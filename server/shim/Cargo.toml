@@ -1,0 +1,9 @@
+[package]
+name = "ia-shim"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Per-run supervisor for huntaway: detaches, runs one command, records its output and exit status on disk"
+
+[dependencies]
+libc = "0.2"

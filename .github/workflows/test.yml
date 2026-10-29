@@ -1,0 +1,67 @@
+# Runs the server and UI tests on each pull request, on GitHub-hosted runners. It needs no secrets, so
+# pull requests from forks run it too. Deployments live outside this repository.
+name: Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Incremental state only helps rebuilds of the same code, and is about half the size of a debug build.
+      CARGO_INCREMENTAL: "0"
+      # sccache isn't installed here; server/.cargo/rustc-wrapper runs rustc directly without it.
+      SCCACHE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: server
+
+      # The binaries first, so that cargo test doesn't compile them alongside the server's test binary
+      # (two rustcs at once peak at about 2.9G).
+      - name: cargo build
+        working-directory: server
+        run: cargo build --locked
+
+      - name: cargo test
+        working-directory: server
+        run: cargo test --locked
+
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: npm ci
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: app
+        run: npm run typecheck
+
+      - name: npm test
+        working-directory: app
+        run: npm test

@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Calls to a test server's API (scripts/test-server.sh), so scripts don't each rewrite them.
+
+  ia-api [--env FILE] get|post|patch|delete <path> [json]   # path with or without /api
+  ia-api task <task>                                       # GET /api/tasks/<id>
+  ia-api new-task <title> [json]                           # in $IA_TEST_PROJECT (--seed)
+  ia-api start <task>                                      # start its agent, as the board does
+  ia-api send <task> <text>                                # message the task's agent
+  ia-api pending [<task>]                                  # pending permission prompts
+  ia-api approve-all [<task>] [--deny-pattern REGEX]
+  ia-api wait-idle <task> [--timeout SECS] [--approve [--deny-pattern REGEX]] [--grace SECS]
+
+A <task> is an id, or a key like TES-3 (looked up in $IA_TEST_PROJECT), here and in a path's
+/tasks/<task>. The server comes from
+--env FILE, $IA_TEST_ENV, $IA_TEST_URL and $IA_TEST_TOKEN, or the worktree's .ia-test-env (the
+latest test-server.sh start), in that order. Responses are printed as JSON; an HTTP error exits
+1 with the error body on stderr.
+
+`approve-all` allows every pending prompt, denying those whose tool name or input matches
+--deny-pattern; a prompt answered meanwhile (409) is reported, any other HTTP error exits 1.
+`wait-idle` polls until the task's agent isn't running (or merging), then prints
+{status, running, attention_reason, pending_permissions, last_message}. It exits 0 when idle,
+2 when the task needs attention (a pending prompt, which --approve answers instead, or a run or
+merge that ended in needs_attention) and 124 on timeout (default 300s, --approve included). If no run is going when it
+starts, it waits --grace seconds (default 5) for one to start first, since a run can take a
+moment to start (a task's title is generated before its run starts, for example).
+"""
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def die(msg, code=1):
+    print(f"ia-api: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def read_env(path):
+    env = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                m = re.match(r"\s*(?:export\s+)?(IA_TEST_\w+)=(.*)$", line)
+                if m:
+                    env[m.group(1)] = m.group(2).strip().strip("'\"")
+    except OSError as e:
+        die(f"can't read {path}: {e.strerror} (is the test server stopped?)")
+    return env
+
+
+def load_env(path):
+    if path:
+        return read_env(path)
+    if os.environ.get("IA_TEST_ENV"):
+        return read_env(os.environ["IA_TEST_ENV"])
+    if os.environ.get("IA_TEST_URL") and os.environ.get("IA_TEST_TOKEN"):
+        return {k: v for k, v in os.environ.items() if k.startswith("IA_TEST_")}
+    latest = os.path.join(ROOT, ".ia-test-env")
+    if os.path.lexists(latest):
+        return read_env(latest)
+    die("no test server: start one with scripts/test-server.sh, or pass --env <data dir>/env")
+
+
+class Api:
+    def __init__(self, env):
+        self.env = env
+        self.url = env.get("IA_TEST_URL", "").rstrip("/")
+        self.token = env.get("IA_TEST_TOKEN", "")
+        if not self.url or not self.token:
+            die("the env has no IA_TEST_URL or IA_TEST_TOKEN")
+        host = urllib.parse.urlparse(self.url)
+        # Test servers and previews only: never the live board.
+        if host.port == 7878 or host.hostname in ("code.dire.nz", "desktop"):
+            die(f"{self.url} is the live board, not a test server")
+
+    def call(self, method, path, body=None, conflict_ok=False):
+        """The response's JSON. An HTTP error exits, except that with `conflict_ok` a 409 comes back
+        as {"error": …}."""
+        path = path if path.startswith("/") else "/" + path
+        if not path.startswith("/api/"):
+            path = "/api" + path
+        # /tasks/TES-3/… takes a key too.
+        path = re.sub(r"^/api/tasks/([A-Za-z][A-Za-z0-9]*-\d+)(?=/|$|\?)", lambda m: "/api/tasks/" + self.task_id(m.group(1)), path)
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(self.url + path, data=data, method=method.upper())
+        req.add_header("Authorization", f"Bearer {self.token}")
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                text = r.read().decode()
+                ctype = r.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            msg = f"{method.upper()} {path}: HTTP {e.code}: {e.read().decode().strip()}"
+            if conflict_ok and e.code == 409:
+                return {"error": msg}
+            die(msg)
+        except urllib.error.URLError as e:
+            die(f"{method.upper()} {path}: {e.reason} (is the test server running?)")
+        if "text/html" in ctype:
+            die(f"{method.upper()} {path}: no such API route (the server answered with the UI's index.html)")
+        return json.loads(text) if text.strip() else None
+
+    def task_id(self, ref):
+        """An id, or a key like TEST-3 in $IA_TEST_PROJECT."""
+        m = re.fullmatch(r"([A-Za-z][A-Za-z0-9]*)-(\d+)", ref)
+        if not m:
+            return ref
+        project = self.env.get("IA_TEST_PROJECT")
+        if not project:
+            die(f"{ref} looks like a key, but there's no IA_TEST_PROJECT (start with --seed, or use the task id)")
+        key = self.call("get", f"/projects/{project}")["key"]
+        for kind in ("task", "scratch"):
+            for t in self.call("get", f"/projects/{project}/tasks?kind={kind}"):
+                if key.upper() == m.group(1).upper() and t["number"] == int(m.group(2)):
+                    return t["id"]
+        die(f"no task {ref} in project {key}")
+
+    def pending(self, task=None):
+        q = f"?task_id={urllib.parse.quote(self.task_id(task))}" if task else ""
+        return self.call("get", "/permissions" + q)
+
+    def approve_all(self, task=None, deny_pattern=None):
+        done = []
+        for p in self.pending(task):
+            text = p["tool_name"] + " " + json.dumps(p["input"])
+            decision = "deny" if deny_pattern and re.search(deny_pattern, text) else "allow"
+            # A prompt answered or expired meanwhile is a 409, not a reason to stop.
+            r = self.call("post", f"/permissions/{p['id']}", {"decision": decision}, conflict_ok=True)
+            done.append({"id": p["id"], "task_id": p["task_id"], "tool_name": p["tool_name"], "input": p["input"], "decision": decision,
+                         "status": r.get("status") or r.get("error")})
+        return done
+
+
+def take(args, flag, default=None, has_value=True):
+    if flag not in args:
+        return default
+    i = args.index(flag)
+    if not has_value:
+        del args[i]
+        return True
+    if i + 1 >= len(args):
+        die(f"{flag} needs a value", 2)
+    v = args[i + 1]
+    del args[i:i + 2]
+    return v
+
+
+def show(v):
+    print(json.dumps(v, indent=2))
+
+
+def summary(api, info):
+    t = info["task"]
+    return {"id": t["id"], "status": t["status"], "running": t["running"], "attention_reason": t.get("attention_reason"),
+            "pending_permissions": info["pending_permissions"], "last_message": info.get("last_message")}
+
+
+def wait_idle(api, ref, timeout, grace, approve, deny_pattern):
+    tid = api.task_id(ref)
+    start = time.monotonic()
+    first = api.call("get", f"/tasks/{tid}")
+    # A merge that needs the user keeps `merging` set, with the run over.
+    started = first["task"]["running"] or first["task"].get("merging")
+    run0 = first["task"].get("run_started_at")
+    while True:
+        info = api.call("get", f"/tasks/{tid}")
+        t = info["task"]
+        elapsed = time.monotonic() - start
+        if t.get("run_started_at") != run0 or t["running"] or t.get("merging"):
+            started = True
+        pending = info["pending_permissions"]
+        if pending and not approve:
+            show(summary(api, info) | {"pending": api.pending(tid)})
+            return 2
+        attention = not t["running"] and t["status"] == "needs_attention"
+        idle = not t["running"] and not t.get("merging")
+        if not pending and (attention or idle) and (started or elapsed >= grace):
+            show(summary(api, info))
+            return 2 if attention else 0
+        # Checked on every round, so prompts that keep coming don't hold it past the deadline.
+        if elapsed >= timeout:
+            show(summary(api, info))
+            print(f"ia-api: timed out after {timeout:g}s", file=sys.stderr)
+            return 124
+        if pending:
+            for d in api.approve_all(tid, deny_pattern):
+                print(f"ia-api: {d['decision']} {d['tool_name']} {json.dumps(d['input'])[:200]}: {d['status']}", file=sys.stderr)
+            time.sleep(0.5)
+            continue
+        time.sleep(1)
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    api = Api(load_env(take(args, "--env")))
+    cmd, rest = args[0], args[1:]
+    if cmd in ("get", "post", "patch", "put", "delete"):
+        if not rest:
+            die(f"usage: ia-api {cmd} <path> [json]", 2)
+        body = None
+        if len(rest) > 1:
+            try:
+                body = json.loads(rest[1])
+            except ValueError as e:
+                die(f"the body isn't JSON: {e}", 2)
+        elif cmd in ("post", "patch", "put"):
+            body = {}
+        show(api.call(cmd, rest[0], body))
+    elif cmd == "env":
+        for k, v in sorted(api.env.items()):
+            print(f"export {k}={v}")
+    elif cmd == "task" and len(rest) == 1:
+        show(api.call("get", f"/tasks/{api.task_id(rest[0])}"))
+    elif cmd == "new-task" and len(rest) in (1, 2):
+        project = api.env.get("IA_TEST_PROJECT") or die("no IA_TEST_PROJECT (start the server with --seed)")
+        body = {"title": rest[0]} | (json.loads(rest[1]) if len(rest) == 2 else {})
+        show(api.call("post", f"/projects/{project}/tasks", body))
+    elif cmd == "start" and len(rest) == 1:
+        # Moving a task to in_progress doesn't start it: the board then sends an empty message.
+        tid = api.task_id(rest[0])
+        if api.call("get", f"/tasks/{tid}")["task"]["status"] in ("todo", "backlog"):
+            api.call("patch", f"/tasks/{tid}", {"status": "in_progress"})
+        show(api.call("post", f"/tasks/{tid}/messages", {"text": ""}))
+    elif cmd == "send" and len(rest) == 2:
+        show(api.call("post", f"/tasks/{api.task_id(rest[0])}/messages", {"text": rest[1]}))
+    elif cmd == "pending" and len(rest) <= 1:
+        show(api.pending(rest[0] if rest else None))
+    elif cmd == "approve-all":
+        deny = take(rest, "--deny-pattern")
+        if len(rest) > 1:
+            die("usage: ia-api approve-all [<task>] [--deny-pattern REGEX]", 2)
+        show(api.approve_all(rest[0] if rest else None, deny))
+    elif cmd == "wait-idle":
+        timeout = float(take(rest, "--timeout", 300))
+        grace = float(take(rest, "--grace", 5))
+        deny = take(rest, "--deny-pattern")
+        approve = take(rest, "--approve", False, has_value=False)
+        if len(rest) != 1:
+            die("usage: ia-api wait-idle <task> [--timeout SECS] [--approve [--deny-pattern REGEX]] [--grace SECS]", 2)
+        return wait_idle(api, rest[0], timeout, grace, approve, deny)
+    else:
+        die(f"unknown command or wrong arguments: {' '.join(args)} (see ia-api --help)", 2)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

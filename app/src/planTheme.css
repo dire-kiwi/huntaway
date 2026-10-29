@@ -1,0 +1,586 @@
+/*
+ * The board's theme for plans (see planTheme.ts), ahead of the plan's own HTML in its frame.
+ * Plain HTML gets the theme as it is, and the ia-* components below are what plan agents are told
+ * to build with (the list in server/src/documents.rs's system_prompt must match).
+ * planTheme.ts sets these colours from the board's own, so these are only defaults.
+ */
+:root {
+  color-scheme: dark;
+  --bg: #0b0b0e;
+  --panel: #111116;
+  --panel-2: #16161d;
+  --raised: #1c1c25;
+  --line: #24242e;
+  --line-strong: #33333f;
+  --fg: #e6e6ec;
+  --heading: #f4f4f8;
+  --muted: #9a9aab;
+  --faint: #6b6b7b;
+  --accent: #7c7cf8;
+  --ok: #34d399;
+  --warn: #f59e0b;
+  --danger: #f87171;
+  --info: #60a5fa;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2c2c38 transparent;
+}
+::selection {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* A readable column, by padding so a page's own background still fills the width. */
+body {
+  margin: 0;
+  padding: 36px max(28px, calc((100% - 780px) / 2)) 48px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.65 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--heading);
+  line-height: 1.3;
+  font-weight: 650;
+}
+h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  letter-spacing: -0.01em;
+}
+h2 {
+  margin: 36px 0 12px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+  font-size: 19px;
+}
+h3 {
+  margin: 24px 0 8px;
+  font-size: 16px;
+}
+h4 {
+  margin: 16px 0 6px;
+  font-size: 14.5px;
+}
+p,
+ul,
+ol,
+dl,
+table,
+pre,
+blockquote,
+figure,
+details {
+  margin: 0 0 14px;
+}
+ul,
+ol {
+  padding-left: 22px;
+}
+li {
+  margin: 4px 0;
+}
+li::marker {
+  color: var(--faint);
+}
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+strong,
+b {
+  color: var(--heading);
+  font-weight: 600;
+}
+hr {
+  margin: 28px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+code,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+:not(pre) > code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.06);
+  color: #e9e3ff;
+}
+kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+pre {
+  overflow-x: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0e0e13;
+  color: #dcdce6;
+  font-size: 13px;
+  line-height: 1.55;
+}
+blockquote {
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+}
+small,
+figcaption {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th,
+td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  border-bottom-color: var(--line-strong);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* A definition list: terms beside their descriptions. */
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 18px;
+}
+dt {
+  color: var(--muted);
+}
+dd {
+  margin: 0;
+}
+
+details {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+summary {
+  cursor: pointer;
+  color: var(--heading);
+  font-weight: 600;
+}
+details[open] > summary {
+  margin-bottom: 8px;
+}
+
+/* Inline SVG diagrams: shapes and text in the theme's colours. */
+svg text {
+  fill: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+svg .muted {
+  fill: var(--muted);
+}
+svg .box {
+  fill: var(--panel-2);
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+svg .box.accent {
+  fill: color-mix(in srgb, var(--accent) 16%, var(--panel-2));
+  stroke: var(--accent);
+}
+svg .edge {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+svg .edge.accent {
+  stroke: var(--accent);
+}
+svg .arrow {
+  fill: var(--muted);
+}
+
+/* Components */
+
+ia-lede {
+  display: block;
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+ia-callout {
+  --tone: var(--accent);
+  display: block;
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  border-left: 3px solid var(--tone);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tone) 8%, var(--panel));
+}
+ia-callout[title]::before {
+  content: attr(title);
+  display: block;
+  margin-bottom: 4px;
+  color: var(--tone);
+  font-weight: 600;
+}
+ia-callout > :last-child {
+  margin-bottom: 0;
+}
+ia-callout[kind="tip"],
+ia-callout[kind="decision"] {
+  --tone: var(--ok);
+}
+ia-callout[kind="warn"],
+ia-callout[kind="question"] {
+  --tone: var(--warn);
+}
+ia-callout[kind="risk"] {
+  --tone: var(--danger);
+}
+ia-callout[kind="info"] {
+  --tone: var(--info);
+}
+
+/* Numbered steps, each a card; a size attribute shows as a badge. */
+ia-steps {
+  display: block;
+  margin: 0 0 14px;
+  counter-reset: ia-step;
+}
+ia-step {
+  position: relative;
+  display: block;
+  margin: 0 0 10px;
+  padding: 12px 16px 12px 52px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  counter-increment: ia-step;
+}
+ia-step::before {
+  content: counter(ia-step);
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 24px;
+  text-align: center;
+}
+ia-step[size]::after {
+  content: attr(size);
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 20px;
+}
+ia-step > :first-child {
+  margin-top: 0;
+}
+ia-step > :last-child {
+  margin-bottom: 0;
+}
+ia-step[size] > :first-child {
+  padding-right: 48px;
+}
+
+ia-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 0 0 14px;
+}
+ia-card {
+  --tone: var(--line);
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--tone);
+  border-radius: 10px;
+  background: var(--panel);
+}
+ia-card > :first-child {
+  margin-top: 0;
+}
+ia-card > :last-child {
+  margin-bottom: 0;
+}
+ia-card[kind="chosen"] {
+  --tone: color-mix(in srgb, var(--ok) 55%, transparent);
+  background: color-mix(in srgb, var(--ok) 6%, var(--panel));
+}
+ia-card[kind="rejected"] {
+  opacity: 0.75;
+}
+ia-card[kind="chosen"]::before,
+ia-card[kind="rejected"]::before {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+ia-card[kind="chosen"]::before {
+  content: "Chosen";
+  color: var(--ok);
+}
+ia-card[kind="rejected"]::before {
+  content: "Not chosen";
+  color: var(--faint);
+}
+
+ia-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+  margin: 0 0 14px;
+}
+ia-columns > * {
+  margin-top: 0;
+}
+
+ia-badge {
+  --tone: var(--muted);
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  color: var(--tone);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 20px;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+ia-badge[kind="accent"] {
+  --tone: var(--accent);
+}
+ia-badge[kind="ok"] {
+  --tone: var(--ok);
+}
+ia-badge[kind="warn"] {
+  --tone: var(--warn);
+}
+ia-badge[kind="danger"] {
+  --tone: var(--danger);
+}
+ia-badge[kind="info"] {
+  --tone: var(--info);
+}
+
+/* Lists with markers that say what they are. */
+ul.pros,
+ul.cons,
+ul.checklist,
+ul.files {
+  padding-left: 0;
+  list-style: none;
+}
+ul.pros > li,
+ul.cons > li,
+ul.checklist > li {
+  position: relative;
+  padding-left: 24px;
+}
+ul.pros > li::before,
+ul.cons > li::before,
+ul.checklist > li::before {
+  position: absolute;
+  left: 2px;
+  font-weight: 700;
+}
+ul.pros > li::before {
+  content: "+";
+  color: var(--ok);
+}
+ul.cons > li::before {
+  content: "−";
+  color: var(--danger);
+}
+ul.checklist > li::before {
+  content: "○";
+  color: var(--faint);
+}
+ul.checklist > li.done::before {
+  content: "✓";
+  color: var(--ok);
+}
+ul.checklist > li.done {
+  color: var(--muted);
+}
+ul.files {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+ul.files > li {
+  margin: 0;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+}
+ul.files > li:first-child {
+  border-top: 0;
+}
+ul.files > li > code:first-child {
+  margin-right: 8px;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+}
+
+ia-diagram {
+  display: block;
+  margin: 0 0 14px;
+  padding: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  text-align: center;
+}
+ia-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Free-form HTML, as a page of its own in a frame that fits it (planTheme.ts). */
+ia-html {
+  display: block;
+  margin: 0 0 14px;
+}
+ia-html > iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+}
+
+/* A question the user answers in the plan (planTheme.ts turns it into form fields). */
+ia-question {
+  display: block;
+  margin: 0 0 14px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+  background: var(--panel);
+}
+ia-question > .ia-ask {
+  margin-bottom: 4px;
+  color: var(--heading);
+  font-weight: 600;
+}
+ia-question > p {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+ia-question > .ia-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+ia-question > .ia-answer > label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+ia-question > .ia-answer > label > input[type="radio"],
+ia-question > .ia-answer > label > input[type="checkbox"] {
+  flex: none;
+  position: relative;
+  top: 2px;
+}
+ia-question > .ia-answer > label > .ia-other {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Form fields, in an <ia-question> or anywhere in the plan. */
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+}
+input:not([type="radio"], [type="checkbox"], [type="range"], [type="color"]),
+select,
+textarea {
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel-2);
+  outline: none;
+}
+ia-question input:not([type="radio"], [type="checkbox"]),
+ia-question select,
+ia-question textarea {
+  width: 100%;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+input[type="radio"],
+input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+textarea {
+  display: block;
+  resize: vertical;
+  line-height: 1.5;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

@@ -1,0 +1,16 @@
+# Faster builds that take less disk: each task worktree has its own target directory.
+
+# sccache, when it's installed (see rustc-wrapper): worktrees share one build of each dependency.
+# `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off.
+[build]
+rustc-wrapper = ".cargo/rustc-wrapper"
+
+# No debuginfo for dependencies in debug builds and tests, which makes their artifacts about a quarter
+# smaller. Our crates keep it, and backtraces still name dependencies' functions, without line numbers.
+[profile.dev.package."*"]
+debug = false
+
+# Our crates' debuginfo stays in their object files rather than being copied into every binary (the
+# server, ia-shim and each test binary). Debuggers and backtraces read it from there.
+[profile.dev]
+split-debuginfo = "unpacked"

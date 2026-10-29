@@ -1,0 +1,8 @@
+node_modules
+/.ia-test-env
+__pycache__/
+# Local secrets: keep env files and keys out of the (public) repository.
+.env
+.env.*
+*.pem
+*.key

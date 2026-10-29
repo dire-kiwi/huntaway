@@ -1,0 +1,134 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("./assets/SymbolsNerdFontMono-Regular.ttf") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@theme {
+  --color-bg: #0b0b0e;
+  --color-panel: #111116;
+  --color-panel-2: #16161d;
+  --color-raised: #1c1c25;
+  --color-line: #24242e;
+  --color-line-strong: #33333f;
+  --color-fg: #e6e6ec;
+  --color-muted: #9a9aab;
+  --color-faint: #6b6b7b;
+  --color-accent: #7c7cf8;
+  --color-accent-strong: #6366f1;
+
+  --color-st-todo: #8b8b9c;
+  --color-st-progress: #60a5fa;
+  --color-st-attention: #f59e0b;
+  --color-st-review: #a78bfa;
+  --color-st-merge: #f472b6;
+  --color-st-done: #34d399;
+  --color-st-backlog: #5f5f6e;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "Symbols Nerd Font Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2c2c38 transparent;
+}
+
+/* Electron: let the title area drag the window */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.prose-chat {
+  @apply prose prose-invert max-w-none prose-sm;
+  --tw-prose-body: var(--color-fg);
+  --tw-prose-headings: #f4f4f8;
+  --tw-prose-links: var(--color-accent);
+  --tw-prose-code: #e9e3ff;
+  --tw-prose-pre-bg: #0e0e13;
+  --tw-prose-pre-code: #dcdce6;
+  --tw-prose-bullets: var(--color-faint);
+  --tw-prose-counters: var(--color-faint);
+  --tw-prose-hr: var(--color-line);
+  --tw-prose-quote-borders: var(--color-line-strong);
+  --tw-prose-th-borders: var(--color-line-strong);
+  --tw-prose-td-borders: var(--color-line);
+  line-height: 1.6;
+}
+.prose-chat :where(code):not(:where(pre *)) {
+  @apply rounded bg-white/[0.06] px-1 py-0.5 font-normal;
+}
+.prose-chat :where(code):not(:where(pre *))::before,
+.prose-chat :where(code):not(:where(pre *))::after {
+  content: none;
+}
+.prose-chat pre {
+  @apply border border-line rounded-lg text-[12.5px];
+}
+.prose-chat > :first-child {
+  margin-top: 0;
+}
+.prose-chat > :last-child {
+  margin-bottom: 0;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 180ms ease-out;
+}
+
+/* The kanban board's sideways scrollbar: full width and easy to see, since columns past the edge are otherwise easy to miss. */
+.kanban-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: var(--color-line-strong) var(--color-panel);
+}
+.kanban-scroll:hover {
+  scrollbar-color: #4a4a5a var(--color-panel);
+}

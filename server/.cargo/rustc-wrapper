@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Cargo's rustc wrapper (config.toml): compiles through sccache, so every worktree shares one build
+# of the dependencies, and runs rustc directly where sccache can't help: when it isn't installed,
+# when SCCACHE_DISABLE is set, or when its server can't be reached or started (a sandbox without
+# network, where sccache would fail the build).
+#
+# Called as `rustc-wrapper <rustc> <args>...`.
+
+sccache=$(command -v sccache) && [[ -z ${SCCACHE_DISABLE:-} ]] || exec "$@"
+# A Unix socket server is left to sccache.
+[[ -n ${SCCACHE_SERVER_UDS:-} ]] && exec "$sccache" "$@"
+
+up() { (exec 3<>"/dev/tcp/127.0.0.1/${SCCACHE_SERVER_PORT:-4226}") 2>/dev/null; }
+# Several wrappers can start the server at once: the ones that lose see the winner's.
+if up || { "$sccache" --start-server >/dev/null 2>&1; up; }; then
+    exec "$sccache" "$@"
+fi
+exec "$@"
