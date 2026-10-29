@@ -3122,7 +3122,7 @@ mod tests {
         let c = open(&path).unwrap();
         let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         let kind: String = c.query_row("SELECT kind FROM permission_requests WHERE id='r'", [], |r| r.get(0)).unwrap();
-        assert_eq!((version, kind.as_str()), (52, "tool"));
+        assert_eq!((version, kind.as_str()), (53, "tool"));
         // Projects from before aren't archived.
         assert_eq!(get_project(&c, "x").unwrap().unwrap().archived_at, None);
         let t = get_task(&c, "t").unwrap().unwrap();
