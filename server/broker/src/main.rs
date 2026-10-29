@@ -1,4 +1,4 @@
-//! `huntaway-broker`: see the library's comment, and deploy/broker/README.md.
+//! `huntaway-broker`: see the library's comment, and server/broker/README.md.
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;

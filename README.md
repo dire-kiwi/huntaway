@@ -344,8 +344,8 @@ reaches the host:
   broker's default host (`--default-host`), else the only host connected.
 
 A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
-whose board links the others) on the broker, and its board shows every host it links. Deploying
-the broker is in `deploy/broker/README.md`.
+whose board links the others) on the broker, and its board shows every host it links. Running the
+broker is in `server/broker/README.md`.
 
 ### Codex agents
 
