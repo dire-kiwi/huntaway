@@ -1065,6 +1065,8 @@ export const api = {
       claude_config_id?: string;
       task_type?: DocumentType;
       external_links?: ExternalLink[];
+      /** Shared by the tasks made from one prompt (API 61). */
+      fanout_id?: string;
     },
   ) => on(h).post<Task>(`/profiles/${enc(profileId)}/group-tasks`, b),
   projectTasks: (h: string, projectId: string, kind: Task["kind"] = "task") => on(h).get<Task[]>(`/projects/${enc(projectId)}/tasks?kind=${kind}`),

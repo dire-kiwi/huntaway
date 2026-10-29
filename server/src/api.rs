@@ -1170,6 +1170,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
         return Err(ApiError::bad("a group task can't be a scratch task"));
     }
     let config = pick_config(&s.db(), &id, None, b.claude_config_id.as_deref())?;
+    let fanout = new_task_fanout(&b)?;
     let links = new_task_links(&b)?;
     let t = db::insert_group_task(
         &s.db(),
@@ -1187,7 +1188,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
         },
         group,
     )?;
-    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).collect();
+    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).chain(fanout).collect();
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     std::fs::create_dir_all(s.profile_scratch_dir(&id)).ok();
     s.emit_task(&t);
@@ -2759,9 +2760,15 @@ pub(crate) mod tests {
             // On its own, or with a blank one, it has none.
             assert_eq!(create_task_inner(&s, &p.id, CreateTask { title: "Alone".into(), ..Default::default() }).unwrap().fanout_id, None);
             assert_eq!(create_task_inner(&s, &p.id, fanned(" ")).unwrap().fanout_id, None);
+            // A group's plans made from one prompt are linked too.
+            update_project_inner(&s, &p.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
+            let grouped = |id: &str| CreateGroupTask { group: "Shop".into(), task: CreateTask { task_type: Some("plan".into()), ..fanned(id) } };
+            let Json(g) = create_group_task(State(s.clone()), Path(profile.id.clone()), Json(grouped("f-3"))).await.unwrap();
+            assert_eq!((g["task_type"].as_str(), g["fanout_id"].as_str()), (Some("plan"), Some("f-3")));
             for bad in ["a b", "x/y", &"z".repeat(65)] {
                 assert!(create_task_inner(&s, &p.id, fanned(bad)).is_err(), "{bad}");
                 assert!(create_scratch_task_inner(&s, &profile.id, fanned(bad)).is_err(), "{bad}");
+                assert!(create_group_task(State(s.clone()), Path(profile.id.clone()), Json(grouped(bad))).await.is_err(), "{bad}");
             }
         })
     }

@@ -632,7 +632,11 @@ export function NewTaskModal({
   // with the model last picked there.
   const named = harnessesOf(harnessVocab, allValues(resolve({ "!": modelVocab }), "!"));
   const runs: Harness[] = named.length ? named : [{ config, model: codex && isClaudeModel(model) ? "" : model }];
-  const fanout = runs.length > 1;
+  // Several harnesses make a task each. After only some of them could be made, those left (even one) are made as part
+  // of the same set when it's tried again: linked to the others by its id (null on hosts before API 61), in a worktree.
+  const [pending, setPending] = useState<{ id: string | null; made: string[] } | null>(null);
+  const many = runs.length > 1;
+  const fanout = many || pending !== null;
   const runConfig = (h: Harness) => configs.find((c) => c.id === h.config);
   // The efforts any of them takes; one that doesn't take the effort picked gets its default.
   const runEfforts = (h: Harness) => effortOptions(runConfig(h), configModels[h.config] ?? null, h.model);
@@ -701,8 +705,6 @@ export function NewTaskModal({
         : worktree && inProject?.is_git === false
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
-  // Kept after only some of the tasks could be made, so those made when it's tried again are with them.
-  const fanoutId = useRef<string | null>(null);
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
   const setStart = (v: boolean) => {
@@ -734,6 +736,7 @@ export function NewTaskModal({
     setStartPref(localStorage.getItem(startKey(prefId)) === "1");
     setWorktree(null);
     setCreated(null);
+    setPending(null);
     switched.current = true;
     if (from.host_id !== target.host_id || from.profile_id !== target.profile_id) setLinks([]);
     if (from.host_id !== target.host_id) attach.clear();
@@ -792,8 +795,8 @@ export function NewTaskModal({
     setErr(null);
     // A task for each harness, one after another, so a failure leaves the rest to try again.
     const tasks: Task[] = [];
-    if (fanout && hostSupports(host, 61)) fanoutId.current ??= newFanoutId();
-    const shared = fanout && fanoutId.current ? { fanout_id: fanoutId.current } : {};
+    const fanoutId = pending ? pending.id : fanout && hostSupports(host, 61) ? newFanoutId() : null;
+    const shared = fanoutId ? { fanout_id: fanoutId } : {};
     try {
       for (const run of runs) {
         // The server titles it from the description.
@@ -812,7 +815,7 @@ export function NewTaskModal({
             noProject
               ? await api.createScratchTask(target.host_id, target.profile_id, { ...common, ...shared })
               : asGroup && group
-                ? await api.createGroupTask(target.host_id, target.profile_id, { ...common, group, ...(docType ? { task_type: docType } : {}) })
+                ? await api.createGroupTask(target.host_id, target.profile_id, { ...common, ...shared, group, ...(docType ? { task_type: docType } : {}) })
                 : await api.createTask(project!.host_id, project!.id, {
                     ...common,
                     ...shared,
@@ -828,14 +831,16 @@ export function NewTaskModal({
           // Those made are taken out of the text, so trying again makes the others.
           const done = runs.slice(0, tasks.length);
           untoken((t) => t.prefix === "!" && done.some((h) => sameHarness(harnessOf(t.value), h)));
-          setErr(`Made ${tasks.map((t) => `${keyPrefix(t, inProject)}-${t.number}`).join(", ")}, but not the one with ${runLabel(run)}: ${(e as Error).message}`);
+          const keys = tasks.map((t) => `${keyPrefix(t, inProject)}-${t.number}`);
+          setPending({ id: fanoutId, made: [...(pending?.made ?? []), ...keys] });
+          setErr(`Made ${keys.join(", ")}, but not the one with ${runLabel(run)}: ${(e as Error).message}`);
           setBusy(false);
           return;
         }
       }
-      fanoutId.current = null;
-      // One harness is what's picked from then on; several leave what was picked as it was.
-      const only = runs.length === 1 ? runs[0] : null;
+      setPending(null);
+      // One harness is what's picked from then on; several (or what's left of them) leave what was picked as it was.
+      const only = fanout ? null : runs[0];
       if (only) {
         const m = named.length ? only.model : model;
         setModel(m);
@@ -1261,7 +1266,9 @@ export function NewTaskModal({
         {fanout && (
           <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>
             {fanoutBlock ??
-              `Makes ${runs.length} ${noun}s from this prompt, one with each model${worktree ? ", each in its own worktree" : ""}, so you can compare what they do. Their cards say which is which.`}
+              (many
+                ? `Makes ${runs.length} ${noun}s from this prompt, one with each model${worktree ? ", each in its own worktree" : ""}${pending ? `, with ${pending.made.join(", ")}` : ", so you can compare what they do"}. Their cards say which is which.`
+                : `Makes the ${noun} left from this prompt, with ${pending!.made.join(", ")}${worktree ? ", in its own worktree" : ""}. Their cards say which is which.`)}
           </div>
         )}
         {err && <div className="text-xs text-red-400">{err}</div>}
@@ -1278,7 +1285,7 @@ export function NewTaskModal({
             Cancel
           </Button>
           <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!fanoutBlock}>
-            {fanout
+            {many
               ? start && deps && dependsOn.length
                 ? `Create & queue ${runs.length}`
                 : start
