@@ -15,6 +15,7 @@ import {
   mergeQueued,
   STATUSES,
   worktreesOn,
+  type ClaudeConfig,
   type DocumentType,
   type Host,
   type Profile,
@@ -307,7 +308,25 @@ interface Draft {
   files: AttachmentRef[];
   /** The Asana tasks picked for it, in the project's profile. */
   links?: ExternalLink[];
+  /** Some of the tasks for its models were made, and these are the rest of the set (IA-227). */
+  fanout?: PendingFanout | null;
 }
+
+/** A set of tasks from one prompt that only some of were made: what the rest are made with when it's tried again. */
+interface PendingFanout {
+  /** The id they share; null on hosts before API 61. */
+  id: string | null;
+  /** The keys of those made. */
+  made: string[];
+  /** The efforts those made took, so a `^` only they take is still one. */
+  efforts: string[];
+}
+
+const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+const isPendingFanout = (f: unknown): f is PendingFanout => {
+  const x = f as PendingFanout | null;
+  return !!x && (x.id === null || typeof x.id === "string") && strings(x.made) && strings(x.efforts);
+};
 
 const isLink = (l: unknown): l is ExternalLink => {
   const x = l as ExternalLink | null;
@@ -318,7 +337,12 @@ function loadDraft(key: string): Draft | null {
   try {
     const d = JSON.parse(localStorage.getItem(key) ?? "null");
     if (!d || typeof d.description !== "string") return null;
-    return { description: d.description, files: Array.isArray(d.files) ? d.files : [], links: Array.isArray(d.links) ? d.links.filter(isLink) : [] };
+    return {
+      description: d.description,
+      files: Array.isArray(d.files) ? d.files : [],
+      links: Array.isArray(d.links) ? d.links.filter(isLink) : [],
+      fanout: isPendingFanout(d.fanout) ? d.fanout : null,
+    };
   } catch {
     return null;
   }
@@ -635,7 +659,12 @@ export function NewTaskModal({
   const runs: Harness[] = named.length ? named : [{ config, model: codex && isClaudeModel(model) ? "" : model }];
   // Several harnesses make a task each. After only some of them could be made, those left (even one) are made as part
   // of the same set when it's tried again: linked to the others by its id (null on hosts before API 61), in a worktree.
-  const [pending, setPending] = useState<{ id: string | null; made: string[]; efforts: string[] } | null>(null);
+  // Kept with the draft, so closing the dialog (or reloading) before trying again doesn't lose it.
+  const [pending, setPending] = useState<PendingFanout | null>(() => saved?.fanout ?? null);
+  // Taking all the text out starts over.
+  useEffect(() => {
+    if (!description.trim()) setPending(null);
+  }, [description]);
   const many = runs.length > 1;
   const fanout = many || pending !== null;
   const runConfig = (h: Harness) => configs.find((c) => c.id === h.config);
@@ -678,7 +707,10 @@ export function NewTaskModal({
   const [pickingLink, setPickingLink] = useState(false);
   const hasContent = !!text.trim() || attach.items.length > 0;
   // Saved as it's written, tokens and all (and when it's only tokens, the options they pick). Files still uploading are left out until they're on the host.
-  const draftJson = description.trim() || attach.files.length || links.length ? JSON.stringify({ description, files: attach.files, links } satisfies Draft) : null;
+  const draftJson =
+    description.trim() || attach.files.length || links.length || pending
+      ? JSON.stringify({ description, files: attach.files, links, ...(pending ? { fanout: pending } : {}) } satisfies Draft)
+      : null;
   useEffect(() => {
     if (draftJson) localStorage.setItem(draft, draftJson);
     else localStorage.removeItem(draft);
@@ -707,19 +739,24 @@ export function NewTaskModal({
         : worktree && inProject?.is_git === false
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
-  // A `!` that names no model may be a Codex config's, whose models are still on their way: the task waits for them, so a
-  // harness isn't left out (with its token sent as text). If they couldn't be fetched, it says so.
+  // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
+  // out, with its token sent as text), and whether the effort picked is one a Codex harness's model takes (it's only
+  // sent if it is). If they couldn't be fetched, it says so.
   const unknownModels = tokens.filter((t) => t.prefix === "!" && t.value === undefined);
   const asText = unknownModels.map((t) => `!${t.word}`).join(", ");
+  const effortWaits = (c: ClaudeConfig) => efforts && !!pickedEffort && runs.some((h) => h.config === c.id);
+  const waitsFor = (c: ClaudeConfig) => unknownModels.length > 0 || effortWaits(c);
+  const loadingFor = discovery.loading.filter(waitsFor);
+  const failedFor = discovery.failed.filter((f) => waitsFor(f.config));
   const configNames = (cs: { name: string }[]) => cs.map((c) => c.name).join(", ");
-  const modelsLoading = unknownModels.length > 0 && discovery.loading.length > 0;
-  const modelsBlock = !unknownModels.length
-    ? null
-    : modelsLoading
-      ? `Loading ${configNames(discovery.loading)}'s models, to see which ${asText} is…`
-      : discovery.failed.length
-        ? `Couldn't load ${configNames(discovery.failed.map((f) => f.config))}'s models (${discovery.failed[0].error}), so ${asText} isn't known: take it out, or open the dialog again to try again.`
-        : null;
+  const unknown = (cs: ClaudeConfig[]) =>
+    unknownModels.length ? `which ${asText} is` : `whether ${cs.length > 1 ? "they take" : "it takes"} ${pickedEffort} effort`;
+  const modelsLoading = loadingFor.length > 0;
+  const modelsBlock = modelsLoading
+    ? `Loading ${configNames(loadingFor)}'s models, to see ${unknown(loadingFor)}…`
+    : failedFor.length
+      ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${unknownModels.length ? "it" : "the effort"} out, or open the dialog again to try again.`
+      : null;
   const submitBlock = fanoutBlock ?? modelsBlock;
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
@@ -767,6 +804,7 @@ export function NewTaskModal({
     setRestoring(null);
     attach.clear();
     setLinks(theirs.links ?? []);
+    setPending(theirs.fanout ?? null);
     if (attach.enabled) attach.restore(theirs.files);
     setCreated(made);
   }, [restoring]); // eslint-disable-line react-hooks/exhaustive-deps
