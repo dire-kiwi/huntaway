@@ -573,6 +573,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
                 depends_on: dependency_ids(s, ctx, &args["depends_on"], profile)?,
                 task_type: str_arg("type"),
                 external_links: None,
+                fanout_id: None,
             };
             let marks = new_task_marks(args)?;
             let t = api::create_task_inner(s, &project.id, body)?;
@@ -1270,6 +1271,7 @@ mod tests {
             depends_on: None,
             task_type: None,
             external_links: None,
+            fanout_id: None,
         };
         api::create_task_inner(s, project, body).map_err(|e| e.1).unwrap()
     }
