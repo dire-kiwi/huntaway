@@ -184,3 +184,35 @@ test("the rest of a set are made as part of it after the dialog is closed and op
   );
   assert.ok(tasks[0].fanout_id && tasks[1].fanout_id === tasks[0].fanout_id);
 });
+
+// Review of IA-227: a Codex harness on its default model runs with the model it inherits (here the profile's), so the
+// effort is checked against that one, not Codex's default.
+test("an effort is checked against the model a default-model harness inherits", async () => {
+  const [profile] = await server.api("GET", "/profiles");
+  await server.api("PATCH", `/profiles/${profile.id}`, { default_model: "gpt-5.4-mini" });
+  try {
+    const models = [
+      { id: "gpt-5.5", name: "GPT-5.5", is_default: true, efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium" },
+      { id: "gpt-5.4-mini", name: "GPT-5.4 mini", is_default: false, efforts: ["low", "medium", "high"], default_effort: "medium" },
+    ];
+    await withBrowser(server, {}, async (ui) => {
+      await ui.page.route(isModels, (route) => route.fulfill(json(models)));
+      await ui.run([
+        `goto /p/${project.id}`,
+        "click New task",
+        "type Inherited model /scratch !opus !codex ^xhigh",
+        "press Escape",
+        "wait Create 2 scratch tasks",
+        "press Control+Enter",
+        "gone Reads as",
+      ]);
+    });
+    const tasks = await tasksIn("Inherited model");
+    assert.deepEqual(tasks.map((t) => [t.model, t.effort, t.claude_config_id === codex.id]).sort(), [
+      [null, null, true],
+      ["opus", "xhigh", false],
+    ]);
+  } finally {
+    await server.api("PATCH", `/profiles/${profile.id}`, { default_model: null });
+  }
+});
