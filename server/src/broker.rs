@@ -23,7 +23,7 @@ use crate::state::Shared;
 /// Paths a client mustn't reach through the broker: `--open-token` hands the token to whoever asks.
 const BLOCKED: &[&str] = &["/api/open-token"];
 
-/// The broker pings every 20s; one we hear nothing from for this long is gone.
+/// The broker sends a `Ping` every 20s; one we hear nothing from for this long is gone.
 const SILENCE: Duration = Duration::from_secs(60);
 
 /// What the broker sent on one of our streams.
@@ -44,9 +44,13 @@ pub fn dial_out(s: &Shared, url: String, token: String, name: String) {
     tokio::spawn(async move {
         let mut backoff = 1;
         loop {
-            match session(&s, &url, &token, &name).await {
-                Ok(()) => backoff = 1,
-                Err(e) => tracing::warn!("broker {url}: {e:#}"),
+            let started = std::time::Instant::now();
+            if let Err(e) = session(&s, &url, &token, &name).await {
+                tracing::warn!("broker {url}: {e:#}");
+            }
+            // A connection that lasted a while starts over at a quick retry.
+            if started.elapsed() > Duration::from_secs(60) {
+                backoff = 1;
             }
             tokio::time::sleep(Duration::from_secs(backoff)).await;
             backoff = (backoff * 2).min(30);
@@ -105,6 +109,9 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
                         if let (false, Some(entry)) = (ws, streams.lock().unwrap().get_mut(&id)) {
                             entry.1 = Some(task.abort_handle());
                         }
+                    }
+                    Ok(Ctl::Ping) => {
+                        let _ = tx.send(TMessage::Text(serde_json::to_string(&Ctl::Pong)?.into()));
                     }
                     Ok(Ctl::End { id }) => incoming(&streams, id, Incoming::End, false),
                     Ok(Ctl::Close { id, code, reason }) => incoming(&streams, id, Incoming::Close(code, reason), true),
@@ -182,9 +189,11 @@ impl Out {
     }
 }
 
+/// A path the broker mustn't make us request: one that isn't a path on our server (`@other.host/`
+/// after our URL would be another server), or one that's blocked.
 fn blocked(path: &str) -> bool {
-    let p = path.split('?').next().unwrap_or_default().trim_end_matches('/');
-    BLOCKED.contains(&p)
+    let p = path.split('?').next().unwrap_or_default();
+    !p.starts_with('/') || BLOCKED.contains(&p.trim_end_matches('/'))
 }
 
 fn local() -> &'static reqwest::Client {
@@ -386,6 +395,12 @@ mod tests {
                 (502, json!({"error": "host laptop isn't connected to the broker"}))
             );
             assert_eq!(call("GET", &format!("{b}/_broker/nope"), &[]).await.0, 404);
+            // The path goes on as it was sent: `%2F` isn't a `/`.
+            let raw = call("GET", &format!("{b}/_broker/h/desktop/api/tasks/a%2Fb"), &[auth]).await;
+            assert_eq!(raw, call("GET", &format!("{b}/api/tasks/a%2Fb"), &[auth]).await);
+            assert_ne!(raw, call("GET", &format!("{b}/api/tasks/a/b"), &[auth]).await);
+            // The root of a host, as hubs ask for it.
+            assert_eq!(call("GET", &format!("{b}/_broker/h/desktop"), &[]).await, call("GET", &format!("{b}/"), &[]).await);
             // The broker's own token, for hosts to connect.
             let mut req = format!("{}/_broker/connect", b.replacen("http", "ws", 1)).into_client_request().unwrap();
             req.headers_mut().insert("Authorization", "Bearer desktop-tok".parse().unwrap());
@@ -465,5 +480,6 @@ mod tests {
     fn blocks_the_open_token() {
         assert!(blocked("/api/open-token") && blocked("/api/open-token?x=1") && blocked("/api/open-token/"));
         assert!(!blocked("/api/info") && !blocked("/"));
+        assert!(blocked("@example.com/") && blocked("") && blocked("?x=1"));
     }
 }

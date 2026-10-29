@@ -26,6 +26,10 @@ pub enum Ctl {
     Hello { name: String, host_id: String, version: String, protocol: u32 },
     /// Broker → host: it's reachable as `name` now.
     Welcome { name: String },
+    /// Broker → host, every 20 seconds, so the connection is seen to be alive (websocket pings
+    /// don't get through every proxy). The host answers `Pong`.
+    Ping,
+    Pong,
     /// Broker → host: not taken (a bad name, another protocol). The broker hangs up after it.
     Refused { error: String },
     /// Broker → host: a client's request. `path` includes the query string.

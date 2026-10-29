@@ -36,9 +36,9 @@ pub mod proto;
 
 use proto::Ctl;
 
-/// The broker sends a ping this often, so proxies in between keep the host's websocket open.
+/// The broker sends a `Ping` this often, so proxies in between keep the host's websocket open.
 const PING: Duration = Duration::from_secs(20);
-/// A host we've heard nothing from (not even a pong) for this long is gone.
+/// A host we've heard nothing from (not even a `Pong`) for this long is gone.
 const SILENCE: Duration = Duration::from_secs(60);
 /// How long a request waits for the host to start answering.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(300);
@@ -120,9 +120,9 @@ pub fn router(cfg: Config) -> Router {
         .route("/_broker/connect", get(connect))
         .route("/_broker/health", get(|| async { Json(json!({"ok": true})) }))
         .route("/_broker/use/{name}", get(use_host))
-        .route("/_broker/h/{name}", any(|s, Path(name): Path<String>, req| prefixed(s, name, String::new(), req)))
-        .route("/_broker/h/{name}/", any(|s, Path(name): Path<String>, req| prefixed(s, name, String::new(), req)))
-        .route("/_broker/h/{name}/{*rest}", any(|s, Path((name, rest)): Path<(String, String)>, req| prefixed(s, name, rest, req)))
+        .route("/_broker/h/{name}", any(prefixed))
+        .route("/_broker/h/{name}/", any(prefixed))
+        .route("/_broker/h/{name}/{*rest}", any(prefixed))
         .route("/_broker/{*rest}", any(|req: Request| async move { fail(req.uri().path(), StatusCode::NOT_FOUND, "no such broker route") }))
         .fallback(picked)
         .with_state(b)
@@ -171,7 +171,7 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
                     Some(m) => m,
                     None => break,
                 },
-                _ = ping.tick() => Message::Ping(Bytes::new()),
+                _ = ping.tick() => Message::Text(serde_json::to_string(&Ctl::Ping).unwrap_or_default().into()),
             };
             let close = matches!(msg, Message::Close(_));
             if sink.send(msg).await.is_err() || close {
@@ -249,13 +249,21 @@ async fn use_host(Path(name): Path<String>, req: Request) -> Response {
 }
 
 /// `/_broker/h/<name>/<rest>`: `/<rest>` on that host.
-async fn prefixed(State(b): State<Arc<Broker>>, name: String, rest: String, req: Request) -> Response {
-    let Some(host) = b.hosts.lock().unwrap().get(&name).cloned() else {
-        return fail(&format!("/{rest}"), StatusCode::BAD_GATEWAY, &format!("host {name} isn't connected to the broker"));
+async fn prefixed(State(b): State<Arc<Broker>>, Path(params): Path<HashMap<String, String>>, req: Request) -> Response {
+    let name = params.get("name").cloned().unwrap_or_default();
+    // The rest of the path as the client sent it: the extracted one is decoded, which would turn `%2F` into `/`.
+    let rest = req.uri().path().strip_prefix("/_broker/h/").and_then(|p| p.strip_prefix(name.as_str())).filter(|_| proto::valid_name(&name));
+    let Some(rest) = rest else {
+        return fail(req.uri().path(), StatusCode::BAD_REQUEST, "bad host name");
     };
-    let path = match req.uri().query() {
-        Some(q) => format!("/{rest}?{q}"),
-        None => format!("/{rest}"),
+    let path = match (rest.is_empty(), req.uri().query()) {
+        (true, Some(q)) => format!("/?{q}"),
+        (true, None) => "/".into(),
+        (false, Some(q)) => format!("{rest}?{q}"),
+        (false, None) => rest.into(),
+    };
+    let Some(host) = b.hosts.lock().unwrap().get(&name).cloned() else {
+        return fail(&path, StatusCode::BAD_GATEWAY, &format!("host {name} isn't connected to the broker"));
     };
     forward(host, path, req).await
 }
