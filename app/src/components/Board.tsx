@@ -740,22 +740,48 @@ export function NewTaskModal({
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
   // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
-  // out, with its token sent as text), and whether the effort picked is one a Codex harness's model takes (it's only
-  // sent if it is). If they couldn't be fetched, it says so.
+  // out, with its token sent as text); which config a `!` names a model of, when a config of the same agent before it
+  // (the picked one, then in order) may have the model too (so it doesn't depend on which answers first); and whether the effort picked
+  // is one a Codex harness's model takes (it's only sent if it is). If they couldn't be fetched, it says so.
   const unknownModels = tokens.filter((t) => t.prefix === "!" && t.value === undefined);
   const asText = unknownModels.map((t) => `!${t.word}`).join(", ");
+  const rank = (id: string) => (id === config ? -1 : configs.findIndex((c) => c.id === id));
+  const claimable = (c: ClaudeConfig) =>
+    tokens.filter((t) => {
+      const w = t.prefix === "!" && t.value !== undefined ? harnessVocab.find((x) => x.word === t.value) : undefined;
+      const agent = harnessConfigs.find((x) => x.id === w?.harness.config)?.agent;
+      return !!w && !!w.harness.model && w.word.toLowerCase() === w.harness.model.toLowerCase() && agent === agentOf(c) && rank(c.id) < rank(w.harness.config);
+    });
   const effortWaits = (c: ClaudeConfig) => efforts && !!pickedEffort && runs.some((h) => h.config === c.id);
-  const waitsFor = (c: ClaudeConfig) => unknownModels.length > 0 || effortWaits(c);
+  const waitsFor = (c: ClaudeConfig) => unknownModels.length > 0 || claimable(c).length > 0 || effortWaits(c);
   const loadingFor = discovery.loading.filter(waitsFor);
   const failedFor = discovery.failed.filter((f) => waitsFor(f.config));
   const configNames = (cs: { name: string }[]) => cs.map((c) => c.name).join(", ");
+  const claimed = (cs: ClaudeConfig[]) => [...new Set(cs.flatMap((c) => claimable(c).map((t) => `!${t.word}`)))].join(", ");
+  // The words that name the config a model is taken from, for a model another config may have too.
+  const qualified = (cs: ClaudeConfig[]) =>
+    cs
+      .flatMap((c) => claimable(c))
+      .flatMap((t) => {
+        const h = harnessOf(t.value);
+        const w = h && harnessVocab.find((x) => sameHarness(x.harness, h) && x.word.toLowerCase() !== h.model.toLowerCase());
+        return w ? [`!${w.word}`] : [];
+      })
+      .filter((w, i, all) => all.indexOf(w) === i)
+      .join(", ");
   const unknown = (cs: ClaudeConfig[]) =>
-    unknownModels.length ? `which ${asText} is` : `whether ${cs.length > 1 ? "they take" : "it takes"} ${pickedEffort} effort`;
+    unknownModels.length
+      ? `which ${asText} is`
+      : claimed(cs)
+        ? `whether ${cs.length > 1 ? "they have" : "it has"} ${claimed(cs)} too`
+        : `whether ${cs.length > 1 ? "they take" : "it takes"} ${pickedEffort} effort`;
+  const takeOut = (cs: ClaudeConfig[]) =>
+    unknownModels.length ? "it out" : claimed(cs) ? `${claimed(cs)} out, or name its config (${qualified(cs)})` : "the effort out";
   const modelsLoading = loadingFor.length > 0;
   const modelsBlock = modelsLoading
     ? `Loading ${configNames(loadingFor)}'s models, to see ${unknown(loadingFor)}…`
     : failedFor.length
-      ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${unknownModels.length ? "it" : "the effort"} out, or open the dialog again to try again.`
+      ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${takeOut(failedFor.map((f) => f.config))}, or open the dialog again to try again.`
       : null;
   // While they're loading, creating it waits for them (see whenLoaded).
   const submitBlock = fanoutBlock ?? (modelsLoading ? null : modelsBlock);

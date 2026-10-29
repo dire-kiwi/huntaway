@@ -65,3 +65,14 @@ test("configs with the same name are numbered, and a model's id wins over a conf
 test("no configs (the agent's default): nothing to pick", () => {
   assert.deepEqual(harnessWords([], "", "default"), []);
 });
+
+test("a model is named with its config too when another config of its agent may have it", () => {
+  const work = { ...codex, id: "w", name: "Work" };
+  // Personal's models aren't in yet.
+  const personal = { ...codex, id: "p", name: "Personal", models: [] };
+  const words = harnessWords([work, personal, claude("a", "Claude")], "w", "default");
+  assert.deepEqual(word(words, "gpt-5.5"), { config: "w", model: "gpt-5.5" });
+  assert.deepEqual(word(words, "gpt-5.5.work"), { config: "w", model: "gpt-5.5" });
+  // The only Claude config: its models need no qualifying.
+  assert.equal(word(words, "opus.claude"), undefined);
+});
