@@ -1,6 +1,7 @@
 mod admin;
 mod agent_tools;
 mod attachments;
+mod broker;
 mod codex;
 mod context;
 mod analytics;
@@ -130,6 +131,17 @@ struct ServeArgs {
     /// Token for --hub (from that hub's Settings → Hosts).
     #[arg(long, env = "IA_HUB_TOKEN")]
     hub_token: Option<String>,
+    /// Broker to dial out to (`huntaway-broker`), so this host can be reached through it from
+    /// anywhere: the board in a browser, and the API from hubs.
+    #[arg(long, env = "IA_BROKER")]
+    broker: Option<String>,
+    /// Token for --broker (the broker's BROKER_TOKEN). Prefer the environment variable over the flag.
+    #[arg(long, env = "IA_BROKER_TOKEN", hide_env_values = true)]
+    broker_token: Option<String>,
+    /// Name to reach this host by on the broker (defaults to the host's name, as lowercase letters,
+    /// digits and hyphens).
+    #[arg(long, env = "IA_BROKER_NAME")]
+    broker_name: Option<String>,
     /// Use this access token instead of the generated one in the data dir (e.g. one shared
     /// by deployments, set from a secret). Prefer the environment variable over the flag.
     #[arg(long = "token", env = "IA_TOKEN", hide_env_values = true)]
@@ -301,6 +313,19 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
         (None, false) => tracing::warn!("--hub needs --hub-token"),
         _ => {}
+    }
+    if let Some(url) = args.broker.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        let name = args.broker_name.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(String::from);
+        match (args.broker_token.as_deref().map(str::trim).filter(|t| !t.is_empty()), name) {
+            (None, _) => tracing::warn!("--broker needs --broker-token"),
+            (Some(_), Some(n)) if !huntaway_broker::proto::valid_name(&n) => {
+                tracing::warn!("bad --broker-name {n:?}: use up to 48 lowercase letters, digits and hyphens")
+            }
+            (Some(t), name) => {
+                let name = name.unwrap_or_else(|| huntaway_broker::proto::slug(&state.host_name));
+                broker::dial_out(&state, url.to_string(), t.to_string(), name);
+            }
+        }
     }
     tracing::info!("host {} ({})", state.host_name, state.host_id);
     tracing::info!("data dir: {}", data_dir.display());

@@ -68,14 +68,12 @@ pub fn reached(point: &str) {
 
 /// An `AppState` on an in-memory database.
 pub fn state() -> Shared {
+    state_as(Identity { host_id: "h".into(), host_name: "desktop".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() })
+}
+
+/// An `AppState` on an in-memory database, for a host with these ids, tokens and URL.
+pub fn state_as(id: Identity) -> Shared {
     let c = crate::db::open(std::path::Path::new(":memory:")).unwrap();
-    let id = Identity {
-        host_id: "h".into(),
-        host_name: "desktop".into(),
-        token: String::new(),
-        hub_token: String::new(),
-        internal_url: String::new(),
-    };
     let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, args: vec![] };
     let data_dir = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
     AppState::new(c, data_dir, id, meta)

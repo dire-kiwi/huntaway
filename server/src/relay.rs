@@ -8,6 +8,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as TMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Request;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame as TCloseFrame;
 
 /// One websocket message, whichever library carried it.
@@ -46,6 +47,12 @@ impl Frame {
 pub async fn connect(url: &str, token: &str) -> Result<Pipe> {
     let mut req = url.into_client_request()?;
     req.headers_mut().insert("Authorization", format!("Bearer {token}").parse()?);
+    Ok(open(req).await?)
+}
+
+/// Open a websocket for a handshake request. A server that answers with something other than
+/// a websocket gives `Error::Http` with its response.
+pub async fn open(req: Request) -> Result<Pipe, tokio_tungstenite::tungstenite::Error> {
     let (ws, _) = tokio_tungstenite::connect_async(req).await?;
     let (mut sink, mut stream) = ws.split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Frame>();
