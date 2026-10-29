@@ -6,6 +6,7 @@ import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScra
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
+import { harnessLabels, useConfigsOf, useFanout } from "./Fanout";
 import { effortOptions, inheritedModel, useAgentModels } from "../agents";
 import { useOpenTools } from "../terminalTools";
 import { openingTab } from "../openingTab";
@@ -783,6 +784,8 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         </Section>
       )}
 
+      {task.fanout_id && <FanoutSection task={task} />}
+
       {(groupTask || docType === "plan") && <CreatedTasksSection task={task} />}
 
       {docType && <DocumentSection task={task} />}
@@ -1001,6 +1004,35 @@ function ConfigRow({ task }: { task: Task }) {
       )}
       {err && <div className="text-[11.5px] text-red-400">{err}</div>}
     </Row>
+  );
+}
+
+/** The tasks made from the same prompt (IA-227), with what each runs with, to compare them. */
+function FanoutSection({ task }: { task: Task }) {
+  const tasks = useFanout(task);
+  const projects = useStore((s) => s.projects);
+  const configs = useConfigsOf(tasks);
+  if (tasks.length < 2) return null;
+  const labels = harnessLabels(tasks, configs);
+  return (
+    <Section title="Same prompt">
+      <div className="-mx-1 space-y-0.5">
+        {tasks.map((t, i) => (
+          <button
+            key={t.id}
+            className={clsx("flex w-full items-center gap-2 rounded px-1 py-1 text-left text-[12.5px] hover:bg-raised", t.id === task.id && "bg-raised")}
+            onClick={() => openTask(t.id)}
+            title={t.title}
+          >
+            <StatusIcon status={t.status} />
+            <span className="shrink-0 font-mono text-[11px] text-faint">{taskKey(t, projects)}</span>
+            <span className="min-w-0 flex-1 truncate text-fg">{labels[i]}</span>
+            {t.running && (t.agent_wait ? <Hourglass size={11} className="shrink-0 text-muted" /> : <RunningDot />)}
+            {cost(t.cost_usd) && <span className="shrink-0 text-[11px] text-faint">{cost(t.cost_usd)}</span>}
+          </button>
+        ))}
+      </div>
+    </Section>
   );
 }
 

@@ -512,6 +512,8 @@ export interface Task {
   pr_url?: string | null;
   /** The tasks elsewhere (Asana) it's for (API 57). */
   external_links?: ExternalLink[];
+  /** Shared by the tasks made together from one prompt, each run by another agent (a model or config) (API 61). */
+  fanout_id?: string | null;
   /** Listed in the sidebar's Starred section (API 48). */
   starred?: boolean;
   /** When to remind the user of it (API 48): listed under Reminders in the sidebar, due from then on. */
@@ -1036,7 +1038,17 @@ export const api = {
   createScratchTask: (
     h: string,
     profileId: string,
-    b: { title?: string; description?: string; status?: Status; start?: boolean; model?: string; effort?: Effort; claude_config_id?: string; external_links?: ExternalLink[] },
+    b: {
+      title?: string;
+      description?: string;
+      status?: Status;
+      start?: boolean;
+      model?: string;
+      effort?: Effort;
+      claude_config_id?: string;
+      external_links?: ExternalLink[];
+      fanout_id?: string;
+    },
   ) => on(h).post<Task>(`/profiles/${enc(profileId)}/tasks`, b),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47). */
   groupTasks: (h: string, profileId: string) => on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks`),
@@ -1075,6 +1087,8 @@ export const api = {
       /** A scratch task in the project needs API 51. */
       task_type?: TaskType;
       external_links?: ExternalLink[];
+      /** Shared by the tasks made from one prompt (API 61). */
+      fanout_id?: string;
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),

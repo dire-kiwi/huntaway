@@ -32,6 +32,30 @@ export function useAgentModels(config: ClaudeConfig | undefined): AgentModel[] |
   return codex && models?.key === key ? models.list : null;
 }
 
+/** The models each of several configs offers, by config id, as useAgentModels has them for one. */
+export function useConfigsModels(configs: ClaudeConfig[]): Record<string, AgentModel[] | null> {
+  const codex = configs.filter((c) => agentOf(c) === "codex");
+  const keys = codex.map((c) => `${c.host_id}:${c.id}`).join(",");
+  const [loaded, setLoaded] = useState<Record<string, AgentModel[]>>({});
+  useEffect(() => {
+    let live = true;
+    for (const c of codex) {
+      const key = `${c.host_id}:${c.id}`;
+      let p = cache.get(key);
+      if (!p) {
+        p = api.claudeConfigModels(c.host_id, c.id);
+        cache.set(key, p);
+        p.catch(() => cache.delete(key));
+      }
+      p.then((list) => live && setLoaded((m) => (m[key] === list ? m : { ...m, [key]: list }))).catch(() => {});
+    }
+    return () => {
+      live = false;
+    };
+  }, [keys]); // eslint-disable-line react-hooks/exhaustive-deps
+  return Object.fromEntries(configs.map((c) => [c.id, agentOf(c) === "codex" ? (loaded[`${c.host_id}:${c.id}`] ?? null) : null]));
+}
+
 /** The model options for a picker: Claude's aliases, or a Codex config's models. */
 export function modelOptions(config: ClaudeConfig | undefined, models: AgentModel[] | null): { id: string; label: string }[] {
   if (agentOf(config) === "codex") return (models ?? []).map((m) => ({ id: m.id, label: m.name || m.id }));
