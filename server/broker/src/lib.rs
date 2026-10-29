@@ -53,6 +53,9 @@ const HOST_HEADER: &str = "x-huntaway-host";
 const MAX_STREAMS: usize = 128;
 /// How long a client must have left a stream's data waiting before a new request takes its place.
 const EVICT_AFTER: Duration = Duration::from_secs(1);
+/// How long a client's websocket has to take what the host sent before the host's close (or the host
+/// going) before it's cut off.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
 /// A stream whose client takes none of what's waiting for it for this long is closed, and so is one
 /// whose data waits that long for the host to take it.
 const STALL: Duration = Duration::from_secs(60);
@@ -111,8 +114,8 @@ impl Entry {
 struct Queue {
     state: Mutex<QueueState>,
     notify: tokio::sync::Notify,
-    /// Woken when the stream is dropped (`end(true)`).
-    dropped: tokio::sync::Notify,
+    /// Woken when the stream ends, or is dropped.
+    over: tokio::sync::Notify,
 }
 
 #[derive(Default)]
@@ -153,19 +156,28 @@ impl Queue {
         }
         drop(q);
         self.notify.notify_one();
-        if drop_waiting {
-            self.dropped.notify_waiters();
-        }
+        self.over.notify_waiters();
     }
 
-    /// Wait until the stream is dropped (its client stopped reading, say).
-    async fn until_dropped(&self) {
+    /// Wait until a websocket's client is to be let go of: at once when the stream is dropped (its
+    /// client stopped reading, say), `grace` after it ends (the host closed it, or went), so the
+    /// client can take what was sent before and the close.
+    async fn until_cut_off(&self, grace: Duration) {
         loop {
-            let woken = self.dropped.notified();
+            let woken = self.over.notified();
             tokio::pin!(woken);
-            // Registered before looking, so a drop in between isn't missed.
+            // Registered before looking, so an end in between isn't missed.
             woken.as_mut().enable();
-            if self.state.lock().unwrap().dropped {
+            let (ended, dropped) = {
+                let q = self.state.lock().unwrap();
+                (q.ended, q.dropped)
+            };
+            if dropped {
+                return;
+            }
+            if ended {
+                // Dropped meanwhile cuts it short.
+                tokio::select! { _ = tokio::time::sleep(grace) => {}, _ = woken => {} }
                 return;
             }
             woken.await;
@@ -687,6 +699,146 @@ async fn bridge(socket: WebSocket, mut stream: Stream, rx: Arc<Queue>) {
             host.credit(id, len);
         }
     };
-    // A stream dropped for a client that stopped reading lets go of it, whatever either way waits on.
-    stream.done = tokio::select! { d = up => d, d = down => d, _ = rx.until_dropped() => true };
+    // A stream that's over lets go of the client in the end, whatever either way waits on (a write
+    // to a client that doesn't read, say). The host knows it's over.
+    #[cfg(test)]
+    let _live = tests::Live::new(&host.name);
+    stream.done = tokio::select! { d = up => d, d = down => d, _ = rx.until_cut_off(CLOSE_GRACE) => true };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_tungstenite::tungstenite::Message as TMessage;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    /// The websocket bridges running, by host name, so a test can see one end.
+    static LIVE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    pub(super) struct Live(String);
+
+    impl Live {
+        pub(super) fn new(host: &str) -> Self {
+            LIVE.lock().unwrap().push(host.into());
+            Live(host.into())
+        }
+    }
+
+    impl Drop for Live {
+        fn drop(&mut self) {
+            let mut live = LIVE.lock().unwrap();
+            if let Some(i) = live.iter().position(|h| *h == self.0) {
+                live.remove(i);
+            }
+        }
+    }
+
+    fn live(host: &str) -> usize {
+        LIVE.lock().unwrap().iter().filter(|h| *h == host).count()
+    }
+
+    const TOKEN: &str = "broker-token-0123456789";
+
+    fn run(body: impl Future<Output = ()>) {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async { tokio::time::timeout(Duration::from_secs(30), body).await.expect("test still running after 30s") });
+    }
+
+    async fn broker() -> String {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let app = router(Config { token: TOKEN.into(), ..Default::default() });
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        addr.to_string()
+    }
+
+    /// A host speaking the protocol by hand. It answers a websocket with window-sized messages, one
+    /// more each time the broker gives room back. Returns where to send it control messages, when
+    /// it last sent a message, and the websocket's stream id.
+    async fn fake_host(b: &str, name: &str) -> (mpsc::UnboundedSender<Ctl>, Arc<Mutex<Instant>>, Arc<AtomicU64>, tokio::task::JoinHandle<()>) {
+        let mut req = format!("ws://{b}/_broker/connect").into_client_request().unwrap();
+        req.headers_mut().insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
+        let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+        let (mut sink, mut source) = ws.split();
+        let hello = Ctl::Hello { name: name.into(), host_id: name.into(), version: "0".into(), protocol: proto::PROTOCOL };
+        sink.send(TMessage::Text(serde_json::to_string(&hello).unwrap().into())).await.unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<Ctl>();
+        let (sent, ws_id) = (Arc::new(Mutex::new(Instant::now())), Arc::new(AtomicU64::new(0)));
+        let (sent2, ws_id2) = (sent.clone(), ws_id.clone());
+        let task = tokio::spawn(async move {
+            let text = |c: &Ctl| TMessage::Text(serde_json::to_string(c).unwrap().into());
+            let message = |id| TMessage::Binary(proto::encode(id, proto::DATA, &vec![0u8; proto::WINDOW]).into());
+            loop {
+                tokio::select! {
+                    c = rx.recv() => {
+                        let Some(c) = c else { return };
+                        sink.send(text(&c)).await.unwrap();
+                    }
+                    m = source.next() => {
+                        let Some(Ok(TMessage::Text(t))) = m else { continue };
+                        match serde_json::from_str::<Ctl>(&t).unwrap() {
+                            Ctl::Req { id, ws: true, .. } => {
+                                ws_id2.store(id, Ordering::SeqCst);
+                                sink.send(text(&Ctl::Head { id, status: 101, headers: vec![] })).await.unwrap();
+                                sink.send(message(id)).await.unwrap();
+                                *sent2.lock().unwrap() = Instant::now();
+                            }
+                            Ctl::Credit { id, .. } => {
+                                sink.send(message(id)).await.unwrap();
+                                *sent2.lock().unwrap() = Instant::now();
+                            }
+                            Ctl::Ping => sink.send(text(&Ctl::Pong)).await.unwrap(),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        });
+        (tx, sent, ws_id, task)
+    }
+
+    /// A client's websocket on the broker's only host, which never reads, with a small receive
+    /// buffer, once the broker is stuck writing to it.
+    async fn stuck_client(b: &str, sent: &Mutex<Instant>) -> impl Sized {
+        let sock = tokio::net::TcpSocket::new_v4().unwrap();
+        sock.set_recv_buffer_size(4096).unwrap();
+        let tcp = sock.connect(b.parse().unwrap()).await.unwrap();
+        let (ws, _) = tokio_tungstenite::client_async(format!("ws://{b}/x"), tcp).await.unwrap();
+        while sent.lock().unwrap().elapsed() < Duration::from_millis(500) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        ws
+    }
+
+    async fn until_gone(host: &str) {
+        let started = Instant::now();
+        while live(host) > 0 {
+            assert!(started.elapsed() < CLOSE_GRACE + Duration::from_secs(2), "the bridge is still there after the host's close");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[test]
+    fn a_websocket_stuck_writing_to_its_client_ends_after_the_hosts_close() {
+        run(async {
+            let b = broker().await;
+            let (tx, sent, id, _host) = fake_host(&b, "close-host").await;
+            let _client = stuck_client(&b, &sent).await;
+            assert_eq!(live("close-host"), 1);
+            tx.send(Ctl::Close { id: id.load(Ordering::SeqCst), code: Some(1000), reason: None }).unwrap();
+            until_gone("close-host").await;
+        })
+    }
+
+    #[test]
+    fn a_websocket_stuck_writing_to_its_client_ends_when_its_host_goes() {
+        run(async {
+            let b = broker().await;
+            let (_tx, sent, _id, host) = fake_host(&b, "gone-host").await;
+            let _client = stuck_client(&b, &sent).await;
+            assert_eq!(live("gone-host"), 1);
+            host.abort();
+            until_gone("gone-host").await;
+        })
+    }
 }
