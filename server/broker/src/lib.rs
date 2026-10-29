@@ -46,6 +46,9 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(300);
 const COOKIE: &str = "huntaway_host";
 /// The header that picks a host for a request.
 const HOST_HEADER: &str = "x-huntaway-host";
+/// Requests (and websockets) a host may have in flight through the broker at once. With each
+/// stream's window, this bounds what the broker can hold for a host.
+const MAX_STREAMS: usize = 64;
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {
@@ -65,8 +68,14 @@ struct Host {
     name: String,
     tx: mpsc::UnboundedSender<Message>,
     /// Requests in flight, by stream id.
-    streams: Mutex<HashMap<u64, mpsc::UnboundedSender<Event>>>,
+    streams: Mutex<HashMap<u64, Entry>>,
     next: AtomicU64,
+}
+
+/// A stream in flight: where what the host sends on it goes, and our room to send it data.
+struct Entry {
+    tx: mpsc::UnboundedSender<Event>,
+    window: proto::Window,
 }
 
 /// What a host sent on one stream.
@@ -88,12 +97,40 @@ impl Host {
         self.tx.send(Message::Binary(proto::encode(id, kind, bytes).into())).is_ok()
     }
 
-    /// Start a stream: its id, what the host sends on it, and a guard that ends it.
-    fn open(self: &Arc<Self>) -> (Stream, mpsc::UnboundedReceiver<Event>) {
+    /// Send body bytes as the stream's window has room for them.
+    async fn send_body(&self, window: &proto::Window, id: u64, bytes: &[u8]) -> bool {
+        for piece in bytes.chunks(proto::WINDOW) {
+            if !window.take(piece.len()).await || !self.send_data(id, proto::DATA, piece) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Send a websocket message once the stream's window has room for it.
+    async fn send_message(&self, window: &proto::Window, id: u64, kind: u8, bytes: &[u8]) -> bool {
+        window.take(bytes.len()).await && self.send_data(id, kind, bytes)
+    }
+
+    /// Tell the host we passed on `bytes` of what it sent on a stream.
+    fn credit(&self, id: u64, bytes: usize) {
+        if bytes > 0 {
+            self.send(&Ctl::Credit { id, bytes: bytes as u64 });
+        }
+    }
+
+    /// Start a stream: its id, what the host sends on it, and a guard that ends it. None when the
+    /// host has as many in flight as it may.
+    fn open(self: &Arc<Self>) -> Option<(Stream, mpsc::UnboundedReceiver<Event>)> {
+        let mut streams = self.streams.lock().unwrap();
+        if streams.len() >= MAX_STREAMS {
+            return None;
+        }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
-        self.streams.lock().unwrap().insert(id, tx);
-        (Stream { host: self.clone(), id, done: false }, rx)
+        let window = proto::Window::default();
+        streams.insert(id, Entry { tx, window: window.clone() });
+        Some((Stream { host: self.clone(), id, done: false, window, upload: None }, rx))
     }
 }
 
@@ -103,11 +140,19 @@ struct Stream {
     host: Arc<Host>,
     id: u64,
     done: bool,
+    /// Our room to send the host this stream's data.
+    window: proto::Window,
+    /// Passing the request body on, which stops with the stream.
+    upload: Option<tokio::task::AbortHandle>,
 }
 
 impl Drop for Stream {
     fn drop(&mut self) {
         self.host.streams.lock().unwrap().remove(&self.id);
+        self.window.close();
+        if let Some(u) = &self.upload {
+            u.abort();
+        }
         if !self.done {
             self.host.send(&Ctl::Close { id: self.id, code: None, reason: None });
         }
@@ -200,6 +245,11 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
                 Ok(Ctl::Head { id, status, headers }) => to_stream(&host, id, Event::Head(status, headers), false),
                 Ok(Ctl::End { id }) => to_stream(&host, id, Event::End, false),
                 Ok(Ctl::Close { id, code, reason }) => to_stream(&host, id, Event::Close(code, reason), true),
+                Ok(Ctl::Credit { id, bytes }) => {
+                    if let Some(e) = host.streams.lock().unwrap().get(&id) {
+                        e.window.credit(bytes);
+                    }
+                }
                 Ok(_) => {}
                 Err(e) => tracing::warn!("bad message from host {name}: {e}"),
             },
@@ -219,16 +269,22 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
         }
     }
     // Dropping the senders ends the requests in flight.
-    host.streams.lock().unwrap().clear();
+    for (_, e) in host.streams.lock().unwrap().drain() {
+        e.window.close();
+    }
     writer.abort();
     tracing::info!("host {name} disconnected");
 }
 
 fn to_stream(host: &Host, id: u64, ev: Event, last: bool) {
     let mut streams = host.streams.lock().unwrap();
-    let tx = if last { streams.remove(&id) } else { streams.get(&id).cloned() };
-    if let Some(tx) = tx {
-        let _ = tx.send(ev);
+    if last {
+        if let Some(e) = streams.remove(&id) {
+            e.window.close();
+            let _ = e.tx.send(ev);
+        }
+    } else if let Some(e) = streams.get(&id) {
+        let _ = e.tx.send(ev);
     }
 }
 
@@ -336,20 +392,23 @@ async fn forward(host: Arc<Host>, path: String, req: Request) -> Response {
         .filter_map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_string())))
         .collect();
     let has_body = !ws && !body.is_end_stream();
-    let (mut stream, mut rx) = host.open();
+    let Some((mut stream, mut rx)) = host.open() else {
+        return fail(&path, StatusCode::SERVICE_UNAVAILABLE, &format!("host {} has too many requests in flight", host.name));
+    };
     let id = stream.id;
     if !host.send(&Ctl::Req { id, method: parts.method.to_string(), path: path.clone(), headers, body: has_body, ws }) {
         stream.done = true;
         return fail(&path, StatusCode::BAD_GATEWAY, &format!("host {} disconnected", host.name));
     }
     if has_body {
-        let host = host.clone();
-        tokio::spawn(async move {
+        // As fast as the host takes it: a client can't upload faster than that into our memory.
+        let (host, window) = (host.clone(), stream.window.clone());
+        let upload = tokio::spawn(async move {
             let mut body = body.into_data_stream();
             while let Some(chunk) = body.next().await {
                 match chunk {
                     Ok(c) => {
-                        if !host.send_data(id, proto::DATA, &c) {
+                        if !host.send_body(&window, id, &c).await {
                             return;
                         }
                     }
@@ -359,6 +418,7 @@ async fn forward(host: Arc<Host>, path: String, req: Request) -> Response {
             }
             host.send(&Ctl::End { id });
         });
+        stream.upload = Some(upload.abort_handle());
     }
     let (status, headers) = match tokio::time::timeout(HEAD_TIMEOUT, rx.recv()).await {
         Ok(Some(Event::Head(status, headers))) => (status, headers),
@@ -392,7 +452,11 @@ fn body_stream(stream: Stream, rx: mpsc::UnboundedReceiver<Event>) -> impl futur
         let (mut stream, mut rx) = state?;
         loop {
             match rx.recv().await {
-                Some(Event::Data(b)) => return Some((Ok(b), Some((stream, rx)))),
+                // Taken by the client's connection: the host may send as much more.
+                Some(Event::Data(b)) => {
+                    stream.host.credit(stream.id, b.len());
+                    return Some((Ok(b), Some((stream, rx))));
+                }
                 Some(Event::End) => {
                     stream.done = true;
                     return None;
@@ -407,45 +471,57 @@ fn body_stream(stream: Stream, rx: mpsc::UnboundedReceiver<Event>) -> impl futur
     })
 }
 
-/// Relay a client's websocket to the host's until either side closes it.
-async fn bridge(mut socket: WebSocket, mut stream: Stream, mut rx: mpsc::UnboundedReceiver<Event>) {
-    let (host, id) = (stream.host.clone(), stream.id);
-    loop {
-        tokio::select! {
-            m = socket.recv() => {
-                let sent = match m {
-                    Some(Ok(Message::Text(t))) => host.send_data(id, proto::TEXT, t.as_bytes()),
-                    Some(Ok(Message::Binary(b))) => host.send_data(id, proto::DATA, &b),
-                    Some(Ok(Message::Close(c))) => {
-                        stream.done = true;
-                        host.send(&Ctl::Close { id, code: c.as_ref().map(|c| c.code), reason: c.map(|c| c.reason.to_string()) });
-                        return;
-                    }
-                    Some(Ok(_)) => true,
-                    None | Some(Err(_)) => return,
-                };
-                if !sent {
-                    break;
+/// Relay a client's websocket to the host's until either side closes it. The two ways go on
+/// side by side, so one waiting for room doesn't hold up the other.
+async fn bridge(socket: WebSocket, mut stream: Stream, mut rx: mpsc::UnboundedReceiver<Event>) {
+    let (host, id, window) = (stream.host.clone(), stream.id, stream.window.clone());
+    let (mut sink, mut source) = socket.split();
+    // Each way says whether the host knows the stream is over.
+    let up = async {
+        while let Some(m) = source.next().await {
+            let sent = match m {
+                Ok(Message::Text(t)) => host.send_message(&window, id, proto::TEXT, t.as_bytes()).await,
+                Ok(Message::Binary(b)) => host.send_message(&window, id, proto::DATA, &b).await,
+                Ok(Message::Close(c)) => {
+                    host.send(&Ctl::Close { id, code: c.as_ref().map(|c| c.code), reason: c.map(|c| c.reason.to_string()) });
+                    return true;
                 }
-            }
-            ev = rx.recv() => {
-                let msg = match ev {
-                    Some(Event::Data(b)) => Message::Binary(b),
-                    Some(Event::Text(t)) => Message::Text(t.into()),
-                    Some(Event::Close(code, reason)) => {
-                        stream.done = true;
-                        let frame = code.map(|code| CloseFrame { code, reason: reason.unwrap_or_default().into() });
-                        let _ = socket.send(Message::Close(frame)).await;
-                        return;
-                    }
-                    Some(_) => continue,
-                    None => break,
-                };
-                if socket.send(msg).await.is_err() {
-                    return;
-                }
+                Ok(_) => true,
+                Err(_) => return false,
+            };
+            if !sent {
+                return false;
             }
         }
-    }
-    let _ = socket.send(Message::Close(Some(CloseFrame { code: 1011, reason: "host disconnected".into() }))).await;
+        false
+    };
+    let down = async {
+        loop {
+            let (msg, len) = match rx.recv().await {
+                Some(Event::Data(b)) => {
+                    let n = b.len();
+                    (Message::Binary(b), n)
+                }
+                Some(Event::Text(t)) => {
+                    let n = t.len();
+                    (Message::Text(t.into()), n)
+                }
+                Some(Event::Close(code, reason)) => {
+                    let frame = code.map(|code| CloseFrame { code, reason: reason.unwrap_or_default().into() });
+                    let _ = sink.send(Message::Close(frame)).await;
+                    return true;
+                }
+                Some(_) => continue,
+                None => {
+                    let _ = sink.send(Message::Close(Some(CloseFrame { code: 1011, reason: "host disconnected".into() }))).await;
+                    return true;
+                }
+            };
+            if sink.send(msg).await.is_err() {
+                return false;
+            }
+            host.credit(id, len);
+        }
+    };
+    stream.done = tokio::select! { d = up => d, d = down => d };
 }

@@ -23,6 +23,10 @@ use crate::state::Shared;
 /// Paths a client mustn't reach through the broker: `--open-token` hands the token to whoever asks.
 const BLOCKED: &[&str] = &["/api/open-token"];
 
+/// Marks the requests we make on our own server for the broker's clients, so a route that mustn't
+/// be reached through the broker can refuse them however their path is spelled.
+pub const VIA_BROKER: &str = "x-huntaway-via-broker";
+
 /// The broker sends a `Ping` every 20s; one we hear nothing from for this long is gone.
 const SILENCE: Duration = Duration::from_secs(60);
 
@@ -34,9 +38,25 @@ enum Incoming {
     Close(Option<u16>, Option<String>),
 }
 
-/// Our streams by id: where to send what the broker sends on each, and for a request, how to stop
-/// it when the client goes away.
-type Streams = Arc<Mutex<HashMap<u64, (mpsc::UnboundedSender<Incoming>, Option<tokio::task::AbortHandle>)>>>;
+/// One of our streams: where what the broker sends on it goes, our room to send it data, and for a
+/// request, how to stop it when the client goes away.
+struct Entry {
+    tx: mpsc::UnboundedSender<Incoming>,
+    window: proto::Window,
+    abort: Option<tokio::task::AbortHandle>,
+}
+
+impl Entry {
+    fn end(self) {
+        self.window.close();
+        if let Some(a) = self.abort {
+            a.abort();
+        }
+    }
+}
+
+/// Our streams by id.
+type Streams = Arc<Mutex<HashMap<u64, Entry>>>;
 
 /// Keep a connection to the broker at `url`, as `name`.
 pub fn dial_out(s: &Shared, url: String, token: String, name: String) {
@@ -94,9 +114,10 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
                 TMessage::Text(t) => match serde_json::from_str::<Ctl>(&t) {
                     Ok(Ctl::Req { id, method, path, headers, body, ws }) => {
                         let (in_tx, in_rx) = mpsc::unbounded_channel();
+                        let window = proto::Window::default();
                         // Registered right away: the request body follows at once.
-                        streams.lock().unwrap().insert(id, (in_tx, None));
-                        let (s, tx, streams2) = (s.clone(), Out { id, tx: tx.clone() }, streams.clone());
+                        streams.lock().unwrap().insert(id, Entry { tx: in_tx, window: window.clone(), abort: None });
+                        let (s, tx, streams2) = (s.clone(), Out { id, tx: tx.clone(), window }, streams.clone());
                         let task = tokio::spawn(async move {
                             if ws {
                                 websocket(&s, &path, headers, in_rx, &tx).await;
@@ -107,7 +128,7 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
                         });
                         // A websocket is closed by the Close the broker sends it; a request stops at once.
                         if let (false, Some(entry)) = (ws, streams.lock().unwrap().get_mut(&id)) {
-                            entry.1 = Some(task.abort_handle());
+                            entry.abort = Some(task.abort_handle());
                         }
                     }
                     Ok(Ctl::Ping) => {
@@ -115,6 +136,11 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
                     }
                     Ok(Ctl::End { id }) => incoming(&streams, id, Incoming::End, false),
                     Ok(Ctl::Close { id, code, reason }) => incoming(&streams, id, Incoming::Close(code, reason), true),
+                    Ok(Ctl::Credit { id, bytes }) => {
+                        if let Some(e) = streams.lock().unwrap().get(&id) {
+                            e.window.credit(bytes);
+                        }
+                    }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("bad message from the broker: {e}"),
                 },
@@ -135,10 +161,8 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
     }
     .await;
     // Dropping the senders closes the websockets in flight; requests are stopped.
-    for (_, (_, abort)) in streams.lock().unwrap().drain() {
-        if let Some(a) = abort {
-            a.abort();
-        }
+    for (_, e) in streams.lock().unwrap().drain() {
+        e.end();
     }
     writer.abort();
     result
@@ -147,21 +171,22 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
 fn incoming(streams: &Streams, id: u64, msg: Incoming, last: bool) {
     let mut streams = streams.lock().unwrap();
     if last {
-        if let Some((tx, abort)) = streams.remove(&id) {
-            let _ = tx.send(msg);
-            if let Some(a) = abort {
-                a.abort();
-            }
+        if let Some(e) = streams.remove(&id) {
+            let _ = e.tx.send(msg);
+            e.end();
         }
-    } else if let Some((tx, _)) = streams.get(&id) {
-        let _ = tx.send(msg);
+    } else if let Some(e) = streams.get(&id) {
+        let _ = e.tx.send(msg);
     }
 }
 
 /// Sending on one stream.
+#[derive(Clone)]
 struct Out {
     id: u64,
     tx: mpsc::UnboundedSender<TMessage>,
+    /// Our room to send its data.
+    window: proto::Window,
 }
 
 impl Out {
@@ -169,8 +194,31 @@ impl Out {
         self.tx.send(TMessage::Text(serde_json::to_string(&ctl).unwrap_or_default().into())).is_ok()
     }
 
+    /// Data sent whatever the window: only for a short body we make up ourselves, in place of a response.
     fn data(&self, kind: u8, bytes: &[u8]) -> bool {
         self.tx.send(TMessage::Binary(proto::encode(self.id, kind, bytes).into())).is_ok()
+    }
+
+    /// Send body bytes as the window has room for them.
+    async fn body(&self, bytes: &[u8]) -> bool {
+        for piece in bytes.chunks(proto::WINDOW) {
+            if !self.window.take(piece.len()).await || !self.data(proto::DATA, piece) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Send a websocket message once the window has room for it.
+    async fn message(&self, kind: u8, bytes: &[u8]) -> bool {
+        self.window.take(bytes.len()).await && self.data(kind, bytes)
+    }
+
+    /// Tell the broker we passed on `bytes` of what it sent.
+    fn credit(&self, bytes: usize) {
+        if bytes > 0 {
+            self.ctl(Ctl::Credit { id: self.id, bytes: bytes as u64 });
+        }
     }
 
     fn head(&self, status: u16, headers: Vec<(String, String)>) -> bool {
@@ -189,11 +237,67 @@ impl Out {
     }
 }
 
-/// A path the broker mustn't make us request: one that isn't a path on our server (`@other.host/`
-/// after our URL would be another server), or one that's blocked.
-fn blocked(path: &str) -> bool {
-    let p = path.split('?').next().unwrap_or_default();
-    !p.starts_with('/') || BLOCKED.contains(&p.trim_end_matches('/'))
+/// The URL on our server (`base`) for a path the broker passes on. None for one a client mustn't
+/// reach through the broker: one that isn't on our server (`@other.host/` after our URL would be
+/// another server), or one that's blocked, however it's written (`/api/./open-token`, `%2e`, `\`).
+/// The URL is checked as it's parsed, which resolves dot segments, and then decoded on top, so it's
+/// what gets requested that's checked.
+fn local_url(base: &str, path: &str) -> Option<reqwest::Url> {
+    if !path.starts_with('/') {
+        return None;
+    }
+    let base = reqwest::Url::parse(base).ok()?;
+    let url = reqwest::Url::parse(&format!("{}{path}", base.as_str().trim_end_matches('/'))).ok()?;
+    if url.origin() != base.origin() || BLOCKED.contains(&normalized(url.path()).as_str()) {
+        return None;
+    }
+    Some(url)
+}
+
+/// A path decoded and resolved until it doesn't change: no escapes, dot segments, backslashes,
+/// empty segments, trailing slash or capitals. More than a server would make of it, so nothing that
+/// routes to a blocked path gets past.
+fn normalized(path: &str) -> String {
+    let mut p = path.to_lowercase();
+    for _ in 0..8 {
+        let decoded = percent_decode(&p).replace('\\', "/").to_lowercase();
+        let mut segs: Vec<&str> = vec![];
+        for seg in decoded.split('/') {
+            match seg {
+                "" | "." => {}
+                ".." => {
+                    segs.pop();
+                }
+                s => segs.push(s),
+            }
+        }
+        let next = format!("/{}", segs.join("/"));
+        if next == p {
+            break;
+        }
+        p = next;
+    }
+    p
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = (b[i] == b'%').then(|| b.get(i + 1..i + 3)).flatten().and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok());
+        match hex {
+            Some(c) => {
+                out.push(c);
+                i += 3;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn local() -> &'static reqwest::Client {
@@ -204,28 +308,39 @@ fn local() -> &'static reqwest::Client {
 
 /// Pass the client's headers on, but not the ones that belong to the hop to the broker.
 fn passed_on(headers: Vec<(String, String)>) -> impl Iterator<Item = (String, String)> {
-    headers.into_iter().filter(|(k, _)| !proto::hop_by_hop(k) && !k.eq_ignore_ascii_case("content-length"))
+    // A client's own is dropped: ours says the request came through the broker.
+    headers
+        .into_iter()
+        .filter(|(k, _)| !proto::hop_by_hop(k) && !k.eq_ignore_ascii_case("content-length") && !k.eq_ignore_ascii_case(VIA_BROKER))
+        .chain([(VIA_BROKER.to_string(), "1".to_string())])
 }
 
 /// Make an HTTP request on our own server and send the response back.
 async fn request(s: &Shared, method: &str, path: &str, headers: Vec<(String, String)>, body: Option<mpsc::UnboundedReceiver<Incoming>>, out: &Out) {
-    if blocked(path) {
+    let Some(url) = local_url(&s.internal_url, path) else {
         return out.json(404, crate::api::no_route_error(method, path));
-    }
+    };
     let Ok(m) = reqwest::Method::from_bytes(method.as_bytes()) else {
         return out.json(400, json!({"error": format!("bad method {method}")}));
     };
-    let mut req = local().request(m, format!("{}{path}", s.internal_url));
+    let mut req = local().request(m, url);
     for (k, v) in passed_on(headers) {
         req = req.header(k, v);
     }
     if let Some(rx) = body {
-        // The body as the broker sends it; a client that went away fails the request.
-        let chunks = futures::stream::unfold(Some(rx), |rx| async move {
-            let mut rx = rx?;
+        // The body as the broker sends it, giving it room for more as our server takes it; a client
+        // that went away fails the request.
+        let chunks = futures::stream::unfold(Some((rx, out.clone())), |state| async move {
+            let (mut rx, out) = state?;
             match rx.recv().await {
-                Some(Incoming::Data(b)) => Some((Ok(b), Some(rx))),
-                Some(Incoming::Text(t)) => Some((Ok(t.into_bytes()), Some(rx))),
+                Some(Incoming::Data(b)) => {
+                    out.credit(b.len());
+                    Some((Ok(b), Some((rx, out))))
+                }
+                Some(Incoming::Text(t)) => {
+                    out.credit(t.len());
+                    Some((Ok(t.into_bytes()), Some((rx, out))))
+                }
                 Some(Incoming::End) => None,
                 Some(Incoming::Close(..)) | None => Some((Err(std::io::Error::other("the client went away")), None)),
             }
@@ -244,7 +359,7 @@ async fn request(s: &Shared, method: &str, path: &str, headers: Vec<(String, Str
     while let Some(chunk) = body.next().await {
         match chunk {
             Ok(c) => {
-                if !out.data(proto::DATA, &c) {
+                if !out.body(&c).await {
                     return;
                 }
             }
@@ -259,11 +374,11 @@ async fn request(s: &Shared, method: &str, path: &str, headers: Vec<(String, Str
 
 /// Open a websocket on our own server and relay it until either side closes it.
 async fn websocket(s: &Shared, path: &str, headers: Vec<(String, String)>, mut from_broker: mpsc::UnboundedReceiver<Incoming>, out: &Out) {
-    if blocked(path) {
+    let Some(mut url) = local_url(&s.internal_url, path) else {
         return out.json(404, crate::api::no_route_error("GET", path));
-    }
-    let url = format!("{}{path}", s.internal_url.replacen("http", "ws", 1));
-    let req = url.into_client_request().map(|mut req| {
+    };
+    let _ = url.set_scheme("ws");
+    let req = url.as_str().into_client_request().map(|mut req| {
         for (k, v) in passed_on(headers) {
             if let (Ok(k), Ok(v)) = (axum::http::HeaderName::try_from(k), axum::http::HeaderValue::try_from(v)) {
                 req.headers_mut().append(k, v);
@@ -288,40 +403,46 @@ async fn websocket(s: &Shared, path: &str, headers: Vec<(String, String)>, mut f
         Err(e) => return out.json(400, json!({"error": format!("{e:#}")})),
     };
     out.head(101, vec![]);
-    loop {
-        tokio::select! {
-            m = from_broker.recv() => {
-                let f = match m {
-                    Some(Incoming::Data(b)) => Frame::Binary(b),
-                    Some(Incoming::Text(t)) => Frame::Text(t),
-                    Some(Incoming::End) => continue,
-                    Some(Incoming::Close(code, reason)) => Frame::Close(code.map(|c| (c, reason.unwrap_or_default()))),
-                    None => Frame::Close(None),
-                };
-                let close = matches!(f, Frame::Close(_));
-                if local_tx.send(f).is_err() || close {
-                    break;
+    // The two ways go on side by side, so one waiting for room doesn't hold up the other.
+    let up = async {
+        loop {
+            let (f, n) = match from_broker.recv().await {
+                Some(Incoming::Data(b)) => {
+                    let n = b.len();
+                    (Frame::Binary(b), n)
                 }
+                Some(Incoming::Text(t)) => {
+                    let n = t.len();
+                    (Frame::Text(t), n)
+                }
+                Some(Incoming::End) => continue,
+                Some(Incoming::Close(code, reason)) => (Frame::Close(code.map(|c| (c, reason.unwrap_or_default()))), 0),
+                None => (Frame::Close(None), 0),
+            };
+            let close = matches!(f, Frame::Close(_));
+            if local_tx.send(f).is_err() || close {
+                return;
             }
-            f = local_rx.recv() => match f.unwrap_or(Frame::Close(None)) {
+            out.credit(n);
+        }
+    };
+    let down = async {
+        loop {
+            let sent = match local_rx.recv().await.unwrap_or(Frame::Close(None)) {
                 Frame::Close(c) => {
                     let (code, reason) = c.unzip();
                     out.ctl(Ctl::Close { id: out.id, code, reason });
-                    break;
+                    return;
                 }
-                Frame::Text(t) => {
-                    if !out.data(proto::TEXT, t.as_bytes()) {
-                        break;
-                    }
-                }
-                Frame::Binary(b) => {
-                    if !out.data(proto::DATA, &b) {
-                        break;
-                    }
-                }
-            },
+                Frame::Text(t) => out.message(proto::TEXT, t.as_bytes()).await,
+                Frame::Binary(b) => out.message(proto::DATA, &b).await,
+            };
+            if !sent {
+                return;
+            }
         }
-    }
+    };
+    tokio::select! { _ = up => {}, _ = down => {} }
 }
 
 #[cfg(test)]
@@ -343,10 +464,16 @@ mod tests {
 
     /// A host (`id`, token `<id>-tok`) served on a free port and dialled out to `broker` as `id`.
     async fn host(id: &str, broker: &str) -> Shared {
+        host_with(id, broker, axum::Router::new()).await
+    }
+
+    /// `host`, also serving `extra`. Every test host serves `/api/open-token` as `--open-token` does,
+    /// which no client of the broker may reach.
+    async fn host_with(id: &str, broker: &str, extra: axum::Router) -> Shared {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let internal_url = format!("http://{}", l.local_addr().unwrap());
         let s = testing::state_as(Identity { host_id: id.into(), host_name: id.into(), token: format!("{id}-tok"), hub_token: format!("{id}-hub"), internal_url });
-        let app = crate::api::router(s.clone());
+        let app = crate::api::router(s.clone()).route("/api/open-token", axum::routing::get(crate::open_token(s.token.clone()))).merge(extra);
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
         dial_out(&s, broker.into(), BROKER_TOKEN.into(), id.into());
         // Connected once the broker passes a request to it.
@@ -408,6 +535,85 @@ mod tests {
                 Err(tokio_tungstenite::tungstenite::Error::Http(res)) => assert_eq!(res.status(), 401),
                 other => panic!("connected with the wrong token: {:?}", other.map(|_| ())),
             }
+        })
+    }
+
+    /// A request sent as it's written (clients like reqwest resolve dot segments before sending).
+    async fn raw(base: &str, path: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut c = tokio::net::TcpStream::connect(base.trim_start_matches("http://")).await.unwrap();
+        c.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let mut out = Vec::new();
+        c.read_to_end(&mut out).await.unwrap();
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    #[test]
+    fn keeps_the_open_token_from_clients_of_the_broker() {
+        testing::run(async || {
+            let b = broker().await;
+            let s = host("desktop", &b).await;
+            // The host does hand it out, to whoever reaches it directly, but not for the broker's clients.
+            assert!(raw(&s.internal_url, "/api/open-token").await.contains("desktop-tok"));
+            let marked = call("GET", &format!("{}/api/open-token", s.internal_url), &[(VIA_BROKER, "1")]).await;
+            assert_eq!(marked, (404, json!({"error": "no such API route: GET /api/open-token"})));
+            for p in ["/api/open-token", "/api/./open-token", "/api/%2e/open-token", "/api/x/../open-token", "/api/%2E%2E/api/open-token", "/api\\open-token", "/api/open-token/"] {
+                for path in [p.to_string(), format!("/_broker/h/desktop{p}")] {
+                    let res = raw(&b, &path).await;
+                    assert!(!res.contains("desktop-tok"), "{path} gave the token away: {res}");
+                    assert!(res.starts_with("HTTP/1.1 4"), "{path}: {res}");
+                }
+            }
+        })
+    }
+
+    /// A body of 128 MiB, counting the bytes it has given out in `sent`.
+    fn big_body(sent: Arc<std::sync::atomic::AtomicUsize>) -> impl futures::Stream<Item = std::io::Result<Vec<u8>>> + Send + 'static {
+        futures::stream::iter(0..2048).map(move |_| {
+            sent.fetch_add(64 << 10, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![0u8; 64 << 10])
+        })
+    }
+
+    const MIB: usize = 1 << 20;
+
+    #[test]
+    fn a_client_that_doesnt_read_holds_up_only_its_own_download() {
+        testing::run(async || {
+            let b = broker().await;
+            let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let s2 = sent.clone();
+            let big = axum::Router::new().route("/test/big", axum::routing::get(move || async move { axum::body::Body::from_stream(big_body(s2)) }));
+            host_with("desktop", &b, big).await;
+            // Asks for it, and never reads the response.
+            use tokio::io::AsyncWriteExt;
+            let mut c = tokio::net::TcpStream::connect(b.trim_start_matches("http://")).await.unwrap();
+            c.write_all(b"GET /test/big HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            // What the host could send is the window plus what the sockets in between hold, not all of it.
+            let n = sent.load(std::sync::atomic::Ordering::SeqCst);
+            assert!(n < 48 * MIB, "the host sent {} MiB of 128 to a client that reads none of it", n / MIB);
+            // Other requests still go through.
+            assert_eq!(call("GET", &format!("{b}/api/info?token=desktop-tok"), &[]).await.0, 200);
+            drop(c);
+        })
+    }
+
+    #[test]
+    fn a_host_that_doesnt_read_holds_up_only_its_own_upload() {
+        testing::run(async || {
+            let b = broker().await;
+            // Takes the body, and never reads it.
+            let stall = axum::Router::new().route("/test/stall", axum::routing::post(|_body: axum::body::Body| std::future::pending::<&'static str>()));
+            host_with("desktop", &b, stall).await;
+            let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let body = reqwest::Body::wrap_stream(big_body(sent.clone()));
+            let upload = tokio::spawn(reqwest::Client::new().post(format!("{b}/test/stall")).body(body).send());
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let n = sent.load(std::sync::atomic::Ordering::SeqCst);
+            assert!(n < 48 * MIB, "the broker took {} MiB of 128 for a host that reads none of it", n / MIB);
+            assert_eq!(call("GET", &format!("{b}/api/info?token=desktop-tok"), &[]).await.0, 200);
+            upload.abort();
         })
     }
 
@@ -477,9 +683,34 @@ mod tests {
     }
 
     #[test]
-    fn blocks_the_open_token() {
-        assert!(blocked("/api/open-token") && blocked("/api/open-token?x=1") && blocked("/api/open-token/"));
-        assert!(!blocked("/api/info") && !blocked("/"));
-        assert!(blocked("@example.com/") && blocked("") && blocked("?x=1"));
+    fn blocks_the_open_token_however_its_written() {
+        let base = "http://127.0.0.1:7878";
+        for p in [
+            "/api/open-token",
+            "/api/open-token?x=1",
+            "/api/open-token/",
+            "/api/./open-token",
+            "/api/%2e/open-token",
+            "/api/%2E%2E/api/open-token",
+            "/api/x/../open-token",
+            "/api/x/%2e%2e/open-token",
+            "/api\\open-token",
+            "//api//open-token",
+            "/api/%6Fpen-token",
+            "/api/%252e/open-token",
+            "/x/../../api/open-token",
+            "/API/Open-Token",
+        ] {
+            assert_eq!(local_url(base, p), None, "{p}");
+        }
+        // Not on our server.
+        for p in ["@example.com/", "", "?x=1", "x"] {
+            assert_eq!(local_url(base, p), None, "{p:?}");
+        }
+        assert_eq!(local_url(base, "/api/info?a=1").unwrap().as_str(), "http://127.0.0.1:7878/api/info?a=1");
+        assert_eq!(local_url(base, "/").unwrap().as_str(), "http://127.0.0.1:7878/");
+        // Escapes go on as they were.
+        assert_eq!(local_url(base, "/api/tasks/a%2Fb").unwrap().as_str(), "http://127.0.0.1:7878/api/tasks/a%2Fb");
+        assert_eq!(local_url(base, "//example.com/x").unwrap().host_str(), Some("127.0.0.1"));
     }
 }

@@ -238,6 +238,19 @@ async fn main() -> Result<()> {
     }
 }
 
+/// `--open-token`'s route: the token for whoever asks, but not through a broker (where whoever
+/// asks could be anyone).
+fn open_token(token: String) -> impl Fn(axum::http::HeaderMap) -> std::future::Ready<axum::response::Response> + Clone {
+    move |headers| {
+        use axum::response::IntoResponse;
+        std::future::ready(if headers.contains_key(broker::VIA_BROKER) {
+            (axum::http::StatusCode::NOT_FOUND, axum::Json(api::no_route_error("GET", "/api/open-token"))).into_response()
+        } else {
+            axum::Json(serde_json::json!({ "token": token })).into_response()
+        })
+    }
+}
+
 async fn serve(args: ServeArgs) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "huntaway=info".into()))
@@ -294,7 +307,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if args.open_token {
         tracing::warn!("--open-token: handing the access token to every browser that opens the board");
         let token = token.clone();
-        app = app.route("/api/open-token", axum::routing::get(move || async move { axum::Json(serde_json::json!({ "token": token })) }));
+        app = app.route("/api/open-token", axum::routing::get(open_token(token)));
     }
 
     // Agents kept running while we were down; catch up on their output.

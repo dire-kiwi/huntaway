@@ -8,8 +8,16 @@
 //! (`ws`), the host opens it on its own server and answers `Head` with 101 (or with the response
 //! it got instead, as for a request), then both sides send its messages as data until one sends
 //! `Close`. `Close` also abandons a request: a client that went away, or a host that failed.
+//!
+//! Each side may send `WINDOW` bytes of a stream's data ahead of what the other has passed on, and
+//! the other side gives the room back with `Credit` as it does. A slow reader at either end (a
+//! client on a poor connection, a host that reads an upload slowly) holds up only its own stream,
+//! and nothing piles up in between.
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 
 /// Bump on incompatible changes to these messages.
 pub const PROTOCOL: u32 = 1;
@@ -18,6 +26,9 @@ pub const PROTOCOL: u32 = 1;
 pub const DATA: u8 = 0;
 /// A text websocket message.
 pub const TEXT: u8 = 1;
+
+/// How many bytes of a stream's data a side may send before the other gives room back.
+pub const WINDOW: usize = 256 << 10;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "t", rename_all = "snake_case")]
@@ -47,6 +58,8 @@ pub enum Ctl {
     Head { id: u64, status: u16, headers: Vec<(String, String)> },
     /// The body that way is complete.
     End { id: u64 },
+    /// Either way: `bytes` of the stream's data have been passed on, so as many more may be sent.
+    Credit { id: u64, bytes: u64 },
     /// Either way: the stream is over (a websocket closed, or the request was abandoned).
     Close {
         id: u64,
@@ -68,6 +81,41 @@ pub fn encode(id: u64, kind: u8, bytes: &[u8]) -> Vec<u8> {
 pub fn decode(frame: &[u8]) -> Option<(u64, u8, &[u8])> {
     let id = u64::from_be_bytes(frame.get(..8)?.try_into().ok()?);
     Some((id, *frame.get(8)?, &frame[9..]))
+}
+
+/// The room a side has left to send a stream's data in (see the module's comment).
+#[derive(Clone)]
+pub struct Window(Arc<Semaphore>);
+
+impl Default for Window {
+    fn default() -> Self {
+        Window(Arc::new(Semaphore::new(WINDOW)))
+    }
+}
+
+impl Window {
+    /// Wait for room to send `n` bytes; false once the stream is over. A websocket message can't be
+    /// split, so one bigger than the window waits for all of it.
+    pub async fn take(&self, n: usize) -> bool {
+        match self.0.acquire_many(n.min(WINDOW) as u32).await {
+            Ok(p) => {
+                p.forget();
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// The other side passed on `bytes`. Never more room than the window, whatever it says.
+    pub fn credit(&self, bytes: u64) {
+        let room = WINDOW.saturating_sub(self.0.available_permits());
+        self.0.add_permits(room.min(usize::try_from(bytes).unwrap_or(usize::MAX)));
+    }
+
+    /// The stream is over: wake anything waiting for room.
+    pub fn close(&self) {
+        self.0.close();
+    }
 }
 
 /// Headers that belong to one hop, which a proxy doesn't pass on. The websocket handshake's are
@@ -121,6 +169,24 @@ mod tests {
         assert_eq!(slug("ŵ"), "host");
         assert_eq!(slug(&format!("{}-b", "a".repeat(47))), "a".repeat(47));
         assert!(valid_name(&slug(&"é1".repeat(40))));
+    }
+
+    #[test]
+    fn window_gives_room_back_up_to_its_size() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let w = Window::default();
+            assert!(w.take(WINDOW - 10).await);
+            let short = tokio::time::timeout(std::time::Duration::from_millis(50), w.take(20)).await;
+            assert!(short.is_err(), "took more than the window");
+            w.credit(u64::MAX);
+            assert_eq!(w.0.available_permits(), WINDOW);
+            // A message bigger than the window waits for all of it, then goes.
+            assert!(w.take(WINDOW * 3).await);
+            assert_eq!(w.0.available_permits(), 0);
+            w.close();
+            assert!(!w.take(1).await);
+        });
     }
 
     #[test]
