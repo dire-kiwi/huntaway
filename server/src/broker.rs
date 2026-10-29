@@ -43,13 +43,26 @@ enum Incoming {
 struct Entry {
     tx: mpsc::UnboundedSender<Incoming>,
     window: proto::Window,
+    /// Stops the stream's task, which may be waiting on our server however long.
     abort: Option<tokio::task::AbortHandle>,
+    ws: bool,
 }
 
+/// How long a websocket the broker closed has to close on our server before it's cut off.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
+
 impl Entry {
-    fn end(self) {
+    /// The stream is over. A request stops at once. A websocket gets the close it was sent through
+    /// `tx`, with `CLOSE_GRACE` to pass it on, unless it's to stop at once too (we lost the broker).
+    fn end(self, at_once: bool) {
         self.window.close();
-        if let Some(a) = self.abort {
+        let Some(a) = self.abort else { return };
+        if self.ws && !at_once {
+            tokio::spawn(async move {
+                tokio::time::sleep(CLOSE_GRACE).await;
+                a.abort();
+            });
+        } else {
             a.abort();
         }
     }
@@ -116,7 +129,7 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
                         let (in_tx, in_rx) = mpsc::unbounded_channel();
                         let window = proto::Window::default();
                         // Registered right away: the request body follows at once.
-                        streams.lock().unwrap().insert(id, Entry { tx: in_tx, window: window.clone(), abort: None });
+                        streams.lock().unwrap().insert(id, Entry { tx: in_tx, window: window.clone(), abort: None, ws });
                         let (s, tx, streams2) = (s.clone(), Out { id, tx: tx.clone(), window }, streams.clone());
                         let task = tokio::spawn(async move {
                             if ws {
@@ -126,8 +139,7 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
                             }
                             streams2.lock().unwrap().remove(&tx.id);
                         });
-                        // A websocket is closed by the Close the broker sends it; a request stops at once.
-                        if let (false, Some(entry)) = (ws, streams.lock().unwrap().get_mut(&id)) {
+                        if let Some(entry) = streams.lock().unwrap().get_mut(&id) {
                             entry.abort = Some(task.abort_handle());
                         }
                     }
@@ -162,7 +174,7 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
     .await;
     // Dropping the senders closes the websockets in flight; requests are stopped.
     for (_, e) in streams.lock().unwrap().drain() {
-        e.end();
+        e.end(true);
     }
     writer.abort();
     result
@@ -173,7 +185,7 @@ fn incoming(streams: &Streams, id: u64, msg: Incoming, last: bool) {
     if last {
         if let Some(e) = streams.remove(&id) {
             let _ = e.tx.send(msg);
-            e.end();
+            e.end(false);
         }
     } else if let Some(e) = streams.get(&id) {
         let _ = e.tx.send(msg);
@@ -374,6 +386,8 @@ async fn request(s: &Shared, method: &str, path: &str, headers: Vec<(String, Str
 
 /// Open a websocket on our own server and relay it until either side closes it.
 async fn websocket(s: &Shared, path: &str, headers: Vec<(String, String)>, mut from_broker: mpsc::UnboundedReceiver<Incoming>, out: &Out) {
+    #[cfg(test)]
+    let _live = tests::LiveWs::new(path);
     let Some(mut url) = local_url(&s.internal_url, path) else {
         return out.json(404, crate::api::no_route_error("GET", path));
     };
@@ -466,6 +480,126 @@ mod tests {
     use serde_json::Value;
 
     const BROKER_TOKEN: &str = "broker-token-0123456789";
+
+    /// The websockets the host is relaying to its own server, by path, so a test can see one end.
+    static LIVE_WS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    pub(super) struct LiveWs(String);
+
+    impl LiveWs {
+        pub(super) fn new(path: &str) -> Self {
+            LIVE_WS.lock().unwrap().push(path.into());
+            LiveWs(path.into())
+        }
+    }
+
+    impl Drop for LiveWs {
+        fn drop(&mut self) {
+            let mut live = LIVE_WS.lock().unwrap();
+            if let Some(i) = live.iter().position(|p| *p == self.0) {
+                live.remove(i);
+            }
+        }
+    }
+
+    fn live_ws(path: &str) -> usize {
+        LIVE_WS.lock().unwrap().iter().filter(|p| *p == path).count()
+    }
+
+    /// A route for a websocket that never reads what it's sent.
+    fn ws_sink(router: axum::Router, path: &str) -> axum::Router {
+        router.route(
+            path,
+            axum::routing::get(|ws: axum::extract::WebSocketUpgrade| async move {
+                ws.on_upgrade(|socket| async move {
+                    let _keep = socket;
+                    std::future::pending::<()>().await
+                })
+            }),
+        )
+    }
+
+    /// Sends window-sized messages through the broker to `path` until they stop going.
+    async fn flood_ws(b: &str, path: &str) -> tokio::task::JoinHandle<()> {
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("{}{path}", b.replacen("http", "ws", 1))).await.unwrap();
+        tokio::spawn(async move {
+            loop {
+                if ws.send(TMessage::Binary(vec![0u8; proto::WINDOW].into())).await.is_err() {
+                    return;
+                }
+            }
+        })
+    }
+
+    async fn until(what: &str, limit: Duration, mut done: impl FnMut() -> bool) {
+        let started = std::time::Instant::now();
+        while !done() {
+            assert!(started.elapsed() < limit, "{what} after {limit:?}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[test]
+    fn a_websocket_stuck_writing_to_its_client_lets_go_of_its_stream() {
+        testing::run(async || {
+            use axum::extract::ws::{Message as AMessage, WebSocketUpgrade};
+            let b = broker_with(huntaway_broker::Config { max_streams: 2, stall: Duration::from_millis(500), ..Default::default() }).await;
+            // Sends messages a whole window in size, so the broker has none waiting while it writes one.
+            let routes = axum::Router::new().route(
+                "/test/ws-window",
+                axum::routing::get(|ws: WebSocketUpgrade| async move {
+                    ws.on_upgrade(|mut socket| async move {
+                        while socket.send(AMessage::Binary(vec![0u8; proto::WINDOW].into())).await.is_ok() {}
+                    })
+                }),
+            );
+            host_with("desktop", &b, routes).await;
+            // As many clients as the host may have streams, none of them reading.
+            let mut clients = vec![];
+            for _ in 0..2 {
+                let sock = tokio::net::TcpSocket::new_v4().unwrap();
+                sock.set_recv_buffer_size(4096).unwrap();
+                let tcp = sock.connect(b.trim_start_matches("http://").parse().unwrap()).await.unwrap();
+                let (ws, _) = tokio_tungstenite::client_async(format!("{}/test/ws-window", b.replacen("http", "ws", 1)), tcp).await.unwrap();
+                clients.push(ws);
+            }
+            tokio::time::sleep(Duration::from_millis(2000)).await;
+            assert_eq!(call("GET", &format!("{b}/api/info?token=desktop-tok"), &[]).await.0, 200);
+            drop(clients);
+        })
+    }
+
+    #[test]
+    fn a_websocket_stuck_on_our_server_is_cut_off_when_the_broker_closes_it() {
+        testing::run(async || {
+            let stall = Duration::from_secs(1);
+            let b = broker_with(huntaway_broker::Config { stall, ..Default::default() }).await;
+            host_with("desktop", &b, ws_sink(axum::Router::new(), "/test/ws-stuck")).await;
+            let client = flood_ws(&b, "/test/ws-stuck").await;
+            // Writing to our server, which reads nothing, gets stuck.
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            assert_eq!(live_ws("/test/ws-stuck"), 1);
+            // The client goes. Its data waiting for the host makes no progress, so the broker closes the
+            // stream, and the host lets go once it's had its grace.
+            client.abort();
+            until("the host still relays the websocket", stall * 2 + CLOSE_GRACE + Duration::from_secs(2), || live_ws("/test/ws-stuck") == 0).await;
+        })
+    }
+
+    #[test]
+    fn a_websocket_stuck_on_our_server_is_cut_off_when_the_broker_goes() {
+        testing::run(async || {
+            let b = broker().await;
+            let s = host_with("desktop", &b, ws_sink(axum::Router::new(), "/test/ws-stuck-2")).await;
+            let client = flood_ws(&b, "/test/ws-stuck-2").await;
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            assert_eq!(live_ws("/test/ws-stuck-2"), 1);
+            // Connecting again under the same name makes the broker hang up on the first connection.
+            dial_out(&s, b.clone(), BROKER_TOKEN.into(), "desktop".into());
+            until("the host still relays the websocket", Duration::from_secs(1), || live_ws("/test/ws-stuck-2") == 0).await;
+            client.abort();
+        })
+    }
 
     async fn broker() -> String {
         broker_with(huntaway_broker::Config::default()).await

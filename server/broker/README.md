@@ -33,7 +33,8 @@ give hosts the `https://` URL. It keeps no data and needs no volume. Things to k
 Each request or websocket through the broker has at most 256 KiB in flight each way, so a slow client or host holds
 up only its own request and the broker's memory stays bounded. A host has at most 128 requests in flight through it.
 When it has that many, a new one takes the place of the one whose client has left data waiting longest. A request
-or websocket whose client takes nothing of what's waiting for it for 60 seconds is closed.
+or websocket that makes no progress for 60 seconds (its client takes nothing of what's waiting for it, or the host
+nothing of what the client sent) is closed.
 
 `GET /_broker/health` answers `{"ok": true}` without reaching a host, for health checks. To change the token or the
 default host, restart it with the new value: hosts reconnect by themselves within 30 seconds.

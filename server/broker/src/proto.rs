@@ -14,7 +14,8 @@
 //! client on a poor connection, a host that reads an upload slowly) holds up only its own stream,
 //! and nothing piles up in between.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
@@ -85,11 +86,11 @@ pub fn decode(frame: &[u8]) -> Option<(u64, u8, &[u8])> {
 
 /// The room a side has left to send a stream's data in (see the module's comment).
 #[derive(Clone)]
-pub struct Window(Arc<Semaphore>);
+pub struct Window(Arc<Semaphore>, Arc<Mutex<Option<Instant>>>);
 
 impl Default for Window {
     fn default() -> Self {
-        Window(Arc::new(Semaphore::new(WINDOW)))
+        Window(Arc::new(Semaphore::new(WINDOW)), Arc::default())
     }
 }
 
@@ -97,13 +98,28 @@ impl Window {
     /// Wait for room to send `n` bytes; false once the stream is over. A websocket message can't be
     /// split, so one bigger than the window waits for all of it.
     pub async fn take(&self, n: usize) -> bool {
-        match self.0.acquire_many(n.min(WINDOW) as u32).await {
+        let n = n.min(WINDOW) as u32;
+        let permit = match self.0.try_acquire_many(n) {
+            Ok(p) => Ok(p),
+            Err(_) => {
+                self.1.lock().unwrap().get_or_insert_with(Instant::now);
+                let p = self.0.acquire_many(n).await;
+                *self.1.lock().unwrap() = None;
+                p
+            }
+        };
+        match permit {
             Ok(p) => {
                 p.forget();
                 true
             }
             Err(_) => false,
         }
+    }
+
+    /// How long a sender has been waiting for room, if it is.
+    pub fn blocked_for(&self) -> Option<Duration> {
+        self.1.lock().unwrap().map(|t| t.elapsed())
     }
 
     /// The other side passed on `bytes`. Never more room than the window, whatever it says.
@@ -179,6 +195,7 @@ mod tests {
             assert!(w.take(WINDOW - 10).await);
             let short = tokio::time::timeout(std::time::Duration::from_millis(50), w.take(20)).await;
             assert!(short.is_err(), "took more than the window");
+            assert!(w.blocked_for().is_some());
             w.credit(u64::MAX);
             assert_eq!(w.0.available_permits(), WINDOW);
             // A message bigger than the window waits for all of it, then goes.

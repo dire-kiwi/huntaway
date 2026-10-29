@@ -53,7 +53,8 @@ const HOST_HEADER: &str = "x-huntaway-host";
 const MAX_STREAMS: usize = 128;
 /// How long a client must have left a stream's data waiting before a new request takes its place.
 const EVICT_AFTER: Duration = Duration::from_secs(1);
-/// A stream whose client takes none of what's waiting for it for this long is closed.
+/// A stream whose client takes none of what's waiting for it for this long is closed, and so is one
+/// whose data waits that long for the host to take it.
 const STALL: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug)]
@@ -95,12 +96,23 @@ struct Entry {
     window: proto::Window,
 }
 
+impl Entry {
+    /// How long the stream has made no progress: its client taking none of what the host sent, or
+    /// the host none of what the client sent. (A client that went away while its data waits for
+    /// the host isn't read meanwhile, so this is how it's noticed.)
+    fn stuck(&self) -> Option<Duration> {
+        self.queue.waited().max(self.window.blocked_for())
+    }
+}
+
 /// What the host sent on a stream, waiting for the client to take it. At most a window's worth of
 /// data, as the host sends only that much ahead of what the client takes.
 #[derive(Default)]
 struct Queue {
     state: Mutex<QueueState>,
     notify: tokio::sync::Notify,
+    /// Woken when the stream is dropped (`end(true)`).
+    dropped: tokio::sync::Notify,
 }
 
 #[derive(Default)]
@@ -108,7 +120,11 @@ struct QueueState {
     items: VecDeque<Event>,
     /// Nothing more is coming.
     ended: bool,
-    /// Since when the client has taken nothing of what's waiting.
+    /// The stream was dropped: its client should be let go of too.
+    dropped: bool,
+    /// The consumer has data it took out and hasn't passed on yet (it's writing it to the client).
+    in_hand: bool,
+    /// Since when the client has taken nothing of what's waiting or in hand.
     waiting_since: Option<Instant>,
 }
 
@@ -118,7 +134,7 @@ impl Queue {
         if q.ended {
             return;
         }
-        if q.items.is_empty() {
+        if q.items.is_empty() && !q.in_hand {
             q.waiting_since = Some(Instant::now());
         }
         q.items.push_back(ev);
@@ -133,18 +149,47 @@ impl Queue {
         if drop_waiting {
             q.items.clear();
             q.waiting_since = None;
+            q.dropped = true;
         }
         drop(q);
         self.notify.notify_one();
+        if drop_waiting {
+            self.dropped.notify_waiters();
+        }
     }
 
-    /// The next thing the host sent; None once the stream is over.
+    /// Wait until the stream is dropped (its client stopped reading, say).
+    async fn until_dropped(&self) {
+        loop {
+            let woken = self.dropped.notified();
+            tokio::pin!(woken);
+            // Registered before looking, so a drop in between isn't missed.
+            woken.as_mut().enable();
+            if self.state.lock().unwrap().dropped {
+                return;
+            }
+            woken.await;
+        }
+    }
+
+    /// The next thing the host sent; None once the stream is over. Asking for more says the data
+    /// taken last was passed on: until then, a client that doesn't take it (a write that doesn't
+    /// finish) counts as leaving it waiting.
     async fn recv(&self) -> Option<Event> {
         loop {
             {
                 let mut q = self.state.lock().unwrap();
-                if let Some(ev) = q.items.pop_front() {
+                if q.in_hand {
+                    q.in_hand = false;
                     q.waiting_since = if q.items.is_empty() { None } else { Some(Instant::now()) };
+                }
+                if let Some(ev) = q.items.pop_front() {
+                    if matches!(ev, Event::Data(_) | Event::Text(_)) {
+                        q.in_hand = true;
+                        q.waiting_since = Some(Instant::now());
+                    } else {
+                        q.waiting_since = if q.items.is_empty() { None } else { Some(Instant::now()) };
+                    }
                     return Some(ev);
                 }
                 if q.ended {
@@ -208,7 +253,7 @@ impl Host {
     fn open(self: &Arc<Self>) -> Option<(Stream, Arc<Queue>)> {
         let mut streams = self.streams.lock().unwrap();
         if streams.len() >= self.max_streams {
-            let stalest = streams.iter().filter_map(|(id, e)| Some((*id, e.queue.waited()?))).filter(|(_, w)| *w >= EVICT_AFTER).max_by_key(|(_, w)| *w);
+            let stalest = streams.iter().filter_map(|(id, e)| Some((*id, e.stuck()?))).filter(|(_, w)| *w >= EVICT_AFTER).max_by_key(|(_, w)| *w);
             let (id, _) = stalest?;
             self.drop_stream(&mut streams, id);
         }
@@ -229,12 +274,12 @@ impl Host {
         }
     }
 
-    /// Close the streams whose clients have taken nothing for `stall`.
+    /// Close the streams that have been stuck for `stall`.
     fn drop_stalled(&self, stall: Duration) {
         let mut streams = self.streams.lock().unwrap();
-        let stalled: Vec<u64> = streams.iter().filter(|(_, e)| e.queue.waited().is_some_and(|w| w >= stall)).map(|(id, _)| *id).collect();
+        let stalled: Vec<u64> = streams.iter().filter(|(_, e)| e.stuck().is_some_and(|w| w >= stall)).map(|(id, _)| *id).collect();
         for id in stalled {
-            tracing::info!("host {}: closing stream {id}, whose client stopped reading", self.name);
+            tracing::info!("host {}: closing stream {id}, which has made no progress", self.name);
             self.drop_stream(&mut streams, id);
         }
     }
@@ -642,5 +687,6 @@ async fn bridge(socket: WebSocket, mut stream: Stream, rx: Arc<Queue>) {
             host.credit(id, len);
         }
     };
-    stream.done = tokio::select! { d = up => d, d = down => d };
+    // A stream dropped for a client that stopped reading lets go of it, whatever either way waits on.
+    stream.done = tokio::select! { d = up => d, d = down => d, _ = rx.until_dropped() => true };
 }
