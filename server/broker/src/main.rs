@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     }
     let listener = tokio::net::TcpListener::bind((args.host.as_str(), args.port)).await.with_context(|| format!("binding {}:{}", args.host, args.port))?;
     tracing::info!("listening on http://{}", listener.local_addr()?);
-    let app = huntaway_broker::router(huntaway_broker::Config { token, default_host });
+    let app = huntaway_broker::router(huntaway_broker::Config { token, default_host, ..Default::default() });
     axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
     Ok(())
 }

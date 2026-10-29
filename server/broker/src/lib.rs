@@ -16,10 +16,10 @@
 //!   (`--default-host`), else the only host connected. A browser opens the board at the root, as
 //!   it would on the host itself.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -47,15 +47,31 @@ const COOKIE: &str = "huntaway_host";
 /// The header that picks a host for a request.
 const HOST_HEADER: &str = "x-huntaway-host";
 /// Requests (and websockets) a host may have in flight through the broker at once. With each
-/// stream's window, this bounds what the broker can hold for a host.
-const MAX_STREAMS: usize = 64;
+/// stream's window, this bounds what the broker can hold for a host. A host that has as many takes
+/// a new request in place of the one whose client has left data waiting longest (`EVICT_AFTER` at
+/// least), so clients that stop reading can't keep others out.
+const MAX_STREAMS: usize = 128;
+/// How long a client must have left a stream's data waiting before a new request takes its place.
+const EVICT_AFTER: Duration = Duration::from_secs(1);
+/// A stream whose client takes none of what's waiting for it for this long is closed.
+const STALL: Duration = Duration::from_secs(60);
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Config {
     /// What hosts present to connect (as a bearer token).
     pub token: String,
     /// The host for requests that don't pick one.
     pub default_host: Option<String>,
+    /// Streams a host may have in flight (`MAX_STREAMS`).
+    pub max_streams: usize,
+    /// How long a client may leave a stream's data waiting before it's closed (`STALL`).
+    pub stall: Duration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config { token: String::new(), default_host: None, max_streams: MAX_STREAMS, stall: STALL }
+    }
 }
 
 struct Broker {
@@ -66,16 +82,84 @@ struct Broker {
 /// A connected host.
 struct Host {
     name: String,
+    max_streams: usize,
     tx: mpsc::UnboundedSender<Message>,
     /// Requests in flight, by stream id.
     streams: Mutex<HashMap<u64, Entry>>,
     next: AtomicU64,
 }
 
-/// A stream in flight: where what the host sends on it goes, and our room to send it data.
+/// A stream in flight: what the host sent on it, waiting for the client, and our room to send it data.
 struct Entry {
-    tx: mpsc::UnboundedSender<Event>,
+    queue: Arc<Queue>,
     window: proto::Window,
+}
+
+/// What the host sent on a stream, waiting for the client to take it. At most a window's worth of
+/// data, as the host sends only that much ahead of what the client takes.
+#[derive(Default)]
+struct Queue {
+    state: Mutex<QueueState>,
+    notify: tokio::sync::Notify,
+}
+
+#[derive(Default)]
+struct QueueState {
+    items: VecDeque<Event>,
+    /// Nothing more is coming.
+    ended: bool,
+    /// Since when the client has taken nothing of what's waiting.
+    waiting_since: Option<Instant>,
+}
+
+impl Queue {
+    fn push(&self, ev: Event) {
+        let mut q = self.state.lock().unwrap();
+        if q.ended {
+            return;
+        }
+        if q.items.is_empty() {
+            q.waiting_since = Some(Instant::now());
+        }
+        q.items.push_back(ev);
+        drop(q);
+        self.notify.notify_one();
+    }
+
+    /// Nothing more is coming: what's waiting still goes to the client, unless `drop_waiting`.
+    fn end(&self, drop_waiting: bool) {
+        let mut q = self.state.lock().unwrap();
+        q.ended = true;
+        if drop_waiting {
+            q.items.clear();
+            q.waiting_since = None;
+        }
+        drop(q);
+        self.notify.notify_one();
+    }
+
+    /// The next thing the host sent; None once the stream is over.
+    async fn recv(&self) -> Option<Event> {
+        loop {
+            {
+                let mut q = self.state.lock().unwrap();
+                if let Some(ev) = q.items.pop_front() {
+                    q.waiting_since = if q.items.is_empty() { None } else { Some(Instant::now()) };
+                    return Some(ev);
+                }
+                if q.ended {
+                    return None;
+                }
+            }
+            // A notification while we weren't waiting is kept, so none is missed.
+            self.notify.notified().await;
+        }
+    }
+
+    /// How long the client has left data waiting.
+    fn waited(&self) -> Option<Duration> {
+        self.state.lock().unwrap().waiting_since.map(|t| t.elapsed())
+    }
 }
 
 /// What a host sent on one stream.
@@ -120,17 +204,39 @@ impl Host {
     }
 
     /// Start a stream: its id, what the host sends on it, and a guard that ends it. None when the
-    /// host has as many in flight as it may.
-    fn open(self: &Arc<Self>) -> Option<(Stream, mpsc::UnboundedReceiver<Event>)> {
+    /// host has as many in flight as it may, and all their clients are taking what's sent.
+    fn open(self: &Arc<Self>) -> Option<(Stream, Arc<Queue>)> {
         let mut streams = self.streams.lock().unwrap();
-        if streams.len() >= MAX_STREAMS {
-            return None;
+        if streams.len() >= self.max_streams {
+            let stalest = streams.iter().filter_map(|(id, e)| Some((*id, e.queue.waited()?))).filter(|(_, w)| *w >= EVICT_AFTER).max_by_key(|(_, w)| *w);
+            let (id, _) = stalest?;
+            self.drop_stream(&mut streams, id);
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = mpsc::unbounded_channel();
+        let queue = Arc::new(Queue::default());
         let window = proto::Window::default();
-        streams.insert(id, Entry { tx, window: window.clone() });
-        Some((Stream { host: self.clone(), id, done: false, window, upload: None }, rx))
+        streams.insert(id, Entry { queue: queue.clone(), window: window.clone() });
+        Some((Stream { host: self.clone(), id, done: false, window, upload: None }, queue))
+    }
+
+    /// Close a stream whose client stopped taking what's sent: what's waiting is dropped, and the
+    /// host told to stop.
+    fn drop_stream(&self, streams: &mut HashMap<u64, Entry>, id: u64) {
+        if let Some(e) = streams.remove(&id) {
+            e.queue.end(true);
+            e.window.close();
+            self.send(&Ctl::Close { id, code: None, reason: Some("the client stopped reading".into()) });
+        }
+    }
+
+    /// Close the streams whose clients have taken nothing for `stall`.
+    fn drop_stalled(&self, stall: Duration) {
+        let mut streams = self.streams.lock().unwrap();
+        let stalled: Vec<u64> = streams.iter().filter(|(_, e)| e.queue.waited().is_some_and(|w| w >= stall)).map(|(id, _)| *id).collect();
+        for id in stalled {
+            tracing::info!("host {}: closing stream {id}, whose client stopped reading", self.name);
+            self.drop_stream(&mut streams, id);
+        }
     }
 }
 
@@ -224,7 +330,17 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             }
         }
     });
-    let host = Arc::new(Host { name: name.clone(), tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
+    let host = Arc::new(Host { name: name.clone(), max_streams: b.cfg.max_streams, tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
+    let watchdog = {
+        let (host, stall) = (host.clone(), b.cfg.stall);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval((stall / 4).max(Duration::from_millis(50)));
+            loop {
+                tick.tick().await;
+                host.drop_stalled(stall);
+            }
+        })
+    };
     // A host that reconnects (its old connection not yet seen to drop) takes its name back.
     if let Some(old) = b.hosts.lock().unwrap().insert(name.clone(), host.clone()) {
         let _ = old.tx.send(Message::Close(Some(CloseFrame { code: 4000, reason: "replaced by a newer connection".into() })));
@@ -268,10 +384,12 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             hosts.remove(&name);
         }
     }
-    // Dropping the senders ends the requests in flight.
+    // The requests in flight end (with what the host sent of them).
     for (_, e) in host.streams.lock().unwrap().drain() {
+        e.queue.end(false);
         e.window.close();
     }
+    watchdog.abort();
     writer.abort();
     tracing::info!("host {name} disconnected");
 }
@@ -281,10 +399,11 @@ fn to_stream(host: &Host, id: u64, ev: Event, last: bool) {
     if last {
         if let Some(e) = streams.remove(&id) {
             e.window.close();
-            let _ = e.tx.send(ev);
+            e.queue.push(ev);
+            e.queue.end(false);
         }
     } else if let Some(e) = streams.get(&id) {
-        let _ = e.tx.send(ev);
+        e.queue.push(ev);
     }
 }
 
@@ -392,7 +511,7 @@ async fn forward(host: Arc<Host>, path: String, req: Request) -> Response {
         .filter_map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_string())))
         .collect();
     let has_body = !ws && !body.is_end_stream();
-    let Some((mut stream, mut rx)) = host.open() else {
+    let Some((mut stream, rx)) = host.open() else {
         return fail(&path, StatusCode::SERVICE_UNAVAILABLE, &format!("host {} has too many requests in flight", host.name));
     };
     let id = stream.id;
@@ -447,9 +566,9 @@ async fn forward(host: Arc<Host>, path: String, req: Request) -> Response {
 
 /// A response body from what the host sends, until `End`. A stream the host drops ends in an
 /// error, so the client sees an incomplete response rather than a short one.
-fn body_stream(stream: Stream, rx: mpsc::UnboundedReceiver<Event>) -> impl futures::Stream<Item = std::io::Result<Bytes>> {
+fn body_stream(stream: Stream, rx: Arc<Queue>) -> impl futures::Stream<Item = std::io::Result<Bytes>> {
     futures::stream::unfold(Some((stream, rx)), |state| async move {
-        let (mut stream, mut rx) = state?;
+        let (mut stream, rx) = state?;
         loop {
             match rx.recv().await {
                 // Taken by the client's connection: the host may send as much more.
@@ -473,7 +592,7 @@ fn body_stream(stream: Stream, rx: mpsc::UnboundedReceiver<Event>) -> impl futur
 
 /// Relay a client's websocket to the host's until either side closes it. The two ways go on
 /// side by side, so one waiting for room doesn't hold up the other.
-async fn bridge(socket: WebSocket, mut stream: Stream, mut rx: mpsc::UnboundedReceiver<Event>) {
+async fn bridge(socket: WebSocket, mut stream: Stream, rx: Arc<Queue>) {
     let (host, id, window) = (stream.host.clone(), stream.id, stream.window.clone());
     let (mut sink, mut source) = socket.split();
     // Each way says whether the host knows the stream is over.

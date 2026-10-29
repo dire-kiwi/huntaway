@@ -16,8 +16,8 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as TMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 
-use crate::relay::{self, Frame};
 use crate::state::Shared;
 
 /// Paths a client mustn't reach through the broker: `--open-token` hands the token to whoever asks.
@@ -386,9 +386,12 @@ async fn websocket(s: &Shared, path: &str, headers: Vec<(String, String)>, mut f
         }
         req
     });
-    let (local_tx, mut local_rx) = match req {
-        Ok(req) => match relay::open(req).await {
-            Ok(pipe) => pipe,
+    // The websocket itself rather than a relay with queues of its own: we read a message from our
+    // server only once there's room to send it on, and give the broker room back only once one is
+    // written, so neither way piles up here.
+    let (mut sink, mut source) = match req {
+        Ok(req) => match tokio_tungstenite::connect_async(req).await {
+            Ok((ws, _)) => ws.split(),
             // Not a websocket after all (unauthorized, say): the client gets that response.
             Err(tokio_tungstenite::tungstenite::Error::Http(res)) => {
                 let headers = res.headers().iter().filter_map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_string()))).collect();
@@ -406,21 +409,27 @@ async fn websocket(s: &Shared, path: &str, headers: Vec<(String, String)>, mut f
     // The two ways go on side by side, so one waiting for room doesn't hold up the other.
     let up = async {
         loop {
-            let (f, n) = match from_broker.recv().await {
+            let (msg, n) = match from_broker.recv().await {
                 Some(Incoming::Data(b)) => {
                     let n = b.len();
-                    (Frame::Binary(b), n)
+                    (TMessage::Binary(b.into()), n)
                 }
                 Some(Incoming::Text(t)) => {
                     let n = t.len();
-                    (Frame::Text(t), n)
+                    (TMessage::Text(t.into()), n)
                 }
                 Some(Incoming::End) => continue,
-                Some(Incoming::Close(code, reason)) => (Frame::Close(code.map(|c| (c, reason.unwrap_or_default()))), 0),
-                None => (Frame::Close(None), 0),
+                Some(Incoming::Close(code, reason)) => {
+                    let frame = code.map(|c| CloseFrame { code: c.into(), reason: reason.unwrap_or_default().into() });
+                    let _ = sink.send(TMessage::Close(frame)).await;
+                    return;
+                }
+                None => {
+                    let _ = sink.send(TMessage::Close(None)).await;
+                    return;
+                }
             };
-            let close = matches!(f, Frame::Close(_));
-            if local_tx.send(f).is_err() || close {
+            if sink.send(msg).await.is_err() {
                 return;
             }
             out.credit(n);
@@ -428,14 +437,18 @@ async fn websocket(s: &Shared, path: &str, headers: Vec<(String, String)>, mut f
     };
     let down = async {
         loop {
-            let sent = match local_rx.recv().await.unwrap_or(Frame::Close(None)) {
-                Frame::Close(c) => {
-                    let (code, reason) = c.unzip();
-                    out.ctl(Ctl::Close { id: out.id, code, reason });
+            let sent = match source.next().await {
+                Some(Ok(TMessage::Text(t))) => out.message(proto::TEXT, t.as_bytes()).await,
+                Some(Ok(TMessage::Binary(b))) => out.message(proto::DATA, &b).await,
+                Some(Ok(TMessage::Close(c))) => {
+                    out.ctl(Ctl::Close { id: out.id, code: c.as_ref().map(|c| c.code.into()), reason: c.map(|c| c.reason.to_string()) });
                     return;
                 }
-                Frame::Text(t) => out.message(proto::TEXT, t.as_bytes()).await,
-                Frame::Binary(b) => out.message(proto::DATA, &b).await,
+                Some(Ok(_)) => true,
+                None | Some(Err(_)) => {
+                    out.ctl(Ctl::Close { id: out.id, code: None, reason: None });
+                    return;
+                }
             };
             if !sent {
                 return;
@@ -455,9 +468,13 @@ mod tests {
     const BROKER_TOKEN: &str = "broker-token-0123456789";
 
     async fn broker() -> String {
+        broker_with(huntaway_broker::Config::default()).await
+    }
+
+    async fn broker_with(cfg: huntaway_broker::Config) -> String {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
-        let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), default_host: None });
+        let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..cfg });
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
         url
     }
@@ -576,6 +593,126 @@ mod tests {
     }
 
     const MIB: usize = 1 << 20;
+
+    /// Counts the big bodies the host is serving: one is dropped when its request stops.
+    struct Live(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Drop for Live {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Asks for `path` and never reads the response, with a small receive buffer so it stalls soon.
+    async fn unread(base: &str, path: &str) -> tokio::net::TcpStream {
+        use tokio::io::AsyncWriteExt;
+        let sock = tokio::net::TcpSocket::new_v4().unwrap();
+        sock.set_recv_buffer_size(4096).unwrap();
+        let mut c = sock.connect(base.trim_start_matches("http://").parse().unwrap()).await.unwrap();
+        c.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes()).await.unwrap();
+        c
+    }
+
+    #[test]
+    fn clients_that_stop_reading_cant_keep_others_out() {
+        testing::run(async || {
+            let b = broker_with(huntaway_broker::Config { max_streams: 8, stall: Duration::from_secs(3), ..Default::default() }).await;
+            let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let l2 = live.clone();
+            let big = axum::Router::new().route(
+                "/test/big",
+                axum::routing::get(move || {
+                    let l2 = l2.clone();
+                    async move {
+                        l2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let guard = Live(l2);
+                        let body = big_body(Arc::default()).map(move |c| {
+                            let _ = &guard;
+                            c
+                        });
+                        axum::body::Body::from_stream(body)
+                    }
+                }),
+            );
+            host_with("desktop", &b, big).await;
+            // More downloads than the host may have in flight, none of them read.
+            let mut conns = vec![];
+            for _ in 0..12 {
+                conns.push(unread(&b, "/test/big").await);
+            }
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            // A request still gets through, in place of one of them, at once.
+            let started = std::time::Instant::now();
+            assert_eq!(call("GET", &format!("{b}/api/info?token=desktop-tok"), &[]).await.0, 200);
+            assert!(started.elapsed() < Duration::from_secs(1));
+            // And once they've stalled for long enough, the host stops serving every one of them.
+            for _ in 0..100 {
+                if live.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    return drop(conns);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            panic!("the host is still serving {} downloads nobody reads", live.load(std::sync::atomic::Ordering::SeqCst));
+        })
+    }
+
+    #[test]
+    fn a_websocket_that_isnt_read_holds_up_only_itself() {
+        testing::run(async || {
+            use axum::extract::ws::{Message as AMessage, WebSocketUpgrade};
+            let b = broker().await;
+            let flooded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let f2 = flooded.clone();
+            let routes = axum::Router::new()
+                // Never reads what it's sent.
+                .route(
+                    "/test/ws-sink",
+                    axum::routing::get(|ws: WebSocketUpgrade| async move {
+                        ws.on_upgrade(|socket| async move {
+                            let _keep = socket;
+                            std::future::pending::<()>().await
+                        })
+                    }),
+                )
+                // Sends 128 MiB as fast as it's let.
+                .route(
+                    "/test/ws-flood",
+                    axum::routing::get(move |ws: WebSocketUpgrade| async move {
+                        ws.on_upgrade(move |mut socket| async move {
+                            for _ in 0..2048 {
+                                if socket.send(AMessage::Binary(vec![0u8; 64 << 10].into())).await.is_err() {
+                                    return;
+                                }
+                                f2.fetch_add(64 << 10, std::sync::atomic::Ordering::SeqCst);
+                            }
+                        })
+                    }),
+                );
+            host_with("desktop", &b, routes).await;
+            let ws = b.replacen("http", "ws", 1);
+            // Up: the client sends 128 MiB to a websocket on the host that reads none of it.
+            let (mut up, _) = tokio_tungstenite::connect_async(format!("{ws}/test/ws-sink")).await.unwrap();
+            let uploaded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let u2 = uploaded.clone();
+            let sender = tokio::spawn(async move {
+                for _ in 0..2048 {
+                    if up.send(TMessage::Binary(vec![0u8; 64 << 10].into())).await.is_err() {
+                        return;
+                    }
+                    u2.fetch_add(64 << 10, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+            // Down: the host's websocket sends 128 MiB to a client that reads none of it.
+            let (down, _) = tokio_tungstenite::connect_async(format!("{ws}/test/ws-flood")).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(2000)).await;
+            let (u, f) = (uploaded.load(std::sync::atomic::Ordering::SeqCst), flooded.load(std::sync::atomic::Ordering::SeqCst));
+            assert!(u < 48 * MIB, "{} MiB of 128 went towards a websocket that reads none of it", u / MIB);
+            assert!(f < 48 * MIB, "the host's websocket sent {} MiB of 128 towards a client that reads none of it", f / MIB);
+            assert_eq!(call("GET", &format!("{b}/api/info?token=desktop-tok"), &[]).await.0, 200);
+            sender.abort();
+            drop(down);
+        })
+    }
 
     #[test]
     fn a_client_that_doesnt_read_holds_up_only_its_own_download() {
