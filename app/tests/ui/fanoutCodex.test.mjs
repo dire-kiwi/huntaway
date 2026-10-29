@@ -47,13 +47,14 @@ test("a model named before its config's models are in waits for them", async () 
       // No list is open for it (there's nothing to offer yet), so Escape would close the dialog.
       "type Slow discovery !opus !gpt-5.5",
       "wait Loading Codex's models",
-      `assert ${disabled}`,
+      // Asked for meanwhile, it's created once they're in.
       "press Control+Enter",
+      "wait It's created once they're in",
       "sleep 300",
     ]);
     assert.equal((await tasksIn("Slow discovery")).length, 0);
     release();
-    await ui.run(["wait Create 2 tasks", "gone Loading Codex's models", "press Control+Enter", "gone Reads as"]);
+    await ui.run(["gone Reads as"]);
   });
   const tasks = await tasksIn("Slow discovery");
   assert.deepEqual(tasks.map((t) => [t.model, t.claude_config_id === codex.id]).sort(), [
@@ -128,10 +129,13 @@ test("an effort for a Codex harness waits for its models", async () => {
       "click New task",
       "type Default discovery !opus !codex ^max",
       "wait Loading Codex's models, to see whether it takes max effort",
-      `assert ${disabled}`,
+      "click Create 2 tasks",
+      "wait It's created once they're in",
+      "sleep 300",
     ]);
+    assert.equal((await tasksIn("Default discovery")).length, 0);
     release();
-    await ui.run(["gone Loading Codex's models", "wait Create 2 tasks", "press Control+Enter", "gone Reads as"]);
+    await ui.run(["gone Reads as"]);
   });
   const tasks = await tasksIn("Default discovery");
   assert.deepEqual(tasks.map((t) => [t.model, t.effort]).sort(), [

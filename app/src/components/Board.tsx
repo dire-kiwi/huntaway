@@ -757,7 +757,8 @@ export function NewTaskModal({
     : failedFor.length
       ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${unknownModels.length ? "it" : "the effort"} out, or open the dialog again to try again.`
       : null;
-  const submitBlock = fanoutBlock ?? modelsBlock;
+  // While they're loading, creating it waits for them (see whenLoaded).
+  const submitBlock = fanoutBlock ?? (modelsLoading ? null : modelsBlock);
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
   const setStart = (v: boolean) => {
@@ -845,6 +846,7 @@ export function NewTaskModal({
       return;
     }
     if (!hasContent || busy || attach.uploading || submitBlock) return;
+    if (modelsLoading) return setWhenLoaded(true);
     setBusy(true);
     setErr(null);
     // A task for each harness, one after another, so a failure leaves the rest to try again.
@@ -931,6 +933,15 @@ export function NewTaskModal({
       setBusy(false);
     }
   };
+
+  // Created once the models it waits for are in, if it was asked for meanwhile (and the text hasn't changed since).
+  const [whenLoaded, setWhenLoaded] = useState(false);
+  useEffect(() => setWhenLoaded(false), [description]);
+  useEffect(() => {
+    if (!whenLoaded || modelsLoading) return;
+    setWhenLoaded(false);
+    submit();
+  }, [whenLoaded, modelsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // What's offered for each prefix as it's typed.
   const inherited = inheritedModel(configObj, models, inProject?.model, profile?.default_model, hostSettings?.default_model);
@@ -1325,7 +1336,12 @@ export function NewTaskModal({
                 : `Makes the ${noun} left from this prompt, with ${pending!.made.join(", ")}${worktree ? ", in its own worktree" : ""}. Their cards say which is which.`)}
           </div>
         )}
-        {modelsBlock && <div className={clsx("text-[12px]", modelsLoading ? "text-muted" : "text-amber-300")}>{modelsBlock}</div>}
+        {modelsBlock && (
+          <div className={clsx("text-[12px]", modelsLoading ? "text-muted" : "text-amber-300")}>
+            {modelsBlock}
+            {whenLoaded && " It's created once they're in."}
+          </div>
+        )}
         {err && <div className="text-xs text-red-400">{err}</div>}
         <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
           <span className="mr-auto flex min-w-0 items-center gap-3">
