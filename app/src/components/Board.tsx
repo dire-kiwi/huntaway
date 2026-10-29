@@ -585,7 +585,8 @@ export function NewTaskModal({
   const configObj = configs.find((c) => c.id === config);
   const codex = agentOf(configObj) === "codex";
   // Every config's models, as a `!` can send the task to any of them (IA-227).
-  const configModels = useConfigsModels(configs);
+  const discovery = useConfigsModels(configs);
+  const configModels = discovery.models;
   const models = configObj ? configModels[configObj.id] : null;
   const modelList = modelOptions(configObj, models);
   // Models and efforts are the agent's own, so picking another agent starts them over.
@@ -634,13 +635,14 @@ export function NewTaskModal({
   const runs: Harness[] = named.length ? named : [{ config, model: codex && isClaudeModel(model) ? "" : model }];
   // Several harnesses make a task each. After only some of them could be made, those left (even one) are made as part
   // of the same set when it's tried again: linked to the others by its id (null on hosts before API 61), in a worktree.
-  const [pending, setPending] = useState<{ id: string | null; made: string[] } | null>(null);
+  const [pending, setPending] = useState<{ id: string | null; made: string[]; efforts: string[] } | null>(null);
   const many = runs.length > 1;
   const fanout = many || pending !== null;
   const runConfig = (h: Harness) => configs.find((c) => c.id === h.config);
   // The efforts any of them takes; one that doesn't take the effort picked gets its default.
   const runEfforts = (h: Harness) => effortOptions(runConfig(h), configModels[h.config] ?? null, h.model);
-  const effortList = efforts ? [...new Set(runs.flatMap(runEfforts))] : [];
+  // Those of the tasks already made too, so a `^` that only they take is still read as one when the rest are made.
+  const effortList = efforts ? [...new Set([...runs.flatMap(runEfforts), ...(pending?.efforts ?? [])])] : [];
   const harnessOf = (word: string | undefined) => harnessVocab.find((w) => w.word === word)?.harness;
   const runInherits = (h: Harness) => inheritedModel(runConfig(h), configModels[h.config] ?? null, inProject?.model, profile?.default_model, hostSettings?.default_model);
   // A harness as the "Reads as" row has it: its model (or the one it inherits), and its config where there are several.
@@ -705,6 +707,20 @@ export function NewTaskModal({
         : worktree && inProject?.is_git === false
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
+  // A `!` that names no model may be a Codex config's, whose models are still on their way: the task waits for them, so a
+  // harness isn't left out (with its token sent as text). If they couldn't be fetched, it says so.
+  const unknownModels = tokens.filter((t) => t.prefix === "!" && t.value === undefined);
+  const asText = unknownModels.map((t) => `!${t.word}`).join(", ");
+  const configNames = (cs: { name: string }[]) => cs.map((c) => c.name).join(", ");
+  const modelsLoading = unknownModels.length > 0 && discovery.loading.length > 0;
+  const modelsBlock = !unknownModels.length
+    ? null
+    : modelsLoading
+      ? `Loading ${configNames(discovery.loading)}'s models, to see which ${asText} is…`
+      : discovery.failed.length
+        ? `Couldn't load ${configNames(discovery.failed.map((f) => f.config))}'s models (${discovery.failed[0].error}), so ${asText} isn't known: take it out, or open the dialog again to try again.`
+        : null;
+  const submitBlock = fanoutBlock ?? modelsBlock;
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
   const setStart = (v: boolean) => {
@@ -790,7 +806,7 @@ export function NewTaskModal({
       setSettling(1);
       return;
     }
-    if (!hasContent || busy || attach.uploading || fanoutBlock) return;
+    if (!hasContent || busy || attach.uploading || submitBlock) return;
     setBusy(true);
     setErr(null);
     // A task for each harness, one after another, so a failure leaves the rest to try again.
@@ -832,7 +848,7 @@ export function NewTaskModal({
           const done = runs.slice(0, tasks.length);
           untoken((t) => t.prefix === "!" && done.some((h) => sameHarness(harnessOf(t.value), h)));
           const keys = tasks.map((t) => `${keyPrefix(t, inProject)}-${t.number}`);
-          setPending({ id: fanoutId, made: [...(pending?.made ?? []), ...keys] });
+          setPending({ id: fanoutId, made: [...(pending?.made ?? []), ...keys], efforts: effortList });
           setErr(`Made ${keys.join(", ")}, but not the one with ${runLabel(run)}: ${(e as Error).message}`);
           setBusy(false);
           return;
@@ -1271,6 +1287,7 @@ export function NewTaskModal({
                 : `Makes the ${noun} left from this prompt, with ${pending!.made.join(", ")}${worktree ? ", in its own worktree" : ""}. Their cards say which is which.`)}
           </div>
         )}
+        {modelsBlock && <div className={clsx("text-[12px]", modelsLoading ? "text-muted" : "text-amber-300")}>{modelsBlock}</div>}
         {err && <div className="text-xs text-red-400">{err}</div>}
         <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
           <span className="mr-auto flex min-w-0 items-center gap-3">
@@ -1284,7 +1301,7 @@ export function NewTaskModal({
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!fanoutBlock}>
+          <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
             {many
               ? start && deps && dependsOn.length
                 ? `Create & queue ${runs.length}`
