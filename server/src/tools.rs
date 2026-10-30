@@ -53,6 +53,12 @@ impl From<anyhow::Error> for ToolError {
     }
 }
 
+impl From<rusqlite::Error> for ToolError {
+    fn from(e: rusqlite::Error) -> Self {
+        ToolError::Other(e.to_string())
+    }
+}
+
 impl From<crate::state::ApiError> for ToolError {
     fn from(e: crate::state::ApiError) -> Self {
         if e.0 == axum::http::StatusCode::NOT_FOUND { ToolError::NotFound(e.1) } else { ToolError::Other(e.1) }
@@ -87,7 +93,8 @@ pub struct McpCall {
 /// restart, say): they only read, record what they're given, or pick up where they left off
 /// (`wait` and `permission_prompt`, by their call id). A call to another tool that was cut short
 /// may have taken effect, so it isn't run again.
-const RERUNNABLE: &[&str] = &["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project"];
+const RERUNNABLE: &[&str] =
+    &["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations"];
 
 /// A call being executed, which duplicate deliveries wait on (see `handle_mcp`). Dropped without
 /// `done`, as when its request is cut short, it lets them go: a retry then finds it recorded as
@@ -190,13 +197,15 @@ pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, St
     result
 }
 
-/// Whether call `c`, cut short, can run again. An `update_project` or `delete_task` can while the
-/// user hasn't approved what it asked (nothing is changed before then): it carries on waiting for them.
+/// Whether call `c`, cut short, can run again. An `update_project`, `delete_task` or a change to
+/// an automation can while the user hasn't approved what it asked (nothing is changed before
+/// then): it carries on waiting for them.
 fn rerunnable(s: &Shared, c: &McpCall) -> bool {
     let kind = match c.tool.as_str() {
         _ if RERUNNABLE.contains(&c.tool.as_str()) => return true,
         "update_project" => "project",
         "delete_task" => "delete_task",
+        "create_automation" | "update_automation" | "delete_automation" => "automation",
         _ => return false,
     };
     s.db()
@@ -421,6 +430,11 @@ const DELETE_TASK_API: u32 = 58;
 /// The API version from which task details are bounded and get_task_field is available.
 const TASK_FIELDS_API: u32 = 59;
 
+/// The API version from which hosts have the automation tools.
+const AUTOMATIONS_API: u32 = 67;
+
+const AUTOMATION_TOOLS: &[&str] = &["list_automations", "create_automation", "update_automation", "delete_automation", "run_automation"];
+
 pub const TASK_FIELD_DEFAULT_LIMIT: usize = 2000;
 pub const TASK_FIELD_MAX_LIMIT: usize = 4000;
 
@@ -447,6 +461,9 @@ fn too_old(host: &str, api_version: u32, tool: &str, args: &Value) -> Option<Str
     }
     if tool == "delete_task" && api_version < DELETE_TASK_API {
         return Some(format!("{host} runs an older build that can't delete tasks; ask the user to delete it on the board"));
+    }
+    if AUTOMATION_TOOLS.contains(&tool) && api_version < AUTOMATIONS_API {
+        return Some(format!("{host} runs an older build without the automation tools; ask the user to update it, or to set it up in the project's settings"));
     }
     (needs_project_settings_api(tool, args) && api_version < PROJECT_SETTINGS_API || move_repo && api_version < MOVE_REPO_API)
         .then(|| format!("{host} runs an older build that can't do this with {tool}; ask the user to update it, or to make the change in the project's settings"))
@@ -677,7 +694,60 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
             let p = api::create_project_inner(s, &board.id, body).await?;
             Ok(project_json(s, &p, &board))
         }
+        "list_automations" => {
+            let p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?;
+            let list = crate::automations::list(&s.db(), &p.id)?;
+            let list: Vec<Value> = list.iter().map(|a| automation_json(s, a)).collect();
+            Ok(json!({"project": {"id": p.id, "key": p.key, "name": p.name}, "automations": list, "time_zone": crate::automations::time_zone()}))
+        }
+        "create_automation" | "update_automation" | "delete_automation" => {
+            // A call retried after a restart carries on with the approval it asked for.
+            if let Some(saved) = ctx.call_id.as_deref().map(|c| permissions::asked(s, c)).transpose()?.flatten() {
+                return change_automation(s, ctx, &saved).await;
+            }
+            let input = match tool {
+                "create_automation" => {
+                    let p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?;
+                    automation_creation(s, ctx, &p, args, profile)?
+                }
+                "update_automation" => {
+                    let (a, p) = resolve_automation(s, ctx, args, profile, own_project)?;
+                    match automation_update(s, ctx, &a, &p, args, profile)? {
+                        Ok(input) => input,
+                        // Nothing that needs asking: turning it off, or renaming it.
+                        Err(apply) => {
+                            let a = crate::automations::update(s, &a.id, &apply)?;
+                            return Ok(automation_json(s, &a));
+                        }
+                    }
+                }
+                _ => {
+                    let (a, p) = resolve_automation(s, ctx, args, profile, own_project)?;
+                    let mut input = automation_input(s, ctx, "delete", &p, automation_view(s, &a.id, &a.name, a.enabled, &a.trigger, &a.action, has_secret(&a)));
+                    input["reason"] = json!(str_arg("reason"));
+                    input
+                }
+            };
+            change_automation(s, ctx, &input).await
+        }
+        "run_automation" => {
+            let (a, _) = resolve_automation(s, ctx, args, profile, own_project)?;
+            let event = str_arg("event");
+            let run = crate::automations::run_now(s, &a, crate::automations::RunNow { payload: args.get("payload").filter(|p| !p.is_null()).cloned(), event }).await?;
+            Ok(crate::automations::run_json(&s.db(), &run))
+        }
         other => Err(ToolError::Other(format!("unknown tool {other}"))),
+    }
+}
+
+/// The project an agent names (on a board it can use), or its own.
+fn project_or_own(s: &Shared, ctx: &Ctx, pid: Option<String>, profile: Option<&str>, own: Option<String>) -> std::result::Result<db::Project, ToolError> {
+    match pid {
+        Some(pid) => resolve_project(s, ctx, &pid, profile),
+        None => {
+            let pid = own.ok_or_else(|| ToolError::Other("project_id is required (use list_projects)".into()))?;
+            db::get_project(&s.db(), &pid)?.ok_or_else(|| ToolError::NotFound(format!("project {pid}")))
+        }
     }
 }
 
@@ -771,16 +841,26 @@ fn approval_what(tool: &str, input: &Value) -> String {
     if tool == "delete_task" {
         return format!("deleting {}", input["delete"]["key"].as_str().unwrap_or("the task"));
     }
+    if let Some(op) = tool.strip_suffix("_automation") {
+        let verb = match op {
+            "create" => "creating",
+            "update" => "changing",
+            _ => "deleting",
+        };
+        return format!("{verb} the automation \"{}\"", input["automation"]["name"].as_str().unwrap_or_default());
+    }
     let fields: Vec<&str> = input["changes"].as_array().into_iter().flatten().filter(|c| c["needs_approval"] == true).filter_map(|c| c["field"].as_str()).collect();
     format!("changing {}", fields.join(", "))
 }
 
-/// Asks the user to approve what `input` describes for `tool` (update_project or delete_task) in
-/// the calling agent's thread, and waits for their answer: the input they approved.
+/// Asks the user to approve what `input` describes for `tool` (update_project, delete_task or an
+/// automation tool) in the calling agent's thread, and waits for their answer: the input they approved.
 async fn ask_user(s: &Shared, ctx: &Ctx, tool: &str, input: &Value) -> std::result::Result<Value, ToolError> {
     let what = approval_what(tool, input);
     let (kind, of, instead, nothing) = match tool {
         "delete_task" => ("delete_task", "task", "ask the user to delete it on the board", "deleted"),
+        "create_automation" => ("automation", "project", "ask the user to add it in the project's settings (Automations)", "created"),
+        "update_automation" | "delete_automation" => ("automation", "project", "ask the user to do it in the project's settings (Automations)", "changed"),
         _ => ("project", "project", "ask the user to do it in the project's settings", "changed"),
     };
     let (Some(task), Some(call_id)) = (&ctx.task, &ctx.call_id) else {
@@ -852,6 +932,222 @@ async fn delete_task(s: &Shared, ctx: &Ctx, input: &Value) -> ToolResult {
     }
     api::delete_last(s, &t, delete_branch).await?;
     Ok(json!({"deleted": true, "key": key, "title": t.title, "tasks_deleted_with_it": children.len()}))
+}
+
+// ---------- automations ----------
+
+/// The automation an agent names in `automation_id`: its id, or its name in `project_id` (or
+/// the agent's own project). Only one in a project on a board the agent can use.
+fn resolve_automation(
+    s: &Shared, ctx: &Ctx, args: &Value, profile: Option<&str>, own_project: Option<String>,
+) -> std::result::Result<(crate::automations::Automation, db::Project), ToolError> {
+    let r = args["automation_id"].as_str().map(str::trim).unwrap_or_default();
+    let by_id = crate::automations::get(&s.db(), r)?;
+    if let Some(a) = by_id {
+        let p = db::get_project(&s.db(), &a.project_id)?;
+        if let Some(p) = p.filter(|p| boards(s, ctx).is_ok_and(|b| b.iter().any(|b| b.id == p.profile_id))) {
+            return Ok((a, p));
+        }
+        return Err(ToolError::NotFound(format!("automation {r}")));
+    }
+    let p = project_or_own(s, ctx, args["project_id"].as_str().filter(|p| !p.is_empty()).map(String::from), profile, own_project)?;
+    let named: Vec<_> = crate::automations::list(&s.db(), &p.id)?.into_iter().filter(|a| a.name.eq_ignore_ascii_case(r)).collect();
+    match named.len() {
+        0 => Err(ToolError::NotFound(format!("automation {r} in {} (use list_automations)", p.key))),
+        1 => Ok((named.into_iter().next().unwrap(), p)),
+        _ => Err(ToolError::Other(format!("{} has several automations named {r}; give its id (see list_automations)", p.key))),
+    }
+}
+
+fn has_secret(a: &crate::automations::Automation) -> bool {
+    a.secret.as_deref().is_some_and(|s| !s.is_empty())
+}
+
+/// An automation as list_automations shows it, with its webhook's full URL when the host's
+/// public_url is set.
+fn automation_json(s: &Shared, a: &crate::automations::Automation) -> Value {
+    let c = s.db();
+    let mut v = crate::automations::to_json(&c, a);
+    if a.is_webhook() {
+        match db::get_setting(&c, "public_url").ok().flatten().filter(|u| !u.is_empty()) {
+            Some(url) => v["webhook_url"] = json!(format!("{url}{}", a.hook_path())),
+            None => v["webhook_note"] = json!("hook_path is on this host; the full URL depends on how it's reached from outside (the host's public_url setting isn't set)"),
+        }
+    }
+    v
+}
+
+/// An automation as its approval shows it: what it is, and the task its message goes to and
+/// the agent config its tasks use, by name.
+#[allow(clippy::too_many_arguments)]
+fn automation_view(
+    s: &Shared, id: &str, name: &str, enabled: bool, trigger: &crate::automations::Trigger, action: &crate::automations::Action, signed: bool,
+) -> Value {
+    use crate::automations::Action;
+    let mut v = json!({"id": id, "name": name, "enabled": enabled, "trigger": trigger, "action": action, "signed": signed});
+    match action {
+        Action::SendToTask { task_id, .. } => {
+            let t = db::get_task(&s.db(), task_id).ok().flatten();
+            if let Some(t) = t {
+                v["target"] = json!({"id": t.id, "key": format!("{}-{}", project_key(s, &t), t.number), "title": t.title, "status": t.status});
+            }
+        }
+        Action::CreateTask { claude_config_id: Some(id), .. } => {
+            let c = db::get_claude_config(&s.db(), id).ok().flatten();
+            if let Some(c) = c {
+                v["config"] = json!({"id": c.id, "name": c.name, "agent": c.agent});
+            }
+        }
+        Action::CreateTask { .. } => {}
+    }
+    v
+}
+
+/// What an automation approval asks: `op` (create, update or delete) on `automation` (see
+/// automation_view) in project `p`, asked by the calling agent, with the time zone its times of
+/// day are in.
+fn automation_input(s: &Shared, ctx: &Ctx, op: &str, p: &db::Project, automation: Value) -> Value {
+    let time_zone = crate::automations::time_zone();
+    json!({"op": op, "project": approval_project(s, p), "task": approval_task(s, ctx), "automation": automation, "time_zone": time_zone})
+}
+
+/// An automation's action as an agent gives it, checked against project `p`: a message's task
+/// can be named by key, and has to be one of the project's.
+fn automation_action(s: &Shared, ctx: &Ctx, p: &db::Project, v: &Value, profile: Option<&str>) -> std::result::Result<crate::automations::Action, ToolError> {
+    use crate::automations::{self as au, Action};
+    let action = match au::parse::<Action>("action", v)? {
+        Action::SendToTask { task_id, message } => {
+            let t = resolve_task(s, ctx, task_id.trim(), profile).map_err(|e| match e {
+                ToolError::NotFound(_) => ToolError::Other(format!("task {task_id} not found in {}", p.key)),
+                e => e,
+            })?;
+            Action::SendToTask { task_id: t.id, message }
+        }
+        a => a,
+    };
+    Ok(au::check_action(&s.db(), p, action)?)
+}
+
+/// What `create_automation` asks the user to approve: the automation, checked.
+fn automation_creation(s: &Shared, ctx: &Ctx, p: &db::Project, args: &Value, profile: Option<&str>) -> ToolResult {
+    use crate::automations as au;
+    let name = au::check_name(&args["name"])?;
+    let trigger = au::check_trigger(au::parse("trigger", &args["trigger"])?)?;
+    let action = automation_action(s, ctx, p, &args["action"], profile)?;
+    let enabled = args["enabled"].as_bool().unwrap_or(true);
+    let generate_secret = args["generate_secret"].as_bool().unwrap_or(false);
+    if generate_secret && !matches!(trigger, au::Trigger::Webhook { .. }) {
+        return Err(ToolError::Other("only a webhook can have a secret".into()));
+    }
+    let view = automation_view(s, "", &name, enabled, &trigger, &action, generate_secret);
+    let mut input = automation_input(s, ctx, "create", p, view);
+    input["apply"] = json!({"name": name, "enabled": enabled, "trigger": trigger, "action": action, "generate_secret": generate_secret});
+    input["reason"] = args["reason"].clone();
+    Ok(input)
+}
+
+/// What `update_automation` asks the user to approve (Ok), or the change to make without asking
+/// (Err): turning the automation off, or renaming it. Only what differs is changed, so a
+/// setting left as it was can't overwrite a change the user made meanwhile.
+fn automation_update(
+    s: &Shared, ctx: &Ctx, a: &crate::automations::Automation, p: &db::Project, args: &Value, profile: Option<&str>,
+) -> std::result::Result<std::result::Result<Value, Map<String, Value>>, ToolError> {
+    use crate::automations as au;
+    let mut apply = Map::new();
+    let name = match &args["name"] {
+        Value::Null => a.name.clone(),
+        v => au::check_name(v)?,
+    };
+    if name != a.name {
+        apply.insert("name".into(), json!(name));
+    }
+    let trigger = match &args["trigger"] {
+        Value::Null => a.trigger.clone(),
+        v => au::check_trigger(au::parse("trigger", v)?)?,
+    };
+    if trigger != a.trigger {
+        apply.insert("trigger".into(), json!(trigger));
+    }
+    let action = match &args["action"] {
+        Value::Null => a.action.clone(),
+        v => automation_action(s, ctx, p, v, profile)?,
+    };
+    if action != a.action {
+        apply.insert("action".into(), json!(action));
+    }
+    let enabled = match &args["enabled"] {
+        Value::Null => a.enabled,
+        v => v.as_bool().ok_or_else(|| ToolError::Other("enabled must be true or false".into()))?,
+    };
+    if enabled != a.enabled {
+        apply.insert("enabled".into(), json!(enabled));
+    }
+    let webhook = matches!(trigger, au::Trigger::Webhook { .. });
+    let (generate, remove, rotate) = (args["generate_secret"] == true, args["remove_secret"] == true, args["rotate_url"] == true);
+    if (generate || rotate) && !webhook {
+        return Err(ToolError::Other("only a webhook has a secret or a URL".into()));
+    }
+    if generate && remove {
+        return Err(ToolError::Other("generate_secret and remove_secret can't both be true".into()));
+    }
+    if generate {
+        apply.insert("generate_secret".into(), json!(true));
+    } else if remove && has_secret(a) {
+        apply.insert("secret".into(), json!(""));
+    }
+    if rotate {
+        apply.insert("rotate_token".into(), json!(true));
+    }
+    if apply.is_empty() {
+        return Err(ToolError::Other("nothing to change".into()));
+    }
+    // Turning it off, or renaming it, doesn't make it do anything it didn't.
+    if apply.keys().all(|k| k == "name" || k == "enabled") && enabled <= a.enabled {
+        return Ok(Err(apply));
+    }
+    let signed = if generate { true } else if remove { false } else { has_secret(a) };
+    let mut input = automation_input(s, ctx, "update", p, automation_view(s, &a.id, &name, enabled, &trigger, &action, signed));
+    input["before"] = automation_view(s, &a.id, &a.name, a.enabled, &a.trigger, &a.action, has_secret(a));
+    input["changes"] = json!(apply.keys().map(|k| k.as_str()).collect::<Vec<_>>());
+    input["apply"] = json!(apply);
+    input["reason"] = args["reason"].clone();
+    Ok(Ok(input))
+}
+
+/// Asks the user to approve the automation change `input` describes (see automation_input),
+/// then makes it, exactly as they saw it. A new secret is made once it's approved, and returned.
+async fn change_automation(s: &Shared, ctx: &Ctx, input: &Value) -> ToolResult {
+    use crate::automations as au;
+    let op = input["op"].as_str().unwrap_or_default();
+    let tool = format!("{op}_automation");
+    let id = input["automation"]["id"].as_str().unwrap_or_default();
+    let approved = match ask_user(s, ctx, &tool, input).await {
+        Ok(a) => a,
+        // Deleted while the user was asked.
+        Err(_) if op != "create" && au::get(&s.db(), id)?.is_none() => {
+            return Err(ToolError::Other(format!("the automation \"{}\" was deleted meanwhile, so nothing was changed", input["automation"]["name"].as_str().unwrap_or(id))));
+        }
+        Err(e) => return Err(e),
+    };
+    let mut apply = approved["apply"].as_object().cloned().unwrap_or_default();
+    let secret = (apply.remove("generate_secret") == Some(json!(true))).then(crate::util::new_token);
+    if let Some(secret) = &secret {
+        apply.insert("secret".into(), json!(secret));
+    }
+    let a = match op {
+        "create" => au::create(s, approved["project"]["id"].as_str().unwrap_or_default(), &apply)?,
+        "update" => au::update(s, id, &apply)?,
+        _ => {
+            let a = au::delete(s, id)?;
+            return Ok(json!({"deleted": true, "id": a.id, "name": a.name}));
+        }
+    };
+    let mut out = automation_json(s, &a);
+    if let Some(secret) = secret {
+        out["secret"] = json!(secret);
+        out["secret_note"] = json!("Deliveries must be signed with this secret (X-Hub-Signature-256, as GitHub does). It isn't shown again.");
+    }
+    Ok(out)
 }
 
 /// The project a change is to, as the approval shows it.
@@ -2033,7 +2329,7 @@ mod tests {
     /// The next project change or deletion waiting for approval, once there is one.
     async fn approval_asked(s: &Shared) -> Value {
         loop {
-            if let Some(a) = permissions::pending_approvals(s, true).unwrap().into_iter().next() {
+            if let Some(a) = permissions::pending_approvals(s, true, true).unwrap().into_iter().next() {
                 return a;
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -2085,7 +2381,7 @@ mod tests {
 
             let err = call(&s, &me("c0"), "delete_task", json!({"task_id": "KIW-1"})).await.unwrap_err();
             assert!(err.contains("can't delete your own task"), "{err}");
-            assert!(permissions::pending_approvals(&s, true).unwrap().is_empty());
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
 
             // Denied: nothing is deleted.
             let args = json!({"task_id": "KIW-3", "reason": "A duplicate of KIW-2"});
@@ -2105,7 +2401,7 @@ mod tests {
             // Confirmed: it's deleted.
             let asked = async {
                 let a = approval_asked(&s).await;
-                assert!(permissions::pending_approvals(&s, false).unwrap().is_empty());
+                assert!(permissions::pending_approvals(&s, false, false).unwrap().is_empty());
                 assert_eq!(permissions::pending(&s, Some(&caller.id)).unwrap().len(), 1);
                 answer_approval(&s, true).await;
                 a
@@ -2122,7 +2418,7 @@ mod tests {
             };
             let (res, _) = tokio::join!(call(&s, &c3, "delete_task", json!({"task_id": "KIW-3"})), delete);
             assert_eq!(res.unwrap()["deleted"], false);
-            assert!(permissions::pending_approvals(&s, true).unwrap().is_empty());
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
 
             // An agent on another host has no thread here to ask in.
             let other = task(&s, "kiwicd", "Other");
@@ -2295,7 +2591,7 @@ mod tests {
             };
             let (res, _) = tokio::join!(call(&s, &c1, "update_project", json!({"setup_script": "make"})), delete);
             assert!(res.unwrap_err().contains("Request expired"));
-            assert!(permissions::pending_approvals(&s, true).unwrap().is_empty());
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
             // The project the change is for is deleted, from another project's thread.
             let delete = async {
                 approval_asked(&s).await;
@@ -2303,7 +2599,7 @@ mod tests {
             };
             let (res, _) = tokio::join!(call(&s, &c2, "update_project", json!({"project_id": "OTH", "setup_script": "make"})), delete);
             assert!(res.unwrap_err().contains("Request expired"));
-            assert!(permissions::pending_approvals(&s, true).unwrap().is_empty());
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
         });
     }
 
@@ -2327,7 +2623,7 @@ mod tests {
             let (res, asked) = tokio::join!(call(&s, &c1, "update_project", change.clone()), answer_approval(&s, true));
             assert_eq!(res.unwrap()["name"], "Kiwi");
             assert_eq!(asked["input"]["changes"].as_array().unwrap().len(), 1);
-            assert_eq!(permissions::pending_approvals(&s, true).unwrap().len(), 0);
+            assert_eq!(permissions::pending_approvals(&s, true, true).unwrap().len(), 0);
             // Answered already: a denial stands, without asking again.
             let first = tokio::time::timeout(std::time::Duration::from_millis(100), call(&s, &c2, "update_project", json!({"setup_script": "make"}))).await;
             assert!(first.is_err());
@@ -2403,7 +2699,7 @@ mod tests {
             let same = json!({"status_scripts": {"done": "  "}, "reviewers": [{}], "use_worktrees": false, "repo_path": "/x"});
             let v = call(&s, &me("c6"), "update_project", same).await.unwrap();
             assert_eq!((&v["status_scripts"], &v["reviewers"]), (&json!({}), &json!([])));
-            assert!(permissions::pending_approvals(&s, true).unwrap().is_empty());
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
         });
     }
 
@@ -3108,6 +3404,260 @@ mod tests {
             answer_approval(&s, true).await;
             assert!(handle_mcp(&s, delete("c5", "KIW-3")).await.unwrap_err().contains("interrupted"));
             assert!(exists(&kept));
+        });
+    }
+    fn automations(s: &Shared, project: &str) -> Vec<crate::automations::Automation> {
+        crate::automations::list(&s.db(), project).unwrap()
+    }
+
+    fn webhook_args(name: &str) -> Value {
+        json!({
+            "name": name,
+            "trigger": {"kind": "webhook", "filters": [{"path": "event", "op": "equals", "value": "issues"}]},
+            "action": {"kind": "create_task", "title": "Triage: {{body.issue.title}}", "description": "Look at {{body.issue.html_url}}", "start": true},
+            "generate_secret": true,
+            "reason": "Triage new issues",
+        })
+    }
+
+    #[test]
+    fn agents_create_automations_only_once_the_user_approves() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            project(&s, &p, "other", "OTH");
+            // Even a thread that may do anything without asking asks first.
+            let caller = task(&s, "kiwicd", "Caller");
+            s.update_task(&caller.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap();
+            let caller = db::get_task(&s.db(), &caller.id).unwrap().unwrap();
+            let me = |call_id: &str| Ctx { task: Some(caller.clone()), call_id: Some(call_id.into()), ..ctx(&p) };
+            let elsewhere = task(&s, "other", "Elsewhere");
+
+            // Denied: nothing is made.
+            let (c1, c2) = (me("c1"), me("c2"));
+            let (res, asked) = tokio::join!(call(&s, &c1, "create_automation", webhook_args("Triage")), answer_approval(&s, false));
+            let err = res.unwrap_err();
+            assert!(err.contains("didn't approve creating the automation \"Triage\", so nothing was created"), "{err}");
+            assert!(automations(&s, "kiwicd").is_empty());
+            // The approval shows what would run, and who asked.
+            assert_eq!((&asked["kind"], &asked["tool_name"]), (&json!("automation"), &json!("create_automation")));
+            let input = &asked["input"];
+            assert_eq!((&input["op"], &input["project"]["key"], &input["task"]["key"]), (&json!("create"), &json!("KIW"), &json!("KIW-1")));
+            assert_eq!(input["reason"], "Triage new issues");
+            let a = &input["automation"];
+            assert_eq!((&a["name"], &a["enabled"], &a["signed"]), (&json!("Triage"), &json!(true), &json!(true)));
+            assert_eq!((&a["trigger"]["kind"], &a["trigger"]["filters"][0]["value"]), (&json!("webhook"), &json!("issues")));
+            assert_eq!((&a["action"]["title"], &a["action"]["start"], &a["action"]["status"]), (&json!("Triage: {{body.issue.title}}"), &json!(true), &json!("todo")));
+            assert_eq!(db::get_task(&s.db(), &caller.id).unwrap().unwrap().attention_reason.as_deref(), Some("Approve an automation?"));
+            // Only UIs that know automations are shown it.
+            let shown = async {
+                let a = approval_asked(&s).await;
+                assert!(permissions::pending_approvals(&s, true, false).unwrap().is_empty());
+                answer_approval(&s, true).await;
+                a
+            };
+            // Approved: it's made as it was shown, with a new secret that's returned once.
+            let (res, _) = tokio::join!(call(&s, &c2, "create_automation", webhook_args("Triage")), shown);
+            let res = res.unwrap();
+            let made = automations(&s, "kiwicd");
+            assert_eq!(made.len(), 1);
+            assert_eq!((made[0].name.as_str(), made[0].enabled), ("Triage", true));
+            assert_eq!(made[0].secret.as_deref(), res["secret"].as_str());
+            assert!(res["secret"].as_str().is_some_and(|s| s.len() > 20));
+            assert_eq!(res["hook_path"], json!(made[0].hook_path()));
+            assert!(res["webhook_note"].is_string());
+            // With the host's public address, the full URL.
+            db::set_setting(&s.db(), "public_url", Some("https://board.example.com")).unwrap();
+            let list = call(&s, &me("c3"), "list_automations", json!({})).await.unwrap();
+            assert_eq!(list["automations"][0]["webhook_url"], json!(format!("https://board.example.com{}", made[0].hook_path())));
+            assert!(list["automations"][0].get("secret").is_none());
+
+            // A message goes to a task named by key, and only one of the project's own.
+            let message = |task: &str| json!({
+                "name": "Nudge", "trigger": {"kind": "daily", "time": "9:00", "weekdays": ["fri", "mon"]},
+                "action": {"kind": "send_to_task", "task_id": task, "message": "Anything new?"},
+            });
+            let err = call(&s, &me("c4"), "create_automation", message(&format!("OTH-{}", elsewhere.number))).await.unwrap_err();
+            assert!(err.contains("only send messages to tasks in its own project"), "{err}");
+            let err = call(&s, &me("c5"), "create_automation", message("KIW-99")).await.unwrap_err();
+            assert!(err.contains("not found"), "{err}");
+            // Bad settings are refused before the user is asked.
+            let mut fast = message("KIW-1");
+            fast["trigger"] = json!({"kind": "interval", "every_minutes": 1});
+            assert!(call(&s, &me("c6"), "create_automation", fast).await.unwrap_err().contains("every_minutes"));
+            let mut signed = message("KIW-1");
+            signed["generate_secret"] = json!(true);
+            assert!(call(&s, &me("c7"), "create_automation", signed).await.unwrap_err().contains("only a webhook"));
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
+            let c8 = me("c8");
+            let (res, asked) = tokio::join!(call(&s, &c8, "create_automation", message("KIW-1")), answer_approval(&s, true));
+            res.unwrap();
+            let view = &asked["input"]["automation"];
+            assert_eq!((&view["target"]["key"], &view["target"]["title"]), (&json!("KIW-1"), &json!("Caller")));
+            assert_eq!(view["trigger"], json!({"kind": "daily", "time": "09:00", "weekdays": ["mon", "fri"]}));
+            assert_eq!(view["action"]["task_id"], json!(caller.id));
+            assert_eq!(automations(&s, "kiwicd").len(), 2);
+
+            // An agent on another host has no thread here to ask in.
+            let mut remote = webhook_args("Remote");
+            remote["project_id"] = json!("KIW");
+            let err = call(&s, &ctx(&p), "create_automation", remote).await.unwrap_err();
+            assert!(err.contains("creating the automation \"Remote\" needs the user's approval"), "{err}");
+            assert_eq!(automations(&s, "kiwicd").len(), 2);
+        });
+    }
+
+    #[test]
+    fn agents_change_run_and_delete_automations() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            let caller = task(&s, "kiwicd", "Caller");
+            let me = |call_id: &str| Ctx { task: Some(caller.clone()), call_id: Some(call_id.into()), ..ctx(&p) };
+            let body = json!({"name": "Weekly", "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "create_task", "title": "Update deps {{date}}"}});
+            let a = crate::automations::create(&s, "kiwicd", body.as_object().unwrap()).unwrap();
+            let get = || crate::automations::get(&s.db(), &a.id).unwrap().unwrap();
+
+            // Turning it off or renaming it isn't asked about.
+            let res = call(&s, &me("c1"), "update_automation", json!({"automation_id": "weekly", "enabled": false, "name": "Weekly deps"})).await.unwrap();
+            assert_eq!((&res["enabled"], &res["name"]), (&json!(false), &json!("Weekly deps")));
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
+            assert!(call(&s, &me("c2"), "update_automation", json!({"automation_id": a.id, "enabled": false})).await.unwrap_err().contains("nothing to change"));
+            // Turning it on is.
+            let c3 = me("c3");
+            let (res, asked) = tokio::join!(call(&s, &c3, "update_automation", json!({"automation_id": a.id, "enabled": true})), answer_approval(&s, false));
+            assert!(res.unwrap_err().contains("didn't approve changing the automation \"Weekly deps\""));
+            assert!(!get().enabled);
+            assert_eq!(asked["input"]["changes"], json!(["enabled"]));
+            // So is a new action; only what it changes is changed, though the user renames it meanwhile.
+            let c4 = me("c4");
+            let change = json!({"automation_id": a.id, "name": "Weekly deps", "action": {"kind": "create_task", "title": "Bump deps", "status": "backlog"}});
+            let approve = async {
+                let asked = approval_asked(&s).await;
+                crate::automations::update(&s, &a.id, json!({"name": "Deps"}).as_object().unwrap()).unwrap();
+                answer_approval(&s, true).await;
+                asked
+            };
+            let (res, asked) = tokio::join!(call(&s, &c4, "update_automation", change), approve);
+            res.unwrap();
+            let input = &asked["input"];
+            assert_eq!((&input["op"], &input["changes"]), (&json!("update"), &json!(["action"])));
+            assert_eq!((&input["before"]["action"]["title"], &input["automation"]["action"]["title"]), (&json!("Update deps {{date}}"), &json!("Bump deps")));
+            assert_eq!(input["automation"]["action"]["status"], json!("backlog"));
+            let now = get();
+            assert_eq!(now.name, "Deps");
+            assert!(matches!(&now.action, crate::automations::Action::CreateTask { title, status, .. } if title == "Bump deps" && status == "backlog"));
+
+            // Run now makes its task.
+            let run = call(&s, &me("c5"), "run_automation", json!({"automation_id": "Deps"})).await.unwrap();
+            assert_eq!(run["status"], "ok", "{run}");
+            let made = db::get_task(&s.db(), run["task_id"].as_str().unwrap()).unwrap().unwrap();
+            assert_eq!(made.title, "Bump deps");
+
+            // Deleted by the user while an agent asks to change it: the question goes, and the call says so.
+            let c6 = me("c6");
+            let delete = async {
+                approval_asked(&s).await;
+                crate::automations::delete(&s, &a.id).unwrap();
+            };
+            let (res, _) = tokio::join!(call(&s, &c6, "update_automation", json!({"automation_id": a.id, "trigger": {"kind": "interval", "every_minutes": 30}})), delete);
+            assert!(res.unwrap_err().contains("was deleted meanwhile"));
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
+
+            // Deleting one is asked about too.
+            let b = crate::automations::create(&s, "kiwicd", body.as_object().unwrap()).unwrap();
+            let (c7, c8) = (me("c7"), me("c8"));
+            let (res, asked) = tokio::join!(call(&s, &c7, "delete_automation", json!({"automation_id": b.id, "reason": "Not needed"})), answer_approval(&s, false));
+            assert!(res.unwrap_err().contains("didn't approve deleting the automation \"Weekly\""));
+            assert_eq!((&asked["input"]["op"], &asked["input"]["reason"]), (&json!("delete"), &json!("Not needed")));
+            assert_eq!(automations(&s, "kiwicd").len(), 1);
+            let flagged = db::get_task(&s.db(), &caller.id).unwrap().unwrap();
+            assert_eq!(flagged.attention_reason.as_deref(), Some("Delete an automation?"));
+            let (res, _) = tokio::join!(call(&s, &c8, "delete_automation", json!({"automation_id": "Weekly"})), answer_approval(&s, true));
+            assert_eq!(res.unwrap()["deleted"], json!(true));
+            assert!(automations(&s, "kiwicd").is_empty());
+        });
+    }
+
+    #[test]
+    fn agents_only_reach_automations_on_boards_they_can_use() {
+        testing::run(async || {
+            let s = state();
+            let me = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            let work = insert_profile(&s.db(), "work", &[], None).unwrap();
+            project(&s, &me, "kiwicd", "KIW");
+            project(&s, &work, "secret", "SEC");
+            let body = json!({"name": "Nightly", "trigger": {"kind": "daily", "time": "02:00"}, "action": {"kind": "create_task", "title": "Nightly"}});
+            let theirs = crate::automations::create(&s, "secret", body.as_object().unwrap()).unwrap();
+            let caller = task(&s, "kiwicd", "Caller");
+            let c = Ctx { task: Some(caller.clone()), call_id: Some("c1".into()), ..ctx(&me) };
+            // Not found here, as if it weren't there (so linked hosts are asked instead).
+            let not_found = async |tool: &str, args: Value| {
+                let r = local(&s, &c, tool, &args).await;
+                assert!(matches!(r, Err(ToolError::NotFound(_))), "{tool}: {:?}", r.map_err(msg));
+            };
+            not_found("list_automations", json!({"project_id": "SEC"})).await;
+            not_found("list_automations", json!({"project_id": "work:SEC"})).await;
+            not_found("create_automation", json!({"project_id": "SEC", "name": "x", "trigger": body["trigger"], "action": body["action"]})).await;
+            for tool in ["update_automation", "delete_automation", "run_automation"] {
+                let mut args = json!({"automation_id": theirs.id});
+                if tool == "update_automation" {
+                    args["enabled"] = json!(false);
+                }
+                not_found(tool, args).await;
+            }
+            assert!(crate::automations::get(&s.db(), &theirs.id).unwrap().unwrap().enabled);
+            assert!(crate::automations::runs(&s.db(), &theirs.id, 10).unwrap().is_empty());
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
+            // A task of theirs can't be messaged from an automation here, by id either.
+            let hidden = task(&s, "secret", "Hidden");
+            let args = json!({"name": "x", "trigger": body["trigger"], "action": {"kind": "send_to_task", "task_id": hidden.id, "message": "hi"}});
+            assert!(call(&s, &c, "create_automation", args).await.unwrap_err().contains(&format!("task {} not found in KIW", hidden.id)));
+            // Once their board lets this profile's agents in, its automations are there to use.
+            grant(&s, &work, &["personal"]);
+            let list = call(&s, &c, "list_automations", json!({"project_id": "SEC"})).await.unwrap();
+            assert_eq!(list["automations"][0]["id"], json!(theirs.id));
+            // And a message still only goes to a task in the automation's own project.
+            let args = json!({"name": "x", "trigger": body["trigger"], "action": {"kind": "send_to_task", "task_id": hidden.id, "message": "hi"}});
+            assert!(call(&s, &c, "create_automation", args).await.unwrap_err().contains("its own project"));
+            // Older hosts aren't sent automation calls.
+            assert!(too_old("laptop", 66, "create_automation", &json!({})).is_some_and(|e| e.contains("without the automation tools")));
+            assert!(too_old("laptop", 67, "list_automations", &json!({})).is_none());
+        });
+    }
+
+    #[test]
+    fn an_automation_approval_cut_short_by_a_restart_is_still_waited_for() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            let caller = task(&s, "kiwicd", "Caller");
+            let run = db::insert_run(&s.db(), &caller.id, "prompt").unwrap();
+            let call = |id: &str, args: Value| McpCall { task_fields: true, run_id: run.id.clone(), call_id: id.into(), tool: "create_automation".into(), args };
+            let cut_short = async |c: McpCall| assert!(tokio::time::timeout(std::time::Duration::from_millis(100), handle_mcp(&s, c)).await.is_err());
+            let asks = || s.db().query_row("SELECT COUNT(*) FROM permission_requests WHERE kind='automation'", [], |r| r.get::<_, i64>(0)).unwrap();
+            // The server restarts while the user is asked; retried (even with other arguments), the
+            // call waits for the same answer and makes what it asked about, once.
+            cut_short(call("c1", webhook_args("Triage"))).await;
+            let (res, _) = tokio::join!(handle_mcp(&s, call("c1", webhook_args("Other"))), answer_approval(&s, true));
+            assert_eq!(res.unwrap()["name"], "Triage");
+            assert_eq!((asks(), automations(&s, "kiwicd").len()), (1, 1));
+            assert_eq!(handle_mcp(&s, call("c1", webhook_args("Triage"))).await.unwrap()["name"], "Triage");
+            assert_eq!(automations(&s, "kiwicd").len(), 1);
+            // Denied before the retry: nothing is made.
+            cut_short(call("c2", webhook_args("Second"))).await;
+            answer_approval(&s, false).await;
+            assert!(handle_mcp(&s, call("c2", webhook_args("Second"))).await.unwrap_err().contains("didn't approve"));
+            assert_eq!(automations(&s, "kiwicd").len(), 1);
+            // Approved before the retry: it may have been made as the server stopped, so it isn't made again.
+            cut_short(call("c3", webhook_args("Third"))).await;
+            answer_approval(&s, true).await;
+            assert!(handle_mcp(&s, call("c3", webhook_args("Third"))).await.unwrap_err().contains("interrupted"));
+            assert_eq!(automations(&s, "kiwicd").len(), 1);
+            assert_eq!(asks(), 3);
         });
     }
 }

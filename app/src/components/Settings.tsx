@@ -498,7 +498,7 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
             </div>
           )}
 
-          {hostSupports(host, 66) && (
+          {hostSupports(host, 68) && (
             <Field
               label="Watch pull requests in review"
               hint="While a task is in In review, the board reads its pull request every couple of minutes and sends its agent what's new, which starts its turn. Only comments and reviews from people who can push to the repository (its owner, members and collaborators) count, not those from bots or from the agents' own GitHub account (yours too, if you share it)."
