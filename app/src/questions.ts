@@ -24,7 +24,9 @@ export function questionsOf(data: Any): AskedQuestion[] {
       question: str(q.question) || "(no question)",
       header: str(q.header) || undefined,
       options: (Array.isArray(q.options) ? q.options : [])
-        .map((o: Any) => (typeof o === "string" ? { label: o } : { label: str(o?.label), description: str(o?.description) || undefined, preview: str(o?.preview) || undefined }))
+        .map((o: Any) =>
+          typeof o === "string" ? { label: o } : { label: str(o?.label), description: str(o?.description) || undefined, preview: str(o?.preview) || undefined },
+        )
         .filter((o: AskedOption) => o.label),
       multiSelect: q.multiSelect === true,
       isOther: typeof q.isOther === "boolean" ? q.isOther : undefined,
@@ -48,7 +50,8 @@ export function answersList(questions: AskedQuestion[], answers: string[][]): st
  * question is declined with them as its message.
  */
 export function declinedWithAnswers(questions: AskedQuestion[], answers: string[][]): string {
-  return `The user answered your questions in the board, which couldn't pass the answers to this tool (so it shows as declined). Carry on with these answers:\n\n${answersList(questions, answers)}`;
+  const why = "The user answered your questions in the board, which couldn't pass the answers to this tool (so it shows as declined).";
+  return `${why} Carry on with these answers:\n\n${answersList(questions, answers)}`;
 }
 
 /** A plan's title: its first line if that's a heading, without a leading "Plan:". */

@@ -230,7 +230,8 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             let options = card["options"].as_array().is_some_and(|o| !o.is_empty());
             crate::questions::ask(s, &task, &c.call_id, card).map_err(|e| format!("{e:#}"))?;
             let note = if options {
-                "The user will be notified and shown your question with its options. End your turn now; their answer (the options they picked, or what they wrote) comes as their next message."
+                "The user will be notified and shown your question with its options. End your turn now; their answer (the options \
+                 they picked, or what they wrote) comes as their next message."
             } else {
                 "The user will be notified. End your turn now with your question."
             };

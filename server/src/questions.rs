@@ -234,7 +234,12 @@ mod tests {
         let c = card(&json!({"question": "Which?", "options": ["A", {"label": " B ", "description": " the second "}, {"label": "C", "description": ""}]})).unwrap();
         assert_eq!(
             c,
-            json!({"question": "Which?", "options": [{"label": "A"}, {"label": "B", "description": "the second"}, {"label": "C"}], "multi_select": false, "allow_other": true})
+            json!({
+                "question": "Which?",
+                "options": [{"label": "A"}, {"label": "B", "description": "the second"}, {"label": "C"}],
+                "multi_select": false,
+                "allow_other": true
+            })
         );
         assert!(card(&json!({"question": "Which?", "options": [{"description": "no label"}]})).is_err());
         assert!(card(&json!({"question": "Which?", "options": ["A", "A"]})).is_err());

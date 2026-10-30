@@ -870,7 +870,8 @@ mod tests {
             let (task, _) = running_task(&s, None);
             // As an older build raised it: no agent in its message, and the MCP call retried after the upgrade finds it.
             let input = two_questions();
-            let msg = s.add_message(&task.id, "permission", json!({"tool_name": ASK_USER, "input": input, "tool_use_id": null, "request_id": "old", "status": "pending"})).unwrap();
+            let data = json!({"tool_name": ASK_USER, "input": input, "tool_use_id": null, "request_id": "old", "status": "pending"});
+            let msg = s.add_message(&task.id, "permission", data).unwrap();
             s.db()
                 .execute(
                     "INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id) VALUES ('old',?1,?2,?3,?4,'pending',?5,'c1')",

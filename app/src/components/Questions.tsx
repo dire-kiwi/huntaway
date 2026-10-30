@@ -96,7 +96,15 @@ type Option = { label: string; description?: string; preview?: string };
  * One choice of a question: a numbered row (its number is its key while the question's the one keys pick in), ticked
  * when it's picked. Shown as picked or not, and not clickable, once the question's answered.
  */
-function Choice({ option, n, picked, multi, onPick, disabled, keys }: { option: Option; n: number; picked: boolean; multi: boolean; onPick?: () => void; disabled?: boolean; keys: boolean }) {
+function Choice({ option, n, picked, multi, onPick, disabled, keys }: {
+  option: Option;
+  n: number;
+  picked: boolean;
+  multi: boolean;
+  onPick?: () => void;
+  disabled?: boolean;
+  keys: boolean;
+}) {
   return (
     <button
       type="button"
@@ -129,7 +137,15 @@ function Choice({ option, n, picked, multi, onPick, disabled, keys }: { option: 
 }
 
 /** A free-text answer: picked as soon as there's text in it. Enter sends it when `onEnter` is given. */
-function OtherField({ value, onChange, placeholder, disabled, secret, onEnter, label }: { value: string; onChange: (v: string) => void; placeholder: string; disabled?: boolean; secret?: boolean; onEnter?: () => void; label: string }) {
+function OtherField({ value, onChange, placeholder, disabled, secret, onEnter, label }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  secret?: boolean;
+  onEnter?: () => void;
+  label: string;
+}) {
   return (
     <input
       type={secret ? "password" : "text"}
@@ -207,7 +223,16 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
       {options.length > 0 && (
         <div className="mt-2 grid gap-1.5" role={multi ? "group" : "radiogroup"} aria-label={data.question}>
           {options.map((o, i) => (
-            <Choice key={o.label} option={o} n={i + 1} multi={multi} picked={shown.includes(o.label)} keys={pending} disabled={busy} onPick={pending ? () => pick(o.label) : undefined} />
+            <Choice
+              key={o.label}
+              option={o}
+              n={i + 1}
+              multi={multi}
+              picked={shown.includes(o.label)}
+              keys={pending}
+              disabled={busy}
+              onPick={pending ? () => pick(o.label) : undefined}
+            />
           ))}
         </div>
       )}
@@ -271,7 +296,11 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from }: { id: n
   const [current, setCurrent] = useState(0);
   const { busy, err, run } = useBusy();
   const ref = useRef<HTMLDivElement>(null);
-  const answerOf = (q: AskedQuestion, d: Draft) => (q.multiSelect ? [...d.picked, ...(d.other.trim() ? [d.other.trim()] : [])] : d.other.trim() ? [d.other.trim()] : d.picked);
+  // A typed answer goes with the options ticked, or in place of the one picked.
+  const answerOf = (q: AskedQuestion, d: Draft) => {
+    const typed = d.other.trim() ? [d.other.trim()] : [];
+    return q.multiSelect ? [...d.picked, ...typed] : typed.length ? typed : d.picked;
+  };
   const answers = questions.map((q, i) => answerOf(q, drafts[i] ?? { picked: [], other: "" }));
   const complete = answers.every((a) => a.length > 0);
   const submit = (list = answers) =>
@@ -360,7 +389,11 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from }: { id: n
                   />
                 ))}
               </div>
-              {preview && <pre className="mt-1.5 max-h-60 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[12px] leading-[1.45] text-[#c9c9d6]">{preview}</pre>}
+              {preview && (
+                <pre className="mt-1.5 max-h-60 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[12px] leading-[1.45] text-[#c9c9d6]">
+                  {preview}
+                </pre>
+              )}
               {open && takesOther && (
                 <div className="mt-1.5">
                   <OtherField
@@ -404,6 +437,9 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from }: { id: n
 
 // ---------- ExitPlanMode ----------
 
+/** What a plan's sent back with, by a host that doesn't take feedback (before API 62; server: permissions::answer). */
+const KEEP_PLANNING = "The user wants you to keep planning rather than start on this plan.";
+
 /** Modes a thread can carry on in once its plan's approved, as Claude Code offers them. */
 const AFTER_PLAN: PermissionMode[] = ["default", "acceptEdits", "auto", "bypassPermissions"];
 const modeLabel = (m: PermissionMode) => PERMISSION_MODES.find((x) => x.id === m)?.label ?? m;
@@ -440,7 +476,7 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from }: {
     return run(() =>
       structured
         ? api.resolvePermission(hostId, data.request_id, "deny", undefined, { feedback: f })
-        : api.resolvePermission(hostId, data.request_id, "deny", f ? `The user wants you to keep planning rather than start on this plan. Their feedback:\n\n${f}` : "The user wants you to keep planning rather than start on this plan."),
+        : api.resolvePermission(hostId, data.request_id, "deny", `${KEEP_PLANNING}${f ? ` Their feedback:\n\n${f}` : ""}`),
     );
   };
   const title = planTitle(plan);
