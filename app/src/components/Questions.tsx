@@ -21,20 +21,22 @@ export const QUESTIONS_API = 62;
 
 // ---------- keys 1–9 ----------
 
-/** The cards waiting for an answer, by message id, each with what keys 1–9 do in it: the thread's latest one gets them. */
-const keyed = new Map<number, { el: () => HTMLElement | null; pick: (n: number) => void }>();
+/** The cards waiting for an answer, each with its message's id and what keys 1–9 do in it: the latest one shown gets them. */
+type Keyed = { id: number; el: () => HTMLElement | null; pick: (n: number) => void };
+const keyed = new Set<Keyed>();
 
 function onDigit(e: KeyboardEvent) {
-  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.repeat || !/^[1-9]$/.test(e.key) || !keyed.size) return;
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.repeat || !/^[1-9]$/.test(e.key)) return;
   const t = e.target as HTMLElement | null;
   // Typing a number somewhere.
   if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
-  const card = keyed.get(Math.max(...keyed.keys()));
-  const el = card?.el();
-  if (!card || !el?.isConnected) return;
-  // Not behind a dialog it isn't in.
-  const dialogs = [...document.querySelectorAll('[aria-modal="true"]')];
-  if (dialogs.length && !dialogs[dialogs.length - 1].contains(el)) return;
+  // Not one in a part of the thread that's hidden (the main conversation, while a subagent's is shown in its place).
+  const shown = [...keyed].filter((k) => !!k.el()?.getClientRects().length);
+  if (!shown.length) return;
+  const card = shown.reduce((a, b) => (b.id > a.id ? b : a));
+  // Nor one behind a dialog it isn't in.
+  const dialogs = document.querySelectorAll('[aria-modal="true"]');
+  if (dialogs.length && !dialogs[dialogs.length - 1].contains(card.el())) return;
   e.preventDefault();
   card.pick(Number(e.key));
 }
@@ -45,10 +47,11 @@ function useDigitKeys(id: number, on: boolean, ref: React.RefObject<HTMLElement 
   latest.current = pick;
   useEffect(() => {
     if (!on) return;
+    const entry: Keyed = { id, el: () => ref.current, pick: (n) => latest.current(n) };
     if (!keyed.size) document.addEventListener("keydown", onDigit);
-    keyed.set(id, { el: () => ref.current, pick: (n) => latest.current(n) });
+    keyed.add(entry);
     return () => {
-      keyed.delete(id);
+      keyed.delete(entry);
       if (!keyed.size) document.removeEventListener("keydown", onDigit);
     };
   }, [id, on, ref]);

@@ -637,6 +637,8 @@ fn start_run(
     for m in &recorded {
         state.emit_message(m);
     }
+    #[cfg(test)]
+    crate::testing::reached("run:started");
     let mut fields = vec![("running", json!(true)), ("steerable", json!(!compact))];
     // A queued message sent as the last run ends carries on the same stretch of work.
     if !task.running {

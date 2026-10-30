@@ -320,6 +320,15 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
         return Err(ApiError::conflict("this request is no longer pending"));
     }
     let task = db::get_task(&s.db(), &task_id)?;
+    // Approving a plan ends plan mode for this thread, otherwise the next run would plan again (as the
+    // one a late approval's message starts would).
+    let mode = match (&task, allow && plan) {
+        (Some(t), true) => mode_after_plan(s, t, reply.mode.as_deref())?,
+        _ => None,
+    };
+    if let Some(next) = &mode {
+        set_mode(s, &task_id, next.clone())?;
+    }
     if late {
         // Its run is over: what the user answered goes to the agent as their message.
         let text = match (question, allow) {
@@ -334,8 +343,11 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
         };
         if let Some(text) = text {
             if let Err(e) = crate::runner::send(s, &task_id, &text) {
-                // Answerable again.
+                // Answerable again, as it was.
                 let _ = s.db().execute("UPDATE permission_requests SET status='expired', note=NULL WHERE id=?1", [id]);
+                if let (Some(t), Some(_)) = (&task, &mode) {
+                    let _ = s.update_task(&task_id, &[("permission_mode", json!(t.permission_mode))]);
+                }
                 return Err(e);
             }
         }
@@ -365,27 +377,6 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
         }
         s.update_task(&task_id, &[("auto_allow", json!(serde_json::to_string(&list).unwrap()))])?;
     }
-    // Approving a plan ends plan mode for this thread, otherwise the next run would plan again.
-    if let (true, true, Some(t)) = (allow, plan, &task) {
-        let project = match &t.project_id {
-            Some(pid) => db::get_project(&s.db(), pid)?,
-            None => None,
-        };
-        let inherited = db::inherited_permission_mode(&s.db(), project.as_ref())?;
-        let next = match reply.mode {
-            // The mode the user picked: the thread's default again if it's that.
-            Some(m) if m == inherited => Some(Value::Null),
-            Some(m) => Some(json!(m)),
-            // Back to the thread's default mode, or Ask if that's Plan too.
-            None if t.permission_mode.as_deref().unwrap_or(&inherited) == "plan" => Some(if inherited == "plan" { json!("default") } else { Value::Null }),
-            None => None,
-        };
-        if let Some(next) = next {
-            if let Some(t) = s.update_task(&task_id, &[("permission_mode", next)])? {
-                apply_mode_to_pending(s, &t)?;
-            }
-        }
-    }
     wake(s, id);
     if late {
         return Ok(status);
@@ -404,6 +395,30 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
         s.update_task(&task_id, &fields)?;
     }
     Ok(status)
+}
+
+/// The permission mode thread `t` carries on in once its plan is approved, if it changes: the one the user
+/// picked (or the thread's default, if that's it), or else the thread's default if it's planning (Ask if
+/// that's Plan too).
+fn mode_after_plan(s: &Shared, t: &Task, picked: Option<&str>) -> anyhow::Result<Option<Value>> {
+    let project = match &t.project_id {
+        Some(pid) => db::get_project(&s.db(), pid)?,
+        None => None,
+    };
+    let inherited = db::inherited_permission_mode(&s.db(), project.as_ref())?;
+    Ok(match picked {
+        Some(m) if m == inherited => Some(Value::Null),
+        Some(m) => Some(json!(m)),
+        None if t.permission_mode.as_deref().unwrap_or(&inherited) == "plan" => Some(if inherited == "plan" { json!("default") } else { Value::Null }),
+        None => None,
+    })
+}
+
+fn set_mode(s: &Shared, task_id: &str, mode: Value) -> ApiResult<()> {
+    if let Some(t) = s.update_task(task_id, &[("permission_mode", mode)])? {
+        apply_mode_to_pending(s, &t)?;
+    }
+    Ok(())
 }
 
 /// A question prompt's questions (see is_question).
@@ -458,7 +473,8 @@ fn late_answers(input: &Value, answers: &[Vec<String>]) -> String {
             if a.is_empty() { format!("- {asked}\n  (no answer)") } else { format!("- {asked}\n  {}", a.join(", ")) }
         })
         .collect();
-    format!("My answers to the questions you asked:\n\n{}", lines.join("\n"))
+    let what = if lines.len() == 1 { "answer to the question" } else { "answers to the questions" };
+    format!("My {what} you asked:\n\n{}", lines.join("\n"))
 }
 
 /// The project changes agents are waiting for the user to approve, oldest first, each with
@@ -569,6 +585,7 @@ fn expire(s: &Shared, query: &str, arg: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner;
 
     /// A task (in the profile's default config, or `config`'s), and a run of it that's going (so a message sent to it is
     /// queued for it, as no agent reads its input).
@@ -806,6 +823,39 @@ mod tests {
             let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
             assert_eq!((t.permission_mode.as_deref(), t.queued_message.as_deref()), (Some("acceptEdits"), Some("Your plan is approved: go ahead and implement it.")));
             assert_eq!(prompt_message(&s, &plan)["status"], "allowed");
+        });
+    }
+
+    #[test]
+    fn a_late_approval_leaves_plan_mode_before_its_message_starts_a_run() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (task, run) = running_task(&s, None);
+            s.update_task(&task.id, &[("permission_mode", json!("plan"))]).unwrap();
+            let (id, _) = asked(&s, &task, "p1", EXIT_PLAN, json!({"plan": "Do it"})).await;
+            s.runs.lock().unwrap().remove(&task.id);
+            s.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
+            expire_for_task(&s, &task.id);
+            s.update_task(&task.id, &[("running", json!(false))]).unwrap();
+
+            // No agent can start: the approval isn't taken, and the thread's still planning.
+            let approve = || Reply { mode: Some("auto".into()), ..Default::default() };
+            assert!(answer(&s, &id, true, false, None, approve()).is_err());
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().permission_mode.as_deref(), Some("plan"));
+            assert_eq!(prompt_message(&s, &id)["status"], "expired");
+
+            // One that starts runs with the mode picked, from the run the approval starts.
+            crate::runs::TEST_CAN_RUN.set(true);
+            let mode = std::rc::Rc::new(std::cell::RefCell::new(None));
+            crate::testing::when("run:started", {
+                let (s, task_id, mode) = (s.clone(), task.id.clone(), mode.clone());
+                move || *mode.borrow_mut() = db::get_task(&s.db(), &task_id).unwrap().unwrap().permission_mode
+            });
+            let answered = answer(&s, &id, true, false, None, approve());
+            crate::runs::TEST_CAN_RUN.set(false);
+            answered.unwrap();
+            assert_eq!(mode.borrow().as_deref(), Some("auto"));
+            runner::stop(&s, &task.id);
         });
     }
 

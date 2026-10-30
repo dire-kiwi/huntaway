@@ -53,7 +53,7 @@ import { buildItems, threadModel, type Call, type Item, type ThreadModel, type T
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
 import { ProjectChangeCard, TaskDeletionCard } from "./Approvals";
 import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
-import { QUESTION_TOOLS } from "../questions";
+import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
 import { Button, RunningDot, waitTitle } from "./ui";
@@ -638,7 +638,7 @@ function QuestionRow({ id, data, hostId }: { id: number; data: Any; hostId: stri
 /** A permission prompt: a question or a plan gets its own card. */
 function PromptCard({ id, data, hostId }: { id: number; data: Any; hostId: string }) {
   const taskId = useThread((t) => t.taskId);
-  if (QUESTION_TOOLS.includes(data.tool_name) && data.input?.questions) return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} />;
+  if (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length) return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} />;
   if (data.tool_name === "ExitPlanMode") return <PlanCard data={data} hostId={hostId} taskId={taskId} from={<PromptFrom data={data} />} />;
   return <PermissionCard data={data} hostId={hostId} />;
 }
