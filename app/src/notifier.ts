@@ -1,4 +1,4 @@
-import { movedHere, type Task } from "./api";
+import { isOpenBoard, movedHere, type Task } from "./api";
 import {
   attentionCount,
   EVENT_STATUS,
@@ -28,9 +28,11 @@ declare global {
 }
 
 /** Why system notifications can or can't be shown here. */
-export type NotifyPermission = NotificationPermission | "insecure" | "unsupported";
+export type NotifyPermission = NotificationPermission | "insecure" | "unsupported" | "preview";
 
 export function notifyPermission(): NotifyPermission {
+  // A PR preview's agents and demo tasks would notify alongside the user's own board, from a board they're only trying.
+  if (isOpenBoard()) return "preview";
   // Browsers only offer them to secure pages: HTTPS, and localhost.
   if (!window.isSecureContext) return "insecure";
   if (typeof Notification === "undefined") return "unsupported";
