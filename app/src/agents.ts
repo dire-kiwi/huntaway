@@ -32,6 +32,49 @@ export function useAgentModels(config: ClaudeConfig | undefined): AgentModel[] |
   return codex && models?.key === key ? models.list : null;
 }
 
+/** The models each of several configs offers, by config id, as useAgentModels has them for one. */
+export interface ConfigsModels {
+  models: Record<string, AgentModel[] | null>;
+  /** The Codex configs whose models are still being fetched. */
+  loading: ClaudeConfig[];
+  /** Those whose models couldn't be fetched, and why. */
+  failed: { config: ClaudeConfig; error: string }[];
+}
+
+export function useConfigsModels(configs: ClaudeConfig[]): ConfigsModels {
+  const codex = configs.filter((c) => agentOf(c) === "codex");
+  const keys = codex.map((c) => `${c.host_id}:${c.id}`).join(",");
+  const [loaded, setLoaded] = useState<Record<string, AgentModel[] | { error: string }>>({});
+  useEffect(() => {
+    let live = true;
+    for (const c of codex) {
+      const key = `${c.host_id}:${c.id}`;
+      let p = cache.get(key);
+      if (!p) {
+        p = api.claudeConfigModels(c.host_id, c.id);
+        cache.set(key, p);
+        p.catch(() => cache.delete(key));
+      }
+      p.then(
+        (list) => live && setLoaded((m) => (m[key] === list ? m : { ...m, [key]: list })),
+        (e) => live && setLoaded((m) => ({ ...m, [key]: { error: (e as Error).message } })),
+      );
+    }
+    return () => {
+      live = false;
+    };
+  }, [keys]); // eslint-disable-line react-hooks/exhaustive-deps
+  const of = (c: ClaudeConfig) => loaded[`${c.host_id}:${c.id}`];
+  return {
+    models: Object.fromEntries(configs.map((c) => [c.id, Array.isArray(of(c)) ? (of(c) as AgentModel[]) : null])),
+    loading: codex.filter((c) => !of(c)),
+    failed: codex.flatMap((c) => {
+      const x = of(c);
+      return x && !Array.isArray(x) ? [{ config: c, error: x.error }] : [];
+    }),
+  };
+}
+
 /** The model options for a picker: Claude's aliases, or a Codex config's models. */
 export function modelOptions(config: ClaudeConfig | undefined, models: AgentModel[] | null): { id: string; label: string }[] {
   if (agentOf(config) === "codex") return (models ?? []).map((m) => ({ id: m.id, label: m.name || m.id }));

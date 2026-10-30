@@ -15,6 +15,7 @@ import {
   mergeQueued,
   STATUSES,
   worktreesOn,
+  type ClaudeConfig,
   type DocumentType,
   type Host,
   type Profile,
@@ -27,7 +28,8 @@ import {
   type TaskType,
   asanaLink,
 } from "../api";
-import { effortOptions, inheritedModel, isClaudeModel, modelOptions, useAgentModels } from "../agents";
+import { effortOptions, inheritedModel, isClaudeModel, modelOptions, useConfigsModels } from "../agents";
+import { harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses";
 import { groupProjects, groupTasks, inGroupTaskGroup } from "../projectGroups";
 import { dropPosition } from "../taskOrder";
 import { allValues, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens, type Token, type TokenPrefix, type Vocab } from "../taskTokens";
@@ -41,6 +43,7 @@ import { AttachButton, DraftAttachments, useAttachmentDraft } from "./Attachment
 import { AsanaIcon, AsanaPicker, ExternalLinkIcon, LinkList, LINKS_API, usesAsana } from "./ExternalLinks";
 import { ReviewBadge } from "./Review";
 import { DependencyBadge } from "./Dependencies";
+import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
 import { SCRATCH_TYPE, TASK_TYPES, TaskTypeBadge } from "./Document";
@@ -244,6 +247,7 @@ export const TaskCard = memo(function TaskCard({
             </span>
           )}
           <DependencyBadge task={task} project={project} compact />
+          {task.fanout_id && <FanoutBadge task={task} />}
           <ReviewBadge task={task} compact />
           <TaskMarks task={task} compact />
         </div>
@@ -304,7 +308,25 @@ interface Draft {
   files: AttachmentRef[];
   /** The Asana tasks picked for it, in the project's profile. */
   links?: ExternalLink[];
+  /** Some of the tasks for its models were made, and these are the rest of the set (IA-227). */
+  fanout?: PendingFanout | null;
 }
+
+/** A set of tasks from one prompt that only some of were made: what the rest are made with when it's tried again. */
+interface PendingFanout {
+  /** The id they share; null on hosts before API 61. */
+  id: string | null;
+  /** The keys of those made. */
+  made: string[];
+  /** The efforts those made took, so a `^` only they take is still one. */
+  efforts: string[];
+}
+
+const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+const isPendingFanout = (f: unknown): f is PendingFanout => {
+  const x = f as PendingFanout | null;
+  return !!x && (x.id === null || typeof x.id === "string") && strings(x.made) && strings(x.efforts);
+};
 
 const isLink = (l: unknown): l is ExternalLink => {
   const x = l as ExternalLink | null;
@@ -315,7 +337,12 @@ function loadDraft(key: string): Draft | null {
   try {
     const d = JSON.parse(localStorage.getItem(key) ?? "null");
     if (!d || typeof d.description !== "string") return null;
-    return { description: d.description, files: Array.isArray(d.files) ? d.files : [], links: Array.isArray(d.links) ? d.links.filter(isLink) : [] };
+    return {
+      description: d.description,
+      files: Array.isArray(d.files) ? d.files : [],
+      links: Array.isArray(d.links) ? d.links.filter(isLink) : [],
+      fanout: isPendingFanout(d.fanout) ? d.fanout : null,
+    };
   } catch {
     return null;
   }
@@ -406,7 +433,7 @@ type Suggestion = { value: string; label: string; hint?: string };
 const TOKEN_HELP: { prefix: TokenPrefix; what: string; asks: string }[] = [
   { prefix: "/", what: "type", asks: "a type" },
   { prefix: "@", what: "where", asks: "where it goes" },
-  { prefix: "!", what: "model", asks: "a model" },
+  { prefix: "!", what: "model", asks: "a model (or several, for a task each)" },
   { prefix: "^", what: "effort", asks: "effort" },
   { prefix: "#", what: "waits for", asks: "a task to wait for" },
 ];
@@ -437,7 +464,8 @@ function ReadsChip({ icon, label, title, onRemove, removeTitle = "Remove", dashe
 
 /**
  * The new task form. Its options are tokens typed in the description (IA-220): `/plan` its type, `@IA` where it goes
- * (or `@group`, `@none`), `!sonnet` its model, `^high` its effort and `#IA-212` a task to merge first. They're taken
+ * (or `@group`, `@none`), `!sonnet` its model (several make a task with each, IA-227), `^high` its effort and `#IA-212`
+ * a task to merge first. They're taken
  * out of what its agent is given. With none, it goes where the dialog was opened, with the options last picked there.
  */
 export function NewTaskModal({
@@ -580,7 +608,10 @@ export function NewTaskModal({
   const pickConfig = configs.length > 1;
   const configObj = configs.find((c) => c.id === config);
   const codex = agentOf(configObj) === "codex";
-  const models = useAgentModels(configObj);
+  // Every config's models, as a `!` can send the task to any of them (IA-227).
+  const discovery = useConfigsModels(configs);
+  const configModels = discovery.models;
+  const models = configObj ? configModels[configObj.id] : null;
   const modelList = modelOptions(configObj, models);
   // Models and efforts are the agent's own, so picking another agent starts them over.
   const setConfig = (id: string) => {
@@ -608,14 +639,49 @@ export function NewTaskModal({
   );
   const depKey = (t: Task) => `${depProject?.key}-${t.number}`;
 
-  // Claude takes a full model id too (what "Specific model…" was for).
-  const specific = codex ? [] : found.filter((t) => t.prefix === "!" && /^claude-[\w.-]+$/i.test(t.word)).map((t) => t.word.toLowerCase());
-  const modelVocab = [DEFAULT_WORD, ...modelList.map((m) => m.id), ...specific];
-  const modelAsked = lastValue(resolve({ "!": modelVocab }), "!");
-  const pickedModel = modelAsked === undefined ? model : modelAsked === DEFAULT_WORD ? "" : modelAsked;
-  // A model remembered from a Claude config doesn't run on Codex.
-  const taskModel = codex && isClaudeModel(pickedModel) ? "" : pickedModel;
-  const effortList = efforts ? effortOptions(configObj, models, taskModel) : [];
+  // What `!` names: a model of any of the configs, or one's default model (see harnesses.ts). With no configs to pick
+  // from, Claude's own config.
+  const harnessConfigs: HarnessConfig[] = configs.length
+    ? configs.map((c) => ({ id: c.id, name: c.name, agent: agentOf(c), models: modelOptions(c, configModels[c.id]) }))
+    : [{ id: "", name: "", agent: "claude", models: modelList }];
+  // Claude takes a full model id too (what "Specific model…" was for), in the picked config or the first Claude one.
+  const claudeConfig = harnessConfigs.find((c) => c.id === config && c.agent === "claude") ?? harnessConfigs.find((c) => c.agent === "claude");
+  const specific: HarnessWord[] = claudeConfig
+    ? found
+        .filter((t) => t.prefix === "!" && /^claude-[\w.-]+$/i.test(t.word))
+        .map((t) => ({ word: t.word.toLowerCase(), harness: { config: claudeConfig.id, model: t.word.toLowerCase() }, label: t.word.toLowerCase() }))
+    : [];
+  const harnessVocab = [...harnessWords(harnessConfigs, config, DEFAULT_WORD), ...specific];
+  const modelVocab = harnessVocab.map((w) => w.word);
+  // A task for each harness named (`!opus !gpt-5.5` makes two from one prompt); with none, one in the picked config
+  // with the model last picked there.
+  const named = harnessesOf(harnessVocab, allValues(resolve({ "!": modelVocab }), "!"));
+  const runs: Harness[] = named.length ? named : [{ config, model: codex && isClaudeModel(model) ? "" : model }];
+  // Several harnesses make a task each. After only some of them could be made, those left (even one) are made as part
+  // of the same set when it's tried again: linked to the others by its id (null on hosts before API 61), in a worktree.
+  // Kept with the draft, so closing the dialog (or reloading) before trying again doesn't lose it.
+  const [pending, setPending] = useState<PendingFanout | null>(() => saved?.fanout ?? null);
+  // Taking all the text out starts over.
+  useEffect(() => {
+    if (!description.trim()) setPending(null);
+  }, [description]);
+  const many = runs.length > 1;
+  const fanout = many || pending !== null;
+  const runConfig = (h: Harness) => configs.find((c) => c.id === h.config);
+  // The efforts any of them takes; one that doesn't take the effort picked gets its default.
+  // The model one on its default model runs with: the project's, profile's or host's (as runner::launch picks it), else its agent's.
+  const runInherits = (h: Harness) => inheritedModel(runConfig(h), configModels[h.config] ?? null, inProject?.model, profile?.default_model, hostSettings?.default_model);
+  const runEfforts = (h: Harness) => effortOptions(runConfig(h), configModels[h.config] ?? null, h.model || runInherits(h) || "");
+  // Those of the tasks already made too, so a `^` that only they take is still read as one when the rest are made.
+  const effortList = efforts ? [...new Set([...runs.flatMap(runEfforts), ...(pending?.efforts ?? [])])] : [];
+  const harnessOf = (word: string | undefined) => harnessVocab.find((w) => w.word === word)?.harness;
+  // A harness as the "Reads as" row has it: its model (or the one it inherits), and its config where there are several.
+  const runLabel = (h: Harness) => {
+    const c = harnessConfigs.find((x) => x.id === h.config);
+    const inherits = h.model ? undefined : runInherits(h);
+    const m = h.model ? (c?.models.find((x) => x.id === h.model)?.label ?? h.model) : inherits ? `default model (${inherits})` : "default model";
+    return pickConfig && c ? `${m} · ${c.name}` : m;
+  };
   const tokens = resolve({
     "@": atVocab,
     "/": offered.map(typeWord),
@@ -642,7 +708,10 @@ export function NewTaskModal({
   const [pickingLink, setPickingLink] = useState(false);
   const hasContent = !!text.trim() || attach.items.length > 0;
   // Saved as it's written, tokens and all (and when it's only tokens, the options they pick). Files still uploading are left out until they're on the host.
-  const draftJson = description.trim() || attach.files.length || links.length ? JSON.stringify({ description, files: attach.files, links } satisfies Draft) : null;
+  const draftJson =
+    description.trim() || attach.files.length || links.length || pending
+      ? JSON.stringify({ description, files: attach.files, links, ...(pending ? { fanout: pending } : {}) } satisfies Draft)
+      : null;
   useEffect(() => {
     if (draftJson) localStorage.setItem(draft, draftJson);
     else localStorage.removeItem(draft);
@@ -659,7 +728,64 @@ export function NewTaskModal({
   // Follows the project until it's changed here.
   const [worktreeChoice, setWorktree] = useState<boolean | null>(null);
   const worktreePref = worktreeChoice ?? (!!inProject && worktreesOn(inProject));
-  const worktree = !!inProject && codeTask && (worktreePref || asSubproject || !!subproject);
+  // Tasks made from one prompt each get a worktree too, so their agents don't change the same checkout (as in t3code).
+  const worktree = !!inProject && codeTask && (worktreePref || fanout || asSubproject || !!subproject);
+  // What can't be made a task for each of several harnesses.
+  const fanoutBlock = !fanout
+    ? null
+    : asSubproject
+      ? "A subproject has one agent, so it takes one model."
+      : asGroup && !docType
+        ? "A group task has one agent, so it takes one model."
+        : worktree && inProject?.is_git === false
+          ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
+          : null;
+  // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
+  // out, with its token sent as text); which config a `!` names a model of, when a config of the same agent before it
+  // (the picked one, then in order) may have the model too (so it doesn't depend on which answers first); and whether the effort picked
+  // is one a Codex harness's model takes (it's only sent if it is). If they couldn't be fetched, it says so.
+  const unknownModels = tokens.filter((t) => t.prefix === "!" && t.value === undefined);
+  const asText = unknownModels.map((t) => `!${t.word}`).join(", ");
+  const rank = (id: string) => (id === config ? -1 : configs.findIndex((c) => c.id === id));
+  const claimable = (c: ClaudeConfig) =>
+    tokens.filter((t) => {
+      const w = t.prefix === "!" && t.value !== undefined ? harnessVocab.find((x) => x.word === t.value) : undefined;
+      const agent = harnessConfigs.find((x) => x.id === w?.harness.config)?.agent;
+      return !!w && !!w.harness.model && w.word.toLowerCase() === w.harness.model.toLowerCase() && agent === agentOf(c) && rank(c.id) < rank(w.harness.config);
+    });
+  const effortWaits = (c: ClaudeConfig) => efforts && !!pickedEffort && runs.some((h) => h.config === c.id);
+  const waitsFor = (c: ClaudeConfig) => unknownModels.length > 0 || claimable(c).length > 0 || effortWaits(c);
+  const loadingFor = discovery.loading.filter(waitsFor);
+  const failedFor = discovery.failed.filter((f) => waitsFor(f.config));
+  const configNames = (cs: { name: string }[]) => cs.map((c) => c.name).join(", ");
+  const claimed = (cs: ClaudeConfig[]) => [...new Set(cs.flatMap((c) => claimable(c).map((t) => `!${t.word}`)))].join(", ");
+  // The words that name the config a model is taken from, for a model another config may have too.
+  const qualified = (cs: ClaudeConfig[]) =>
+    cs
+      .flatMap((c) => claimable(c))
+      .flatMap((t) => {
+        const h = harnessOf(t.value);
+        const w = h && harnessVocab.find((x) => sameHarness(x.harness, h) && x.word.toLowerCase() !== h.model.toLowerCase());
+        return w ? [`!${w.word}`] : [];
+      })
+      .filter((w, i, all) => all.indexOf(w) === i)
+      .join(", ");
+  const unknown = (cs: ClaudeConfig[]) =>
+    unknownModels.length
+      ? `which ${asText} is`
+      : claimed(cs)
+        ? `whether ${cs.length > 1 ? "they have" : "it has"} ${claimed(cs)} too`
+        : `whether ${cs.length > 1 ? "they take" : "it takes"} ${pickedEffort} effort`;
+  const takeOut = (cs: ClaudeConfig[]) =>
+    unknownModels.length ? "it out" : claimed(cs) ? `${claimed(cs)} out, or name its config (${qualified(cs)})` : "the effort out";
+  const modelsLoading = loadingFor.length > 0;
+  const modelsBlock = modelsLoading
+    ? `Loading ${configNames(loadingFor)}'s models, to see ${unknown(loadingFor)}…`
+    : failedFor.length
+      ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${takeOut(failedFor.map((f) => f.config))}, or open the dialog again to try again.`
+      : null;
+  // While they're loading, creating it waits for them (see whenLoaded).
+  const submitBlock = fanoutBlock ?? (modelsLoading ? null : modelsBlock);
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
   const setStart = (v: boolean) => {
@@ -691,6 +817,7 @@ export function NewTaskModal({
     setStartPref(localStorage.getItem(startKey(prefId)) === "1");
     setWorktree(null);
     setCreated(null);
+    setPending(null);
     switched.current = true;
     if (from.host_id !== target.host_id || from.profile_id !== target.profile_id) setLinks([]);
     if (from.host_id !== target.host_id) attach.clear();
@@ -705,6 +832,7 @@ export function NewTaskModal({
     setRestoring(null);
     attach.clear();
     setLinks(theirs.links ?? []);
+    setPending(theirs.fanout ?? null);
     if (attach.enabled) attach.restore(theirs.files);
     setCreated(made);
   }, [restoring]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -744,42 +872,72 @@ export function NewTaskModal({
       setSettling(1);
       return;
     }
-    if (!hasContent || busy || attach.uploading) return;
+    if (!hasContent || busy || attach.uploading || submitBlock) return;
+    if (modelsLoading) return setWhenLoaded(true);
     setBusy(true);
     setErr(null);
+    // A task for each harness, one after another, so a failure leaves the rest to try again.
+    const tasks: Task[] = [];
+    const fanoutId = pending ? pending.id : fanout && hostSupports(host, 61) ? newFanoutId() : null;
+    const shared = fanoutId ? { fanout_id: fanoutId } : {};
     try {
-      // The server titles it from the description.
-      const common = {
-        description: withAttachments(text, attach.files),
-        start,
-        status,
-        model: taskModel || undefined,
-        effort: (efforts && pickedEffort) || undefined,
-        ...(pickConfig ? { claude_config_id: config } : {}),
-        ...(linking && links.length ? { external_links: links } : {}),
-      };
-      const task = noProject
-        ? await api.createScratchTask(target.host_id, target.profile_id, common)
-        : asGroup && group
-          ? await api.createGroupTask(target.host_id, target.profile_id, { ...common, group, ...(docType ? { task_type: docType } : {}) })
-          : await api.createTask(project!.host_id, project!.id, {
-              ...common,
-              use_worktree: worktree,
-              ...(subproject ? { parent_id: subproject.id } : {}),
-              // Sent as the flag, which hosts before API 51 take too.
-              ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : {}),
-              ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
-            });
-      setModel(pickedModel);
+      for (const run of runs) {
+        // The server titles it from the description.
+        const runEffort = efforts && pickedEffort && runEfforts(run).includes(pickedEffort) ? pickedEffort : undefined;
+        const common = {
+          description: withAttachments(text, attach.files),
+          start,
+          status,
+          model: run.model || undefined,
+          effort: runEffort,
+          ...(pickConfig ? { claude_config_id: run.config } : {}),
+          ...(linking && links.length ? { external_links: links } : {}),
+        };
+        try {
+          tasks.push(
+            noProject
+              ? await api.createScratchTask(target.host_id, target.profile_id, { ...common, ...shared })
+              : asGroup && group
+                ? await api.createGroupTask(target.host_id, target.profile_id, { ...common, ...shared, group, ...(docType ? { task_type: docType } : {}) })
+                : await api.createTask(project!.host_id, project!.id, {
+                    ...common,
+                    ...shared,
+                    use_worktree: worktree,
+                    ...(subproject ? { parent_id: subproject.id } : {}),
+                    // Sent as the flag, which hosts before API 51 take too.
+                    ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : {}),
+                    ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
+                  }),
+          );
+        } catch (e) {
+          if (!tasks.length) throw e;
+          // Those made are taken out of the text, so trying again makes the others.
+          const done = runs.slice(0, tasks.length);
+          untoken((t) => t.prefix === "!" && done.some((h) => sameHarness(harnessOf(t.value), h)));
+          const keys = tasks.map((t) => `${keyPrefix(t, inProject)}-${t.number}`);
+          setPending({ id: fanoutId, made: [...(pending?.made ?? []), ...keys], efforts: effortList });
+          setErr(`Made ${keys.join(", ")}, but not the one with ${runLabel(run)}: ${(e as Error).message}`);
+          setBusy(false);
+          return;
+        }
+      }
+      setPending(null);
+      // One harness is what's picked from then on; several (or what's left of them) leave what was picked as it was.
+      const only = fanout ? null : runs[0];
+      if (only) {
+        const m = named.length ? only.model : model;
+        setModel(m);
+        localStorage.setItem(modelKey(prefId), m);
+        if (only.config !== config) setConfigPref(only.config);
+        if (pickConfig) localStorage.setItem(configKey(prefId), only.config);
+      }
       setEffort(pickedEffort);
-      localStorage.setItem(modelKey(prefId), pickedModel);
       if (efforts) localStorage.setItem(effortKey(prefId), pickedEffort);
-      if (pickConfig) localStorage.setItem(configKey(prefId), config);
       // Where it went is where the next one starts, where there's a choice.
       if (projects?.length) localStorage.setItem(PROJECT_KEY, prefId);
       localStorage.removeItem(draft);
       if (!addAnother) return onClose();
-      const made = { key: `${keyPrefix(task, inProject)}-${task.number}`, title: task.title };
+      const made = { key: tasks.map((t) => `${keyPrefix(t, inProject)}-${t.number}`).join(", "), title: tasks[0].title };
       setCreated(made);
       // The dialog starts there now too, as it would opened again, so the next one's draft is kept there. A draft
       // already there comes back, rather than being written over.
@@ -803,6 +961,15 @@ export function NewTaskModal({
     }
   };
 
+  // Created once the models it waits for are in, if it was asked for meanwhile (and the text hasn't changed since).
+  const [whenLoaded, setWhenLoaded] = useState(false);
+  useEffect(() => setWhenLoaded(false), [description]);
+  useEffect(() => {
+    if (!whenLoaded || modelsLoading) return;
+    setWhenLoaded(false);
+    submit();
+  }, [whenLoaded, modelsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // What's offered for each prefix as it's typed.
   const inherited = inheritedModel(configObj, models, inProject?.model, profile?.default_model, hostSettings?.default_model);
   useEffect(() => {
@@ -823,7 +990,14 @@ export function NewTaskModal({
           ...(group ? [{ value: GROUP_WORD, label: `Group task (${group})`, hint: "Plans the work across the group's projects" }] : []),
           ...(scratch ? [{ value: NONE_WORD, label: `No project (${scratch.name})`, hint: "A scratch task, with no repository" }] : []),
         ],
-    "!": [{ value: DEFAULT_WORD, label: inherited ? `Default model (${inherited})` : "Default model" }, ...modelList.map((m) => ({ value: m.id, label: m.label }))],
+    // Each `!` makes a task with its model, so naming several makes a task for each (IA-227).
+    "!": harnessVocab
+      .filter((w) => !specific.includes(w))
+      .map((w) => ({
+        value: w.word,
+        label: w.word === DEFAULT_WORD && !pickConfig ? (inherited ? `Default model (${inherited})` : "Default model") : w.label,
+        hint: named.length ? "Another ! makes another task from this prompt, with that model" : undefined,
+      })),
     "^": efforts
       ? [
           { value: DEFAULT_WORD, label: hostSettings?.default_effort ? `Default effort (${hostSettings.default_effort})` : "Default effort" },
@@ -1066,16 +1240,27 @@ export function NewTaskModal({
             onRemove={setBy("@") ? removeKind("@") : undefined}
             removeTitle="Go back to where it started"
           />
-          {pickedModel ? (
+          {named.length ? (
+            // One for each task it makes, with the model it names.
+            named.map((h) => (
+              <ReadsChip
+                key={`${h.config}/${h.model}`}
+                icon={<Cpu size={12} />}
+                label={runLabel(h)}
+                onRemove={() => untoken((t) => t.prefix === "!" && sameHarness(harnessOf(t.value), h))}
+                removeTitle={fanout ? "Don't make a task with this model" : "Remove the model"}
+              />
+            ))
+          ) : model ? (
             <ReadsChip
               icon={<Cpu size={12} />}
-              label={modelLabel(taskModel || pickedModel)}
-              title={codex && !taskModel ? "A Claude model, which Codex doesn't run: it uses the default" : undefined}
-              onRemove={setBy("!") ? removeKind("!") : () => setModel("")}
-              removeTitle={setBy("!") ? "Remove the model" : "Use the default model"}
+              label={modelLabel(runs[0].model || model)}
+              title={codex && !runs[0].model ? "A Claude model, which Codex doesn't run: it uses the default" : undefined}
+              onRemove={() => setModel("")}
+              removeTitle="Use the default model"
             />
           ) : (
-            <ReadsChip dashed label={inherited ? `default model (${inherited})` : "default model"} onRemove={setBy("!") ? removeKind("!") : undefined} />
+            <ReadsChip dashed label={inherited ? `default model (${inherited})` : "default model"} />
           )}
           {efforts &&
             (pickedEffort ? (
@@ -1118,7 +1303,7 @@ export function NewTaskModal({
         </div>
         <DraftAttachments draft={attach} hostId={target.host_id} />
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pt-1">
-          {!subproject && inProject && taskType === null && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
+          {!subproject && inProject && taskType === null && !fanout && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
           {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
           {pickConfig && <ConfigSelect className={pickerClass} configs={configs} value={config} onChange={setConfig} />}
           <div className="-my-1 ml-auto flex items-center gap-1">
@@ -1170,6 +1355,20 @@ export function NewTaskModal({
               : "It gets its own worktree and thread, and a board of tasks: each branches from the subproject's branch and merges back into it, and the subproject is merged as a whole through its own pull request."}
           </div>
         )}
+        {fanout && (
+          <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>
+            {fanoutBlock ??
+              (many
+                ? `Makes ${runs.length} ${noun}s from this prompt, one with each model${worktree ? ", each in its own worktree" : ""}${pending ? `, with ${pending.made.join(", ")}` : ", so you can compare what they do"}. Their cards say which is which.`
+                : `Makes the ${noun} left from this prompt, with ${pending!.made.join(", ")}${worktree ? ", in its own worktree" : ""}. Their cards say which is which.`)}
+          </div>
+        )}
+        {modelsBlock && (
+          <div className={clsx("text-[12px]", modelsLoading ? "text-muted" : "text-amber-300")}>
+            {modelsBlock}
+            {whenLoaded && " It's created once they're in."}
+          </div>
+        )}
         {err && <div className="text-xs text-red-400">{err}</div>}
         <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
           <span className="mr-auto flex min-w-0 items-center gap-3">
@@ -1183,8 +1382,18 @@ export function NewTaskModal({
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent}>
-            {start && deps && dependsOn.length ? "Create & queue" : start ? "Create & start" : `Create ${noun}`}
+          <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
+            {many
+              ? start && deps && dependsOn.length
+                ? `Create & queue ${runs.length}`
+                : start
+                  ? `Create & start ${runs.length}`
+                  : `Create ${runs.length} ${noun}s`
+              : start && deps && dependsOn.length
+                ? "Create & queue"
+                : start
+                  ? "Create & start"
+                  : `Create ${noun}`}
             <span className="translate-y-px text-[11px] font-normal text-white/60">{SUBMIT_KEYS}</span>
           </Button>
         </div>
@@ -1250,6 +1459,7 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
           </span>
         )}
         <DependencyBadge task={task} project={project} />
+        {task.fanout_id && <FanoutBadge task={task} />}
         <ReviewBadge task={task} />
         <ResolutionBadge task={task} />
         {showsPreview(task) && <PreviewDot url={task.preview_url!} label />}

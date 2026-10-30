@@ -508,6 +508,12 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let add = if has { "" } else { "ALTER TABLE profiles ADD COLUMN asana_enabled INTEGER NOT NULL DEFAULT 1;" };
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=52; COMMIT;"))?;
     }
+    if version < 53 {
+        // What ties the tasks made together from one prompt (see Task::fanout_id).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='fanout_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN fanout_id TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=53; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
@@ -1093,6 +1099,10 @@ pub struct Task {
     /// The tasks elsewhere (in Asana) that this one is for.
     #[serde(default)]
     pub external_links: Vec<ExternalLink>,
+    /// Shared by the tasks made together from one prompt, each run by another agent (a model
+    /// or config), so the board can show them side by side. Unset for a task made on its own.
+    #[serde(default)]
+    pub fanout_id: Option<String>,
     /// Starred: listed in the sidebar's Starred section.
     #[serde(default)]
     pub starred: bool,
@@ -1324,6 +1334,7 @@ impl Task {
             preview_url: r.get("preview_url")?,
             pr_url: r.get("pr_url")?,
             external_links: json_or_default(r.get::<_, Option<String>>("external_links")?),
+            fanout_id: r.get("fanout_id")?,
             starred: r.get("starred")?,
             remind_at: r.get("remind_at")?,
             reminder: r.get("reminder")?,
@@ -1888,7 +1899,7 @@ pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -2774,7 +2785,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
         assert_eq!(get_task(&c, "d").unwrap().unwrap().done_at.as_deref(), Some("2026-01-02T00:00:00Z"));
         assert_eq!(get_task(&c, "t").unwrap().unwrap().done_at, None);
         drop(c);
@@ -2796,7 +2807,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
         let p = get_profile(&c, "p").unwrap().unwrap();
         assert_eq!((p.clone_dir.as_deref(), p.clone_dir_or_default().as_str()), (None, "~/work"));
         let p = update_profile(&c, "p", &[("clone_dir", json!("~/src/work"))]).unwrap().unwrap();
@@ -2824,7 +2835,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
         let p = get_profile(&c, "p").unwrap().unwrap();
         assert_eq!((p.asana_token, p.asana_user), (None, None));
         assert!(get_task(&c, "t").unwrap().unwrap().external_links.is_empty());
@@ -2847,13 +2858,38 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
         let p = get_profile(&c, "p").unwrap().unwrap();
         assert!(p.asana_enabled);
         assert_eq!((p.asana_token.as_deref(), p.asana_user.as_deref()), (Some("tok"), Some("Ivy")));
         let p = update_profile(&c, "p", &[("asana_enabled", json!(false))]).unwrap().unwrap();
         assert!(!p.asana_enabled);
         assert!(insert_profile(&c, "personal", &[], None).unwrap().asana_enabled, "new profiles use Asana");
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_52_gets_fanout_ids() {
+        let path = std::env::temp_dir().join(format!("huntaway-v52-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE tasks DROP COLUMN fanout_id;
+                 PRAGMA user_version=52;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,description,status,position,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'t','','todo',0,'1','1','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(get_task(&c, "t").unwrap().unwrap().fanout_id, None);
+        let t = update_task(&c, "t", &[("fanout_id", json!("f1"))]).unwrap().unwrap();
+        assert_eq!(t.fanout_id.as_deref(), Some("f1"));
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2882,7 +2918,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
         let configs = list_claude_configs(&c).unwrap();
         assert_eq!(configs.iter().map(|c| (c.id.as_str(), c.show_usage)).collect::<Vec<_>>(), [("c", false)]);
         drop(c);
@@ -2914,7 +2950,7 @@ mod tests {
                 .unwrap();
             }
             let c = open(&path).unwrap();
-            assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+            assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
             assert_eq!(get_profile(&c, "p").unwrap().unwrap().github_account.as_deref(), Some("work-me"), "{version}");
             let t = get_task(&c, "t").unwrap().unwrap();
             assert!(!t.starred && !t.title_pinned && t.queued_user_text.is_none(), "{version}");
@@ -2947,7 +2983,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
         assert_eq!(get_project(&c, "pr").unwrap().unwrap().archived_at, None);
         let t = get_task(&c, "s").unwrap().unwrap();
         assert_eq!((t.number, t.work_dir.as_deref(), t.is_scratch()), (1, Some("/old"), true));
@@ -2979,7 +3015,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 52);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
         let t = get_task(&c, "t").unwrap().unwrap();
         assert_eq!((t.starred, t.remind_at.as_deref(), t.reminder.as_deref()), (true, Some("2030-01-01T00:00:00.000Z"), Some("Look again")));
         // A message queued before is the user's unless other agents sent all of it.
@@ -3086,7 +3122,7 @@ mod tests {
         let c = open(&path).unwrap();
         let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         let kind: String = c.query_row("SELECT kind FROM permission_requests WHERE id='r'", [], |r| r.get(0)).unwrap();
-        assert_eq!((version, kind.as_str()), (52, "tool"));
+        assert_eq!((version, kind.as_str()), (53, "tool"));
         // Projects from before aren't archived.
         assert_eq!(get_project(&c, "x").unwrap().unwrap().archived_at, None);
         let t = get_task(&c, "t").unwrap().unwrap();
