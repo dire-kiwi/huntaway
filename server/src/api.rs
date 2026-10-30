@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{derive_key, expand_tilde, new_id, path_str};
-use crate::{admin, agent_tools, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
+use crate::{admin, agent_tools, git_view, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
 
 /// This host's API (`/api/...`) plus the hub endpoints that span hosts.
 pub fn router(state: Shared) -> Router {
@@ -36,7 +36,7 @@ pub fn router(state: Shared) -> Router {
         .route("/ws", get(hub::ws))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
     Router::new()
-        .route("/api/health", get(|| async { Json(json!({"ok": true})) }))
+        .route("/api/health", get(health))
         .route("/api/hub/connect", get(hub::accept))
         // Without the board's token: the token in its path reaches only its own automation.
         .route("/api/hooks/{id}/{token}", post(crate::automations::webhook).layer(DefaultBodyLimit::max(crate::automations::MAX_BODY)))
@@ -112,12 +112,24 @@ fn host_routes() -> Router<Shared> {
         )
         .route("/tasks/{id}", get(get_task).patch(update_task).delete(delete_task))
         .route("/tasks/{id}/messages", get(list_messages).post(send_message))
+        .route("/tasks/{id}/questions/{message_id}", post(answer_question))
         .route("/tasks/{id}/stop", post(stop_task))
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/review", post(review_task))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
+        .route("/tasks/{id}/git", get(git_view::status))
+        .route("/tasks/{id}/git/diff", get(git_view::diff))
+        .route("/tasks/{id}/git/show", get(git_view::show))
+        .route("/tasks/{id}/git/stage", post(git_view::stage))
+        .route("/tasks/{id}/git/unstage", post(git_view::unstage))
+        .route("/tasks/{id}/git/discard", post(git_view::discard))
+        // A patch of a big file's lines is past the default 2 MB body limit.
+        .route("/tasks/{id}/git/apply", post(git_view::apply).layer(DefaultBodyLimit::max(32 << 20)))
+        .route("/tasks/{id}/git/commit", post(git_view::commit))
+        .route("/tasks/{id}/git/stash", post(git_view::stash))
+        .route("/tasks/{id}/git/reset", post(git_view::reset))
         .route("/tasks/{id}/context", get(crate::context::get))
         .route("/tasks/{id}/skills", get(agent_tools::for_task))
         .route("/tasks/{id}/document", get(crate::documents::get))
@@ -172,6 +184,11 @@ async fn auth(State(s): State<Shared>, headers: HeaderMap, req: Request, next: N
 /// Pick known keys out of a JSON body as (column, value) pairs.
 fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)> {
     keys.iter().filter_map(|k| body.get(*k).map(|v| (*k, v.clone()))).collect()
+}
+
+/// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
+async fn health(State(s): State<Shared>) -> Json<Value> {
+    Json(json!({"ok": true, "commit": s.meta.running_commit}))
 }
 
 async fn info(State(s): State<Shared>) -> Json<Value> {
@@ -1773,7 +1790,22 @@ struct SendBody {
 
 async fn send_message(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
     let t = runner::send(&s, &id, &b.text)?;
+    // The user's reply answers the questions the agent asked (see questions.rs).
+    if !b.text.trim().is_empty() {
+        crate::questions::replied(&s, &t.id);
+    }
     Ok(Json(json!(t)))
+}
+
+/// Answer a question an agent asked with request_user_input, from its card (API 64): the answer
+/// is sent as the user's message.
+async fn answer_question(
+    State(s): State<Shared>,
+    Path((id, message_id)): Path<(String, i64)>,
+    Json(b): Json<crate::questions::Answer>,
+) -> ApiResult<Json<Value>> {
+    let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    Ok(Json(json!(crate::questions::answer(&s, &task.id, message_id, b)?)))
 }
 
 /// Drop the queued message. Returns the task as it was, queued message included.
@@ -1900,6 +1932,9 @@ async fn list_permissions(State(s): State<Shared>, Query(q): Query<PermissionsQu
 struct ResolveBody {
     decision: String,
     message: Option<String>,
+    /// The answers to a question, or how a plan is approved or what to change in it (API 64).
+    #[serde(flatten)]
+    reply: permissions::Reply,
 }
 
 async fn resolve_permission(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<ResolveBody>) -> ApiResult<Json<Value>> {
@@ -1908,7 +1943,7 @@ async fn resolve_permission(State(s): State<Shared>, Path(id): Path<String>, Jso
         "deny" => false,
         _ => return Err(ApiError::bad("decision must be allow, allow_always or deny")),
     };
-    let status = permissions::decide(&s, &id, allow, b.decision == "allow_always", b.message)?;
+    let status = permissions::answer(&s, &id, allow, b.decision == "allow_always", b.message, b.reply)?;
     Ok(Json(json!({"ok": true, "status": status})))
 }
 
@@ -1917,12 +1952,15 @@ struct ApprovalsQuery {
     /// Deletions too (API 58); older hosts ignore it and list project changes only.
     #[serde(default)]
     all: bool,
+    /// Automations too (API 67).
+    #[serde(default)]
+    automations: bool,
 }
 
-/// Project changes (and with `?all=true`, task deletions) agents are waiting for the user to
-/// approve (see permissions::approve).
+/// Project changes (and with `?all=true`, task deletions, and with `?automations=true`,
+/// automations) agents are waiting for the user to approve (see permissions::approve).
 async fn project_approvals(State(s): State<Shared>, Query(q): Query<ApprovalsQuery>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(permissions::pending_approvals(&s, q.all)?)))
+    Ok(Json(json!(permissions::pending_approvals(&s, q.all, q.automations)?)))
 }
 
 // ---------- host settings ----------

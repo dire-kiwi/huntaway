@@ -13,6 +13,7 @@ import {
   type AutomationInput,
   type AutomationRun,
   type AutomationRunStatus,
+  type AutomationTrigger,
   type FilterOp,
   type Project,
   type TaskType,
@@ -84,13 +85,13 @@ function daysText(days: Weekday[]) {
   return days.map((d) => DAY_LABELS[d]).join(", ");
 }
 
-function filterText(f: AutomationFilter) {
+export function filterText(f: AutomationFilter) {
   const value = Array.isArray(f.value) ? f.value.join(", ") : (f.value ?? "");
   return f.op === "exists" || f.op === "not_exists" ? `${f.path} ${OP_LABELS[f.op]}` : `${f.path} ${OP_LABELS[f.op]} ${value}`;
 }
 
-function triggerText(a: Automation, tz: TimeZone | null) {
-  const t = a.trigger;
+/** What starts an automation, e.g. "Every hour" or "At 09:00 on weekdays (Pacific/Auckland)". */
+export function triggerText(t: AutomationTrigger, tz: TimeZone | null) {
   if (t.kind === "interval") return everyText(t.every_minutes);
   if (t.kind === "daily") return `At ${t.time} on ${daysText(t.weekdays)}${tz?.name ? ` (${tz.name})` : ""}`;
   const parts = ["Webhook"];
@@ -239,7 +240,7 @@ function AutomationRow({
             <span className="truncate font-medium">{a.name}</span>
           </div>
           <div className="truncate text-[11.5px] text-faint">
-            {triggerText(a, tz)} · {what}
+            {triggerText(a.trigger, tz)} · {what}
           </div>
         </button>
         <Button

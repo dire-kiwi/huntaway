@@ -1438,7 +1438,7 @@ pub struct Message {
 }
 
 impl Message {
-    fn from_row(r: &Row) -> rusqlite::Result<Self> {
+    pub fn from_row(r: &Row) -> rusqlite::Result<Self> {
         let data: String = r.get("data")?;
         Ok(Self {
             id: r.get("id")?,
@@ -1488,6 +1488,16 @@ pub fn insert_profile(c: &Connection, name: &str, config_ids: &[String], model: 
         params![id, name, json!(config_ids).to_string(), model, now()],
     )?;
     Ok(get_profile(c, &id)?.unwrap())
+}
+
+/// A profile called `name` with the Claude config in `dir` (see `config_for_dir`), unless there's
+/// a profile of that name already, which is left as it is. Some(the new profile) if it made one.
+pub fn ensure_profile(c: &Connection, name: &str, dir: &str) -> Result<Option<Profile>> {
+    if list_profiles(c)?.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
+        return Ok(None);
+    }
+    let config = config_for_dir(c, name, dir)?;
+    Ok(Some(insert_profile(c, name, &[config], None)?))
 }
 
 // ---------- Claude configs ----------
@@ -2622,6 +2632,25 @@ mod tests {
         assert_eq!(c.query_row("PRAGMA synchronous", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
         drop(c);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ensure_profile_makes_a_profile_only_if_none_has_its_name() {
+        let c = open(std::path::Path::new(":memory:")).unwrap();
+        let p = ensure_profile(&c, "personal", "/claude/personal").unwrap().expect("made");
+        assert_eq!(p.name, "personal");
+        let configs = list_claude_configs(&c).unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!((configs[0].name.as_str(), configs[0].config_dir.as_str()), ("personal", "/claude/personal"));
+        assert_eq!(p.claude_config_ids, vec![configs[0].id.clone()]);
+        // On the next start, or with the name in another case, it's left as it is.
+        assert!(ensure_profile(&c, "personal", "/claude/personal").unwrap().is_none());
+        assert!(ensure_profile(&c, "Personal", "/elsewhere").unwrap().is_none());
+        assert_eq!(list_profiles(&c).unwrap().len(), 1);
+        assert_eq!(list_claude_configs(&c).unwrap().len(), 1);
+        // A config with the directory already is shared, as when a profile is made with claude_config_dir.
+        let work = ensure_profile(&c, "work", "/claude/personal").unwrap().expect("made");
+        assert_eq!(work.claude_config_ids, p.claude_config_ids);
     }
 
     #[test]
