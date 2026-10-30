@@ -8,6 +8,7 @@
 //   --env <file|data dir>   test-server.sh's output saved to a file, or its data dir (default: $IA_TEST_DATA_DIR)
 //   --url <url> --token <t> instead of --env ($IA_TEST_URL and $IA_TEST_TOKEN also work)
 //   --size <w>x<h>          viewport, default 1900x1000 (the Done column is off-screen below about 1900 wide)
+//   --touch                 a touch screen, as a phone or tablet has (pointer: coarse; below 700 wide is the phone layout)
 //   --timeout <ms>          for each step, default 5000
 //   --allow-error <regex>   don't fail on page and console errors that match (repeatable)
 //   --chromium <path>       default /usr/bin/chromium
@@ -80,14 +81,15 @@ const escapeCss = (s) => s.replace(/["\\]/g, "\\$&");
 
 /**
  * Open a browser on the server. `errors` collects page and console errors that weren't allowed.
- * Options: url, token, size ("1900x1000"), timeout (ms), allowErrors (regexes), chromium (path), log (function).
+ * Options: url, token, size ("1900x1000"), touch (a touch screen), timeout (ms), allowErrors (regexes), chromium (path),
+ * log (function).
  */
-export async function open({ url, token = "", size = "1900x1000", timeout = 5000, allowErrors = [], chromium = "/usr/bin/chromium", log = console.log } = {}) {
+export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = "/usr/bin/chromium", log = console.log } = {}) {
   if (!url) throw new Error("no server URL: pass --env <file|data dir>, or --url and --token (variables set with `. <env file>` aren't exported)");
   const base = url.replace(/\/+$/, "");
   const [width, height] = parseSize(size);
   const browser = await playwright().chromium.launch({ executablePath: chromium });
-  const context = await browser.newContext({ viewport: { width, height } });
+  const context = await browser.newContext({ viewport: { width, height }, ...(touch && { hasTouch: true, isMobile: true }) });
   // Signed in before the app's first script runs, so any page can be opened directly. Init scripts run in
   // every frame, and plans render in a sandboxed frame where touching localStorage throws: only the app's own page.
   if (token)
@@ -261,6 +263,7 @@ function parseArgs(argv) {
     else if (a === "--url") o.url = val();
     else if (a === "--token") o.token = val();
     else if (a === "--size") o.size = val();
+    else if (a === "--touch") o.touch = true;
     else if (a === "--timeout") o.timeout = Number(val());
     else if (a === "--allow-error") o.allowErrors.push(val());
     else if (a === "--chromium") o.chromium = val();

@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Folder, FolderGit2, Gauge, GitBranch, Kanban, Layers, Link2, List, MessagesSquare, NotebookPen, Plus, Settings2, X } from "lucide-react";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
+import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Ellipsis, Folder, FolderGit2, Gauge, GitBranch, Kanban, Layers, Link2, List, MessagesSquare, NotebookPen, Plus, Settings2, X } from "lucide-react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type UIEvent, type WheelEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   agentOf,
@@ -47,7 +47,8 @@ import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
 import { SCRATCH_TYPE, TASK_TYPES, TaskTypeBadge } from "./Document";
-import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide } from "./ui";
+import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, MenuButton, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide, type MenuItem } from "./ui";
+import { useNarrow, useTouch } from "../narrow";
 
 /** How many of a subproject's tasks are done. */
 export type Progress = { done: number; total: number };
@@ -181,11 +182,36 @@ function SubprojectBoardButton({ task, icon }: { task: Task; icon?: boolean }) {
   );
 }
 
-/** Opens a task's menu at a right-click. */
-type OnMenu = (e: MouseEvent, task: Task) => void;
+/** Opens a task's menu at a right-click, or with `move` from its menu button (which moves it to another column). */
+type OnMenu = (e: MouseEvent, task: Task, move?: boolean) => void;
 
 /** `onMenu` decides whether to replace the browser's menu (preventDefault). */
 const menuHandler = (task: Task, onMenu?: OnMenu) => onMenu && ((e: MouseEvent) => onMenu(e, task));
+
+/**
+ * The button that opens a task's menu to move it to another column: what dragging it does, where that doesn't work. On
+ * phones and touch screens only.
+ */
+function MoveButton({ task, onMenu, className }: { task: Task; onMenu?: OnMenu; className?: string }) {
+  const narrow = useNarrow();
+  const touch = useTouch();
+  if (!onMenu || !(narrow || touch)) return null;
+  return (
+    <button
+      title="Move to…"
+      aria-label={`Move ${task.title} to…`}
+      aria-haspopup="menu"
+      className={clsx("flex shrink-0 items-center justify-center rounded-md text-faint hover:bg-white/5 hover:text-fg", className)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onMenu(e, task, true);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <Ellipsis size={16} />
+    </button>
+  );
+}
 
 /** A card or row that opens its task: a button to the keyboard and screen readers too (Enter or Space opens it). */
 const opensTask = (task: Task, open: boolean) => ({
@@ -252,6 +278,7 @@ export const TaskCard = memo(function TaskCard({
           <TaskMarks task={task} compact />
         </div>
         <CardState task={task} />
+        <MoveButton task={task} onMenu={onMenu} className="-my-2.5 -mr-2 h-8 w-8" />
       </div>
       <div className={clsx("text-[13px] leading-snug", task.status === "done" && task.resolution === "wont_fix" ? "text-muted" : "text-fg")}>{task.title}</div>
       {task.attention_reason && task.status === "needs_attention" && (
@@ -1394,7 +1421,7 @@ export function NewTaskModal({
                 : start
                   ? "Create & start"
                   : `Create ${noun}`}
-            <span className="translate-y-px text-[11px] font-normal text-white/60">{SUBMIT_KEYS}</span>
+            <span className="translate-y-px text-[11px] font-normal text-white/60 touch:hidden">{SUBMIT_KEYS}</span>
           </Button>
         </div>
       </form>
@@ -1431,22 +1458,26 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
       {...opensTask(task, open)}
       onContextMenu={menuHandler(task, onMenu)}
       data-task={task.id}
-      className={clsx("flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset", open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : "bg-panel/60")}
+      className={clsx(
+        "flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset narrow:flex-wrap narrow:gap-x-2 narrow:px-3",
+        open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : "bg-panel/60",
+      )}
     >
       <span className="pt-0.5">
         <StatusIcon status={task.status} />
       </span>
-      <span className="w-14 shrink-0 pt-px font-mono text-[11.5px] text-faint">
+      <span className="w-14 shrink-0 pt-px font-mono text-[11.5px] text-faint narrow:w-auto">
         {keyPrefix(task, project)}-{task.number}
       </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] text-fg">{task.title}</div>
+      <div className="min-w-0 flex-1 narrow:order-last narrow:basis-full narrow:pl-[22px]">
+        <div className="truncate text-[13px] text-fg narrow:line-clamp-2 narrow:whitespace-normal">{task.title}</div>
         {task.attention_reason && task.status === "needs_attention" && (
           <div className="mt-0.5 line-clamp-2 text-[12px] text-amber-200/80">{task.attention_reason}</div>
         )}
         {agentWaiting(task) && <WaitReason wait={agentWaiting(task)!} className="mt-0.5 truncate text-[12px] text-muted" />}
       </div>
-      <div className="flex shrink-0 items-center gap-3 pt-px text-[11.5px] text-faint">
+      {/* On a phone, the title goes on a line of its own under these. */}
+      <div className="flex shrink-0 items-center gap-3 pt-px text-[11.5px] text-faint narrow:min-w-0 narrow:flex-1 narrow:gap-2 narrow:overflow-hidden">
         <TaskMarks task={task} />
         {task.subproject && <SubprojectBadge progress={progress} />}
         {task.subproject && <SubprojectBoardButton task={task} />}
@@ -1467,10 +1498,11 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
         {cost(task.cost_usd) && <span>{cost(task.cost_usd)}</span>}
-        <span className="w-14 text-right">
+        <span className="w-14 text-right narrow:ml-auto narrow:w-auto narrow:shrink-0">
           <ActivityTime task={task} />
         </span>
       </div>
+      <MoveButton task={task} onMenu={onMenu} className="-my-1.5 -mr-1.5 h-8 w-8" />
     </div>
   );
 });
@@ -1485,6 +1517,8 @@ const ARCHIVED_KEY = "ia.board.archived";
 const WIDE_BOARD = 1180;
 // How the boards sort their tasks, on this client.
 const SORT_KEY = "ia.board.sort";
+// The column the narrow layout's board shows (one at a time), on this client.
+const COLUMN_KEY = "ia.board.column";
 // Each board's search and filters, in this tab (so they last over a reload, and don't stay on forever).
 const queryKey = (board: string) => `ia.board.query.${board}`;
 
@@ -1536,13 +1570,14 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
       header={({ controls, newTask }) =>
         subproject ? (
           <header className="drag flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
+            <MenuButton />
             <IconButton className="no-drag" title={`Back to ${project.name}`} onClick={() => navigate({ name: "board", projectId })}>
               <ChevronLeft size={16} />
             </IconButton>
-            <button className="no-drag text-[12.5px] text-muted hover:text-fg" onClick={() => navigate({ name: "board", projectId })}>
+            <button className="no-drag text-[12.5px] text-muted hover:text-fg narrow:hidden" onClick={() => navigate({ name: "board", projectId })}>
               {project.name}
             </button>
-            <ChevronRight size={12} className="text-faint" />
+            <ChevronRight size={12} className="text-faint narrow:hidden" />
             <Layers size={14} className="shrink-0 text-accent" />
             <span className="font-mono text-[12px] text-faint">
               {project.key}-{subproject.number}
@@ -1557,19 +1592,18 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
             <div className="no-drag ml-auto flex items-center gap-1.5">
               {controls}
               <Button size="sm" variant="ghost" onClick={() => openTask(subproject.id)} title="The subproject's own agent, which plans and coordinates its tasks">
-                {subproject.running ? <RunningDot /> : <MessagesSquare size={14} />} Thread
+                {subproject.running ? <RunningDot /> : <MessagesSquare size={14} />} <span className="narrow:hidden">Thread</span>
               </Button>
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
+              <NewTaskButton onClick={newTask} />
             </div>
           </header>
         ) : (
-          <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
-            <FolderGit2 size={16} className="text-muted" />
+          <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
+            <MenuButton />
+            <FolderGit2 size={16} className="shrink-0 text-muted narrow:hidden" />
             <div className="flex min-w-0 items-baseline gap-2">
-              <h1 className="shrink-0 text-[14px] font-semibold">{project.name}</h1>
-              <span className="truncate font-mono text-[11.5px] text-faint">
+              <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{project.name}</h1>
+              <span className="truncate font-mono text-[11.5px] text-faint narrow:hidden">
                 {hostCount > 1 && <span className="mr-1.5 font-sans text-muted">{host?.name} ·</span>}
                 {project.repo_path}
               </span>
@@ -1579,9 +1613,7 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
               <IconButton title="Project settings" onClick={() => navigate({ name: "projectSettings", projectId })}>
                 <Settings2 size={15} />
               </IconButton>
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
+              <NewTaskButton onClick={newTask} />
             </div>
           </header>
         )
@@ -1611,11 +1643,12 @@ export function GroupBoard({ hostId, group }: { hostId: string; group: string })
         `${group} has no projects any more, so only its group tasks are left. Their agents can still run, and you can delete them; put a project back in the group to plan in it again.`
       }
       header={({ controls, newTask }) => (
-        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
-          <Folder size={16} className="shrink-0 text-muted" />
+        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
+          <MenuButton />
+          <Folder size={16} className="shrink-0 text-muted narrow:hidden" />
           <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="shrink-0 text-[14px] font-semibold">{group}</h1>
-            <span className="min-w-0 truncate text-[11.5px] text-faint">
+            <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{group}</h1>
+            <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
               {hostCount > 1 && <span className="mr-1.5 text-muted">{host?.name} ·</span>}
               {projects.map((p, i) => (
                 <span key={p.id}>
@@ -1629,11 +1662,7 @@ export function GroupBoard({ hostId, group }: { hostId: string; group: string })
           </div>
           <div className="no-drag ml-auto flex items-center gap-1.5">
             {controls}
-            {projects.length > 0 && (
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
-            )}
+            {projects.length > 0 && <NewTaskButton onClick={newTask} />}
           </div>
         </header>
       )}
@@ -1690,9 +1719,11 @@ function TaskBoard({
   const [archivedOpen, setArchivedOpen] = useState(() => localStorage.getItem(ARCHIVED_KEY) === "open");
   const [dropTarget, setDropTarget] = useState<{ status: Status; before: string | null } | null>(null);
   const [dropErr, setDropErr] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; taskId: string } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; taskId: string; move?: boolean } | null>(null);
   const [picking, setPicking] = useState<Task | null>(null);
   const [query, setQuery] = useState(() => loadQuery(boardKey));
+  const narrow = useNarrow();
+  const [column, setColumn] = useState<Status | null>(() => localStorage.getItem(COLUMN_KEY) as Status | null);
   useEffect(() => {
     if (isFiltering(query)) sessionStorage.setItem(queryKey(boardKey), JSON.stringify(query));
     else sessionStorage.removeItem(queryKey(boardKey));
@@ -1826,6 +1857,54 @@ function TaskBoard({
       return next;
     });
 
+  // The narrow layout's board shows one column at a time, picked above it or by swiping sideways: the one picked
+  // last, while it's shown. Until one is picked, what needs attention, or else the first column with tasks.
+  const firstColumn = () => {
+    const work = shownStatuses.filter((s) => s.id !== "backlog");
+    return (work.find((s) => s.id === "needs_attention" && shown[s.id].length) ?? work.find((s) => shown[s.id].length) ?? work[0] ?? shownStatuses[0])?.id;
+  };
+  const shownColumn = column && shownStatuses.some((s) => s.id === column) ? column : firstColumn();
+  // Which that is is settled once the board has tasks, so it doesn't change under you as they move.
+  const settle = !column && total > 0 ? shownColumn : undefined;
+  useEffect(() => {
+    if (settle) setColumn(settle);
+  }, [settle]);
+  const columnIndex = shownStatuses.findIndex((s) => s.id === shownColumn);
+  const columnsRef = useRef<HTMLDivElement>(null);
+  const columnTabsRef = useRef<HTMLDivElement>(null);
+  /** The column being scrolled to, which the columns passed on the way don't take over from. */
+  const scrollingTo = useRef<{ index: number; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const pickColumn = (s: Status) => {
+    setColumn(s);
+    localStorage.setItem(COLUMN_KEY, s);
+  };
+  useLayoutEffect(() => {
+    const el = columnsRef.current;
+    if (!el || columnIndex < 0) return;
+    columnTabsRef.current?.querySelector("[aria-selected=true]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // At once when the board opens, smoothly from one column to another.
+    const smooth = el.dataset.shown === "1";
+    el.dataset.shown = "1";
+    const left = columnIndex * el.clientWidth;
+    if (Math.abs(el.scrollLeft - left) <= 1) return;
+    if (smooth) {
+      clearTimeout(scrollingTo.current?.timer);
+      scrollingTo.current = { index: columnIndex, timer: setTimeout(() => (scrollingTo.current = null), 800) };
+    }
+    el.scrollTo({ left, behavior: smooth ? "smooth" : "instant" });
+  }, [columnIndex, narrow, view]);
+  const onColumnsScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const i = Math.round(el.scrollLeft / el.clientWidth);
+    if (Math.abs(el.scrollLeft - i * el.clientWidth) > 2) return;
+    if (scrollingTo.current) {
+      if (scrollingTo.current.index === i) scrollingTo.current = null;
+      return;
+    }
+    const s = shownStatuses[i]?.id;
+    if (s && s !== shownColumn) pickColumn(s);
+  };
+
   const onDragOver = (e: DragEvent, status: Status) => {
     if (!e.dataTransfer.types.includes("text/task-id")) return;
     e.preventDefault();
@@ -1840,13 +1919,17 @@ function TaskBoard({
     if (dropTarget?.status !== status || dropTarget.before !== beforeId) setDropTarget({ status, before: beforeId });
   };
 
-  const onDrop = async (e: DragEvent, status: Status) => {
+  const onDrop = (e: DragEvent, status: Status) => {
     e.preventDefault();
-    const id = e.dataTransfer.getData("text/task-id");
     const target = dropTarget;
     setDropTarget(null);
-    const task = all[id];
-    if (!task) return;
+    const task = all[e.dataTransfer.getData("text/task-id")];
+    if (task) moveTask(task, status, target?.before ?? null);
+  };
+
+  /** Moves `task` into column `status` before task `before`, or after its last task shown: as dropping it there does. */
+  const moveTask = async (task: Task, status: Status, before: string | null) => {
+    const id = task.id;
     // Dragged from the Archived section back into Done, it's done from now (and archived again in two days).
     const unarchive = status === "done" && isArchived(task, Date.now());
     // Sorted, it keeps its place in its own column, and goes last in another.
@@ -1854,7 +1937,7 @@ function TaskBoard({
     const col = columns[status].filter((t) => t.id !== id);
     // Before the card it's dropped above, or after the last card shown, which with filters may not be the column's last.
     const last = shown[status].filter((t) => t.id !== id).at(-1);
-    const idx = sort !== "manual" ? -1 : target?.before ? col.findIndex((t) => t.id === target.before) : last ? col.findIndex((t) => t.id === last.id) + 1 : -1;
+    const idx = sort !== "manual" ? -1 : before ? col.findIndex((t) => t.id === before) : last ? col.findIndex((t) => t.id === last.id) + 1 : -1;
     const { position, moves } = dropPosition(col, idx === -1 ? col.length : idx);
     if (task.status === status && task.position === position && !moves.length && !unarchive) return;
     const host = hostOf(task);
@@ -1899,26 +1982,43 @@ function TaskBoard({
   // Older hosts have no resolutions, so their tasks keep the browser's menu. The same function
   // from render to render, so the (memoized) cards don't all redraw.
   const onMenu = useCallback(
-    (e: MouseEvent, task: Task) => {
-      if (!hostSupports(hosts.find((h) => h.id === task.host_id), 19)) return;
+    (e: MouseEvent, task: Task, move?: boolean) => {
+      if (!move && !hostSupports(hosts.find((h) => h.id === task.host_id), 19)) return;
       e.preventDefault();
-      setMenu({ x: e.clientX, y: e.clientY, taskId: task.id });
+      // From its menu button, under the button.
+      const r = move ? (e.currentTarget as HTMLElement).getBoundingClientRect() : null;
+      setMenu({ x: r ? r.right : e.clientX, y: r ? r.bottom + 4 : e.clientY, taskId: task.id, move });
     },
     [hosts],
   );
 
   const menuTask = menu && all[menu.taskId];
+  /** The columns to move a task to from its menu: all but Done where Done's resolutions follow them. */
+  const moveItems = (task: Task): MenuItem[] =>
+    statuses
+      .filter((s) => s.id !== "done" || !hostSupports(hostOf(task), 19))
+      .map((s) => ({
+        label: (
+          <span className="flex items-center gap-2">
+            <StatusIcon status={s.id} size={13} /> {s.label}
+          </span>
+        ),
+        checked: task.status === s.id,
+        onSelect: () => task.status !== s.id && moveTask(task, s.id, null),
+      }));
   const canAdd = !!project || !!scratch;
 
   // A column or section with nothing to show: filtered out, or empty.
   const emptyText = (status: Status) =>
     columns[status].length
       ? "No matching tasks"
-      : status === "in_progress"
-        ? "Drop a task here to start its agent"
-        : status === "ready_for_merge"
-          ? "Drop a task here to have its agent merge it"
-          : "No tasks";
+      : narrow
+        ? "No tasks"
+        : status === "in_progress"
+          ? "Drop a task here to start its agent"
+          : status === "ready_for_merge"
+            ? "Drop a task here to have its agent merge it"
+            : "No tasks";
 
   const viewToggle = (
     <div className="mr-1 flex items-center rounded-md border border-line p-0.5">
@@ -1933,14 +2033,37 @@ function TaskBoard({
           title={`${label} view`}
           onClick={() => changeView(id)}
           className={clsx(
-            "inline-flex h-6 items-center gap-1 rounded px-2 text-xs font-medium transition-colors",
+            "inline-flex h-6 items-center gap-1 rounded px-2 text-xs font-medium transition-colors narrow:h-8",
             view === id ? "bg-raised text-fg" : "text-muted hover:text-fg",
           )}
         >
-          <Icon size={13} /> {label}
+          <Icon size={13} /> <span className="narrow:hidden">{label}</span>
         </button>
       ))}
     </div>
+  );
+
+  /** A column's cards, with where a dragged one would go, and what it says when it has none. */
+  const cards = (status: Status) => (
+    <>
+      {shown[status].map((t) => (
+        <div key={t.id}>
+          {dropTarget?.status === status && dropTarget.before === t.id && <DropLine status={status} />}
+          <TaskCard task={t} project={projectOf(t)} progress={progressOf(t)} onMenu={onMenu} />
+        </div>
+      ))}
+      {sort === "manual" && dropTarget?.status === status && dropTarget.before === null && <DropLine status={status} />}
+      {shown[status].length === 0 && <div className="px-2 py-6 text-center text-[12px] text-faint">{emptyText(status)}</div>}
+      {status === "done" && shownArchived.length > 0 && (
+        <button
+          onClick={showArchived}
+          title="Tasks done for two days or more are in the list view"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] text-faint transition-colors hover:bg-raised/40 hover:text-fg"
+        >
+          <Archive size={12} /> {shownArchived.length} archived
+        </button>
+      )}
+    </>
   );
 
   const queryControls = (
@@ -1960,12 +2083,12 @@ function TaskBoard({
   return (
     <div ref={setRoot} className="flex h-full min-h-0 flex-col">
       {header({ controls, newTask: () => setNewIn("todo") })}
-      {notice && <div className="border-b border-line bg-panel/60 px-5 py-2 text-[12.5px] text-muted">{notice}</div>}
+      {notice && <div className="border-b border-line bg-panel/60 px-5 py-2 text-[12.5px] text-muted narrow:px-3">{notice}</div>}
       {(filtering || !wide) && (
         <FilterBar query={query} onChange={setQuery} tools={!wide && queryControls} shown={shownCount} total={total} statuses={statusOptions} projects={projectOptions} />
       )}
       {dropErr && (
-        <div className="flex items-center gap-2 border-b border-line bg-red-500/10 px-5 py-2 text-[12.5px] text-red-300">
+        <div className="flex items-center gap-2 border-b border-line bg-red-500/10 px-5 py-2 text-[12.5px] text-red-300 narrow:px-3">
           <span className="min-w-0 flex-1">{dropErr}</span>
           <IconButton className="h-6 w-6" title="Dismiss" onClick={() => setDropErr(null)}>
             <X size={14} />
@@ -1974,7 +2097,7 @@ function TaskBoard({
       )}
       {view === "list" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="space-y-5 p-6">
+          <div className="space-y-5 p-6 narrow:p-3">
             {shownStatuses.map((s) => {
               const items = shown[s.id];
               // The backlog is open or collapsed in both views at once, and starts collapsed.
@@ -2065,6 +2188,53 @@ function TaskBoard({
             )}
           </div>
         </div>
+      ) : narrow ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div ref={columnTabsRef} role="tablist" aria-label="Columns" className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-line px-3 py-2 [scrollbar-width:none]">
+            {shownStatuses.map((s) => (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={s.id === shownColumn}
+                onClick={() => pickColumn(s.id)}
+                className={clsx(
+                  "flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] transition-colors",
+                  s.id === shownColumn ? "border-accent/50 bg-accent/10 text-fg" : "border-line text-muted",
+                )}
+              >
+                <StatusIcon status={s.id} size={13} />
+                {s.label}
+                <span className="text-faint">{shown[s.id].length}</span>
+              </button>
+            ))}
+          </div>
+          <div ref={columnsRef} onScroll={onColumnsScroll} className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
+            {shownStatuses.map((s) => (
+              <section
+                key={s.id}
+                role="tabpanel"
+                aria-label={s.label}
+                inert={s.id !== shownColumn}
+                onDragOver={(e) => onDragOver(e, s.id)}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
+                }}
+                onDrop={(e) => onDrop(e, s.id)}
+                className="h-full w-full shrink-0 snap-start snap-always space-y-2 overflow-y-auto px-3 pt-3 pb-6"
+              >
+                {cards(s.id)}
+                {canAdd && CAN_ADD.has(s.id) && (
+                  <button
+                    onClick={() => setNewIn(s.id)}
+                    className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line text-[12.5px] text-muted hover:text-fg"
+                  >
+                    <Plus size={14} /> New task in {s.label}
+                  </button>
+                )}
+              </section>
+            ))}
+          </div>
+        </div>
       ) : (
         <div ref={kanbanRef} onWheel={onKanbanWheel} className="kanban-scroll min-h-0 flex-1 overflow-x-auto">
           {/* w-max keeps the right padding when the columns overflow; min-w-full lets them grow to fill a wide window. */}
@@ -2126,25 +2296,7 @@ function TaskBoard({
                     </div>
                   </div>
                   {/* pt-px leaves room for the open card's ring, which the scroll area would clip at the top. */}
-                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pt-px pb-3">
-                    {shown[s.id].map((t) => (
-                      <div key={t.id}>
-                        {dropTarget?.status === s.id && dropTarget.before === t.id && <DropLine status={s.id} />}
-                        <TaskCard task={t} project={projectOf(t)} progress={progressOf(t)} onMenu={onMenu} />
-                      </div>
-                    ))}
-                    {sort === "manual" && dropTarget?.status === s.id && dropTarget.before === null && <DropLine status={s.id} />}
-                    {shown[s.id].length === 0 && <div className="px-2 py-6 text-center text-[12px] text-faint">{emptyText(s.id)}</div>}
-                    {s.id === "done" && shownArchived.length > 0 && (
-                      <button
-                        onClick={showArchived}
-                        title="Tasks done for two days or more are in the list view"
-                        className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] text-faint transition-colors hover:bg-raised/40 hover:text-fg"
-                      >
-                        <Archive size={12} /> {shownArchived.length} archived
-                      </button>
-                    )}
-                  </div>
+                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pt-px pb-3">{cards(s.id)}</div>
                 </section>
               ),
             )}
@@ -2155,13 +2307,23 @@ function TaskBoard({
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          title={`Complete ${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number} as`}
+          title={`${menu.move ? "Move" : "Complete"} ${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number} ${menu.move ? "to" : "as"}`}
           items={[
-            ...(Object.keys(RESOLUTION_LABELS) as Resolution[]).map((r) => ({
-              label: RESOLUTION_LABELS[r],
-              checked: menuTask.status === "done" && menuTask.resolution === r,
-              onSelect: () => complete(menuTask, r),
-            })),
+            ...(menu.move ? moveItems(menuTask) : []),
+            ...(hostSupports(hostOf(menuTask), 19)
+              ? (Object.keys(RESOLUTION_LABELS) as Resolution[]).map((r, i) => ({
+                  label: menu.move ? (
+                    <span className="flex items-center gap-2">
+                      <StatusIcon status="done" size={13} /> {RESOLUTION_LABELS[r]}
+                    </span>
+                  ) : (
+                    RESOLUTION_LABELS[r]
+                  ),
+                  checked: menuTask.status === "done" && menuTask.resolution === r,
+                  divider: i === 0,
+                  onSelect: () => complete(menuTask, r),
+                }))
+              : []),
             ...(hostSupports(hostOf(menuTask), REMINDERS_API)
               ? [starItem(menuTask, setDropErr, true), ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr)]
               : []),
@@ -2184,6 +2346,15 @@ function TaskBoard({
         />
       )}
     </div>
+  );
+}
+
+/** A board's New task button: just its + in the narrow layout. */
+function NewTaskButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button size="sm" variant="primary" onClick={onClick} aria-label="New task" className="narrow:h-9 narrow:w-9 narrow:px-0">
+      <Plus size={14} /> <span className="narrow:hidden">New task</span>
+    </Button>
   );
 }
 
@@ -2220,22 +2391,19 @@ export function ProfileBoard({ profile }: { profile: string }) {
       targets={targets}
       scratch={scratch}
       header={({ controls, newTask }) => (
-        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
+        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
+          <MenuButton />
           <ProfileAvatar name={profile} />
           <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="shrink-0 text-[14px] font-semibold">{profile}</h1>
-            <span className="min-w-0 truncate text-[11.5px] text-faint">
+            <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{profile}</h1>
+            <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
               {hosts.length > 1 && <span className="mr-1.5 text-muted">{on.map((h) => h.name).join(", ")} ·</span>}
               {projects.length ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : "No projects yet"}
             </span>
           </div>
           <div className="no-drag ml-auto flex items-center gap-1.5">
             {controls}
-            {(targets.length > 0 || scratch) && (
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
-            )}
+            {(targets.length > 0 || scratch) && <NewTaskButton onClick={newTask} />}
           </div>
         </header>
       )}

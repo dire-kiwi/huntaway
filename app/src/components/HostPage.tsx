@@ -7,7 +7,7 @@ import { profileConfigLabel, useStore } from "../store";
 import { HostClaudeConfigs } from "./ClaudeConfigs";
 import { AgentDefaultsRow, CopyLoginModal, HostVersion, ProfileForm, TerminalToolsRow } from "./Hosts";
 import { ServerPanel } from "./Server";
-import { Button, IconButton, Modal, timeAgo } from "./ui";
+import { Button, IconButton, MenuButton, Modal, timeAgo } from "./ui";
 
 const MODE: Record<string, string> = { local: "this hub's own host", outbound: "linked by URL", inbound: "dials in", ssh: "over SSH" };
 
@@ -20,6 +20,7 @@ export function HostPage({ hostId }: { hostId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="drag flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
+        <MenuButton />
         <IconButton className="no-drag" onClick={() => navigate({ name: "settings" })}>
           <ChevronLeft size={16} />
         </IconButton>

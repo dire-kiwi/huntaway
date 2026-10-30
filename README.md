@@ -680,6 +680,21 @@ skipped. Auto-compacting idle sessions is Claude-only.
   yourself or a run you stopped. The tab title (`(2) Huntaway`) and icon count the tasks that
   need attention, and the desktop app shows the count on its dock or taskbar badge. The settings
   are kept in the browser.
+- **Phones and tablets:** below 700px wide (a phone) the board has a narrow layout. The sidebar
+  is a drawer, opened with the menu button at the start of each page's header and closed once
+  it's taken you somewhere (or with a tap beside it, or Escape). A board shows one column at a
+  time: tabs above it with each column's count pick one, as does swiping sideways, and the board
+  opens on the column picked last (before any is picked, *Needs attention* if it has tasks,
+  else the first column with some). The list view stays as it is, with each task's title on a
+  line of its own. A task opens over the whole screen with a back button, its tabs first in a
+  row that scrolls sideways and its details as a tab. On a touch screen Enter in the composer
+  starts a new line and the send button sends (Ctrl/Cmd+Enter does too). Dialogs and menus fit
+  the screen and scroll, and buttons are larger to tap. Dragging doesn't work on touch screens,
+  so on a phone, and on any touch screen (a tablet keeps the desktop layout), each card and row
+  has a **⋯** button whose menu moves the task to another column as dropping it there does
+  (into *In progress* starts its agent), or completes it as Done, Not done or Won't fix. A task
+  beside a board is at least 480px wide, so it's usable on a tablet. Wider windows and the
+  desktop app keep the desktop layout.
 - **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its
