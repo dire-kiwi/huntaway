@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Folder, FolderGit2, Gauge, GitBranch, GitMerge, Kanban, Layers, Link2, List, MessagesSquare, NotebookPen, Plus, Settings2, X } from "lucide-react";
+import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Folder, FolderGit2, Gauge, GanttChart, GitBranch, GitMerge, Inbox, Kanban, Layers, Link2, List, MessagesSquare, MonitorPlay, Network, NotebookPen, Plus, Settings2, X } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -48,6 +48,10 @@ import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
 import { SCRATCH_TYPE, TASK_TYPES, TaskTypeBadge } from "./Document";
+import { TimelineView } from "./TimelineView";
+import { GraphView } from "./GraphView";
+import { TriageView } from "./TriageView";
+import { LiveView } from "./LiveView";
 import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide } from "./ui";
 
 /** How many of a subproject's tasks are done. */
@@ -183,7 +187,7 @@ function SubprojectBoardButton({ task, icon }: { task: Task; icon?: boolean }) {
 }
 
 /** Opens a task's menu at a right-click. */
-type OnMenu = (e: MouseEvent, task: Task) => void;
+export type OnMenu = (e: MouseEvent, task: Task) => void;
 
 /** `onMenu` decides whether to replace the browser's menu (preventDefault). */
 const menuHandler = (task: Task, onMenu?: OnMenu) => onMenu && ((e: MouseEvent) => onMenu(e, task));
@@ -1486,8 +1490,20 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
   );
 });
 
-type BoardView = "board" | "list";
+// Board and List show the tasks by status; the others are other ways of looking at the same tasks (HA-5).
+const VIEWS = [
+  { id: "board", label: "Board", icon: Kanban, title: "Board view: a column for each status" },
+  { id: "list", label: "List", icon: List, title: "List view: a section for each status" },
+  { id: "triage", label: "Triage", icon: Inbox, title: "Triage view: what needs you, most pressing first" },
+  { id: "live", label: "Live", icon: MonitorPlay, title: "Live view: the working agents side by side" },
+  { id: "timeline", label: "Timeline", icon: GanttChart, title: "Timeline view: when agents ran, and how long tasks have waited on you" },
+  { id: "graph", label: "Graph", icon: Network, title: "Graph view: which tasks led to which, and what waits on what" },
+] as const;
+type BoardView = (typeof VIEWS)[number]["id"];
+const isView = (v: string | null): v is BoardView => VIEWS.some((x) => x.id === v);
 const VIEW_KEY = "ia.boardView";
+// How wide a board has to be for every view's name to show in the view switch (see `labelled` in TaskBoard).
+const WIDE_VIEWS = 1500;
 // Whether the kanban board's Backlog column is open (it starts collapsed), on this client.
 const BACKLOG_KEY = "ia.board.backlog";
 // Whether the list view's Archived section is open (it starts collapsed), on this client.
@@ -1695,7 +1711,10 @@ function TaskBoard({
   const all = useStore((s) => s.tasks);
   const upsertTask = useStore((s) => s.upsertTask);
   const [newIn, setNewIn] = useState<Status | null>(null);
-  const [view, setView] = useState<BoardView>(() => (localStorage.getItem(VIEW_KEY) === "list" ? "list" : "board"));
+  const [view, setView] = useState<BoardView>(() => {
+    const v = localStorage.getItem(VIEW_KEY);
+    return isView(v) ? v : "board";
+  });
   const [collapsed, setCollapsed] = useState<Set<Status>>(() => new Set());
   const [backlogOpen, setBacklogOpen] = useState(() => localStorage.getItem(BACKLOG_KEY) === "open");
   const [archivedOpen, setArchivedOpen] = useState(() => localStorage.getItem(ARCHIVED_KEY) === "open");
@@ -1720,9 +1739,13 @@ function TaskBoard({
   // its title and buttons (a subproject's has the most), and otherwise in a row of their own below it.
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   const [wide, setWide] = useState(true);
+  const [roomy, setRoomy] = useState(true);
   useLayoutEffect(() => {
     if (!root) return;
-    const fits = (width: number) => setWide(width >= WIDE_BOARD);
+    const fits = (width: number) => {
+      setWide(width >= WIDE_BOARD);
+      setRoomy(width >= WIDE_VIEWS);
+    };
     fits(root.getBoundingClientRect().width);
     const ro = new ResizeObserver(([e]) => fits(e.contentRect.width));
     ro.observe(root);
@@ -1780,6 +1803,13 @@ function TaskBoard({
     const shown = Object.fromEntries(Object.entries(columns).map(([k, ts]) => [k, sortTasks(ts.filter(match), sort)])) as Record<Status, Task[]>;
     return { shown, shownArchived: sortTasks(archived.filter(match), sort) };
   }, [columns, archived, query, sort, byId]);
+  // For the views that aren't by status: every task shown, in the order of the statuses.
+  const shownTasks = useMemo(
+    () => [...shownStatuses.flatMap((s) => shown[s.id]), ...(showsStatus(query, "done") ? shownArchived : [])],
+    // shownStatuses is a new array each render, but follows `statuses` and `query`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shown, shownArchived, statuses, query],
+  );
   const total = statuses.reduce((n, s) => n + columns[s.id].length, archived.length);
   const shownCount = shownStatuses.reduce((n, s) => n + shown[s.id].length, showsStatus(query, "done") ? shownArchived.length : 0);
   // The filter menu's choices: the board's statuses, the kinds of task it has, and its projects (with "No project" for its group and scratch tasks).
@@ -1931,24 +1961,24 @@ function TaskBoard({
           ? "Drop a task here to have its agent merge it"
           : "No tasks";
 
+  // Every view's name on a roomy board, the current one's on a wide one, and only icons on a narrow one.
+  const labelled = (id: BoardView) => roomy || (wide && view === id);
   const viewToggle = (
     <div className="mr-1 flex items-center rounded-md border border-line p-0.5">
-      {(
-        [
-          { id: "board", label: "Board", icon: Kanban },
-          { id: "list", label: "List", icon: List },
-        ] as const
-      ).map(({ id, label, icon: Icon }) => (
+      {VIEWS.map(({ id, label, icon: Icon, title }) => (
         <button
           key={id}
-          title={`${label} view`}
+          title={title}
+          aria-label={`${label} view`}
+          aria-pressed={view === id}
           onClick={() => changeView(id)}
           className={clsx(
-            "inline-flex h-6 items-center gap-1 rounded px-2 text-xs font-medium transition-colors",
+            "inline-flex h-6 items-center gap-1 rounded text-xs font-medium transition-colors",
+            labelled(id) ? "px-2" : "px-1.5",
             view === id ? "bg-raised text-fg" : "text-muted hover:text-fg",
           )}
         >
-          <Icon size={13} /> {label}
+          <Icon size={13} /> {labelled(id) && label}
         </button>
       ))}
     </div>
@@ -1983,7 +2013,15 @@ function TaskBoard({
           </IconButton>
         </div>
       )}
-      {view === "list" ? (
+      {view === "triage" ? (
+        <TriageView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
+      ) : view === "live" ? (
+        <LiveView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
+      ) : view === "timeline" ? (
+        <TimelineView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
+      ) : view === "graph" ? (
+        <GraphView tasks={shownTasks} projectOf={projectOf} progressOf={progressOf} onMenu={onMenu} />
+      ) : view === "list" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-5 p-6">
             {shownStatuses.map((s) => {

@@ -3,7 +3,7 @@
 A kanban board for orchestrating Claude Code and Codex agents. Every task is an agent thread
 (`claude -p`, or `codex app-server` for Codex) that moves through **To do → In progress → Needs attention → In review → Ready for merge → Done**,
 usually in its own git worktree. Click a card to see the full thread, reply to the agent,
-approve tool calls, and review the diff.
+approve tool calls, and review, stage and commit its changes (lazygit-style).
 
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
@@ -545,7 +545,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   to another column to reopen it. Tasks keep when they were done in `done_at`; hosts from before
   that go by when the task last changed.
 - **Search, filter and sort:** each board's header (a project's, a subproject's, a group's or a
-  profile's; on a narrow board, a row below it), in both views, has a search field (`/` goes to it, Escape clears it) that matches
+  profile's; on a narrow board, a row below it), in every view, has a search field (`/` goes to it, Escape clears it) that matches
   every word typed in a task's key, title, description, branch or project. *Filter* picks
   statuses (which leaves the other columns or sections out), types of task, projects (on a
   group's or profile's board) and tasks with a running agent, a star, a pull request or a
@@ -554,6 +554,30 @@ skipped. Auto-compacting idle sessions is Claude-only.
   the browser tab; *Sort* (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
+- **Other views** (HA-5, a first try at ways to see the board other than by status): beside
+  *Board* and *List*, the view switch has four more, which show the same tasks (the search and
+  filters apply) and are kept for every board like the other two. On a board narrower than
+  1500px the switch names only the current view, and below 1180px none.
+  - *Triage*: what each task needs from you, most pressing first: an answer (*Needs
+    attention*), a review (*In review*), a reminder that's come round, an agent that stopped
+    before it finished, a start; then the agents at work. Each shows the agent's last words
+    (`GET /tasks/{id}`'s `last_message`); picking one (a click, or `j`/`k`) shows its pending
+    permission prompts to allow or deny, its thread's composer (the same draft as its panel's)
+    and, in review, *Ready for merge*. `Enter` opens its thread.
+  - *Live*: a tile for each agent that's working, needs you or was active in the last 30
+    minutes (12 at most): the tail of its thread (the user's messages, the agent's text, its tool
+    calls) with the text it's streaming, its permission prompts to allow or deny, and a field to
+    message it.
+  - *Timeline*: a lane for each task with activity in the last hour, 6 hours, day, 3, 7 or 30
+    days (‹ › go back a window at a time), most recent first: its agent's runs and reviews as
+    bars, your prompts as ticks, and since its agent stopped, how long it's waited on you. Above,
+    how many agents ran at once. It's the hosts' analytics report (API 16) for each profile on
+    the board.
+  - *Graph*: tasks linked by how they came about: a task follows the task whose agent created
+    it, the tasks it waits for (`depends_on`) and the subproject it's in, a column per step, and
+    a link that a longer way round already makes is left out. Tasks made from one prompt are
+    boxed together; tasks from other boards that one links to are shown faded. Tasks with no
+    links are in a grid below.
 - **Waiting** (API 36): an agent with nothing to do until something happens (the tasks it
   created, CI and reviews, a deploy) calls the `wait` tool (`reason`, `seconds`, `tasks`) instead of sleeping,
   polling or ending its turn. The call blocks until the first of: the wait period is over (10
@@ -788,6 +812,29 @@ skipped. Auto-compacting idle sessions is Claude-only.
   to *Ready for merge* or *Done* is up to you. When they're done, the subproject is merged as a
   whole like any other task (its agent asks first if some of its tasks aren't done). Deleting a
   subproject deletes its tasks. Subprojects don't nest (API 17).
+- **Changes** (API 66): a task's *Changes* tab works like lazygit, in its worktree (or its
+  project's repository when it has none). Panels on the left list the branch (*Status*: its
+  commits since the base branch, and against its upstream), the changed files (a tree, or a
+  list with `` ` ``), the commits (the branch's, then a few from its base) and the stashes; the
+  main panel shows what's selected: the branch's whole diff against its base, a file's unstaged
+  and staged changes, or a commit's or stash's. `1`–`4` or ←/→ move between panels, ↑/↓ (or
+  `j`/`k`) through a list, and the bar at the bottom shows the keys for where you are (each one
+  can be clicked; `?` lists them all). In the files, space stages or unstages a file or folder,
+  `a` everything, `d` discards, `c` commits (with a summary and description; a message not
+  committed is kept for the next try), `A` amends the last commit and `s`/`S` stash. Enter goes
+  into a file's diff to stage single lines: space stages (in the staged changes, unstages) the
+  line under the cursor, `v` or shift+↑/↓ select a range, `a` the whole hunk, `d` discards
+  them, Tab switches between the unstaged and staged changes and Esc goes back; clicking,
+  shift+clicking and dragging over lines selects them too, and each hunk has buttons. In the
+  commits, `g` resets the branch (soft, mixed or hard) and `r` rewords the last commit; in the
+  stashes, space applies, `g` pops and `d` drops. Right-clicking a file, commit or stash shows
+  its menu. The view checks for changes every few seconds (the agent may be making them), and
+  keys pressed while a change is being made wait for it, so pressing space again stages the next
+  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/changes.ts`),
+  applied with `git apply --cached`; if the file has changed since, git refuses it and the view
+  shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
+  discarded whole, as a patch made from the text the view shows would write its other bytes back
+  wrong. A host before API 66 shows the branch's diff alone.
 - **Terminals:** a task's *Terminal* tab opens a shell (xterm.js) in its worktree, or where its
   agent runs if it has none. It is a tmux session on the task's host, on a tmux server of its
   own (`tmux -L ia-<host id>`, so your other tmux sessions aren't touched, though `~/.tmux.conf`
