@@ -514,8 +514,56 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN fanout_id TEXT;" };
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=53; COMMIT;"))?;
     }
+    if version < 54 {
+        // Projects' automations and their runs (see automations.rs).
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V54} PRAGMA user_version=54; COMMIT;"))?;
+    }
     Ok(conn)
 }
+
+/// The latest database version (`PRAGMA user_version`).
+#[cfg(test)]
+pub const VERSION: i64 = 54;
+
+/// Automations, which create a task or message one on a schedule or when a webhook is
+/// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
+const SCHEMA_V54: &str = r#"
+CREATE TABLE IF NOT EXISTS automations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  trigger TEXT NOT NULL,
+  action TEXT NOT NULL,
+  token TEXT NOT NULL,
+  secret TEXT,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS automations_project ON automations(project_id);
+CREATE TABLE IF NOT EXISTS automation_runs (
+  id TEXT PRIMARY KEY,
+  automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  detail TEXT,
+  task_id TEXT,
+  delivery_id TEXT,
+  event TEXT,
+  count INTEGER NOT NULL DEFAULT 1,
+  batch_key TEXT,
+  batch_id TEXT,
+  payload TEXT,
+  due_at TEXT,
+  created_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS automation_runs_automation ON automation_runs(automation_id, created_at);
+CREATE INDEX IF NOT EXISTS automation_runs_status ON automation_runs(status, due_at);
+CREATE INDEX IF NOT EXISTS automation_runs_delivery ON automation_runs(automation_id, delivery_id);
+"#;
 
 /// The key scratch tasks' numbers go with (see Task::is_scratch), which no project can have.
 pub const SCRATCH_TASK_KEY: &str = "S";
@@ -2785,7 +2833,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         assert_eq!(get_task(&c, "d").unwrap().unwrap().done_at.as_deref(), Some("2026-01-02T00:00:00Z"));
         assert_eq!(get_task(&c, "t").unwrap().unwrap().done_at, None);
         drop(c);
@@ -2807,7 +2855,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         let p = get_profile(&c, "p").unwrap().unwrap();
         assert_eq!((p.clone_dir.as_deref(), p.clone_dir_or_default().as_str()), (None, "~/work"));
         let p = update_profile(&c, "p", &[("clone_dir", json!("~/src/work"))]).unwrap().unwrap();
@@ -2835,7 +2883,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         let p = get_profile(&c, "p").unwrap().unwrap();
         assert_eq!((p.asana_token, p.asana_user), (None, None));
         assert!(get_task(&c, "t").unwrap().unwrap().external_links.is_empty());
@@ -2858,7 +2906,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         let p = get_profile(&c, "p").unwrap().unwrap();
         assert!(p.asana_enabled);
         assert_eq!((p.asana_token.as_deref(), p.asana_user.as_deref()), (Some("tok"), Some("Ivy")));
@@ -2886,7 +2934,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         assert_eq!(get_task(&c, "t").unwrap().unwrap().fanout_id, None);
         let t = update_task(&c, "t", &[("fanout_id", json!("f1"))]).unwrap().unwrap();
         assert_eq!(t.fanout_id.as_deref(), Some("f1"));
@@ -2918,7 +2966,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         let configs = list_claude_configs(&c).unwrap();
         assert_eq!(configs.iter().map(|c| (c.id.as_str(), c.show_usage)).collect::<Vec<_>>(), [("c", false)]);
         drop(c);
@@ -2950,7 +2998,7 @@ mod tests {
                 .unwrap();
             }
             let c = open(&path).unwrap();
-            assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+            assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
             assert_eq!(get_profile(&c, "p").unwrap().unwrap().github_account.as_deref(), Some("work-me"), "{version}");
             let t = get_task(&c, "t").unwrap().unwrap();
             assert!(!t.starred && !t.title_pinned && t.queued_user_text.is_none(), "{version}");
@@ -2983,7 +3031,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         assert_eq!(get_project(&c, "pr").unwrap().unwrap().archived_at, None);
         let t = get_task(&c, "s").unwrap().unwrap();
         assert_eq!((t.number, t.work_dir.as_deref(), t.is_scratch()), (1, Some("/old"), true));
@@ -3015,7 +3063,7 @@ mod tests {
             .unwrap();
         }
         let c = open(&path).unwrap();
-        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 53);
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
         let t = get_task(&c, "t").unwrap().unwrap();
         assert_eq!((t.starred, t.remind_at.as_deref(), t.reminder.as_deref()), (true, Some("2030-01-01T00:00:00.000Z"), Some("Look again")));
         // A message queued before is the user's unless other agents sent all of it.

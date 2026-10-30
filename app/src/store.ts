@@ -651,6 +651,17 @@ export function connectEvents() {
   };
 }
 
+type AutomationListener = (hostId: string, projectId: string, automationId: string) => void;
+const automationListeners = new Set<AutomationListener>();
+
+/** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
+export function onAutomationsChanged(fn: AutomationListener) {
+  automationListeners.add(fn);
+  return () => {
+    automationListeners.delete(fn);
+  };
+}
+
 /** Applies a websocket event to the store (exported for tests). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function handleEvent(ev: any) {
@@ -688,6 +699,9 @@ export function handleEvent(ev: any) {
       break;
     case "settings_changed":
       s.loadHostSettings(h);
+      break;
+    case "automations_changed":
+      for (const fn of automationListeners) fn(h, ev.project_id, ev.automation_id);
       break;
     case "message":
     case "message_updated": {
