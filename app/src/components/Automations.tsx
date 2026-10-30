@@ -146,16 +146,10 @@ export function ProjectAutomations({ project }: { project: Project }) {
     await reload();
   };
   return (
-    <div className="space-y-3 rounded-xl border border-line p-4" data-testid="automations">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[13px] font-medium">Automations</div>
-        <Button size="sm" onClick={() => setEditing("new")}>
-          <Plus size={13} /> New automation
-        </Button>
-      </div>
-      <div className="text-[12px] text-faint">
-        Create a task, or send a message to one, on a schedule or when a webhook is delivered (a new GitHub issue, say). Saved as you change them.
-      </div>
+    <div className="space-y-3" data-testid="automations">
+      <Button size="sm" onClick={() => setEditing("new")}>
+        <Plus size={13} /> New automation
+      </Button>
       {list && list.length > 0 && (
         <div className="divide-y divide-line/70 rounded-md border border-line/70">
           {list.map((a) => (

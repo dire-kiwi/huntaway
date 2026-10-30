@@ -15,7 +15,7 @@ test("a new webhook shows its URL and secret, closes cleanly, and its deliveries
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await ui.run([
-      `goto /p/${project.id}/settings`,
+      `goto /p/${project.id}/settings/automations`,
       "click New automation",
       "click Weekly dependency update",
       "type Issue triage",
@@ -75,14 +75,14 @@ test("an automation's editor keeps what it was saved with", async () => {
   });
   await withBrowser(server, {}, async (ui) => {
     for (const a of [made, sched]) {
-      await ui.run([`goto /p/${project.id}/settings`, `click ${a.name}`, `wait Edit ${a.name}`, "click Save automation", "gone [role=dialog]"]);
+      await ui.run([`goto /p/${project.id}/settings/automations`, `click ${a.name}`, `wait Edit ${a.name}`, "click Save automation", "gone [role=dialog]"]);
       const after = await server.api("GET", `/automations/${a.id}`);
       assert.deepEqual(after.trigger, a.trigger, a.name);
       assert.deepEqual(after.action, a.action, a.name);
     }
     // An interval in hours shows as hours.
     await server.api("PATCH", `/automations/${sched.id}`, { trigger: { kind: "interval", every_minutes: 360 } });
-    await ui.run([`goto /p/${project.id}/settings`, "wait Every 6 hours", "click Mondays", "wait Edit Mondays"]);
+    await ui.run([`goto /p/${project.id}/settings/automations`, "wait Every 6 hours", "click Mondays", "wait Edit Mondays"]);
     assert.equal(await ui.page.getByRole("spinbutton", { name: "Every" }).inputValue(), "6");
     assert.equal(await ui.page.getByRole("combobox", { name: "Unit" }).inputValue(), "hours");
   });

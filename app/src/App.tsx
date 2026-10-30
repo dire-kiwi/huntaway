@@ -69,7 +69,7 @@ export function App() {
           {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
           {route.name === "task" && <TaskView taskId={route.taskId} />}
           {route.name === "subproject" && <SubprojectBoard taskId={route.taskId} />}
-          {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} />}
+          {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
           {route.name === "settings" && <Settings />}
           {route.name === "analytics" && <Analytics />}
           {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
