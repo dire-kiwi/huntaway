@@ -1,7 +1,8 @@
 import clsx from "clsx";
-import { Ban, Check, CheckCircle2, CircleAlert, CircleSlash, GitBranch, GitPullRequest, Hourglass, X } from "lucide-react";
+import { Ban, Check, CheckCircle2, CircleAlert, CircleSlash, GitBranch, GitPullRequest, Hourglass, Menu, X } from "lucide-react";
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ComponentProps, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { agentWaiting, type AgentWait, type PrWaitEvent, type Resolution, type Status, type Task } from "../api";
+import { useDrawer, useNarrow } from "../narrow";
 import { usePreviewUp } from "../preview";
 
 export function Button({
@@ -15,7 +16,8 @@ export function Button({
       {...props}
       className={clsx(
         "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap",
-        size === "sm" ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-[13px]",
+        // Taller in the narrow layout, to tap.
+        size === "sm" ? "h-7 px-2.5 text-xs narrow:h-9" : "h-8 px-3 text-[13px] narrow:h-10",
         variant === "primary" && "bg-accent-strong text-white hover:bg-accent",
         variant === "secondary" && "bg-raised text-fg border border-line hover:border-line-strong hover:bg-[#22222c]",
         variant === "ghost" && "text-muted hover:text-fg hover:bg-white/5",
@@ -31,10 +33,21 @@ export function IconButton({ className, ...props }: ButtonHTMLAttributes<HTMLBut
     <button
       {...props}
       className={clsx(
-        "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-fg hover:bg-white/5 transition-colors disabled:opacity-40",
+        "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-fg hover:bg-white/5 transition-colors disabled:opacity-40 narrow:h-9 narrow:w-9",
         className,
       )}
     />
+  );
+}
+
+/** Opens the sidebar's drawer, at the start of a page's header in the narrow layout (nothing otherwise). */
+export function MenuButton() {
+  const narrow = useNarrow();
+  if (!narrow) return null;
+  return (
+    <IconButton className="no-drag -ml-1.5 shrink-0" title="Menu" aria-label="Menu" onClick={() => useDrawer.getState().setOpen(true)}>
+      <Menu size={18} />
+    </IconButton>
   );
 }
 
@@ -160,7 +173,11 @@ export function Modal({
     };
   }, [before]);
   return (
-    <div data-modal className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[10vh] backdrop-blur-[2px]" onMouseDown={onClose}>
+    <div
+      data-modal
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[10vh] backdrop-blur-[2px] narrow:overflow-y-auto narrow:p-2 narrow:pt-[max(0.5rem,env(safe-area-inset-top))]"
+      onMouseDown={onClose}
+    >
       <div
         ref={box}
         role="dialog"
@@ -174,11 +191,11 @@ export function Modal({
           <div id={titleId} className="text-[14px] font-semibold">
             {title}
           </div>
-          <IconButton onClick={onClose} title="Close" aria-label="Close">
+          <IconButton onClick={onClose} title="Close" aria-label="Close" className="narrow:-mr-1">
             <X size={15} />
           </IconButton>
         </div>
-        <div className="p-4">{children}</div>
+        <div className="p-4 narrow:p-3">{children}</div>
       </div>
     </div>
   );
@@ -207,6 +224,10 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
     const onDown = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) close();
     };
+    // Not its own scrolling: a long menu scrolls on a short screen.
+    const onScroll = (e: Event) => {
+      if (!ref.current?.contains(e.target as Node)) close();
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" || e.key === "Tab") {
         e.preventDefault();
@@ -222,13 +243,13 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
     };
     window.addEventListener("mousedown", onDown, true);
     window.addEventListener("keydown", onKey, true);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     window.addEventListener("blur", close);
     return () => {
       window.removeEventListener("mousedown", onDown, true);
       window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("blur", close);
     };
@@ -239,7 +260,7 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
       data-modal
       role="menu"
       style={pos}
-      className="fixed z-50 min-w-44 rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50"
+      className="fixed z-50 min-w-44 rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50 narrow:max-h-[calc(100%-8px)] narrow:overflow-y-auto"
       onContextMenu={(e) => e.preventDefault()}
     >
       {title && <div className="px-2 pt-1 pb-1.5 text-[11.5px] text-faint">{title}</div>}
@@ -253,7 +274,7 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
               onClose();
               item.onSelect();
             }}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-fg outline-none hover:bg-white/5 focus:bg-white/5"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-fg outline-none hover:bg-white/5 focus:bg-white/5 narrow:py-2.5"
           >
             <span className="w-3.5 shrink-0 text-accent">{item.checked && <Check size={14} />}</span>
             {item.label}

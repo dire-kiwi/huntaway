@@ -20,7 +20,7 @@ test("fast clicks on skill switches all reach the server", async () => {
       if (route.request().method() === "PATCH") await new Promise((r) => setTimeout(r, 400));
       await route.continue();
     });
-    await ui.run([`goto /p/${project.id}/settings`, "click Skills from Claude configs"]);
+    await ui.run([`goto /p/${project.id}/settings/tools`, "click Skills from Claude configs"]);
     for (const name of names) await page.getByRole("button", { name, exact: true }).click();
     let saved;
     for (const end = Date.now() + 5000; Date.now() < end; await page.waitForTimeout(100)) {
@@ -29,6 +29,6 @@ test("fast clicks on skill switches all reach the server", async () => {
     }
     assert.deepEqual(saved, []);
     // Switched back on and never seen in a run, they're no longer listed, before or after a reload.
-    await ui.run(["wait none seen yet", `goto /p/${project.id}/settings`, "wait none seen yet"]);
+    await ui.run(["wait none seen yet", `goto /p/${project.id}/settings/tools`, "wait none seen yet"]);
   });
 });
