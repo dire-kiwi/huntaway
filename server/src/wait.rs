@@ -139,7 +139,14 @@ pub async fn wait(s: &Shared, run: &Run, task: &Task, call_id: &str, req: Reques
             let pull_request = match pull_request {
                 Some(pr) => {
                     let mut w = crate::pr_watch::Watcher::new(s, task, pr.target.clone())?;
-                    let news = w.poll(s, &task.id, call_id, &pr.events).await.map_err(|e| anyhow!("The wait didn't start: {} couldn't be read: {e}", pr.target.label()))?;
+                    let news = w.poll(s, &task.id, call_id, &pr.events).await.map_err(|e| {
+                        // A host from the task's remote may be an SSH alias that couldn't be looked up.
+                        let hint = match pr.target.host.as_str() {
+                            "github.com" => String::new(),
+                            host => format!(" (if {host} isn't a GitHub host, give the pull request's URL)"),
+                        };
+                        anyhow!("The wait didn't start: {} couldn't be read: {e}{hint}", pr.target.label())
+                    })?;
                     watcher = Some(w);
                     Some(pr.stored(news))
                 }
