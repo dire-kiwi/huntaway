@@ -243,7 +243,7 @@ export function DocumentView({ task, onShowThread }: { task: Task; onShowThread:
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3 text-[12px]">
-        <span className="flex items-center gap-1.5 text-muted">
+        <span className="flex items-center gap-1.5 text-muted narrow:hidden">
           {info.icon} {info.label}
         </span>
         {versions.length > 0 && (
@@ -284,9 +284,10 @@ export function DocumentView({ task, onShowThread }: { task: Task; onShowThread:
                 <button
                   key={m.label}
                   onClick={() => setSource(m.on)}
-                  className={clsx("flex h-5 items-center gap-1 rounded px-1.5 text-[11.5px]", source === m.on ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                  aria-label={m.label}
+                  className={clsx("flex h-5 items-center gap-1 rounded px-1.5 text-[11.5px] narrow:h-7 narrow:px-2", source === m.on ? "bg-raised text-fg" : "text-muted hover:text-fg")}
                 >
-                  {m.icon} {m.label}
+                  {m.icon} <span className="narrow:hidden">{m.label}</span>
                 </button>
               ))}
             </div>

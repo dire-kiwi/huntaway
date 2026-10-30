@@ -230,6 +230,15 @@ fn send_queued(state: &Shared, task_id: &str) -> bool {
     }
 }
 
+/// Other tasks wait to merge while this one does, so a merge that turns out to need changes
+/// steps out of the queue to make them (see Task::remerge).
+const STEP_OUT: &str = "Tasks queued to merge after this one wait while you merge it. Bringing the branch up to date, resolving \
+    simple conflicts, waiting for checks and re-running flaky ones are part of merging. But if the merge needs changes to this task's \
+    work (checks that fail because of it, review comments to address, conflicts that need more than a simple resolution), step out of \
+    the merge queue first so the next task can merge meanwhile: call `update_task` to set this task's status to `in_progress`, with \
+    `remerge` true. Then make the changes, check them, commit and push, and end your turn without merging: the board puts the task \
+    back at the end of the merge queue and asks you to merge again when its turn comes.";
+
 /// Ask the agent on a task that was moved to "Ready for merge" to merge its work. The task
 /// stays in that column while it does; the agent moves it to "Done" once merged.
 pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
@@ -254,7 +263,7 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
     };
     let mut text = format!(
         "The user moved this task to \"Ready for merge\". {what}.\n\n{}\n\nIf you can't merge, call `request_user_input` \
-         explaining why. Once it is merged, call `update_task` to set this task's status to `done`.",
+         explaining why. Once it is merged, call `update_task` to set this task's status to `done`.\n\n{STEP_OUT}",
         crate::prompts::merge(project.as_ref())
     );
     if task.subproject {
@@ -2058,6 +2067,8 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         // The agent marked its own task done (e.g. after merging it).
         (Outcome::Ok, None) if task.status == "done" => (None, None),
         (Outcome::Ok, None) if task.merging => (Some("needs_attention"), Some("The agent finished without marking the task merged".into())),
+        // It stepped out of the merge queue to make changes, and now rejoins it.
+        (Outcome::Ok, None) if task.remerge => (Some("ready_for_merge"), None),
         (Outcome::Ok, None) => (Some("in_review"), None),
     };
     // The queued message carries on the conversation, so the task stays where it is.
@@ -2068,6 +2079,12 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     if is_task {
         if let Some(s) = status {
             fields.push(("status", json!(s)));
+        }
+        if status == Some("ready_for_merge") {
+            // At the back of the queue, as the tasks behind it moved up while it was away.
+            let end = db::end_position(&state.db(), task.project_id.as_deref(), "ready_for_merge", "task").unwrap_or(task.position);
+            fields.extend([("merging", json!(true)), ("remerge", json!(false)), ("position", json!(end))]);
+            state.add_event(task_id, "info", "Back in the merge queue", None);
         }
     }
     let updated = match end_run(state, task_id, run_id, &fields) {
@@ -2312,6 +2329,71 @@ mod tests {
 
     fn result(subtype: &str, total_cost: f64) -> Value {
         json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "total_cost_usd": total_cost, "num_turns": 1})
+    }
+
+    #[test]
+    fn a_merge_that_needs_changes_lets_the_queue_go_and_rejoins_it() {
+        crate::testing::run(async || {
+            let (state, a, run) = running(false);
+            let a = state.update_task(&a.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap().unwrap();
+            let nt = db::NewTask { profile_id: &a.profile_id, project_id: None, kind: "task", title: "b", description: "", status: "ready_for_merge", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let b = db::insert_task(&state.db(), nt).unwrap();
+            let b = state.update_task(&b.id, &[("merging", json!(true)), ("position", json!(a.position + 1.0))]).unwrap().unwrap();
+            let slot = |state: &Shared| db::active_merge(&state.db(), None, None).unwrap().map(|t| t.id);
+            let queue = |state: &Shared| db::queued_merges(&state.db(), None, None).unwrap().into_iter().map(|t| t.id).collect::<Vec<_>>();
+            assert_eq!((slot(&state), queue(&state)), (Some(a.id.clone()), vec![b.id.clone()]));
+            let update = async |state: &Shared, id: &str, body: Value| crate::api::update_task_inner(state, id, body.as_object().unwrap()).await;
+
+            // Only a merging task steps out, into In progress.
+            assert!(update(&state, &a.id, json!({"status": "in_review", "remerge": true})).await.is_err());
+            assert!(update(&state, &a.id, json!({"status": "in_progress", "remerge": "yes"})).await.is_err());
+            let t = update(&state, &a.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.remerge, t.running), ("in_progress", false, true, true));
+            assert!(update(&state, &b.id, json!({"status": "in_progress", "remerge": true})).await.is_err());
+            // B can merge while A makes its changes.
+            assert_eq!((slot(&state), queue(&state)), (None, vec![b.id.clone()]));
+            // Waiting on the user keeps its place to come back to.
+            let t = update(&state, &a.id, json!({"status": "needs_attention"})).await.unwrap();
+            assert!(t.remerge);
+            assert_eq!(slot(&state), None);
+            update(&state, &a.id, json!({"status": "in_progress"})).await.unwrap();
+
+            // Done, it rejoins the end of the queue, rather than going to In review.
+            finish(&state, &run.id, Outcome::Ok);
+            let t = reload(&state, &a.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge, t.running), ("ready_for_merge", true, false, false));
+            assert!(t.position > b.position);
+            assert_eq!((slot(&state), queue(&state)), (None, vec![b.id.clone(), a.id.clone()]));
+
+            // Moved to another column meanwhile, it's out of the queue for good.
+            let (state, c, run) = running(false);
+            state.update_task(&c.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            update(&state, &c.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            let t = update(&state, &c.id, json!({"status": "todo"})).await.unwrap();
+            assert_eq!((t.merging, t.remerge), (false, false));
+            update(&state, &c.id, json!({"status": "in_progress"})).await.unwrap();
+            finish(&state, &run.id, Outcome::Ok);
+            assert_eq!(reload(&state, &c.id).status, "in_review");
+
+            // A run that fails leaves it for the user, still to rejoin once its agent is done.
+            let (state, d, run) = running(false);
+            state.update_task(&d.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            update(&state, &d.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            finish(&state, &run.id, Outcome::Failed("boom".into()));
+            let t = reload(&state, &d.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge), ("needs_attention", false, true));
+            // Moved on by the board rather than the user (a review starting puts it in In review),
+            // it drops its place all the same: work after that goes to review, not to the queue.
+            state.update_task(&d.id, &[("status", json!("in_review")), ("attention_reason", Value::Null)]).unwrap();
+            assert!(!reload(&state, &d.id).remerge);
+            update(&state, &d.id, json!({"status": "in_progress"})).await.unwrap();
+            let next = db::insert_run(&state.db(), &d.id, "prompt").unwrap();
+            state.runs.lock().unwrap().insert(d.id.clone(), RunHandle { run_id: next.id.clone(), cancel: None });
+            state.update_task(&d.id, &[("running", json!(true))]).unwrap();
+            finish(&state, &next.id, Outcome::Ok);
+            let t = reload(&state, &d.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge), ("in_review", false, false));
+        })
     }
 
     #[test]

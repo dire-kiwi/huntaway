@@ -28,7 +28,7 @@ test("a dialog taller than the window keeps its buttons in view", async () => {
     assert.ok(await inView(page, /^Create task/), "the new task dialog's Create button is in the window");
     await ui.run(["click Cancel", "gone [role=dialog]"]);
 
-    await ui.run(["size 1200x600", `goto /p/${project.id}/settings`, "click New automation", "wait Add automation"]);
+    await ui.run(["size 1200x600", `goto /p/${project.id}/settings/automations`, "click New automation", "wait Add automation"]);
     const body = page.getByRole("dialog").locator(".overflow-y-auto").first();
     const { scrollHeight, clientHeight } = await body.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
     assert.ok(scrollHeight > clientHeight, `the automation dialog's fields scroll (${scrollHeight} > ${clientHeight})`);
@@ -71,6 +71,8 @@ test("the new task editor's completion list isn't clipped by the dialog", async 
 
     // With little room under the caret it opens above it, and the arrow keys still pick from it.
     await ui.run(["size 1200x480"]);
+    // It moves on the window's resize event, which can come after the resize step returns.
+    await page.waitForFunction(() => document.querySelector("[role=listbox]").getBoundingClientRect().bottom <= window.innerHeight, null, { timeout: 2000 }).catch(() => {});
     s = await shown();
     assert.ok(s.inWindow && s.onTop, `the last option shows in a short window: ${JSON.stringify(s)}`);
     await page.keyboard.press("ArrowUp");

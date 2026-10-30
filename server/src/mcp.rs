@@ -145,7 +145,7 @@ fn board_tools() -> Value {
     let reminder = json!({"type": "string", "description": "What the reminder is for, shown with it (with remind_at, or to change the note of the reminder the task has)"});
     let project_ref = "Project id, key or name (<profile>:<key> for another profile's board), or 'all'";
     let project_one = "Project id, key or name (<profile>:<key> for another profile's board); defaults to the current project";
-    json!([
+    let mut tools = json!([
         {
             "name": "permission_prompt",
             "description": "Internal: asks the user to approve a tool call.",
@@ -250,7 +250,7 @@ fn board_tools() -> Value {
         },
         {
             "name": "update_task",
-            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done).",
+            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
             "inputSchema": {"type": "object", "properties": {
                 "task_id": task_ref,
                 "profile": profile,
@@ -260,6 +260,7 @@ fn board_tools() -> Value {
                 "resolution": resolution,
                 "pr_url": {"type": "string", "description": "The task's pull request; the board links it from the task's card. Empty string clears it."},
                 "preview_url": {"type": "string", "description": "Where the task's work can be tried (e.g. its PR's preview deployment); the board shows whether it's up. Empty string clears it."},
+                "remerge": {"type": "boolean", "description": "With status in_progress, on a task that's merging: it steps out of the merge queue so the next task can merge, and rejoins the end of the queue when its agent's run ends, rather than going to in_review."},
                 "depends_on": depends_on,
                 "starred": starred,
                 "remind_at": remind_at,
@@ -300,7 +301,7 @@ fn board_tools() -> Value {
                 and each replaces a default: start_prompt is sent to a task's agent when it starts (moving to in_progress), after the task's \
                 title and description; review_prompt tells the reviewer what to look for when the task moves to in_review, after where its \
                 changes are (the board adds how to report the verdict); merge_prompt tells the agent how to merge when the task moves to \
-                ready_for_merge, after which branch to merge into which (the board adds asking the user if it can't, and setting the task to \
+                ready_for_merge, after which branch to merge into which (the board adds asking the user if it can't, stepping out of the merge queue to make changes, and setting the task to \
                 done). An empty string resets a prompt, base_branch, model or permission_mode to the default. Only change these when the user asks. \
                 Changing permission_mode, a script, repo_path (and move_repo), use_worktrees or worktrees_root asks the user to approve the whole change first \
                 (say why in reason): the call waits for their answer, and if they don't approve it nothing changes. A project's agent configs \
@@ -339,7 +340,125 @@ fn board_tools() -> Value {
                 "name": {"type": "string"}, "repo_path": {"type": "string"}, "profile": profile
             }, "required": ["repo_path"]}
         }
-    ])
+    ]);
+    tools.as_array_mut().unwrap().extend(automation_tools(&profile, project_one));
+    tools
+}
+
+/// The tools for a project's automations (see automations.rs).
+fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
+    let automation_ref = json!({
+        "type": "string",
+        "description": "The automation's id, or its name in project_id (see list_automations)"
+    });
+    let trigger = json!({
+        "type": "object",
+        "description": format!("What starts it: {{kind: 'interval', every_minutes}} ({} minutes to 31 days, counted from when it's turned on or changed); \
+            {{kind: 'daily', time: 'HH:MM', weekdays}} (in the host's time zone, on those weekdays, or every day with none); \
+            or {{kind: 'webhook', filters, coalesce_seconds, coalesce_key}}: each POST to its URL that passes all the filters. \
+            Use the fields of its kind.", crate::automations::MIN_INTERVAL_MINUTES),
+        "properties": {
+            "kind": {"type": "string", "enum": ["interval", "daily", "webhook"]},
+            "every_minutes": {"type": "integer", "minimum": crate::automations::MIN_INTERVAL_MINUTES},
+            "time": {"type": "string", "description": "A time of day like 09:30"},
+            "weekdays": {"type": "array", "items": {"type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}},
+            "filters": {"type": "array", "description": "Conditions a delivery must meet: path names a value as templates do (event, action, labels, body.issue.user.login…)",
+                "items": {"type": "object", "properties": {
+                    "path": {"type": "string"},
+                    "op": {"type": "string", "enum": ["equals", "not_equals", "starts_with", "contains", "in", "not_in", "exists", "not_exists"]},
+                    "value": {"description": "A string, or a list for in and not_in; none for exists and not_exists"}
+                }, "required": ["path", "op"]}},
+            "coalesce_seconds": {"type": "integer", "minimum": 0, "maximum": 3600, "description": "Deliveries within this many seconds of the first make one run, with the latest one's values (0: each runs by itself)"},
+            "coalesce_key": {"type": "string", "description": "With coalescing, only deliveries with the same key (a template such as {{body.issue.number}}) go together"}
+        },
+        "required": ["kind"]
+    });
+    let action = json!({
+        "type": "object",
+        "description": "What it does: {kind: 'create_task', title, description, task_type, claude_config_id, model, effort, status, start} creates a task in the automation's project, \
+            or {kind: 'send_to_task', task_id, message} sends a message to one of the project's tasks. Title, description and message are templates: \
+            {{body.<path>}}, {{headers.<name>}}, {{query.<name>}}, {{event}}, {{action}}, {{labels}} and {{delivery}} from a webhook delivery \
+            (marked as untrusted data for the agent), and {{date}}, {{time}}, {{now}}, {{automation}} and {{count}} from the board.",
+        "properties": {
+            "kind": {"type": "string", "enum": ["create_task", "send_to_task"]},
+            "title": {"type": "string"},
+            "description": {"type": "string", "description": "Instructions for the new task's agent (markdown)"},
+            "task_type": {"type": "string", "enum": crate::db::TASK_TYPES, "description": "Leave out for a code task"},
+            "claude_config_id": {"type": "string", "description": "One of the project's agent configs; leave out for its default"},
+            "model": {"type": "string"},
+            "effort": {"type": "string", "enum": crate::db::THREAD_EFFORTS},
+            "status": {"type": "string", "enum": ["todo", "backlog"], "description": "Where the task goes (default todo); a started task moves to in_progress"},
+            "start": {"type": "boolean", "description": "Start the new task's agent straight away"},
+            "task_id": {"type": "string", "description": "The task to message: an id or key of a task in the same project"},
+            "message": {"type": "string"}
+        },
+        "required": ["kind"]
+    });
+    let asks = "It asks the user to approve it first (say why in reason): the call waits for their answer, and if they don't approve it nothing changes.";
+    let tools = json!([
+        {
+            "name": "list_automations",
+            "description": "List a project's automations: what starts each one (an interval, a time of day or a webhook), what it does (create a task or message one), whether it's on, when it next runs, and its latest run. The time zone the times of day are in comes with them.",
+            "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string", "description": project_one}, "profile": profile}}
+        },
+        {
+            "name": "create_automation",
+            "description": format!("Add an automation to a project: it creates a task there, or sends a message to one of its tasks, on a schedule or whenever its webhook URL gets a delivery \
+                (e.g. from GitHub). Only when the user asks for one. {asks} \
+                For a webhook, the result has its hook_path (and webhook_url, if the host's public address is set), which lets whoever has it start runs, so only give it to \
+                where the deliveries come from; with generate_secret, the secret to sign deliveries with is in the result, once."),
+            "inputSchema": {"type": "object", "properties": {
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "name": {"type": "string"},
+                "trigger": trigger,
+                "action": action,
+                "enabled": {"type": "boolean", "description": "On straight away (default true)"},
+                "generate_secret": {"type": "boolean", "description": "For a webhook: make a secret that deliveries must be signed with (X-Hub-Signature-256, as GitHub's webhook Secret does)"},
+                "reason": {"type": "string", "description": "Why, shown to the user when they're asked to approve it"}
+            }, "required": ["name", "trigger", "action"]}
+        },
+        {
+            "name": "update_automation",
+            "description": format!("Change a project's automation; leave out what to keep. Turning it off (enabled false) or renaming it is done straight away; any other change, \
+                including turning it on, asks the user. {asks}"),
+            "inputSchema": {"type": "object", "properties": {
+                "automation_id": automation_ref,
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "name": {"type": "string"},
+                "trigger": trigger,
+                "action": action,
+                "enabled": {"type": "boolean"},
+                "generate_secret": {"type": "boolean", "description": "For a webhook: a new signing secret, returned once in the result"},
+                "remove_secret": {"type": "boolean", "description": "For a webhook: stop checking deliveries' signatures"},
+                "rotate_url": {"type": "boolean", "description": "For a webhook: a new URL (the old one stops working)"},
+                "reason": {"type": "string", "description": "Why, shown to the user when they're asked to approve it"}
+            }, "required": ["automation_id"]}
+        },
+        {
+            "name": "delete_automation",
+            "description": format!("Delete a project's automation (its run history goes with it; the tasks it made stay). Only when the user asks for it. {asks}"),
+            "inputSchema": {"type": "object", "properties": {
+                "automation_id": automation_ref,
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "reason": {"type": "string", "description": "Why, shown to the user when they're asked to confirm"}
+            }, "required": ["automation_id"]}
+        },
+        {
+            "name": "run_automation",
+            "description": "Run an automation once now, on or off, as its Run now (or, for a webhook, Test) does on the board: a webhook's run is a test delivery of payload (else the latest delivery's body) through its filters and templates, without the signature check, duplicate check or coalescing. Returns the run: its status, detail and task.",
+            "inputSchema": {"type": "object", "properties": {
+                "automation_id": automation_ref,
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "payload": {"description": "For a webhook: the test delivery's JSON body"},
+                "event": {"type": "string", "description": "For a webhook: the test delivery's event (X-GitHub-Event), e.g. issues"}
+            }, "required": ["automation_id"]}
+        }
+    ]);
+    tools.as_array().cloned().unwrap_or_default()
 }
 
 /// Checks an agent's arguments against the tool's schema: an argument the tool doesn't have, or

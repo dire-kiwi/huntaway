@@ -1,6 +1,24 @@
 import clsx from "clsx";
-import { Archive, ArchiveRestore, ArrowUp, Folder, FolderGit2, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowUp,
+  Bot,
+  Folder,
+  FolderGit2,
+  GitBranch,
+  KeyRound,
+  Loader2,
+  MessageSquareText,
+  Plus,
+  Puzzle,
+  ScanSearch,
+  SlidersHorizontal,
+  SquareTerminal,
+  Trash2,
+  Zap,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../agents";
 import {
@@ -33,7 +51,7 @@ import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
-import { Button, Field, IconButton, Input, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
+import { Button, Field, IconButton, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
 
 // ---------- directory picker ----------
 
@@ -354,13 +372,76 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
 
 // ---------- project settings ----------
 
-export function ProjectSettings({ projectId }: { projectId: string }) {
+type ProjectTab = "general" | "agents" | "worktrees" | "review" | "prompts" | "scripts" | "tools" | "automations";
+
+/** The project settings' sections, in their order down the side. `fields` are the ones saved with Save
+ *  changes, so a section with unsaved changes is marked; the others save as they're changed. */
+const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; description: string; fields: (keyof Project)[] }[] = [
+  {
+    id: "general",
+    label: "General",
+    icon: <SlidersHorizontal size={14} />,
+    description: "The project's name, key and folder.",
+    fields: ["name", "key", "repo_path", "group_name"],
+  },
+  {
+    id: "agents",
+    label: "Agents",
+    icon: <Bot size={14} />,
+    description: "How the project's agents run. Each setting overrides the profile's or the host's.",
+    fields: ["model", "claude_config_ids", "github_account", "permission_mode"],
+  },
+  {
+    id: "worktrees",
+    label: "Worktrees",
+    icon: <GitBranch size={14} />,
+    description: "Where tasks do their work, and the scripts that set up and tear down each task's worktree.",
+    fields: ["base_branch", "use_worktrees", "worktrees_root", "setup_script", "teardown_script"],
+  },
+  {
+    id: "review",
+    label: "Review",
+    icon: <ScanSearch size={14} />,
+    description: "Reviewer agents that check each task's changes before it's merged, and what happens once it is.",
+    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged"],
+  },
+  {
+    id: "prompts",
+    label: "Prompts",
+    icon: <MessageSquareText size={14} />,
+    description: "What the board tells agents as a task moves across the board. Agents can change these too, when you ask them.",
+    fields: ["start_prompt", "review_prompt", "merge_prompt"],
+  },
+  {
+    id: "scripts",
+    label: "Status scripts",
+    icon: <SquareTerminal size={14} />,
+    description:
+      "Run with bash when a task moves to another column, in its worktree (or the repository without one), e.g. to send a notification or clean up a finished build. Output shows in the task's thread.",
+    fields: ["status_script", "status_scripts"],
+  },
+  { id: "tools", label: "Skills and MCP", icon: <Puzzle size={14} />, description: "The skills and MCP servers the project's agents get. Saved as you change them.", fields: [] },
+  {
+    id: "automations",
+    label: "Automations",
+    icon: <Zap size={14} />,
+    description: "Create a task, or send a message to one, on a schedule or when a webhook is delivered (a new GitHub issue, say). Saved as you change them.",
+    fields: [],
+  },
+];
+
+/** Whether an edit to a field changes it: a blank text is no value, as saving makes it. */
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a === "" ? null : (a ?? null)) === JSON.stringify(b === "" ? null : (b ?? null));
+
+export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: string }) {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId));
   const upsertProject = useStore((s) => s.upsertProject);
   // Only the fields changed here, over the project as it is now, so saving doesn't undo changes
-  // made meanwhile elsewhere (e.g. an agent's update_project) to the others.
+  // made meanwhile elsewhere (e.g. an agent's update_project) to the others. They're kept across
+  // the tabs, and saved together.
   const [edits, setEdits] = useState<Partial<Project>>({});
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -371,14 +452,28 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
   const groups = useMemo(() => (project ? groupNames(allProjects, project.host_id) : []), [allProjects, project]);
   if (!project) return <div className="p-8 text-muted">Project not found.</div>;
   const form: Project = { ...project, ...edits };
-  const prompts = hostSupports(host, 27);
+  const shown: Record<ProjectTab, boolean> = {
+    general: true,
+    agents: true,
+    worktrees: true,
+    review: project.auto_review !== undefined || project.done_when_merged !== undefined,
+    prompts: hostSupports(host, 27),
+    scripts: hostSupports(host, 37),
+    tools: hostSupports(host, 21),
+    automations: hostSupports(host, 63),
+  };
+  const tabs = PROJECT_TABS.filter((t) => shown[t.id]);
+  const current = tabs.find((t) => t.id === tab) ?? tabs[0];
   const set = <K extends keyof Project>(k: K, v: Project[K]) => {
     setEdits((e) => ({ ...e, [k]: v }));
     setSaved(false);
   };
   const repoChanged = "repo_path" in edits && edits.repo_path?.trim() !== project.repo_path;
+  const changed = (k: keyof Project) => k in edits && !sameValue(edits[k], project[k]);
+  const unsaved = tabs.filter((t) => t.fields.some(changed));
   const save = async () => {
     setErr(null);
+    setSaving(true);
     const body: Partial<Project> & { move_repo?: boolean } = { ...edits };
     if (repoChanged && moveRepo) body.move_repo = true;
     if ("base_branch" in body) body.base_branch = body.base_branch || null;
@@ -396,11 +491,22 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
       setSaved(true);
     } catch (e) {
       setErr((e as Error).message);
+    } finally {
+      setSaving(false);
     }
   };
+  const discard = () => {
+    setEdits({});
+    setMoveRepo(false);
+    setErr(null);
+    setSaved(false);
+  };
+  // The save bar is on the sections saved with it, and on the others while there's something to save.
+  const showSave = current.fields.length > 0 || unsaved.length > 0;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
+      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
+        <MenuButton />
         <button className="no-drag text-[12.5px] text-muted hover:text-fg" onClick={() => navigate({ name: "board", projectId })}>
           {project?.name}
         </button>
@@ -408,170 +514,246 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
         <h1 className="text-[14px] font-semibold">Settings</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl space-y-6 p-6">
-          <div className="grid grid-cols-[1fr_120px] gap-3">
-            <Field label="Name">
-              <Input value={form.name} onChange={(e) => set("name", e.target.value)} />
-            </Field>
-            <Field label="Key">
-              <Input value={form.key} maxLength={10} onChange={(e) => set("key", e.target.value.toUpperCase())} />
-            </Field>
-          </div>
-          {hostSupports(host, 45) && (form.key !== project.key || !!project.former_keys?.length) && (
-            <div className="-mt-3 text-xs text-faint">
-              Task keys change with the key. Old ones still find their tasks
-              {project.former_keys?.length ? ` (${[...project.former_keys].reverse().join(", ")})` : ""}.
-            </div>
-          )}
-          <div className="space-y-2">
-            <Field
-              label="Repository path"
-              hint={
-                !hostSupports(host, 45) || !repoChanged
-                  ? undefined
-                  : moveRepo
-                    ? `The folder moves here from ${project.repo_path}. Stop the project's agents first.`
-                    : "Where the project's folder is now, if it has moved: it must be the same repository. Task worktrees are reconnected to it."
-              }
-            >
-              <Input className="font-mono text-[12px]" value={form.repo_path} onChange={(e) => set("repo_path", e.target.value)} />
-            </Field>
-            {hostSupports(host, 45) && repoChanged && <Toggle checked={moveRepo} onChange={setMoveRepo} label="Move the folder there" />}
-          </div>
-          {hostSupports(host, 32) && (
-            <Field label="Group" hint="Projects in a group are together on the sidebar, and the group has a board of all their tasks">
-              <Input value={form.group_name ?? ""} placeholder="No group" list="project-groups" onChange={(e) => set("group_name", e.target.value)} />
-              <datalist id="project-groups">
-                {groups.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
-            </Field>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Base branch" hint="New worktree branches start from here">
-              <Input className="font-mono text-[12px]" value={form.base_branch ?? ""} placeholder="current HEAD" onChange={(e) => set("base_branch", e.target.value)} />
-            </Field>
-            <Field label="Model" hint="Overrides the profile default">
-              <Input value={form.model ?? ""} placeholder="profile default" onChange={(e) => set("model", e.target.value)} />
-            </Field>
-          </div>
-          {hostSupports(host, 20) && <ProjectConfigs project={form} onChange={(ids) => set("claude_config_ids", ids)} />}
-          {hostSupports(host, 50) && <ProjectGithubAccount project={form} onChange={(a) => set("github_account", a)} />}
-          <Field label="Permission mode" hint="With 'Ask', tool approvals show up in the thread and flag the task as needing attention.">
-            <select
-              value={form.permission_mode ?? ""}
-              onChange={(e) => set("permission_mode", (e.target.value || null) as PermissionMode | null)}
-              className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
-            >
-              {hostSupports(host, 2) && <option value="">Host default ({PERMISSION_MODES.find((m) => m.id === hostMode)?.label})</option>}
-              {PERMISSION_MODES.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label} — {m.description}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          {form.auto_review !== undefined && (
-            <div className="space-y-4 rounded-xl border border-line p-4">
-              <div className="space-y-1.5">
-                <Toggle checked={form.auto_review} onChange={(v) => set("auto_review", v)} label="Review each task's changes when it moves to In review" />
-                <div className="text-[12px] text-faint">
-                  A reviewer agent checks the branch's pull request in its own thread, and sends serious issues back to the task's agent to fix.
-                </div>
-              </div>
-              <Field
-                label="Fix rounds"
-                hint="How many times in a row a review's serious issues go back to the agent to fix. After that, the task moves to Needs attention."
+        {/* The tabs and the open one are together in the middle, the tabs staying put as it scrolls. */}
+        <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6 narrow:gap-4 narrow:p-4 md:flex-row md:gap-10">
+          <nav
+            role="tablist"
+            aria-label="Project settings"
+            aria-orientation="vertical"
+            className="flex shrink-0 gap-0.5 overflow-x-auto md:sticky md:top-6 md:w-48 md:flex-col md:self-start"
+          >
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                id={`project-tab-${t.id}`}
+                aria-selected={t === current}
+                aria-controls="project-tab-panel"
+                onClick={() => navigate({ name: "projectSettings", projectId, tab: t.id }, true)}
+                className={clsx(
+                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px]",
+                  t === current ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
+                )}
               >
-                <div className="w-24">
-                  <Input
-                    type="number"
-                    min={0}
-                    max={20}
-                    value={form.review_rounds ?? 2}
-                    onChange={(e) => set("review_rounds", Math.max(0, Math.min(20, Math.floor(Number(e.target.value) || 0))))}
-                  />
-                </div>
-              </Field>
-              {hostSupports(host, 29) && <ProjectReviewers project={form} onChange={(v) => set("reviewers", v)} />}
-            </div>
-          )}
-
-          {prompts && <ProjectPrompts project={form} onChange={set} />}
-
-          {project && hostSupports(host, 21) && (
-            <div className="space-y-3">
-              <div>
-                <h2 className="text-[13px] font-semibold">Skills and MCP servers</h2>
-                <div className="text-[12px] text-faint">Saved as you change them.</div>
-              </div>
-              <ProjectAgentTools project={project} />
-            </div>
-          )}
-
-          {hostSupports(host, 63) && <ProjectAutomations project={project} />}
-
-          <div className="space-y-4 rounded-xl border border-line p-4">
+                <span className={t === current ? "text-accent" : "text-faint"}>{t.icon}</span>
+                <span className="flex-1 whitespace-nowrap">{t.label}</span>
+                {unsaved.includes(t) && <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Unsaved changes" aria-label="Unsaved changes" />}
+              </button>
+            ))}
+          </nav>
+          <div id="project-tab-panel" role="tabpanel" aria-labelledby={`project-tab-${current.id}`} className="min-w-0 flex-1 space-y-6">
             <div className="space-y-1">
-              <Toggle checked={form.use_worktrees} onChange={(v) => set("use_worktrees", v)} label="New tasks use their own git worktree" />
-              {project?.is_git === false && form.use_worktrees && (
-                <div className="text-[12px] text-faint">The folder isn't a git repository yet. New tasks get worktrees once it is.</div>
-              )}
+              <h2 className="text-[15px] font-semibold">{current.label}</h2>
+              <p className="text-[12.5px] text-faint">{current.description}</p>
             </div>
-            <Field label="Worktrees folder">
-              <Input className="font-mono text-[12px]" value={form.worktrees_root} onChange={(e) => set("worktrees_root", e.target.value)} />
-            </Field>
-            <Field
-              label="Setup script"
-              hint={
-                <>
-                  Runs with bash in each new worktree, e.g. installing dependencies or copying <code>.env</code>. Available variables: $IA_REPO_PATH,
-                  $IA_WORKTREE_PATH, $IA_BRANCH, $IA_TASK_ID, $IA_TASK_NUMBER, $IA_PROJECT_KEY.
-                </>
-              }
-            >
-              <Textarea
-                rows={5}
-                className="font-mono text-[12px]"
-                placeholder={'cp "$IA_REPO_PATH/.env" .env\nnpm install'}
-                value={form.setup_script}
-                onChange={(e) => set("setup_script", e.target.value)}
-              />
-            </Field>
-            <Field label="Teardown script" hint="Runs in the worktree before it's removed (e.g. stopping dev servers, dropping a database).">
-              <Textarea
-                rows={3}
-                className="font-mono text-[12px]"
-                placeholder="docker compose down"
-                value={form.teardown_script}
-                onChange={(e) => set("teardown_script", e.target.value)}
-              />
-            </Field>
-            {hostSupports(host, 39) && <RemoveMergedWorktrees project={project} />}
-          </div>
-          {hostSupports(host, 37) && <ProjectStatusScripts project={form} perColumn={hostSupports(host, 38)} statuses={hostStatuses(host)} onChange={set} />}
-          <Field label="Scratch folder">
-            <Input className="font-mono text-[12px]" value={form.scratch_path} readOnly />
-          </Field>
-          {err && <div className="text-xs text-red-400">{err}</div>}
-          <div className="flex items-center gap-3">
-            <Button variant="primary" onClick={save}>
-              Save changes
-            </Button>
-            {saved && <span className="text-[12px] text-emerald-400">Saved</span>}
-            {hostSupports(host, 46) && (
-              <Button className="ml-auto" onClick={() => setArchiving(true)} title="Take the project off the board until it's unarchived in Settings">
-                <Archive size={13} /> Archive project
-              </Button>
+
+            {current.id === "general" && (
+              <>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[1fr_120px] gap-3">
+                    <Field label="Name">
+                      <Input value={form.name} onChange={(e) => set("name", e.target.value)} />
+                    </Field>
+                    <Field label="Key">
+                      <Input value={form.key} maxLength={10} onChange={(e) => set("key", e.target.value.toUpperCase())} />
+                    </Field>
+                  </div>
+                  {hostSupports(host, 45) && (form.key !== project.key || !!project.former_keys?.length) && (
+                    <div className="text-xs text-faint">
+                      Task keys change with the key. Old ones still find their tasks
+                      {project.former_keys?.length ? ` (${[...project.former_keys].reverse().join(", ")})` : ""}.
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Field
+                    label="Repository path"
+                    hint={
+                      !hostSupports(host, 45) || !repoChanged
+                        ? undefined
+                        : moveRepo
+                          ? `The folder moves here from ${project.repo_path}. Stop the project's agents first.`
+                          : "Where the project's folder is now, if it has moved: it must be the same repository. Task worktrees are reconnected to it."
+                    }
+                  >
+                    <Input className="font-mono text-[12px]" value={form.repo_path} onChange={(e) => set("repo_path", e.target.value)} />
+                  </Field>
+                  {hostSupports(host, 45) && repoChanged && <Toggle checked={moveRepo} onChange={setMoveRepo} label="Move the folder there" />}
+                </div>
+                {hostSupports(host, 32) && (
+                  <Field label="Group" hint="Projects in a group are together on the sidebar, and the group has a board of all their tasks">
+                    <Input value={form.group_name ?? ""} placeholder="No group" list="project-groups" onChange={(e) => set("group_name", e.target.value)} />
+                    <datalist id="project-groups">
+                      {groups.map((g) => (
+                        <option key={g} value={g} />
+                      ))}
+                    </datalist>
+                  </Field>
+                )}
+                <Field label="Scratch folder">
+                  <Input className="font-mono text-[12px]" value={form.scratch_path} readOnly />
+                </Field>
+                <div className="space-y-3 rounded-xl border border-red-500/30 p-4">
+                  <h3 className="text-[13px] font-semibold">Danger zone</h3>
+                  {hostSupports(host, 46) && (
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 text-[12px] text-faint">
+                        Takes the project off the board until it's unarchived in Settings. Its tasks, worktrees and branches are kept.
+                      </div>
+                      <Button className="shrink-0" onClick={() => setArchiving(true)}>
+                        <Archive size={13} /> Archive project
+                      </Button>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 text-[12px] text-faint">Deletes the project, its tasks and their threads, and removes their worktrees.</div>
+                    <Button variant="danger" className="shrink-0" onClick={() => setConfirm(true)}>
+                      <Trash2 size={13} /> Delete project
+                    </Button>
+                  </div>
+                </div>
+              </>
             )}
-            <Button variant="danger" className={clsx(!hostSupports(host, 46) && "ml-auto")} onClick={() => setConfirm(true)}>
-              <Trash2 size={13} /> Delete project
-            </Button>
+
+            {current.id === "agents" && (
+              <>
+                <Field label="Model" hint="Overrides the profile default">
+                  <Input value={form.model ?? ""} placeholder="profile default" onChange={(e) => set("model", e.target.value)} />
+                </Field>
+                <Field label="Permission mode" hint="With 'Ask', tool approvals show up in the thread and flag the task as needing attention.">
+                  <select
+                    value={form.permission_mode ?? ""}
+                    onChange={(e) => set("permission_mode", (e.target.value || null) as PermissionMode | null)}
+                    className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+                  >
+                    {hostSupports(host, 2) && <option value="">Host default ({PERMISSION_MODES.find((m) => m.id === hostMode)?.label})</option>}
+                    {PERMISSION_MODES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} — {m.description}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {hostSupports(host, 50) && <ProjectGithubAccount project={form} onChange={(a) => set("github_account", a)} />}
+                {hostSupports(host, 20) && <ProjectConfigs project={form} onChange={(ids) => set("claude_config_ids", ids)} />}
+              </>
+            )}
+
+            {current.id === "worktrees" && (
+              <>
+                <div className="space-y-1">
+                  <Toggle checked={form.use_worktrees} onChange={(v) => set("use_worktrees", v)} label="New tasks use their own git worktree" />
+                  {project.is_git === false && form.use_worktrees && (
+                    <div className="text-[12px] text-faint">The folder isn't a git repository yet. New tasks get worktrees once it is.</div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Base branch" hint="New worktree branches start from here">
+                    <Input className="font-mono text-[12px]" value={form.base_branch ?? ""} placeholder="current HEAD" onChange={(e) => set("base_branch", e.target.value)} />
+                  </Field>
+                  <Field label="Worktrees folder">
+                    <Input className="font-mono text-[12px]" value={form.worktrees_root} onChange={(e) => set("worktrees_root", e.target.value)} />
+                  </Field>
+                </div>
+                <Field
+                  label="Setup script"
+                  hint={
+                    <>
+                      Runs with bash in each new worktree, e.g. installing dependencies or copying <code>.env</code>. Available variables: $IA_REPO_PATH,
+                      $IA_WORKTREE_PATH, $IA_BRANCH, $IA_TASK_ID, $IA_TASK_NUMBER, $IA_PROJECT_KEY.
+                    </>
+                  }
+                >
+                  <Textarea
+                    rows={5}
+                    className="font-mono text-[12px]"
+                    placeholder={'cp "$IA_REPO_PATH/.env" .env\nnpm install'}
+                    value={form.setup_script}
+                    onChange={(e) => set("setup_script", e.target.value)}
+                  />
+                </Field>
+                <Field label="Teardown script" hint="Runs in the worktree before it's removed (e.g. stopping dev servers, dropping a database).">
+                  <Textarea
+                    rows={3}
+                    className="font-mono text-[12px]"
+                    placeholder="docker compose down"
+                    value={form.teardown_script}
+                    onChange={(e) => set("teardown_script", e.target.value)}
+                  />
+                </Field>
+                {hostSupports(host, 39) && <RemoveMergedWorktrees project={project} />}
+              </>
+            )}
+
+            {current.id === "review" && form.auto_review !== undefined && (
+              <>
+                <div className="space-y-1.5">
+                  <Toggle checked={form.auto_review} onChange={(v) => set("auto_review", v)} label="Review each task's changes when it moves to In review" />
+                  <div className="text-[12px] text-faint">
+                    A reviewer agent checks the branch's pull request in its own thread, and sends serious issues back to the task's agent to fix.
+                  </div>
+                </div>
+                <Field
+                  label="Fix rounds"
+                  hint="How many times in a row a review's serious issues go back to the agent to fix. After that, the task moves to Needs attention."
+                >
+                  <div className="w-24">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={20}
+                      value={form.review_rounds ?? 2}
+                      onChange={(e) => set("review_rounds", Math.max(0, Math.min(20, Math.floor(Number(e.target.value) || 0))))}
+                    />
+                  </div>
+                </Field>
+                {hostSupports(host, 29) && <ProjectReviewers project={form} onChange={(v) => set("reviewers", v)} />}
+              </>
+            )}
+
+            {current.id === "review" && form.done_when_merged !== undefined && (
+              <div className="space-y-1.5">
+                <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
+                <div className="text-[12px] text-faint">
+                  Every few minutes, the pull requests of tasks in In review or Needs attention are checked. A merged one moves its task to Done and
+                  removes its worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
+                </div>
+              </div>
+            )}
+
+            {current.id === "prompts" && <ProjectPrompts project={form} onChange={set} />}
+
+            {current.id === "scripts" && <ProjectStatusScripts project={form} perColumn={hostSupports(host, 38)} statuses={hostStatuses(host)} onChange={set} />}
+
+            {current.id === "tools" && <ProjectAgentTools project={project} />}
+
+            {current.id === "automations" && <ProjectAutomations project={project} />}
           </div>
         </div>
       </div>
+      {showSave && (
+        <footer className="shrink-0 border-t border-line">
+          {/* Lined up with the open tab: past the tabs' width and the gap after them. */}
+          <div className="mx-auto flex max-w-4xl items-center gap-3 px-6 py-3 narrow:px-4 md:pl-64">
+            <Button variant="primary" disabled={saving || !unsaved.length} onClick={save}>
+              {saving && <Loader2 size={13} className="animate-spin" />} Save changes
+            </Button>
+            {unsaved.length > 0 && (
+              <Button variant="ghost" disabled={saving} onClick={discard}>
+                Discard
+              </Button>
+            )}
+            {err ? (
+              <span className="min-w-0 text-xs text-red-400">{err}</span>
+            ) : unsaved.length > 0 ? (
+              <span className="min-w-0 truncate text-[12px] text-faint">Unsaved changes in {unsaved.map((t) => t.label).join(", ")}</span>
+            ) : (
+              saved && <span className="text-[12px] text-emerald-400">Saved</span>
+            )}
+          </div>
+        </footer>
+      )}
       {archiving && <ArchiveProjectModal project={project} onClose={() => setArchiving(false)} />}
       {confirm && (
         <Modal title="Delete project" onClose={() => setConfirm(false)}>
@@ -670,8 +852,6 @@ const PROMPTS: { field: PromptField; label: string; hint: string }[] = [
   },
 ];
 
-/** The instructions in the prompts the board sends as a task moves across it: the host's default
- * until the project has its own. */
 /** The project's status script and, from API 38, a script per column (blank is none). */
 function ProjectStatusScripts({
   project,
@@ -686,14 +866,10 @@ function ProjectStatusScripts({
 }) {
   const columns = project.status_scripts ?? {};
   return (
-    <div className="space-y-4 rounded-xl border border-line p-4">
-      <div>
-        <h2 className="text-[13px] font-semibold">Status scripts</h2>
-        <div className="text-[12px] text-faint">
-          Run with bash when a task moves to another column, in its worktree (or the repository without one), e.g. to send a notification or clean up a
-          finished build. Output shows in the task's thread. Available variables: $IA_OLD_STATUS, $IA_NEW_STATUS (e.g. in_review), $IA_TASK_KEY,
-          $IA_TASK_TITLE, $IA_RESOLUTION, $IA_PR_URL and the setup script's.
-        </div>
+    <div className="space-y-4">
+      <div className="text-[12px] text-faint">
+        Available variables: $IA_OLD_STATUS, $IA_NEW_STATUS (e.g. in_review), $IA_TASK_KEY, $IA_TASK_TITLE, $IA_RESOLUTION, $IA_PR_URL and the setup
+        script's.
       </div>
       <Field label="Any column" hint={perColumn ? "Runs on every move, before the column's own script." : undefined}>
         <Textarea
@@ -720,6 +896,8 @@ function ProjectStatusScripts({
   );
 }
 
+/** The instructions in the prompts the board sends as a task moves across it: the host's default
+ * until the project has its own. */
 function ProjectPrompts({ project, onChange }: { project: Project; onChange: (field: PromptField, v: string | null) => void }) {
   const [defaults, setDefaults] = useState<Record<PromptField, string> | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -727,11 +905,7 @@ function ProjectPrompts({ project, onChange }: { project: Project; onChange: (fi
     api.defaultPrompts(project.host_id).then(setDefaults, (e) => setErr((e as Error).message));
   }, [project.host_id]);
   return (
-    <div className="space-y-4 rounded-xl border border-line p-4">
-      <div>
-        <h2 className="text-[13px] font-semibold">Prompts</h2>
-        <div className="text-[12px] text-faint">What the board tells agents as a task moves across the board. Agents can change these too, when you ask them.</div>
-      </div>
+    <div className="space-y-5">
       {err && <div className="text-xs text-red-400">Couldn't load the default prompts: {err}</div>}
       {defaults &&
         PROMPTS.map(({ field, label, hint }) => {
@@ -1026,11 +1200,12 @@ export function Settings() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="drag flex h-12 shrink-0 items-center border-b border-line px-5">
+      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
+        <MenuButton />
         <h1 className="text-[14px] font-semibold">Settings</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl space-y-8 p-6">
+        <div className="mx-auto max-w-2xl space-y-8 p-6 narrow:p-4">
           <HostsPanel />
 
           <ClaudeConfigsPanel />
