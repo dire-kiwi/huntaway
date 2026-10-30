@@ -8,6 +8,7 @@ approve tool calls, and review, stage and commit its changes (lazygit-style).
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
+server/broker/ huntaway-broker: public relay that hosts dial out to, to reach them from anywhere
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -197,6 +198,9 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--name` / `IA_NAME` | hostname | Name this host shows on boards |
 | `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
 | `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
+| `--broker` / `IA_BROKER` | | Broker to dial out to, to be reachable through it (see *Reaching a host from anywhere*) |
+| `--broker-token` / `IA_BROKER_TOKEN` | | Token for `--broker` (the broker's `BROKER_TOKEN`) |
+| `--broker-name` / `IA_BROKER_NAME` | host name, as a slug | Name to reach this host by on the broker |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
@@ -374,6 +378,36 @@ versioning need one manual update (`git pull`, then Rebuild & restart).
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
 mode set on a thread or project, takes precedence.
+
+### Reaching a host from anywhere
+
+Away from home, without Tailscale or a VPN, a host can be reached through a **broker**
+(`huntaway-broker`, in `server/broker`): a small public relay that keeps nothing but the list of
+hosts connected to it. The host dials out to it and keeps one websocket open, and the broker
+passes each request it gets down that websocket. The host answers it from its own server, as if
+the client were on the LAN, so no inbound port is needed:
+
+```sh
+huntaway serve --broker https://broker.example.com --broker-token <broker token>   # or IA_BROKER, IA_BROKER_TOKEN
+```
+
+Then open `https://broker.example.com/?token=<host token>` from anywhere: the broker serves that
+host's board, API and websockets. Its token (`huntaway token`) still guards the API, so the broker
+signs no one in; the broker's own token only says which hosts may connect, and `/api/open-token`
+(`--open-token`) isn't served through it. Each host is known on the broker by a name
+(`--broker-name`, by default its own name as lowercase letters, digits and hyphens), and a request
+reaches the host:
+
+- at `/_broker/h/<name>/…`, for anything that takes a base URL: a hub links a host through the
+  broker with `--hub https://broker.example.com/_broker/h/<hub's name>` (the host dials in to a hub
+  that is behind the broker), or **Add host** with the URL `https://broker.example.com/_broker/h/<name>`;
+- otherwise, named by an `X-Huntaway-Host` header, else by the cookie that opening
+  `/_broker/use/<name>` sets (`/_broker/use/<name>?token=…` signs the board in too), else the
+  broker's default host (`--default-host`), else the only host connected.
+
+A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
+whose board links the others) on the broker, and its board shows every host it links. Running the
+broker is in `server/broker/README.md`.
 
 ### Codex agents
 
