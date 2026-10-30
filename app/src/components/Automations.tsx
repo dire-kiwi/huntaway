@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { ChevronDown, ChevronRight, Clock, Copy, Play, Plus, RefreshCw, Trash2, Webhook, X } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   api,
@@ -146,7 +146,7 @@ export function ProjectAutomations({ project }: { project: Project }) {
     await reload();
   };
   return (
-    <div className="space-y-3 rounded-xl border border-line p-4">
+    <div className="space-y-3 rounded-xl border border-line p-4" data-testid="automations">
       <div className="flex items-center justify-between gap-3">
         <div className="text-[13px] font-medium">Automations</div>
         <Button size="sm" onClick={() => setEditing("new")}>
@@ -537,10 +537,10 @@ function AutomationEditor({
       const b = inputOf(d, saved);
       const a = saved ? await api.updateAutomation(hostId, saved.id, b) : await api.createAutomation(hostId, project.id, b);
       onSaved();
-      // A new webhook stays open, to show its URL.
+      // A new webhook stays open, to show its URL, and the secret it was given until it closes.
       if (!saved && a.trigger.kind === "webhook") {
         setSaved(a);
-        setD(draftOf(a));
+        setD({ ...draftOf(a), secret: d.secret });
         setBusy(false);
         return;
       }
@@ -567,7 +567,9 @@ function AutomationEditor({
   );
   return (
     <Modal title={saved ? `Edit ${saved.name}` : "New automation"} onClose={onClose} onSubmit={save} width="max-w-2xl">
-      <div className="space-y-4">
+      {/* The fields scroll, under the dialog's title and above its buttons. */}
+      <div className="flex max-h-[calc(90vh-7rem)] flex-col">
+      <div className="-mx-4 -mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-4 pb-1">
         <div className="grid grid-cols-[1fr_auto] items-end gap-3">
           <Field label="Name">
             <Input value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="Weekly dependency update" autoFocus={!saved} />
@@ -750,6 +752,8 @@ function AutomationEditor({
             </>
           )}
         </div>
+      </div>
+      <div className="space-y-2 pt-3">
         {err && <div className="text-xs text-red-400">{err}</div>}
         <div className="flex items-center justify-end gap-2">
           <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
@@ -760,6 +764,7 @@ function AutomationEditor({
             {saved ? "Save automation" : "Add automation"}
           </Button>
         </div>
+      </div>
       </div>
     </Modal>
   );
@@ -784,11 +789,19 @@ function WebhookFields({
   const publicUrl = useStore((s) => s.hostSettings[hostId]?.public_url ?? "");
   const [address, setAddress] = useState(publicUrl);
   const [addressErr, setAddressErr] = useState<string | null>(null);
-  useEffect(() => setAddress(publicUrl), [publicUrl]);
+  useEffect(() => {
+    setAddress(publicUrl);
+  }, [publicUrl]);
   const [copied, setCopied] = useState(false);
   const base = publicUrl || (host?.local ? window.location.origin : "");
   const path = saved?.trigger.kind === "webhook" ? saved.hook_path : undefined;
   const url = path ? `${base}${path}` : null;
+  // Shown once it's saved (or made anew): brought into view.
+  const urlField = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Not returned: browsers' scrollIntoView may return a promise, which isn't a cleanup.
+    urlField.current?.scrollIntoView({ block: "nearest" });
+  }, [path]);
   const setFilter = (i: number, f: Partial<AutomationFilter>) => set("filters", d.filters.map((x, j) => (j === i ? { ...x, ...f } : x)));
   return (
     <div className="space-y-3">
@@ -806,8 +819,8 @@ function WebhookFields({
         }
       >
         {url ? (
-          <div className="flex items-center gap-2">
-            <Input readOnly className="font-mono text-[12px]" value={url} onFocus={(e) => e.target.select()} data-testid="webhook-url" />
+          <div ref={urlField} className="flex items-center gap-2">
+            <Input readOnly aria-label="Webhook URL" className="font-mono text-[12px]" value={url} onFocus={(e) => e.target.select()} data-testid="webhook-url" />
             <IconButton
               title="Copy the URL"
               onClick={(e) => {
@@ -864,12 +877,13 @@ function WebhookFields({
       </Field>
       <Field
         label="Secret"
-        hint="GitHub's webhook Secret: deliveries without a matching X-Hub-Signature-256 are rejected. Copy a new one into GitHub before you save; it isn't shown again."
+        hint="GitHub's webhook Secret: deliveries without a matching X-Hub-Signature-256 are rejected. Copy a new one into GitHub: once this dialog closes, it isn't shown again."
       >
         <div className="flex items-center gap-2">
           <Input
             className="font-mono text-[12px]"
             value={d.secret}
+            aria-label="Secret"
             autoComplete="off"
             placeholder={saved?.has_secret && !d.removeSecret ? "Saved (type a new one to replace it)" : "None: deliveries aren't checked"}
             onChange={(e) => set("secret", e.target.value)}

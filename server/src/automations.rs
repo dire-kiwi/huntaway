@@ -911,7 +911,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
                 text.push_str(body.trim_end());
                 text.push_str("\n\n");
             }
-            text.push_str(&format!("---\n*Created by the automation \"{}\" {how}.*", a.name));
+            text.push_str(&format!("*Created by the automation \"{}\" {how}.*", a.name));
             let task = CreateTask {
                 title,
                 description: text,
