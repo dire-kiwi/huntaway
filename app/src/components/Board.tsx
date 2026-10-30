@@ -51,7 +51,7 @@ import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
 import { LiveView } from "./LiveView";
-import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, Wide } from "./ui";
+import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide } from "./ui";
 
 /** How many of a subproject's tasks are done. */
 export type Progress = { done: number; total: number };
@@ -263,7 +263,7 @@ export const TaskCard = memo(function TaskCard({
           <div className="line-clamp-3">{task.attention_reason}</div>
         </div>
       )}
-      {agentWaiting(task)?.reason && <div className="mt-1 line-clamp-2 text-[12px] leading-snug text-muted">{agentWaiting(task)!.reason}</div>}
+      {agentWaiting(task) && <WaitReason wait={agentWaiting(task)!} className="mt-1 line-clamp-2 text-[12px] leading-snug text-muted" />}
       {(task.subproject || task.branch || task.pr_url || task.external_links?.length || task.cost_usd > 0 || showsPreview(task)) && (
         <div className="mt-2 flex items-center gap-2 text-[11px] text-faint">
           {task.subproject && <SubprojectBoardButton task={task} icon />}
@@ -1448,7 +1448,7 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {task.attention_reason && task.status === "needs_attention" && (
           <div className="mt-0.5 line-clamp-2 text-[12px] text-amber-200/80">{task.attention_reason}</div>
         )}
-        {agentWaiting(task)?.reason && <div className="mt-0.5 truncate text-[12px] text-muted">{agentWaiting(task)!.reason}</div>}
+        {agentWaiting(task) && <WaitReason wait={agentWaiting(task)!} className="mt-0.5 truncate text-[12px] text-muted" />}
       </div>
       <div className="flex shrink-0 items-center gap-3 pt-px text-[11.5px] text-faint">
         <TaskMarks task={task} />

@@ -1,11 +1,13 @@
 import clsx from "clsx";
-import { Check, Maximize2, Send, ShieldQuestion, X } from "lucide-react";
+import { Check, Map as MapIcon, Maximize2, MessageCircleQuestion, Send, ShieldQuestion, X } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type Message, type Project, type Task } from "../api";
 import { openTask, usePanel } from "../router";
 import { keyPrefix, useStore, useThreadMessages } from "../store";
 import { threadModel, type Item } from "../threadModel";
+import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { toolMeta } from "./Thread";
+import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { CardState, StatusIcon } from "./ui";
 import type { OnMenu } from "./Board";
 
@@ -38,11 +40,32 @@ function tail(items: Item[], cwd: string | null): { key: string; kind: "user" | 
   return lines.slice(-TAIL);
 }
 
-/** A permission prompt still waiting in a thread, on one line, with Allow and Deny. */
-function PromptLine({ data, task }: { data: { request_id: string; tool_name: string; input: unknown }; task: Task }) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Any = any;
+
+/** A question or a plan, which gets its own card (see Questions.tsx), not Allow and Deny. */
+const asks = (data: Any) => (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length > 0) || data.tool_name === "ExitPlanMode";
+
+/** A permission prompt still waiting in a thread, on one line, with Allow and Deny; a question or a plan opens the thread to answer it. */
+function PromptLine({ data, task }: { data: Any; task: Task }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const m = toolMeta(data.tool_name, data.input, task.worktree_path ?? task.work_dir ?? null);
+  if (asks(data)) {
+    const plan = data.tool_name === "ExitPlanMode";
+    const text = plan ? "A plan to review" : questionsOf(data)[0].question;
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-st-attention/40 bg-st-attention/[0.07] px-2 py-1.5 font-sans text-[12px]">
+        {plan ? <MapIcon size={13} className="shrink-0 text-st-attention" /> : <MessageCircleQuestion size={13} className="shrink-0 text-st-attention" />}
+        <span className="min-w-0 flex-1 truncate text-fg" title={text}>
+          {text}
+        </span>
+        <button onClick={() => openTask(task.id)} className="shrink-0 rounded bg-accent-strong px-1.5 py-0.5 text-white hover:bg-accent">
+          {plan ? "Review" : "Answer"}
+        </button>
+      </div>
+    );
+  }
   const decide = async (d: "allow" | "deny") => {
     setBusy(true);
     setErr(null);
@@ -76,18 +99,26 @@ function PromptLine({ data, task }: { data: { request_id: string; tool_name: str
 
 const pendingPrompts = (items: Item[]) => items.filter((it): it is Extract<Item, { type: "permission" }> => it.type === "permission" && it.data?.status === "pending");
 
-/** The permission prompts a task's agent is waiting on, to answer without opening its thread. */
+/** The permission prompts, questions and plans a task's agent is waiting on, to answer without opening its thread. */
 export function PendingPrompts({ task }: { task: Task }) {
   const messages = useThreadMessages(task.id);
   const earlier = useStore((s) => s.threads[task.id]?.subagents);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
   const prompts = pendingPrompts(model.items);
-  if (!prompts.length) return null;
+  // The question it asked with request_user_input, while nothing's been sent to it since.
+  const question = model.items.findLast((it) => it.type === "question");
+  const asked = question?.type === "question" && question.data?.status === "pending" && model.lastSent < question.id ? question : undefined;
+  if (!prompts.length && !asked) return null;
   return (
-    <div className="space-y-1">
-      {prompts.map((p) => (
-        <PromptLine key={p.key} data={p.data} task={task} />
-      ))}
+    <div className="space-y-1.5">
+      {prompts.map((p) => {
+        const id = Number(p.key);
+        const movedOn = model.lastSent > id;
+        if (p.data.tool_name === "ExitPlanMode") return <PlanCard key={p.key} data={p.data} hostId={task.host_id} taskId={task.id} movedOn={movedOn} />;
+        if (asks(p.data)) return <AskCard key={p.key} id={id} data={p.data} hostId={task.host_id} movedOn={movedOn} />;
+        return <PromptLine key={p.key} data={p.data} task={task} />;
+      })}
+      {asked && <BoardQuestionCard id={asked.id} data={asked.data} hostId={task.host_id} taskId={task.id} movedOn={false} />}
     </div>
   );
 }

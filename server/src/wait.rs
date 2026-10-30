@@ -13,6 +13,9 @@
 //!   directory while it waits: that can check on anything the board can't see (CI, a deploy, a
 //!   file), by blocking until it's ready or looping until it is. It's approved like the agent's
 //!   own Bash calls, and stopped with everything it started once the wait ends;
+//! - news about the pull request it was given (`pull_request`): its checks finished, someone
+//!   commented or reviewed, it conflicts with its base, or it was merged or closed. The server
+//!   reads it from GitHub every minute or so as the task's GitHub account (see pr_watch.rs);
 //! - a message sent to the agent (by the user or `send_to_task`), which it reads after the call;
 //! - the run being stopped, or the task moved to another column, from the board or with
 //!   `update_task` ("Needs attention" included; the board's own moves there and back for a
@@ -27,14 +30,15 @@
 //! (whichever way, errors included), and failing that (the agent gave up on the call) when its
 //! turn or run ends. A server restart
 //! doesn't start a wait over: the helper retries the same call, which carries on with the
-//! stored wait and its deadline (running its command again from the start).
+//! stored wait and its deadline (running its command again from the start, and reading its pull
+//! request again straight away).
 
 use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
@@ -79,6 +83,8 @@ pub enum Ended {
     /// The wait's command exited, with this code (none if a signal ended it) and the end of
     /// its output.
     Command { code: Option<i32>, output: String },
+    /// There's news about the wait's pull request (see pr_watch::compare), or it couldn't be read.
+    PullRequest(Value),
 }
 
 impl Ended {
@@ -92,6 +98,7 @@ impl Ended {
             Ended::Resumed => "resumed",
             Ended::Moved(_) => "task_moved",
             Ended::Command { .. } => "command_exited",
+            Ended::PullRequest(_) => "pull_request",
         }
     }
 }
@@ -111,19 +118,33 @@ pub struct Request {
     pub tasks: Vec<WaitTask>,
     /// A shell command to run while waiting (already approved), in the agent's working directory.
     pub command: Option<String>,
+    /// A pull request whose news ends the wait.
+    pub pull_request: Option<crate::pr_watch::Request>,
 }
 
 /// Wait in the call `call_id` of `run` (on `task`) until the period is over or something
-/// happens, showing the task as waiting meanwhile. A call that's `resuming` keeps the tasks and
-/// command it started with. Returns how the wait ended and the tasks it watched.
-pub async fn wait(s: &Shared, run: &Run, task: &Task, call_id: &str, req: Request) -> Result<(Ended, Vec<WaitTask>)> {
+/// happens, showing the task as waiting meanwhile. A call that's `resuming` keeps the tasks,
+/// command and pull request it started with. Returns how the wait ended and the wait as it was
+/// then (with the tasks it watched, and its pull request's news).
+pub async fn wait(s: &Shared, run: &Run, task: &Task, call_id: &str, req: Request) -> Result<(Ended, AgentWait)> {
     // Subscribed before anything is read, so no change can slip in between.
     let events = s.events.subscribe();
+    let mut watcher = None;
     let wait = match resuming(task, call_id).cloned() {
         Some(w) => w,
         None => {
             let secs = period(&req).map_err(anyhow::Error::msg)?;
-            let Request { reason, tasks, command, .. } = req;
+            let Request { reason, tasks, command, pull_request, .. } = req;
+            // Read before the wait starts, so a pull request that can't be read doesn't start it.
+            let pull_request = match pull_request {
+                Some(pr) => {
+                    let mut w = crate::pr_watch::Watcher::new(s, task, pr.target.clone())?;
+                    let news = w.poll(s, &task.id, call_id, &pr.events).await.map_err(|e| anyhow!("The wait didn't start: {} couldn't be read: {e}", pr.target.label()))?;
+                    watcher = Some(w);
+                    Some(pr.stored(news))
+                }
+                None => None,
+            };
             let until = Utc::now() + chrono::Duration::milliseconds((secs * 1000.0) as i64);
             let w = AgentWait {
                 reason: reason.map(|r| r.trim().to_string()).filter(|r| !r.is_empty()),
@@ -135,34 +156,51 @@ pub async fn wait(s: &Shared, run: &Run, task: &Task, call_id: &str, req: Reques
                 run_id: run.id.clone(),
                 moved_to: None,
                 subagent_finished: None,
+                pull_request,
             };
             s.update_task(&task.id, &[("agent_wait", json!(w))])?;
             w
         }
     };
-    let ended = wait_out(s, task, &wait, events).await;
+    let ended = wait_out(s, task, &wait, events, watcher).await;
+    // As it is now, with what came in meanwhile (a pull request's news), before it's cleared.
+    let last = db::get_task(&s.db(), &task.id).ok().flatten().and_then(|t| t.agent_wait).filter(|w| w.call_id == call_id).unwrap_or(wait);
     clear(s, &task.id, Some(call_id));
-    Ok((ended?, wait.tasks))
+    let ended = ended?;
+    // The call returns its pull request's news (whatever ended it), unless the agent won't see it.
+    if let Some(pr) = last.pull_request.as_ref().filter(|p| p.news.is_some())
+        && !matches!(ended, Ended::Stopped | Ended::Resumed)
+    {
+        crate::pr_watch::delivered(s, &task.id, call_id, pr);
+    }
+    Ok((ended, last))
 }
 
 /// How long a new wait asked for lasts (in seconds), or why it doesn't start: see
 /// `UNWATCHED_MAX_SECS`.
 pub fn period(req: &Request) -> std::result::Result<f64, String> {
-    let unwatched = req.tasks.is_empty() && req.command.as_deref().is_none_or(|c| c.trim().is_empty());
+    let unwatched = req.tasks.is_empty() && req.command.as_deref().is_none_or(|c| c.trim().is_empty()) && req.pull_request.is_none();
     let max = if unwatched { UNWATCHED_MAX_SECS } else { MAX_SECS };
     match req.seconds {
         Some(secs) if unwatched && secs > max as f64 => Err(format!(
-            "The wait didn't start: without a command or tasks, a wait lasts {max} seconds at most, because little but a message or a \
-             subagent can end it early, so it would carry on long after what you're waiting for is ready. Either give a command that \
-             exits once it's ready (e.g. 'gh pr checks 12 --watch', or 'until curl -sf https://example.com/health; do sleep 15; done'), \
-             list the tasks you're waiting for in tasks, or wait {max} seconds at a time, checking in between."
+            "The wait didn't start: without a command, tasks or a pull request, a wait lasts {max} seconds at most, because little but a \
+             message or a subagent can end it early, so it would carry on long after what you're waiting for is ready. Either give the \
+             pull_request you're waiting on (its checks, reviews or merge), a command that exits once it's ready (e.g. 'until curl -sf \
+             https://example.com/health; do sleep 15; done'), list the tasks you're waiting for in tasks, or wait {max} seconds at a \
+             time, checking in between."
         )),
         Some(secs) => Ok(secs.clamp(1.0, max as f64)),
         None => Ok((if unwatched { UNWATCHED_MAX_SECS } else { DEFAULT_SECS }) as f64),
     }
 }
 
-async fn wait_out(s: &Shared, task: &Task, wait: &AgentWait, mut events: tokio::sync::broadcast::Receiver<Value>) -> Result<Ended> {
+async fn wait_out(
+    s: &Shared,
+    task: &Task,
+    wait: &AgentWait,
+    mut events: tokio::sync::broadcast::Receiver<Value>,
+    watcher: Option<crate::pr_watch::Watcher>,
+) -> Result<Ended> {
     let until = DateTime::parse_from_rfc3339(&wait.until).map(|d| d.with_timezone(&Utc)).unwrap_or_else(|_| Utc::now());
     let mut ids: HashSet<&str> = wait.tasks.iter().map(|t| t.id.as_str()).collect();
     ids.insert(&task.id);
@@ -182,6 +220,21 @@ async fn wait_out(s: &Shared, task: &Task, wait: &AgentWait, mut events: tokio::
         None => Vec::new(),
     };
     let mut command = wait.command.as_deref().map(|c| Box::pin(run_command(c, &cwd, &env)));
+    // Reads the pull request until there's news, which it records in the wait (see `check`). A
+    // wait carried on after a restart reads it straight away.
+    let mut watch = match &wait.pull_request {
+        Some(pr) if pr.news.is_none() => {
+            let (w, delay) = match watcher {
+                Some(w) => (w, crate::pr_watch::POLL),
+                None => {
+                    let target = crate::pr_watch::Target::of(pr).with_context(|| format!("the wait's pull request {}", pr.url))?;
+                    (crate::pr_watch::Watcher::new(s, task, target)?, Duration::ZERO)
+                }
+            };
+            Some(Box::pin(crate::pr_watch::watch(s, &task.id, &wait.call_id, &pr.events, w, delay)))
+        }
+        _ => None,
+    };
     let ended = loop {
         if let Some(e) = check(s, &task.id, wait)? {
             break e;
@@ -208,12 +261,23 @@ async fn wait_out(s: &Shared, task: &Task, wait: &AgentWait, mut events: tokio::
                 None => std::future::pending().await,
             }
         };
+        let read = async {
+            match watch.as_mut() {
+                Some(w) => w.await,
+                None => std::future::pending().await,
+            }
+        };
+        let mut news = false;
         tokio::select! {
             _ = next => {}
             r = exited => {
                 let (code, output) = r?;
                 break Ended::Command { code, output };
             }
+            _ = read => news = true,
+        }
+        if news {
+            watch = None;
         }
     };
     Ok(ended)
@@ -285,6 +349,9 @@ fn check(s: &Shared, task_id: &str, wait: &AgentWait) -> Result<Option<Ended>> {
     }
     if let Some(agent) = current.subagent_finished {
         return Ok(Some(Ended::Subagent(agent)));
+    }
+    if let Some(news) = current.pull_request.and_then(|p| p.news) {
+        return Ok(Some(Ended::PullRequest(news)));
     }
     let mut changed = Vec::new();
     for w in &wait.tasks {
@@ -397,6 +464,7 @@ pub fn note(ended: &Ended, keys: &[String]) -> String {
         Ended::Moved(status) => format!("The task was moved to {status} on the board."),
         Ended::Command { code: Some(code), .. } => format!("Your command exited with code {code} (see command.output)."),
         Ended::Command { code: None, .. } => "Your command was ended by a signal (see command.output).".into(),
+        Ended::PullRequest(news) => crate::pr_watch::note(news),
     }
 }
 
@@ -669,7 +737,7 @@ mod tests {
         assert_eq!(period(&Request { seconds: Some(1800.0), ..command("gh pr checks 1 --watch") }), Ok(1800.0));
         // A blank command is none.
         let err = period(&Request { seconds: Some(1800.0), ..command("  ") }).unwrap_err();
-        assert!(err.contains("30 seconds at most") && err.contains("give a command"), "{err}");
+        assert!(err.contains("30 seconds at most") && err.contains("give the pull_request") && err.contains("a command that exits"), "{err}");
         testing::run(async || {
             let (s, task, run, _) = running();
             let err = wait(&s, &run, &task, "c1", secs(30.5)).await.unwrap_err().to_string();
@@ -779,6 +847,238 @@ mod tests {
         });
     }
 
+    // ---------- pull requests ----------
+
+    use crate::pr_watch::{self, Target, response};
+    use std::sync::{Arc, Mutex};
+
+    /// A fake GitHub (see pr_watch::fake): what reads of its pull requests get, and the account and
+    /// pull request of each read.
+    #[derive(Clone)]
+    struct Github {
+        pr: Arc<Mutex<Result<Value, String>>>,
+        reads: Arc<Mutex<Vec<(Option<String>, String)>>>,
+    }
+
+    impl Github {
+        fn new(pr: Value) -> Self {
+            let g = Self { pr: Arc::new(Mutex::new(Ok(pr))), reads: Arc::default() };
+            let g2 = g.clone();
+            pr_watch::fake(move |account, target| {
+                g2.reads.lock().unwrap().push((account.map(String::from), target.label()));
+                g2.pr.lock().unwrap().clone()
+            });
+            g
+        }
+
+        fn set(&self, pr: Result<Value, String>) {
+            *self.pr.lock().unwrap() = pr;
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.lock().unwrap().len()
+        }
+
+        fn accounts(&self) -> Vec<Option<String>> {
+            self.reads.lock().unwrap().iter().map(|(a, _)| a.clone()).collect()
+        }
+    }
+
+    fn o_r(number: u64) -> Target {
+        Target { host: "github.com".into(), owner: "o".into(), name: "r".into(), number }
+    }
+
+    /// A wait of `seconds` on o/r#7, for all of its news.
+    fn on_pr(seconds: f64) -> Request {
+        let events = pr_watch::EVENTS.iter().map(|e| e.to_string()).collect();
+        Request { pull_request: Some(pr_watch::Request { target: o_r(7), events }), ..secs(seconds) }
+    }
+
+    fn pr_events(ended: &Ended) -> Vec<&str> {
+        let Ended::PullRequest(news) = ended else { panic!("{ended:?}") };
+        news["events"].as_array().unwrap().iter().map(|e| e.as_str().unwrap()).collect()
+    }
+
+    fn authors(ended: &Ended) -> Vec<&str> {
+        let Ended::PullRequest(news) = ended else { panic!("{ended:?}") };
+        news["comments"].as_array().map_or(vec![], |c| c.iter().map(|c| c["author"].as_str().unwrap()).collect())
+    }
+
+    #[test]
+    fn ends_on_news_about_its_pull_request() {
+        testing::run(async || {
+            let (s, task, run, _) = running();
+            let gh = Github::new(response("me", "a1", &[("test", "IN_PROGRESS", "", true)], &[("01", "alice", "old")]));
+            let shown = Arc::new(Mutex::new(None));
+            let (gh2, shown2, id) = (gh.clone(), shown.clone(), task.id.clone());
+            when_waiting(&s, &task.id, move |s| {
+                *shown2.lock().unwrap() = reload(s, &id).agent_wait.and_then(|w| w.pull_request);
+                // A check fails, someone comments, and so does the agent's own account.
+                gh2.set(Ok(response("me", "a1", &[("test", "COMPLETED", "FAILURE", true)], &[("01", "alice", "old"), ("02", "me", "mine"), ("03", "bob", "Looks off")])));
+            });
+            let (ended, w) = wait(&s, &run, &task, "c1", on_pr(30.0)).await.unwrap();
+            assert_eq!(pr_events(&ended), ["checks_failed", "comments"]);
+            assert_eq!(authors(&ended), ["bob"]);
+            let Ended::PullRequest(news) = &ended else { unreachable!() };
+            assert_eq!(news["checks"]["failed"][0]["url"], "https://github.com/o/r/actions/runs/0");
+            assert_eq!(note(&ended, &[]), "Pull request #7: checks failed (test); 1 new comment or review from bob (see pull_request).");
+            // The board showed what it watched.
+            let shown = shown.lock().unwrap().clone().unwrap();
+            assert_eq!((shown.url.as_str(), shown.repo.as_str(), shown.number, shown.news), ("https://github.com/o/r/pull/7", "o/r", 7, None));
+            assert_eq!(w.pull_request.unwrap().news.as_ref(), Some(news));
+            assert_eq!(reload(&s, &task.id).agent_wait, None);
+            // Read as gh's account (the profile has none).
+            assert!(gh.accounts().iter().all(Option::is_none) && gh.reads() >= 2);
+
+            // Told, it isn't news again.
+            assert_eq!(wait(&s, &run, &task, "c2", on_pr(0.5)).await.unwrap().0, Ended::Timeout);
+            // A review left while the agent worked between waits ends the next one straight away.
+            gh.set(Ok(response("me", "a1", &[("test", "COMPLETED", "FAILURE", true)], &[("01", "alice", "old"), ("03", "bob", "Looks off"), ("04", "carol", "Approve?")])));
+            let started = std::time::Instant::now();
+            let ended = wait(&s, &run, &task, "c3", on_pr(30.0)).await.unwrap().0;
+            assert_eq!((pr_events(&ended), authors(&ended)), (vec!["comments"], vec!["carol"]));
+            assert!(started.elapsed() < Duration::from_secs(5));
+            // Merged ends it whatever it waits for.
+            let mut merged = response("me", "a1", &[], &[]);
+            merged["data"]["repository"]["pullRequest"]["state"] = json!("MERGED");
+            gh.set(Ok(merged));
+            let req = Request { pull_request: Some(pr_watch::Request { target: o_r(7), events: vec![] }), ..secs(30.0) };
+            assert_eq!(pr_events(&wait(&s, &run, &task, "c4", req).await.unwrap().0), ["merged"]);
+        });
+    }
+
+    #[test]
+    fn a_pull_request_that_cant_be_read_doesnt_start_the_wait() {
+        testing::run(async || {
+            let (s, task, run, _) = running();
+            let gh = Github::new(json!(null));
+            gh.set(Err("Could not resolve to a Repository with the name 'o/r'.".into()));
+            let err = format!("{:#}", wait(&s, &run, &task, "c1", on_pr(30.0)).await.unwrap_err());
+            assert_eq!(err, "The wait didn't start: o/r#7 couldn't be read: Could not resolve to a Repository with the name 'o/r'.");
+            assert_eq!(reload(&s, &task.id).agent_wait, None);
+        });
+    }
+
+    #[test]
+    fn its_pull_request_is_read_as_the_tasks_github_account_only() {
+        testing::run(async || {
+            // The personal profile's agents act as one account, the work profile's as another, whose
+            // project's pull request the personal one's agent asks for.
+            let (s, task, run, _) = running();
+            db::update_profile(&s.db(), &task.profile_id, &[("github_account", json!("me-personal"))]).unwrap();
+            let work = db::insert_profile(&s.db(), "work", &[], None).unwrap();
+            db::update_profile(&s.db(), &work.id, &[("github_account", json!("me-work"))]).unwrap();
+            let gh = Github::new(json!(null));
+            let gh2 = gh.clone();
+            pr_watch::fake(move |account, target| {
+                gh2.reads.lock().unwrap().push((account.map(String::from), target.label()));
+                match account {
+                    Some("me-work") => Ok(response("me-work", "a1", &[], &[("01", "boss", "secret")])),
+                    _ => Err("Could not resolve to a Repository with the name 'work-org/secret'.".into()),
+                }
+            });
+            let target = Target { host: "github.com".into(), owner: "work-org".into(), name: "secret".into(), number: 7 };
+            let req = Request { pull_request: Some(pr_watch::Request { target, events: vec!["comments".into()] }), ..secs(30.0) };
+            let err = format!("{:#}", wait(&s, &run, &task, "c1", req).await.unwrap_err());
+            assert!(err.contains("couldn't be read: Could not resolve"), "{err}");
+            assert_eq!(*gh.reads.lock().unwrap(), [(Some("me-personal".to_string()), "work-org/secret#7".to_string())]);
+            // Nor is one on another host than its account's asked for at all.
+            db::update_profile(&s.db(), &task.profile_id, &[("github_account", json!("ghe.acme.com/me"))]).unwrap();
+            let err = pr_watch::request(&s, &task, &json!("https://github.com/work-org/secret/pull/7"), &Value::Null).await.unwrap_err();
+            assert!(err.contains("is on github.com, but this task's GitHub account ghe.acme.com/me is on ghe.acme.com"), "{err}");
+            assert_eq!(gh.reads(), 1);
+            // A profile whose account isn't gh's default reads as that account.
+            let gh = Github::new(response("me-work", "a1", &[], &[]));
+            db::update_profile(&s.db(), &task.profile_id, &[("github_account", json!("me-work"))]).unwrap();
+            assert_eq!(wait(&s, &run, &task, "c2", on_pr(0.3)).await.unwrap().0, Ended::Timeout);
+            assert!(gh.reads() >= 2 && gh.accounts().iter().all(|a| a.as_deref() == Some("me-work")), "{:?}", gh.accounts());
+        });
+    }
+
+    #[test]
+    fn a_pull_request_wait_carried_on_after_a_restart_keeps_what_was_seen() {
+        testing::run(async || {
+            let (s, task, run, _) = running();
+            let gh = Github::new(response("me", "a1", &[], &[("01", "alice", "old")]));
+            // A first wait sees alice's comment.
+            assert_eq!(wait(&s, &run, &task, "c1", on_pr(0.3)).await.unwrap().0, Ended::Timeout);
+            // The server restarts during the next one, and bob comments meanwhile.
+            let stored = |news: Option<Value>| AgentWait {
+                reason: Some("waiting for review".into()),
+                since: now(),
+                until: (Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
+                tasks: vec![],
+                command: None,
+                call_id: "c2".into(),
+                run_id: run.id.clone(),
+                moved_to: None,
+                subagent_finished: None,
+                pull_request: Some(on_pr(1.0).pull_request.unwrap().stored(news)),
+            };
+            let task = s.update_task(&task.id, &[("agent_wait", json!(stored(None)))]).unwrap().unwrap();
+            gh.set(Ok(response("me", "a1", &[], &[("01", "alice", "old"), ("02", "bob", "new")])));
+            let started = std::time::Instant::now();
+            let ended = wait(&s, &run, &task, "c2", secs(30.0)).await.unwrap().0;
+            assert_eq!(authors(&ended), ["bob"]);
+            assert!(started.elapsed() < Duration::from_secs(5));
+            // News found before a restart is returned without reading again.
+            let reads = gh.reads();
+            let news = json!({"events": ["closed"], "number": 7});
+            let task = s.update_task(&task.id, &[("agent_wait", json!(stored(Some(news.clone()))))]).unwrap().unwrap();
+            assert_eq!(wait(&s, &run, &task, "c2", secs(30.0)).await.unwrap().0, Ended::PullRequest(news));
+            assert_eq!(gh.reads(), reads);
+        });
+    }
+
+    #[test]
+    fn news_that_doesnt_reach_the_agent_is_reported_again() {
+        testing::run(async || {
+            let (s, task, run, _) = running();
+            let _gh = Github::new(response("me", "a1", &[("test", "COMPLETED", "FAILURE", false)], &[]));
+            // A read for the wait c1 found the failure, and then the run was stopped.
+            let mut w = pr_watch::Watcher::new(&s, &task, o_r(7)).unwrap();
+            let events: Vec<String> = pr_watch::EVENTS.iter().map(|e| e.to_string()).collect();
+            let news = w.poll(&s, &task.id, "c1", &events).await.unwrap();
+            assert!(news.is_some());
+            let pr = on_pr(1.0).pull_request.unwrap().stored(news);
+            let stored = AgentWait {
+                reason: None, since: now(), until: (Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(), tasks: vec![], command: None,
+                call_id: "c1".into(), run_id: run.id.clone(), moved_to: None, subagent_finished: None, pull_request: Some(pr),
+            };
+            let task = s.update_task(&task.id, &[("agent_wait", json!(stored))]).unwrap().unwrap();
+            s.db().execute("UPDATE runs SET stop_requested=1 WHERE id=?1", [&run.id]).unwrap();
+            assert_eq!(wait(&s, &run, &task, "c1", secs(30.0)).await.unwrap().0, Ended::Stopped);
+            // The next run's wait is told.
+            let (s2, task2, run2) = (s.clone(), reload(&s, &task.id), db::insert_run(&s.db(), &task.id, "prompt").unwrap());
+            s2.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run2.id]).unwrap();
+            assert_eq!(pr_events(&wait(&s2, &run2, &task2, "c2", on_pr(30.0)).await.unwrap().0), ["checks_failed"]);
+            assert_eq!(wait(&s2, &run2, &task2, "c3", on_pr(0.3)).await.unwrap().0, Ended::Timeout);
+        });
+    }
+
+    #[test]
+    fn a_pull_request_that_stops_being_readable_ends_the_wait() {
+        testing::run(async || {
+            let (s, task, run, _) = running();
+            let gh = Github::new(response("me", "a1", &[], &[]));
+            let gh2 = gh.clone();
+            when_waiting(&s, &task.id, move |_| gh2.set(Err("HTTP 502: Bad Gateway".into())));
+            let ended = wait(&s, &run, &task, "c1", on_pr(30.0)).await.unwrap().0;
+            assert_eq!(pr_events(&ended), ["unreadable"]);
+            assert_eq!(gh.reads(), 1 + pr_watch::GIVE_UP as usize);
+            assert_eq!(
+                note(&ended, &[]),
+                "o/r#7 couldn't be read 5 times in a row: HTTP 502: Bad Gateway. Check it yourself (pr_view), and wait on it again once it can be read."
+            );
+        });
+    }
+
+    #[test]
+    fn a_wait_on_a_pull_request_is_watched() {
+        assert_eq!(period(&on_pr(1800.0)), Ok(1800.0));
+        assert_eq!(period(&Request { seconds: None, ..on_pr(1.0) }), Ok(600.0));
+    }
+
     #[test]
     fn a_retried_call_carries_on_with_its_deadline() {
         testing::run(async || {
@@ -794,6 +1094,7 @@ mod tests {
                 run_id: run.id.clone(),
                 moved_to: None,
                 subagent_finished: None,
+                pull_request: None,
             };
             let task = s.update_task(&task.id, &[("agent_wait", json!(w))]).unwrap().unwrap();
             let started = std::time::Instant::now();

@@ -1,0 +1,123 @@
+# Builds the desktop app (app/package.json's `build`) and the server for Linux and macOS when a GitHub release is
+# published, and attaches them to that release. The release's tag is the version (v1.2.3 → 1.2.3), so it must be
+# semver with an optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing
+# release's tag again and replaces its files. A pull request that changes the packaging builds it too, as an
+# artifact of the run, without a release.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the release to build and attach the files to
+        required: true
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - app/package.json
+      - app/package-lock.json
+      - app/electron/**
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: x64
+          - runner: macos-latest
+            os: mac
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || '' }}
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: server
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # fpm writes the Arch package's .MTREE with bsdtar.
+      - name: bsdtar
+        if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+
+      - name: Version
+        working-directory: app
+        run: |
+          version="${TAG#v}"
+          [ -n "$TAG" ] || version="0.0.0-pr.${{ github.event.number }}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          npm version --no-git-tag-version --allow-same-version "$version"
+
+      - name: npm ci
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        working-directory: app
+        run: npm run build && (cd ../server && cargo build --release --locked)
+
+      # Linux: an AppImage and an Arch package. macOS: a dmg and a zip, ad-hoc signed (there's no Developer ID).
+      - name: Package the desktop app
+        working-directory: app
+        run: npx electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
+
+      # The server on its own, for hosts: huntaway and ia-shim with the UI in ui/ beside them, where the server looks.
+      - name: Package the server
+        run: |
+          name="huntaway-server-$VERSION-${{ matrix.os }}-${{ matrix.arch }}"
+          mkdir -p "app/release/$name"
+          cp server/target/release/huntaway server/target/release/ia-shim "app/release/$name/"
+          cp -R app/dist "app/release/$name/ui"
+          tar -C app/release -czf "app/release/$name.tar.gz" "$name"
+
+      - name: Attach to the release
+        if: env.TAG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(app/release/*.{AppImage,pacman,dmg,zip,tar.gz})
+          ls -l "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !env.TAG }}
+        with:
+          name: huntaway-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            app/release/*.AppImage
+            app/release/*.pacman
+            app/release/*.dmg
+            app/release/*.zip
+            app/release/*.tar.gz
+          retention-days: 7
