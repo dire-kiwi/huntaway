@@ -1952,7 +1952,7 @@ struct ApprovalsQuery {
     /// Deletions too (API 58); older hosts ignore it and list project changes only.
     #[serde(default)]
     all: bool,
-    /// Automations too (API 66).
+    /// Automations too (API 67).
     #[serde(default)]
     automations: bool,
 }

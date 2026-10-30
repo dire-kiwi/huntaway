@@ -431,7 +431,7 @@ const DELETE_TASK_API: u32 = 58;
 const TASK_FIELDS_API: u32 = 59;
 
 /// The API version from which hosts have the automation tools.
-const AUTOMATIONS_API: u32 = 66;
+const AUTOMATIONS_API: u32 = 67;
 
 const AUTOMATION_TOOLS: &[&str] = &["list_automations", "create_automation", "update_automation", "delete_automation", "run_automation"];
 
@@ -3622,8 +3622,8 @@ mod tests {
             let args = json!({"name": "x", "trigger": body["trigger"], "action": {"kind": "send_to_task", "task_id": hidden.id, "message": "hi"}});
             assert!(call(&s, &c, "create_automation", args).await.unwrap_err().contains("its own project"));
             // Older hosts aren't sent automation calls.
-            assert!(too_old("laptop", 65, "create_automation", &json!({})).is_some_and(|e| e.contains("without the automation tools")));
-            assert!(too_old("laptop", 66, "list_automations", &json!({})).is_none());
+            assert!(too_old("laptop", 66, "create_automation", &json!({})).is_some_and(|e| e.contains("without the automation tools")));
+            assert!(too_old("laptop", 67, "list_automations", &json!({})).is_none());
         });
     }
 

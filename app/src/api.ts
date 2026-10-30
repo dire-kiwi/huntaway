@@ -589,7 +589,7 @@ export interface ContextDetail {
 export interface Message {
   id: number;
   task_id: string;
-  /** `question`: one asked with request_user_input (API 66). */
+  /** `question`: one asked with request_user_input (API 64). */
   kind: "user" | "claude" | "event" | "permission" | "question";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
@@ -1102,7 +1102,7 @@ export interface DeletionApproval extends ApprovalRequest {
   input: TaskDeletion;
 }
 
-/** An automation as an approval shows it (API 66), with the task its message goes to and its tasks' agent config. */
+/** An automation as an approval shows it (API 67), with the task its message goes to and its tasks' agent config. */
 export interface AutomationView {
   /** Empty for one that's being created. */
   id: string;
@@ -1116,7 +1116,7 @@ export interface AutomationView {
   config?: { id: string; name: string; agent: string };
 }
 
-/** An automation an agent asked to create, change or delete, shown to the user to approve (API 66). */
+/** An automation an agent asked to create, change or delete, shown to the user to approve (API 67). */
 export interface AutomationChange {
   op: "create" | "update" | "delete";
   project: { id: string; key: string; name: string; host?: string };
@@ -1134,7 +1134,7 @@ export interface AutomationChange {
   reason?: string | null;
 }
 
-/** An automation change waiting for the user to approve it, like a project change (API 66). */
+/** An automation change waiting for the user to approve it, like a project change (API 67). */
 export interface AutomationApproval extends ApprovalRequest {
   kind: "automation";
   tool_name: "create_automation" | "update_automation" | "delete_automation";
@@ -1146,7 +1146,7 @@ export type Approval = ProjectApproval | DeletionApproval | AutomationApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
-/** What the user answered a question or plan prompt with, besides allowing or denying it (API 66). */
+/** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
 export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
 
 export interface HostInfo {
@@ -1391,11 +1391,11 @@ export const api = {
   killTerminal: (h: string, id: string, tool?: string) => on(h).del(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),
   /** Tool sessions end once no board renews them (and nobody is attached). */
   keepTerminal: (h: string, id: string, tool: string) => on(h).post(`/tasks/${enc(id)}/terminal/keepalive${toolQuery(tool)}`),
-  /** With `reply` (API 66): a question's answers, by question (each a list of picked labels and typed text); the
+  /** With `reply` (API 64): a question's answers, by question (each a list of picked labels and typed text); the
    *  mode an approved plan carries on in; or the feedback a plan's sent back with. */
   resolvePermission: (h: string, id: string, decision: "allow" | "allow_always" | "deny", message?: string, reply?: PermissionReply) =>
     on(h).post(`/permissions/${enc(id)}`, { decision, message, ...reply }),
-  /** Answer a question an agent asked with request_user_input, from its card (API 66): sent as the user's message. */
+  /** Answer a question an agent asked with request_user_input, from its card (API 64): sent as the user's message. */
   answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
     on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
