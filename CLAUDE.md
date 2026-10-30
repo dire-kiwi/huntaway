@@ -152,6 +152,9 @@ node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New
   times out after 5s. Page errors and console errors are printed and make it exit non-zero
   (`--allow-error <regex>` for expected ones). A failed step saves a screenshot of the page and
   prints its path; Read it to see what went wrong. Read the PNGs from `shot` the same way.
+- Phones and tablets: `--size 390x844 --touch` (below 700px wide is the narrow layout, and
+  `--touch` makes it a touch screen, which gives cards their move menu button). Start a new run for
+  another size rather than a `size` step, which a touch screen's page doesn't lay out again for.
 - The task panel covers the right half of the board, so a screenshot of the whole board needs it
   closed.
 - For a visual fix, take the same screenshot with the change set aside and compare the two. Run
