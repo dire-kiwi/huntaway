@@ -78,7 +78,8 @@ export function navigate(r: Route | string, replace = false) {
   listeners.forEach((l) => l());
 }
 
-function subscribe(cb: () => void) {
+/** Calls `cb` when the page's URL changes (the route or the open task); returns a function that stops it. */
+export function onNavigate(cb: () => void) {
   listeners.add(cb);
   return () => {
     listeners.delete(cb);
@@ -86,7 +87,7 @@ function subscribe(cb: () => void) {
 }
 
 export function useRoute(): Route {
-  return parse(useSyncExternalStore(subscribe, () => window.location.pathname));
+  return parse(useSyncExternalStore(onNavigate, () => window.location.pathname));
 }
 
 /** A task open beside the page in a side panel (`?task=<id>`), or expanded into a dialog over it (`&expanded`). */
@@ -110,7 +111,7 @@ function parsePanel(search: string): Panel | null {
 }
 
 export function usePanel(): Panel | null {
-  const search = useSyncExternalStore(subscribe, () => window.location.search);
+  const search = useSyncExternalStore(onNavigate, () => window.location.search);
   return parsePanel(search);
 }
 

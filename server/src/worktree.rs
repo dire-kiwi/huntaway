@@ -810,6 +810,18 @@ pub struct Github {
 /// Where a task branched from `base` in `repo` opens its pull request, if that's on GitHub:
 /// `base`'s upstream remote, or else `origin` (or the only remote), going by where it pushes to.
 pub async fn github(repo: &Path, base: Option<&str>) -> Option<Github> {
+    let (remote, url) = push_remote(repo, base).await?;
+    Some(Github { repo: github_repo(url.trim())?, remote })
+}
+
+/// The host and `OWNER/REPO` that a task branched from `base` in `repo` pushes to, as `github`
+/// picks the remote, on any host.
+pub async fn push_repo(repo: &Path, base: Option<&str>) -> Option<(String, String)> {
+    remote_repo(push_remote(repo, base).await?.1.trim())
+}
+
+/// The remote `github` picks, and its push URL.
+async fn push_remote(repo: &Path, base: Option<&str>) -> Option<(String, String)> {
     let remotes = git(repo, &["remote"]).await.ok().filter(|o| o.ok)?.stdout;
     let remotes: Vec<&str> = remotes.lines().map(str::trim).filter(|r| !r.is_empty()).collect();
     let upstream = match base {
@@ -821,7 +833,7 @@ pub async fn github(repo: &Path, base: Option<&str>) -> Option<Github> {
         .or_else(|| remotes.contains(&"origin").then(|| "origin".to_string()))
         .or_else(|| (remotes.len() == 1).then(|| remotes[0].to_string()))?;
     let url = git_ok(repo, &["remote", "get-url", "--push", &remote]).await.ok()?;
-    Some(Github { repo: github_repo(url.trim())?, remote })
+    Some((remote, url))
 }
 
 /// `OWNER/REPO` from a remote URL on github.com: `git@github.com:o/r.git`, `https://github.com/o/r`,
@@ -883,8 +895,6 @@ async fn gh_json(dir: &Path, args: &[&str], env: Option<&crate::gh_mcp::GhEnv>) 
     out.status.success().then(|| serde_json::from_slice(&out.stdout).ok()).flatten()
 }
 
-/// Diff of the task's work against the merge-base with its base branch,
-/// including uncommitted and untracked changes.
 /// Where a task's changes are: its worktree once it's ready, else the project's repository.
 pub fn changes_dir(state: &Shared, task_id: &str) -> Result<(PathBuf, Task, Project)> {
     let (task, project) = load(state, task_id)?;
@@ -910,6 +920,8 @@ pub async fn changes_base(dir: &Path, task: &Task, project: &Project) -> (Option
     (base, merge_base)
 }
 
+/// Diff of the task's work against the merge-base with its base branch,
+/// including uncommitted and untracked changes.
 pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
     let (dir, task, project) = changes_dir(state, task_id)?;
     if !is_git_repo(&dir).await {

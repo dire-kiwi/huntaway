@@ -26,8 +26,8 @@ const noop = () => {};
 
 export function ChangesView({ task }: { task: Task }) {
   const host = useHost(task.host_id);
-  // A host from before API 62 only has the branch's whole diff.
-  if (!hostSupports(host, 62)) return <BranchOnly task={task} />;
+  // A host from before API 66 only has the branch's whole diff.
+  if (!hostSupports(host, 66)) return <BranchOnly task={task} />;
   return <GitView key={task.id} task={task} />;
 }
 
@@ -1730,7 +1730,7 @@ const HELP: { title: string; items: Option[] }[] = [
   },
 ];
 
-/** The branch's whole diff alone, from a host from before the Changes tab could stage (API 62). */
+/** The branch's whole diff alone, from a host from before the Changes tab could stage (API 66). */
 function BranchOnly({ task }: { task: Task }) {
   const [diff, setDiff] = useState<DiffResult | null>(null);
   useEffect(() => {

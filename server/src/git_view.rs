@@ -1,4 +1,4 @@
-//! The Changes tab, a lazygit-style view of a task's repository (API 62): the working tree's files,
+//! The Changes tab, a lazygit-style view of a task's repository (API 66): the working tree's files,
 //! the commits on the task's branch and the stashes, the diff of a file, commit or stash, and what
 //! can be done from there: staging and unstaging whole files or chosen lines (a patch the UI makes
 //! from a file's diff, applied to the index), discarding, committing, amending, stashing and

@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Ban, Check, CheckCircle2, CircleAlert, CircleSlash, GitBranch, GitPullRequest, Hourglass, X } from "lucide-react";
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ComponentProps, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { agentWaiting, type AgentWait, type Resolution, type Status, type Task } from "../api";
+import { agentWaiting, type AgentWait, type PrWaitEvent, type Resolution, type Status, type Task } from "../api";
 import { usePreviewUp } from "../preview";
 
 export function Button({
@@ -431,11 +431,49 @@ export function RunState({ task }: { task: Task }) {
   );
 }
 
-/** "Waiting for CI · until 3:40 pm · or until `gh pr checks --watch` exits" */
+/** "Waiting for CI · until 3:40 pm · or until `./deploy-done` exits · or until o/r#12 has failed checks, … or is merged or closed" */
 export function waitTitle(w: AgentWait) {
-  return [w.reason || "Waiting", `until ${new Date(w.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`, w.tasks?.length ? `or until ${w.tasks.map((t) => t.key).join(", ")} ${w.tasks.length === 1 ? "moves" : "move"} on` : null, w.command ? `or until \`${w.command}\` exits` : null]
+  return [
+    w.reason || "Waiting",
+    `until ${new Date(w.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+    w.tasks?.length ? `or until ${w.tasks.map((t) => t.key).join(", ")} ${w.tasks.length === 1 ? "moves" : "move"} on` : null,
+    w.command ? `or until \`${w.command}\` exits` : null,
+    w.pull_request ? `or until ${w.pull_request.repo}#${w.pull_request.number} ${prWaitNews(w.pull_request.events)}` : null,
+  ]
     .filter(Boolean)
     .join(" · ");
+}
+
+const PR_WAIT_NEWS: Record<PrWaitEvent, string> = {
+  checks_failed: "failed checks",
+  checks_passed: "passing checks",
+  comments: "new comments or reviews",
+  conflicts: "a conflict",
+};
+
+/** "has failed checks, new comments or reviews, or is merged or closed" */
+function prWaitNews(events: PrWaitEvent[]) {
+  const news = events.map((e) => PR_WAIT_NEWS[e]).filter(Boolean);
+  return news.length ? `has ${news.join(", ")}, or is merged or closed` : "is merged or closed";
+}
+
+/** What a waiting agent said it's waiting for, with the pull request it watches (linked), as a card or list row shows it. */
+export function WaitReason({ wait, className }: { wait: AgentWait; className?: string }) {
+  const pr = wait.pull_request;
+  if (!wait.reason && !pr) return null;
+  return (
+    <div className={className} title={waitTitle(wait)}>
+      {wait.reason}
+      {pr && (
+        <>
+          {wait.reason && " · "}
+          <a href={pr.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="whitespace-nowrap hover:text-fg">
+            <GitPullRequest size={11} className="inline align-[-1px]" /> watching #{pr.number}
+          </a>
+        </>
+      )}
+    </div>
+  );
 }
 
 /** A task in review with a preview URL: polled while shown, the dot is green once it answers 200. */

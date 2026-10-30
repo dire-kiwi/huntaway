@@ -7,9 +7,17 @@
 //
 // Remote mode: set `serverUrl` (and `token`) in ~/.config/huntaway/desktop.json
 // to use a server running on another machine.
+//
+// Installed with scripts/install.sh, it runs from a source checkout and updates like any host: the
+// server's Rebuild & restart, or Update when it follows a deployment (IA_UPDATE_FROM). The window
+// reloads onto the new UI, and the app relaunches itself if the update changed this directory.
+//
+// A release build (`npm run dist`, attached to each GitHub release by .github/workflows/release.yml) carries the
+// server, ia-shim and the UI in its resources. It has no checkout, so it's updated by installing a newer release.
 
-const { app, BrowserWindow, shell } = require("electron");
-const { spawn } = require("node:child_process");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { execFileSync, spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -39,8 +47,42 @@ function loadConfig() {
 }
 
 const config = loadConfig();
+
+/**
+ * An app started from the Dock or a desktop launcher gets a minimal PATH, without the folders of claude, codex, git
+ * and gh (Homebrew's, ~/.local/bin, nvm's). Take the login shell's, as a terminal would have it. install.sh's launcher
+ * sets PATH itself, so this is for release builds.
+ */
+function useLoginShellPath() {
+  if (process.platform === "win32") return;
+  try {
+    const out = execFileSync(process.env.SHELL || "/bin/sh", ["-ilc", 'printf "\\n__HUNTAWAY_PATH__%s\\n" "$PATH"'], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+    const found = out.match(/^__HUNTAWAY_PATH__(.+)$/m)?.[1].split(":") ?? [];
+    const dirs = [...found, ...(process.env.PATH || "").split(":")].filter(Boolean);
+    process.env.PATH = [...new Set(dirs)].join(":");
+  } catch (e) {
+    console.error(`couldn't read the login shell's PATH: ${e.message}`);
+  }
+}
+if (app.isPackaged) useLoginShellPath();
+
 const port = Number(process.env.IA_PORT || config.port || 7878);
 let serverProc = null;
+let stopping = false;
+
+// Pages on plain HTTP get no notifications (browsers keep them to HTTPS and localhost), so a remote server
+// reached over HTTP counts as secure here: it's the one this app was set up to use.
+if (config.serverUrl?.startsWith("http:")) {
+  try {
+    app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", new URL(config.serverUrl).origin);
+  } catch {
+    // Not a URL: resolveTarget's load fails and says so.
+  }
+}
 
 /** Mirrors `default_data_dir()` in the server: `dirs::data_dir()/huntaway`, or `/issue-agent` from before the rename. */
 function defaultDataDir() {
@@ -135,6 +177,19 @@ function errorPage(message) {
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
 
+/** This process's own code (this directory) and the Electron that npm installed, to see when an update changed them. */
+function mainStamp() {
+  const hash = crypto.createHash("sha256");
+  for (const f of fs.readdirSync(__dirname).sort()) hash.update(f).update(fs.readFileSync(path.join(__dirname, f)));
+  try {
+    hash.update(JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version);
+  } catch {
+    /* packaged, or not installed */
+  }
+  return hash.digest("hex");
+}
+const startStamp = mainStamp();
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -144,7 +199,17 @@ async function createWindow() {
     backgroundColor: "#0b0b0e",
     autoHideMenuBar: true,
     title: "Huntaway",
-    webPreferences: { contextIsolation: true, sandbox: true },
+    webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },
+  });
+  // The board reloads once a rebuild has restarted the server. If that changed the app itself, start the new one.
+  win.webContents.on("did-finish-load", () => {
+    if (mainStamp() !== startStamp) {
+      console.log("the desktop app changed on disk; relaunching");
+      // Through install.sh's launcher where there is one, which downloads the Electron an update may have installed.
+      const launcher = process.env.HUNTAWAY_LAUNCHER;
+      app.relaunch(launcher ? { execPath: launcher, args: process.argv.slice(2) } : undefined);
+      app.quit();
+    }
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -159,6 +224,18 @@ async function createWindow() {
   }
 }
 
+ipcMain.on("huntaway:badge", (_e, n) => {
+  app.setBadgeCount(Math.max(0, Math.floor(Number(n)) || 0));
+});
+
+ipcMain.on("huntaway:focus", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
+
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
@@ -169,7 +246,18 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (e) => {
   // Agents run under ia-shim and outlive the server; the next start picks them back up.
-  if (serverProc) serverProc.kill("SIGTERM");
+  if (!serverProc) return;
+  // Wait for it to exit, so that a relaunch (after an update) starts a new server rather than finding this one going down.
+  e.preventDefault();
+  if (stopping) return;
+  stopping = true;
+  const proc = serverProc;
+  const kill = setTimeout(() => proc.kill("SIGKILL"), 10_000);
+  proc.once("exit", () => {
+    clearTimeout(kill);
+    app.quit();
+  });
+  proc.kill("SIGTERM");
 });
