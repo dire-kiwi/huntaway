@@ -43,6 +43,26 @@ after(() => server?.stop());
 const DRAFT = "What should the agent know";
 /** Into app.ts's unstaged diff (its folder is the first row), with the cursor on its first change. */
 const openFile = () => [`goto /t/${task.id}`, "click changes", "wait app.ts", "press j", "press Enter", "wait Unstaged changes"];
+/** A commit's patch comes a little after its subject is listed, as it can from a slow host. */
+const slowPatches = (ui) =>
+  ui.page.route("**/git/show?*", async (route) => {
+    await new Promise((r) => setTimeout(r, 400));
+    await route.continue();
+  });
+/**
+ * The rows of the commit's diff of app.ts (its index and text), once its patch has come: its subject is in the
+ * Commits list before then, so it's waited for by a line only the patch has.
+ */
+async function commitRows(ui) {
+  const lines = ui.page.locator('[data-diff="src/app.ts"] [data-i]');
+  await lines.filter({ hasText: "export const ten" }).first().waitFor();
+  const rows = await lines.evaluateAll((els) => els.map((e) => [e.dataset.i, e.textContent]));
+  return (re) => {
+    const row = rows.find(([, t]) => re.test(t));
+    assert.ok(row, `no row of the commit's diff matches ${re}: ${JSON.stringify(rows)}`);
+    return row[0];
+  };
+}
 
 // HA-10: lines picked in a file's diff and in a commit's, each with a note, go to the agent as one message.
 test("comments on a file's lines and a commit's reach the agent in one message", async () => {
@@ -50,10 +70,10 @@ test("comments on a file's lines and a commit's reach the agent in one message",
     // The cursor's line (the removed line 3): n, a note, Enter.
     await ui.run([...openFile(), "press n", `wait ${DRAFT}`, "type Name it after its value.", "press Enter", `gone ${DRAFT}`, "wait Comment for the agent on removed line 3"]);
     // The commit's lines 10 (removed and added), picked by their numbers: a click, then a shift-click.
-    await ui.run(["press 3", "press Enter", "wait Name ten"]);
+    await slowPatches(ui);
+    await ui.run(["press 3", "press Enter"]);
     const row = (i) => ui.page.locator(`[data-diff="src/app.ts"] [data-i="${i}"] > span`).first();
-    const rows = await ui.page.locator('[data-diff="src/app.ts"] [data-i]').evaluateAll((els) => els.map((e) => [e.dataset.i, e.textContent]));
-    const at = (re) => rows.find(([, t]) => re.test(t))[0];
+    const at = await commitRows(ui);
     await row(at(/^10\s*-export const line10/)).click();
     await row(at(/^\s*10\s*\+export const ten/)).click({ modifiers: ["Shift"] });
     await ui.run(["press n", `wait ${DRAFT}`, "type Keep the old name too.", "press Enter", `gone ${DRAFT}`, "wait 2 comments for the agent"]);
@@ -94,10 +114,10 @@ test("the composer sends the comments with what's typed", async () => {
 
 test("a line's comment button comments on that line, or on the lines picked if it's one of them", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /t/${task.id}`, "click changes", "wait app.ts", "press 3", "press Enter", "wait Name ten"]);
+    await slowPatches(ui);
+    await ui.run([`goto /t/${task.id}`, "click changes", "wait app.ts", "press 3", "press Enter"]);
     const diff = '[data-diff="src/app.ts"]';
-    const rows = await ui.page.locator(`${diff} [data-i]`).evaluateAll((els) => els.map((e) => [e.dataset.i, e.textContent]));
-    const at = (re) => rows.find(([, t]) => re.test(t))[0];
+    const at = await commitRows(ui);
     const button = async (i) => {
       await ui.page.locator(`${diff} [data-i="${i}"]`).hover();
       await ui.page.locator(`${diff} button[title^="Comment for the agent"]`).click();
