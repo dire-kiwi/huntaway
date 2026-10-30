@@ -635,6 +635,11 @@ export interface ServerStatus {
   dirty?: boolean;
   /** `<short sha> <subject>` for commits in the checkout that this server isn't running yet. */
   new_commits?: string[];
+  /** API 65, with `--update-from`: the deployment this host follows, and what it last said it runs. */
+  update_from?: string;
+  deployed?: { commit: string | null; checked_at: string; error: string | null } | null;
+  /** `<short sha> <subject>` for the deployed commits this server isn't running (when it's ahead of it). */
+  deployed_commits?: string[];
 }
 
 export interface DirListing {
@@ -1291,6 +1296,8 @@ export const api = {
   updateSettings: (h: string, b: Partial<HostSettings>) => on(h).patch<HostSettings>("/settings", b),
   serverStatus: (h: string) => on(h).get<ServerStatus>("/admin/server"),
   restartServer: (h: string, b: { rebuild: boolean }) => on(h).post(`/admin/restart`, b),
+  /** Fetch `commit` from the host's origin, fast-forward its checkout to it, then rebuild and restart. */
+  updateServer: (h: string, commit: string) => on(h).post<{ ok: boolean; up_to_date?: boolean }>(`/admin/update`, { commit }),
 };
 
 export function wsUrl(path = "/ws") {

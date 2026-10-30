@@ -15,6 +15,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
+               install.sh: install the desktop app from source (Linux, macOS)
 ```
 
 Agents survive server restarts, and one board can span several machines. Each machine runs
@@ -197,6 +198,7 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
 | `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
+| `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 
@@ -234,6 +236,13 @@ checkout, streaming the log, then re-execs the new binary with the same argument
 stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
 
+With `--update-from <url>`, the server also follows that deployment of the board. Every five
+minutes it asks the deployment which commit it runs (its unauthenticated `/api/health` reports
+it, API 65) and fetches it from the checkout's `origin`. When that commit is ahead of the running
+one, the sidebar shows **N new commits · Update**. Update fast-forwards the checkout to the commit
+(it refuses if the checkout is dirty, or has diverged from the commit), then rebuilds and restarts
+as above. Settings → Server shows the commit the deployment runs and when it was last checked.
+
 ### Network access
 
 Every API call needs the token in `<data-dir>/auth_token` (sent as a bearer token; the
@@ -254,7 +263,58 @@ reverse proxy.
 
 Setting `serverUrl` makes the desktop app a client of a remote server instead of starting one.
 An `http:` one counts as a secure page in the app, so it can show notifications.
-Packaging an AppImage: `npm run dist` (needs `electron-builder`; not exercised yet).
+
+### Installing the desktop app
+
+`scripts/install.sh` installs the desktop app from source on Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway/master/scripts/install.sh | bash
+```
+
+It checks for git, Node.js 22.12+, npm, Rust 1.85+ and a C compiler (and warns if `claude`/`codex`
+or `tmux` are missing), then clones the repository to `~/.local/share/huntaway-app` (`--dir`) and
+builds the UI and the server there. Last, it adds **Huntaway** to the app launcher: on Linux a
+`huntaway-app.desktop` entry that runs `~/.local/bin/huntaway-desktop`, and on macOS
+`~/Applications/Huntaway.app` (a renamed copy of the checkout's Electron whose app runs the
+checkout's). Run it again to update an install by hand or to change its options (`--help`).
+
+The app runs from that checkout like `npm run electron`, so it updates like a host: **Rebuild &
+restart** builds whatever the checkout has. With `--update-from https://board.example` (or
+`HUNTAWAY_UPDATE_FROM`) it also follows the board deployed there: the launcher starts its server
+with `IA_UPDATE_FROM`, and once the deployment runs a newer commit the sidebar shows **N new
+commits · Update** (and Settings → Server shows **Update to <commit>**). Updating fetches that commit
+from the checkout's `origin`, fast-forwards to it, rebuilds and restarts. When the update changed
+the app itself (`app/electron/`, or the Electron version), the app relaunches once the board has
+reloaded. Agents keep running throughout.
+
+The launcher also puts the folders of `node`, `npm`, `cargo`, `git` and the agent CLIs on `PATH`,
+as found at install time, since a desktop session may not have them. Run the script again after
+moving any of them, for example to another nvm Node version. Like `npm run electron`, the app uses
+a server already listening on its port (7878 by default) and starts its own otherwise. In that
+case the app updates through that server, which follows a deployment only if it was started with
+`--update-from`.
+
+### Release builds
+
+Publishing a GitHub release runs `.github/workflows/release.yml`, which builds the release's tag
+and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
+
+| File | What |
+|---|---|
+| `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
+| `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
+| `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+
+The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
+`PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
+from the Dock or an app launcher. A release build isn't a checkout, so **Rebuild & restart** and
+**Update** don't apply to it: install a newer release to update it. The Mac build is ad-hoc signed,
+not signed with a Developer ID, so macOS blocks a downloaded copy until you run
+`xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
+run `npm run dist` in `app/`, which puts them in `app/release/`. To build an existing release
+again, use Actions → Release → Run workflow with its tag, which replaces its files.
 
 ## Hosts
 

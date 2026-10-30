@@ -2207,7 +2207,7 @@ mod tests {
         };
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
-        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, args: vec![] };
+        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] };
         let dir = std::env::temp_dir().join(format!("ia-runner-{}", crate::util::new_id()));
         let state: Shared = crate::state::AppState::new(c, dir, id, meta);
         runs::TEST_CAN_RUN.set(true);

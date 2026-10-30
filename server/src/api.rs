@@ -36,7 +36,7 @@ pub fn router(state: Shared) -> Router {
         .route("/ws", get(hub::ws))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
     Router::new()
-        .route("/api/health", get(|| async { Json(json!({"ok": true})) }))
+        .route("/api/health", get(health))
         .route("/api/hub/connect", get(hub::accept))
         // Without the board's token: the token in its path reaches only its own automation.
         .route("/api/hooks/{id}/{token}", post(crate::automations::webhook).layer(DefaultBodyLimit::max(crate::automations::MAX_BODY)))
@@ -173,6 +173,11 @@ async fn auth(State(s): State<Shared>, headers: HeaderMap, req: Request, next: N
 /// Pick known keys out of a JSON body as (column, value) pairs.
 fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)> {
     keys.iter().filter_map(|k| body.get(*k).map(|v| (*k, v.clone()))).collect()
+}
+
+/// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
+async fn health(State(s): State<Shared>) -> Json<Value> {
+    Json(json!({"ok": true, "commit": s.meta.running_commit}))
 }
 
 async fn info(State(s): State<Shared>) -> Json<Value> {

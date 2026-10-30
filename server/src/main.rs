@@ -124,6 +124,10 @@ struct ServeArgs {
     /// (defaults to the checkout this binary was built in).
     #[arg(long, env = "IA_SOURCE_DIR")]
     source_dir: Option<PathBuf>,
+    /// A deployment of the board (e.g. https://board.example) to follow: when it runs a newer commit
+    /// than this server, the UI offers to update to it (fetched from the source checkout's origin).
+    #[arg(long, env = "IA_UPDATE_FROM")]
+    update_from: Option<String>,
     /// Name shown for this host on boards (defaults to the hostname).
     #[arg(long, env = "IA_NAME")]
     name: Option<String>,
@@ -264,6 +268,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         started_at: util::now(),
         source_dir,
         running_commit,
+        update_from: args.update_from.clone().map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty()),
         args: std::env::args_os().skip(1).collect(),
     };
     let identity = state::Identity { host_id, host_name, token: token.clone(), hub_token, internal_url };
@@ -296,6 +301,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runs::start_pruner(&state);
     automations::start(&state);
     relocate::start_recording(&state);
+    admin::start_update_check(&state);
     hub::start(&state)?;
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
