@@ -340,6 +340,8 @@ export interface Project {
   auto_review?: boolean;
   /** How many times in a row a review's serious issues go back to the agent to fix (API 12). */
   review_rounds?: number;
+  /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
+  done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
