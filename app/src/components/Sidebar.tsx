@@ -28,7 +28,7 @@ import { ReminderModal, reminderItems, starItem, useReminderClock } from "./Remi
 import { ReloadButton, UpdateButton } from "./Server";
 import { UsagePanel } from "./Usage";
 import { ArchiveProjectModal, NewProjectModal } from "./Settings";
-import { Button, ContextMenu, IconButton, Input, Modal, RunningDot, StatusBar, type MenuItem } from "./ui";
+import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, RunningDot, StatusBar, type MenuItem } from "./ui";
 
 function NavItem({ active, current, onClick, onContextMenu, icon, children, right, className, title, expanded }: {
   active: boolean;
@@ -322,15 +322,17 @@ function GroupNameModal({ title, initial, onSave, onClose }: { title: string; in
     <Modal title={title} onClose={onClose} onSubmit={submit} width="max-w-sm">
       <form onSubmit={submit} className="space-y-4">
         <Input autoFocus value={name} placeholder="Group name" maxLength={100} onChange={(e) => setName(e.target.value)} />
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
-            Save
-          </Button>
-        </div>
+        <ModalFooter className="space-y-4">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
+              Save
+            </Button>
+          </div>
+        </ModalFooter>
       </form>
     </Modal>
   );

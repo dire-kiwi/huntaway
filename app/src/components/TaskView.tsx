@@ -23,7 +23,7 @@ import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Button, cost, IconButton, Input, Modal, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, isSubmitShortcut } from "./ui";
+import { ActivityTime, Button, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, isSubmitShortcut } from "./ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
@@ -1217,15 +1217,17 @@ function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
           <Toggle checked={force} onChange={setForce} label="Discard uncommitted changes" />
           <Toggle checked={deleteBranch} onChange={setDeleteBranch} label="Also delete the branch" />
         </div>
-        {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={go}>
-            {busy && <Loader2 size={13} className="animate-spin" />} Tear down
-          </Button>
-        </div>
+        <ModalFooter className="space-y-4">
+          {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="danger" disabled={busy} onClick={go}>
+              {busy && <Loader2 size={13} className="animate-spin" />} Tear down
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );
@@ -1269,14 +1271,14 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
             label={task.subproject && children > 0 ? `Also delete branch ${task.branch} and its tasks' branches` : `Also delete branch ${task.branch}`}
           />
         )}
-        <div className="flex justify-end gap-2">
+        <ModalFooter className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="danger" disabled={busy} onClick={go}>
             Delete
           </Button>
-        </div>
+        </ModalFooter>
       </div>
     </Modal>
   );

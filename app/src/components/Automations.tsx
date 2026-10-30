@@ -20,7 +20,7 @@ import {
 } from "../api";
 import { openTask } from "../router";
 import { onAutomationsChanged, useAvailableConfigs, useHost, useStore } from "../store";
-import { Button, copyText, Field, IconButton, Input, Modal, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
+import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
 
 type TimeZone = { name: string | null; offset: string };
 
@@ -567,9 +567,7 @@ function AutomationEditor({
   );
   return (
     <Modal title={saved ? `Edit ${saved.name}` : "New automation"} onClose={onClose} onSubmit={save} width="max-w-2xl">
-      {/* The fields scroll, under the dialog's title and above its buttons. */}
-      <div className="flex max-h-[calc(90vh-7rem)] flex-col">
-      <div className="-mx-4 -mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-4 pb-1">
+      <div className="space-y-4">
         <div className="grid grid-cols-[1fr_auto] items-end gap-3">
           <Field label="Name">
             <Input value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="Weekly dependency update" autoFocus={!saved} />
@@ -752,19 +750,18 @@ function AutomationEditor({
             </>
           )}
         </div>
-      </div>
-      <div className="space-y-2 pt-3">
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex items-center justify-end gap-2">
-          <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
-          <Button variant="ghost" onClick={onClose}>
-            {saved && !automation ? "Done" : "Cancel"}
-          </Button>
-          <Button variant="primary" disabled={busy} onClick={save}>
-            {saved ? "Save automation" : "Add automation"}
-          </Button>
-        </div>
-      </div>
+        <ModalFooter className="space-y-2">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
+            <Button variant="ghost" onClick={onClose}>
+              {saved && !automation ? "Done" : "Cancel"}
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={save}>
+              {saved ? "Save automation" : "Add automation"}
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );
@@ -1026,16 +1023,18 @@ function TestDelivery({ hostId, automation, onClose }: { hostId: string; automat
             {result.detail && <span className="min-w-0 truncate text-faint">{result.detail}</span>}
           </div>
         )}
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex items-center justify-end gap-2">
-          <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to send</span>
-          <Button variant="ghost" onClick={onClose}>
-            Close
-          </Button>
-          <Button variant="primary" disabled={busy || body === null} onClick={send}>
-            <Play size={12} /> Send test delivery
-          </Button>
-        </div>
+        <ModalFooter className="space-y-3">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to send</span>
+            <Button variant="ghost" onClick={onClose}>
+              Close
+            </Button>
+            <Button variant="primary" disabled={busy || body === null} onClick={send}>
+              <Play size={12} /> Send test delivery
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );

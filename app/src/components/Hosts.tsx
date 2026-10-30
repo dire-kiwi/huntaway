@@ -25,7 +25,7 @@ import { navigate } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../store";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "./ExternalLinks";
-import { Button, Field, IconButton, Input, Modal, timeAgo, Toggle } from "./ui";
+import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle } from "./ui";
 
 const MODE_LABEL: Record<Host["mode"], string> = {
   local: "this host",
@@ -308,15 +308,17 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
       <Field label="Add this line to ~/.ssh/authorized_keys on that machine" hint="The key can only run huntaway ssh-host and forward to the host's port.">
         <CopyLine value={line} />
       </Field>
-      {err && <div className="rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{err}</div>}
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button variant="primary" disabled={busy || !target.includes("@")} onClick={submit}>
-          {busy ? "Connecting…" : "Start & connect"}
-        </Button>
-      </div>
+      <ModalFooter className="space-y-4">
+        {err && <div className="rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || !target.includes("@")} onClick={submit}>
+            {busy ? "Connecting…" : "Start & connect"}
+          </Button>
+        </div>
+      </ModalFooter>
     </div>
   );
 }
@@ -349,15 +351,17 @@ function AddUrlHost({ onClose }: { onClose: () => void }) {
       <Field label="Token">
         <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono text-[12px]" />
       </Field>
-      {err && <div className="text-xs text-red-400">{err}</div>}
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button variant="primary" disabled={busy || !token.trim() || url.length < 10} onClick={submit}>
-          Add host
-        </Button>
-      </div>
+      <ModalFooter className="space-y-4">
+        {err && <div className="text-xs text-red-400">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || !token.trim() || url.length < 10} onClick={submit}>
+            Add host
+          </Button>
+        </div>
+      </ModalFooter>
     </div>
   );
 }
@@ -612,17 +616,19 @@ export function ProfileForm({
           <AccessPicker own={name.trim()} value={access} onChange={setAccess} />
         </Field>
       )}
-      {err && <div className="text-xs text-red-400">{err}</div>}
-      <div className="flex justify-end gap-2">
-        {onCancel && (
-          <Button variant="ghost" onClick={onCancel}>
-            Cancel
+      <ModalFooter className="space-y-3">
+        {err && <div className="text-xs text-red-400">{err}</div>}
+        <div className="flex justify-end gap-2">
+          {onCancel && (
+            <Button variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          <Button variant="primary" disabled={!name.trim()} onClick={submit}>
+            {initial ? "Save" : "Create profile"}
           </Button>
-        )}
-        <Button variant="primary" disabled={!name.trim()} onClick={submit}>
-          {initial ? "Save" : "Create profile"}
-        </Button>
-      </div>
+        </div>
+      </ModalFooter>
     </div>
   );
 }
@@ -794,18 +800,20 @@ export function CopyLoginModal({ from, onClose }: { from: ClaudeConfig | Profile
             </Field>
           )
         )}
-        {err && <div className="rounded bg-red-500/10 p-2 text-red-300">{err}</div>}
-        {done && <div className="rounded bg-emerald-500/10 p-2 text-emerald-300">Copied {done.join(", ")}.</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            {done ? "Close" : "Cancel"}
-          </Button>
-          {!done && (
-            <Button variant="primary" disabled={busy || !to} onClick={submit}>
-              Copy login
+        <ModalFooter className="space-y-4">
+          {err && <div className="rounded bg-red-500/10 p-2 text-red-300">{err}</div>}
+          {done && <div className="rounded bg-emerald-500/10 p-2 text-emerald-300">Copied {done.join(", ")}.</div>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              {done ? "Close" : "Cancel"}
             </Button>
-          )}
-        </div>
+            {!done && (
+              <Button variant="primary" disabled={busy || !to} onClick={submit}>
+                Copy login
+              </Button>
+            )}
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );

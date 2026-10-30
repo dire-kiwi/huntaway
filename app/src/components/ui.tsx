@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { Ban, Check, CheckCircle2, CircleAlert, CircleSlash, GitBranch, GitPullRequest, Hourglass, X } from "lucide-react";
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ComponentProps, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ComponentProps, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { agentWaiting, type AgentWait, type PrWaitEvent, type Resolution, type Status, type Task } from "../api";
 import { usePreviewUp } from "../preview";
 
@@ -112,6 +112,18 @@ function focusables(el: HTMLElement): HTMLElement[] {
 /** Whether this dialog is the one on top (a dialog can open another). */
 const topModal = (el: HTMLElement) => [...document.querySelectorAll("[data-modal]")].at(-1) === el.parentElement;
 
+const InModal = createContext(false);
+
+/**
+ * A dialog's buttons (with the error above them): in a dialog too tall for the window, they stay at its bottom while its
+ * fields scroll. Outside a dialog (a form also shown on a page) it's a plain div.
+ */
+export function ModalFooter({ className, children }: { className?: string; children: ReactNode }) {
+  const inModal = useContext(InModal);
+  // The negative margins and matching padding keep its place at rest, and cover the dialog's padding when it's stuck.
+  return <div className={clsx(inModal && "sticky bottom-0 -mx-4 -mt-3 -mb-4 bg-panel px-4 pt-3 pb-4", className)}>{children}</div>;
+}
+
 export function Modal({
   title,
   onClose,
@@ -167,10 +179,10 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={clsx("w-full rounded-xl border border-line bg-panel shadow-2xl shadow-black/50 outline-none", width)}
+        className={clsx("flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-2xl shadow-black/50 outline-none", width)}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
           <div id={titleId} className="text-[14px] font-semibold">
             {title}
           </div>
@@ -178,7 +190,12 @@ export function Modal({
             <X size={15} />
           </IconButton>
         </div>
-        <div className="p-4">{children}</div>
+        {/* No taller than the window: what doesn't fit scrolls, under the title. */}
+        <div className="min-h-0 overflow-y-auto">
+          <div className="p-4">
+            <InModal.Provider value={true}>{children}</InModal.Provider>
+          </div>
+        </div>
       </div>
     </div>
   );

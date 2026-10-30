@@ -47,7 +47,7 @@ import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
 import { SCRATCH_TYPE, TASK_TYPES, TaskTypeBadge } from "./Document";
-import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide } from "./ui";
+import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide } from "./ui";
 
 /** How many of a subproject's tasks are done. */
 export type Progress = { done: number; total: number };
@@ -1369,34 +1369,36 @@ export function NewTaskModal({
             {whenLoaded && " It's created once they're in."}
           </div>
         )}
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
-          <span className="mr-auto flex min-w-0 items-center gap-3">
-            <Toggle checked={addAnother} onChange={changeAddAnother} label="Add another" />
-            {created && (
-              <span className="truncate text-xs text-muted" title={created.title}>
-                Created {created.key}
-              </span>
-            )}
-          </span>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
-            {many
-              ? start && deps && dependsOn.length
-                ? `Create & queue ${runs.length}`
-                : start
-                  ? `Create & start ${runs.length}`
-                  : `Create ${runs.length} ${noun}s`
-              : start && deps && dependsOn.length
-                ? "Create & queue"
-                : start
-                  ? "Create & start"
-                  : `Create ${noun}`}
-            <span className="translate-y-px text-[11px] font-normal text-white/60">{SUBMIT_KEYS}</span>
-          </Button>
-        </div>
+        <ModalFooter className="space-y-3">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
+            <span className="mr-auto flex min-w-0 items-center gap-3">
+              <Toggle checked={addAnother} onChange={changeAddAnother} label="Add another" />
+              {created && (
+                <span className="truncate text-xs text-muted" title={created.title}>
+                  Created {created.key}
+                </span>
+              )}
+            </span>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
+              {many
+                ? start && deps && dependsOn.length
+                  ? `Create & queue ${runs.length}`
+                  : start
+                    ? `Create & start ${runs.length}`
+                    : `Create ${runs.length} ${noun}s`
+                : start && deps && dependsOn.length
+                  ? "Create & queue"
+                  : start
+                    ? "Create & start"
+                    : `Create ${noun}`}
+              <span className="translate-y-px text-[11px] font-normal text-white/60">{SUBMIT_KEYS}</span>
+            </Button>
+          </div>
+        </ModalFooter>
       </form>
       {pickingLink && (
         <AsanaPicker
