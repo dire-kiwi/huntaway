@@ -28,8 +28,20 @@ Every task that changes code gets a pull request:
    links it.
 
 CI (`.github/workflows/test.yml`) runs the tests on every PR. This repository has no deployment
-workflows: deployments are kept elsewhere, and a merge to `master` may deploy it. PR preview
-deployments are paused for now.
+workflows: deployments are kept elsewhere, and a merge to `master` may deploy it.
+
+### PR previews
+
+Each PR from this repository (not from forks) gets a preview deployment, also kept elsewhere: a few
+minutes after each push it's rebuilt from the PR's head, and it's removed when the PR closes.
+
+- A preview is a board of its own, LAN-only, started with `--demo` and `--open-token` (any browser
+  that opens it is signed in), so it has the sample Default profile and Demo project. It sleeps when
+  idle and wakes on the next request.
+- It also has a `personal` profile (`--profile`, see `README.md`) on a Claude login shared by every
+  preview, so agents can run there. Don't log it out or change that login's settings from a preview.
+- Its address isn't kept in this public repository. The board project's instructions give it: once
+  the PR's preview is up, put it in the task's `preview_url` with `update_task`, so the card links it.
 
 ## Testing in a worktree
 

@@ -199,6 +199,7 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
+| `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
 
 ### Agents survive restarts
 
