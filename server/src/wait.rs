@@ -139,7 +139,14 @@ pub async fn wait(s: &Shared, run: &Run, task: &Task, call_id: &str, req: Reques
             let pull_request = match pull_request {
                 Some(pr) => {
                     let mut w = crate::pr_watch::Watcher::new(s, task, pr.target.clone())?;
-                    let news = w.poll(s, &task.id, call_id, &pr.events).await.map_err(|e| anyhow!("The wait didn't start: {} couldn't be read: {e}", pr.target.label()))?;
+                    let news = w.poll(s, &task.id, call_id, &pr.events).await.map_err(|e| {
+                        // A host from the task's remote may be an SSH alias that couldn't be looked up.
+                        let hint = match pr.target.host.as_str() {
+                            "github.com" => String::new(),
+                            host => format!(" (if {host} isn't a GitHub host, give the pull request's URL)"),
+                        };
+                        anyhow!("The wait didn't start: {} couldn't be read: {e}{hint}", pr.target.label())
+                    })?;
                     watcher = Some(w);
                     Some(pr.stored(news))
                 }
@@ -956,6 +963,12 @@ mod tests {
             let err = format!("{:#}", wait(&s, &run, &task, "c1", on_pr(30.0)).await.unwrap_err());
             assert_eq!(err, "The wait didn't start: o/r#7 couldn't be read: Could not resolve to a Repository with the name 'o/r'.");
             assert_eq!(reload(&s, &task.id).agent_wait, None);
+            // A host from the task's remote that isn't GitHub's (an SSH alias ssh doesn't know) asks for the URL.
+            gh.set(Err("gh failed: none of the git remotes configured for this repository point to a known GitHub host".into()));
+            let target = Target { host: "github-work".into(), ..o_r(7) };
+            let req = Request { pull_request: Some(pr_watch::Request { target, events: vec![] }), ..secs(30.0) };
+            let err = format!("{:#}", wait(&s, &run, &task, "c2", req).await.unwrap_err());
+            assert!(err.ends_with("known GitHub host (if github-work isn't a GitHub host, give the pull request's URL)"), "{err}");
         });
     }
 

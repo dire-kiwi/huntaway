@@ -8,6 +8,7 @@ approve tool calls, and review, stage and commit its changes (lazygit-style).
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
+server/broker/ huntaway-broker: public relay that hosts dial out to, to reach them from anywhere
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -197,6 +198,9 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--name` / `IA_NAME` | hostname | Name this host shows on boards |
 | `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
 | `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
+| `--broker` / `IA_BROKER` | | Broker to dial out to, to be reachable through it (see *Reaching a host from anywhere*) |
+| `--broker-token` / `IA_BROKER_TOKEN` | | Token for `--broker` (the broker's `BROKER_TOKEN`) |
+| `--broker-name` / `IA_BROKER_NAME` | host name, as a slug | Name to reach this host by on the broker |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
@@ -374,6 +378,36 @@ versioning need one manual update (`git pull`, then Rebuild & restart).
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
 mode set on a thread or project, takes precedence.
+
+### Reaching a host from anywhere
+
+Away from home, without Tailscale or a VPN, a host can be reached through a **broker**
+(`huntaway-broker`, in `server/broker`): a small public relay that keeps nothing but the list of
+hosts connected to it. The host dials out to it and keeps one websocket open, and the broker
+passes each request it gets down that websocket. The host answers it from its own server, as if
+the client were on the LAN, so no inbound port is needed:
+
+```sh
+huntaway serve --broker https://broker.example.com --broker-token <broker token>   # or IA_BROKER, IA_BROKER_TOKEN
+```
+
+Then open `https://broker.example.com/?token=<host token>` from anywhere: the broker serves that
+host's board, API and websockets. Its token (`huntaway token`) still guards the API, so the broker
+signs no one in; the broker's own token only says which hosts may connect, and `/api/open-token`
+(`--open-token`) isn't served through it. Each host is known on the broker by a name
+(`--broker-name`, by default its own name as lowercase letters, digits and hyphens), and a request
+reaches the host:
+
+- at `/_broker/h/<name>/…`, for anything that takes a base URL: a hub links a host through the
+  broker with `--hub https://broker.example.com/_broker/h/<hub's name>` (the host dials in to a hub
+  that is behind the broker), or **Add host** with the URL `https://broker.example.com/_broker/h/<name>`;
+- otherwise, named by an `X-Huntaway-Host` header, else by the cookie that opening
+  `/_broker/use/<name>` sets (`/_broker/use/<name>?token=…` signs the board in too), else the
+  broker's default host (`--default-host`), else the only host connected.
+
+A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
+whose board links the others) on the broker, and its board shows every host it links. Running the
+broker is in `server/broker/README.md`.
 
 ### Codex agents
 
@@ -619,7 +653,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     doesn't leave the old copy running. It's kept in `agent_wait.command` and shown with the
     wait.
   - `pull_request` (API 62) watches a pull request: its number (in the task's repository, the one
-    its branch is pushed to), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
+    its branch is pushed to, whose SSH host alias, like `git@github-work:o/r.git`, is the host
+    `ssh -G` says it stands for), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
     been told yet: a check on its head commit failed (or was cancelled or timed out), all of the
     head's required checks passed (all of its checks, when none is required), someone other than
     the agent's GitHub account commented or reviewed, it started to conflict with its base branch,
@@ -630,7 +665,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     comments with their author, kind (comment, review or review comment), file and line, and their
     text without HTML comments and cut to 800 characters (20 at most). A wait that ends otherwise
     returns how the pull request was when last read (`read_at`). The server reads it with one
-    GraphQL query (`gh api graphql`) a minute, as the task's GitHub account (see *GitHub accounts*)
+    GraphQL query (`gh api graphql`) a minute (and one for each 100 review threads past the first
+    100, up to 1,000), as the task's GitHub account (see *GitHub accounts*)
     and only that one; a failed read is tried again after 2, 4, 8 and 10 minutes, and after 5 in a
     row the wait ends with `events: ["unreadable"]` and the error. The first read is made before
     the wait starts, so a pull request that can't be read fails the call. No one's asked about it:
@@ -767,6 +803,21 @@ skipped. Auto-compacting idle sessions is Claude-only.
   yourself or a run you stopped. The tab title (`(2) Huntaway`) and icon count the tasks that
   need attention, and the desktop app shows the count on its dock or taskbar badge. The settings
   are kept in the browser.
+- **Phones and tablets:** below 700px wide (a phone) the board has a narrow layout. The sidebar
+  is a drawer, opened with the menu button at the start of each page's header and closed once
+  it's taken you somewhere (or with a tap beside it, or Escape). A board shows one column at a
+  time: tabs above it with each column's count pick one, as does swiping sideways, and the board
+  opens on the column picked last (before any is picked, *Needs attention* if it has tasks,
+  else the first column with some). The list view stays as it is, with each task's title on a
+  line of its own. A task opens over the whole screen with a back button, its tabs first in a
+  row that scrolls sideways and its details as a tab. On a touch screen Enter in the composer
+  starts a new line and the send button sends (Ctrl/Cmd+Enter does too). Dialogs and menus fit
+  the screen and scroll, and buttons are larger to tap. Dragging doesn't work on touch screens,
+  so on a phone, and on any touch screen (a tablet keeps the desktop layout), each card and row
+  has a **⋯** button whose menu moves the task to another column as dropping it there does
+  (into *In progress* starts its agent), or completes it as Done, Not done or Won't fix. A task
+  beside a board is at least 480px wide, so it's usable on a tablet. Wider windows and the
+  desktop app keep the desktop layout.
 - **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its
