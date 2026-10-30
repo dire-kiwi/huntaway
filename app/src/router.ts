@@ -5,7 +5,8 @@ export type Route =
   | { name: "profile"; profile: string }
   | { name: "board"; projectId: string }
   | { name: "group"; hostId: string; group: string }
-  | { name: "projectSettings"; projectId: string }
+  /** `tab` is the section of the settings open, the first one when it's missing. */
+  | { name: "projectSettings"; projectId: string; tab?: string }
   | { name: "task"; taskId: string }
   | { name: "subproject"; taskId: string }
   | { name: "settings" }
@@ -34,7 +35,7 @@ export function parse(path: string): Route {
       break;
     case "p":
       if (!parts[1]) break;
-      if (parts[2] === "settings") return { name: "projectSettings", projectId: parts[1] };
+      if (parts[2] === "settings") return { name: "projectSettings", projectId: parts[1], ...(parts[3] && { tab: decodeURIComponent(parts[3]) }) };
       return { name: "board", projectId: parts[1] };
   }
   return { name: "home" };
@@ -61,7 +62,7 @@ export function href(r: Route): string {
     case "group":
       return `/g/${encodeURIComponent(r.hostId)}/${encodeURIComponent(r.group)}`;
     case "projectSettings":
-      return `/p/${r.projectId}/settings`;
+      return `/p/${r.projectId}/settings${r.tab ? `/${encodeURIComponent(r.tab)}` : ""}`;
   }
 }
 
