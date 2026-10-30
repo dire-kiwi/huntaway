@@ -952,7 +952,7 @@ async fn check(s: &Shared, task: &Task, mode: &str, w: &mut Watched, now: Instan
         w.next = now + REVIEW_POLL.saturating_mul(1 << w.failures.min(4)).min(REVIEW_POLL * 10);
         tracing::warn!(task = %task.id, pr = %w.url, failures = w.failures, "watching a pull request in review: {e}");
         if w.failures == GIVE_UP {
-            let why = format!("Couldn't read its pull request {GIVE_UP} times in a row, to watch it while the task is in review; still trying");
+            let why = format!("Watching its pull request while the task is in review failed {GIVE_UP} times in a row; still trying");
             s.add_event(&task.id, "warn", why, Some(e));
         }
     };
