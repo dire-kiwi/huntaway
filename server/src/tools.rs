@@ -2858,9 +2858,11 @@ mod tests {
             assert!(err.starts_with("pull_request_events takes checks_failed, checks_passed, comments, conflicts"), "{err}");
             let err = handle_mcp(&s, mcp(&claude, "c4", json!({"reason": "r", "pull_request": "the PR"}))).await.unwrap_err();
             assert!(err.contains("the PR isn't a pull request"), "{err}");
-            // A whole number sent as a float is a number.
-            let v = handle_mcp(&s, mcp(&claude, "c5", json!({"reason": "r", "pull_request": 7.0, "seconds": 1}))).await.unwrap();
-            assert_eq!((v["ended"].as_str(), v["pull_request"]["number"].as_u64()), (Some("timeout"), Some(7)));
+            // A whole number sent as a float (or written as one) is a number.
+            for (call, pr) in [("c5", json!(7.0)), ("c5b", json!("7.0"))] {
+                let v = handle_mcp(&s, mcp(&claude, call, json!({"reason": "r", "pull_request": pr, "seconds": 1}))).await.unwrap();
+                assert_eq!((v["ended"].as_str(), v["pull_request"]["number"].as_u64()), (Some("timeout"), Some(7)), "{pr}");
+            }
             let err = handle_mcp(&s, mcp(&claude, "c6", json!({"reason": "r", "pull_request": 7.5}))).await.unwrap_err();
             assert!(err.contains("7.5 isn't a pull request"), "{err}");
             // A remote's host that isn't its account's (an SSH alias ssh doesn't know) asks for the URL.

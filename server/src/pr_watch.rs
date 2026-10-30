@@ -108,7 +108,11 @@ impl Target {
     /// on its host.
     fn parse(given: &str, default: Option<&(String, String)>) -> Result<Self, String> {
         let given = given.trim();
-        let number = |n: &str| n.parse::<u64>().ok().filter(|&n| n > 0);
+        let number = |n: &str| {
+            // A whole number written as a float (`7.0`, as agents send numbers sometimes) is that number.
+            let n = n.split_once('.').filter(|(_, zeros)| !zeros.is_empty() && zeros.bytes().all(|b| b == b'0')).map_or(n, |(whole, _)| whole);
+            n.parse::<u64>().ok().filter(|&n| n > 0)
+        };
         let in_repo = |host: &str, repo: &str, n: u64| {
             let (owner, name) = repo.split_once('/').filter(|(o, n)| ok_name(o) && ok_name(n))?;
             Some(Self { host: host.to_ascii_lowercase(), owner: owner.into(), name: name.into(), number: n })
@@ -182,11 +186,7 @@ pub async fn request(s: &Shared, task: &Task, pr: &Value, events: &Value) -> Res
         _ => return Err(format!("pull_request_events must be a list of {}", EVENTS.join(", "))),
     };
     let given = match pr {
-        // A whole number sent as a float (`7.0`) is a number too.
-        Value::Number(n) => match n.as_f64().filter(|f| n.as_u64().is_none() && f.fract() == 0.0 && *f >= 1.0 && *f < u64::MAX as f64) {
-            Some(f) => (f as u64).to_string(),
-            None => n.to_string(),
-        },
+        Value::Number(n) => n.to_string(),
         Value::String(p) => p.clone(),
         _ => return Err("pull_request must be a pull request's number or URL".into()),
     };
@@ -952,6 +952,8 @@ mod tests {
         let t = |host: &str, owner: &str, name: &str, number| Target { host: host.into(), owner: owner.into(), name: name.into(), number };
         assert_eq!(Target::parse("12", Some(&repo)), Ok(t("github.com", "o", "r", 12)));
         assert_eq!(Target::parse(" #12 ", Some(&repo)), Ok(t("github.com", "o", "r", 12)));
+        assert_eq!(Target::parse("12.0", Some(&repo)), Ok(t("github.com", "o", "r", 12)));
+        assert_eq!(Target::parse("other/thing#3.00", Some(&repo)), Ok(t("github.com", "other", "thing", 3)));
         assert_eq!(Target::parse("other/thing#3", Some(&repo)), Ok(t("github.com", "other", "thing", 3)));
         assert_eq!(Target::parse("https://github.com/a/b/pull/9/files#diff-1", None), Ok(t("github.com", "a", "b", 9)));
         assert_eq!(Target::parse("https://www.github.com/a/b/pull/9", None), Ok(t("github.com", "a", "b", 9)));
@@ -959,7 +961,7 @@ mod tests {
         assert_eq!(Target::parse("5", Some(&ghe)), Ok(t("acme.ghe.com", "o", "r", 5)));
         assert_eq!(Target::parse("https://ACME.ghe.com/o/r/pull/5", None).unwrap().label(), "acme.ghe.com/o/r#5");
         assert!(Target::parse("12", None).unwrap_err().contains("give its URL"));
-        for bad in ["", "0", "abc", "https://github.com/a/b/issues/9", "https://github.com/a/b/pull/x", "a/b/c#1", "o/r#"] {
+        for bad in ["", "0", "0.0", "12.5", "12.", "1e3", "abc", "https://github.com/a/b/issues/9", "https://github.com/a/b/pull/x", "a/b/c#1", "o/r#"] {
             assert!(Target::parse(bad, Some(&repo)).is_err(), "{bad}");
         }
         let w = Request { target: t("acme.ghe.com", "o", "r", 5), events: all() }.stored(None);
