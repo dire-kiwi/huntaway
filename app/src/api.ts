@@ -420,20 +420,25 @@ export interface AgentWait {
 
 export type PrWaitEvent = "checks_failed" | "checks_passed" | "comments" | "conflicts";
 
-/** A task that makes a document instead of code: an HTML plan or artifact, or a Mermaid diagram (API 42). */
-export type DocumentType = "plan" | "artifact" | "diagram";
+export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
+import type { DocumentType } from "./labels";
 
-/** What a task makes, if not code: a document, or for a scratch task (in no project, API 47, or in one, API 51) nothing in particular. */
-export type TaskType = DocumentType | "scratch";
+/** Hosts from this API version on take labels (before, the board made a task of a label's type instead). */
+export const LABELS_API = 69;
+
+/** What a task is, if not a code task: a scratch task (in no project, API 47, or in one, API 51). On hosts before API 69,
+ *  also a plan, artifact or diagram task. */
+export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
-/** The document a task makes, if it's a plan, artifact or diagram task. */
-export const documentType = (t: Pick<Task, "task_type">): DocumentType | undefined => (t.task_type && t.task_type !== "scratch" ? t.task_type : undefined);
+/** Where the task's agent works, if not where its kind and project say and the folder is one to show: one in the host's
+ *  data dir (a task that makes only documents) is given relative to it. */
+export const ownWorkDir = (t: Pick<Task, "work_dir">) => (t.work_dir && /^[/~]/.test(t.work_dir) ? t.work_dir : null);
 
-/** One version of a plan, artifact or diagram task's document; `open` while the agent's turn is still writing it. */
+/** One version of a task's document for one of its labels; `open` while the agent's turn is still writing it. */
 export interface DocumentVersion {
   version: number;
   open: boolean;
@@ -443,7 +448,8 @@ export interface DocumentVersion {
 }
 
 export interface TaskDocument {
-  task_type: DocumentType | null;
+  /** Which of its labels' documents it is (API 69). */
+  label?: DocumentType;
   /** Where the agent writes it, on the task's host. */
   file: string | null;
   versions: DocumentVersion[];
@@ -467,12 +473,15 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task makes, if not code: its agent writes a document the board keeps and shows (API 42), or for
-   *  a scratch task nothing in particular (API 47). */
-  task_type?: TaskType | null;
-  /** When its document last changed (API 42). */
+  /** What the task is, if not a code task: a scratch task (API 47). On hosts before API 69, also a plan, artifact or
+   *  diagram task (API 42), whose agent writes a document the board keeps and shows: see `taskLabels`. */
+  task_type?: TaskType | DocumentType | null;
+  /** The documents its agent writes besides its other work, each shown in a tab of the task (API 69). */
+  labels?: DocumentType[];
+  /** When one of its documents last changed (API 42). */
   document_at?: string | null;
-  /** Where a scratch task made from a scratch chat works: the chat's folder (API 47). */
+  /** Where a scratch task made from a scratch chat works: the chat's folder (API 47). For a task that makes only
+   *  documents, its own folder, relative to the host's data dir (API 69): see `ownWorkDir`. */
   work_dir?: string | null;
   number: number;
   title: string;
@@ -954,7 +963,10 @@ export type AutomationAction =
       kind: "create_task";
       title: string;
       description: string;
-      task_type: TaskType | null;
+      /** A label as its type, in an action saved before API 69. */
+      task_type: TaskType | DocumentType | null;
+      /** API 69. */
+      labels?: DocumentType[];
       claude_config_id: string | null;
       model: string | null;
       effort: string | null;
@@ -1289,6 +1301,8 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
+      /** API 69. */
+      labels?: DocumentType[];
       external_links?: ExternalLink[];
       fanout_id?: string;
     },
@@ -1306,7 +1320,10 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
+      /** A plan, artifact or diagram task, on hosts before API 69. */
       task_type?: DocumentType;
+      /** API 69. */
+      labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
@@ -1329,8 +1346,10 @@ export const api = {
       subproject?: boolean;
       claude_config_id?: string;
       depends_on?: string[];
-      /** A scratch task in the project needs API 51. */
-      task_type?: TaskType;
+      /** A scratch task in the project needs API 51; a plan, artifact or diagram task is one on hosts before API 69. */
+      task_type?: TaskType | DocumentType;
+      /** API 69. */
+      labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
@@ -1386,8 +1405,10 @@ export const api = {
   context: (h: string, id: string) => on(h).get<{ context: ContextSummary | null; detail: ContextDetail | null }>(`/tasks/${enc(id)}/context`),
   /** The skills the task's agent can be asked to use, for the composer's `/` menu (API 54). */
   taskSkills: (h: string, id: string) => on(h).get<TaskSkills>(`/tasks/${enc(id)}/skills`),
-  /** A plan, artifact or diagram task's document: the latest version, or `version` (API 42). */
-  document: (h: string, id: string, version?: number) => on(h).get<TaskDocument>(`/tasks/${enc(id)}/document${version ? `?version=${version}` : ""}`),
+  /** A task's document for one of its labels (API 69; a host before then has the one its type makes, API 42): the
+   *  latest version, or `version`. */
+  document: (h: string, id: string, label: DocumentType, version?: number) =>
+    on(h).get<TaskDocument>(`/tasks/${enc(id)}/document?label=${label}${version ? `&version=${version}` : ""}`),
   /** The task's shell, or with `tool` one of the host's terminal tools (API 13). */
   terminal: (h: string, id: string, tool?: string) => on(h).get<TerminalStatus>(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),
   killTerminal: (h: string, id: string, tool?: string) => on(h).del(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),

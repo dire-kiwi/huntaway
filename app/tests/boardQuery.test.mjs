@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { EMPTY_QUERY, filterCount, isFiltering, showsStatus, sortTasks, taskKind, taskMatcher, toggled } from "../src/boardQuery.ts";
+import { EMPTY_QUERY, filterCount, isFiltering, showsStatus, sortTasks, taskKind, taskKinds, taskMatcher, toggled } from "../src/boardQuery.ts";
 
 let n = 0;
 const task = (fields) => ({
@@ -44,11 +44,13 @@ test("filters of one kind match any value, and kinds together all match", () => 
     task({ title: "code", running: true, pr_url: "https://github.com/o/r/pull/1" }),
     task({ title: "plan", task_type: "plan", starred: true }),
     task({ title: "sub", subproject: true, running: true }),
+    task({ title: "planned", labels: ["artifact", "plan"] }),
     task({ title: "group", project_id: null, group_name: "G", task_type: "plan" }),
     task({ title: "scratch", project_id: null, task_type: "scratch", remind_at: "2026-02-01T00:00:00Z" }),
     task({ title: "elsewhere", project_id: "q" }),
   ];
-  assert.deepEqual(keep({ kinds: ["plan", "subproject"] }, tasks), ["plan", "sub"]);
+  assert.deepEqual(keep({ kinds: ["plan", "subproject"] }, tasks), ["plan", "sub", "planned", "group"]);
+  assert.deepEqual(keep({ kinds: ["artifact"] }, tasks), ["planned"]);
   assert.deepEqual(keep({ kinds: ["group"] }, tasks), ["group"]);
   assert.deepEqual(keep({ projects: [""] }, tasks), ["group", "scratch"]);
   assert.deepEqual(keep({ projects: ["h:q", ""] }, tasks), ["group", "scratch", "elsewhere"]);
@@ -57,6 +59,7 @@ test("filters of one kind match any value, and kinds together all match", () => 
   assert.deepEqual(keep({ flags: ["starred"] }, tasks), ["plan"]);
   assert.deepEqual(keep({ flags: ["reminder"] }, tasks), ["scratch"]);
   assert.deepEqual(keep({ kinds: ["code"], flags: ["running"] }, tasks), ["code"]);
+  assert.deepEqual(keep({ kinds: ["code"] }, tasks), ["code", "planned", "elsewhere"]);
   assert.deepEqual(keep({ kinds: ["code"], search: "else" }, tasks), ["elsewhere"]);
 });
 
@@ -84,6 +87,11 @@ test("knows each kind of task", () => {
   assert.equal(taskKind(task({ subproject: true })), "subproject");
   assert.equal(taskKind(task({ project_id: null, group_name: "G", task_type: "plan" })), "group");
   assert.equal(taskKind(task({ project_id: null, task_type: "scratch" })), "scratch");
+  // Plan, artifact and diagram are labels since API 69: a task made as one before keeps making only its document.
+  assert.equal(taskKind(task({ labels: ["diagram"], work_dir: "documents/t" })), "diagram");
+  assert.equal(taskKind(task({ labels: ["diagram"] })), "code");
+  assert.deepEqual(taskKinds(task({ labels: ["diagram", "plan"] })), ["code", "plan", "diagram"]);
+  assert.deepEqual(taskKinds(task({ subproject: true, labels: ["plan"] })), ["subproject", "plan"]);
 });
 
 test("sorts, keeping the board's order for ties and for the manual sort", () => {
