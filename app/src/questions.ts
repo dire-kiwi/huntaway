@@ -34,7 +34,7 @@ export function questionsOf(data: Any): AskedQuestion[] {
     }));
 }
 
-/** The answers the user gave, question by question, once they have (API 63); undefined before, or from older hosts. */
+/** The answers the user gave, question by question, once they have (API 64); undefined before, or from older hosts. */
 export function askedAnswers(data: Any): string[][] | undefined {
   const a = data?.answers;
   return Array.isArray(a) ? a.map((x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean) : [])) : undefined;
@@ -46,7 +46,7 @@ export function answersList(questions: AskedQuestion[], answers: string[][]): st
 }
 
 /**
- * How a host that can't give AskUserQuestion the user's answers (before API 63) still gets them to the agent: the
+ * How a host that can't give AskUserQuestion the user's answers (before API 64) still gets them to the agent: the
  * question is declined with them as its message.
  */
 export function declinedWithAnswers(questions: AskedQuestion[], answers: string[][]): string {

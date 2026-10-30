@@ -256,7 +256,7 @@ pub fn decide(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
     answer(s, id, allow, always, message, Reply::default())
 }
 
-/// What the user answered a question or a plan with, besides allowing or denying it (API 63).
+/// What the user answered a question or a plan with, besides allowing or denying it (API 64).
 #[derive(Default, Debug, serde::Deserialize)]
 pub struct Reply {
     /// For a question (see is_question), allowed: each question's answers, in order. An answer is a
