@@ -1,6 +1,20 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* The narrow layout, for phones (see NARROW_QUERY in narrow.ts). */
+@custom-variant narrow {
+  @media (max-width: 699.98px) {
+    @slot;
+  }
+}
+
+/* A touch screen as the main pointer (see TOUCH_QUERY in narrow.ts). */
+@custom-variant touch {
+  @media (pointer: coarse) {
+    @slot;
+  }
+}
+
 @font-face {
   font-family: "Symbols Nerd Font Mono";
   src: url("./assets/SymbolsNerdFontMono-Regular.ttf") format("truetype");
@@ -39,9 +53,15 @@
 }
 
 html,
-body,
-#root {
+body {
   height: 100%;
+}
+
+/* Clear of a phone's notch and home bar (index.html's viewport-fit=cover), and above the on-screen keyboard
+   (followKeyboard in narrow.ts). Elsewhere the insets are 0 and the height is the window's. */
+#root {
+  height: var(--app-height, 100%);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 body {
@@ -94,6 +114,16 @@ body {
 }
 .prose-chat pre {
   @apply border border-line rounded-lg text-[12.5px];
+}
+/* On a phone, long links and words wrap rather than run off the side, and wide tables scroll. */
+@media (max-width: 699.98px) {
+  .prose-chat {
+    overflow-wrap: break-word;
+  }
+  .prose-chat table {
+    display: block;
+    overflow-x: auto;
+  }
 }
 .prose-chat > :first-child {
   margin-top: 0;

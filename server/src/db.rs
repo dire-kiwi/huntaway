@@ -533,17 +533,34 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V55} PRAGMA user_version=55; COMMIT;"))?;
     }
     if version < 56 {
+        // Whether a task whose pull request was merged on GitHub moves to Done (see merged.rs),
+        // on until it's turned off, and what its last read found.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='done_when_merged'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN done_when_merged INTEGER NOT NULL DEFAULT 1;" };
+        conn.execute_batch(&format!(
+            "BEGIN; {add}
+             CREATE TABLE IF NOT EXISTS pr_states (
+               task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+               pr_url TEXT NOT NULL,
+               state TEXT NOT NULL,
+               updated_at TEXT NOT NULL,
+               PRIMARY KEY (task_id, pr_url)
+             );
+             PRAGMA user_version=56; COMMIT;"
+        ))?;
+    }
+    if version < 57 {
         // The thread that helps get a project's folder ready for worktrees (see Project::setup_task_id).
         let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='setup_task_id'", [], |r| r.get(0))?;
         let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN setup_task_id TEXT;" };
-        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=56; COMMIT;"))?;
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=57; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 56;
+pub const VERSION: i64 = 57;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -995,7 +1012,7 @@ pub struct Project {
     #[serde(default)]
     pub has_commits: bool,
     /// The task whose thread helps the user get the folder ready for worktrees (a git
-    /// repository with a commit), which the board shows in its place until it is (API 66).
+    /// repository with a commit), which the board shows in its place until it is (API 69).
     #[serde(default)]
     pub setup_task_id: Option<String>,
     /// Falls back to the host's default mode when unset.
@@ -1005,6 +1022,9 @@ pub struct Project {
     pub claude_config_ids: Option<Vec<String>>,
     /// Review each task's work when it moves to "In review" (see review.rs).
     pub auto_review: bool,
+    /// Move a task to Done when its pull request is merged on GitHub (see merged.rs).
+    #[serde(default = "yes")]
+    pub done_when_merged: bool,
     /// How many times in a row a review's serious issues go back to the agent to fix before
     /// the task is left for the user.
     pub review_rounds: u32,
@@ -1055,6 +1075,7 @@ impl Project {
             model: r.get("model")?,
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
             auto_review: r.get("auto_review")?,
+            done_when_merged: r.get("done_when_merged")?,
             review_rounds: r.get("review_rounds")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             start_prompt: r.get("start_prompt")?,
@@ -1506,6 +1527,16 @@ pub fn insert_profile(c: &Connection, name: &str, config_ids: &[String], model: 
     Ok(get_profile(c, &id)?.unwrap())
 }
 
+/// A profile called `name` with the Claude config in `dir` (see `config_for_dir`), unless there's
+/// a profile of that name already, which is left as it is. Some(the new profile) if it made one.
+pub fn ensure_profile(c: &Connection, name: &str, dir: &str) -> Result<Option<Profile>> {
+    if list_profiles(c)?.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
+        return Ok(None);
+    }
+    let config = config_for_dir(c, name, dir)?;
+    Ok(Some(insert_profile(c, name, &[config], None)?))
+}
+
 // ---------- Claude configs ----------
 
 pub fn list_claude_configs(c: &Connection) -> Result<Vec<ClaudeConfig>> {
@@ -1759,6 +1790,19 @@ pub fn list_tasks_for_profile(c: &Connection, profile_id: &str) -> Result<Vec<Ta
         "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' ORDER BY project_id, position",
     )?;
     let rows = st.query_map([profile_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// Tasks in "In review" or "Needs attention" with a pull request, not running or merging, in
+/// projects whose merged pull requests move them to Done (see merged.rs).
+pub fn tasks_with_open_prs(c: &Connection) -> Result<Vec<Task>> {
+    let mut st = c.prepare(
+        "SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id
+         WHERE t.kind='task' AND t.status IN ('in_review','needs_attention') AND t.pr_url IS NOT NULL AND t.merging=0 AND t.running=0
+           AND t.task_type IS NULL AND p.done_when_merged=1
+         ORDER BY t.project_id, t.number",
+    )?;
+    let rows = st.query_map([], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 
@@ -2047,7 +2091,7 @@ fn normalize_resolution(c: &Connection, id: &str) -> Result<()> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "setup_task_id",
 ];
 
@@ -2641,6 +2685,25 @@ mod tests {
     }
 
     #[test]
+    fn ensure_profile_makes_a_profile_only_if_none_has_its_name() {
+        let c = open(std::path::Path::new(":memory:")).unwrap();
+        let p = ensure_profile(&c, "personal", "/claude/personal").unwrap().expect("made");
+        assert_eq!(p.name, "personal");
+        let configs = list_claude_configs(&c).unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!((configs[0].name.as_str(), configs[0].config_dir.as_str()), ("personal", "/claude/personal"));
+        assert_eq!(p.claude_config_ids, vec![configs[0].id.clone()]);
+        // On the next start, or with the name in another case, it's left as it is.
+        assert!(ensure_profile(&c, "personal", "/claude/personal").unwrap().is_none());
+        assert!(ensure_profile(&c, "Personal", "/elsewhere").unwrap().is_none());
+        assert_eq!(list_profiles(&c).unwrap().len(), 1);
+        assert_eq!(list_claude_configs(&c).unwrap().len(), 1);
+        // A config with the directory already is shared, as when a profile is made with claude_config_dir.
+        let work = ensure_profile(&c, "work", "/claude/personal").unwrap().expect("made");
+        assert_eq!(work.claude_config_ids, p.claude_config_ids);
+    }
+
+    #[test]
     fn archived_projects_threads_arent_compacted() {
         let c = open(std::path::Path::new(":memory:")).unwrap();
         let p = insert_profile(&c, "me", &[], None).unwrap();
@@ -2877,6 +2940,32 @@ mod tests {
         for table in ["automations", "automation_runs"] {
             assert!(c.query_row("SELECT COUNT(*) FROM pragma_table_info(?1)", [table], |r| r.get::<_, i64>(0)).unwrap() > 0, "{table}");
         }
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_56_gets_setup_threads() {
+        let path = std::env::temp_dir().join(format!("huntaway-v56-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN setup_task_id;
+                 PRAGMA user_version=56;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','Web','WEB','/nowhere','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        // Master's version 56 stays (HA-16's done_when_merged), and projects from before have no setup thread yet.
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!((p.done_when_merged, p.setup_task_id), (true, None));
+        assert_eq!(update_project(&c, "pr", &[("setup_task_id", json!("t"))]).unwrap().unwrap().setup_task_id.as_deref(), Some("t"));
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

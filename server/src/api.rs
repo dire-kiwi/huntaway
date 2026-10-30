@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{derive_key, expand_tilde, new_id, path_str};
-use crate::{admin, agent_tools, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
+use crate::{admin, agent_tools, git_view, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
 
 /// This host's API (`/api/...`) plus the hub endpoints that span hosts.
 pub fn router(state: Shared) -> Router {
@@ -120,6 +120,17 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
+        .route("/tasks/{id}/git", get(git_view::status))
+        .route("/tasks/{id}/git/diff", get(git_view::diff))
+        .route("/tasks/{id}/git/show", get(git_view::show))
+        .route("/tasks/{id}/git/stage", post(git_view::stage))
+        .route("/tasks/{id}/git/unstage", post(git_view::unstage))
+        .route("/tasks/{id}/git/discard", post(git_view::discard))
+        // A patch of a big file's lines is past the default 2 MB body limit.
+        .route("/tasks/{id}/git/apply", post(git_view::apply).layer(DefaultBodyLimit::max(32 << 20)))
+        .route("/tasks/{id}/git/commit", post(git_view::commit))
+        .route("/tasks/{id}/git/stash", post(git_view::stash))
+        .route("/tasks/{id}/git/reset", post(git_view::reset))
         .route("/tasks/{id}/context", get(crate::context::get))
         .route("/tasks/{id}/skills", get(agent_tools::for_task))
         .route("/tasks/{id}/document", get(crate::documents::get))
@@ -804,6 +815,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
             "worktrees_root", "auto_review", "review_rounds", "reviewers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
+            "done_when_merged",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -860,7 +872,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
                 }
                 *v = json!(key);
             }
-            "use_worktrees" | "auto_review" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "done_when_merged" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
@@ -1862,7 +1874,7 @@ async fn start_setup_thread(State(s): State<Shared>, Path(id): Path<String>, Jso
     Ok(Json(json!(start_setup_thread_inner(&s, &id, b).await?)))
 }
 
-/// `POST /projects/{id}/setup-thread` (API 66): the project's setup thread (see
+/// `POST /projects/{id}/setup-thread` (API 69): the project's setup thread (see
 /// db::Project::setup_task_id), whose agent helps the user make its folder a git repository with
 /// a commit, so its tasks can have worktrees. A new one is started with `message` after its
 /// instructions; one the project has already is returned as it is.
@@ -2011,12 +2023,15 @@ struct ApprovalsQuery {
     /// Deletions too (API 58); older hosts ignore it and list project changes only.
     #[serde(default)]
     all: bool,
+    /// Automations too (API 67).
+    #[serde(default)]
+    automations: bool,
 }
 
-/// Project changes (and with `?all=true`, task deletions) agents are waiting for the user to
-/// approve (see permissions::approve).
+/// Project changes (and with `?all=true`, task deletions, and with `?automations=true`,
+/// automations) agents are waiting for the user to approve (see permissions::approve).
 async fn project_approvals(State(s): State<Shared>, Query(q): Query<ApprovalsQuery>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(permissions::pending_approvals(&s, q.all)?)))
+    Ok(Json(json!(permissions::pending_approvals(&s, q.all, q.automations)?)))
 }
 
 // ---------- host settings ----------

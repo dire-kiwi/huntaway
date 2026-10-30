@@ -28,8 +28,20 @@ Every task that changes code gets a pull request:
    links it.
 
 CI (`.github/workflows/test.yml`) runs the tests on every PR. This repository has no deployment
-workflows: deployments are kept elsewhere, and a merge to `master` may deploy it. PR preview
-deployments are paused for now.
+workflows: deployments are kept elsewhere, and a merge to `master` may deploy it.
+
+### PR previews
+
+Each PR from this repository (not from forks) gets a preview deployment, also kept elsewhere: a few
+minutes after each push it's rebuilt from the PR's head, and it's removed when the PR closes.
+
+- A preview is a board of its own, LAN-only, started with `--demo` and `--open-token` (any browser
+  that opens it is signed in), so it has the sample Default profile and Demo project. It sleeps when
+  idle and wakes on the next request.
+- It also has a `personal` profile (`--profile`, see `README.md`) on a Claude login shared by every
+  preview, so agents can run there. Don't log it out or change that login's settings from a preview.
+- Its address isn't kept in this public repository. The board project's instructions give it: once
+  the PR's preview is up, put it in the task's `preview_url` with `update_task`, so the card links it.
 
 ## Testing in a worktree
 
@@ -65,8 +77,9 @@ Keep test servers fully separate from it:
     server started from this worktree (`.ia-test-env` links to its env file).
 - Use `scripts/ia-api` for the API rather than curl and python. It finds the server from
   `$IA_TEST_ENV` (or `--env <file>`, or `.ia-test-env`), prints JSON, exits 1 with the error on
-  an HTTP error or a wrong path, and refuses to touch the live board. A task can be given by key
-  (`TES-1`, in the seeded project) as well as by id, in paths too.
+  an HTTP error or a wrong path, and refuses to touch the live board: it only calls test servers
+  on 127.0.0.1 and servers started with `--open-token`, such as PR previews. A task can be given
+  by key (`TES-1`, in the seeded project) as well as by id, in paths too.
   - `ia-api get|post|patch|delete <path> [json]`, with or without the `/api` prefix.
   - `ia-api new-task <title> ['{"description": …}']` (in the seeded project), `ia-api start
     <task>` (as dragging it to In progress does: moving a task to `in_progress` with a PATCH
@@ -139,6 +152,9 @@ node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New
   times out after 5s. Page errors and console errors are printed and make it exit non-zero
   (`--allow-error <regex>` for expected ones). A failed step saves a screenshot of the page and
   prints its path; Read it to see what went wrong. Read the PNGs from `shot` the same way.
+- Phones and tablets: `--size 390x844 --touch` (below 700px wide is the narrow layout, and
+  `--touch` makes it a touch screen, which gives cards their move menu button). Start a new run for
+  another size rather than a `size` step, which a touch screen's page doesn't lay out again for.
 - The task panel covers the right half of the board, so a screenshot of the whole board needs it
   closed.
 - For a visual fix, take the same screenshot with the change set aside and compare the two. Run
