@@ -177,12 +177,10 @@ tool_path() {
   printf '%s' "$p"
 }
 
-electron_bin() {
-  if [ "$OS" = Darwin ]; then
-    echo "$DIR/app/node_modules/electron/dist/Electron.app"
-  else
-    echo "$DIR/app/node_modules/electron/dist/electron"
-  fi
+# Electron downloads its binary the first time it's required (and again once an update has
+# installed another version), not when npm installs it.
+ensure_electron() {
+  node -e 'require(process.argv[1])' "$DIR/app/node_modules/electron" >/dev/null || die "couldn't download Electron"
 }
 
 shortcut_linux() {
@@ -198,7 +196,12 @@ shortcut_linux() {
       echo "IA_UPDATE_FROM=\${IA_UPDATE_FROM-$(shq "$UPDATE_FROM")}"
       echo "export IA_UPDATE_FROM"
     fi
-    echo "exec $(shq "$(electron_bin)") $(shq "$DIR/app") \"\$@\""
+    # For the app to relaunch through this, which downloads a new Electron after an update.
+    echo "HUNTAWAY_LAUNCHER=$(shq "$launcher")"
+    echo "export HUNTAWAY_LAUNCHER"
+    echo "electron=$(shq "$DIR/app/node_modules/electron")"
+    echo "node -e 'require(process.argv[1])' \"\$electron\" >/dev/null || exit 1"
+    echo "exec \"\$electron/dist/\$(cat \"\$electron/path.txt\")\" $(shq "$DIR/app") \"\$@\""
   } >"$launcher"
   chmod 755 "$launcher"
   # Named after app/package.json's desktopName, which Electron reports as the window's app id.
@@ -230,7 +233,7 @@ shortcut_mac() {
   mkdir -p "$HOME/Applications"
   rm -rf "$app"
   # A copy of the Electron that npm installed, renamed, whose app is a stub that runs the checkout's.
-  ditto "$(electron_bin)" "$app"
+  ditto "$DIR/app/node_modules/electron/dist/Electron.app" "$app"
   plutil -replace CFBundleName -string Huntaway "$app/Contents/Info.plist"
   plutil -replace CFBundleDisplayName -string Huntaway "$app/Contents/Info.plist"
   plutil -replace CFBundleIdentifier -string nz.dire.huntaway "$app/Contents/Info.plist"
@@ -287,7 +290,7 @@ if [ "$BUILD" = 1 ]; then
 else
   [ -x "$DIR/server/target/release/huntaway" ] || die "no build in $DIR; run this without --shortcut-only first"
 fi
-[ -e "$(electron_bin)" ] || die "Electron isn't installed in $DIR/app; run this without --shortcut-only"
+ensure_electron
 
 if [ "$SHORTCUT" = 1 ]; then
   if [ "$OS" = Darwin ]; then shortcut_mac; else shortcut_linux; fi

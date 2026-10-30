@@ -169,7 +169,9 @@ async function createWindow() {
   win.webContents.on("did-finish-load", () => {
     if (mainStamp() !== startStamp) {
       console.log("the desktop app changed on disk; relaunching");
-      app.relaunch();
+      // Through install.sh's launcher where there is one, which downloads the Electron an update may have installed.
+      const launcher = process.env.HUNTAWAY_LAUNCHER;
+      app.relaunch(launcher ? { execPath: launcher, args: process.argv.slice(2) } : undefined);
       app.quit();
     }
   });
