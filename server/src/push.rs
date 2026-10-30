@@ -12,23 +12,20 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes128Gcm, Nonce};
 use anyhow::{anyhow, bail, Context, Result};
+use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_128_GCM};
+use aws_lc_rs::agreement::{self, UnparsedPublicKey, ECDH_P256};
+use aws_lc_rs::encoding::AsBigEndian;
+use aws_lc_rs::hkdf::{self, HKDF_SHA256};
+use aws_lc_rs::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+use aws_lc_rs::{digest, rand};
 use axum::extract::{Path, State};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use base64::Engine;
-use hkdf::Hkdf;
-use p256::ecdsa::signature::Signer;
-use p256::ecdsa::{Signature, SigningKey};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::{PublicKey, SecretKey};
-use rand_core::{OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 use crate::db;
 use crate::state::{ApiError, ApiResult, Shared};
@@ -47,14 +44,17 @@ fn subject() -> String {
 
 /// The board's VAPID key pair: subscriptions are made for its public key, and pushes signed with it.
 pub struct Vapid {
-    key: SigningKey,
+    key: EcdsaKeyPair,
     /// The public key, an uncompressed point (65 bytes), as browsers take it (`applicationServerKey`).
     public: Vec<u8>,
 }
 
 impl Vapid {
-    fn from_secret(secret: &SecretKey) -> Self {
-        Self { key: SigningKey::from(secret), public: secret.public_key().to_encoded_point(false).as_bytes().to_vec() }
+    /// From its private key, a P-256 scalar (32 bytes).
+    fn from_private(private: &[u8]) -> Result<Self> {
+        let public = public_key(&agreement::PrivateKey::from_private_key(&ECDH_P256, private).map_err(|_| anyhow!("not a P-256 private key"))?)?;
+        let key = EcdsaKeyPair::from_private_key_and_public_key(&ECDSA_P256_SHA256_FIXED_SIGNING, private, &public).map_err(|e| anyhow!("{e}"))?;
+        Ok(Self { key, public })
     }
 
     pub fn public_key(&self) -> String {
@@ -62,15 +62,20 @@ impl Vapid {
     }
 }
 
+/// A key's public half, an uncompressed point.
+fn public_key(k: &agreement::PrivateKey) -> Result<Vec<u8>> {
+    Ok(k.compute_public_key().map_err(|_| anyhow!("computing a public key"))?.as_ref().to_vec())
+}
+
 /// The board's VAPID key, made and stored the first time.
 pub fn vapid(c: &Connection) -> Result<Vapid> {
     if let Some(saved) = db::get_setting(c, KEY_SETTING)? {
-        let bytes = B64.decode(saved.trim()).context("reading the VAPID key")?;
-        return Ok(Vapid::from_secret(&SecretKey::from_slice(&bytes).context("reading the VAPID key")?));
+        return Vapid::from_private(&B64.decode(saved.trim()).context("reading the VAPID key")?).context("reading the VAPID key");
     }
-    let secret = SecretKey::random(&mut OsRng);
-    db::set_setting(c, KEY_SETTING, Some(&B64.encode(secret.to_bytes())))?;
-    Ok(Vapid::from_secret(&secret))
+    let key = agreement::PrivateKey::generate(&ECDH_P256).map_err(|_| anyhow!("making a key"))?;
+    let private: aws_lc_rs::encoding::EcPrivateKeyBin = key.as_be_bytes().map_err(|_| anyhow!("making a key"))?;
+    db::set_setting(c, KEY_SETTING, Some(&B64.encode(private.as_ref())))?;
+    Vapid::from_private(private.as_ref())
 }
 
 // ---------- encryption (RFC 8291) ----------
@@ -82,40 +87,52 @@ const RECORD_SIZE: u32 = 4096;
 /// and its authentication secret: the body of the push request (`Content-Encoding: aes128gcm`).
 pub fn encrypt(ua_public: &[u8], auth: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
     let mut salt = [0u8; 16];
-    OsRng.fill_bytes(&mut salt);
-    encrypt_with(&SecretKey::random(&mut OsRng), &salt, ua_public, auth, plaintext)
+    rand::fill(&mut salt).map_err(|_| anyhow!("no random numbers"))?;
+    encrypt_with(&agreement::PrivateKey::generate(&ECDH_P256).map_err(|_| anyhow!("making a key"))?, &salt, ua_public, auth, plaintext)
+}
+
+/// HKDF-SHA-256: `len` bytes from `ikm` with `salt` and `info`.
+fn hkdf(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> Vec<u8> {
+    struct Len(usize);
+    impl hkdf::KeyType for Len {
+        fn len(&self) -> usize {
+            self.0
+        }
+    }
+    let mut out = vec![0u8; len];
+    // Only fails for a length over 255 hashes.
+    hkdf::Salt::new(HKDF_SHA256, salt).extract(ikm).expand(&[info], Len(len)).and_then(|okm| okm.fill(&mut out)).expect("HKDF");
+    out
+}
+
+/// The ECDH secret of `key` and the public key `peer`, if it's one.
+fn ecdh(key: &agreement::PrivateKey, peer: &[u8]) -> Result<Vec<u8>> {
+    agreement::agree(key, UnparsedPublicKey::new(&ECDH_P256, peer), anyhow!("the subscription's key isn't a P-256 public key"), |s| Ok(s.to_vec()))
+}
+
+/// The content encryption key and nonce of a message with `salt`, for the subscription's key and auth secret.
+fn content_keys(ecdh: &[u8], auth: &[u8], ua_public: &[u8], as_public: &[u8], salt: &[u8]) -> Result<(LessSafeKey, Nonce)> {
+    // IKM = HKDF(auth secret, ECDH secret, "WebPush: info" 0 ua_public as_public), then the key and nonce from the salt (RFC 8188).
+    let key_info = [b"WebPush: info\0".as_slice(), ua_public, as_public].concat();
+    let ikm = hkdf(auth, ecdh, &key_info, 32);
+    let cek = hkdf(salt, &ikm, b"Content-Encoding: aes128gcm\0", 16);
+    let nonce = hkdf(salt, &ikm, b"Content-Encoding: nonce\0", 12);
+    let key = LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &cek).map_err(|_| anyhow!("AES key"))?);
+    Ok((key, Nonce::try_assume_unique_for_key(&nonce).map_err(|_| anyhow!("nonce"))?))
 }
 
 /// `encrypt` with the sender's (one-off) key and the salt given.
-fn encrypt_with(as_secret: &SecretKey, salt: &[u8; 16], ua_public: &[u8], auth: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
-    let ua = PublicKey::from_sec1_bytes(ua_public).map_err(|_| anyhow!("the subscription's key isn't a P-256 public key"))?;
-    let as_public = as_secret.public_key().to_encoded_point(false);
-    let ecdh = p256::ecdh::diffie_hellman(as_secret.to_nonzero_scalar(), ua.as_affine());
-    // IKM = HKDF(auth secret, ECDH secret, "WebPush: info" 0 ua_public as_public)
-    let mut key_info = b"WebPush: info\0".to_vec();
-    key_info.extend_from_slice(ua_public);
-    key_info.extend_from_slice(as_public.as_bytes());
-    let mut ikm = [0u8; 32];
-    Hkdf::<Sha256>::new(Some(auth), ecdh.raw_secret_bytes()).expand(&key_info, &mut ikm).map_err(|_| anyhow!("HKDF"))?;
-    // The content encryption key and nonce, from the salt (RFC 8188).
-    let prk = Hkdf::<Sha256>::new(Some(&salt[..]), &ikm);
-    let (mut cek, mut nonce) = ([0u8; 16], [0u8; 12]);
-    prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).map_err(|_| anyhow!("HKDF"))?;
-    prk.expand(b"Content-Encoding: nonce\0", &mut nonce).map_err(|_| anyhow!("HKDF"))?;
+fn encrypt_with(as_key: &agreement::PrivateKey, salt: &[u8; 16], ua_public: &[u8], auth: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+    let as_public = public_key(as_key)?;
+    let (key, nonce) = content_keys(&ecdh(as_key, ua_public)?, auth, ua_public, &as_public, salt)?;
     // One record, the last: the text and its padding delimiter (2), and no padding.
     if plaintext.len() + 1 + 16 > RECORD_SIZE as usize - 86 {
         bail!("the message is too long to push");
     }
-    let mut record = plaintext.to_vec();
-    record.push(2);
-    let sealed = Aes128Gcm::new_from_slice(&cek).unwrap().encrypt(Nonce::from_slice(&nonce), record.as_slice()).map_err(|_| anyhow!("encrypting the message"))?;
+    let mut record = [plaintext, &[2]].concat();
+    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut record).map_err(|_| anyhow!("encrypting the message"))?;
     // salt, record size, the sender's public key as the key id, then the record.
-    let mut body = salt.to_vec();
-    body.extend_from_slice(&RECORD_SIZE.to_be_bytes());
-    body.push(as_public.as_bytes().len() as u8);
-    body.extend_from_slice(as_public.as_bytes());
-    body.extend_from_slice(&sealed);
-    Ok(body)
+    Ok([salt.as_slice(), &RECORD_SIZE.to_be_bytes(), &[as_public.len() as u8], &as_public, &record].concat())
 }
 
 // ---------- VAPID (RFC 8292) ----------
@@ -127,8 +144,8 @@ fn authorization(v: &Vapid, endpoint: &str, sub: &str, now: i64) -> Result<Strin
     let header = B64.encode(br#"{"typ":"JWT","alg":"ES256"}"#);
     let claims = B64.encode(json!({"aud": url.origin().ascii_serialization(), "exp": now + 12 * 3600, "sub": sub}).to_string());
     let signed = format!("{header}.{claims}");
-    let sig: Signature = v.key.sign(signed.as_bytes());
-    Ok(format!("vapid t={signed}.{}, k={}", B64.encode(sig.to_bytes()), v.public_key()))
+    let sig = v.key.sign(&rand::SystemRandom::new(), signed.as_bytes()).map_err(|_| anyhow!("signing the token"))?;
+    Ok(format!("vapid t={signed}.{}, k={}", B64.encode(sig.as_ref()), v.public_key()))
 }
 
 // ---------- subscriptions ----------
@@ -283,7 +300,7 @@ async fn deliver(s: &Shared, sub: &Subscription, msg: &Message, urgent: bool) ->
         authorization(&v, &sub.endpoint, &subject(), chrono::Utc::now().timestamp()).map_err(|e| Failed(format!("{e:#}")))?
     };
     // A newer message about the same task replaces one still waiting to be delivered.
-    let topic = hex(&Sha256::digest(msg.tag.as_bytes())[..16]);
+    let topic = hex(&digest::digest(&digest::SHA256, msg.tag.as_bytes()).as_ref()[..16]);
     let res = s
         .push
         .client
@@ -618,7 +635,8 @@ pub struct Keys {
 /// Adds a device's subscription (`PushSubscription.toJSON()`), or updates the one with its endpoint.
 pub async fn subscribe(State(s): State<Shared>, Json(b): Json<Subscribe>) -> ApiResult<Json<Value>> {
     check_endpoint(&b.endpoint)?;
-    let p256dh = B64.decode(b.keys.p256dh.trim_end_matches('=')).ok().filter(|k| PublicKey::from_sec1_bytes(k).is_ok() && k.len() == 65);
+    let valid = |k: &[u8]| k.len() == 65 && agreement::PrivateKey::generate(&ECDH_P256).is_ok_and(|key| ecdh(&key, k).is_ok());
+    let p256dh = B64.decode(b.keys.p256dh.trim_end_matches('=')).ok().filter(|k| valid(k));
     let auth = B64.decode(b.keys.auth.trim_end_matches('=')).ok().filter(|a| a.len() == 16);
     let (Some(p256dh), Some(auth)) = (p256dh, auth) else {
         return Err(ApiError::bad("keys must have the subscription's p256dh public key and 16-byte auth secret"));
@@ -695,9 +713,8 @@ mod tests {
     use super::*;
     use crate::testing;
     use axum::body::Bytes;
+    use aws_lc_rs::signature::{UnparsedPublicKey as VerifyingKey, ECDSA_P256_SHA256_FIXED};
     use axum::http::HeaderMap;
-    use p256::ecdsa::signature::Verifier;
-    use p256::ecdsa::VerifyingKey;
     use std::sync::atomic::{AtomicU16, Ordering};
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -707,23 +724,20 @@ mod tests {
         B64.decode(s).unwrap()
     }
 
+    /// A device's key (as its browser makes one).
+    fn device_key() -> agreement::PrivateKey {
+        agreement::PrivateKey::generate(&ECDH_P256).unwrap()
+    }
+
     /// What a browser does with a push it gets (RFC 8291 section 3.4, the other way round).
-    fn decrypt(ua: &SecretKey, auth: &[u8], body: &[u8]) -> Vec<u8> {
+    fn decrypt(ua: &agreement::PrivateKey, auth: &[u8], body: &[u8]) -> Vec<u8> {
         let (salt, rest) = body.split_at(16);
         assert_eq!(u32::from_be_bytes(rest[..4].try_into().unwrap()), RECORD_SIZE);
         let idlen = rest[4] as usize;
         let (as_public, sealed) = rest[5..].split_at(idlen);
-        let ecdh = p256::ecdh::diffie_hellman(ua.to_nonzero_scalar(), PublicKey::from_sec1_bytes(as_public).unwrap().as_affine());
-        let mut key_info = b"WebPush: info\0".to_vec();
-        key_info.extend_from_slice(ua.public_key().to_encoded_point(false).as_bytes());
-        key_info.extend_from_slice(as_public);
-        let mut ikm = [0u8; 32];
-        Hkdf::<Sha256>::new(Some(auth), ecdh.raw_secret_bytes()).expand(&key_info, &mut ikm).unwrap();
-        let prk = Hkdf::<Sha256>::new(Some(salt), &ikm);
-        let (mut cek, mut nonce) = ([0u8; 16], [0u8; 12]);
-        prk.expand(b"Content-Encoding: aes128gcm\0", &mut cek).unwrap();
-        prk.expand(b"Content-Encoding: nonce\0", &mut nonce).unwrap();
-        let mut plain = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(Nonce::from_slice(&nonce), sealed).unwrap();
+        let (key, nonce) = content_keys(&ecdh(ua, as_public).unwrap(), auth, &public_key(ua).unwrap(), as_public, salt).unwrap();
+        let mut sealed = sealed.to_vec();
+        let mut plain = key.open_in_place(nonce, Aad::empty(), &mut sealed).unwrap().to_vec();
         // The last record ends in 2, then any padding of zeros.
         while plain.last() == Some(&0) {
             plain.pop();
@@ -735,7 +749,7 @@ mod tests {
     #[test]
     fn encryption_matches_the_rfc_8291_example() {
         // RFC 8291, section 5 and appendix A.
-        let as_secret = SecretKey::from_slice(&b64("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw")).unwrap();
+        let as_secret = agreement::PrivateKey::from_private_key(&ECDH_P256, &b64("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw")).unwrap();
         let salt: [u8; 16] = b64("DGv6ra1nlYgDCS1FRnbzlw").try_into().unwrap();
         let ua_public = b64("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4");
         let auth = b64("BTBZMqHH6r4Tts7J_aSIgg");
@@ -746,14 +760,14 @@ mod tests {
         );
         assert_eq!(B64.encode(&body), expected);
         // And the user agent's key reads it.
-        let ua = SecretKey::from_slice(&b64("q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94")).unwrap();
+        let ua = agreement::PrivateKey::from_private_key(&ECDH_P256, &b64("q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94")).unwrap();
         assert_eq!(decrypt(&ua, &auth, &body), b"When I grow up, I want to be a watermelon");
     }
 
     #[test]
     fn each_message_gets_its_own_key_and_salt() {
-        let ua = SecretKey::random(&mut OsRng);
-        let ua_public = ua.public_key().to_encoded_point(false).as_bytes().to_vec();
+        let ua = device_key();
+        let ua_public = public_key(&ua).unwrap();
         let auth = [7u8; 16];
         let (a, b) = (encrypt(&ua_public, &auth, b"hello").unwrap(), encrypt(&ua_public, &auth, b"hello").unwrap());
         assert_ne!(a[..86], b[..86]);
@@ -779,9 +793,9 @@ mod tests {
             serde_json::from_slice::<Value>(&b64(parts[1])).unwrap(),
             json!({"aud": "https://fcm.googleapis.com", "exp": 1_000_000 + 12 * 3600, "sub": "mailto:me@example.com"})
         );
-        let key = VerifyingKey::from_sec1_bytes(&b64(k)).unwrap();
-        let sig = Signature::from_slice(&b64(parts[2])).unwrap();
-        key.verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &sig).unwrap();
+        let key = VerifyingKey::new(&ECDSA_P256_SHA256_FIXED, b64(k));
+        key.verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &b64(parts[2])).unwrap();
+        assert!(key.verify(b"something else", &b64(parts[2])).is_err());
     }
 
     fn task(status: &str) -> Value {
@@ -857,9 +871,9 @@ mod tests {
         (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
 
-    fn device() -> (SecretKey, Value) {
-        let ua = SecretKey::random(&mut OsRng);
-        let keys = json!({"p256dh": B64.encode(ua.public_key().to_encoded_point(false).as_bytes()), "auth": B64.encode([9u8; 16])});
+    fn device() -> (agreement::PrivateKey, Value) {
+        let ua = device_key();
+        let keys = json!({"p256dh": B64.encode(public_key(&ua).unwrap()), "auth": B64.encode([9u8; 16])});
         (ua, keys)
     }
 

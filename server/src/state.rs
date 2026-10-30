@@ -62,6 +62,8 @@ pub struct AppState {
     pub calls_inflight: Mutex<HashMap<String, Vec<oneshot::Sender<Result<Value, String>>>>>,
     pub meta: ServerMeta,
     pub restart: Mutex<Option<RestartJob>>,
+    /// What `--update-from` last reported (see admin::start_update_check).
+    pub deployed: Mutex<Option<crate::admin::Deployed>>,
     /// Claude usage limits by Claude config id.
     pub usage: Mutex<HashMap<String, crate::usage::Usage>>,
     /// Held while a project is created or changed, so a key is checked against the keys as they
@@ -104,6 +106,7 @@ impl AppState {
             calls_inflight: Mutex::new(HashMap::new()),
             meta,
             restart: Mutex::new(None),
+            deployed: Mutex::new(None),
             usage: Mutex::new(HashMap::new()),
             project_changes: tokio::sync::Mutex::new(()),
             relocating: Mutex::new(Default::default()),

@@ -82,7 +82,7 @@ enum Kind {
 
 pub type LinkHandle = Arc<LinkConn>;
 
-fn http() -> &'static reqwest::Client {
+pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(reqwest::Client::new)
 }
