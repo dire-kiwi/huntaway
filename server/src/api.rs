@@ -32,6 +32,10 @@ pub fn router(state: Shared) -> Router {
         .route("/hosts/{id}", axum::routing::patch(hub::rename_host).delete(hub::remove_host))
         .route("/hosts/{id}/update", post(hub::update_host))
         .route("/preview-status", get(preview_status))
+        .route("/push", get(crate::push::info))
+        .route("/push/subscriptions", post(crate::push::subscribe))
+        .route("/push/subscriptions/{id}", axum::routing::patch(crate::push::update).delete(crate::push::unsubscribe))
+        .route("/push/subscriptions/{id}/test", post(crate::push::test))
         .route("/h/{host_id}/{*rest}", any(hub::proxy))
         .route("/ws", get(hub::ws))
         .layer(middleware::from_fn_with_state(state.clone(), auth));

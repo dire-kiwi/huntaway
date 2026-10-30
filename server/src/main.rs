@@ -20,6 +20,7 @@ mod pr_watch;
 mod prompts;
 mod proto;
 mod pty;
+mod push;
 mod relay;
 mod relocate;
 mod review;
@@ -294,6 +295,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runs::start_pruner(&state);
     relocate::start_recording(&state);
     hub::start(&state)?;
+    push::start(&state);
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
             for h in &args.hubs {

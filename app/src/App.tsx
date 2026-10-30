@@ -11,6 +11,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TaskPanel, TaskView } from "./components/TaskView";
 import { useDrawer, useNarrow } from "./narrow";
 import { startNotifications } from "./notifier";
+import { startPush } from "./push";
 import { boardTaskUrl, groupTaskUrl, hasPanel, navigate, profileTaskUrl, subprojectTaskUrl, usePanel, useRoute } from "./router";
 import { connectEvents, isGroupTask, profileNames, useProfileName, useStore } from "./store";
 import { startToolKeepalive } from "./terminalTools";
@@ -30,6 +31,7 @@ export function App() {
     connectEvents();
     startToolKeepalive();
     startNotifications();
+    startPush();
   }, []);
 
   // Home is the board of the profile picked last (or the first one), which has every one of its tasks.
