@@ -11,9 +11,12 @@
 // Installed with scripts/install.sh, it runs from a source checkout and updates like any host: the
 // server's Rebuild & restart, or Update when it follows a deployment (IA_UPDATE_FROM). The window
 // reloads onto the new UI, and the app relaunches itself if the update changed this directory.
+//
+// A release build (`npm run dist`, attached to each GitHub release by .github/workflows/release.yml) carries the
+// server, ia-shim and the UI in its resources. It has no checkout, so it's updated by installing a newer release.
 
 const { app, BrowserWindow, shell } = require("electron");
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -44,6 +47,29 @@ function loadConfig() {
 }
 
 const config = loadConfig();
+
+/**
+ * An app started from the Dock or a desktop launcher gets a minimal PATH, without the folders of claude, codex, git
+ * and gh (Homebrew's, ~/.local/bin, nvm's). Take the login shell's, as a terminal would have it. install.sh's launcher
+ * sets PATH itself, so this is for release builds.
+ */
+function useLoginShellPath() {
+  if (process.platform === "win32") return;
+  try {
+    const out = execFileSync(process.env.SHELL || "/bin/sh", ["-ilc", 'printf "\\n__HUNTAWAY_PATH__%s\\n" "$PATH"'], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+    const found = out.match(/^__HUNTAWAY_PATH__(.+)$/m)?.[1].split(":") ?? [];
+    const dirs = [...found, ...(process.env.PATH || "").split(":")].filter(Boolean);
+    process.env.PATH = [...new Set(dirs)].join(":");
+  } catch (e) {
+    console.error(`couldn't read the login shell's PATH: ${e.message}`);
+  }
+}
+if (app.isPackaged) useLoginShellPath();
+
 const port = Number(process.env.IA_PORT || config.port || 7878);
 let serverProc = null;
 let stopping = false;

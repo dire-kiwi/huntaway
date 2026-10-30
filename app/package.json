@@ -14,7 +14,8 @@
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:ui": "npm run build && node --experimental-strip-types --test --test-concurrency=1 tests/ui/*.test.mjs",
     "electron": "electron .",
-    "electron:dev": "IA_DEV_URL=http://localhost:5173 electron ."
+    "electron:dev": "IA_DEV_URL=http://localhost:5173 electron .",
+    "dist": "npm run build && (cd ../server && cargo build --release --locked) && electron-builder --publish never"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
@@ -40,9 +41,79 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
     "playwright-core": "^1.64.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
+  },
+  "author": "Ivan Meredith",
+  "homepage": "https://github.com/dire-kiwi/huntaway",
+  "build": {
+    "appId": "nz.net.ivan.huntaway",
+    "productName": "Huntaway",
+    "files": [
+      "electron/**",
+      "!node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../server/target/release/huntaway",
+        "to": "huntaway"
+      },
+      {
+        "from": "../server/target/release/ia-shim",
+        "to": "ia-shim"
+      },
+      {
+        "from": "dist",
+        "to": "ui"
+      }
+    ],
+    "artifactName": "huntaway-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "target": [
+        "AppImage",
+        "pacman"
+      ],
+      "executableName": "huntaway-desktop",
+      "category": "Development",
+      "icon": "build/icon.png",
+      "synopsis": "Kanban board for Claude Code and Codex agents",
+      "description": "A kanban board for orchestrating Claude Code and Codex agents.",
+      "maintainer": "Huntaway <https://github.com/dire-kiwi/huntaway>"
+    },
+    "pacman": {
+      "packageName": "huntaway",
+      "depends": [
+        "gtk3",
+        "nss",
+        "alsa-lib",
+        "libxss",
+        "libxtst",
+        "libnotify",
+        "libsecret",
+        "at-spi2-core",
+        "xdg-utils",
+        "git"
+      ],
+      "fpm": [
+        "--description",
+        "Kanban board for Claude Code and Codex agents"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "directories": {
+      "output": "release"
+    }
   }
 }

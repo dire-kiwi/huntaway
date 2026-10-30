@@ -294,6 +294,27 @@ a server already listening on its port (7878 by default) and starts its own othe
 case the app updates through that server, which follows a deployment only if it was started with
 `--update-from`.
 
+### Release builds
+
+Publishing a GitHub release runs `.github/workflows/release.yml`, which builds the release's tag
+and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
+
+| File | What |
+|---|---|
+| `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
+| `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
+| `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+
+The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
+`PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
+from the Dock or an app launcher. A release build isn't a checkout, so **Rebuild & restart** and
+**Update** don't apply to it: install a newer release to update it. The Mac build is ad-hoc signed,
+not signed with a Developer ID, so macOS blocks a downloaded copy until you run
+`xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
+run `npm run dist` in `app/`, which puts them in `app/release/`. To build an existing release
+again, use Actions → Release → Run workflow with its tag, which replaces its files.
+
 ## Hosts
 
 Every `huntaway serve` is a **host**: it keeps its own SQLite database with its profiles,
