@@ -824,7 +824,7 @@ fn signed(secret: &str, body: &[u8], header: Option<&str>) -> bool {
 }
 
 fn from_hex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
@@ -1084,11 +1084,14 @@ pub async fn webhook(State(s): State<Shared>, Path((id, token)): Path<(String, S
 /// restart can't run it again) and returns those to run.
 fn claim_due<Tz: TimeZone>(s: &Shared, now: DateTime<Utc>, tz: &Tz) -> anyhow::Result<Vec<(Automation, Run)>> {
     let c = s.db();
-    let mut st = c.prepare("SELECT * FROM automations WHERE enabled=1 AND next_run_at IS NOT NULL")?;
-    let due: Vec<Automation> = st.query_map([], Automation::from_row)?.filter_map(Result::ok).collect();
+    let mut st = c.prepare(
+        "SELECT a.*, p.archived_at IS NOT NULL AS archived FROM automations a JOIN projects p ON p.id=a.project_id
+         WHERE a.enabled=1 AND a.next_run_at IS NOT NULL",
+    )?;
+    let due: Vec<(Automation, bool)> = st.query_map([], |r| Ok((Automation::from_row(r)?, r.get("archived")?)))?.filter_map(Result::ok).collect();
     drop(st);
     let mut out = Vec::new();
-    for a in due {
+    for (a, archived) in due {
         let Some(due_at) = a.next_run_at.as_deref().and_then(parse_time) else { continue };
         if due_at > now {
             continue;
@@ -1110,7 +1113,8 @@ fn claim_due<Tz: TimeZone>(s: &Shared, now: DateTime<Utc>, tz: &Tz) -> anyhow::R
         if claimed == 0 {
             continue;
         }
-        if a.is_webhook() {
+        // An archived project's schedules go on without running (or filling its history) until it's unarchived.
+        if a.is_webhook() || archived {
             tx.commit()?;
             continue;
         }
@@ -1118,7 +1122,9 @@ fn claim_due<Tz: TimeZone>(s: &Shared, now: DateTime<Utc>, tz: &Tz) -> anyhow::R
         r.due_at = a.next_run_at.clone();
         if !run {
             let at = due_at.with_timezone(&Local).format("%Y-%m-%d %H:%M");
-            r = r.with_detail(format!("Missed: it was due at {at}, when the server wasn't running (runs more than 10 minutes late are skipped)"));
+            r = r.with_detail(format!(
+                "Missed: it was due at {at}, when the server wasn't running (or the host was asleep). Runs more than 10 minutes late are skipped."
+            ));
             r.finished_at = Some(fmt(now));
         }
         insert_run(&tx, &r)?;
@@ -1515,7 +1521,7 @@ mod tests {
     #[test]
     fn triggers_are_checked_and_tidied() {
         assert_eq!(check_trigger(daily(" 9:05", &["fri", "mon", "Fri"])).unwrap(), daily("09:05", &["mon", "fri"]));
-        assert_eq!(check_trigger(daily("09:05", &WEEKDAYS.to_vec())).unwrap(), daily("09:05", &[]));
+        assert_eq!(check_trigger(daily("09:05", WEEKDAYS)).unwrap(), daily("09:05", &[]));
         assert!(check_trigger(daily("25:00", &[])).is_err());
         assert!(check_trigger(daily("09:00", &["someday"])).is_err());
         assert!(check_trigger(Trigger::Interval { every_minutes: 1 }).is_err());
@@ -1595,6 +1601,15 @@ mod tests {
             assert_eq!(tasks(&s).len(), 2);
             let next = parse_time(&get(&s.db(), &a.id).unwrap().unwrap().next_run_at.unwrap()).unwrap();
             assert_eq!(next, later + chrono::TimeDelta::minutes(60));
+
+            // An archived project's schedule goes on without running.
+            s.db().execute("UPDATE projects SET archived_at='x' WHERE id=?1", [&p.id]).unwrap();
+            set_next(&s, &a, later);
+            tick(&s, later + chrono::TimeDelta::seconds(1)).await;
+            assert_eq!(tasks(&s).len(), 2);
+            assert_eq!(statuses(&s, &a), ["ok", "ok"]);
+            assert_eq!(get(&s.db(), &a.id).unwrap().unwrap().next_run_at, Some(fmt(later + chrono::TimeDelta::minutes(60))));
+            s.db().execute("UPDATE projects SET archived_at=NULL WHERE id=?1", [&p.id]).unwrap();
 
             // A run the server stopped in the middle of isn't run again.
             insert_run(&s.db(), &Run::new(&a.id, "schedule", "running", later + chrono::TimeDelta::seconds(1))).unwrap();

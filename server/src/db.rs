@@ -2818,6 +2818,24 @@ mod tests {
     }
 
     #[test]
+    fn a_database_from_version_53_gets_automations() {
+        let path = std::env::temp_dir().join(format!("huntaway-v53-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch("DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version=53;").unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        for table in ["automations", "automation_runs"] {
+            assert!(c.query_row("SELECT COUNT(*) FROM pragma_table_info(?1)", [table], |r| r.get::<_, i64>(0)).unwrap() > 0, "{table}");
+        }
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn a_database_from_version_48_has_its_done_tasks_done_since_they_last_changed() {
         let path = std::env::temp_dir().join(format!("huntaway-v48-{}.db", crate::util::new_id()));
         {
@@ -3170,7 +3188,7 @@ mod tests {
         let c = open(&path).unwrap();
         let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         let kind: String = c.query_row("SELECT kind FROM permission_requests WHERE id='r'", [], |r| r.get(0)).unwrap();
-        assert_eq!((version, kind.as_str()), (53, "tool"));
+        assert_eq!((version, kind.as_str()), (VERSION, "tool"));
         // Projects from before aren't archived.
         assert_eq!(get_project(&c, "x").unwrap().unwrap().archived_at, None);
         let t = get_task(&c, "t").unwrap().unwrap();
