@@ -460,7 +460,7 @@ type Suggestion = { value: string; label: string; hint?: string };
 
 /** The token prefixes, in the order the legend and the placeholder give them. */
 const TOKEN_HELP: { prefix: TokenPrefix; what: string; asks: string }[] = [
-  { prefix: "/", what: "type", asks: "a type" },
+  { prefix: "/", what: "type or label", asks: "a type or label" },
   { prefix: "@", what: "where", asks: "where it goes" },
   { prefix: "!", what: "model", asks: "a model (or several, for a task each)" },
   { prefix: "^", what: "effort", asks: "effort" },
@@ -764,18 +764,19 @@ export function NewTaskModal({
   const worktreePref = worktreeChoice ?? (!!inProject && worktreesOn(inProject));
   // Tasks made from one prompt each get a worktree too, so their agents don't change the same checkout (as in t3code).
   const worktree = !!inProject && codeTask && (worktreePref || fanout || asSubproject || !!subproject);
-  // What can't be made a task for each of several harnesses.
-  const fanoutBlock = labelTypes && labels.length > 1
-    ? `${host?.name ?? "This host"} makes a task of one of plan, artifact or diagram, not several: update it for labels.`
-    : !fanout
+  // What can't be made a task for each of several harnesses. A group task coordinates its group's work, so it takes one,
+  // unless it has labels: then they write documents to compare.
+  const fanoutBlock = !fanout
     ? null
     : asSubproject
       ? "A subproject has one agent, so it takes one model."
-      : asGroup && !docType
+      : asGroup && !docType && !labels.length
         ? "A group task has one agent, so it takes one model."
         : worktree && inProject?.is_git === false
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
+  // A host before API 69 makes a task of one label's type.
+  const labelBlock = labelTypes && labels.length > 1 ? `${host?.name ?? "This host"} makes a task of one of plan, artifact or diagram, not several: update it for labels.` : null;
   // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
   // out, with its token sent as text); which config a `!` names a model of, when a config of the same agent before it
   // (the picked one, then in order) may have the model too (so it doesn't depend on which answers first); and whether the effort picked
@@ -821,7 +822,7 @@ export function NewTaskModal({
       ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${takeOut(failedFor.map((f) => f.config))}, or open the dialog again to try again.`
       : null;
   // While they're loading, creating it waits for them (see whenLoaded).
-  const submitBlock = fanoutBlock ?? (modelsLoading ? null : modelsBlock);
+  const submitBlock = labelBlock ?? fanoutBlock ?? (modelsLoading ? null : modelsBlock);
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
   const setStart = (v: boolean) => {
@@ -1241,7 +1242,7 @@ export function NewTaskModal({
               onMouseDown={(e) => e.preventDefault()}
             >
               <div className="px-2 pt-1 pb-1 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
-                {{ "/": "Type", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
+                {{ "/": "Type or label", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
               </div>
               {matches.map((s, i) => (
                 <button
@@ -1412,6 +1413,7 @@ export function NewTaskModal({
               : "It gets its own worktree and thread, and a board of tasks: each branches from the subproject's branch and merges back into it, and the subproject is merged as a whole through its own pull request."}
           </div>
         )}
+        {labelBlock && <div className="text-[12px] text-amber-300">{labelBlock}</div>}
         {fanout && (
           <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>
             {fanoutBlock ??

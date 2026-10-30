@@ -144,20 +144,29 @@ repositories readable, and follows its group when the group is renamed. A group 
 projects are all ungrouped or deleted stays in the sidebar (in italics) while it has group
 tasks, so they can still be opened, resumed and deleted.
 
-A task can also make a document instead of code: pick **Plan**, **Artifact** or **Diagram** at
-the top of the *New task* form (a group task can be one too), or pass `type` to the
-`create_task` tool. Its agent reads the project's repository (or the group's) but works in the
-task's own folder (`<data dir>/documents/<task id>`) and writes one file there: `plan.html`, an
-HTML plan to iterate on; `artifact.html`, a designed HTML page like a claude.ai artifact (the
-agent uses the `artifact-design` skill when it has it, but the page stays on the board); or
-`diagram.mmd`, a Mermaid diagram. It can write in its folder without asking. The task opens
-on its document as the agent writes it: HTML in a sandboxed frame (its scripts run, but it
-can't reach the board), a diagram drawn in the board with zoom, an SVG download and a button
-that sends a parse error back to the agent. Reply under the document to ask for changes. The
-board keeps a version from each turn that changed the file (`GET /tasks/{id}/document`, with
-`?version=N` for an earlier one). There's no worktree, review or merge: moving one to *Ready
-for merge* marks it done. Once you approve a plan, its agent can break it into tasks, and its
-card shows how many of them are done.
+Any task can have **labels** (API 69): **Plan**, **Artifact** and **Diagram**, each asking its
+agent for a document besides its other work. Add them in the *New task* form by typing `/plan`,
+`/artifact` or `/diagram` (several at once work), in the task's details under *Labels* (they can
+be added and taken off at any time; the agent hears of a change the next time it starts), or
+with `labels` on the `create_task` and `update_task` tools. The agent writes each in the task's
+own folder (`<data dir>/documents/<task id>`, which it can write in without asking, outside the
+repository), wherever it does the rest of its work: `plan.html`, an HTML plan to iterate on;
+`artifact.html`, a designed HTML page like a claude.ai artifact (the agent uses the
+`artifact-design` skill when it has it, but the page stays on the board); or `diagram.mmd`, a
+Mermaid diagram. With a plan, it writes the plan first and waits for you to approve it before it
+starts the work; once you do, it can carry it out in the task or break it into tasks, and the
+card shows how many of those are done. Each label gets a tab in the task, before the thread,
+showing its document as the agent writes it: HTML in a sandboxed frame (its scripts run, but it
+can't reach the board), a diagram drawn in the board with zoom, an SVG download and a button that
+sends a parse error back to the agent. Reply under the document to ask for changes. The board
+keeps a version from each turn that changed the file (`GET /tasks/{id}/document?label=plan`, with
+`&version=N` for an earlier one), and the task opens on its first label's document once there's
+one to read. The board's *Type* filter finds tasks by their labels too.
+
+Before API 69, plan, artifact and diagram were types of task whose agents made only the document,
+in the task's own folder, with no worktree, review or merge. Tasks made as one have it as their
+label since, and keep working that way: *Ready for merge* marks them done. A host before API 69
+still makes a task of that type when the board gives a new task one label (and refuses several).
 
 A plan's agent asks what it needs to know as questions in the plan (`<ia-question>`: a choice of
 one or several, a dropdown, or text, with an optional free-text *Other*, and any named form field
@@ -1095,8 +1104,8 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
   changes); a time of day on some weekdays, in the host's time zone; or a **webhook**: a POST to
   `/api/hooks/<id>/<token>` on the host.
-- **Actions.** Create a task in the project from a template: title, description, type (code,
-  plan, artifact, diagram or scratch), agent config, model, effort, To do or Backlog, and whether to
+- **Actions.** Create a task in the project from a template: title, description, type (code or
+  scratch), labels (plan, artifact, diagram), agent config, model, effort, To do or Backlog, and whether to
   start its agent. Or send a message to one of the project's tasks (to its agent as it works, if
   it's running). Its description says which automation made it and why.
 - **Templates** take `{{…}}` values. From a webhook delivery: `{{body.issue.title}}` (any path in
