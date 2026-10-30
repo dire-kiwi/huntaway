@@ -7,12 +7,15 @@
 //
 // Remote mode: set `serverUrl` (and `token`) in ~/.config/huntaway/desktop.json
 // to use a server running on another machine.
+//
+// The packaged app (`npm run dist`, an Arch package) updates itself from GitHub Releases; see updater.cjs.
 
 const { app, BrowserWindow, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const updater = require("./updater.cjs");
 
 /** `dir`, or `legacy` from before the rename to Huntaway if only that one exists. */
 function renamed(dir, legacy) {
@@ -41,6 +44,7 @@ function loadConfig() {
 const config = loadConfig();
 const port = Number(process.env.IA_PORT || config.port || 7878);
 let serverProc = null;
+let stopping = false;
 
 /** Mirrors `default_data_dir()` in the server: `dirs::data_dir()/huntaway`, or `/issue-agent` from before the rename. */
 function defaultDataDir() {
@@ -144,7 +148,7 @@ async function createWindow() {
     backgroundColor: "#0b0b0e",
     autoHideMenuBar: true,
     title: "Huntaway",
-    webPreferences: { contextIsolation: true, sandbox: true },
+    webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -159,7 +163,10 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  updater.setup();
+  createWindow();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -169,7 +176,18 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (e) => {
   // Agents run under ia-shim and outlive the server; the next start picks them back up.
-  if (serverProc) serverProc.kill("SIGTERM");
+  if (!serverProc) return;
+  // Wait for it to exit, so that a relaunch (after an update) starts a new server rather than finding this one still up.
+  e.preventDefault();
+  if (stopping) return;
+  stopping = true;
+  const proc = serverProc;
+  const kill = setTimeout(() => proc.kill("SIGKILL"), 10_000);
+  proc.once("exit", () => {
+    clearTimeout(kill);
+    app.quit();
+  });
+  proc.kill("SIGTERM");
 });

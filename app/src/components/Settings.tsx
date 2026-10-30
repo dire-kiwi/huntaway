@@ -30,6 +30,7 @@ import { ModelPicker } from "./Board";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
+import { DesktopPanel } from "./Desktop";
 import { ServerPanel } from "./Server";
 import { Button, Field, IconButton, Input, Modal, Textarea, timeAgo, Toggle } from "./ui";
 
@@ -1034,6 +1035,8 @@ export function Settings() {
           <ArchivedProjectsPanel />
 
           <ServerPanel />
+
+          <DesktopPanel />
 
           <section>
             <h2 className="mb-3 text-[13px] font-semibold">Network access</h2>

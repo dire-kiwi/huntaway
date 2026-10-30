@@ -253,7 +253,33 @@ reverse proxy.
 ```
 
 Setting `serverUrl` makes the desktop app a client of a remote server instead of starting one.
-Packaging an AppImage: `npm run dist` (needs `electron-builder`; not exercised yet).
+
+### Desktop app on Arch Linux
+
+`npm run dist` in `app/` builds the UI and the server, then packages them with Electron as an Arch
+package, `app/release/huntaway-<version>.pacman`. Install it with `sudo pacman -U` and start
+**Huntaway** from the launcher (or `huntaway-desktop`). It lives in `/opt/Huntaway`, with the server
+and ia-shim in its `resources/`. Like `npm run electron`, it uses a server already listening on the
+port (7878 by default) and starts its own otherwise.
+
+The packaged app updates itself. It checks the repository's latest GitHub release (on start and every
+four hours), downloads a newer package in the background, and then shows **Huntaway <version> ·
+Update** in the sidebar (Settings → Desktop app also shows the version and checks on demand).
+**Install and restart** asks for your password through polkit, runs `pacman -U` on the downloaded
+package, and restarts the app and the server it started. Agents keep running under ia-shim and the new
+server picks them up. If the board can't show it (a remote server's older UI, or no profile yet), a
+dialog offers the update instead. A server the app didn't start (one you run yourself, or the
+source checkout's) isn't updated by it.
+
+Releasing: push a version tag, e.g. `git tag v0.2.0 && git push origin v0.2.0`. The *Release*
+workflow (`.github/workflows/release.yml`) sets the app's version from the tag, builds the package
+and publishes it with `latest-linux.yml` to a GitHub release, which installed apps pick up. Running
+the workflow by hand builds the package as an artifact without publishing it. To try the updater
+locally, serve a newer build's `release/` directory (`python -m http.server`) and start the app with
+`IA_UPDATE_URL=http://127.0.0.1:8000/`.
+
+AppImages aren't built: agents' ia-shim processes outlive the app, and an AppImage's files go away
+when it exits.
 
 ## Hosts
 

@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { CircleAlert, GitCommitHorizontal, Loader2, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type ServerStatus } from "../api";
+import { desktop } from "../desktop";
 import { useStore } from "../store";
 import { useNewUiBuild } from "../uiVersion";
 import { Button, Modal, timeAgo, Toggle } from "./ui";
@@ -109,6 +110,8 @@ export function ServerPanel() {
                   <span>, the same as the running server</span>
                 )}
               </div>
+            ) : desktop ? (
+              <div>No source checkout found, so restart reuses the current binary. A server that came with the desktop app updates with it (see Desktop app below).</div>
             ) : (
               <div>No source checkout found, so restart reuses the current binary. Start the server with --source-dir to enable rebuilds.</div>
             )}
