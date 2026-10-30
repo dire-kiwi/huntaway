@@ -1,6 +1,6 @@
 //! Questions agents ask with the board's `request_user_input` (see tools.rs): the question, and
 //! the options to pick from if the agent gave them, as a card in the thread (a `question`
-//! message, API 62). The agent ends its turn after asking, so a question isn't waited on like a
+//! message, API 63). The agent ends its turn after asking, so a question isn't waited on like a
 //! permission prompt: it stays answerable after the run ends, and answering it sends the user's
 //! message that resumes the agent. A reply typed in the thread instead settles it too.
 

@@ -739,7 +739,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
 - **Permissions:** in *Ask* mode, Claude's permission prompts are routed
   (`--permission-prompt-tool`) to an approval card in the thread: Allow, Always allow (for
   that thread), or Deny. Codex's approvals get the same card, which names the agent asking.
-- **Questions and plans** (API 62) are cards in the thread rather than approvals, and the task's
+- **Questions and plans** (API 63) are cards in the thread rather than approvals, and the task's
   card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
   Keys 1–9 pick an option in the latest one that's waiting, unless you're typing.
   - `request_user_input` can give `options` (each a `label` and a `description`, up to nine),

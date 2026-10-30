@@ -17,7 +17,7 @@ import { Markdown } from "./Thread";
 type Any = any;
 
 /** The host API that takes answers and a plan's mode with a prompt's decision, and answers questions from their cards. */
-export const QUESTIONS_API = 62;
+export const QUESTIONS_API = 63;
 
 // ---------- keys 1–9 ----------
 
@@ -437,7 +437,7 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from }: { id: n
 
 // ---------- ExitPlanMode ----------
 
-/** What a plan's sent back with, by a host that doesn't take feedback (before API 62; server: permissions::answer). */
+/** What a plan's sent back with, by a host that doesn't take feedback (before API 63; server: permissions::answer). */
 const KEEP_PLANNING = "The user wants you to keep planning rather than start on this plan.";
 
 /** Modes a thread can carry on in once its plan's approved, as Claude Code offers them. */

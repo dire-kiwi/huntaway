@@ -1772,7 +1772,7 @@ async fn send_message(State(s): State<Shared>, Path(id): Path<String>, Json(b): 
     Ok(Json(json!(t)))
 }
 
-/// Answer a question an agent asked with request_user_input, from its card (API 62): the answer
+/// Answer a question an agent asked with request_user_input, from its card (API 63): the answer
 /// is sent as the user's message.
 async fn answer_question(
     State(s): State<Shared>,
@@ -1907,7 +1907,7 @@ async fn list_permissions(State(s): State<Shared>, Query(q): Query<PermissionsQu
 struct ResolveBody {
     decision: String,
     message: Option<String>,
-    /// The answers to a question, or how a plan is approved or what to change in it (API 62).
+    /// The answers to a question, or how a plan is approved or what to change in it (API 63).
     #[serde(flatten)]
     reply: permissions::Reply,
 }
