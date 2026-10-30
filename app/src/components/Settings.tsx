@@ -33,7 +33,7 @@ import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
-import { Button, Field, IconButton, Input, Modal, Textarea, timeAgo, Toggle } from "./ui";
+import { Button, Field, IconButton, Input, MenuButton, Modal, Textarea, timeAgo, Toggle } from "./ui";
 
 // ---------- directory picker ----------
 
@@ -398,7 +398,8 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
   };
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
+      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
+        <MenuButton />
         <button className="no-drag text-[12.5px] text-muted hover:text-fg" onClick={() => navigate({ name: "board", projectId })}>
           {project?.name}
         </button>
@@ -406,7 +407,7 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
         <h1 className="text-[14px] font-semibold">Settings</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl space-y-6 p-6">
+        <div className="mx-auto max-w-2xl space-y-6 p-6 narrow:p-4">
           <div className="grid grid-cols-[1fr_120px] gap-3">
             <Field label="Name">
               <Input value={form.name} onChange={(e) => set("name", e.target.value)} />
@@ -494,6 +495,16 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
                 </div>
               </Field>
               {hostSupports(host, 29) && <ProjectReviewers project={form} onChange={(v) => set("reviewers", v)} />}
+            </div>
+          )}
+
+          {form.done_when_merged !== undefined && (
+            <div className="space-y-1.5">
+              <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
+              <div className="text-[12px] text-faint">
+                Every few minutes, the pull requests of tasks in In review or Needs attention are checked. A merged one moves its task to Done and
+                removes its worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
+              </div>
             </div>
           )}
 
@@ -1022,11 +1033,12 @@ export function Settings() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="drag flex h-12 shrink-0 items-center border-b border-line px-5">
+      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
+        <MenuButton />
         <h1 className="text-[14px] font-semibold">Settings</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl space-y-8 p-6">
+        <div className="mx-auto max-w-2xl space-y-8 p-6 narrow:p-4">
           <HostsPanel />
 
           <ClaudeConfigsPanel />

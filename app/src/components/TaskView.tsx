@@ -1,13 +1,14 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, RefreshCw, Square, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, runningAgentSteers, stopTitle, worktreesOn, type DiffResult, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
 import { harnessLabels, useConfigsOf, useFanout } from "./Fanout";
 import { effortOptions, inheritedModel, useAgentModels } from "../agents";
+import { useNarrow } from "../narrow";
 import { useOpenTools } from "../terminalTools";
 import { openingTab } from "../openingTab";
 import { useSubagentView } from "../subagents";
@@ -27,6 +28,7 @@ import { ActivityTime, Button, cost, IconButton, Input, Modal, PrIcon, PreviewDo
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
+const ChangesView = lazy(() => import("./Changes").then((m) => ({ default: m.ChangesView })));
 
 const NO_TOOLS: TerminalTool[] = [];
 
@@ -54,11 +56,12 @@ type Mode = "page" | "panel" | "expanded";
 // header's controls into a second row.
 const WIDE = 880;
 
-/** Whether the element is at least WIDE (taken as wide until measured), followed as it resizes, and
- * whether it has been measured. Use the returned ref on it. */
+/** Whether the element is at least WIDE (taken as wide until measured, but for the narrow layout), followed as it
+ * resizes, and whether it has been measured. Use the returned ref on it. */
 function useWide() {
   const [el, setEl] = useState<HTMLElement | null>(null);
   const [width, setWidth] = useState<number | null>(null);
+  const narrow = useNarrow();
   useLayoutEffect(() => {
     if (!el) return;
     setWidth(el.getBoundingClientRect().width);
@@ -66,11 +69,12 @@ function useWide() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [el]);
-  return [setEl, width === null || width >= WIDE, width !== null] as const;
+  return [setEl, width === null ? !narrow : width >= WIDE, width !== null] as const;
 }
 
-/** A task beside the board, taking half the width, or expanded into a dialog over it. */
+/** A task beside the board, taking half the width, or expanded into a dialog over it; in the narrow layout, over the whole screen. */
 export function TaskPanel({ panel }: { panel: Panel }) {
+  const narrow = useNarrow();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
@@ -85,7 +89,7 @@ export function TaskPanel({ panel }: { panel: Panel }) {
   // unless that would throw away something unsaved in it: fields holding one are marked `data-draft`.
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (panel.expanded) return;
+    if (panel.expanded || narrow) return;
     const inside = (e: Event) => ref.current?.contains(e.target as Node) ?? true;
     // Pressed outside with no dialog open (a dialog's backdrop closes just the dialog) and no draft.
     let down: string | null = null;
@@ -107,18 +111,21 @@ export function TaskPanel({ panel }: { panel: Panel }) {
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("click", onClick);
     };
-  }, [panel.expanded]);
+  }, [panel.expanded, narrow]);
   return (
     <>
-      {panel.expanded && <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]" onMouseDown={() => closeTask()} />}
+      {panel.expanded && !narrow && <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]" onMouseDown={() => closeTask()} />}
       {/* The same element either way, so expanding keeps the thread, terminals and edits as they are. */}
       <div
         ref={ref}
         className={clsx(
           "min-w-0 bg-bg",
-          panel.expanded
-            ? "fixed inset-3 z-40 mx-auto max-w-[1400px] overflow-hidden rounded-xl border border-line shadow-2xl shadow-black/50 md:inset-x-10 md:inset-y-8"
-            : "animate-slide-in-right absolute top-12 right-0 bottom-0 z-30 w-1/2 border-l border-line shadow-2xl shadow-black/50",
+          narrow
+            ? "animate-slide-in-right absolute inset-0 z-30"
+            : panel.expanded
+              ? "fixed inset-3 z-40 mx-auto max-w-[1400px] overflow-hidden rounded-xl border border-line shadow-2xl shadow-black/50 md:inset-x-10 md:inset-y-8"
+              : // At least 480 wide where half would be less (a tablet, a small window), leaving a strip of the board.
+                "animate-slide-in-right absolute top-12 right-0 bottom-0 z-30 w-1/2 min-w-[min(100%-3rem,480px)] border-l border-line shadow-2xl shadow-black/50",
         )}
       >
         <TaskView taskId={panel.taskId} mode={panel.expanded ? "expanded" : "panel"} />
@@ -127,8 +134,9 @@ export function TaskPanel({ panel }: { panel: Panel }) {
   );
 }
 
-/** Expand into a dialog or back into the side panel, and close. */
+/** Expand into a dialog or back into the side panel, and close. The narrow layout has a back button instead. */
 function PanelButtons({ expanded }: { expanded: boolean }) {
+  if (useNarrow()) return null;
   return (
     <div className="no-drag flex shrink-0 items-center gap-0.5">
       <IconButton title={expanded ? "Collapse into the side panel" : "Expand"} onClick={() => setPanelExpanded(!expanded)}>
@@ -155,6 +163,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const openIds = useOpenTools(useShallow((s) => s.open.filter((o) => o.taskId === taskId && o.hostId === task?.host_id).map((o) => o.toolId)));
   const { openTool, closeTool } = useOpenTools.getState();
   const [rootRef, wide, measured] = useWide();
+  const narrow = useNarrow();
   const canMark = useCanMark(task);
   const [markErr, setMarkErr] = useState<string | null>(null);
   useEffect(() => setMarkErr(null), [taskId]);
@@ -264,12 +273,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
       <AgentsPill task={task} onReveal={() => setTab("thread")} />
       <ContextPill task={task} />
-      <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5">
+      <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
         {tabs.map((t) => (
           <button
             key={t}
             onClick={() => selectTab(t)}
-            className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize", shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+            className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5", shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
           >
             {t === "review" && <ReviewDot task={task} />}
             {t}
@@ -295,11 +304,11 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         </div>
       )}
       {task.running || reviewing ? (
-        <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
+        <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"} className="narrow:-order-1">
           <Square size={11} fill="currentColor" /> Stop
         </Button>
       ) : dependencyQueued(task) ? (
-        <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
+        <span className="flex items-center gap-1 text-[12px] text-muted narrow:-order-1" title="Its agent starts once the tasks it depends on are merged">
           <Clock size={12} /> Queued
         </span>
       ) : (
@@ -308,6 +317,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           <Button
             size="sm"
             variant="primary"
+            className="narrow:-order-1"
             onClick={() => {
               setMarkErr(null);
               api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
@@ -337,12 +347,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     <div ref={rootRef} className="flex h-full min-h-0 flex-col">
       <header className={clsx("shrink-0 border-b border-line", mode === "page" && "drag")}>
         <div className="flex h-12 items-center gap-2 px-3">
-          {mode === "page" && (
-            <IconButton className="no-drag" onClick={back}>
-              <ChevronLeft size={16} />
+          {(mode === "page" || narrow) && (
+            <IconButton className="no-drag narrow:-ml-1.5" title="Back" onClick={mode === "page" ? back : () => closeTask()}>
+              <ChevronLeft size={narrow ? 20 : 16} />
             </IconButton>
           )}
-          <button className={clsx("no-drag shrink-0 text-[12.5px] text-muted hover:text-fg", mode !== "page" && "pl-1")} onClick={toProject}>
+          <button className={clsx("no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden", mode !== "page" && "pl-1")} onClick={toProject}>
             {group ? (
               <span className="flex items-center gap-1" title="A group task: it plans the work of the group's projects">
                 <Folder size={12} /> {group}
@@ -353,18 +363,18 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               project?.name
             )}
           </button>
-          <ChevronRight size={12} className="shrink-0 text-faint" />
+          <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
           {subproject && (
             <>
               <button
-                className="no-drag flex shrink-0 items-center gap-1 font-mono text-[12px] text-faint hover:text-fg"
+                className="no-drag flex shrink-0 items-center gap-1 font-mono text-[12px] text-faint hover:text-fg narrow:hidden"
                 title={subproject.title}
                 onClick={toSubproject}
               >
                 <Layers size={12} className="text-accent" />
                 {project?.key ?? "T"}-{subproject.number}
               </button>
-              <ChevronRight size={12} className="shrink-0 text-faint" />
+              <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
             </>
           )}
           <span className="shrink-0 font-mono text-[12px] text-faint">{key}</span>
@@ -384,7 +394,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             {mode !== "page" && <PanelButtons expanded={mode === "expanded"} />}
           </div>
         </div>
-        {!wide && <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2">{controls}</div>}
+        {/* A phone's row scrolls sideways, with the tabs first. */}
+        {!wide && (
+          <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:[scrollbar-width:none] narrow:*:shrink-0">
+            {controls}
+          </div>
+        )}
         {markErr && (
           <div className="no-drag flex items-start gap-1 px-3 pb-2 text-[11.5px] text-red-400">
             <span className="min-w-0 flex-1">{markErr}</span>
@@ -421,7 +436,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ) : shown === docType ? (
             <DocumentView key={task.id} task={task} onShowThread={() => setTab("thread")} />
           ) : tab === "changes" ? (
-            <DiffView task={task} />
+            <Suspense fallback={null}>
+              <ChangesView task={task} />
+            </Suspense>
           ) : shown === "review" ? (
             <div className="h-full overflow-y-auto">
               <div className="mx-auto max-w-3xl px-5 py-5">
@@ -432,8 +449,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             <Details key={task.id} task={task} mode={mode} className="h-full overflow-y-auto" />
           ) : null}
         </main>
-        {/* A document gets the room. */}
-        {wide && !isTerminalTab(tab) && shown !== docType && (
+        {/* A document, and the changes' panels, get the room. */}
+        {wide && !isTerminalTab(tab) && shown !== docType && shown !== "changes" && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>
@@ -467,13 +484,13 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
   return (
     <div ref={rootRef} className="flex h-full min-h-0 flex-col">
       <header className={clsx("flex h-12 shrink-0 items-center gap-2 border-b border-line px-3", mode === "page" && "drag")}>
-        <IconButton className="no-drag" onClick={back}>
+        <IconButton className="no-drag narrow:-ml-1.5" title="Back" onClick={back}>
           <ChevronLeft size={16} />
         </IconButton>
-        <button className="no-drag shrink-0 text-[12.5px] text-muted hover:text-fg" onClick={() => project && navigate({ name: "board", projectId: project.id })}>
+        <button className="no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden" onClick={() => project && navigate({ name: "board", projectId: project.id })}>
           {project?.name}
         </button>
-        <ChevronRight size={12} className="shrink-0 text-faint" />
+        <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
         {parent && (
           <>
             <button className="no-drag shrink-0 font-mono text-[12px] text-faint hover:text-fg" onClick={back}>
@@ -766,7 +783,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
                 Cancel
               </Button>
               <Button size="sm" variant="primary" onClick={saveDesc}>
-                Save <span className="font-normal text-white/60">{SUBMIT_KEYS}</span>
+                Save <span className="font-normal text-white/60 touch:hidden">{SUBMIT_KEYS}</span>
               </Button>
             </div>
           </div>
@@ -1279,116 +1296,6 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
         </div>
       </div>
     </Modal>
-  );
-}
-
-// ---------- diff ----------
-
-interface FileDiff {
-  path: string;
-  lines: string[];
-  adds: number;
-  dels: number;
-}
-
-function parsePatch(patch: string): FileDiff[] {
-  const files: FileDiff[] = [];
-  let cur: FileDiff | null = null;
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("diff --git")) {
-      const m = line.match(/ b\/(.*)$/);
-      cur = { path: m?.[1] ?? line, lines: [], adds: 0, dels: 0 };
-      files.push(cur);
-      continue;
-    }
-    if (!cur) continue;
-    if (/^(index |--- |\+\+\+ |new file mode|deleted file mode|similarity|rename )/.test(line)) continue;
-    cur.lines.push(line);
-    if (line.startsWith("+")) cur.adds++;
-    else if (line.startsWith("-")) cur.dels++;
-  }
-  return files;
-}
-
-function DiffView({ task }: { task: Task }) {
-  const [diff, setDiff] = useState<DiffResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const load = () => {
-    setLoading(true);
-    api
-      .diff(task.host_id, task.id)
-      .then(setDiff)
-      .catch((e) => setDiff({ available: false, reason: e.message }))
-      .finally(() => setLoading(false));
-  };
-  useEffect(load, [task.id, task.running, task.worktree_state]);
-  const files = useMemo(() => parsePatch(diff?.patch ?? ""), [diff]);
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-4 p-5">
-        <div className="flex items-center gap-3 text-[12.5px] text-muted">
-          {diff?.available && (
-            <>
-              <span>
-                {files.length} file{files.length === 1 ? "" : "s"} changed
-                {diff.base && (
-                  <>
-                    {" "}
-                    vs <span className="font-mono text-fg">{diff.base}</span>
-                  </>
-                )}
-              </span>
-              <span className="text-emerald-400">+{files.reduce((a, f) => a + f.adds, 0)}</span>
-              <span className="text-red-400">−{files.reduce((a, f) => a + f.dels, 0)}</span>
-            </>
-          )}
-          <Button size="sm" variant="ghost" className="ml-auto" onClick={load} disabled={loading}>
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> Refresh
-          </Button>
-        </div>
-        {diff && !diff.available && <div className="text-[13px] text-muted">Diff unavailable: {diff.reason}</div>}
-        {diff?.commits?.trim() && (
-          <div className="rounded-lg border border-line bg-panel/60 p-3">
-            <div className="mb-1.5 text-[11px] font-semibold tracking-wide text-faint uppercase">Commits</div>
-            <pre className="font-mono text-[12px] whitespace-pre-wrap text-muted">{diff.commits.trim()}</pre>
-          </div>
-        )}
-        {diff?.available && files.length === 0 && <div className="py-10 text-center text-[13px] text-faint">No changes yet.</div>}
-        {files.map((f) => (
-          <div key={f.path} className="overflow-hidden rounded-lg border border-line">
-            <button
-              onClick={() => setCollapsed((c) => ({ ...c, [f.path]: !c[f.path] }))}
-              className="flex w-full items-center gap-2 border-b border-line bg-panel-2 px-3 py-2 text-left font-mono text-[12px]"
-            >
-              <ChevronRight size={12} className={clsx("text-faint transition-transform", !collapsed[f.path] && "rotate-90")} />
-              <span className="truncate">{f.path}</span>
-              <span className="ml-auto text-emerald-400">+{f.adds}</span>
-              <span className="text-red-400">−{f.dels}</span>
-            </button>
-            {!collapsed[f.path] && (
-              <pre className="overflow-x-auto bg-[#0c0c10] py-1 font-mono text-[12px] leading-[1.5]">
-                {f.lines.map((l, i) => (
-                  <div
-                    key={i}
-                    className={clsx(
-                      "px-3",
-                      l.startsWith("+") && "bg-emerald-500/10 text-emerald-200",
-                      l.startsWith("-") && "bg-red-500/10 text-red-200",
-                      l.startsWith("@@") && "bg-accent/[0.07] text-accent",
-                      !/^[+\-@]/.test(l) && "text-[#a9a9b8]",
-                    )}
-                  >
-                    {l || " "}
-                  </div>
-                ))}
-              </pre>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 

@@ -106,7 +106,7 @@ impl Target {
     /// The pull request a wait was given: its number (`12`, `#12`), `OWNER/REPO#12` or URL. A
     /// number is in `default` (the task's repository: its host and `OWNER/REPO`), and `OWNER/REPO`
     /// on its host.
-    fn parse(given: &str, default: Option<&(String, String)>) -> Result<Self, String> {
+    pub fn parse(given: &str, default: Option<&(String, String)>) -> Result<Self, String> {
         let given = given.trim();
         let number = |n: &str| {
             // A whole number written as a float (`7.0`, as agents send numbers sometimes) is that number.
@@ -233,11 +233,7 @@ impl Watcher {
 
     /// The pull request as GitHub has it now.
     async fn read(&mut self) -> Result<Pr, String> {
-        let r = self.read_all().await;
-        if r.is_err() {
-            self.env = None;
-        }
-        Pr::parse(&r?)
+        Pr::parse(&self.read_all().await?)
     }
 
     /// The query's response, with the review threads past its first page (`THREAD_PAGES` at most).
@@ -269,56 +265,9 @@ impl Watcher {
             return r;
         }
         let t = &self.target;
-        let mut args: Vec<String> = vec![
-            "api".into(),
-            "graphql".into(),
-            "-f".into(),
-            format!("query={query}"),
-            "-f".into(),
-            format!("owner={}", t.owner),
-            "-f".into(),
-            format!("name={}", t.name),
-            "-F".into(),
-            format!("number={}", t.number),
-        ];
-        if let Some(after) = after {
-            args.extend(["-f".into(), format!("after={after}")]);
-        }
-        if t.host != "github.com" {
-            args.extend(["--hostname".into(), t.host.clone()]);
-        }
-        let mut cmd = tokio::process::Command::new(crate::gh_mcp::gh_program());
-        if let Some(account) = &self.account {
-            if self.env.is_none() {
-                self.env = crate::gh_mcp::account_env(Some(account)).await.map_err(|e| format!("{e:#}"))?;
-            }
-            let env = self.env.as_ref().with_context(|| format!("{account} isn't a GitHub account")).map_err(|e| format!("{e:#}"))?;
-            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            env.check(&arg_refs, None).map_err(|e| format!("{e:#}"))?;
-            env.apply(&mut cmd);
-        } else {
-            cmd.env_remove("GH_REPO");
-        }
-        cmd.args(&args)
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GH_NO_UPDATE_NOTIFIER", "1")
-            .env("NO_COLOR", "1")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-        let out = tokio::time::timeout(GH_TIMEOUT, cmd.output())
-            .await
-            .map_err(|_| format!("gh timed out after {} seconds", GH_TIMEOUT.as_secs()))?
-            .map_err(|e| format!("couldn't run gh: {e}"))?;
-        // gh prints GraphQL errors' response too, and exits with 1.
-        match serde_json::from_slice::<Value>(&out.stdout) {
-            Ok(v) if v.is_object() => Ok(v),
-            _ => {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(format!("gh failed: {}", err.trim().trim_start_matches("gh: ")))
-            }
-        }
+        let mut vars = vec![("owner", t.owner.clone()), ("name", t.name.clone())];
+        vars.extend(after.map(|a| ("after", a.to_string())));
+        graphql(self.account.as_deref(), &mut self.env, &t.host, query, &vars, &[("number", t.number)]).await
     }
 
     /// Read the pull request and see what's news to the agent of `task_id` since it was last told
@@ -335,6 +284,76 @@ impl Watcher {
         let row = Row { seen: quiet, pending, last: summary(&pr), polled_at: crate::util::now() };
         store(&c, task_id, &key, &row).map_err(|e| format!("{e:#}"))?;
         Ok(news.map(|(report, _)| report))
+    }
+}
+
+/// Run the GraphQL `query` on `host` with string `vars` and number `numbers`, as `account` (gh's
+/// active account when None, see Watcher). `env` keeps gh's environment for the account between
+/// calls; it's made when missing, and dropped when a call fails so the next one makes it again.
+pub async fn graphql(
+    account: Option<&str>,
+    env: &mut Option<GhEnv>,
+    host: &str,
+    query: &str,
+    vars: &[(&str, String)],
+    numbers: &[(&str, u64)],
+) -> Result<Value, String> {
+    let r = graphql_once(account, env, host, query, vars, numbers).await;
+    if r.is_err() {
+        *env = None;
+    }
+    r
+}
+
+async fn graphql_once(
+    account: Option<&str>,
+    env: &mut Option<GhEnv>,
+    host: &str,
+    query: &str,
+    vars: &[(&str, String)],
+    numbers: &[(&str, u64)],
+) -> Result<Value, String> {
+    let mut args: Vec<String> = vec!["api".into(), "graphql".into(), "-f".into(), format!("query={query}")];
+    for (k, v) in vars {
+        args.extend(["-f".into(), format!("{k}={v}")]);
+    }
+    for (k, n) in numbers {
+        args.extend(["-F".into(), format!("{k}={n}")]);
+    }
+    if host != "github.com" {
+        args.extend(["--hostname".into(), host.to_string()]);
+    }
+    let mut cmd = tokio::process::Command::new(crate::gh_mcp::gh_program());
+    if let Some(account) = account {
+        if env.is_none() {
+            *env = crate::gh_mcp::account_env(Some(account)).await.map_err(|e| format!("{e:#}"))?;
+        }
+        let env = env.as_ref().with_context(|| format!("{account} isn't a GitHub account")).map_err(|e| format!("{e:#}"))?;
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        env.check(&arg_refs, None).map_err(|e| format!("{e:#}"))?;
+        env.apply(&mut cmd);
+    } else {
+        cmd.env_remove("GH_REPO");
+    }
+    cmd.args(&args)
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(GH_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| format!("gh timed out after {} seconds", GH_TIMEOUT.as_secs()))?
+        .map_err(|e| format!("couldn't run gh: {e}"))?;
+    // gh prints GraphQL errors' response too, and exits with 1.
+    match serde_json::from_slice::<Value>(&out.stdout) {
+        Ok(v) if v.is_object() => Ok(v),
+        _ => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            Err(format!("gh failed: {}", err.trim().trim_start_matches("gh: ")))
+        }
     }
 }
 

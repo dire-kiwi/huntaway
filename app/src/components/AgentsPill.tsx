@@ -67,7 +67,7 @@ export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal
         <ChevronDown size={11} className="text-faint" />
       </button>
       {open && (
-        <div className="absolute top-full right-0 z-30 mt-1.5 max-h-96 w-96 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl">
+        <div className="absolute top-full right-0 z-30 mt-1.5 max-h-96 w-96 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl narrow:fixed narrow:inset-x-2 narrow:top-auto narrow:bottom-2 narrow:max-h-[60%] narrow:w-auto">
           {list.map((s) => (
             <button
               key={s.id}

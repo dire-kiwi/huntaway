@@ -2,6 +2,7 @@ mod admin;
 mod agent_tools;
 mod attachments;
 mod automations;
+mod broker;
 mod codex;
 mod context;
 mod analytics;
@@ -13,9 +14,11 @@ mod demo;
 mod disk;
 mod documents;
 mod gh_mcp;
+mod git_view;
 mod github;
 mod hub;
 mod mcp;
+mod merged;
 mod permissions;
 mod pr_watch;
 mod prompts;
@@ -137,6 +140,17 @@ struct ServeArgs {
     /// Token for --hub (from that hub's Settings → Hosts).
     #[arg(long, env = "IA_HUB_TOKEN")]
     hub_token: Option<String>,
+    /// Broker to dial out to (`huntaway-broker`), so this host can be reached through it from
+    /// anywhere: the board in a browser, and the API from hubs.
+    #[arg(long, env = "IA_BROKER")]
+    broker: Option<String>,
+    /// Token for --broker (the broker's BROKER_TOKEN). Prefer the environment variable over the flag.
+    #[arg(long, env = "IA_BROKER_TOKEN", hide_env_values = true)]
+    broker_token: Option<String>,
+    /// Name to reach this host by on the broker (defaults to the host's name, as lowercase letters,
+    /// digits and hyphens).
+    #[arg(long, env = "IA_BROKER_NAME")]
+    broker_name: Option<String>,
     /// Use this access token instead of the generated one in the data dir (e.g. one shared
     /// by deployments, set from a secret). Prefer the environment variable over the flag.
     #[arg(long = "token", env = "IA_TOKEN", hide_env_values = true)]
@@ -148,6 +162,21 @@ struct ServeArgs {
     /// `?token=` (for LAN-only PR previews; anyone who can reach the server gets full control).
     #[arg(long, env = "IA_OPEN_TOKEN")]
     open_token: bool,
+    /// Make a profile NAME with the Claude config in DIR on start, unless there's a profile of
+    /// that name already (repeatable, or comma-separated). For PR previews, with a login mounted in.
+    #[arg(long = "profile", env = "IA_PROFILES", value_name = "NAME=DIR", value_delimiter = ',', value_parser = parse_profile)]
+    profiles: Vec<Option<(String, String)>>,
+}
+
+/// A `--profile` value, `NAME=DIR`. A blank one is none, so a deployment can leave `IA_PROFILES=` empty.
+fn parse_profile(s: &str) -> Result<Option<(String, String)>, String> {
+    if s.trim().is_empty() {
+        return Ok(None);
+    }
+    match s.split_once('=').map(|(name, dir)| (name.trim(), dir.trim())) {
+        Some((name, dir)) if !name.is_empty() && !dir.is_empty() => Ok(Some((name.to_string(), dir.to_string()))),
+        _ => Err(format!("{s:?} isn't NAME=DIR")),
+    }
 }
 
 /// `<data dir>/huntaway`, or `<data dir>/issue-agent` on a machine that ran the board before it
@@ -233,6 +262,19 @@ async fn main() -> Result<()> {
     }
 }
 
+/// `--open-token`'s route: the token for whoever asks, but not through a broker (where whoever
+/// asks could be anyone).
+fn open_token(token: String) -> impl Fn(axum::http::HeaderMap) -> std::future::Ready<axum::response::Response> + Clone {
+    move |headers| {
+        use axum::response::IntoResponse;
+        std::future::ready(if headers.contains_key(broker::VIA_BROKER) {
+            (axum::http::StatusCode::NOT_FOUND, axum::Json(api::no_route_error("GET", "/api/open-token"))).into_response()
+        } else {
+            axum::Json(serde_json::json!({ "token": token })).into_response()
+        })
+    }
+}
+
 async fn serve(args: ServeArgs) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "huntaway=info".into()))
@@ -276,6 +318,17 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if args.demo {
         demo::seed(&state).await.context("seeding the demo project")?;
     }
+    // After the demo, which only seeds a host that has no profiles.
+    for (name, dir) in args.profiles.iter().flatten() {
+        let made = db::ensure_profile(&state.db(), name, dir).with_context(|| format!("making profile {name}"))?;
+        if let Some(p) = made {
+            std::fs::create_dir_all(state.profile_scratch_dir(&p.id))?;
+            tracing::info!("made profile {name} with the Claude config in {dir}");
+            if !util::expand_tilde(dir).is_dir() {
+                tracing::warn!("profile {name}'s Claude config {dir} isn't a directory here");
+            }
+        }
+    }
     let mut app = api::router(state.clone());
     match find_ui_dir(args.ui_dir) {
         Some(ui) => {
@@ -290,7 +343,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if args.open_token {
         tracing::warn!("--open-token: handing the access token to every browser that opens the board");
         let token = token.clone();
-        app = app.route("/api/open-token", axum::routing::get(move || async move { axum::Json(serde_json::json!({ "token": token })) }));
+        app = app.route("/api/open-token", axum::routing::get(open_token(token)));
     }
 
     // Agents kept running while we were down; catch up on their output.
@@ -300,6 +353,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
     automations::start(&state);
+    merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);
     hub::start(&state)?;
@@ -311,6 +365,19 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
         (None, false) => tracing::warn!("--hub needs --hub-token"),
         _ => {}
+    }
+    if let Some(url) = args.broker.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        let name = args.broker_name.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(String::from);
+        match (args.broker_token.as_deref().map(str::trim).filter(|t| !t.is_empty()), name) {
+            (None, _) => tracing::warn!("--broker needs --broker-token"),
+            (Some(_), Some(n)) if !huntaway_broker::proto::valid_name(&n) => {
+                tracing::warn!("bad --broker-name {n:?}: use up to 48 lowercase letters, digits and hyphens")
+            }
+            (Some(t), name) => {
+                let name = name.unwrap_or_else(|| huntaway_broker::proto::slug(&state.host_name));
+                broker::dial_out(&state, url.to_string(), t.to_string(), name);
+            }
+        }
     }
     tracing::info!("host {} ({})", state.host_name, state.host_id);
     tracing::info!("data dir: {}", data_dir.display());
@@ -358,5 +425,18 @@ mod tests {
         std::fs::write(dir.join("huntaway.db"), "").unwrap();
         assert_eq!(super::db_path(&dir), dir.join("huntaway.db"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn profile_flags_take_name_dir_pairs() {
+        use clap::Parser;
+        let args = super::ServeArgs::try_parse_from(["huntaway", "--profile", "personal=/claude/personal", "--profile", "a = ~/.a,b=/b=c,"]).unwrap();
+        let pair = |n: &str, d: &str| Some((n.to_string(), d.to_string()));
+        assert_eq!(args.profiles, [pair("personal", "/claude/personal"), pair("a", "~/.a"), pair("b", "/b=c"), None]);
+        // As from an empty IA_PROFILES.
+        assert_eq!(super::ServeArgs::try_parse_from(["huntaway", "--profile", ""]).unwrap().profiles, [None]);
+        for bad in ["personal", "=/claude", "personal=", "personal=/a,b"] {
+            assert!(super::ServeArgs::try_parse_from(["huntaway", "--profile", bad]).is_err(), "{bad}");
+        }
     }
 }
