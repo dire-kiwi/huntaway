@@ -651,6 +651,13 @@ export function connectEvents() {
   };
 }
 
+/**
+ * Called with a task as it was (undefined if it wasn't on the board) and as it is when an event changes it, for
+ * notifications (notifier.ts). Not when lists of tasks load, at the start and after a reconnect, so a task that's
+ * waiting already then doesn't notify.
+ */
+export const liveTaskChanges = new Set<(prev: Task | undefined, next: Task) => void>();
+
 /** Applies a websocket event to the store (exported for tests). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function handleEvent(ev: any) {
@@ -659,9 +666,13 @@ export function handleEvent(ev: any) {
   // Ids are only unique on their host: an event about another host's task with the same id leaves it be.
   const otherHost = (taskId: string) => otherHosts(s.tasks, h, taskId);
   switch (ev.type) {
-    case "task":
+    case "task": {
+      const prev = s.tasks[ev.task.id];
       s.upsertTask({ ...ev.task, host_id: h });
+      const next = useStore.getState().tasks[ev.task.id];
+      if (next && next !== prev && next.host_id === h) for (const l of liveTaskChanges) l(prev?.host_id === h ? prev : undefined, next);
       break;
+    }
     case "task_deleted":
       if (otherHost(ev.id)) break;
       changed(h, "tasks", ev.id);

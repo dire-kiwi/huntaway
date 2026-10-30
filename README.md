@@ -253,6 +253,7 @@ reverse proxy.
 ```
 
 Setting `serverUrl` makes the desktop app a client of a remote server instead of starting one.
+An `http:` one counts as a secure page in the app, so it can show notifications.
 Packaging an AppImage: `npm run dist` (needs `electron-builder`; not exercised yet).
 
 ## Hosts
@@ -664,6 +665,21 @@ skipped. Auto-compacting idle sessions is Claude-only.
   each done task's worktree as removed or kept, and why. The tasks and their branches are kept;
   if a task's agent runs again, its worktree is set up again in the same folder (named from its
   branch), so its conversation carries on.
+- **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
+  every board it shows (other profiles' and other hosts' too): *Off* (the default),
+  *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that
+  needs attention (a question, a permission prompt or a failed run), one that's ready to review
+  (in review once its automatic review passes, or with none to wait for; it has to stay so for
+  5 seconds, as a review or a run can start straight after), and optionally Ready for merge and
+  Done. A notification shows the task's key, title and reason, and clicking it opens the task.
+  *Enable* asks the browser for permission. Browsers only show notifications for secure pages
+  (HTTPS or localhost), so a board opened over plain HTTP on a LAN address can't have them, and
+  the section says so; the sound needs a click or key press on the page since it loaded. One of
+  the browser's tabs or windows notifies, and none do for the task open in a focused window,
+  for tasks that were waiting already when the page loaded or reconnected, for a move you made
+  yourself or a run you stopped. The tab title (`(2) Huntaway`) and icon count the tasks that
+  need attention, and the desktop app shows the count on its dock or taskbar badge. The settings
+  are kept in the browser.
 - **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its

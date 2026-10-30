@@ -73,6 +73,11 @@ export const isArchived = (t: Task, now: number) => {
   return !!since && Date.parse(since) <= now - ARCHIVE_AFTER_MS;
 };
 
+/** In review, and the agent hasn't gone back to work since: its review passed, or it wasn't
+ * reviewed (the project doesn't review automatically, it has no code changes, or it isn't in a
+ * project). One being reviewed, or whose review found issues or didn't finish, isn't ready yet. */
+export const readyToCheck = (t: Task) => t.status === "in_review" && !t.running && (!t.review || t.review.state === "passed");
+
 /** Statuses a host knows about ("Ready for merge" needs API 4). */
 export const hostStatuses = (h: Host | undefined) =>
   STATUSES.filter((s) => (s.id !== "ready_for_merge" || hostSupports(h, 4)) && (s.id !== "backlog" || hostSupports(h, 5)));
@@ -659,6 +664,36 @@ export function setToken(t: string) {
   }
 }
 
+const MOVES_KEY = "ia.movedHere";
+/** How long a move made in this browser keeps its notification away (see movedHere). */
+const MOVE_MS = 15_000;
+
+/** The columns tasks were moved to from this browser lately, and when, by `host:id`; kept for every tab. */
+function readMoves(): Record<string, { status: Status; at: number }> {
+  try {
+    return JSON.parse(localStorage.getItem(MOVES_KEY) ?? "{}") ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function noteMove(h: string, id: string, status: Status) {
+  const now = Date.now();
+  const moves = Object.fromEntries(Object.entries(readMoves()).filter(([, m]) => now - m.at < MOVE_MS));
+  moves[`${h}:${id}`] = { status, at: now };
+  try {
+    localStorage.setItem(MOVES_KEY, JSON.stringify(moves));
+  } catch {
+    /* then it may notify of the move */
+  }
+}
+
+/** Whether a tab of this browser moved task `id` on host h to `status` in the last few seconds: nobody needs telling of their own moves. */
+export function movedHere(h: string, id: string, status: Status) {
+  const m = readMoves()[`${h}:${id}`];
+  return !!m && m.status === status && Date.now() - m.at < MOVE_MS;
+}
+
 /** Pick up `?token=` from the URL (Electron and shared links pass it this way). */
 export function captureTokenFromUrl() {
   const url = new URL(window.location.href);
@@ -1099,7 +1134,10 @@ export const api = {
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (h: string, id: string, b: Partial<Task>) => on(h).patch<Task>(`/tasks/${enc(id)}`, b),
+  updateTask: (h: string, id: string, b: Partial<Task>) => {
+    if (b.status) noteMove(h, id, b.status);
+    return on(h).patch<Task>(`/tasks/${enc(id)}`, b);
+  },
   deleteTask: (h: string, id: string, deleteBranch = false) => on(h).del(`/tasks/${enc(id)}?delete_branch=${deleteBranch}`),
   messages: (h: string, id: string) => on(h).get<Message[]>(`/tasks/${enc(id)}/messages`),
   /**

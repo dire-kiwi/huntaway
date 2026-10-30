@@ -30,6 +30,7 @@ import { ModelPicker } from "./Board";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
+import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
 import { Button, Field, IconButton, Input, Modal, Textarea, timeAgo, Toggle } from "./ui";
 
@@ -1030,6 +1031,8 @@ export function Settings() {
           <ProfilesPanel />
 
           <GlobalAgentToolsPanel />
+
+          <NotificationsPanel />
 
           <ArchivedProjectsPanel />
 

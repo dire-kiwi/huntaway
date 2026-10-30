@@ -8,7 +8,7 @@
 // Remote mode: set `serverUrl` (and `token`) in ~/.config/huntaway/desktop.json
 // to use a server running on another machine.
 
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -41,6 +41,16 @@ function loadConfig() {
 const config = loadConfig();
 const port = Number(process.env.IA_PORT || config.port || 7878);
 let serverProc = null;
+
+// Pages on plain HTTP get no notifications (browsers keep them to HTTPS and localhost), so a remote server
+// reached over HTTP counts as secure here: it's the one this app was set up to use.
+if (config.serverUrl?.startsWith("http:")) {
+  try {
+    app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", new URL(config.serverUrl).origin);
+  } catch {
+    // Not a URL: resolveTarget's load fails and says so.
+  }
+}
 
 /** Mirrors `default_data_dir()` in the server: `dirs::data_dir()/huntaway`, or `/issue-agent` from before the rename. */
 function defaultDataDir() {
@@ -144,7 +154,7 @@ async function createWindow() {
     backgroundColor: "#0b0b0e",
     autoHideMenuBar: true,
     title: "Huntaway",
-    webPreferences: { contextIsolation: true, sandbox: true },
+    webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -158,6 +168,18 @@ async function createWindow() {
     await win.loadURL(errorPage(e.message || e));
   }
 }
+
+ipcMain.on("huntaway:badge", (_e, n) => {
+  app.setBadgeCount(Math.max(0, Math.floor(Number(n)) || 0));
+});
+
+ipcMain.on("huntaway:focus", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
 
 app.whenReady().then(createWindow);
 
