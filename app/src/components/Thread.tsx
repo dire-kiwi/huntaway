@@ -784,7 +784,7 @@ export const Thread = memo(function Thread({
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, []);
 
-  // The turns with checkpoints, for rewinding to before one of the user's messages (API 69).
+  // The turns with checkpoints, for rewinding to before one of the user's messages (API 70).
   const turns = useTurns(task);
   const [rewinding, setRewinding] = useState<Turn | null>(null);
   const turnsCtx = useMemo(() => {
@@ -1020,7 +1020,7 @@ const ItemList = memo(function ItemList({ items, running, hostId, cwd }: { items
 });
 
 /** Memoized: a new message leaves the items it doesn't change as they were (see buildModel), and their rows with them. */
-/** The thread's turns with checkpoints, by the message each started with, and how to rewind to before one (API 69). */
+/** The thread's turns with checkpoints, by the message each started with, and how to rewind to before one (API 70). */
 const TurnsCtx = createContext<{ byMessage: Map<number, Turn>; rewind: (t: Turn) => void } | null>(null);
 
 /** Beside a user message that started a turn: rewind the task to before it, or that it was rewound. */

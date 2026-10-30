@@ -51,6 +51,9 @@ export const canRunAgents = (h: Host | undefined) => !!h && h.connected && h.age
 /** Waiting in "Ready for merge" for another task in its project to finish merging. */
 export const mergeQueued = (t: Task) => !!t.merging && t.status === "ready_for_merge" && !t.running;
 
+/** Stepped out of the merge queue to make changes, and rejoins it when its agent is done. */
+export const rejoinsMerge = (t: Task) => !!t.remerge && (t.status === "in_progress" || t.status === "needs_attention");
+
 /** Its agent is running but waiting for something (the `wait` tool), not working. */
 export const agentWaiting = (t: Task) => (t.running && t.agent_wait) || null;
 
@@ -497,6 +500,8 @@ export interface Task {
   run_started_at?: string | null;
   /** Its agent is merging it (moved to "Ready for merge" and not done yet). Hosts before API 4 omit it. */
   merging?: boolean;
+  /** Its agent stepped out of the merge queue to make changes; it rejoins the queue when the agent is done (API 69). */
+  remerge?: boolean;
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
   depends_on?: string[];
@@ -536,7 +541,7 @@ export interface Task {
   review?: Review | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
-  /** The conversation rollback its agent's next run makes, after a rewind (API 69). */
+  /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
   rewind?: PendingRewind | null;
   cost_usd: number;
   last_activity_at: string;
@@ -650,14 +655,14 @@ export interface GitStash {
   time: number;
 }
 
-/** A conversation rollback waiting for a task's next run (API 69): it goes on from before turn `turn`. */
+/** A conversation rollback waiting for a task's next run (API 70): it goes on from before turn `turn`. */
 export interface PendingRewind {
   turn: number;
   message_id: number;
   session: string;
 }
 
-/** What a turn changed, without the files git brought in by a merge, pull or rebase (API 69). */
+/** What a turn changed, without the files git brought in by a merge, pull or rebase (API 70). */
 export interface TurnStats {
   files: number;
   additions: number;
@@ -667,7 +672,7 @@ export interface TurnStats {
   excluded_count: number;
 }
 
-/** One of the agent's turns with a checkpoint after it (API 69). */
+/** One of the agent's turns with a checkpoint after it (API 70). */
 export interface Turn {
   /** Its number among the task's turns. */
   turn: number;
@@ -1468,7 +1473,7 @@ export const api = {
   gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
     on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
   gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
-  /** The task's turns with checkpoints, and the changes between two checkpoints (API 69). */
+  /** The task's turns with checkpoints, and the changes between two checkpoints (API 70). */
   turns: (h: string, id: string) => on(h).get<TurnsResult>(`/tasks/${enc(id)}/turns`),
   turnDiff: (h: string, id: string, from: number, to: number) => on(h).get<TurnDiff>(`/tasks/${enc(id)}/turns/diff?from=${from}&to=${to}`),
   /** Restores the files to before the turn `message_id` started, and optionally the branch and the agent's conversation. */

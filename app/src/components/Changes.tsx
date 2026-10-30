@@ -99,7 +99,7 @@ const rowPath = (r: FileRow) => (r.file ? r.file.path : r.key.slice(0, -1));
 
 function GitView({ task }: { task: Task }) {
   const [h, id] = [task.host_id, task.id];
-  // The agent's turns, from their checkpoints (API 69): a fifth panel.
+  // The agent's turns, from their checkpoints (API 70): a fifth panel.
   const turns = useTurns(task);
   const sides: Side[] = hasTurns(useHost(h), task) ? [...SIDES, "turns"] : SIDES;
   const [rewinding, setRewinding] = useState<Turn | null>(null);

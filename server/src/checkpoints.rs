@@ -1,4 +1,4 @@
-//! Checkpoints of a task's worktree (API 69), to see what each of its agent's turns changed and to
+//! Checkpoints of a task's worktree (API 70), to see what each of its agent's turns changed and to
 //! rewind the task to before one of them.
 //!
 //! A checkpoint is a commit of everything in the worktree that git doesn't ignore (tracked files as

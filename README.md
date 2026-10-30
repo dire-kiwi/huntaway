@@ -690,6 +690,13 @@ skipped. Auto-compacting idle sessions is Claude-only.
   and start in column order (top first) once it ends.
   A task with nothing to merge (no commits on its branch beyond its base and no uncommitted
   changes, or no worktree at all) skips the merge and goes straight to *Done*.
+  A merge that turns out to need changes to the task's work (checks failing because of it, review
+  comments, conflicts that need more than a simple resolution) doesn't hold up the tasks behind it:
+  its agent steps out of the queue (`update_task` with status `in_progress` and `remerge`), the
+  next task starts merging, and the card shows *rejoins merge queue* in *In progress* while its
+  agent makes the changes. When that run ends, the task goes back to the end of *Ready for merge*
+  (not to *In review*) and merges when its turn comes. Moving it to another column meanwhile
+  (bar *Needs attention*) takes it out of the queue.
   A merge waiting on you in *Needs attention* still holds the queue; move it to another column to
   let the next one go. You can't message a queued task's agent until it's its turn.
 - **Dependencies:** a task can depend on other tasks in its project (*Depends on* in its
@@ -726,7 +733,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   it a message). *Review now* in the task's sidebar reviews on demand, once the agent has
   stopped; a task in *In progress* or *Needs attention* moves to *In review* for it. Turn reviews off,
   or set the rounds, in the project's settings (API 12). The task's *Review* tab shows what each
-  round of fixes changed, from its checkpoints (API 69, see *Checkpoints and rewinding*).
+  round of fixes changed, from its checkpoints (API 70, see *Checkpoints and rewinding*).
 - **Several reviewers** (API 29): a project's settings can list more than one reviewer under
   *Reviewers*, each an agent config with an optional model and effort (for example one Codex and
   one Claude, or Fable and Opus). By default there's one, with the task's own config. Each reviews
@@ -864,7 +871,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   list with `` ` ``), the commits (the branch's, then a few from its base) and the stashes; the
   main panel shows what's selected: the branch's whole diff against its base, a file's unstaged
   and staged changes, or a commit's or stash's. A task in a worktree of its own has a fifth panel,
-  *Turns* (API 69): its agent's turns, latest first, each showing what that turn changed (see
+  *Turns* (API 70): its agent's turns, latest first, each showing what that turn changed (see
   *Checkpoints* below); `g` rewinds to before one. `1`–`5` or ←/→ move between panels, ↑/↓ (or
   `j`/`k`) through a list, and the bar at the bottom shows the keys for where you are (each one
   can be clicked; `?` lists them all). In the files, space stages or unstages a file or folder,
@@ -883,7 +890,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
   wrong. A host before API 66 shows the branch's diff alone.
-- **Checkpoints and rewinding** (API 69): a task in a worktree of its own keeps a checkpoint of
+- **Checkpoints and rewinding** (API 70): a task in a worktree of its own keeps a checkpoint of
   its files before each of its agent's runs (when anything changed since the last, so the first
   run's is the task's baseline) and after each of the agent's turns, including ones that were
   stopped or failed. A checkpoint is a commit of everything git doesn't ignore in the worktree

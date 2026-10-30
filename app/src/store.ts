@@ -652,7 +652,7 @@ export function connectEvents() {
 }
 
 type AutomationListener = (hostId: string, projectId: string, automationId: string) => void;
-/** Told when a task's checkpoints change (API 69): a turn's was taken, or it was rewound. */
+/** Told when a task's checkpoints change (API 70): a turn's was taken, or it was rewound. */
 type CheckpointListener = (hostId: string, taskId: string) => void;
 const checkpointListeners = new Set<CheckpointListener>();
 export function onCheckpoints(fn: CheckpointListener) {
