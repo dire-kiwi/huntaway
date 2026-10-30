@@ -25,8 +25,9 @@ impl Pty {
     /// Start `cmd` as the session leader of a new terminal of the given size.
     pub fn spawn(mut cmd: Command, cols: u16, rows: u16) -> Result<(Pty, Child)> {
         let (mut m, mut s) = (0, 0);
-        let ws = winsize(cols, rows);
-        cvt(unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null(), &ws) }).context("openpty")?;
+        // macOS's openpty takes *mut termios and winsize, Linux's *const; mutable pointers suit both.
+        let mut ws = winsize(cols, rows);
+        cvt(unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null_mut(), &mut ws) }).context("openpty")?;
         let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
         for fd in [m, s] {
             cvt(unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) })?;
