@@ -610,7 +610,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;
             let mut body = Map::new();
-            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url"] {
+            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge"] {
                 if !args[k].is_null() {
                     body.insert(k.into(), args[k].clone());
                 }

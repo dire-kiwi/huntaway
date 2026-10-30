@@ -532,12 +532,18 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         // Projects' automations and their runs (see automations.rs).
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V55} PRAGMA user_version=55; COMMIT;"))?;
     }
+    if version < 56 {
+        // A merging task that stepped out of the merge queue to fix something (see Task::remerge).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='remerge'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN remerge INTEGER NOT NULL DEFAULT 0;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=56; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 55;
+pub const VERSION: i64 = 56;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -1116,6 +1122,13 @@ pub struct Task {
     /// that column, not "In progress". Not running and still in that column means it's queued
     /// behind another merge in its project (see runner::start_next_merge).
     pub merging: bool,
+    /// Its agent stepped out of the merge queue while merging it, to fix what the merge turned
+    /// up (failing checks, review comments) without holding up the tasks queued behind it. It
+    /// works in "In progress" meanwhile, and rejoins the back of the queue when its run ends,
+    /// rather than going to "In review" (see runner::finish). Moving it to another column
+    /// (bar "Needs attention") drops it.
+    #[serde(default)]
+    pub remerge: bool,
     pub attention_reason: Option<String>,
     /// Tasks in the same project that have to be merged (done, resolution `done`) before this
     /// task's agent starts.
@@ -1398,6 +1411,7 @@ impl Task {
             running: r.get("running")?,
             run_started_at: r.get("run_started_at")?,
             merging: r.get("merging")?,
+            remerge: r.get("remerge")?,
             attention_reason: r.get("attention_reason")?,
             depends_on: json_list(r.get("depends_on")?),
             waiting: r.get("waiting")?,
@@ -1988,7 +2002,7 @@ pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
 
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
-    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "attention_reason",
+    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
     "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
@@ -2992,6 +3006,33 @@ mod tests {
         let p = update_profile(&c, "p", &[("asana_enabled", json!(false))]).unwrap().unwrap();
         assert!(!p.asana_enabled);
         assert!(insert_profile(&c, "personal", &[], None).unwrap().asana_enabled, "new profiles use Asana");
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_55_gets_remerge() {
+        let path = std::env::temp_dir().join(format!("huntaway-v55-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE tasks DROP COLUMN remerge;
+                 PRAGMA user_version=55;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,description,status,position,merging,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'t','','ready_for_merge',0,1,'1','1','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        // A merge from before keeps holding its place in the queue as it did.
+        let t = get_task(&c, "t").unwrap().unwrap();
+        assert_eq!((t.merging, t.remerge), (true, false));
+        let t = update_task(&c, "t", &[("remerge", json!(true))]).unwrap().unwrap();
+        assert!(t.remerge);
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

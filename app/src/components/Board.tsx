@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Folder, FolderGit2, Gauge, GitBranch, Kanban, Layers, Link2, List, MessagesSquare, NotebookPen, Plus, Settings2, X } from "lucide-react";
+import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Folder, FolderGit2, Gauge, GitBranch, GitMerge, Kanban, Layers, Link2, List, MessagesSquare, NotebookPen, Plus, Settings2, X } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -13,6 +13,7 @@ import {
   isMerged,
   isScratch,
   mergeQueued,
+  rejoinsMerge,
   STATUSES,
   worktreesOn,
   type ClaudeConfig,
@@ -244,6 +245,11 @@ export const TaskCard = memo(function TaskCard({
           {mergeQueued(task) && (
             <span className={clsx(CARD_BADGE, "text-muted")} title="Queued to merge: waits for the merge in progress in this project">
               <Clock size={11} /> <Wide>queued to merge</Wide>
+            </span>
+          )}
+          {rejoinsMerge(task) && (
+            <span className={clsx(CARD_BADGE, "text-muted")} title="Stepped out of the merge queue to make changes: rejoins it when its agent is done">
+              <GitMerge size={11} /> <Wide>rejoins merge queue</Wide>
             </span>
           )}
           <DependencyBadge task={task} project={project} compact />
@@ -1456,6 +1462,11 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {mergeQueued(task) && (
           <span className="flex items-center gap-1 text-muted" title="Waits for the merge in progress in this project">
             <Clock size={11} /> queued to merge
+          </span>
+        )}
+        {rejoinsMerge(task) && (
+          <span className="flex items-center gap-1 text-muted" title="Stepped out of the merge queue to make changes: rejoins it when its agent is done">
+            <GitMerge size={11} /> rejoins merge queue
           </span>
         )}
         <DependencyBadge task={task} project={project} />

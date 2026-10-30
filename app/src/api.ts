@@ -51,6 +51,9 @@ export const canRunAgents = (h: Host | undefined) => !!h && h.connected && h.age
 /** Waiting in "Ready for merge" for another task in its project to finish merging. */
 export const mergeQueued = (t: Task) => !!t.merging && t.status === "ready_for_merge" && !t.running;
 
+/** Stepped out of the merge queue to make changes, and rejoins it when its agent is done. */
+export const rejoinsMerge = (t: Task) => !!t.remerge && (t.status === "in_progress" || t.status === "needs_attention");
+
 /** Its agent is running but waiting for something (the `wait` tool), not working. */
 export const agentWaiting = (t: Task) => (t.running && t.agent_wait) || null;
 
@@ -495,6 +498,8 @@ export interface Task {
   run_started_at?: string | null;
   /** Its agent is merging it (moved to "Ready for merge" and not done yet). Hosts before API 4 omit it. */
   merging?: boolean;
+  /** Its agent stepped out of the merge queue to make changes; it rejoins the queue when the agent is done (API 66). */
+  remerge?: boolean;
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
   depends_on?: string[];

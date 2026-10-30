@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, RefreshCw, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, runningAgentSteers, stopTitle, worktreesOn, type DiffResult, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type DiffResult, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -710,6 +710,12 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         {mergeQueued(task) && (
           <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
             Queued to merge. Another task in this project is merging; this one starts when it's done.
+          </div>
+        )}
+        {rejoinsMerge(task) && (
+          <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
+            Stepped out of the merge queue to make changes, so the tasks behind it could merge. It rejoins the end of the queue when its
+            agent is done, unless you move it to another column first.
           </div>
         )}
         {dependencyQueued(task) && (

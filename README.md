@@ -629,6 +629,13 @@ skipped. Auto-compacting idle sessions is Claude-only.
   and start in column order (top first) once it ends.
   A task with nothing to merge (no commits on its branch beyond its base and no uncommitted
   changes, or no worktree at all) skips the merge and goes straight to *Done*.
+  A merge that turns out to need changes to the task's work (checks failing because of it, review
+  comments, conflicts that need more than a simple resolution) doesn't hold up the tasks behind it:
+  its agent steps out of the queue (`update_task` with status `in_progress` and `remerge`), the
+  next task starts merging, and the card shows *rejoins merge queue* in *In progress* while its
+  agent makes the changes. When that run ends, the task goes back to the end of *Ready for merge*
+  (not to *In review*) and merges when its turn comes. Moving it to another column meanwhile
+  (bar *Needs attention*) takes it out of the queue.
   A merge waiting on you in *Needs attention* still holds the queue; move it to another column to
   let the next one go. You can't message a queued task's agent until it's its turn.
 - **Dependencies:** a task can depend on other tasks in its project (*Depends on* in its
