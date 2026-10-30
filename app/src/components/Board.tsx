@@ -1483,10 +1483,10 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
 const VIEWS = [
   { id: "board", label: "Board", icon: Kanban, title: "Board view: a column for each status" },
   { id: "list", label: "List", icon: List, title: "List view: a section for each status" },
-  { id: "triage", label: "Triage", icon: Inbox, title: "Triage view: what each task needs from you, most pressing first" },
-  { id: "live", label: "Live", icon: MonitorPlay, title: "Live view: what each working agent is doing now, side by side" },
-  { id: "timeline", label: "Timeline", icon: GanttChart, title: "Timeline view: when each task's agent ran, and how long it's waited on you" },
-  { id: "graph", label: "Graph", icon: Network, title: "Graph view: which tasks created which, and what waits on what" },
+  { id: "triage", label: "Triage", icon: Inbox, title: "Triage view: what needs you, most pressing first" },
+  { id: "live", label: "Live", icon: MonitorPlay, title: "Live view: the working agents side by side" },
+  { id: "timeline", label: "Timeline", icon: GanttChart, title: "Timeline view: when agents ran, and how long tasks have waited on you" },
+  { id: "graph", label: "Graph", icon: Network, title: "Graph view: which tasks led to which, and what waits on what" },
 ] as const;
 type BoardView = (typeof VIEWS)[number]["id"];
 const isView = (v: string | null): v is BoardView => VIEWS.some((x) => x.id === v);
