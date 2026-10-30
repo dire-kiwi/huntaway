@@ -1,12 +1,15 @@
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, CircleSlash, Loader2, MessageSquareText, ScanSearch } from "lucide-react";
-import { useState, type MouseEvent } from "react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, Loader2, MessageSquareText, ScanSearch } from "lucide-react";
+import { lazy, Suspense, useMemo, useState, type MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, type Review, type ReviewerRun, type ReviewState, type Task } from "../api";
+import { api, type Review, type ReviewerRun, type ReviewState, type Task, type Turn, type TurnDiff } from "../api";
 import { openTask } from "../router";
 import { useProject, useStore } from "../store";
+import { turnStat, useTurns } from "../turns";
 import { Markdown } from "./Thread";
 import { Button, CARD_BADGE, Wide } from "./ui";
+
+const PatchBox = lazy(() => import("./Changes").then((m) => ({ default: m.PatchBox })));
 
 /** Each reviewer's part: a review from before there could be several has just its own. */
 export const reviewParts = (r: Review): ReviewerRun[] =>
@@ -230,6 +233,91 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
         )}
       </div>
       {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+      {!threadId && task.kind === "task" && <FixRounds task={task} />}
+    </div>
+  );
+}
+
+/** A round of fixes a review sent back: the turns of the run it started. */
+interface Round {
+  round: number;
+  first: Turn;
+  last: Turn;
+  turns: number;
+}
+
+/** What each round of fixes changed, from the checkpoints taken around it (API 67). */
+function FixRounds({ task }: { task: Task }) {
+  const { data } = useTurns(task);
+  const rounds = useMemo(() => {
+    const out: Round[] = [];
+    for (const t of data?.turns ?? []) {
+      const last = out.at(-1);
+      if (t.review_round) out.push({ round: t.review_round, first: t, last: t, turns: 1 });
+      else if (last && t.run_id && t.run_id === last.first.run_id) Object.assign(last, { last: t, turns: last.turns + 1 });
+    }
+    return out.reverse();
+  }, [data]);
+  if (!rounds.length) return null;
+  return (
+    <div className="space-y-1.5 border-t border-line pt-3">
+      <div className="text-[11.5px] font-medium text-muted">What each round of fixes changed</div>
+      {rounds.map((r) => (
+        <FixRound key={r.first.n} task={task} r={r} />
+      ))}
+    </div>
+  );
+}
+
+function FixRound({ task, r }: { task: Task; r: Round }) {
+  const [open, setOpen] = useState(false);
+  const [diff, setDiff] = useState<TurnDiff | { error: string } | null>(null);
+  const from = r.first.before_n;
+  const can = from !== null && r.first.diff && r.last.diff;
+  const toggle = () => {
+    setOpen(!open);
+    if (open || !can || diff) return;
+    api
+      .turnDiff(task.host_id, task.id, from, r.last.n)
+      .then(setDiff)
+      .catch((e) => setDiff({ error: (e as Error).message }));
+  };
+  const stat = diff && "stats" in diff ? turnStat({ ...r.last, stats: diff.stats }) : r.turns === 1 ? turnStat(r.last) : `${r.turns} turns`;
+  return (
+    <div className="rounded-lg border border-line">
+      <button className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/[0.03]" onClick={toggle} disabled={!can} title={can ? undefined : "There are no checkpoints from around this round"}>
+        {open ? <ChevronDown size={12} className="shrink-0 text-faint" /> : <ChevronRight size={12} className="shrink-0 text-faint" />}
+        <span className="font-medium text-fg">Round {r.round}</span>
+        <span className="min-w-0 flex-1 truncate text-faint">
+          {stat}
+          {r.last.stale && " · rewound"}
+        </span>
+        <span className="shrink-0 text-[11px] text-faint">{new Date(r.last.at).toLocaleString()}</span>
+      </button>
+      {open && (
+        <div className="px-2.5 pb-2.5">
+          {!diff ? (
+            <Loader2 size={12} className="animate-spin text-faint" />
+          ) : "error" in diff ? (
+            <div className="text-[11.5px] text-red-300">{diff.error}</div>
+          ) : (
+            <>
+              {diff.excluded.length > 0 && (
+                <div className="mb-1.5 text-[11.5px] text-faint" title={diff.excluded.join("\n")}>
+                  Left out: {diff.excluded.length} file{diff.excluded.length === 1 ? "" : "s"} git brought in (a merge, pull or rebase).
+                </div>
+              )}
+              {diff.too_large ? (
+                <div className="text-[11.5px] text-amber-300">The diff is too big to show here: see the Changes tab's Turns.</div>
+              ) : (
+                <Suspense fallback={null}>
+                  <PatchBox patch={diff.patch} empty="No changes in this round" />
+                </Suspense>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

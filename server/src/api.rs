@@ -960,6 +960,7 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         permissions::expire_for_task(s, &t.id);
         // Remove worktrees but keep branches so no committed work is lost.
         if let Some(wt) = &t.worktree_path {
+            crate::checkpoints::forget(s, &t.id, std::path::Path::new(&project.repo_path)).await;
             let _ = worktree::git(&PathBuf::from(&project.repo_path), &["worktree", "remove", "--force", wt]).await;
         }
     }

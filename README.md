@@ -688,7 +688,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   *In progress* when the agent works on it again (to fix the issues found, or because you sent
   it a message). *Review now* in the task's sidebar reviews on demand, once the agent has
   stopped; a task in *In progress* or *Needs attention* moves to *In review* for it. Turn reviews off,
-  or set the rounds, in the project's settings (API 12).
+  or set the rounds, in the project's settings (API 12). The task's *Review* tab shows what each
+  round of fixes changed, from its checkpoints (API 67, see *Checkpoints and rewinding*).
 - **Several reviewers** (API 29): a project's settings can list more than one reviewer under
   *Reviewers*, each an agent config with an optional model and effort (for example one Codex and
   one Claude, or Fable and Opus). By default there's one, with the task's own config. Each reviews
@@ -810,7 +811,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   commits since the base branch, and against its upstream), the changed files (a tree, or a
   list with `` ` ``), the commits (the branch's, then a few from its base) and the stashes; the
   main panel shows what's selected: the branch's whole diff against its base, a file's unstaged
-  and staged changes, or a commit's or stash's. `1`–`4` or ←/→ move between panels, ↑/↓ (or
+  and staged changes, or a commit's or stash's. A task in a worktree of its own has a fifth panel,
+  *Turns* (API 67): its agent's turns, latest first, each showing what that turn changed (see
+  *Checkpoints* below); `g` rewinds to before one. `1`–`5` or ←/→ move between panels, ↑/↓ (or
   `j`/`k`) through a list, and the bar at the bottom shows the keys for where you are (each one
   can be clicked; `?` lists them all). In the files, space stages or unstages a file or folder,
   `a` everything, `d` discards, `c` commits (with a summary and description; a message not
@@ -828,6 +831,46 @@ skipped. Auto-compacting idle sessions is Claude-only.
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
   wrong. A host before API 66 shows the branch's diff alone.
+- **Checkpoints and rewinding** (API 67): a task in a worktree of its own keeps a checkpoint of
+  its files before each of its agent's runs (when anything changed since the last, so the first
+  run's is the task's baseline) and after each of the agent's turns, including ones that were
+  stopped or failed. A checkpoint is a commit of everything git doesn't ignore in the worktree
+  (tracked files as they are on disk, and untracked ones; untracked files over 50 MB are left
+  out), whose parent is the HEAD then, kept under `refs/huntaway/checkpoints/<task id>/<n>` in the
+  project's repository (so `git log --all` shows them). It's made with a scratch copy of the
+  worktree's index (`GIT_INDEX_FILE`, `git add -A`, `write-tree`, `commit-tree`), so the index,
+  branch and stashes aren't touched. The `checkpoints` table ties each turn's to its run, its
+  number and the message that started it. A task keeps its last 200, and they're deleted (refs
+  and rows) when its worktree is removed. Tasks working in their project's repository, review
+  threads, documents and scratch tasks have none.
+  - **What each turn changed:** the *Turns* panel of the *Changes* tab shows the difference
+    between the checkpoint a turn started from and its own. Files git brought in during the turn
+    are left out (and listed) unless the turn changed them itself: those changed by commits HEAD
+    moved to rather than made in the worktree (a pull or fast-forward, the commits a rebase went
+    onto, told apart by the worktree's HEAD reflog) and by merges made there, except where the
+    merge's result isn't git's own (conflicts resolved, from `git show --remerge-diff`). The
+    task's *Review* tab lists what each round of fixes a review sent back changed (the turns of
+    the run it started, whose message is marked with `review_round`). A turn from before a host
+    had checkpoints has none to start from, so its changes aren't shown.
+  - **Rewinding:** hovering one of your messages in the thread shows *Rewind to here* (or `g` in
+    the *Turns* panel). It puts the worktree's files back to the checkpoint taken before that
+    message's turn: only the files that differ are written or removed (never through a symlink),
+    files git ignores (build output) are left alone, and so are submodules and files marked
+    `skip-worktree` or `assume-unchanged`. Those files go back to HEAD in the index. The files
+    as they were are kept as a checkpoint of their own (named in the thread's note). If commits
+    were made since, the branch can be moved back too (`git reset --soft`, off by default). The
+    agent's conversation can go back with it, so it carries on from before that message: its
+    next run resumes Claude Code's session with `--resume-session-at` (the session's last message
+    from the turn before) or reverts the Codex thread with `thread/revert` (to before the turn);
+    going back to before the thread's first message starts a new conversation. Until that run,
+    a note over the composer says so (*Keep the conversation* cancels it), and the message goes
+    back into the composer to edit and send again. The rest of the thread stays, with the
+    message marked *rewound*, and the checkpoints after it are marked stale and can't be
+    rewound to again. A rewind is refused while the agent or a review of the task is running,
+    or while a merge or rebase is in progress in the worktree. `GET /tasks/{id}/turns` lists the
+    turns, `GET /tasks/{id}/turns/diff?from=&to=` diffs two checkpoints, `POST /tasks/{id}/rewind
+    {message_id, conversation, branch}` rewinds and `DELETE /tasks/{id}/rewind` keeps the
+    conversation.
 - **Terminals:** a task's *Terminal* tab opens a shell (xterm.js) in its worktree, or where its
   agent runs if it has none. It is a tmux session on the task's host, on a tmux server of its
   own (`tmux -L ia-<host id>`, so your other tmux sessions aren't touched, though `~/.tmux.conf`

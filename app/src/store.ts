@@ -652,6 +652,16 @@ export function connectEvents() {
 }
 
 type AutomationListener = (hostId: string, projectId: string, automationId: string) => void;
+/** Told when a task's checkpoints change (API 67): a turn's was taken, or it was rewound. */
+type CheckpointListener = (hostId: string, taskId: string) => void;
+const checkpointListeners = new Set<CheckpointListener>();
+export function onCheckpoints(fn: CheckpointListener) {
+  checkpointListeners.add(fn);
+  return () => {
+    checkpointListeners.delete(fn);
+  };
+}
+
 const automationListeners = new Set<AutomationListener>();
 
 /** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
@@ -713,6 +723,9 @@ export function handleEvent(ev: any) {
       break;
     case "automations_changed":
       for (const fn of automationListeners) fn(h, ev.project_id, ev.automation_id);
+      break;
+    case "checkpoints":
+      for (const fn of checkpointListeners) fn(h, ev.task_id);
       break;
     case "message":
     case "message_updated": {

@@ -823,6 +823,7 @@ pub async fn turns(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> Api
                 "stale": r.stale > 0,
                 "at": r.created_at,
                 "head": r.head,
+                "before_head": before.and_then(|b| rows.iter().find(|x| x.n == b)).and_then(|b| b.head.clone()),
                 "stats": r.stats,
                 "diff": diff,
                 "rewind": match files { Ok(()) => json!({"ok": true, "conversation": conversation}), Err(why) => json!({"ok": false, "reason": why}) },
@@ -883,6 +884,10 @@ fn conversation(task: &Task, rows: &[Checkpoint], turn: &Checkpoint, codex: bool
     let (Some(n), Some(message_id)) = (turn.turn, turn.message_id) else { return Err("the message this turn started with isn't known".into()) };
     let back = |resume_at: Option<String>, before_turn: Option<String>| Convo::Back(Rewind { turn: n, message_id, session: session.clone(), resume_at, before_turn });
     let changed = "the agent's conversation has changed since this message (a new session)";
+    // The message started it: the next one starts a new one (with the task's description, as the first does).
+    if first_user == Some(message_id) {
+        return Ok(Convo::Fresh);
+    }
     if codex {
         // Codex reverts the thread to before the turn itself.
         return match (&turn.session, &turn.agent_at) {
@@ -899,9 +904,6 @@ fn conversation(task: &Task, rows: &[Checkpoint], turn: &Checkpoint, codex: bool
         if let Some(at) = &r.agent_at {
             return Ok(back(Some(at.clone()), None));
         }
-    }
-    if first_user == Some(message_id) {
-        return Ok(Convo::Fresh);
     }
     Err("the conversation from before this message wasn't recorded (it's from before checkpoints were taken)".into())
 }
@@ -1031,7 +1033,11 @@ async fn rewind_now(state: &Shared, task_id: &str, b: &RewindBody) -> ApiResult<
     );
     state.emit(json!({"type": "checkpoints", "task_id": task_id}));
     let task = db::get_task(&state.db(), task_id)?;
+    // The message, for the user to edit and send again.
+    let message: Option<String> = state.db().query_row("SELECT data FROM messages WHERE id=?1 AND task_id=?2", params![b.message_id, task_id], |r| r.get(0)).optional()?;
+    let message = message.and_then(|d| serde_json::from_str::<Value>(&d).ok()).unwrap_or(Value::Null);
     Ok(json!({
+        "message": {"text": message["user_text"].as_str().or(message["text"].as_str()), "auto": message["auto"] == true},
         "task": task,
         "written": restored.written,
         "removed": restored.removed,
@@ -1582,6 +1588,7 @@ mod tests {
         assert_eq!(back(&rows[3], false), resume("u1", 3));
         assert_eq!(back(&rows[1], false), Ok(Convo::Fresh));
         assert_eq!(back(&rows[4], true), Ok(Convo::Back(Rewind { turn: 4, message_id: 40, session: "s".into(), resume_at: None, before_turn: Some("u4".into()) })));
+        assert_eq!(back(&rows[1], true), Ok(Convo::Fresh));
         // A new session since, or no record of where the conversation was.
         let other = Task { session_id: Some("other".into()), ..task.clone() };
         assert!(conversation(&other, &rows, &rows[4], false, Some(10)).is_err());

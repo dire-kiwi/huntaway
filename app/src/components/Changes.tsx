@@ -7,14 +7,17 @@
 import clsx from "clsx";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
-import { api, hostSupports, type DiffResult, type GitCommit, type GitCommitShown, type GitFile, type GitStash, type GitStatus, type Task } from "../api";
+import { api, hostSupports, type DiffResult, type GitCommit, type GitCommitShown, type GitFile, type GitStash, type GitStatus, type Task, type Turn, type TurnDiff } from "../api";
 import { conflicted, fileRows, hasStaged, hasUnstaged, linesPatch, linesStageable, parseDiff, untracked, type FileDiff, type FileRow } from "../changes";
 import { useHost } from "../store";
+import { hasTurns, turnLabel, turnStat, useTurns } from "../turns";
+import { RewindDialog } from "./Rewind";
+import { rewound } from "./Thread";
 import { Button, ContextMenu, copyText, Input, isSubmitShortcut, Kbd, Modal, SUBMIT_KEYS, Textarea, type MenuItem } from "./ui";
 
-type Side = "status" | "files" | "commits" | "stash";
+type Side = "status" | "files" | "commits" | "stash" | "turns";
 const SIDES: Side[] = ["status", "files", "commits", "stash"];
-const SIDE_TITLES: Record<Side, string> = { status: "Status", files: "Files", commits: "Commits", stash: "Stash" };
+const SIDE_TITLES: Record<Side, string> = { status: "Status", files: "Files", commits: "Commits", stash: "Stash", turns: "Turns" };
 type Pane = "unstaged" | "staged";
 /** How often the view checks for changes (an agent may be making them). */
 const POLL_MS = 4000;
@@ -96,6 +99,10 @@ const rowPath = (r: FileRow) => (r.file ? r.file.path : r.key.slice(0, -1));
 
 function GitView({ task }: { task: Task }) {
   const [h, id] = [task.host_id, task.id];
+  // The agent's turns, from their checkpoints (API 67): a fifth panel.
+  const turns = useTurns(task);
+  const sides: Side[] = hasTurns(useHost(h), task) ? [...SIDES, "turns"] : SIDES;
+  const [rewinding, setRewinding] = useState<Turn | null>(null);
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [side, setSide] = useState<Side>("files");
@@ -129,7 +136,7 @@ function GitView({ task }: { task: Task }) {
 
   useEffect(() => root.current?.focus({ preventScroll: true }), []);
   // Back to the view when a dialog closes (one opened from another, as a menu's can be, has nowhere to go back to).
-  const dialogOpen = !!dialog || !!menu;
+  const dialogOpen = !!dialog || !!menu || !!rewinding;
   const wasOpen = useRef(false);
   // Before the next key comes in, rather than once painted.
   useLayoutEffect(() => {
@@ -214,8 +221,8 @@ function GitView({ task }: { task: Task }) {
   const rows = useMemo(() => fileRows(files, tree, collapsed), [files, tree, collapsed]);
 
   // What's selected in each list, by key; one that's gone gives way to the row now where it was.
-  const lastIdx = useRef({ files: 0, commits: 0, stash: 0 });
-  const pick = <T,>(list: T[], which: "files" | "commits" | "stash", at: (t: T) => boolean) => {
+  const lastIdx = useRef({ files: 0, commits: 0, stash: 0, turns: 0 });
+  const pick = <T,>(list: T[], which: "files" | "commits" | "stash" | "turns", at: (t: T) => boolean) => {
     let i = list.findIndex(at);
     if (i < 0) i = Math.min(lastIdx.current[which], list.length - 1);
     lastIdx.current[which] = Math.max(0, i);
@@ -227,6 +234,11 @@ function GitView({ task }: { task: Task }) {
   const commit = commits[commitIdx] as GitCommit | undefined;
   const stashIdx = pick(stashes, "stash", (s) => s.sha === stashSha);
   const stash = stashes[stashIdx] as GitStash | undefined;
+  // Newest first.
+  const turnList = useMemo(() => [...(turns.data?.turns ?? [])].reverse(), [turns.data]);
+  const [turnN, setTurnN] = useState<number | null>(null);
+  const turnIdx = pick(turnList, "turns", (t) => t.n === turnN);
+  const turn = turnList[turnIdx] as Turn | undefined;
 
   // The selected file's (or folder's) diffs, fetched again on every check, as its content can change
   // while its state doesn't.
@@ -302,6 +314,21 @@ function GitView({ task }: { task: Task }) {
       stale = true;
     };
   }, [side, status, askedTick, h, id]);
+  // A turn's changes.
+  const [turnShown, setTurnShown] = useState<{ key: string; diff?: TurnDiff; error?: string } | null>(null);
+  const turnKey = side === "turns" && turn?.diff && turn.before_n !== null ? `${turn.before_n}:${turn.n}` : null;
+  useEffect(() => {
+    if (!turnKey) return;
+    let stale = false;
+    const [from, to] = turnKey.split(":").map(Number);
+    api
+      .turnDiff(h, id, from, to)
+      .then((diff) => !stale && setTurnShown({ key: turnKey, diff }))
+      .catch((e) => !stale && setTurnShown({ key: turnKey, error: errText(e) }));
+    return () => {
+      stale = true;
+    };
+  }, [turnKey, h, id]);
   const [shown, setShown] = useState<{ sha: string; commit?: GitCommitShown; patch?: string; error?: string } | null>(null);
   const showSha = side === "commits" ? commit?.sha : side === "stash" ? stash?.sha : undefined;
   useEffect(() => {
@@ -473,6 +500,11 @@ function GitView({ task }: { task: Task }) {
       onYes: run,
     });
   };
+  const rewindTo = (t: Turn | undefined) => {
+    if (!t) return;
+    if (!t.rewind.ok) return setFlash({ text: `Can't rewind to before turn ${t.turn}: ${t.rewind.reason}`, error: true });
+    setRewinding(t);
+  };
   const copy = (text: string | undefined) => {
     if (!text) return;
     copyText(text);
@@ -527,13 +559,14 @@ function GitView({ task }: { task: Task }) {
   const mainScroll = useRef<HTMLDivElement>(null);
   const page = 12;
   const moveIn = (s: Side, by: number | "first" | "last") => {
-    const n = s === "files" ? rows.length : s === "commits" ? commits.length : s === "stash" ? stashes.length : 0;
+    const n = s === "files" ? rows.length : s === "commits" ? commits.length : s === "stash" ? stashes.length : s === "turns" ? turnList.length : 0;
     if (!n) return;
-    const at = s === "files" ? fileIdx : s === "commits" ? commitIdx : stashIdx;
+    const at = s === "files" ? fileIdx : s === "commits" ? commitIdx : s === "stash" ? stashIdx : turnIdx;
     const i = by === "first" ? 0 : by === "last" ? n - 1 : Math.max(0, Math.min(n - 1, at + by));
     if (s === "files") setFileKey(rows[i].key);
     else if (s === "commits") setCommitSha(commits[i].sha);
     else if (s === "stash") setStashSha(stashes[i].sha);
+    else if (s === "turns") setTurnN(turnList[i].n);
   };
   const moveCursor = (by: number | "first" | "last", extend = false) => {
     if (!file || cur < 0) return;
@@ -593,7 +626,7 @@ function GitView({ task }: { task: Task }) {
   // The options where you are: in the bar at the bottom (the first few) and in the help (all).
   const options = (): { title: string; items: Option[] }[] => {
     const nav: Option[] = [
-      { key: "1-4", label: "Panel", run: noop },
+      { key: `1-${sides.length}`, label: "Panel", run: noop },
       { key: "R", label: "Refresh", run: () => void refresh() },
       { key: "?", label: "Keybindings", run: () => setDialog({ kind: "help" }) },
     ];
@@ -653,6 +686,11 @@ function GitView({ task }: { task: Task }) {
         { key: "d", label: "Drop", run: () => stashDo("drop", stash) },
         { key: "enter", label: "Scroll the patch", run: enterMain },
       ],
+      turns: [
+        { key: "enter", label: "Scroll the changes", run: enterMain },
+        { key: "g", label: "Rewind to before it", run: () => rewindTo(turn) },
+        { key: "y", label: "Copy the message", run: () => copy(turn?.text) },
+      ],
     };
     return [
       { title: SIDE_TITLES[side], items: own[side] },
@@ -668,7 +706,7 @@ function GitView({ task }: { task: Task }) {
   };
 
   const onKey = (e: ReactKeyboardEvent) => {
-    if (dialog || menu) return;
+    if (dialog || menu || rewinding) return;
     if ((e.target as Element).closest("input, textarea, select, [contenteditable], [data-modal]")) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     // While a change is made, keys wait for it (the next space stages the next line, not one from the old diff), and
@@ -690,8 +728,8 @@ function GitView({ task }: { task: Task }) {
     setTaken((n) => n + 1);
   });
   const handleKey = (key: string, shift: boolean): boolean => {
-    if (/^[1-4]$/.test(key)) {
-      focusSide(SIDES[+key - 1]);
+    if (/^[1-9]$/.test(key) && +key <= sides.length) {
+      focusSide(sides[+key - 1]);
       return true;
     }
     if (key === "?") return (setDialog({ kind: "help" }), true);
@@ -753,12 +791,12 @@ function GitView({ task }: { task: Task }) {
       };
       return k[key] ? (k[key](), true) : false;
     }
-    const at = SIDES.indexOf(side);
+    const at = sides.indexOf(side);
     const k: Record<string, () => void> = {
-      ArrowLeft: () => focusSide(SIDES[(at + SIDES.length - 1) % SIDES.length]),
-      h: () => focusSide(SIDES[(at + SIDES.length - 1) % SIDES.length]),
-      ArrowRight: () => focusSide(SIDES[(at + 1) % SIDES.length]),
-      l: () => focusSide(SIDES[(at + 1) % SIDES.length]),
+      ArrowLeft: () => focusSide(sides[(at + sides.length - 1) % sides.length]),
+      h: () => focusSide(sides[(at + sides.length - 1) % sides.length]),
+      ArrowRight: () => focusSide(sides[(at + 1) % sides.length]),
+      l: () => focusSide(sides[(at + 1) % sides.length]),
       ArrowUp: () => moveIn(side, -1),
       k: () => moveIn(side, -1),
       ArrowDown: () => moveIn(side, 1),
@@ -789,6 +827,7 @@ function GitView({ task }: { task: Task }) {
       });
     if (side === "commits") Object.assign(k, { g: () => resetMenu(commit), r: () => reword(commit), y: () => copy(commit?.sha) });
     if (side === "stash") Object.assign(k, { " ": () => stashDo("apply", stash), g: () => stashDo("pop", stash), d: () => stashDo("drop", stash) });
+    if (side === "turns") Object.assign(k, { g: () => rewindTo(turn), y: () => copy(turn?.text) });
     return k[key] ? (k[key](), true) : false;
   };
 
@@ -1011,6 +1050,50 @@ function GitView({ task }: { task: Task }) {
             />,
             { grow: grow("stash", "flex-[1.6] min-h-[60px]", "flex-[0.6] min-h-[44px]") },
           )}
+          {sides.includes("turns") &&
+            sidePanel(
+              "turns",
+              5,
+              <List
+                items={turnList}
+                selected={turnIdx}
+                active={side === "turns"}
+                empty={turns.error ? `Couldn't load: ${turns.error}` : turns.data && !turns.data.available ? `No checkpoints: ${turns.data.reason}` : "No turns yet"}
+                onSelect={(t) => {
+                  setTurnN(t.n);
+                  if (side !== "turns" || inMain) focusSide("turns");
+                }}
+                onOpen={() => setInMain(true)}
+                onMenu={(t, x, y) => {
+                  setTurnN(t.n);
+                  setMenu({
+                    x,
+                    y,
+                    title: `Turn ${t.turn}`,
+                    items: [
+                      { label: "Rewind to before it…", onSelect: () => rewindTo(t) },
+                      { label: "Copy the message", divider: true, onSelect: () => copy(t.text) },
+                    ],
+                  });
+                }}
+                render={(t, i) => (
+                  <div className={clsx("flex gap-2 px-1.5", t.stale && "opacity-50")} title={`Turn ${t.turn}: ${t.text}\n${turnStat(t)}${t.stale ? "\nRewound: a rewind went back to before it" : ""}`}>
+                    <span className={clsx("shrink-0", t.review_round ? "text-st-review" : "text-amber-300")}>#{t.turn}</span>
+                    <span className={clsx("min-w-0 flex-1 truncate", t.auto ? "text-muted" : "text-fg", t.stale && "line-through")}>
+                      {i === 0 && !t.stale && <span className="text-accent">latest · </span>}
+                      {turnLabel(t)}
+                    </span>
+                    {t.stats && t.stats.files > 0 && (
+                      <span className="shrink-0">
+                        <span className="text-emerald-400">+{t.stats.additions}</span> <span className="text-red-400">−{t.stats.deletions}</span>
+                      </span>
+                    )}
+                    <span className="shrink-0 text-faint">{ago(Date.parse(t.at) / 1000)}</span>
+                  </div>
+                )}
+              />,
+              { grow: grow("turns", "flex-[3] min-h-[60px]", "flex-[1.2] min-h-[44px]"), right: turnList.length ? <span>{turnList.length}</span> : null },
+            )}
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
           {side === "files" && single ? (
@@ -1054,8 +1137,14 @@ function GitView({ task }: { task: Task }) {
               {!hasUnstaged(target!.file!) && !hasStaged(target!.file!) && <EmptyMain text="No changes to show" />}
             </>
           ) : (
-            <Panel title={mainTitle(side, status, fileRow, commit, stash)} active={inMain} focused={focused} className="flex-1" scrollRef={mainScroll}>
-              {side === "files" ? (
+            <Panel title={mainTitle(side, status, fileRow, commit, stash, turn, turnIdx === 0)} active={inMain} focused={focused} className="flex-1" scrollRef={mainScroll}>
+              {side === "turns" ? (
+                turn ? (
+                  <TurnView turn={turn} shown={turnShown?.key === turnKey ? turnShown : null} />
+                ) : (
+                  <EmptyMain text={turns.data?.available === false ? "" : "No turns with checkpoints yet: one is taken as each of the agent's turns ends"} />
+                )
+              ) : side === "files" ? (
                 fileRow ? (
                   diffs && (
                     <>
@@ -1088,12 +1177,27 @@ function GitView({ task }: { task: Task }) {
       <OptionsBar options={opts[0].items} busy={busy} flash={flash} onDismiss={() => setFlash(null)} />
       {menu && <ContextMenu x={menu.x} y={menu.y} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
       {dialog && <DialogView dialog={dialog} options={opts} onClose={() => setDialog(null)} />}
+      {rewinding && (
+        <RewindDialog
+          task={task}
+          turn={rewinding}
+          head={turns.data?.head}
+          onClose={() => setRewinding(null)}
+          onDone={(r, convo) => {
+            rewound(task, r, convo);
+            setFlash({ text: `Rewound to before turn ${rewinding.turn}: ${r.written} restored, ${r.removed} removed` });
+            void refresh();
+            void turns.reload();
+          }}
+        />
+      )}
     </>,
   );
 }
 
-function mainTitle(side: Side, status: GitStatus, row: FileRow | undefined, commit: GitCommit | undefined, stash: GitStash | undefined) {
+function mainTitle(side: Side, status: GitStatus, row: FileRow | undefined, commit: GitCommit | undefined, stash: GitStash | undefined, turn: Turn | undefined, latest: boolean) {
   if (side === "status") return status.base ? `Branch changes vs ${status.base}` : "Changes";
+  if (side === "turns") return turn ? `${latest && !turn.stale ? "Latest turn" : `Turn ${turn.turn}`} · ${turnStat(turn)}` : "Turns";
   if (side === "files") return row ? `Changes in ${row.key}` : "Files";
   if (side === "commits") return commit ? `Commit ${short(commit.sha)}` : "Commit";
   return stash ? `stash@{${stash.index}}` : "Stash";
@@ -1466,6 +1570,60 @@ function CommitHead({ c }: { c: GitCommitShown }) {
       <div className="mt-1 font-sans text-[13px] whitespace-pre-wrap text-fg">{c.message}</div>
     </div>
   );
+}
+
+/** A patch shown as the Changes tab shows one, for elsewhere (the review tab's rounds of fixes). */
+export function PatchBox({ patch, empty }: { patch: string; empty: string }) {
+  const files = useMemo(() => parseDiff(patch), [patch]);
+  return (
+    <div className="max-h-[480px] overflow-auto rounded-md border border-line bg-bg py-1.5 font-mono text-[12px] leading-[18px]">
+      <PatchView files={files} empty={empty} />
+    </div>
+  );
+}
+
+/** What one of the agent's turns changed: from the checkpoint before it to its own, without what git brought in. */
+function TurnView({ turn, shown }: { turn: Turn; shown: { diff?: TurnDiff; error?: string } | null }) {
+  const files = useMemo(() => parseDiff(shown?.diff?.patch ?? ""), [shown]);
+  const excluded = shown?.diff?.excluded ?? turn.stats?.excluded ?? [];
+  const head = (
+    <div className="mb-2 px-1.5">
+      <div className="line-clamp-6 font-sans text-[13px] whitespace-pre-wrap text-fg">{turn.text || "(no message)"}</div>
+      <div className="text-faint">
+        {turn.review_round ? `Review fixes, round ${turn.review_round} · ` : ""}
+        {turn.status === "stopped" ? "Stopped" : turn.status === "failed" ? "Failed" : "Ended"} {new Date(turn.at).toLocaleString()}
+      </div>
+      {turn.stale && <div className="text-amber-300">A rewind went back to before this turn.</div>}
+      {excluded.length > 0 && (
+        <div className="text-faint" title={excluded.join("\n")}>
+          Left out: {excluded.length} file{excluded.length === 1 ? "" : "s"} git brought in (a merge, pull or rebase) that the turn didn't change itself:{" "}
+          {excluded.slice(0, 5).join(", ")}
+          {excluded.length > 5 && "…"}
+        </div>
+      )}
+      {shown?.diff?.too_large && <div className="text-amber-300">The diff is too big to show.</div>}
+    </div>
+  );
+  if (!turn.diff)
+    return (
+      <>
+        {head}
+        <Note>
+          {turn.before_n === null
+            ? "There's no checkpoint from before this turn (it started before checkpoints were taken), so what it changed can't be shown."
+            : "This turn's checkpoints are gone from the repository."}
+        </Note>
+      </>
+    );
+  if (!shown) return head;
+  if (shown.error)
+    return (
+      <>
+        {head}
+        <Note error>{shown.error}</Note>
+      </>
+    );
+  return <PatchView files={files} head={head} empty="No changes in this turn" />;
 }
 
 /** The branch's changes against its base: its commits, and everything changed (uncommitted work too). */
