@@ -738,6 +738,7 @@ name = "huntaway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-lc-rs",
  "axum",
  "base64 0.23.1",
  "chrono",
@@ -751,6 +752,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tower",

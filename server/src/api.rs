@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{derive_key, expand_tilde, new_id, path_str};
-use crate::{admin, agent_tools, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
+use crate::{admin, agent_tools, git_view, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
 
 /// This host's API (`/api/...`) plus the hub endpoints that span hosts.
 pub fn router(state: Shared) -> Router {
@@ -36,8 +36,10 @@ pub fn router(state: Shared) -> Router {
         .route("/ws", get(hub::ws))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
     Router::new()
-        .route("/api/health", get(|| async { Json(json!({"ok": true})) }))
+        .route("/api/health", get(health))
         .route("/api/hub/connect", get(hub::accept))
+        // Without the board's token: the token in its path reaches only its own automation.
+        .route("/api/hooks/{id}/{token}", post(crate::automations::webhook).layer(DefaultBodyLimit::max(crate::automations::MAX_BODY)))
         .nest("/api", host_api.merge(hub_api).fallback(no_route).method_not_allowed_fallback(wrong_method))
         // The nested fallback covers `/api` but not `/api/`.
         .route("/api/", any(no_route))
@@ -84,6 +86,13 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}", get(get_project).patch(update_project).delete(delete_project))
         .route("/projects/{id}/tasks", get(list_project_tasks).post(create_task))
         .route("/projects/{id}/remove-merged-worktrees", post(remove_merged_worktrees))
+        .route("/projects/{id}/automations", get(crate::automations::list_handler).post(crate::automations::create_handler))
+        .route(
+            "/automations/{id}",
+            get(crate::automations::get_handler).patch(crate::automations::update_handler).delete(crate::automations::delete_handler),
+        )
+        .route("/automations/{id}/run", post(crate::automations::run_handler))
+        .route("/automations/{id}/runs", get(crate::automations::runs_handler))
         .route("/agent-tools", get(agent_tools::get_global))
         .route("/agent-tools/switches", post(agent_tools::set_switch))
         .route("/agent-tools/skills", post(agent_tools::create_global_skill))
@@ -103,12 +112,24 @@ fn host_routes() -> Router<Shared> {
         )
         .route("/tasks/{id}", get(get_task).patch(update_task).delete(delete_task))
         .route("/tasks/{id}/messages", get(list_messages).post(send_message))
+        .route("/tasks/{id}/questions/{message_id}", post(answer_question))
         .route("/tasks/{id}/stop", post(stop_task))
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/review", post(review_task))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
+        .route("/tasks/{id}/git", get(git_view::status))
+        .route("/tasks/{id}/git/diff", get(git_view::diff))
+        .route("/tasks/{id}/git/show", get(git_view::show))
+        .route("/tasks/{id}/git/stage", post(git_view::stage))
+        .route("/tasks/{id}/git/unstage", post(git_view::unstage))
+        .route("/tasks/{id}/git/discard", post(git_view::discard))
+        // A patch of a big file's lines is past the default 2 MB body limit.
+        .route("/tasks/{id}/git/apply", post(git_view::apply).layer(DefaultBodyLimit::max(32 << 20)))
+        .route("/tasks/{id}/git/commit", post(git_view::commit))
+        .route("/tasks/{id}/git/stash", post(git_view::stash))
+        .route("/tasks/{id}/git/reset", post(git_view::reset))
         .route("/tasks/{id}/context", get(crate::context::get))
         .route("/tasks/{id}/skills", get(agent_tools::for_task))
         .route("/tasks/{id}/document", get(crate::documents::get))
@@ -163,6 +184,11 @@ async fn auth(State(s): State<Shared>, headers: HeaderMap, req: Request, next: N
 /// Pick known keys out of a JSON body as (column, value) pairs.
 fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)> {
     keys.iter().filter_map(|k| body.get(*k).map(|v| (*k, v.clone()))).collect()
+}
+
+/// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
+async fn health(State(s): State<Shared>) -> Json<Value> {
+    Json(json!({"ok": true, "commit": s.meta.running_commit}))
 }
 
 async fn info(State(s): State<Shared>) -> Json<Value> {
@@ -788,6 +814,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
             "worktrees_root", "auto_review", "review_rounds", "reviewers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
+            "done_when_merged",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -844,7 +871,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
                 }
                 *v = json!(key);
             }
-            "use_worktrees" | "auto_review" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "done_when_merged" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
@@ -995,6 +1022,10 @@ pub struct CreateTask {
     /// The tasks elsewhere it's for (see `check_external_links`).
     #[serde(default)]
     pub external_links: Option<Value>,
+    /// Shared by the tasks made together from one prompt, each run by another agent (see
+    /// db::Task::fanout_id).
+    #[serde(default)]
+    pub fanout_id: Option<String>,
 }
 
 /// A task's external links as they're stored (see db::ExternalLink): a list of
@@ -1039,6 +1070,16 @@ fn new_task_links(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
     })
 }
 
+/// A new task's fanout id (blank for none): letters, digits, `-` and `_`, as an id is.
+fn new_task_fanout(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
+    match b.fanout_id.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+        Some(f) if f.len() > 64 || !f.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') => {
+            Err(ApiError::bad("fanout_id must be up to 64 letters, digits, - or _"))
+        }
+        f => Ok(f.map(|f| ("fanout_id", json!(f)))),
+    }
+}
+
 /// Check a new task's requested type (blank for none).
 fn check_task_type(task_type: Option<&str>) -> ApiResult<Option<&str>> {
     match task_type.map(str::trim).filter(|t| !t.is_empty()) {
@@ -1081,6 +1122,7 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
     }
     let config = pick_config(&s.db(), profile_id, None, b.claude_config_id.as_deref())?;
     let links = new_task_links(&b)?;
+    let fanout = new_task_fanout(&b)?;
     let t = db::insert_scratch_task(
         &s.db(),
         NewTask {
@@ -1096,7 +1138,7 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
             claude_config_id: config.as_deref(),
         },
     )?;
-    let fields: Vec<_> = resolution.map(|r| ("resolution", json!(r))).into_iter().chain(links).collect();
+    let fields: Vec<_> = resolution.map(|r| ("resolution", json!(r))).into_iter().chain(links).chain(fanout).collect();
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     s.emit_task(&t);
     let start = match b.start {
@@ -1155,6 +1197,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
         return Err(ApiError::bad("a group task can't be a scratch task"));
     }
     let config = pick_config(&s.db(), &id, None, b.claude_config_id.as_deref())?;
+    let fanout = new_task_fanout(&b)?;
     let links = new_task_links(&b)?;
     let t = db::insert_group_task(
         &s.db(),
@@ -1172,7 +1215,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
         },
         group,
     )?;
-    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).collect();
+    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).chain(fanout).collect();
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     std::fs::create_dir_all(s.profile_scratch_dir(&id)).ok();
     s.emit_task(&t);
@@ -1261,6 +1304,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
         None => None,
     };
     let links = new_task_links(&b)?;
+    let fanout = new_task_fanout(&b)?;
     let t = db::insert_task(
         &s.db(),
         NewTask {
@@ -1297,6 +1341,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
         fields.push(("task_type", json!(tt)));
     }
     fields.extend(links);
+    fields.extend(fanout);
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     drop(deleting);
     s.emit_task(&t);
@@ -1320,7 +1365,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
 }
 
 /// Check a new thread's requested Claude config against those it can use (None for the default).
-fn pick_config(c: &rusqlite::Connection, profile_id: &str, project: Option<&db::Project>, id: Option<&str>) -> ApiResult<Option<String>> {
+pub fn pick_config(c: &rusqlite::Connection, profile_id: &str, project: Option<&db::Project>, id: Option<&str>) -> ApiResult<Option<String>> {
     let Some(id) = id.filter(|id| !id.is_empty()) else { return Ok(None) };
     if !db::available_configs(c, profile_id, project)?.iter().any(|cfg| cfg.id == id) {
         return Err(ApiError::bad("claude_config_id must be one of the project's (or profile's) Claude configs"));
@@ -1746,7 +1791,22 @@ struct SendBody {
 
 async fn send_message(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
     let t = runner::send(&s, &id, &b.text)?;
+    // The user's reply answers the questions the agent asked (see questions.rs).
+    if !b.text.trim().is_empty() {
+        crate::questions::replied(&s, &t.id);
+    }
     Ok(Json(json!(t)))
+}
+
+/// Answer a question an agent asked with request_user_input, from its card (API 64): the answer
+/// is sent as the user's message.
+async fn answer_question(
+    State(s): State<Shared>,
+    Path((id, message_id)): Path<(String, i64)>,
+    Json(b): Json<crate::questions::Answer>,
+) -> ApiResult<Json<Value>> {
+    let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    Ok(Json(json!(crate::questions::answer(&s, &task.id, message_id, b)?)))
 }
 
 /// Drop the queued message. Returns the task as it was, queued message included.
@@ -1873,6 +1933,9 @@ async fn list_permissions(State(s): State<Shared>, Query(q): Query<PermissionsQu
 struct ResolveBody {
     decision: String,
     message: Option<String>,
+    /// The answers to a question, or how a plan is approved or what to change in it (API 64).
+    #[serde(flatten)]
+    reply: permissions::Reply,
 }
 
 async fn resolve_permission(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<ResolveBody>) -> ApiResult<Json<Value>> {
@@ -1881,7 +1944,7 @@ async fn resolve_permission(State(s): State<Shared>, Path(id): Path<String>, Jso
         "deny" => false,
         _ => return Err(ApiError::bad("decision must be allow, allow_always or deny")),
     };
-    let status = permissions::decide(&s, &id, allow, b.decision == "allow_always", b.message)?;
+    let status = permissions::answer(&s, &id, allow, b.decision == "allow_always", b.message, b.reply)?;
     Ok(Json(json!({"ok": true, "status": status})))
 }
 
@@ -1890,12 +1953,15 @@ struct ApprovalsQuery {
     /// Deletions too (API 58); older hosts ignore it and list project changes only.
     #[serde(default)]
     all: bool,
+    /// Automations too (API 67).
+    #[serde(default)]
+    automations: bool,
 }
 
-/// Project changes (and with `?all=true`, task deletions) agents are waiting for the user to
-/// approve (see permissions::approve).
+/// Project changes (and with `?all=true`, task deletions, and with `?automations=true`,
+/// automations) agents are waiting for the user to approve (see permissions::approve).
 async fn project_approvals(State(s): State<Shared>, Query(q): Query<ApprovalsQuery>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(permissions::pending_approvals(&s, q.all)?)))
+    Ok(Json(json!(permissions::pending_approvals(&s, q.all, q.automations)?)))
 }
 
 // ---------- host settings ----------
@@ -1908,13 +1974,16 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
         "default_permission_mode": db::get_setting(&c, "default_permission_mode")?,
         "scratch_host": db::get_setting(&c, "scratch_host")?,
         "terminal_tools": terminal::tools(&c),
+        "public_url": db::get_setting(&c, "public_url")?,
     })))
 }
 
 /// Agent defaults for this host: the model and permission mode (when nothing more specific is
 /// set) and effort. Also, for a board that can't run agents itself, the linked host its
 /// workspace scratch chats go to (`scratch_host`, a link id). And the TUI programs offered as
-/// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`).
+/// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`). And the
+/// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
+/// URLs are shown with.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     if let Some(e) = b.get("default_effort").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) {
         if !db::EFFORTS.contains(&e) {
@@ -1931,11 +2000,20 @@ async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Valu
             return Err(ApiError::bad("scratch_host must be a linked host"));
         }
     }
+    let mut b = b;
+    if let Some(v) = b.get("public_url").filter(|v| !v.is_null()) {
+        let url = v.as_str().map(|u| u.trim().trim_end_matches('/')).ok_or_else(|| ApiError::bad("public_url must be a string"))?;
+        if (!url.is_empty() && !(url.starts_with("https://") || url.starts_with("http://"))) || url.contains(char::is_whitespace) || url.len() > 500 {
+            return Err(ApiError::bad("public_url must be an http(s) URL, like https://board.example.com"));
+        }
+        let url = url.to_string();
+        b.insert("public_url".into(), json!(url));
+    }
     let tools = match b.get("terminal_tools").filter(|v| !v.is_null()) {
         Some(v) => Some(terminal::parse_tools(v).map_err(ApiError::bad)?),
         None => None,
     };
-    for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host"] {
+    for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
         if let Some(v) = b.get(key) {
             db::set_setting(&s.db(), key, v.as_str())?;
         }
@@ -2720,6 +2798,38 @@ pub(crate) mod tests {
             std::fs::remove_dir_all(&s.data_dir).ok();
             std::fs::remove_dir_all(&dir).ok();
             crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn tasks_made_from_one_prompt_share_a_fanout_id() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("WEB".into()), base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let fanned = |id: &str| CreateTask { title: "Look".into(), fanout_id: Some(id.into()), ..Default::default() };
+            let a = create_task_inner(&s, &p.id, fanned("f-1")).unwrap();
+            let b = create_task_inner(&s, &p.id, CreateTask { model: Some("opus".into()), ..fanned("f-1") }).unwrap();
+            assert_eq!((a.fanout_id.as_deref(), b.fanout_id.as_deref()), (Some("f-1"), Some("f-1")));
+            let scratch = create_scratch_task_inner(&s, &profile.id, CreateTask { title: "Ask".into(), fanout_id: Some("f_2".into()), ..Default::default() }).unwrap();
+            assert_eq!(scratch.fanout_id.as_deref(), Some("f_2"));
+            // On its own, or with a blank one, it has none.
+            assert_eq!(create_task_inner(&s, &p.id, CreateTask { title: "Alone".into(), ..Default::default() }).unwrap().fanout_id, None);
+            assert_eq!(create_task_inner(&s, &p.id, fanned(" ")).unwrap().fanout_id, None);
+            // A group's plans made from one prompt are linked too.
+            update_project_inner(&s, &p.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
+            let grouped = |id: &str| CreateGroupTask { group: "Shop".into(), task: CreateTask { task_type: Some("plan".into()), ..fanned(id) } };
+            let Json(g) = create_group_task(State(s.clone()), Path(profile.id.clone()), Json(grouped("f-3"))).await.unwrap();
+            assert_eq!((g["task_type"].as_str(), g["fanout_id"].as_str()), (Some("plan"), Some("f-3")));
+            for bad in ["a b", "x/y", &"z".repeat(65)] {
+                assert!(create_task_inner(&s, &p.id, fanned(bad)).is_err(), "{bad}");
+                assert!(create_scratch_task_inner(&s, &profile.id, fanned(bad)).is_err(), "{bad}");
+                assert!(create_group_task(State(s.clone()), Path(profile.id.clone()), Json(grouped(bad))).await.is_err(), "{bad}");
+            }
         })
     }
 

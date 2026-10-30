@@ -753,8 +753,32 @@ async fn answer(board: Arc<crate::mcp::Ctx>, reply: Responder, msg: Value, item:
                 reply.result(id, json!({"action": if ok { "accept" } else { "decline" }, "content": if ok { json!({}) } else { Value::Null }}));
             }
         }
-        // Questions only come in plan mode; the agent carries on with its own judgement.
-        "item/tool/requestUserInput" => reply.result(id, json!({"answers": {}})),
+        // Its questions (in plan mode) are asked in the thread as Claude's AskUserQuestion is, and
+        // answered with the user's answers by question id. Unanswered, the agent carries on with its own judgement.
+        "item/tool/requestUserInput" => {
+            let questions: Vec<Value> = p["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|q| {
+                    json!({
+                        "id": q["id"], "header": q["header"], "question": q["question"], "multiSelect": false,
+                        "options": q["options"].as_array().cloned().unwrap_or_default(),
+                        "isOther": q["isOther"], "isSecret": q["isSecret"],
+                    })
+                })
+                .collect();
+            let args = json!({"tool_name": crate::permissions::CODEX_QUESTIONS, "input": {"questions": questions}, "tool_use_id": p["itemId"]});
+            let answers = match board.call("permission_prompt", &args).await {
+                Ok(v) if v["behavior"] == "allow" => v["updatedInput"]["answers"].clone(),
+                Ok(_) => json!({}),
+                Err(e) => {
+                    eprintln!("asking the user failed: {e:#}");
+                    json!({})
+                }
+            };
+            reply.result(id, json!({"answers": if answers.is_object() { answers } else { json!({}) }}));
+        }
         m => reply.error(id, &format!("Method not supported by Huntaway: {m}")),
     }
 }
@@ -861,6 +885,12 @@ pub async fn models(codex_home: &str) -> Result<Vec<Model>> {
         .collect();
     MODELS.lock().unwrap().get_or_insert_default().insert(codex_home.to_string(), (Instant::now(), list.clone()));
     Ok(list)
+}
+
+/// Lists `models` for a Codex config, as if its app-server had (for tests).
+#[cfg(test)]
+pub fn set_test_models(codex_home: &str, models: Vec<Model>) {
+    MODELS.lock().unwrap().get_or_insert_default().insert(codex_home.to_string(), (Instant::now(), models));
 }
 
 type SkillCache = HashMap<(String, Option<PathBuf>), (Instant, Vec<crate::agent_tools::TaskSkill>)>;

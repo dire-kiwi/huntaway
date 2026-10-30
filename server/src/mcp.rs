@@ -145,7 +145,7 @@ fn board_tools() -> Value {
     let reminder = json!({"type": "string", "description": "What the reminder is for, shown with it (with remind_at, or to change the note of the reminder the task has)"});
     let project_ref = "Project id, key or name (<profile>:<key> for another profile's board), or 'all'";
     let project_one = "Project id, key or name (<profile>:<key> for another profile's board); defaults to the current project";
-    json!([
+    let mut tools = json!([
         {
             "name": "permission_prompt",
             "description": "Internal: asks the user to approve a tool call.",
@@ -155,26 +155,46 @@ fn board_tools() -> Value {
         },
         {
             "name": "request_user_input",
-            "description": "Flag this task as 'Needs attention' because you need an answer, decision or information from the user. After calling it, end your turn with the question; the user's reply will resume the conversation.",
-            "inputSchema": {"type": "object", "properties": {"question": {"type": "string", "description": "Short summary of what you need from the user"}}, "required": ["question"]}
+            "description": format!("Flag this task as 'Needs attention' because you need an answer, decision or information from the user. \
+                The board shows your question as a card in the thread. When the possible answers are known (a choice between approaches, \
+                yes or no, which of several things to do), give them as options: the user then answers with a click (or keys 1-9), and \
+                can still write their own answer unless allow_other is false. After calling it, end your turn with the question (and \
+                what the user needs to know to answer it); the user's reply (the options they picked, or what they wrote) will resume \
+                the conversation. Up to {} options.", crate::questions::MAX_OPTIONS),
+            "inputSchema": {"type": "object", "properties": {
+                "question": {"type": "string", "description": "The question, short enough to show on the task's card (e.g. 'Which database should the cache use?')"},
+                "options": {
+                    "type": "array",
+                    "maxItems": crate::questions::MAX_OPTIONS,
+                    "description": "The answers to pick from, if they're known; put the one you recommend first",
+                    "items": {"type": "object", "properties": {
+                        "label": {"type": "string", "description": "The answer, in a few words"},
+                        "description": {"type": "string", "description": "What picking it means, or its trade-offs"}
+                    }, "required": ["label"]}
+                },
+                "multi_select": {"type": "boolean", "description": "Let the user pick more than one option (default false)"},
+                "allow_other": {"type": "boolean", "description": "Offer a free-text answer besides the options (default true)"}
+            }, "required": ["question"]}
         },
         {
             "name": "wait",
-            "description": format!("Wait without doing anything, e.g. for the tasks you created to finish, or for CI, a deploy or a background command. \
-                The call blocks until the wait period is over, one of the listed tasks changes status, a subagent completes, fails or stops, your command exits, a message is sent to you, the run is \
+            "description": format!("Wait without doing anything, e.g. for the tasks you created to finish, for a pull request's checks or reviews, or for a deploy or a background command. \
+                The call blocks until the wait period is over, one of the listed tasks changes status, there's news about your pull_request, a subagent completes, fails or stops, your command exits, a message is sent to you, the run is \
                 stopped, or you make another tool call (your subagents' tool calls other than board tools don't count), and says which. Meanwhile your task stays where it is (it doesn't need the user's attention) and the board shows it \
                 as waiting rather than working, with your reason. Use it instead of sleeping or polling in a loop; call it again to keep \
-                waiting. Without tasks or a command, a wait lasts {} seconds at most, as little but a message or a subagent can end it early: to wait for CI \
-                or a deploy, give a command that exits once it's ready, or check and wait again. To wait for the user, use request_user_input instead.",
+                waiting. Without tasks, a command or a pull request, a wait lasts {} seconds at most, as little but a message or a subagent can end it early: for CI \
+                or reviews on a pull request, give pull_request; for a deploy, give a command that exits once it's ready, or check and wait again. To wait for the user, use request_user_input instead.",
                 crate::wait::UNWATCHED_MAX_SECS),
             "inputSchema": {"type": "object", "properties": {
-                "reason": {"type": "string", "description": "What you're waiting for, shown on the board (e.g. 'waiting on OBP-1 and OWC-1', 'waiting for CI')"},
+                "reason": {"type": "string", "description": "What you're waiting for, shown on the board (e.g. 'waiting on OBP-1 and OWC-1', 'waiting for CI and review')"},
                 "seconds": {"type": "number", "minimum": 1, "maximum": crate::wait::MAX_SECS, "description": format!(
-                    "How long to wait at most (with tasks or a command: default {}, at most {}; without them: default and at most {})",
+                    "How long to wait at most (with tasks, a command or a pull request: default {}, at most {}; without them: default and at most {})",
                     crate::wait::DEFAULT_SECS, crate::wait::MAX_SECS, crate::wait::UNWATCHED_MAX_SECS
                 )},
                 "tasks": {"type": "array", "items": {"type": "string"}, "description": "Tasks (ids or keys like ABC-12, on this host) to watch: the wait ends as soon as one of them changes status"},
-                "command": {"type": "string", "description": "A shell command (bash) to run in your working directory while you wait: the wait ends as soon as it exits, and returns its exit code and the end of its output. Use one that blocks until what you're waiting for is ready (e.g. 'gh pr checks 12 --watch'), or loop until it is (e.g. 'until curl -sf https://example.com/health; do sleep 15; done'). It's approved like your Bash calls, and stopped with everything it started if the wait ends first."}
+                "pull_request": {"type": "string", "description": "A pull request to watch: its number (in your task's repository), OWNER/REPO#NUMBER or URL. The wait ends on news about it you haven't been told yet (see pull_request_events): its head commit's checks finished (one failed, or all the required ones passed), someone other than your GitHub account commented or reviewed, it started to conflict with its base branch, or it was merged or closed. It says what happened in pull_request: the failed checks with their links, new comments with their author, file, line and text, and its merge state. What you've been told is remembered across waits, so after acting on the news wait on it again: a comment made meanwhile ends that wait straight away. The first wait on a pull request reports how its checks ended and a conflict, but not its earlier comments. GitHub is read every minute or so, as your GitHub account."},
+                "pull_request_events": {"type": "array", "items": {"type": "string", "enum": crate::pr_watch::EVENTS}, "description": "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does."},
+                "command": {"type": "string", "description": "A shell command (bash) to run in your working directory while you wait: the wait ends as soon as it exits, and returns its exit code and the end of its output. Use one that blocks until what you're waiting for is ready (e.g. 'gh run watch 123'), or loop until it is (e.g. 'until curl -sf https://example.com/health; do sleep 15; done'). It's approved like your Bash calls, and stopped with everything it started if the wait ends first. For a pull request, give pull_request instead."}
             }, "required": ["reason"]}
         },
         {
@@ -319,7 +339,125 @@ fn board_tools() -> Value {
                 "name": {"type": "string"}, "repo_path": {"type": "string"}, "profile": profile
             }, "required": ["repo_path"]}
         }
-    ])
+    ]);
+    tools.as_array_mut().unwrap().extend(automation_tools(&profile, project_one));
+    tools
+}
+
+/// The tools for a project's automations (see automations.rs).
+fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
+    let automation_ref = json!({
+        "type": "string",
+        "description": "The automation's id, or its name in project_id (see list_automations)"
+    });
+    let trigger = json!({
+        "type": "object",
+        "description": format!("What starts it: {{kind: 'interval', every_minutes}} ({} minutes to 31 days, counted from when it's turned on or changed); \
+            {{kind: 'daily', time: 'HH:MM', weekdays}} (in the host's time zone, on those weekdays, or every day with none); \
+            or {{kind: 'webhook', filters, coalesce_seconds, coalesce_key}}: each POST to its URL that passes all the filters. \
+            Use the fields of its kind.", crate::automations::MIN_INTERVAL_MINUTES),
+        "properties": {
+            "kind": {"type": "string", "enum": ["interval", "daily", "webhook"]},
+            "every_minutes": {"type": "integer", "minimum": crate::automations::MIN_INTERVAL_MINUTES},
+            "time": {"type": "string", "description": "A time of day like 09:30"},
+            "weekdays": {"type": "array", "items": {"type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}},
+            "filters": {"type": "array", "description": "Conditions a delivery must meet: path names a value as templates do (event, action, labels, body.issue.user.login…)",
+                "items": {"type": "object", "properties": {
+                    "path": {"type": "string"},
+                    "op": {"type": "string", "enum": ["equals", "not_equals", "starts_with", "contains", "in", "not_in", "exists", "not_exists"]},
+                    "value": {"description": "A string, or a list for in and not_in; none for exists and not_exists"}
+                }, "required": ["path", "op"]}},
+            "coalesce_seconds": {"type": "integer", "minimum": 0, "maximum": 3600, "description": "Deliveries within this many seconds of the first make one run, with the latest one's values (0: each runs by itself)"},
+            "coalesce_key": {"type": "string", "description": "With coalescing, only deliveries with the same key (a template such as {{body.issue.number}}) go together"}
+        },
+        "required": ["kind"]
+    });
+    let action = json!({
+        "type": "object",
+        "description": "What it does: {kind: 'create_task', title, description, task_type, claude_config_id, model, effort, status, start} creates a task in the automation's project, \
+            or {kind: 'send_to_task', task_id, message} sends a message to one of the project's tasks. Title, description and message are templates: \
+            {{body.<path>}}, {{headers.<name>}}, {{query.<name>}}, {{event}}, {{action}}, {{labels}} and {{delivery}} from a webhook delivery \
+            (marked as untrusted data for the agent), and {{date}}, {{time}}, {{now}}, {{automation}} and {{count}} from the board.",
+        "properties": {
+            "kind": {"type": "string", "enum": ["create_task", "send_to_task"]},
+            "title": {"type": "string"},
+            "description": {"type": "string", "description": "Instructions for the new task's agent (markdown)"},
+            "task_type": {"type": "string", "enum": crate::db::TASK_TYPES, "description": "Leave out for a code task"},
+            "claude_config_id": {"type": "string", "description": "One of the project's agent configs; leave out for its default"},
+            "model": {"type": "string"},
+            "effort": {"type": "string", "enum": crate::db::THREAD_EFFORTS},
+            "status": {"type": "string", "enum": ["todo", "backlog"], "description": "Where the task goes (default todo); a started task moves to in_progress"},
+            "start": {"type": "boolean", "description": "Start the new task's agent straight away"},
+            "task_id": {"type": "string", "description": "The task to message: an id or key of a task in the same project"},
+            "message": {"type": "string"}
+        },
+        "required": ["kind"]
+    });
+    let asks = "It asks the user to approve it first (say why in reason): the call waits for their answer, and if they don't approve it nothing changes.";
+    let tools = json!([
+        {
+            "name": "list_automations",
+            "description": "List a project's automations: what starts each one (an interval, a time of day or a webhook), what it does (create a task or message one), whether it's on, when it next runs, and its latest run. The time zone the times of day are in comes with them.",
+            "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string", "description": project_one}, "profile": profile}}
+        },
+        {
+            "name": "create_automation",
+            "description": format!("Add an automation to a project: it creates a task there, or sends a message to one of its tasks, on a schedule or whenever its webhook URL gets a delivery \
+                (e.g. from GitHub). Only when the user asks for one. {asks} \
+                For a webhook, the result has its hook_path (and webhook_url, if the host's public address is set), which lets whoever has it start runs, so only give it to \
+                where the deliveries come from; with generate_secret, the secret to sign deliveries with is in the result, once."),
+            "inputSchema": {"type": "object", "properties": {
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "name": {"type": "string"},
+                "trigger": trigger,
+                "action": action,
+                "enabled": {"type": "boolean", "description": "On straight away (default true)"},
+                "generate_secret": {"type": "boolean", "description": "For a webhook: make a secret that deliveries must be signed with (X-Hub-Signature-256, as GitHub's webhook Secret does)"},
+                "reason": {"type": "string", "description": "Why, shown to the user when they're asked to approve it"}
+            }, "required": ["name", "trigger", "action"]}
+        },
+        {
+            "name": "update_automation",
+            "description": format!("Change a project's automation; leave out what to keep. Turning it off (enabled false) or renaming it is done straight away; any other change, \
+                including turning it on, asks the user. {asks}"),
+            "inputSchema": {"type": "object", "properties": {
+                "automation_id": automation_ref,
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "name": {"type": "string"},
+                "trigger": trigger,
+                "action": action,
+                "enabled": {"type": "boolean"},
+                "generate_secret": {"type": "boolean", "description": "For a webhook: a new signing secret, returned once in the result"},
+                "remove_secret": {"type": "boolean", "description": "For a webhook: stop checking deliveries' signatures"},
+                "rotate_url": {"type": "boolean", "description": "For a webhook: a new URL (the old one stops working)"},
+                "reason": {"type": "string", "description": "Why, shown to the user when they're asked to approve it"}
+            }, "required": ["automation_id"]}
+        },
+        {
+            "name": "delete_automation",
+            "description": format!("Delete a project's automation (its run history goes with it; the tasks it made stay). Only when the user asks for it. {asks}"),
+            "inputSchema": {"type": "object", "properties": {
+                "automation_id": automation_ref,
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "reason": {"type": "string", "description": "Why, shown to the user when they're asked to confirm"}
+            }, "required": ["automation_id"]}
+        },
+        {
+            "name": "run_automation",
+            "description": "Run an automation once now, on or off, as its Run now (or, for a webhook, Test) does on the board: a webhook's run is a test delivery of payload (else the latest delivery's body) through its filters and templates, without the signature check, duplicate check or coalescing. Returns the run: its status, detail and task.",
+            "inputSchema": {"type": "object", "properties": {
+                "automation_id": automation_ref,
+                "project_id": {"type": "string", "description": project_one},
+                "profile": profile,
+                "payload": {"description": "For a webhook: the test delivery's JSON body"},
+                "event": {"type": "string", "description": "For a webhook: the test delivery's event (X-GitHub-Event), e.g. issues"}
+            }, "required": ["automation_id"]}
+        }
+    ]);
+    tools.as_array().cloned().unwrap_or_default()
 }
 
 /// Checks an agent's arguments against the tool's schema: an argument the tool doesn't have, or

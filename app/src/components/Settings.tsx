@@ -26,10 +26,12 @@ import { groupNames } from "../projectGroups";
 import { navigate, parse } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useHost, useStore } from "../store";
 import { GlobalAgentToolsPanel, ProjectAgentTools } from "./AgentTools";
+import { ProjectAutomations } from "./Automations";
 import { ModelPicker } from "./Board";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
+import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
 import { Button, Field, IconButton, Input, Modal, Textarea, timeAgo, Toggle } from "./ui";
 
@@ -495,6 +497,16 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
             </div>
           )}
 
+          {form.done_when_merged !== undefined && (
+            <div className="space-y-1.5">
+              <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
+              <div className="text-[12px] text-faint">
+                Every few minutes, the pull requests of tasks in In review or Needs attention are checked. A merged one moves its task to Done and
+                removes its worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
+              </div>
+            </div>
+          )}
+
           {prompts && <ProjectPrompts project={form} onChange={set} />}
 
           {project && hostSupports(host, 21) && (
@@ -506,6 +518,8 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
               <ProjectAgentTools project={project} />
             </div>
           )}
+
+          {hostSupports(host, 63) && <ProjectAutomations project={project} />}
 
           <div className="space-y-4 rounded-xl border border-line p-4">
             <div className="space-y-1">
@@ -1030,6 +1044,8 @@ export function Settings() {
           <ProfilesPanel />
 
           <GlobalAgentToolsPanel />
+
+          <NotificationsPanel />
 
           <ArchivedProjectsPanel />
 

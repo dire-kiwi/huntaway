@@ -68,13 +68,29 @@ pub fn reached(point: &str) {
 
 /// An `AppState` on an in-memory database.
 pub fn state() -> Shared {
-    state_as(Identity { host_id: "h".into(), host_name: "desktop".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() })
+    state_with(meta())
+}
+
+fn meta() -> crate::admin::ServerMeta {
+    crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] }
+}
+
+fn identity() -> Identity {
+    Identity { host_id: "h".into(), host_name: "desktop".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() }
+}
+
+/// `state()` with this process's `meta`.
+pub fn state_with(meta: crate::admin::ServerMeta) -> Shared {
+    state_of(identity(), meta)
 }
 
 /// An `AppState` on an in-memory database, for a host with these ids, tokens and URL.
 pub fn state_as(id: Identity) -> Shared {
+    state_of(id, meta())
+}
+
+fn state_of(id: Identity, meta: crate::admin::ServerMeta) -> Shared {
     let c = crate::db::open(std::path::Path::new(":memory:")).unwrap();
-    let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, args: vec![] };
     let data_dir = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
     AppState::new(c, data_dir, id, meta)
 }

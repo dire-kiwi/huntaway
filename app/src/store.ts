@@ -651,6 +651,24 @@ export function connectEvents() {
   };
 }
 
+type AutomationListener = (hostId: string, projectId: string, automationId: string) => void;
+const automationListeners = new Set<AutomationListener>();
+
+/** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
+export function onAutomationsChanged(fn: AutomationListener) {
+  automationListeners.add(fn);
+  return () => {
+    automationListeners.delete(fn);
+  };
+}
+
+/**
+ * Called with a task as it was (undefined if it wasn't on the board) and as it is when an event changes it, for
+ * notifications (notifier.ts). Not when lists of tasks load, at the start and after a reconnect, so a task that's
+ * waiting already then doesn't notify.
+ */
+export const liveTaskChanges = new Set<(prev: Task | undefined, next: Task) => void>();
+
 /** Applies a websocket event to the store (exported for tests). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function handleEvent(ev: any) {
@@ -659,9 +677,13 @@ export function handleEvent(ev: any) {
   // Ids are only unique on their host: an event about another host's task with the same id leaves it be.
   const otherHost = (taskId: string) => otherHosts(s.tasks, h, taskId);
   switch (ev.type) {
-    case "task":
+    case "task": {
+      const prev = s.tasks[ev.task.id];
       s.upsertTask({ ...ev.task, host_id: h });
+      const next = useStore.getState().tasks[ev.task.id];
+      if (next && next !== prev && next.host_id === h) for (const l of liveTaskChanges) l(prev?.host_id === h ? prev : undefined, next);
       break;
+    }
     case "task_deleted":
       if (otherHost(ev.id)) break;
       changed(h, "tasks", ev.id);
@@ -689,10 +711,13 @@ export function handleEvent(ev: any) {
     case "settings_changed":
       s.loadHostSettings(h);
       break;
+    case "automations_changed":
+      for (const fn of automationListeners) fn(h, ev.project_id, ev.automation_id);
+      break;
     case "message":
     case "message_updated": {
-      // A project change or deletion asked for (or answered) in any thread.
-      if (ev.message?.kind === "permission" && ["project", "delete_task"].includes(ev.message.data?.kind)) {
+      // A project change, deletion or automation asked for (or answered) in any thread.
+      if (ev.message?.kind === "permission" && ["project", "delete_task", "automation"].includes(ev.message.data?.kind)) {
         const a: HostApproval = { ...ev.message.data, task_id: ev.task_id, created_at: ev.message.created_at, host_id: h };
         approvalsLoading.changed(a);
         useStore.setState((st) => ({ approvals: withApproval(st.approvals, a) }));

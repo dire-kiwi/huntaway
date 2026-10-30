@@ -637,6 +637,8 @@ fn start_run(
     for m in &recorded {
         state.emit_message(m);
     }
+    #[cfg(test)]
+    crate::testing::reached("run:started");
     let mut fields = vec![("running", json!(true)), ("steerable", json!(!compact))];
     // A queued message sent as the last run ends carries on the same stretch of work.
     if !task.running {
@@ -945,6 +947,13 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         let model = task.model.clone().filter(|m| !m.trim().is_empty()).or_else(|| {
             inherited.into_iter().flatten().find(|m| !m.trim().is_empty() && !crate::codex::is_claude_model(m))
         });
+        // Not every Codex model takes every effort, and the effort can come from elsewhere than the model (the host's
+        // default is Claude's and Codex's both, and a task on its default model inherits a model it wasn't picked for):
+        // one the model doesn't take gives way to the model's own default (when its models can be listed).
+        let effort = match config.as_ref() {
+            Some(cfg) => codex_run_effort(cfg, model.as_deref(), effort.clone()).await,
+            None => effort.clone(),
+        };
         let (approval_policy, approvals_reviewer, sandbox) = crate::codex::policy(&permission_mode, task.kind == "review");
         let tools = match &project {
             Some(p) => crate::agent_tools::for_run(state, &p.id)?,
@@ -997,7 +1006,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             cwd: cwd.clone(),
             thread_id: task.session_id.clone(),
             model,
-            effort: effort.clone(),
+            effort,
             approval_policy: approval_policy.into(),
             approvals_reviewer: approvals_reviewer.into(),
             sandbox: sandbox.into(),
@@ -1144,6 +1153,30 @@ pub fn approves_own_waits(args: &[String]) -> bool {
     !allowed.any(|t| pre_approved.iter().flatten().any(|p| p == t))
 }
 
+/// A Codex run's effort, as `codex_effort` has it with the config's models (as it is if they can't be listed).
+async fn codex_run_effort(config: &db::ClaudeConfig, model: Option<&str>, effort: Option<String>) -> Option<String> {
+    if effort.is_none() {
+        return None;
+    }
+    match crate::codex::models(config.dir()).await {
+        Ok(models) => codex_effort(effort, model, &models),
+        Err(_) => effort,
+    }
+}
+
+/// A Codex run's effort, if its model (or the default model) takes it; otherwise that model's own default. Models
+/// that don't say which efforts they take take any.
+fn codex_effort(effort: Option<String>, model: Option<&str>, models: &[crate::codex::Model]) -> Option<String> {
+    let m = match model {
+        Some(id) => models.iter().find(|m| m.id == id),
+        None => models.iter().find(|m| m.is_default).or(models.first()),
+    };
+    match (effort, m) {
+        (Some(e), Some(m)) if !m.efforts.is_empty() && !m.efforts.contains(&e) => m.default_effort.clone(),
+        (e, _) => e,
+    }
+}
+
 /// Whether the agent's own reviewer approved the `wait` calls of a run, command included:
 /// Claude's classifier (see `approves_own_waits`) or Codex's reviewer (`codex::Spec::review_waits`).
 pub fn agent_reviews_waits(state: &Shared, run_id: &str) -> bool {
@@ -1182,15 +1215,18 @@ pub fn github_account(project: Option<&Project>, profile: &Profile) -> Option<St
 /// when no account is set, which leaves gh's active account. Fails when the account set isn't
 /// signed in to gh, so nothing runs as another account instead.
 pub async fn task_gh_env(state: &Shared, task: &Task) -> Result<Option<crate::gh_mcp::GhEnv>> {
-    let (project, profile) = {
-        let c = state.db();
-        let project = match &task.project_id {
-            Some(id) => Some(db::get_project(&c, id)?.context("project not found")?),
-            None => None,
-        };
-        (project, db::get_profile(&c, &task.profile_id)?.context("profile not found")?)
+    crate::gh_mcp::account_env(task_github_account(state, task)?.as_deref()).await
+}
+
+/// The GitHub account `task`'s runs use (see `github_account`), if one is set.
+pub fn task_github_account(state: &Shared, task: &Task) -> Result<Option<String>> {
+    let c = state.db();
+    let project = match &task.project_id {
+        Some(id) => Some(db::get_project(&c, id)?.context("project not found")?),
+        None => None,
     };
-    crate::gh_mcp::account_env(github_account(project.as_ref(), &profile).as_deref()).await
+    let profile = db::get_profile(&c, &task.profile_id)?.context("profile not found")?;
+    Ok(github_account(project.as_ref(), &profile))
 }
 
 /// What a Claude run with our gh server is told about GitHub. gh in Bash is turned away (see
@@ -1487,9 +1523,11 @@ fn system_prompt(
         "You have access to the `{MCP_SERVER_NAME}` MCP tools for the Huntaway board \
          (list_projects, list_tasks, get_task, get_task_field, create_task, update_task, send_to_task, request_user_input, wait). \
          They also reach other profiles' boards that let your agents in: list_projects shows each project's profile. \
-         When you have nothing to do until something happens (other tasks, CI, a deploy), call `wait` rather than \
-         sleeping or polling: the board then shows you as waiting rather than working. For CI or a deploy, give it a \
-         `command` that exits once it's done (e.g. `gh pr checks <N> --watch`)."
+         When you have nothing to do until something happens (other tasks, CI, reviews, a deploy), call `wait` rather than \
+         sleeping or polling: the board then shows you as waiting rather than working. For CI or reviews on a pull \
+         request, give it the `pull_request` (its number or URL): it ends when the checks fail or pass, someone \
+         comments or reviews, the branch conflicts with its base, or it's merged or closed, and says what happened. For \
+         a deploy, give it a `command` that exits once it's done."
     );
     match (task.kind.as_str(), project) {
         ("task", p) if task.is_scratch() => {
@@ -1535,7 +1573,8 @@ fn system_prompt(
                  Use them to look across projects, create and update tasks, and start agents on \
                  tasks (create_task with start=true, or send_to_task) when the user asks for that. Tasks you create are \
                  recorded as this task's. If you are blocked or need a decision or information from the user, call \
-                 `request_user_input` with your question and then end your turn — the task is flagged \"Needs attention\" \
+                 `request_user_input` with your question (and its `options`, when the choices are known) and then end your \
+                 turn — the task is flagged \"Needs attention\" \
                  and the user's reply resumes this conversation. When you finish, end with a concise summary of what you \
                  did; the task then moves to \"In review\".",
                 task.number, task.title, task.id
@@ -1572,7 +1611,8 @@ fn system_prompt(
             s.push_str(&crate::documents::system_prompt(task, document.unwrap_or("?"), p, group));
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you made or changed; the \
                  task then moves to \"In review\"."
             ));
@@ -1599,7 +1639,8 @@ fn system_prompt(
                  rather than ending your turn. Tasks you create are recorded as this task's: the board shows how \
                  many are done, and `get_task` on this task lists them. Run tasks that build on each other one after the other, and independent ones in \
                  parallel. If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of the tasks you created and where \
                  they stand; the task then moves to \"In review\".",
                 GROUP_TASK_KEY, task.number, task.title, task.id
@@ -1679,7 +1720,8 @@ fn system_prompt(
             }
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you did; the task then \
                  moves to \"In review\". You may create follow-up tasks with `create_task`."
             ));
@@ -2165,7 +2207,7 @@ mod tests {
         };
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
-        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, args: vec![] };
+        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] };
         let dir = std::env::temp_dir().join(format!("ia-runner-{}", crate::util::new_id()));
         let state: Shared = crate::state::AppState::new(c, dir, id, meta);
         runs::TEST_CAN_RUN.set(true);
@@ -2182,6 +2224,42 @@ mod tests {
         assert_eq!((b.running, b.waiting, b.status.as_str()), (false, true, "in_progress"));
         assert_eq!(b.queued_message.as_deref(), Some("and then this"));
         runs::TEST_CAN_RUN.set(false);
+    }
+
+    #[test]
+    fn an_effort_a_codex_model_doesnt_take_gives_way_to_its_default() {
+        let model = |id: &str, default: bool, efforts: &[&str], effort: Option<&str>| crate::codex::Model {
+            id: id.into(),
+            name: id.into(),
+            is_default: default,
+            efforts: efforts.iter().map(|e| e.to_string()).collect(),
+            default_effort: effort.map(String::from),
+        };
+        let models = [model("gpt-5.5", true, &["low", "medium", "high", "xhigh"], Some("medium")), model("gpt-6", false, &["low", "max"], None), model("odd", false, &[], None)];
+        let e = |effort: &str, m: Option<&str>| codex_effort(Some(effort.into()), m, &models);
+        assert_eq!(e("max", Some("gpt-5.5")).as_deref(), Some("medium"));
+        assert_eq!(e("high", Some("gpt-5.5")).as_deref(), Some("high"));
+        // No model: the default one's.
+        assert_eq!(e("max", None).as_deref(), Some("medium"));
+        assert_eq!(e("max", Some("gpt-6")).as_deref(), Some("max"));
+        assert_eq!(e("high", Some("gpt-6")), None, "no default of its own: Codex picks");
+        // A model it doesn't know, or one that doesn't list its efforts, keeps it.
+        assert_eq!(e("max", Some("gpt-7")).as_deref(), Some("max"));
+        assert_eq!(e("max", Some("odd")).as_deref(), Some("max"));
+        assert_eq!(codex_effort(None, Some("gpt-5.5"), &models), None);
+
+        // A run checks the model it runs with, its own or inherited, with the config's models (as Codex lists them).
+        let listed = models.to_vec();
+        crate::testing::run(async move || {
+            let home = format!("/tmp/ia-codex-{}", crate::util::new_id());
+            crate::codex::set_test_models(&home, listed.clone());
+            let c = crate::testing::state();
+            let cfg = db::insert_claude_config(&c.db(), "Codex", &home, "codex").unwrap();
+            assert_eq!(codex_run_effort(&cfg, Some("gpt-5.5"), Some("max".into())).await.as_deref(), Some("medium"));
+            assert_eq!(codex_run_effort(&cfg, Some("gpt-6"), Some("max".into())).await.as_deref(), Some("max"));
+            assert_eq!(codex_run_effort(&cfg, None, Some("max".into())).await.as_deref(), Some("medium"));
+            assert_eq!(codex_run_effort(&cfg, Some("gpt-5.5"), None).await, None);
+        })
     }
 
     /// A task whose agent is running a run that takes input (or not), with no process behind it.
@@ -2269,7 +2347,7 @@ mod tests {
         crate::testing::run(async || {
             let (state, task, run) = running(true);
             let wait = |call_id: &str| {
-                let w = db::AgentWait { reason: None, since: crate::util::now(), until: crate::util::now(), tasks: vec![], command: None, call_id: call_id.into(), run_id: run.id.clone(), moved_to: None, subagent_finished: None };
+                let w = db::AgentWait { reason: None, since: crate::util::now(), until: crate::util::now(), tasks: vec![], command: None, call_id: call_id.into(), run_id: run.id.clone(), moved_to: None, subagent_finished: None, pull_request: None };
                 state.update_task(&task.id, &[("agent_wait", json!(w))]).unwrap();
             };
             // Its own thread calling another tool means it's working again; a subagent's doesn't.
@@ -2761,9 +2839,11 @@ mod tests {
 
         // Without GitHub (or a branch of its own), it leaves pushing to the user.
         let text = system_prompt(&task, Some(&project), None, &[], None, None, false);
-        assert!(text.contains("Do not push, merge, or switch branches unless asked.") && !text.contains("pull request"), "{text}");
+        assert!(text.contains("Do not push, merge, or switch branches unless asked.") && !text.contains("open a pull request"), "{text}");
         task.branch = None;
-        assert!(!system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false).contains("pull request"));
+        assert!(!system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false).contains("open a pull request"));
+        // Every agent is told it can wait on one, though.
+        assert!(text.contains("For CI or reviews on a pull request, give it the `pull_request`"), "{text}");
     }
 
     #[test]
