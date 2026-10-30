@@ -589,7 +589,8 @@ export interface ContextDetail {
 export interface Message {
   id: number;
   task_id: string;
-  kind: "user" | "claude" | "event" | "permission";
+  /** `question`: one asked with request_user_input (API 64). */
+  kind: "user" | "claude" | "event" | "permission" | "question";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   created_at: string;
@@ -1039,6 +1040,9 @@ export type Approval = ProjectApproval | DeletionApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
+/** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
+export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
+
 export interface HostInfo {
   host_id: string;
   host_name: string;
@@ -1261,8 +1265,13 @@ export const api = {
   killTerminal: (h: string, id: string, tool?: string) => on(h).del(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),
   /** Tool sessions end once no board renews them (and nobody is attached). */
   keepTerminal: (h: string, id: string, tool: string) => on(h).post(`/tasks/${enc(id)}/terminal/keepalive${toolQuery(tool)}`),
-  resolvePermission: (h: string, id: string, decision: "allow" | "allow_always" | "deny", message?: string) =>
-    on(h).post(`/permissions/${enc(id)}`, { decision, message }),
+  /** With `reply` (API 64): a question's answers, by question (each a list of picked labels and typed text); the
+   *  mode an approved plan carries on in; or the feedback a plan's sent back with. */
+  resolvePermission: (h: string, id: string, decision: "allow" | "allow_always" | "deny", message?: string, reply?: PermissionReply) =>
+    on(h).post(`/permissions/${enc(id)}`, { decision, message, ...reply }),
+  /** Answer a question an agent asked with request_user_input, from its card (API 64): sent as the user's message. */
+  answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
+    on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
   /** Older hosts ignore `all` and list project changes only. */
   projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true"),

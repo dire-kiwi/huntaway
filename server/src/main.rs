@@ -19,6 +19,7 @@ mod mcp;
 mod permissions;
 mod pr_watch;
 mod prompts;
+mod questions;
 mod proto;
 mod pty;
 mod relay;

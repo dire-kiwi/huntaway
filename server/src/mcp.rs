@@ -155,8 +155,26 @@ fn board_tools() -> Value {
         },
         {
             "name": "request_user_input",
-            "description": "Flag this task as 'Needs attention' because you need an answer, decision or information from the user. After calling it, end your turn with the question; the user's reply will resume the conversation.",
-            "inputSchema": {"type": "object", "properties": {"question": {"type": "string", "description": "Short summary of what you need from the user"}}, "required": ["question"]}
+            "description": format!("Flag this task as 'Needs attention' because you need an answer, decision or information from the user. \
+                The board shows your question as a card in the thread. When the possible answers are known (a choice between approaches, \
+                yes or no, which of several things to do), give them as options: the user then answers with a click (or keys 1-9), and \
+                can still write their own answer unless allow_other is false. After calling it, end your turn with the question (and \
+                what the user needs to know to answer it); the user's reply (the options they picked, or what they wrote) will resume \
+                the conversation. Up to {} options.", crate::questions::MAX_OPTIONS),
+            "inputSchema": {"type": "object", "properties": {
+                "question": {"type": "string", "description": "The question, short enough to show on the task's card (e.g. 'Which database should the cache use?')"},
+                "options": {
+                    "type": "array",
+                    "maxItems": crate::questions::MAX_OPTIONS,
+                    "description": "The answers to pick from, if they're known; put the one you recommend first",
+                    "items": {"type": "object", "properties": {
+                        "label": {"type": "string", "description": "The answer, in a few words"},
+                        "description": {"type": "string", "description": "What picking it means, or its trade-offs"}
+                    }, "required": ["label"]}
+                },
+                "multi_select": {"type": "boolean", "description": "Let the user pick more than one option (default false)"},
+                "allow_other": {"type": "boolean", "description": "Offer a free-text answer besides the options (default true)"}
+            }, "required": ["question"]}
         },
         {
             "name": "wait",

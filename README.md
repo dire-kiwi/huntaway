@@ -473,7 +473,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (with the repository's `.agents/skills`). Both add the project's own and global skills, less the
   ones it turns off. The menu reloads when the task moves to another config.
 - **Status transitions:** running → *In progress*; the agent asks a question
-  (`request_user_input`), a tool needs approval, a run fails, or you stop it → *Needs
+  (`request_user_input` or `AskUserQuestion`, see *Questions and plans*) or presents a plan, a
+  tool needs approval, a run fails, or you stop it → *Needs
   attention*; a run finishes cleanly → *In review*. You move cards to *Done* yourself, or to
   *Ready for merge*.
 - **Archived** (API 53): a task that's been in *Done* for two days is archived. It leaves the
@@ -737,14 +738,42 @@ skipped. Auto-compacting idle sessions is Claude-only.
   error, the message stays on screen until you press Enter (API 13).
 - **Permissions:** in *Ask* mode, Claude's permission prompts are routed
   (`--permission-prompt-tool`) to an approval card in the thread: Allow, Always allow (for
-  that thread), or Deny.
+  that thread), or Deny. Codex's approvals get the same card, which names the agent asking.
+- **Questions and plans** (API 64) are cards in the thread rather than approvals, and the task's
+  card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
+  Keys 1–9 pick an option in the latest one that's waiting, unless you're typing.
+  - `request_user_input` can give `options` (each a `label` and a `description`, up to nine),
+    `multi_select` and `allow_other` (whether a free-text answer is offered too; it is by
+    default). The card's buttons answer it, and the answer goes as your message (the question
+    quoted, then the options picked or what you wrote), which resumes the agent. A reply typed in
+    the thread settles it too. The agent's turn ends when it asks, so it stays answerable after
+    its run ends (`POST /tasks/{id}/questions/{message id}` with `choices` and `text`).
+  - Claude's `AskUserQuestion` shows its questions with their headers, options and descriptions,
+    multi-select and an *Other* answer. The answers go back the way headless Claude Code takes
+    them, in the tool's input (`updatedInput.answers`, each question's text to its answers joined
+    with commas). Codex's own questions (`item/tool/requestUserInput`, in its plan mode) get the
+    same card and are answered by question id; a question marked secret takes a password field
+    and its answer isn't shown in the thread. *Dismiss* declines them.
+  - A plan (`ExitPlanMode`) shows as Markdown. **Approve** picks the mode the thread carries on
+    in (starting at the thread's own mode, if it has one other than Plan, else its default; or
+    Accept edits, Auto or Bypass), which the running Claude Code switches to as
+    well (`updatedPermissions` with `setMode`; it can't switch to Bypass, which the board covers
+    by allowing every prompt). **Keep planning** sends it back with your feedback.
+  - They're asked whatever the thread's mode or *Always allow* list, except *Don't ask*, which
+    declines them. A question or plan whose run ended before it was answered (stopped, say) can
+    still be answered: the answers (or the approval, or the feedback) go to the agent as your
+    message. Once a message has been sent to the agent after one (by you, the board or another
+    agent), it isn't answered any more. Only the first answer counts, so two tabs can't both send one.
+  - `POST /permissions/{id}` takes `answers` (a list per question of option labels and typed
+    answers), `mode` (for a plan approved) and `feedback` (for one sent back) besides `decision`.
 - **Permission modes:** each host has a default mode (its agent defaults), each project can
   set its own (Settings, or *Host default*), and every thread can override it from the selector under the message box (Shift+Tab cycles Ask → Accept edits →
   Auto → Plan). Modes map to Claude's `--permission-mode`: *Ask* (`default`), *Accept edits*,
   *Auto* (Claude's classifier), *Plan*, *Don't ask* (deny anything not already allowed) and
   *Bypass*. A change applies from the next message, except that switching to Bypass or Don't ask
   also settles prompts in the current run. Approving a plan (`ExitPlanMode`) moves a thread
-  in Plan mode back to its default mode (Ask if that's Plan too).
+  in Plan mode back to its default mode (Ask if that's Plan too), or to the mode picked on the
+  plan's card.
 - **Analytics** (sidebar) tracks when you prompted which project and task, for timesheets. It's
   built from the threads' own history (your messages, starting a task, moving it to *Ready for
   merge*, and agent runs), so it covers work from before it existed, across every host with the
