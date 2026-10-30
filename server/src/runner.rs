@@ -945,6 +945,13 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         let model = task.model.clone().filter(|m| !m.trim().is_empty()).or_else(|| {
             inherited.into_iter().flatten().find(|m| !m.trim().is_empty() && !crate::codex::is_claude_model(m))
         });
+        // Not every Codex model takes every effort, and the effort can come from elsewhere than the model (the host's
+        // default is Claude's and Codex's both, and a task on its default model inherits a model it wasn't picked for):
+        // one the model doesn't take gives way to the model's own default (when its models can be listed).
+        let effort = match config.as_ref() {
+            Some(cfg) => codex_run_effort(cfg, model.as_deref(), effort.clone()).await,
+            None => effort.clone(),
+        };
         let (approval_policy, approvals_reviewer, sandbox) = crate::codex::policy(&permission_mode, task.kind == "review");
         let tools = match &project {
             Some(p) => crate::agent_tools::for_run(state, &p.id)?,
@@ -997,7 +1004,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             cwd: cwd.clone(),
             thread_id: task.session_id.clone(),
             model,
-            effort: effort.clone(),
+            effort,
             approval_policy: approval_policy.into(),
             approvals_reviewer: approvals_reviewer.into(),
             sandbox: sandbox.into(),
@@ -1142,6 +1149,30 @@ pub fn approves_own_waits(args: &[String]) -> bool {
     let pre_approved = [MCP_SERVER_NAME, LEGACY_MCP_SERVER_NAME].map(|n| [format!("mcp__{n}"), format!("mcp__{n}__wait")]);
     let mut allowed = args[i + 1..].iter().take_while(|a| !a.starts_with("--")).flat_map(|a| a.split([',', ' ']));
     !allowed.any(|t| pre_approved.iter().flatten().any(|p| p == t))
+}
+
+/// A Codex run's effort, as `codex_effort` has it with the config's models (as it is if they can't be listed).
+async fn codex_run_effort(config: &db::ClaudeConfig, model: Option<&str>, effort: Option<String>) -> Option<String> {
+    if effort.is_none() {
+        return None;
+    }
+    match crate::codex::models(config.dir()).await {
+        Ok(models) => codex_effort(effort, model, &models),
+        Err(_) => effort,
+    }
+}
+
+/// A Codex run's effort, if its model (or the default model) takes it; otherwise that model's own default. Models
+/// that don't say which efforts they take take any.
+fn codex_effort(effort: Option<String>, model: Option<&str>, models: &[crate::codex::Model]) -> Option<String> {
+    let m = match model {
+        Some(id) => models.iter().find(|m| m.id == id),
+        None => models.iter().find(|m| m.is_default).or(models.first()),
+    };
+    match (effort, m) {
+        (Some(e), Some(m)) if !m.efforts.is_empty() && !m.efforts.contains(&e) => m.default_effort.clone(),
+        (e, _) => e,
+    }
 }
 
 /// Whether the agent's own reviewer approved the `wait` calls of a run, command included:
@@ -2182,6 +2213,42 @@ mod tests {
         assert_eq!((b.running, b.waiting, b.status.as_str()), (false, true, "in_progress"));
         assert_eq!(b.queued_message.as_deref(), Some("and then this"));
         runs::TEST_CAN_RUN.set(false);
+    }
+
+    #[test]
+    fn an_effort_a_codex_model_doesnt_take_gives_way_to_its_default() {
+        let model = |id: &str, default: bool, efforts: &[&str], effort: Option<&str>| crate::codex::Model {
+            id: id.into(),
+            name: id.into(),
+            is_default: default,
+            efforts: efforts.iter().map(|e| e.to_string()).collect(),
+            default_effort: effort.map(String::from),
+        };
+        let models = [model("gpt-5.5", true, &["low", "medium", "high", "xhigh"], Some("medium")), model("gpt-6", false, &["low", "max"], None), model("odd", false, &[], None)];
+        let e = |effort: &str, m: Option<&str>| codex_effort(Some(effort.into()), m, &models);
+        assert_eq!(e("max", Some("gpt-5.5")).as_deref(), Some("medium"));
+        assert_eq!(e("high", Some("gpt-5.5")).as_deref(), Some("high"));
+        // No model: the default one's.
+        assert_eq!(e("max", None).as_deref(), Some("medium"));
+        assert_eq!(e("max", Some("gpt-6")).as_deref(), Some("max"));
+        assert_eq!(e("high", Some("gpt-6")), None, "no default of its own: Codex picks");
+        // A model it doesn't know, or one that doesn't list its efforts, keeps it.
+        assert_eq!(e("max", Some("gpt-7")).as_deref(), Some("max"));
+        assert_eq!(e("max", Some("odd")).as_deref(), Some("max"));
+        assert_eq!(codex_effort(None, Some("gpt-5.5"), &models), None);
+
+        // A run checks the model it runs with, its own or inherited, with the config's models (as Codex lists them).
+        let listed = models.to_vec();
+        crate::testing::run(async move || {
+            let home = format!("/tmp/ia-codex-{}", crate::util::new_id());
+            crate::codex::set_test_models(&home, listed.clone());
+            let c = crate::testing::state();
+            let cfg = db::insert_claude_config(&c.db(), "Codex", &home, "codex").unwrap();
+            assert_eq!(codex_run_effort(&cfg, Some("gpt-5.5"), Some("max".into())).await.as_deref(), Some("medium"));
+            assert_eq!(codex_run_effort(&cfg, Some("gpt-6"), Some("max".into())).await.as_deref(), Some("max"));
+            assert_eq!(codex_run_effort(&cfg, None, Some("max".into())).await.as_deref(), Some("medium"));
+            assert_eq!(codex_run_effort(&cfg, Some("gpt-5.5"), None).await, None);
+        })
     }
 
     /// A task whose agent is running a run that takes input (or not), with no process behind it.

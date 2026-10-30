@@ -364,6 +364,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   When more than one is available, the new task dialog asks which to use. A thread keeps the
   config it was created with (it can be changed under Details until its agent first starts),
   and its review thread uses the same one unless the project's reviewers pick another.
+- **One prompt, several agents** (API 61), as t3code sends a prompt to several models: each
+  `!model` in the new task dialog's description makes a task with that model, so `!opus
+  !gpt-5.5` makes two tasks from one prompt, one on Claude Code and one on Codex. `!` takes any
+  model of the configs the task can use (the picked config's first), `!<config>` a config's
+  default model, and `!<model>.<config>` a model that more than one config has (`!opus.work`).
+  Code tasks made this way each get their own worktree and branch. They share a `fanout_id`, so
+  their cards show which model each ran with, and each one's Details list the others with their
+  state and cost, to compare them.
 - **Agents across profiles** (API 23): each profile has its own board, and agents' board tools
   see their own profile's. A profile can let other profiles' agents use its board too: edit it
   under Settings → Profiles and tick them under *Agents from other profiles* (or *Every

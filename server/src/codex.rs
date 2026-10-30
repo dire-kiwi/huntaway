@@ -863,6 +863,12 @@ pub async fn models(codex_home: &str) -> Result<Vec<Model>> {
     Ok(list)
 }
 
+/// Lists `models` for a Codex config, as if its app-server had (for tests).
+#[cfg(test)]
+pub fn set_test_models(codex_home: &str, models: Vec<Model>) {
+    MODELS.lock().unwrap().get_or_insert_default().insert(codex_home.to_string(), (Instant::now(), models));
+}
+
 type SkillCache = HashMap<(String, Option<PathBuf>), (Instant, Vec<crate::agent_tools::TaskSkill>)>;
 static SKILLS: std::sync::Mutex<Option<SkillCache>> = std::sync::Mutex::new(None);
 

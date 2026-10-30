@@ -995,6 +995,10 @@ pub struct CreateTask {
     /// The tasks elsewhere it's for (see `check_external_links`).
     #[serde(default)]
     pub external_links: Option<Value>,
+    /// Shared by the tasks made together from one prompt, each run by another agent (see
+    /// db::Task::fanout_id).
+    #[serde(default)]
+    pub fanout_id: Option<String>,
 }
 
 /// A task's external links as they're stored (see db::ExternalLink): a list of
@@ -1039,6 +1043,16 @@ fn new_task_links(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
     })
 }
 
+/// A new task's fanout id (blank for none): letters, digits, `-` and `_`, as an id is.
+fn new_task_fanout(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
+    match b.fanout_id.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+        Some(f) if f.len() > 64 || !f.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') => {
+            Err(ApiError::bad("fanout_id must be up to 64 letters, digits, - or _"))
+        }
+        f => Ok(f.map(|f| ("fanout_id", json!(f)))),
+    }
+}
+
 /// Check a new task's requested type (blank for none).
 fn check_task_type(task_type: Option<&str>) -> ApiResult<Option<&str>> {
     match task_type.map(str::trim).filter(|t| !t.is_empty()) {
@@ -1081,6 +1095,7 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
     }
     let config = pick_config(&s.db(), profile_id, None, b.claude_config_id.as_deref())?;
     let links = new_task_links(&b)?;
+    let fanout = new_task_fanout(&b)?;
     let t = db::insert_scratch_task(
         &s.db(),
         NewTask {
@@ -1096,7 +1111,7 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
             claude_config_id: config.as_deref(),
         },
     )?;
-    let fields: Vec<_> = resolution.map(|r| ("resolution", json!(r))).into_iter().chain(links).collect();
+    let fields: Vec<_> = resolution.map(|r| ("resolution", json!(r))).into_iter().chain(links).chain(fanout).collect();
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     s.emit_task(&t);
     let start = match b.start {
@@ -1155,6 +1170,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
         return Err(ApiError::bad("a group task can't be a scratch task"));
     }
     let config = pick_config(&s.db(), &id, None, b.claude_config_id.as_deref())?;
+    let fanout = new_task_fanout(&b)?;
     let links = new_task_links(&b)?;
     let t = db::insert_group_task(
         &s.db(),
@@ -1172,7 +1188,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
         },
         group,
     )?;
-    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).collect();
+    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).chain(fanout).collect();
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     std::fs::create_dir_all(s.profile_scratch_dir(&id)).ok();
     s.emit_task(&t);
@@ -1261,6 +1277,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
         None => None,
     };
     let links = new_task_links(&b)?;
+    let fanout = new_task_fanout(&b)?;
     let t = db::insert_task(
         &s.db(),
         NewTask {
@@ -1297,6 +1314,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
         fields.push(("task_type", json!(tt)));
     }
     fields.extend(links);
+    fields.extend(fanout);
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     drop(deleting);
     s.emit_task(&t);
@@ -2720,6 +2738,38 @@ pub(crate) mod tests {
             std::fs::remove_dir_all(&s.data_dir).ok();
             std::fs::remove_dir_all(&dir).ok();
             crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn tasks_made_from_one_prompt_share_a_fanout_id() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("WEB".into()), base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let fanned = |id: &str| CreateTask { title: "Look".into(), fanout_id: Some(id.into()), ..Default::default() };
+            let a = create_task_inner(&s, &p.id, fanned("f-1")).unwrap();
+            let b = create_task_inner(&s, &p.id, CreateTask { model: Some("opus".into()), ..fanned("f-1") }).unwrap();
+            assert_eq!((a.fanout_id.as_deref(), b.fanout_id.as_deref()), (Some("f-1"), Some("f-1")));
+            let scratch = create_scratch_task_inner(&s, &profile.id, CreateTask { title: "Ask".into(), fanout_id: Some("f_2".into()), ..Default::default() }).unwrap();
+            assert_eq!(scratch.fanout_id.as_deref(), Some("f_2"));
+            // On its own, or with a blank one, it has none.
+            assert_eq!(create_task_inner(&s, &p.id, CreateTask { title: "Alone".into(), ..Default::default() }).unwrap().fanout_id, None);
+            assert_eq!(create_task_inner(&s, &p.id, fanned(" ")).unwrap().fanout_id, None);
+            // A group's plans made from one prompt are linked too.
+            update_project_inner(&s, &p.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
+            let grouped = |id: &str| CreateGroupTask { group: "Shop".into(), task: CreateTask { task_type: Some("plan".into()), ..fanned(id) } };
+            let Json(g) = create_group_task(State(s.clone()), Path(profile.id.clone()), Json(grouped("f-3"))).await.unwrap();
+            assert_eq!((g["task_type"].as_str(), g["fanout_id"].as_str()), (Some("plan"), Some("f-3")));
+            for bad in ["a b", "x/y", &"z".repeat(65)] {
+                assert!(create_task_inner(&s, &p.id, fanned(bad)).is_err(), "{bad}");
+                assert!(create_scratch_task_inner(&s, &profile.id, fanned(bad)).is_err(), "{bad}");
+                assert!(create_group_task(State(s.clone()), Path(profile.id.clone()), Json(grouped(bad))).await.is_err(), "{bad}");
+            }
         })
     }
 
