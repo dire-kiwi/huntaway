@@ -12,7 +12,7 @@ import {
   type NotifyMode,
   type NotifySettings,
 } from "../notifications";
-import { chime, notifyPermission, showNotification } from "../notifier";
+import { chime, notifyPermission, showNotification, unlockSound } from "../notifier";
 import { Button, Toggle } from "./ui";
 
 /** Settings → Notifications: how this browser tells the user that a task needs them. */
@@ -47,6 +47,7 @@ export function NotificationsPanel() {
   };
   const pick = (mode: NotifyMode) => {
     save({ mode });
+    unlockSound();
     if (showsNotifications(mode) && permission === "default") enable();
   };
   const test = () => {

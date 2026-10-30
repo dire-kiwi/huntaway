@@ -41,32 +41,36 @@ export function notifyPermission(): NotifyPermission {
 const tab = Math.random().toString(36).slice(2);
 
 /** Whether this tab is the one that notifies, of all of the browser's tabs (and windows) on this board. */
-let leading = false;
+let leading = () => false;
 
 /** The first tab to ask holds the lock for as long as it's open; then the next one in line has it. */
 function lead() {
   if (navigator.locks) {
+    let held = false;
+    leading = () => held;
     navigator.locks
       .request("ia.notifications", () => {
-        leading = true;
+        held = true;
         return new Promise<void>(() => {});
       })
       .catch(() => {});
     return;
   }
   // Pages that aren't secure have no locks (or notifications, but the sound still plays once): the tab that last
-  // took a heartbeat over that has gone stale, or kept its own fresh.
+  // took a heartbeat over that had gone stale, or kept its own fresh. Background tabs' timers are slowed down, so
+  // it's checked again before notifying.
   const KEY = "ia.notifyLeader";
   const read = () => JSON.parse(localStorage.getItem(KEY) ?? "null") as { tab: string; at: number } | null;
   const beat = () => {
     try {
       const cur = read();
       if (!cur || cur.tab === tab || Date.now() - cur.at > 6_000) localStorage.setItem(KEY, JSON.stringify({ tab, at: Date.now() }));
-      leading = read()?.tab === tab;
+      return read()?.tab === tab;
     } catch {
-      leading = true;
+      return true;
     }
   };
+  leading = beat;
   beat();
   setInterval(beat, 2_000);
   window.addEventListener("pagehide", () => {
@@ -148,7 +152,7 @@ export function showNotification(title: string, body: string, t?: Task) {
 
 function present(t: Task, event: NotifyEvent) {
   const settings = notifySettings();
-  if (!leading || settings.mode === "off" || !settings.events[event]) return;
+  if (settings.mode === "off" || !settings.events[event] || !leading()) return;
   if (openInFocus(t.id) || movedHere(t.host_id, t.id, EVENT_STATUS[event])) return;
   if (playsSound(settings.mode)) chime(event);
   if (!showsNotifications(settings.mode)) return;
@@ -180,8 +184,8 @@ function taskChanged(prev: Task | undefined, next: Task) {
 let audio: AudioContext | null = null;
 let chimed = 0;
 
-/** Browsers only let a page play sound once the user has clicked or typed on it. */
-function unlockSound() {
+/** Browsers only let a page play sound once the user has clicked or typed on it: call it from a click or key. */
+export function unlockSound() {
   if (!playsSound(notifySettings().mode) || typeof AudioContext === "undefined") return;
   audio ??= new AudioContext();
   if (audio.state !== "running") audio.resume().catch(() => {});

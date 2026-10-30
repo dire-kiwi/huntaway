@@ -124,6 +124,29 @@ test("tasks that need you notify once, with their key, title and reason, and the
   });
 });
 
+test("without Web Locks, one of the tabs still notifies", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Notify: no locks", status: "in_progress" });
+  await withBrowser(server, {}, async (ui) => {
+    const context = ui.page.context();
+    await context.grantPermissions(["notifications"], { origin: server.url });
+    await context.addInitScript(recordNotifications);
+    await context.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "locks", { get: () => undefined });
+      localStorage.setItem("ia.notifications", JSON.stringify({ mode: "notify" }));
+    });
+    const pages = [ui.page, await context.newPage(), await context.newPage()];
+    for (const page of pages) {
+      await page.goto(`${server.url}/p/${project.id}`);
+      await page.getByText("Notify: no locks").first().waitFor();
+    }
+    await server.api("PATCH", `/tasks/${task.id}`, { status: "needs_attention" });
+    await pages[0].waitForFunction(() => document.title.startsWith("("));
+    await sleep(1000);
+    const all = (await Promise.all(pages.map(notes))).flat();
+    assert.deepEqual(all, [`${project.key}-${task.number} Notify: no locks | Needs attention`]);
+  });
+});
+
 test("Settings says why notifications can't work on a page that isn't secure", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
