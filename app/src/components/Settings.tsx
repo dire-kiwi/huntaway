@@ -26,6 +26,7 @@ import { groupNames } from "../projectGroups";
 import { navigate, parse } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useHost, useStore } from "../store";
 import { GlobalAgentToolsPanel, ProjectAgentTools } from "./AgentTools";
+import { ProjectAutomations } from "./Automations";
 import { ModelPicker } from "./Board";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
@@ -508,6 +509,8 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
               <ProjectAgentTools project={project} />
             </div>
           )}
+
+          {hostSupports(host, 63) && <ProjectAutomations project={project} />}
 
           <div className="space-y-4 rounded-xl border border-line p-4">
             <div className="space-y-1">
