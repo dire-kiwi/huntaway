@@ -501,7 +501,7 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
           {hostSupports(host, 66) && (
             <Field
               label="Watch pull requests in review"
-              hint="While a task is in In review, the board reads its pull request every couple of minutes and sends its agent what's new, which starts its turn. Comments from bots and from the agents' own GitHub account (yours too, if you share it) don't count."
+              hint="While a task is in In review, the board reads its pull request every couple of minutes and sends its agent what's new, which starts its turn. Only comments and reviews from people who can push to the repository (its owner, members and collaborators) count, not those from bots or from the agents' own GitHub account (yours too, if you share it)."
             >
               <select
                 value={form.watch_pull_requests ?? "off"}
