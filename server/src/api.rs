@@ -1493,6 +1493,17 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         let at = v.as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).ok_or_else(|| ApiError::bad("done_at must be an RFC 3339 time"))?;
         *v = json!(at.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
     }
+    // A merging task's agent can step out of the merge queue to fix what the merge turned up,
+    // and the task rejoins the queue when its run ends (see Task::remerge).
+    let remerge = match b.get("remerge") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(on)) => *on,
+        Some(_) => return Err(ApiError::bad("remerge must be true or false")),
+    };
+    // Its agent's run ending is what brings it back, so the agent has to be at work.
+    if remerge && !(current.merging && s.is_running(id) && b.get("status").and_then(Value::as_str) == Some("in_progress")) {
+        return Err(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"));
+    }
     // Moving a task to "Ready for merge" asks its agent to merge it (if agents can run here),
     // once no other task in its project is merging.
     let mut merge = false;
@@ -1509,6 +1520,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         // Anywhere but "Ready for merge" (or waiting on the user while merging) ends a merge.
         if merge || !["ready_for_merge", "needs_attention"].contains(&st) {
             fields.push(("merging", json!(merge)));
+        }
+        // Anywhere but "In progress" (or waiting on the user) drops its place to rejoin the queue (see db::update_task).
+        if remerge {
+            fields.push(("remerge", json!(true)));
         }
         // Moving it ends its agent's wait (see wait.rs), told so in the same write.
         if let Some(w) = current.agent_wait.clone().filter(|_| st != current.status) {
@@ -1538,6 +1553,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         fields.push(("position", json!(end)));
     }
     let t = s.update_task(id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
+    if remerge {
+        s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
+    }
     // Unpinned, the title catches up with what the task is about now.
     if unpinned {
         title::refresh(s, id);
