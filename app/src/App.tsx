@@ -8,6 +8,7 @@ import { HostPage } from "./components/HostPage";
 import { Onboarding, ProjectSettings, Settings, TokenScreen } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { TaskPanel, TaskView } from "./components/TaskView";
+import { startNotifications } from "./notifier";
 import { boardTaskUrl, groupTaskUrl, hasPanel, navigate, profileTaskUrl, subprojectTaskUrl, usePanel, useRoute } from "./router";
 import { connectEvents, isGroupTask, profileNames, useProfileName, useStore } from "./store";
 import { startToolKeepalive } from "./terminalTools";
@@ -24,6 +25,7 @@ export function App() {
     setUnauthorizedHandler(() => useStore.getState().setAuthed(false));
     connectEvents();
     startToolKeepalive();
+    startNotifications();
   }, []);
 
   // Home is the board of the profile picked last (or the first one), which has every one of its tasks.
