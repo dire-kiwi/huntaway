@@ -406,7 +406,12 @@ export interface AgentWait {
   tasks?: { id: string; key: string; status: Status }[];
   /** A shell command whose exit ends it (API 41). */
   command?: string | null;
+  /** A pull request whose news ends it (API 62): the `events` it picked of its checks failing or passing, comments
+   *  and reviews, and a conflict, and always its being merged or closed. */
+  pull_request?: { url: string; repo: string; number: number; events: PrWaitEvent[] } | null;
 }
+
+export type PrWaitEvent = "checks_failed" | "checks_passed" | "comments" | "conflicts";
 
 /** A task that makes a document instead of code: an HTML plan or artifact, or a Mermaid diagram (API 42). */
 export type DocumentType = "plan" | "artifact" | "diagram";
