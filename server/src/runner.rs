@@ -126,6 +126,7 @@ fn steered(state: &Shared, run: &Run, id: &str) -> Result<()> {
     };
     // It answers a question the agent asked. Taken in after a turn ended, it starts a new one;
     // after a stop ended the turn, the run is then no longer stopped (see `stop`).
+    let new_turn: bool = state.db().query_row("SELECT between_turns FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
     state.db().execute(
         "UPDATE runs SET attention=NULL, between_turns=0, stop_requested = CASE WHEN stop_requested=2 THEN 0 ELSE stop_requested END WHERE id=?1",
         [&run.id],
@@ -134,7 +135,10 @@ fn steered(state: &Shared, run: &Run, id: &str) -> Result<()> {
     if steer.from_agent {
         msg["from_agent"] = json!(true);
     }
-    state.add_message(task_id, "user", msg)?;
+    let message = state.add_message(task_id, "user", msg)?;
+    if new_turn {
+        state.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![message.id, run.id])?;
+    }
     if let Some(t) = task {
         state.emit_task(&t);
     }
@@ -217,7 +221,7 @@ fn has_queued(state: &Shared, runs: &std::collections::HashMap<String, RunHandle
 /// run's start takes it (see `start_run`), so it isn't lost if the server stops in between.
 /// Returns whether a new run started.
 fn send_queued(state: &Shared, task_id: &str) -> bool {
-    match send_message(state, task_id, None, false, "prompt") {
+    match send_message(state, task_id, None, false, "prompt", None) {
         Ok(_) => true,
         Err(e) => {
             // Unless another run has taken it, or is going to.
@@ -334,6 +338,12 @@ pub fn send_as(state: &Shared, task_id: &str, text: &str, auto: bool) -> ApiResu
     send_run(state, task_id, text, auto, false, "prompt")
 }
 
+/// Send a review's issues back to the task's agent to fix: round `round` of fixes, which the
+/// message is marked with (`review_round`, see checkpoints.rs).
+pub fn send_fixes(state: &Shared, task_id: &str, text: &str, round: u32) -> ApiResult<Task> {
+    send_message(state, task_id, Some(db::Queued::new(text, false)), true, "prompt", Some(round))
+}
+
 /// Like `send`, for a message another thread's agent sent (MCP `send_to_task`). It's marked so
 /// prompt analytics don't count it as the user's.
 pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<Task> {
@@ -346,7 +356,7 @@ pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Tas
 }
 
 fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: bool, kind: &str) -> ApiResult<Task> {
-    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind)?;
+    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
     // The user's prompt may have moved the task on, so its title follows (see title::refresh).
     if kind == "prompt" && !auto && !from_agent && crate::title::worth_asking(text) && !is_compact(text) {
         crate::title::refresh(state, task_id);
@@ -357,7 +367,7 @@ fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: b
 /// Send `message` on a thread. A message the user (or another agent) sent goes with the one
 /// queued there, if any. Without one, it sends just that, and nothing if another run has (see
 /// `send_queued`).
-fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto: bool, kind: &str) -> ApiResult<Task> {
+fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto: bool, kind: &str, review_round: Option<u32>) -> ApiResult<Task> {
     let only_queued = message.is_none();
     let message = message.unwrap_or_else(db::Queued::empty);
     let task = db::get_task(&state.db(), task_id)?.ok_or_else(|| ApiError::not_found("task"))?;
@@ -403,6 +413,9 @@ fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto
             let mut msg = json!({"text": text});
             if auto {
                 msg["auto"] = json!(true);
+            }
+            if let Some(round) = review_round {
+                msg["review_round"] = json!(round);
             }
             if from_agent {
                 msg["from_agent"] = json!(true);
@@ -494,7 +507,7 @@ fn start_waiting(state: &Shared, t: &Task) {
     let queued = db::get_task(&state.db(), &t.id).map(|t| t.and_then(|t| t.queued_message).is_some_and(|q| !q.trim().is_empty()));
     let sent = match queued {
         // It stays queued until the run's start takes it.
-        Ok(true) => send_message(state, &t.id, None, false, "prompt"),
+        Ok(true) => send_message(state, &t.id, None, false, "prompt", None),
         Ok(false) if t.session_id.is_none() => send_as(state, &t.id, "", true),
         Ok(false) => send_as(state, &t.id, "The tasks this one was waiting for are merged (or no longer needed), so carry on with it.", true),
         Err(e) => Err(e.into()),
@@ -636,6 +649,10 @@ fn start_run(
     };
     for m in &recorded {
         state.emit_message(m);
+    }
+    // The message its first turn starts with (see checkpoints.rs).
+    if let Some(m) = recorded.iter().find(|m| m.kind == "user") {
+        let _ = state.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![m.id, run.id]);
     }
     #[cfg(test)]
     crate::testing::reached("run:started");
@@ -900,6 +917,11 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     add_dirs.extend(group.iter().map(|p| p.repo_path.clone()));
     tokio::fs::create_dir_all(crate::util::expand_tilde(&cwd)).await.ok();
+    // A checkpoint of the worktree before the agent changes it (see checkpoints.rs), taken after
+    // any rewind asked for meanwhile, whose conversation rollback this run makes.
+    crate::checkpoints::before_run(state, &task, run).await;
+    task = db::get_task(&state.db(), task_id)?.ok_or_else(|| anyhow!("task not found"))?;
+    let rewind = crate::checkpoints::pending_rewind(&task).cloned();
     // Setting up a subproject task's worktree may have set up the subproject's too.
     let parent = match (&task.parent_id, task.kind.as_str()) {
         (Some(id), "task") => db::get_task(&state.db(), id)?,
@@ -1020,6 +1042,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             approved_mcp_servers: tools.mcp_servers.keys().filter(|n| tools.allowed.contains(&crate::agent_tools::tool_prefix(n))).cloned().collect(),
             disabled_mcp_tools,
             review_waits: approvals_reviewer == "auto_review",
+            revert_before_turn: rewind.as_ref().and_then(|r| r.before_turn.clone()),
         };
         let launch = Launch {
             run_id: run.id.clone(),
@@ -1035,7 +1058,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             codex: Some(spec),
         };
         tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting codex");
-        return started(state, run, launch).await;
+        started(state, run, launch).await?;
+        rewound(state, task_id, rewind);
+        return Ok(());
     }
 
     let mut args: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
@@ -1093,6 +1118,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
     if let Some(sid) = &task.session_id {
         push("--resume", sid);
+        if let Some(at) = rewind.as_ref().and_then(|r| r.resume_at.as_deref()) {
+            push("--resume-session-at", at);
+        }
     }
     if let Some(m) = &model {
         push("--model", m);
@@ -1128,7 +1156,21 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         codex: None,
     };
     tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting claude");
-    started(state, run, launch).await
+    started(state, run, launch).await?;
+    rewound(state, task_id, rewind);
+    Ok(())
+}
+
+/// A run started with the conversation rollback a rewind asked for (see checkpoints.rs): it's done
+/// with. One for another session than the run's is dropped too.
+fn rewound(state: &Shared, task_id: &str, rewind: Option<crate::checkpoints::Rewind>) {
+    let cleared = state.update_task_if(task_id, &[("rewind", Value::Null)], |c| Ok(db::get_task(c, task_id)?.is_some_and(|t| t.rewind.is_some())));
+    if let Err(e) = cleared {
+        tracing::warn!(task = task_id, "clearing the conversation rollback: {e:#}");
+    }
+    if let Some(r) = rewind {
+        state.add_event(task_id, "info", format!("The conversation goes on from before turn {}", r.turn), None);
+    }
 }
 
 /// The board tools a Claude run gets without asking (`--allowedTools`). In auto mode that's all
@@ -1911,6 +1953,10 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
                 return Ok(());
             }
             let tool_result = v["type"] == "user" && v["message"]["content"].as_array().is_some_and(|c| c.iter().any(|b| b["type"] == "tool_result"));
+            // The conversation's latest message, where a rewind can resume it (see checkpoints::Rewind).
+            if let Some(uuid) = v["uuid"].as_str().filter(|_| v["parent_tool_use_id"].is_null()) {
+                state.db().execute("UPDATE runs SET agent_at=?1 WHERE id=?2", rusqlite::params![uuid, run.id])?;
+            }
             state.add_message(task_id, "claude", v)?;
             // A tool call may have changed the task's document: the task shows it as it's written.
             if tool_result {
@@ -1974,6 +2020,8 @@ pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut resul
         }
     }
     state.db().execute("UPDATE runs SET saw_result=1, between_turns=1, result_error=?1 WHERE id=?2", rusqlite::params![error, run.id])?;
+    let status = if stopping == 1 { "stopped" } else if error.is_some() { "failed" } else { "done" };
+    crate::checkpoints::after_turn(state, &run.id, status);
     // A turn that ended isn't waiting any more, even if the agent gave up on the call.
     crate::wait::ended(state, &run.task_id, &run.id);
     crate::documents::turn_ended(state, &run.task_id);
@@ -2016,6 +2064,11 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     };
     #[cfg(test)]
     crate::testing::reached("finish:released");
+    // A turn the agent never ended (stopped, failed or killed) gets its checkpoint here, before the
+    // next run (a queued message) takes one of its own.
+    if run.status == "running" && !run.between_turns && run.kind != "compact" {
+        crate::checkpoints::after_turn(state, run_id, if matches!(outcome, Outcome::Failed(_)) { "failed" } else { "stopped" });
+    }
     let _ = state.db().execute(
         "UPDATE runs SET status='exited', ended_at=?1 WHERE id=?2",
         rusqlite::params![crate::util::now(), run_id],

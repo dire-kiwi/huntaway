@@ -527,6 +527,8 @@ pub async fn teardown(state: &Shared, task_id: &str, force: bool, delete_branch:
         state.update_task(task_id, &[("worktree_state", json!("tearing_down"))])?;
         // Its terminal would be left in a deleted directory.
         crate::terminal::kill_all(state, task_id).await;
+        // And its checkpoints would be of files that are gone.
+        crate::checkpoints::forget(state, task_id, &repo).await;
         if !project.teardown_script.trim().is_empty() {
             match run_script(&project.teardown_script, &wt, &script_env(&project, &task, &wt, &branch), None).await {
                 Ok(log) => state.add_event(task_id, "info", "Teardown script finished", Some(truncate(&log, 20000))),
