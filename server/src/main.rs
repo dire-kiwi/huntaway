@@ -1,6 +1,7 @@
 mod admin;
 mod agent_tools;
 mod attachments;
+mod automations;
 mod codex;
 mod context;
 mod analytics;
@@ -16,7 +17,9 @@ mod github;
 mod hub;
 mod mcp;
 mod permissions;
+mod pr_watch;
 mod prompts;
+mod questions;
 mod proto;
 mod pty;
 mod relay;
@@ -121,7 +124,7 @@ struct ServeArgs {
     /// (defaults to the checkout this binary was built in).
     #[arg(long, env = "IA_SOURCE_DIR")]
     source_dir: Option<PathBuf>,
-    /// A deployment of the board (e.g. https://code.dire.nz) to follow: when it runs a newer commit
+    /// A deployment of the board (e.g. https://board.example) to follow: when it runs a newer commit
     /// than this server, the UI offers to update to it (fetched from the source checkout's origin).
     #[arg(long, env = "IA_UPDATE_FROM")]
     update_from: Option<String>,
@@ -296,6 +299,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
+    automations::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);
     hub::start(&state)?;

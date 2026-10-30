@@ -73,6 +73,11 @@ export const isArchived = (t: Task, now: number) => {
   return !!since && Date.parse(since) <= now - ARCHIVE_AFTER_MS;
 };
 
+/** In review, and the agent hasn't gone back to work since: its review passed, or it wasn't
+ * reviewed (the project doesn't review automatically, it has no code changes, or it isn't in a
+ * project). One being reviewed, or whose review found issues or didn't finish, isn't ready yet. */
+export const readyToCheck = (t: Task) => t.status === "in_review" && !t.running && (!t.review || t.review.state === "passed");
+
 /** Statuses a host knows about ("Ready for merge" needs API 4). */
 export const hostStatuses = (h: Host | undefined) =>
   STATUSES.filter((s) => (s.id !== "ready_for_merge" || hostSupports(h, 4)) && (s.id !== "backlog" || hostSupports(h, 5)));
@@ -406,7 +411,12 @@ export interface AgentWait {
   tasks?: { id: string; key: string; status: Status }[];
   /** A shell command whose exit ends it (API 41). */
   command?: string | null;
+  /** A pull request whose news ends it (API 62): the `events` it picked of its checks failing or passing, comments
+   *  and reviews, and a conflict, and always its being merged or closed. */
+  pull_request?: { url: string; repo: string; number: number; events: PrWaitEvent[] } | null;
 }
+
+export type PrWaitEvent = "checks_failed" | "checks_passed" | "comments" | "conflicts";
 
 /** A task that makes a document instead of code: an HTML plan or artifact, or a Mermaid diagram (API 42). */
 export type DocumentType = "plan" | "artifact" | "diagram";
@@ -579,7 +589,8 @@ export interface ContextDetail {
 export interface Message {
   id: number;
   task_id: string;
-  kind: "user" | "claude" | "event" | "permission";
+  /** `question`: one asked with request_user_input (API 64). */
+  kind: "user" | "claude" | "event" | "permission" | "question";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   created_at: string;
@@ -624,7 +635,7 @@ export interface ServerStatus {
   dirty?: boolean;
   /** `<short sha> <subject>` for commits in the checkout that this server isn't running yet. */
   new_commits?: string[];
-  /** API 62, with `--update-from`: the deployment this host follows, and what it last said it runs. */
+  /** API 65, with `--update-from`: the deployment this host follows, and what it last said it runs. */
   update_from?: string;
   deployed?: { commit: string | null; checked_at: string; error: string | null } | null;
   /** `<short sha> <subject>` for the deployed commits this server isn't running (when it's ahead of it). */
@@ -657,6 +668,36 @@ export function setToken(t: string) {
   } catch {
     /* ignore */
   }
+}
+
+const MOVES_KEY = "ia.movedHere";
+/** How long a move made in this browser keeps its notification away (see movedHere). */
+const MOVE_MS = 15_000;
+
+/** The columns tasks were moved to from this browser lately, and when, by `host:id`; kept for every tab. */
+function readMoves(): Record<string, { status: Status; at: number }> {
+  try {
+    return JSON.parse(localStorage.getItem(MOVES_KEY) ?? "{}") ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function noteMove(h: string, id: string, status: Status) {
+  const now = Date.now();
+  const moves = Object.fromEntries(Object.entries(readMoves()).filter(([, m]) => now - m.at < MOVE_MS));
+  moves[`${h}:${id}`] = { status, at: now };
+  try {
+    localStorage.setItem(MOVES_KEY, JSON.stringify(moves));
+  } catch {
+    /* then it may notify of the move */
+  }
+}
+
+/** Whether a tab of this browser moved task `id` on host h to `status` in the last few seconds: nobody needs telling of their own moves. */
+export function movedHere(h: string, id: string, status: Status) {
+  const m = readMoves()[`${h}:${id}`];
+  return !!m && m.status === status && Date.now() - m.at < MOVE_MS;
 }
 
 /** Pick up `?token=` from the URL (Electron and shared links pass it this way). */
@@ -824,6 +865,95 @@ export interface GlobalAgentTools {
 }
 
 /** Agent defaults for a host. */
+/** What starts an automation (API 63): an interval, a time of day (in the host's time zone) on some weekdays, or a webhook delivery. */
+export type AutomationTrigger =
+  | { kind: "interval"; every_minutes: number }
+  | { kind: "daily"; time: string; weekdays: Weekday[] }
+  | { kind: "webhook"; filters: AutomationFilter[]; coalesce_seconds: number; coalesce_key: string };
+
+export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+
+export const FILTER_OPS = ["equals", "not_equals", "starts_with", "contains", "in", "not_in", "exists", "not_exists"] as const;
+export type FilterOp = (typeof FILTER_OPS)[number];
+
+/** A condition on a webhook delivery: `path` names a value as templates do (`event`, `action`, `labels`, `body.issue.title`…). */
+export interface AutomationFilter {
+  path: string;
+  op: FilterOp;
+  /** A string, or a list (or comma-separated string) for `in` and `not_in`. */
+  value: string | string[] | null;
+}
+
+/** What an automation does: create a task in its project from templates, or send a message to one of its tasks. */
+export type AutomationAction =
+  | {
+      kind: "create_task";
+      title: string;
+      description: string;
+      task_type: TaskType | null;
+      claude_config_id: string | null;
+      model: string | null;
+      effort: string | null;
+      status: "todo" | "backlog";
+      start: boolean;
+    }
+  | { kind: "send_to_task"; task_id: string; message: string };
+
+export type AutomationRunStatus = "pending" | "coalesced" | "running" | "ok" | "failed" | "skipped" | "filtered" | "duplicate" | "rejected";
+
+/** A run of an automation, or a webhook delivery that didn't make one. */
+export interface AutomationRun {
+  id: string;
+  automation_id: string;
+  source: "schedule" | "webhook" | "manual";
+  status: AutomationRunStatus;
+  detail: string | null;
+  task_id: string | null;
+  /** The task it created or messaged, if it's still there. */
+  task?: { key: string; title: string; status: Status };
+  delivery_id: string | null;
+  /** A delivery's event and action, e.g. `issues.opened`. */
+  event: string | null;
+  /** Deliveries coalesced into it. */
+  count: number;
+  batch_id: string | null;
+  due_at: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+/** A project's automation (API 63). */
+export interface Automation {
+  id: string;
+  project_id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  /** When its schedule next runs; null for a webhook, or while it's off. */
+  next_run_at: string | null;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** A webhook's path on its host (`/api/hooks/<id>/<token>`). */
+  hook_path?: string;
+  /** Whether a webhook checks deliveries' signatures (the secret itself is never sent back). */
+  has_secret?: boolean;
+  last_run: AutomationRun | null;
+}
+
+export interface AutomationInput {
+  name?: string;
+  enabled?: boolean;
+  trigger?: AutomationTrigger;
+  action?: AutomationAction;
+  /** A webhook's signing secret; "" removes it. */
+  secret?: string;
+  /** A new webhook URL (the old one stops working). */
+  rotate_token?: boolean;
+}
+
 export interface HostSettings {
   /** Used when the thread, project and profile don't pick a model. */
   default_model: string | null;
@@ -834,6 +964,8 @@ export interface HostSettings {
   scratch_host?: string | null;
   /** TUI programs offered as shortcuts in task terminals (API 13). New ones get an id when saved. */
   terminal_tools?: TerminalTool[];
+  /** Where the host is reached from outside, which its webhook URLs are shown with (API 63). */
+  public_url?: string | null;
 }
 
 /** A program run in its own tmux session in a task's directory, e.g. `lazygit` (API 13). */
@@ -912,6 +1044,9 @@ export interface DeletionApproval extends ApprovalRequest {
 export type Approval = ProjectApproval | DeletionApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
+
+/** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
+export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
 
 export interface HostInfo {
   host_id: string;
@@ -1099,7 +1234,10 @@ export const api = {
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (h: string, id: string, b: Partial<Task>) => on(h).patch<Task>(`/tasks/${enc(id)}`, b),
+  updateTask: (h: string, id: string, b: Partial<Task>) => {
+    if (b.status) noteMove(h, id, b.status);
+    return on(h).patch<Task>(`/tasks/${enc(id)}`, b);
+  },
   deleteTask: (h: string, id: string, deleteBranch = false) => on(h).del(`/tasks/${enc(id)}?delete_branch=${deleteBranch}`),
   messages: (h: string, id: string) => on(h).get<Message[]>(`/tasks/${enc(id)}/messages`),
   /**
@@ -1132,12 +1270,28 @@ export const api = {
   killTerminal: (h: string, id: string, tool?: string) => on(h).del(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),
   /** Tool sessions end once no board renews them (and nobody is attached). */
   keepTerminal: (h: string, id: string, tool: string) => on(h).post(`/tasks/${enc(id)}/terminal/keepalive${toolQuery(tool)}`),
-  resolvePermission: (h: string, id: string, decision: "allow" | "allow_always" | "deny", message?: string) =>
-    on(h).post(`/permissions/${enc(id)}`, { decision, message }),
+  /** With `reply` (API 64): a question's answers, by question (each a list of picked labels and typed text); the
+   *  mode an approved plan carries on in; or the feedback a plan's sent back with. */
+  resolvePermission: (h: string, id: string, decision: "allow" | "allow_always" | "deny", message?: string, reply?: PermissionReply) =>
+    on(h).post(`/permissions/${enc(id)}`, { decision, message, ...reply }),
+  /** Answer a question an agent asked with request_user_input, from its card (API 64): sent as the user's message. */
+  answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
+    on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
   /** Older hosts ignore `all` and list project changes only. */
   projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true"),
   dirs: (h: string, path?: string) => on(h).get<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  /** The project's automations, and the time zone their times of day are in (API 63). */
+  automations: (h: string, projectId: string) =>
+    on(h).get<{ automations: Automation[]; time_zone: { name: string | null; offset: string } }>(`/projects/${enc(projectId)}/automations`),
+  createAutomation: (h: string, projectId: string, b: AutomationInput) => on(h).post<Automation>(`/projects/${enc(projectId)}/automations`, b),
+  updateAutomation: (h: string, id: string, b: AutomationInput) => on(h).patch<Automation>(`/automations/${enc(id)}`, b),
+  deleteAutomation: (h: string, id: string) => on(h).del(`/automations/${enc(id)}`),
+  /** Run it now; for a webhook, a test delivery of `payload` (else the latest delivery's) as `event`. */
+  runAutomation: (h: string, id: string, b: { payload?: unknown; event?: string } = {}) => on(h).post<AutomationRun>(`/automations/${enc(id)}/run`, b),
+  /** Its latest runs and deliveries, newest first, and the latest delivery's body and event. */
+  automationRuns: (h: string, id: string) =>
+    on(h).get<{ runs: AutomationRun[]; latest_delivery: { body: unknown; event: string | null } | null }>(`/automations/${enc(id)}/runs`),
   settings: (h: string) => on(h).get<HostSettings>("/settings"),
   updateSettings: (h: string, b: Partial<HostSettings>) => on(h).patch<HostSettings>("/settings", b),
   serverStatus: (h: string) => on(h).get<ServerStatus>("/admin/server"),

@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Bell, BellRing, ChartColumn, ChevronRight, EyeOff, Folder, GripVertical, Pin, Plus, Settings, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState, type Dispatch, type FormEvent, type MouseEvent, type ReactNode, type SetStateAction } from "react";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../activeProfile";
-import { api, hostCompat, hostSupports, type Project, type Status, type Task } from "../api";
+import { api, hostCompat, hostSupports, readyToCheck, type Project, type Status, type Task } from "../api";
 import {
   groupKey,
   groupNames,
@@ -75,13 +75,6 @@ function Badge({ n, tone = "attention", title }: { n: number; tone?: keyof typeo
       {n}
     </span>
   );
-}
-
-/** In review, and the agent hasn't gone back to work since: its review passed, or it wasn't
- * reviewed (the project doesn't review automatically, it has no code changes, or it isn't in a
- * project). One being reviewed, or whose review found issues or didn't finish, isn't ready yet. */
-function readyToCheck(t: Task) {
-  return t.status === "in_review" && !t.running && (!t.review || t.review.state === "passed");
 }
 
 type Stats = { attention: number; running: number; ready: number };

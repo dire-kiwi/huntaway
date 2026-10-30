@@ -26,10 +26,12 @@ import { groupNames } from "../projectGroups";
 import { navigate, parse } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useHost, useStore } from "../store";
 import { GlobalAgentToolsPanel, ProjectAgentTools } from "./AgentTools";
+import { ProjectAutomations } from "./Automations";
 import { ModelPicker } from "./Board";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
+import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
 import { Button, Field, IconButton, Input, Modal, Textarea, timeAgo, Toggle } from "./ui";
 
@@ -506,6 +508,8 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
               <ProjectAgentTools project={project} />
             </div>
           )}
+
+          {hostSupports(host, 63) && <ProjectAutomations project={project} />}
 
           <div className="space-y-4 rounded-xl border border-line p-4">
             <div className="space-y-1">
@@ -1030,6 +1034,8 @@ export function Settings() {
           <ProfilesPanel />
 
           <GlobalAgentToolsPanel />
+
+          <NotificationsPanel />
 
           <ArchivedProjectsPanel />
 

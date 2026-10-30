@@ -86,7 +86,7 @@ pub async fn status(state: &Shared) -> Result<Value> {
     v["source_branch"] = json!(branch);
     v["dirty"] = json!(dirty);
     v["new_commits"] = json!(new_commits);
-    // API 62: what the deployment this host follows runs, and its commits that this server doesn't
+    // API 65: what the deployment this host follows runs, and its commits that this server doesn't
     // (only when it's ahead: not for a checkout that has moved on or diverged from it).
     if let Some(url) = &meta.update_from {
         let mut deployed_commits = Vec::new();
@@ -132,7 +132,7 @@ pub fn start_update_check(state: &Shared) {
     });
 }
 
-/// Ask `url` which commit it runs (its unauthenticated `/api/health`, API 62+) and make sure the
+/// Ask `url` which commit it runs (its unauthenticated `/api/health`, API 65+) and make sure the
 /// source checkout has it, then record the result in `state.deployed`.
 pub async fn check_deployed(state: &Shared, url: &str) {
     let previous = state.deployed.lock().unwrap().clone();
@@ -140,7 +140,7 @@ pub async fn check_deployed(state: &Shared, url: &str) {
         let res = crate::hub::http().get(format!("{url}/api/health")).timeout(Duration::from_secs(15)).send().await?.error_for_status()?;
         let health: Value = res.json().await?;
         let commit = health["commit"].as_str().map(str::trim).filter(|c| !c.is_empty()).map(String::from);
-        let commit = commit.with_context(|| format!("{url} doesn't say which commit it runs (it needs API 62, and IA_COMMIT without a checkout)"))?;
+        let commit = commit.with_context(|| format!("{url} doesn't say which commit it runs (it needs API 65, and IA_COMMIT without a checkout)"))?;
         let src = state.meta.source_dir.as_deref().context("no source checkout")?;
         if state.meta.running_commit.as_deref() != Some(&commit) && !has_commit(src, &commit).await {
             let fetched = tokio::time::timeout(Duration::from_secs(120), git(src, &["fetch", "--quiet", "origin"])).await.context("git fetch origin timed out")??;
@@ -498,7 +498,7 @@ mod tests {
             let url = deployment(Some(ahead.clone())).await;
             let state = host_at(&src, &url);
             check_deployed(&state, &url).await;
-            // One that doesn't say (from before API 62), or a commit origin doesn't have.
+            // One that doesn't say (from before API 65), or a commit origin doesn't have.
             for (commit, why) in [(None, "doesn't say which commit"), (Some("0".repeat(40)), "isn't on this checkout's origin")] {
                 let other = deployment(commit).await;
                 check_deployed(&state, &other).await;

@@ -6,15 +6,15 @@
 #
 # It checks for the build tools, clones the repository (or fast-forwards a clone it made before),
 # builds the UI and the server, and adds Huntaway to the app launcher (a .desktop entry on Linux,
-# ~/Applications/Huntaway.app on macOS). The app's server follows the board deployed at
-# --update-from (https://code.dire.nz by default): once that runs a newer commit, the sidebar shows
+# ~/Applications/Huntaway.app on macOS). With --update-from URL (or HUNTAWAY_UPDATE_FROM), the app's server follows
+# the board deployed there: once that runs a newer commit, the sidebar shows
 # "N new commits · Update", which fetches it, rebuilds and restarts like Rebuild & restart.
 set -euo pipefail
 
 REPO="${HUNTAWAY_REPO:-https://github.com/dire-kiwi/huntaway.git}"
 BRANCH="${HUNTAWAY_BRANCH:-master}"
 DIR="${HUNTAWAY_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/huntaway-app}"
-UPDATE_FROM="${HUNTAWAY_UPDATE_FROM-https://code.dire.nz}"
+UPDATE_FROM="${HUNTAWAY_UPDATE_FROM-}"
 BUILD=1
 SHORTCUT=1
 OPEN=0
