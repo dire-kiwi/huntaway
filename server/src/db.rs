@@ -550,6 +550,12 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         ))?;
     }
     if version < 57 {
+        // A merging task that stepped out of the merge queue to fix something (see Task::remerge).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='remerge'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN remerge INTEGER NOT NULL DEFAULT 0;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=57; COMMIT;"))?;
+    }
+    if version < 58 {
         // Plans, artifacts and diagrams are labels any task can have, with a document each
         // (see documents.rs), rather than types of task. A task that was one of those types gets
         // its type as its label, and keeps working in its own folder (as a `work_dir` in the data
@@ -567,7 +573,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              CREATE UNIQUE INDEX documents_task ON documents(task_id, label, version);
              UPDATE tasks SET labels=json_array(task_type), work_dir=COALESCE(work_dir, 'documents/' || id), task_type=NULL
                WHERE task_type IN ('plan','artifact','diagram');
-             PRAGMA user_version=57; COMMIT;"
+             PRAGMA user_version=58; COMMIT;"
         ))?;
     }
     Ok(conn)
@@ -575,7 +581,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 57;
+pub const VERSION: i64 = 58;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -831,7 +837,7 @@ pub const STATUSES: &[&str] = &["todo", "in_progress", "needs_attention", "in_re
 pub const TASK_TYPES: &[&str] = &[SCRATCH];
 /// The labels a task can have, each a document its agent writes besides its other work (see
 /// Task::labels and documents.rs), in the order the task shows them. They were task types of their
-/// own before API 69, which still accepts them as a new task's `task_type`.
+/// own before API 70, which still accepts them as a new task's `task_type`.
 pub const LABELS: &[&str] = &["plan", "artifact", "diagram"];
 /// The task type of a scratch task.
 pub const SCRATCH: &str = "scratch";
@@ -1165,6 +1171,13 @@ pub struct Task {
     /// that column, not "In progress". Not running and still in that column means it's queued
     /// behind another merge in its project (see runner::start_next_merge).
     pub merging: bool,
+    /// Its agent stepped out of the merge queue while merging it, to fix what the merge turned
+    /// up (failing checks, review comments) without holding up the tasks queued behind it. It
+    /// works in "In progress" meanwhile, and rejoins the back of the queue when its run ends,
+    /// rather than going to "In review" (see runner::finish). Moving it to another column
+    /// (bar "Needs attention") drops it.
+    #[serde(default)]
+    pub remerge: bool,
     pub attention_reason: Option<String>,
     /// Tasks in the same project that have to be merged (done, resolution `done`) before this
     /// task's agent starts.
@@ -1448,6 +1461,7 @@ impl Task {
             running: r.get("running")?,
             run_started_at: r.get("run_started_at")?,
             merging: r.get("merging")?,
+            remerge: r.get("remerge")?,
             attention_reason: r.get("attention_reason")?,
             depends_on: json_list(r.get("depends_on")?),
             waiting: r.get("waiting")?,
@@ -2051,7 +2065,7 @@ pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
 
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
-    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "attention_reason",
+    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
     "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
@@ -2072,6 +2086,11 @@ pub fn update_task(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result
         c.execute(&sql, rusqlite::params_from_iter(vals))?;
         if fields.iter().any(|(col, _)| *col == "status" || *col == "resolution") {
             normalize_resolution(c, id)?;
+        }
+        // Whoever moves it (the user, a review, a run's end), a task that stepped out of the merge
+        // queue keeps its place to rejoin only while its agent works on it (see Task::remerge).
+        if fields.iter().any(|(col, _)| *col == "status") && !fields.iter().any(|(col, _)| *col == "remerge") {
+            c.execute("UPDATE tasks SET remerge=0 WHERE id=?1 AND remerge=1 AND status NOT IN ('in_progress','needs_attention')", [id])?;
         }
     }
     get_task(c, id)
@@ -2942,8 +2961,8 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_version_56_has_its_plan_artifact_and_diagram_tasks_labelled() {
-        let path = std::env::temp_dir().join(format!("huntaway-v56-{}.db", crate::util::new_id()));
+    fn a_database_from_version_57_has_its_plan_artifact_and_diagram_tasks_labelled() {
+        let path = std::env::temp_dir().join(format!("huntaway-v57-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -2951,7 +2970,7 @@ mod tests {
                  ALTER TABLE documents DROP COLUMN label;
                  CREATE UNIQUE INDEX documents_task ON documents(task_id, version);
                  ALTER TABLE tasks DROP COLUMN labels;
-                 PRAGMA user_version=56;
+                 PRAGMA user_version=57;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
                  INSERT INTO tasks (id,profile_id,kind,task_type,work_dir,number,title,status,last_activity_at,created_at,updated_at)
                    VALUES ('plan','p','task','plan',NULL,1,'Plan','in_review','1','1','1'),
@@ -3102,6 +3121,33 @@ mod tests {
         let p = update_profile(&c, "p", &[("asana_enabled", json!(false))]).unwrap().unwrap();
         assert!(!p.asana_enabled);
         assert!(insert_profile(&c, "personal", &[], None).unwrap().asana_enabled, "new profiles use Asana");
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_56_gets_remerge() {
+        let path = std::env::temp_dir().join(format!("huntaway-v57-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE tasks DROP COLUMN remerge;
+                 PRAGMA user_version=56;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,description,status,position,merging,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'t','','ready_for_merge',0,1,'1','1','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        // A merge from before keeps holding its place in the queue as it did.
+        let t = get_task(&c, "t").unwrap().unwrap();
+        assert_eq!((t.merging, t.remerge), (true, false));
+        let t = update_task(&c, "t", &[("remerge", json!(true))]).unwrap().unwrap();
+        assert!(t.remerge);
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

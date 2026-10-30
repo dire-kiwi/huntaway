@@ -51,6 +51,9 @@ export const canRunAgents = (h: Host | undefined) => !!h && h.connected && h.age
 /** Waiting in "Ready for merge" for another task in its project to finish merging. */
 export const mergeQueued = (t: Task) => !!t.merging && t.status === "ready_for_merge" && !t.running;
 
+/** Stepped out of the merge queue to make changes, and rejoins it when its agent is done. */
+export const rejoinsMerge = (t: Task) => !!t.remerge && (t.status === "in_progress" || t.status === "needs_attention");
+
 /** Its agent is running but waiting for something (the `wait` tool), not working. */
 export const agentWaiting = (t: Task) => (t.running && t.agent_wait) || null;
 
@@ -424,9 +427,9 @@ export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
 import type { DocumentType } from "./labels";
 
 /** Hosts from this API version on take labels (before, the board made a task of a label's type instead). */
-export const LABELS_API = 69;
+export const LABELS_API = 70;
 
-/** What a task is, if not a code task: a scratch task (in no project, API 47, or in one, API 51). On hosts before API 69,
+/** What a task is, if not a code task: a scratch task (in no project, API 47, or in one, API 51). On hosts before API 70,
  *  also a plan, artifact or diagram task. */
 export type TaskType = "scratch";
 
@@ -448,7 +451,7 @@ export interface DocumentVersion {
 }
 
 export interface TaskDocument {
-  /** Which of its labels' documents it is (API 69). */
+  /** Which of its labels' documents it is (API 70). */
   label?: DocumentType;
   /** Where the agent writes it, on the task's host. */
   file: string | null;
@@ -473,15 +476,15 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task is, if not a code task: a scratch task (API 47). On hosts before API 69, also a plan, artifact or
+  /** What the task is, if not a code task: a scratch task (API 47). On hosts before API 70, also a plan, artifact or
    *  diagram task (API 42), whose agent writes a document the board keeps and shows: see `taskLabels`. */
   task_type?: TaskType | DocumentType | null;
-  /** The documents its agent writes besides its other work, each shown in a tab of the task (API 69). */
+  /** The documents its agent writes besides its other work, each shown in a tab of the task (API 70). */
   labels?: DocumentType[];
   /** When one of its documents last changed (API 42). */
   document_at?: string | null;
   /** Where a scratch task made from a scratch chat works: the chat's folder (API 47). For a task that makes only
-   *  documents, its own folder, relative to the host's data dir (API 69): see `ownWorkDir`. */
+   *  documents, its own folder, relative to the host's data dir (API 70): see `ownWorkDir`. */
   work_dir?: string | null;
   number: number;
   title: string;
@@ -506,6 +509,8 @@ export interface Task {
   run_started_at?: string | null;
   /** Its agent is merging it (moved to "Ready for merge" and not done yet). Hosts before API 4 omit it. */
   merging?: boolean;
+  /** Its agent stepped out of the merge queue to make changes; it rejoins the queue when the agent is done (API 69). */
+  remerge?: boolean;
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
   depends_on?: string[];
@@ -784,12 +789,20 @@ export function captureTokenFromUrl() {
   }
 }
 
+let openBoard = false;
+
+/** Whether this board hands out its token (`--open-token`), as PR previews do and the user's own boards never do. */
+export const isOpenBoard = () => openBoard;
+
 /** Servers started with `--open-token` (PR previews) hand out their token; sign in with it. */
 export async function fetchOpenToken() {
   try {
     const res = await fetch("/api/open-token");
     const data = res.ok ? await res.json() : null;
-    if (typeof data?.token === "string" && data.token) setToken(data.token);
+    if (typeof data?.token === "string" && data.token) {
+      setToken(data.token);
+      openBoard = true;
+    }
   } catch {
     /* not offered */
   }
@@ -963,9 +976,9 @@ export type AutomationAction =
       kind: "create_task";
       title: string;
       description: string;
-      /** A label as its type, in an action saved before API 69. */
+      /** A label as its type, in an action saved before API 70. */
       task_type: TaskType | DocumentType | null;
-      /** API 69. */
+      /** API 70. */
       labels?: DocumentType[];
       claude_config_id: string | null;
       model: string | null;
@@ -1301,7 +1314,7 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
-      /** API 69. */
+      /** API 70. */
       labels?: DocumentType[];
       external_links?: ExternalLink[];
       fanout_id?: string;
@@ -1320,9 +1333,9 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
-      /** A plan, artifact or diagram task, on hosts before API 69. */
+      /** A plan, artifact or diagram task, on hosts before API 70. */
       task_type?: DocumentType;
-      /** API 69. */
+      /** API 70. */
       labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
@@ -1346,9 +1359,9 @@ export const api = {
       subproject?: boolean;
       claude_config_id?: string;
       depends_on?: string[];
-      /** A scratch task in the project needs API 51; a plan, artifact or diagram task is one on hosts before API 69. */
+      /** A scratch task in the project needs API 51; a plan, artifact or diagram task is one on hosts before API 70. */
       task_type?: TaskType | DocumentType;
-      /** API 69. */
+      /** API 70. */
       labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
@@ -1405,7 +1418,7 @@ export const api = {
   context: (h: string, id: string) => on(h).get<{ context: ContextSummary | null; detail: ContextDetail | null }>(`/tasks/${enc(id)}/context`),
   /** The skills the task's agent can be asked to use, for the composer's `/` menu (API 54). */
   taskSkills: (h: string, id: string) => on(h).get<TaskSkills>(`/tasks/${enc(id)}/skills`),
-  /** A task's document for one of its labels (API 69; a host before then has the one its type makes, API 42): the
+  /** A task's document for one of its labels (API 70; a host before then has the one its type makes, API 42): the
    *  latest version, or `version`. */
   document: (h: string, id: string, label: DocumentType, version?: number) =>
     on(h).get<TaskDocument>(`/tasks/${enc(id)}/document?label=${label}${version ? `&version=${version}` : ""}`),

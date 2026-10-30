@@ -1017,7 +1017,7 @@ pub struct CreateTask {
     pub depends_on: Option<Vec<String>>,
     /// What the task is, if not a code task: one of db::TASK_TYPES. In a project, also
     /// `subproject` (db::SUBPROJECT), the same as `subproject: true`. One of db::LABELS (a task
-    /// type before API 69) gives the task that label.
+    /// type before API 70) gives the task that label.
     #[serde(default)]
     pub task_type: Option<String>,
     /// Some of db::LABELS, each a document its agent writes besides its other work (see
@@ -1085,7 +1085,7 @@ fn new_task_fanout(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
     }
 }
 
-/// Check a new task's requested type (blank for none). A label (a type before API 69) is
+/// Check a new task's requested type (blank for none). A label (a type before API 70) is
 /// none: see new_task_labels.
 fn check_task_type(task_type: Option<&str>) -> ApiResult<Option<&str>> {
     match task_type.map(str::trim).filter(|t| !t.is_empty()) {
@@ -1096,7 +1096,7 @@ fn check_task_type(task_type: Option<&str>) -> ApiResult<Option<&str>> {
 }
 
 /// The labels a new task asks for, as an update to make once it's created: its `labels`, and a
-/// `task_type` that's one of them, as it was before API 69.
+/// `task_type` that's one of them, as it was before API 70.
 fn new_task_labels(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
     let mut asked: Vec<Value> = match &b.labels {
         Some(Value::Array(a)) => a.clone(),
@@ -1527,6 +1527,17 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         let at = v.as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).ok_or_else(|| ApiError::bad("done_at must be an RFC 3339 time"))?;
         *v = json!(at.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
     }
+    // A merging task's agent can step out of the merge queue to fix what the merge turned up,
+    // and the task rejoins the queue when its run ends (see Task::remerge).
+    let remerge = match b.get("remerge") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(on)) => *on,
+        Some(_) => return Err(ApiError::bad("remerge must be true or false")),
+    };
+    // Its agent's run ending is what brings it back, so the agent has to be at work.
+    if remerge && !(current.merging && s.is_running(id) && b.get("status").and_then(Value::as_str) == Some("in_progress")) {
+        return Err(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"));
+    }
     // Moving a task to "Ready for merge" asks its agent to merge it (if agents can run here),
     // once no other task in its project is merging.
     let mut merge = false;
@@ -1543,6 +1554,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         // Anywhere but "Ready for merge" (or waiting on the user while merging) ends a merge.
         if merge || !["ready_for_merge", "needs_attention"].contains(&st) {
             fields.push(("merging", json!(merge)));
+        }
+        // Anywhere but "In progress" (or waiting on the user) drops its place to rejoin the queue (see db::update_task).
+        if remerge {
+            fields.push(("remerge", json!(true)));
         }
         // Moving it ends its agent's wait (see wait.rs), told so in the same write.
         if let Some(w) = current.agent_wait.clone().filter(|_| st != current.status) {
@@ -1574,6 +1589,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         fields.push(("position", json!(end)));
     }
     let t = s.update_task(id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
+    if remerge {
+        s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
+    }
     // Unpinned, the title catches up with what the task is about now.
     if unpinned {
         title::refresh(s, id);
@@ -2677,7 +2695,7 @@ pub(crate) mod tests {
             assert_eq!(t2.number, 2);
             assert_eq!(crate::documents::work_dir(&s, &t2), Some(crate::documents::dir(&s, &t2.id)));
             assert_eq!(runner::work_dir(&s, &t2).unwrap(), crate::documents::dir(&s, &t2.id));
-            // It can have labels too, also given as a type as before API 69.
+            // It can have labels too, also given as a type as before API 70.
             let planned = create_scratch_task_inner(&s, &profile.id, CreateTask { task_type: Some("plan".into()), ..Default::default() }).unwrap();
             assert_eq!((planned.task_type.as_deref(), planned.labels.as_slice()), (Some("scratch"), ["plan".to_string()].as_slice()));
             for bad in [
@@ -2794,7 +2812,7 @@ pub(crate) mod tests {
             // A code task, in a worktree, with a plan and a diagram.
             let plan = create_task_inner(&s, &p.id, labelled(json!(["diagram", "plan"]))).unwrap();
             assert_eq!((plan.task_type.as_deref(), labels(&plan).as_str(), plan.use_worktree), (None, "plan,diagram", true));
-            // A type that's a label, as before API 69, is that label.
+            // A type that's a label, as before API 70, is that label.
             let old = create_task_inner(&s, &p.id, CreateTask { labels: Some(json!(["artifact"])), ..typed("plan") }).unwrap();
             assert_eq!((old.task_type.as_deref(), labels(&old).as_str(), old.use_worktree), (None, "plan,artifact", true));
             assert!(create_task_inner(&s, &p.id, typed("essay")).is_err());

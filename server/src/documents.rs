@@ -7,7 +7,7 @@
 //! it's written, and is closed when the turn ends: the next change starts a new version, so
 //! there's one per turn that changed it.
 //!
-//! Plan, artifact and diagram were types of task before API 69, whose agents worked in the task's
+//! Plan, artifact and diagram were types of task before API 70, whose agents worked in the task's
 //! own folder and made only the document. Those tasks have their type as their label now, and
 //! keep working in their folder (see documents_only).
 

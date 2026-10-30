@@ -26,7 +26,7 @@ import {
 } from "../api";
 import { openTask } from "../router";
 import { onAutomationsChanged, useAvailableConfigs, useHost, useStore } from "../store";
-import { Button, copyText, Field, IconButton, Input, Modal, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
+import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
 
 type TimeZone = { name: string | null; offset: string };
 
@@ -152,16 +152,10 @@ export function ProjectAutomations({ project }: { project: Project }) {
     await reload();
   };
   return (
-    <div className="space-y-3 rounded-xl border border-line p-4" data-testid="automations">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[13px] font-medium">Automations</div>
-        <Button size="sm" onClick={() => setEditing("new")}>
-          <Plus size={13} /> New automation
-        </Button>
-      </div>
-      <div className="text-[12px] text-faint">
-        Create a task, or send a message to one, on a schedule or when a webhook is delivered (a new GitHub issue, say). Saved as you change them.
-      </div>
+    <div className="space-y-3" data-testid="automations">
+      <Button size="sm" onClick={() => setEditing("new")}>
+        <Plus size={13} /> New automation
+      </Button>
       {list && list.length > 0 && (
         <div className="divide-y divide-line/70 rounded-md border border-line/70">
           {list.map((a) => (
@@ -362,7 +356,7 @@ interface Draft {
   title: string;
   description: string;
   taskType: TaskType | "";
-  /** On a host before API 69, one at most: the type of task it makes. */
+  /** On a host before API 70, one at most: the type of task it makes. */
   labels: DocumentType[];
   config: string;
   model: string;
@@ -433,7 +427,7 @@ function draftOf(a: Automation | null): Draft {
   if (act.kind === "create_task") {
     d.title = act.title;
     d.description = act.description;
-    // One saved before API 69 has a label as its type.
+    // One saved before API 70 has a label as its type.
     d.taskType = act.task_type === "scratch" ? "scratch" : "";
     d.labels = taskLabels({ kind: "task", task_type: act.task_type, labels: act.labels });
     d.config = act.claude_config_id ?? "";
@@ -469,7 +463,7 @@ function inputOf(d: Draft, existing: Automation | null, labelling: boolean): Aut
           kind: "create_task",
           title: d.title,
           description: d.description,
-          // A host before API 69 takes a label as the type of task.
+          // A host before API 70 takes a label as the type of task.
           ...(labelling ? { task_type: d.taskType || null, labels: d.labels } : { task_type: d.taskType || d.labels[0] || null }),
           claude_config_id: d.config || null,
           model: d.model.trim() || null,
@@ -533,7 +527,7 @@ function AutomationEditor({
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
   const configs = useAvailableConfigs(hostId, project.profile_id, project);
   const labelling = hostSupports(useHost(hostId), LABELS_API);
-  // A host before API 69 makes a task of one label's type, rather than a scratch or code task with it.
+  // A host before API 70 makes a task of one label's type, rather than a scratch or code task with it.
   const toggleLabel = (l: DocumentType) =>
     setD((x) =>
       labelling
@@ -588,9 +582,7 @@ function AutomationEditor({
   );
   return (
     <Modal title={saved ? `Edit ${saved.name}` : "New automation"} onClose={onClose} onSubmit={save} width="max-w-2xl">
-      {/* The fields scroll, under the dialog's title and above its buttons. */}
-      <div className="flex max-h-[calc(90vh-7rem)] flex-col">
-      <div className="-mx-4 -mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-4 pb-1">
+      <div className="space-y-4">
         <div className="grid grid-cols-[1fr_auto] items-end gap-3">
           <Field label="Name">
             <Input value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="Weekly dependency update" autoFocus={!saved} />
@@ -799,19 +791,18 @@ function AutomationEditor({
             </>
           )}
         </div>
-      </div>
-      <div className="space-y-2 pt-3">
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex items-center justify-end gap-2">
-          <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
-          <Button variant="ghost" onClick={onClose}>
-            {saved && !automation ? "Done" : "Cancel"}
-          </Button>
-          <Button variant="primary" disabled={busy} onClick={save}>
-            {saved ? "Save automation" : "Add automation"}
-          </Button>
-        </div>
-      </div>
+        <ModalFooter className="space-y-2">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
+            <Button variant="ghost" onClick={onClose}>
+              {saved && !automation ? "Done" : "Cancel"}
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={save}>
+              {saved ? "Save automation" : "Add automation"}
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );
@@ -1080,16 +1071,18 @@ function TestDelivery({ hostId, automation, onClose }: { hostId: string; automat
             {result.detail && <span className="min-w-0 truncate text-faint">{result.detail}</span>}
           </div>
         )}
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex items-center justify-end gap-2">
-          <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to send</span>
-          <Button variant="ghost" onClick={onClose}>
-            Close
-          </Button>
-          <Button variant="primary" disabled={busy || body === null} onClick={send}>
-            <Play size={12} /> Send test delivery
-          </Button>
-        </div>
+        <ModalFooter className="space-y-3">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to send</span>
+            <Button variant="ghost" onClick={onClose}>
+              Close
+            </Button>
+            <Button variant="primary" disabled={busy || body === null} onClick={send}>
+              <Play size={12} /> Send test delivery
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );

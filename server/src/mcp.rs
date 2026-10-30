@@ -255,7 +255,7 @@ fn board_tools() -> Value {
         },
         {
             "name": "update_task",
-            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done).",
+            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
             "inputSchema": {"type": "object", "properties": {
                 "task_id": task_ref,
                 "profile": profile,
@@ -266,6 +266,7 @@ fn board_tools() -> Value {
                 "pr_url": {"type": "string", "description": "The task's pull request; the board links it from the task's card. Empty string clears it."},
                 "preview_url": {"type": "string", "description": "Where the task's work can be tried (e.g. its PR's preview deployment); the board shows whether it's up. Empty string clears it."},
                 "labels": labels,
+                "remerge": {"type": "boolean", "description": "With status in_progress, on a task that's merging: it steps out of the merge queue so the next task can merge, and rejoins the end of the queue when its agent's run ends, rather than going to in_review."},
                 "depends_on": depends_on,
                 "starred": starred,
                 "remind_at": remind_at,
@@ -306,7 +307,7 @@ fn board_tools() -> Value {
                 and each replaces a default: start_prompt is sent to a task's agent when it starts (moving to in_progress), after the task's \
                 title and description; review_prompt tells the reviewer what to look for when the task moves to in_review, after where its \
                 changes are (the board adds how to report the verdict); merge_prompt tells the agent how to merge when the task moves to \
-                ready_for_merge, after which branch to merge into which (the board adds asking the user if it can't, and setting the task to \
+                ready_for_merge, after which branch to merge into which (the board adds asking the user if it can't, stepping out of the merge queue to make changes, and setting the task to \
                 done). An empty string resets a prompt, base_branch, model or permission_mode to the default. Only change these when the user asks. \
                 Changing permission_mode, a script, repo_path (and move_repo), use_worktrees or worktrees_root asks the user to approve the whole change first \
                 (say why in reason): the call waits for their answer, and if they don't approve it nothing changes. A project's agent configs \

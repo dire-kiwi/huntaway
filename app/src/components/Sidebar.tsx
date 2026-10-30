@@ -21,6 +21,7 @@ import {
   visibleEntries,
 } from "../projectGroups";
 import { isDue, reminderLabel, reminderTasks, starredTasks } from "../reminders";
+import { useDrawer } from "../narrow";
 import { navigate, openTask, usePanel, type Route } from "../router";
 import { profileNames, taskKey, useStore } from "../store";
 import { ProfileAvatar } from "./Board";
@@ -28,7 +29,7 @@ import { ReminderModal, reminderItems, starItem, useReminderClock } from "./Remi
 import { ReloadButton, UpdateButton } from "./Server";
 import { UsagePanel } from "./Usage";
 import { ArchiveProjectModal, NewProjectModal } from "./Settings";
-import { Button, ContextMenu, IconButton, Input, Modal, RunningDot, StatusBar, type MenuItem } from "./ui";
+import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, RunningDot, StatusBar, type MenuItem } from "./ui";
 
 function NavItem({ active, current, onClick, onContextMenu, icon, children, right, className, title, expanded }: {
   active: boolean;
@@ -52,7 +53,7 @@ function NavItem({ active, current, onClick, onContextMenu, icon, children, righ
       aria-expanded={expanded}
       aria-current={current || undefined}
       className={clsx(
-        "flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px]",
+        "flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] narrow:h-10",
         active || current ? "text-fg" : "text-muted hover:text-fg",
         active ? "bg-raised" : "hover:bg-white/[0.04]",
         current && "relative before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent",
@@ -146,7 +147,7 @@ function Reorderable({ item, siblings, parent, reorder, children }: { item: Item
           aria-describedby="project-reorder-help"
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
           title="Drag to reorder, or use Alt + Up/Down"
-          className="flex h-8 w-4 shrink-0 cursor-grab items-center justify-center rounded text-faint opacity-0 hover:text-fg focus-visible:opacity-100 group-hover/project:opacity-100 active:cursor-grabbing"
+          className="flex h-8 w-4 shrink-0 cursor-grab items-center justify-center rounded text-faint opacity-0 hover:text-fg focus-visible:opacity-100 group-hover/project:opacity-100 active:cursor-grabbing narrow:hidden"
           onDragStart={(e) => {
             e.stopPropagation();
             e.dataTransfer.setData("text/sidebar-item", item.key);
@@ -322,21 +323,24 @@ function GroupNameModal({ title, initial, onSave, onClose }: { title: string; in
     <Modal title={title} onClose={onClose} onSubmit={submit} width="max-w-sm">
       <form onSubmit={submit} className="space-y-4">
         <Input autoFocus value={name} placeholder="Group name" maxLength={100} onChange={(e) => setName(e.target.value)} />
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
-            Save
-          </Button>
-        </div>
+        <ModalFooter className="space-y-4">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
+              Save
+            </Button>
+          </div>
+        </ModalFooter>
       </form>
     </Modal>
   );
 }
 
-export function Sidebar({ route }: { route: Route }) {
+/** `drawer`: in the narrow layout's drawer, which it fills. */
+export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
   const profiles = useStore((s) => s.profiles);
   const hosts = useStore((s) => s.hosts);
   const projects = useStore((s) => s.projects);
@@ -582,7 +586,7 @@ export function Sidebar({ route }: { route: Route }) {
   };
 
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-panel">
+    <aside className={clsx("flex h-full shrink-0 flex-col border-r border-line bg-panel", drawer ? "w-full" : "w-60")}>
       <div className="drag flex h-12 items-center gap-2 px-4">
         <img src="/icon.svg" className="h-5 w-5" alt="" />
         <span className="text-[13.5px] font-semibold tracking-tight">Huntaway</span>
@@ -590,6 +594,11 @@ export function Sidebar({ route }: { route: Route }) {
           title={connected ? "Connected" : "Reconnecting…"}
           className={clsx("ml-auto h-1.5 w-1.5 rounded-full", connected ? "bg-emerald-400" : "bg-red-400 animate-pulse-dot")}
         />
+        {drawer && (
+          <IconButton className="-mr-2" title="Close the menu" onClick={() => useDrawer.getState().setOpen(false)}>
+            <X size={18} />
+          </IconButton>
+        )}
       </div>
 
       <nav className="space-y-0.5 px-2" aria-label="Profiles">
@@ -675,7 +684,7 @@ export function Sidebar({ route }: { route: Route }) {
                       <div className="min-w-0 flex-1">
                         <div
                           className={clsx(
-                            "flex h-8 items-center rounded-md text-[13px]",
+                            "flex h-8 items-center rounded-md text-[13px] narrow:h-10",
                             onGroup || hidesActive ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
                           )}
                           onContextMenu={(e) => groupMenu(e, entry.name, groupProjects(all, entry.hostId, entry.name), groupProjects(list, entry.hostId, entry.name))}
@@ -685,14 +694,14 @@ export function Sidebar({ route }: { route: Route }) {
                             aria-label={`${open ? "Collapse" : "Expand"} ${entry.name}`}
                             title={open ? "Collapse" : "Expand"}
                             onClick={() => setCollapsedGroup(key, open)}
-                            className="flex h-8 w-6 shrink-0 items-center justify-center rounded-l-md text-faint hover:text-fg"
+                            className="flex h-8 w-6 shrink-0 items-center justify-center rounded-l-md text-faint hover:text-fg narrow:h-10 narrow:w-8"
                           >
                             <ChevronRight size={13} className={clsx("transition-transform", open && "rotate-90")} />
                           </button>
                           <button
                             onClick={() => navigate({ name: "group", hostId: entry.hostId, group: entry.name })}
                             title={`All of ${entry.name}'s tasks`}
-                            className="flex h-8 min-w-0 flex-1 items-center gap-2 pr-2.5 text-left"
+                            className="flex h-8 min-w-0 flex-1 items-center gap-2 pr-2.5 text-left narrow:h-10"
                           >
                             <Folder size={14} className="shrink-0" />
                             <span className="min-w-0 flex-1 truncate">{entry.name}</span>

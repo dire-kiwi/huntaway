@@ -87,7 +87,7 @@ test("knows each kind of task", () => {
   assert.equal(taskKind(task({ subproject: true })), "subproject");
   assert.equal(taskKind(task({ project_id: null, group_name: "G", task_type: "plan" })), "group");
   assert.equal(taskKind(task({ project_id: null, task_type: "scratch" })), "scratch");
-  // Plan, artifact and diagram are labels since API 69: a task made as one before keeps making only its document.
+  // Plan, artifact and diagram are labels since API 70: a task made as one before keeps making only its document.
   assert.equal(taskKind(task({ labels: ["diagram"], work_dir: "documents/t" })), "diagram");
   assert.equal(taskKind(task({ labels: ["diagram"] })), "code");
   assert.deepEqual(taskKinds(task({ labels: ["diagram", "plan"] })), ["code", "plan", "diagram"]);

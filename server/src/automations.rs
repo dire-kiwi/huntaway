@@ -138,7 +138,7 @@ pub enum Action {
         #[serde(default)]
         description: String,
         /// One of db::TASK_TYPES, or none for a code task. One of db::LABELS in an action stored
-        /// before API 69, which gives the task that label.
+        /// before API 70, which gives the task that label.
         #[serde(default)]
         task_type: Option<String>,
         /// Some of db::LABELS.
@@ -459,7 +459,7 @@ pub fn check_action(c: &Connection, project: &db::Project, a: Action) -> ApiResu
                 return Err(bad("the task's title or description is too long"));
             }
             let mut task_type = blank(task_type);
-            // A label as its type, as before API 69.
+            // A label as its type, as before API 70.
             let labels: Vec<Value> = labels.into_iter().chain(task_type.take_if(|t| db::LABELS.contains(&t.as_str()))).map(Value::String).collect();
             let labels = crate::documents::check_labels(&Value::Array(labels)).map_err(bad)?.into_iter().map(String::from).collect();
             if task_type.as_deref().is_some_and(|t| !db::TASK_TYPES.contains(&t)) {

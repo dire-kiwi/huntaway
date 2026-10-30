@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { api, type ServerStatus } from "../api";
 import { useStore } from "../store";
 import { useNewUiBuild } from "../uiVersion";
-import { Button, Modal, timeAgo, Toggle } from "./ui";
+import { Button, Modal, ModalFooter, timeAgo, Toggle } from "./ui";
 
 const PHASES: Record<string, string> = {
   starting: "Starting…",
@@ -285,19 +285,21 @@ export function RestartModal({ status, update, onClose }: { status: ServerStatus
           </div>
         )}
 
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex justify-end gap-2">
-          {!inProgress && (
-            <Button variant="ghost" onClick={onClose}>
-              Close
-            </Button>
-          )}
-          {(!job || job.phase === "failed") && (
-            <Button variant="primary" onClick={start}>
-              <RotateCw size={13} /> {job ? "Try again" : target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart"}
-            </Button>
-          )}
-        </div>
+        <ModalFooter className="space-y-4">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex justify-end gap-2">
+            {!inProgress && (
+              <Button variant="ghost" onClick={onClose}>
+                Close
+              </Button>
+            )}
+            {(!job || job.phase === "failed") && (
+              <Button variant="primary" onClick={start}>
+                <RotateCw size={13} /> {job ? "Try again" : target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart"}
+              </Button>
+            )}
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );

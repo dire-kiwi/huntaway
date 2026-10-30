@@ -144,7 +144,7 @@ repositories readable, and follows its group when the group is renamed. A group 
 projects are all ungrouped or deleted stays in the sidebar (in italics) while it has group
 tasks, so they can still be opened, resumed and deleted.
 
-Any task can have **labels** (API 69): **Plan**, **Artifact** and **Diagram**, each asking its
+Any task can have **labels** (API 70): **Plan**, **Artifact** and **Diagram**, each asking its
 agent for a document besides its other work. Add them in the *New task* form by typing `/plan`,
 `/artifact` or `/diagram` (several at once work), in the task's details under *Labels* (they can
 be added and taken off at any time; the agent hears of a change the next time it starts), or
@@ -163,9 +163,9 @@ keeps a version from each turn that changed the file (`GET /tasks/{id}/document?
 `&version=N` for an earlier one), and the task opens on its first label's document once there's
 one to read. The board's *Type* filter finds tasks by their labels too.
 
-Before API 69, plan, artifact and diagram were types of task whose agents made only the document,
+Before API 70, plan, artifact and diagram were types of task whose agents made only the document,
 in the task's own folder, with no worktree, review or merge. Tasks made as one have it as their
-label since, and keep working that way: *Ready for merge* marks them done. A host before API 69
+label since, and keep working that way: *Ready for merge* marks them done. A host before API 70
 still makes a task of that type when the board gives a new task one label (and refuses several).
 
 A plan's agent asks what it needs to know as questions in the plan (`<ia-question>`: a choice of
@@ -662,7 +662,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     doesn't leave the old copy running. It's kept in `agent_wait.command` and shown with the
     wait.
   - `pull_request` (API 62) watches a pull request: its number (in the task's repository, the one
-    its branch is pushed to), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
+    its branch is pushed to, whose SSH host alias, like `git@github-work:o/r.git`, is the host
+    `ssh -G` says it stands for), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
     been told yet: a check on its head commit failed (or was cancelled or timed out), all of the
     head's required checks passed (all of its checks, when none is required), someone other than
     the agent's GitHub account commented or reviewed, it started to conflict with its base branch,
@@ -673,7 +674,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     comments with their author, kind (comment, review or review comment), file and line, and their
     text without HTML comments and cut to 800 characters (20 at most). A wait that ends otherwise
     returns how the pull request was when last read (`read_at`). The server reads it with one
-    GraphQL query (`gh api graphql`) a minute, as the task's GitHub account (see *GitHub accounts*)
+    GraphQL query (`gh api graphql`) a minute (and one for each 100 review threads past the first
+    100, up to 1,000), as the task's GitHub account (see *GitHub accounts*)
     and only that one; a failed read is tried again after 2, 4, 8 and 10 minutes, and after 5 in a
     row the wait ends with `events: ["unreadable"]` and the error. The first read is made before
     the wait starts, so a pull request that can't be read fails the call. No one's asked about it:
@@ -697,6 +699,13 @@ skipped. Auto-compacting idle sessions is Claude-only.
   and start in column order (top first) once it ends.
   A task with nothing to merge (no commits on its branch beyond its base and no uncommitted
   changes, or no worktree at all) skips the merge and goes straight to *Done*.
+  A merge that turns out to need changes to the task's work (checks failing because of it, review
+  comments, conflicts that need more than a simple resolution) doesn't hold up the tasks behind it:
+  its agent steps out of the queue (`update_task` with status `in_progress` and `remerge`), the
+  next task starts merging, and the card shows *rejoins merge queue* in *In progress* while its
+  agent makes the changes. When that run ends, the task goes back to the end of *Ready for merge*
+  (not to *In review*) and merges when its turn comes. Moving it to another column meanwhile
+  (bar *Needs attention*) takes it out of the queue.
   A merge waiting on you in *Needs attention* still holds the queue; move it to another column to
   let the next one go. You can't message a queued task's agent until it's its turn.
 - **Dependencies:** a task can depend on other tasks in its project (*Depends on* in its
@@ -810,6 +819,21 @@ skipped. Auto-compacting idle sessions is Claude-only.
   yourself or a run you stopped. The tab title (`(2) Huntaway`) and icon count the tasks that
   need attention, and the desktop app shows the count on its dock or taskbar badge. The settings
   are kept in the browser.
+- **Phones and tablets:** below 700px wide (a phone) the board has a narrow layout. The sidebar
+  is a drawer, opened with the menu button at the start of each page's header and closed once
+  it's taken you somewhere (or with a tap beside it, or Escape). A board shows one column at a
+  time: tabs above it with each column's count pick one, as does swiping sideways, and the board
+  opens on the column picked last (before any is picked, *Needs attention* if it has tasks,
+  else the first column with some). The list view stays as it is, with each task's title on a
+  line of its own. A task opens over the whole screen with a back button, its tabs first in a
+  row that scrolls sideways and its details as a tab. On a touch screen Enter in the composer
+  starts a new line and the send button sends (Ctrl/Cmd+Enter does too). Dialogs and menus fit
+  the screen and scroll, and buttons are larger to tap. Dragging doesn't work on touch screens,
+  so on a phone, and on any touch screen (a tablet keeps the desktop layout), each card and row
+  has a **⋯** button whose menu moves the task to another column as dropping it there does
+  (into *In progress* starts its agent), or completes it as Done, Not done or Won't fix. A task
+  beside a board is at least 480px wide, so it's usable on a tablet. Wider windows and the
+  desktop app keep the desktop layout.
 - **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its

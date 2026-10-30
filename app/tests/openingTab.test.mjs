@@ -6,7 +6,7 @@ const task = (fields) => ({ kind: "task", status: "in_review", running: false, d
 const at = "2026-10-26T09:00:00Z";
 
 // IA-147: a plan, artifact or diagram task opens on its document only when it's ready, otherwise on the thread. Hosts
-// before API 69 still have them as types; since, they're labels, and a task from before keeps working in its own folder.
+// before API 70 still have them as types; since, they're labels, and a task from before keeps working in its own folder.
 test("a plan, artifact or diagram task opens on the thread until its document is ready", () => {
   for (const type of ["plan", "artifact", "diagram"]) {
     for (const fields of [{ task_type: type }, { labels: [type], work_dir: "documents/t" }]) {

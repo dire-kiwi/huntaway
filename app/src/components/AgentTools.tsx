@@ -5,7 +5,7 @@ import { api, canRunAgents, hostSupports, type AgentTools, type GlobalAgentTools
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../store";
 import { HostSelect } from "./Hosts";
-import { Button, Field, Input, Modal, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
+import { Button, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
 
 const SKILL_TEMPLATE = `---
 name: my-skill
@@ -378,16 +378,18 @@ function SkillEditor({ skill, onSave, onClose }: { skill: ProjectSkill | null; o
         >
           <Textarea rows={20} className="font-mono text-[12px]" value={content} onChange={(e) => setContent(e.target.value)} spellCheck={false} autoFocus />
         </Field>
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex items-center justify-end gap-2">
-          <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" disabled={busy} onClick={save}>
-            {skill ? "Save skill" : "Add skill"}
-          </Button>
-        </div>
+        <ModalFooter className="space-y-3">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={save}>
+              {skill ? "Save skill" : "Add skill"}
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );
@@ -591,18 +593,20 @@ function McpEditor({
             </Field>
           </>
         )}
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="ghost" className="mr-auto" onClick={switchMode}>
-            {json === null ? "Edit as JSON" : "Edit as form"}
-          </Button>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" disabled={busy || !name.trim()} onClick={save}>
-            {server ? "Save server" : "Add server"}
-          </Button>
-        </div>
+        <ModalFooter className="space-y-4">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" className="mr-auto" onClick={switchMode}>
+              {json === null ? "Edit as JSON" : "Edit as form"}
+            </Button>
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={busy || !name.trim()} onClick={save}>
+              {server ? "Save server" : "Add server"}
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );

@@ -629,7 +629,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;
             let mut body = Map::new();
-            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "labels"] {
+            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge", "labels"] {
                 if !args[k].is_null() {
                     body.insert(k.into(), args[k].clone());
                 }
@@ -3167,6 +3167,18 @@ mod tests {
             assert!(err.starts_with("pull_request_events takes checks_failed, checks_passed, comments, conflicts"), "{err}");
             let err = handle_mcp(&s, mcp(&claude, "c4", json!({"reason": "r", "pull_request": "the PR"}))).await.unwrap_err();
             assert!(err.contains("the PR isn't a pull request"), "{err}");
+            // A whole number sent as a float (or written as one) is a number.
+            for (call, pr) in [("c5", json!(7.0)), ("c5b", json!("7.0"))] {
+                let v = handle_mcp(&s, mcp(&claude, call, json!({"reason": "r", "pull_request": pr, "seconds": 1}))).await.unwrap();
+                assert_eq!((v["ended"].as_str(), v["pull_request"]["number"].as_u64()), (Some("timeout"), Some(7)), "{pr}");
+            }
+            let err = handle_mcp(&s, mcp(&claude, "c6", json!({"reason": "r", "pull_request": 7.5}))).await.unwrap_err();
+            assert!(err.contains("7.5 isn't a pull request"), "{err}");
+            // A remote's host that isn't its account's (an SSH alias ssh doesn't know) asks for the URL.
+            assert!(std::process::Command::new("git").args(["remote", "set-url", "origin", "git@github-work:o/r.git"]).current_dir(&repo).status().unwrap().success());
+            db::update_profile(&s.db(), &p.id, &[("github_account", json!("me"))]).unwrap();
+            let err = handle_mcp(&s, mcp(&claude, "c7", json!({"reason": "r", "pull_request": 7}))).await.unwrap_err();
+            assert!(err.contains("this task's repository is pushed to github-work, but its GitHub account me is on github.com: give the pull request's URL"), "{err}");
             // The pull request's state is kept with the task, and goes with it.
             assert_eq!(s.db().query_row("SELECT COUNT(*) FROM pr_watches WHERE task_id=?1", [&t.id], |r| r.get::<_, i64>(0)).unwrap(), 1);
             s.db().execute("DELETE FROM tasks WHERE id=?1", [&t.id]).unwrap();
