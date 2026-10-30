@@ -858,7 +858,6 @@ export interface GlobalAgentTools {
   profile_switches: Record<string, Record<string, boolean>>;
 }
 
-/** Agent defaults for a host. */
 /** What starts an automation (API 63): an interval, a time of day (in the host's time zone) on some weekdays, or a webhook delivery. */
 export type AutomationTrigger =
   | { kind: "interval"; every_minutes: number }
@@ -948,6 +947,7 @@ export interface AutomationInput {
   rotate_token?: boolean;
 }
 
+/** Agent defaults for a host. */
 export interface HostSettings {
   /** Used when the thread, project and profile don't pick a model. */
   default_model: string | null;

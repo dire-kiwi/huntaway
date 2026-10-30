@@ -468,7 +468,8 @@ function inputOf(d: Draft, existing: Automation | null): AutomationInput {
       : { kind: "send_to_task", task_id: d.taskId, message: d.message };
   const b: AutomationInput = { name: d.name, enabled: d.enabled, trigger, action };
   if (d.when === "webhook") {
-    if (d.secret.trim()) b.secret = d.secret.trim();
+    // As it's typed: GitHub signs with it as it is (the server refuses one with spaces around it).
+    if (d.secret.trim()) b.secret = d.secret;
     else if (d.removeSecret && existing?.has_secret) b.secret = "";
   }
   return b;
@@ -789,6 +790,7 @@ function WebhookFields({
   const publicUrl = useStore((s) => s.hostSettings[hostId]?.public_url ?? "");
   const [address, setAddress] = useState(publicUrl);
   const [addressErr, setAddressErr] = useState<string | null>(null);
+  const [rotateErr, setRotateErr] = useState<string | null>(null);
   useEffect(() => {
     setAddress(publicUrl);
   }, [publicUrl]);
@@ -837,7 +839,12 @@ function WebhookFields({
               onClick={async (e) => {
                 e.preventDefault();
                 if (!saved || !confirm("Make a new URL? The current one stops working, so update it wherever it's used.")) return;
-                onRotated(await api.updateAutomation(hostId, saved.id, { rotate_token: true }));
+                setRotateErr(null);
+                try {
+                  onRotated(await api.updateAutomation(hostId, saved.id, { rotate_token: true }));
+                } catch (err) {
+                  setRotateErr(`Couldn't make a new URL: ${(err as Error).message}`);
+                }
               }}
             >
               <RefreshCw size={13} />
@@ -846,6 +853,7 @@ function WebhookFields({
         ) : (
           <div className="text-[12px] text-faint">Shown here once it's saved.</div>
         )}
+        {rotateErr && <div className="text-xs text-red-400">{rotateErr}</div>}
       </Field>
       <Field label="This host's public address" hint="For every webhook on this host. Where a tunnel or the connection broker reaches it from outside.">
         <div className="flex items-center gap-2">
