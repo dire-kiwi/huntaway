@@ -13,7 +13,7 @@ import { ChevronDown, ChevronRight, Loader2, MessageSquare, X } from "lucide-rea
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import { api, hostSupports, runningAgentSteers, type DiffResult, type GitCommit, type GitCommitShown, type GitFile, type GitStash, type GitStatus, type Task } from "../api";
 import { conflicted, fileRows, hasStaged, hasUnstaged, linesPatch, linesStageable, parseDiff, untracked, type FileDiff, type FileRow } from "../changes";
-import { clearReview, commentLines, editComment, lineRange, openDraft, removeComments, useReview, type CommentLines, type CommentSource, type Review } from "../lineComments";
+import { clearReview, commentLines, dropDraft, editComment, lineRange, openDraft, removeComments, useReview, type CommentLines, type CommentSource, type Review } from "../lineComments";
 import { useHost } from "../store";
 import { CommentsContext, DiffLines, diffRows, type CommentsApi, type DiffRow, type Layout, type PickHow } from "./DiffLines";
 import { sendComments } from "./Thread";
@@ -347,6 +347,11 @@ function GitView({ task }: { task: Task }) {
   const [shown, setShown] = useState<{ sha: string; commit?: GitCommitShown; patch?: string; error?: string } | null>(null);
   const showSha = side === "commits" ? commit?.sha : side === "stash" ? stash?.sha : undefined;
   const shownFiles = useMemo(() => parseDiff(shown?.patch ?? ""), [shown]);
+  const stashIndex = side === "stash" ? stash?.index : undefined;
+  const shownSource = useMemo<CommentSource | undefined>(
+    () => (!shown ? undefined : stashIndex !== undefined ? { key: `stash:${shown.sha}`, label: `stash@{${stashIndex}}` } : { key: `commit:${shown.sha}`, label: `commit ${short(shown.sha)}` }),
+    [shown, stashIndex],
+  );
   useEffect(() => {
     if (!showSha) return;
     let stale = false;
@@ -574,10 +579,9 @@ function GitView({ task }: { task: Task }) {
 
   // A comment on lines of a file's diff being staged: the range (or hunk) picked, or the cursor's line, or with
   // `at` (a line's comment button), that line unless it's in what's picked.
-  const stagingSource = (p: Pane): CommentSource => ({
-    key: p,
-    label: p === "staged" ? "staged changes" : target?.file && untracked(target.file) ? "an untracked file" : "unstaged changes",
-  });
+  const isUntracked = !!target?.file && untracked(target.file);
+  const stagingSources = useMemo<Record<Pane, CommentSource>>(() => ({ unstaged: isUntracked ? { key: "unstaged", label: "an untracked file" } : UNSTAGED, staged: STAGED }), [isUntracked]);
+  const stagingSource = (p: Pane) => stagingSources[p];
   const commentStaging = (p: Pane = activePane, at?: number) => {
     const f = paneFile(p);
     if (!f) return;
@@ -633,7 +637,7 @@ function GitView({ task }: { task: Task }) {
     setDialog({
       kind: "confirm",
       title: "Discard the comments",
-      body: `Throw away ${review.comments.length + review.drafts.length === 1 ? "the comment" : "all the comments"} for the agent that haven't been sent?`,
+      body: `Throw away ${review.comments.length + review.drafts.length === 1 ? "the comment for the agent, which hasn't" : "all the comments for the agent that haven't"} been sent?`,
       yes: "Discard",
       danger: true,
       onYes: () => clearReview(h, id),
@@ -1220,7 +1224,7 @@ function GitView({ task }: { task: Task }) {
                       head={shown.commit && <CommitHead c={shown.commit} />}
                       empty="No changes"
                       layout={layout}
-                      source={side === "stash" && stash ? { key: `stash:${stash.sha}`, label: `stash@{${stash.index}}` } : { key: `commit:${shown.sha}`, label: `commit ${short(shown.sha)}` }}
+                      source={shownSource}
                     />
                   )
                 ) : null
@@ -1583,13 +1587,15 @@ function CommitHead({ c }: { c: GitCommitShown }) {
 /** The branch's changes against its base: its commits, and everything changed (uncommitted work too). */
 function BranchView({ diff, layout }: { diff: DiffResult | null; layout: Layout }) {
   const files = useMemo(() => parseDiff(diff?.patch ?? ""), [diff]);
+  const base = diff?.base;
+  const source = useMemo<CommentSource>(() => ({ key: "branch", label: base ? `the branch's changes against ${base}, uncommitted ones too` : "the branch's changes" }), [base]);
   if (!diff) return null;
   if (!diff.available) return <Note error>Diff unavailable: {diff.reason}</Note>;
   return (
     <PatchView
       files={files}
       layout={layout}
-      source={{ key: "branch", label: diff.base ? `the branch's changes against ${diff.base}, uncommitted ones too` : "the branch's changes" }}
+      source={source}
       empty="No changes yet."
       head={
         <div className="mb-2 px-1.5">
@@ -1680,17 +1686,16 @@ function ReviewBar({
                   <span className="shrink-0 text-[11px] text-faint">{c.source}</span>
                   <span className={clsx("min-w-0 truncate", draft ? "text-amber-300" : "text-fg")}>{draft ? (c.note.trim() ? `${c.note} (being written)` : "(being written)") : c.note}</span>
                 </button>
-                {!draft && (
-                  <button
-                    tabIndex={-1}
-                    title="Delete the comment"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => removeComments(task.host_id, task.id, [c.id as string])}
-                    className="shrink-0 self-center rounded text-faint opacity-0 group-hover:opacity-100 hover:text-red-300"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
+                <button
+                  tabIndex={-1}
+                  title="Delete the comment"
+                  onMouseDown={(e) => e.preventDefault()}
+                  // One being written may be where it can't be seen any more (its lines changed): it goes from here.
+                  onClick={() => (anchor === c.id && drafts.some((d) => d.id === c.id) ? dropDraft(task.host_id, task.id, c.id) : removeComments(task.host_id, task.id, [c.id]))}
+                  className="shrink-0 self-center rounded text-faint opacity-0 group-hover:opacity-100 hover:text-red-300"
+                >
+                  <X size={12} />
+                </button>
               </div>
             ),
           )}
