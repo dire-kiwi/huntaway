@@ -1,6 +1,7 @@
 mod admin;
 mod agent_tools;
 mod attachments;
+mod automations;
 mod codex;
 mod context;
 mod analytics;
@@ -292,6 +293,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
+    automations::start(&state);
     relocate::start_recording(&state);
     hub::start(&state)?;
     match (&args.hub_token, args.hubs.is_empty()) {

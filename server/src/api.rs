@@ -38,6 +38,8 @@ pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/api/health", get(|| async { Json(json!({"ok": true})) }))
         .route("/api/hub/connect", get(hub::accept))
+        // Without the board's token: the token in its path reaches only its own automation.
+        .route("/api/hooks/{id}/{token}", post(crate::automations::webhook).layer(DefaultBodyLimit::max(crate::automations::MAX_BODY)))
         .nest("/api", host_api.merge(hub_api).fallback(no_route).method_not_allowed_fallback(wrong_method))
         // The nested fallback covers `/api` but not `/api/`.
         .route("/api/", any(no_route))
@@ -84,6 +86,13 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}", get(get_project).patch(update_project).delete(delete_project))
         .route("/projects/{id}/tasks", get(list_project_tasks).post(create_task))
         .route("/projects/{id}/remove-merged-worktrees", post(remove_merged_worktrees))
+        .route("/projects/{id}/automations", get(crate::automations::list_handler).post(crate::automations::create_handler))
+        .route(
+            "/automations/{id}",
+            get(crate::automations::get_handler).patch(crate::automations::update_handler).delete(crate::automations::delete_handler),
+        )
+        .route("/automations/{id}/run", post(crate::automations::run_handler))
+        .route("/automations/{id}/runs", get(crate::automations::runs_handler))
         .route("/agent-tools", get(agent_tools::get_global))
         .route("/agent-tools/switches", post(agent_tools::set_switch))
         .route("/agent-tools/skills", post(agent_tools::create_global_skill))
@@ -1338,7 +1347,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
 }
 
 /// Check a new thread's requested Claude config against those it can use (None for the default).
-fn pick_config(c: &rusqlite::Connection, profile_id: &str, project: Option<&db::Project>, id: Option<&str>) -> ApiResult<Option<String>> {
+pub fn pick_config(c: &rusqlite::Connection, profile_id: &str, project: Option<&db::Project>, id: Option<&str>) -> ApiResult<Option<String>> {
     let Some(id) = id.filter(|id| !id.is_empty()) else { return Ok(None) };
     if !db::available_configs(c, profile_id, project)?.iter().any(|cfg| cfg.id == id) {
         return Err(ApiError::bad("claude_config_id must be one of the project's (or profile's) Claude configs"));
@@ -1926,13 +1935,16 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
         "default_permission_mode": db::get_setting(&c, "default_permission_mode")?,
         "scratch_host": db::get_setting(&c, "scratch_host")?,
         "terminal_tools": terminal::tools(&c),
+        "public_url": db::get_setting(&c, "public_url")?,
     })))
 }
 
 /// Agent defaults for this host: the model and permission mode (when nothing more specific is
 /// set) and effort. Also, for a board that can't run agents itself, the linked host its
 /// workspace scratch chats go to (`scratch_host`, a link id). And the TUI programs offered as
-/// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`).
+/// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`). And the
+/// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
+/// URLs are shown with.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     if let Some(e) = b.get("default_effort").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) {
         if !db::EFFORTS.contains(&e) {
@@ -1949,11 +1961,20 @@ async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Valu
             return Err(ApiError::bad("scratch_host must be a linked host"));
         }
     }
+    let mut b = b;
+    if let Some(v) = b.get("public_url").filter(|v| !v.is_null()) {
+        let url = v.as_str().map(|u| u.trim().trim_end_matches('/')).ok_or_else(|| ApiError::bad("public_url must be a string"))?;
+        if (!url.is_empty() && !(url.starts_with("https://") || url.starts_with("http://"))) || url.contains(char::is_whitespace) || url.len() > 500 {
+            return Err(ApiError::bad("public_url must be an http(s) URL, like https://board.example.com"));
+        }
+        let url = url.to_string();
+        b.insert("public_url".into(), json!(url));
+    }
     let tools = match b.get("terminal_tools").filter(|v| !v.is_null()) {
         Some(v) => Some(terminal::parse_tools(v).map_err(ApiError::bad)?),
         None => None,
     };
-    for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host"] {
+    for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
         if let Some(v) = b.get(key) {
             db::set_setting(&s.db(), key, v.as_str())?;
         }

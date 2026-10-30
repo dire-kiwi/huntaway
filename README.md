@@ -897,6 +897,98 @@ Asana in Settings → Profiles → Edit, or `asana_enabled: false` in `POST /pro
 task sidebar leave Asana out (a task linked before still lists its links in the sidebar, so they
 can be removed), and the host won't search Asana for it. Its token is kept for when it's on again.
 
+### Automations
+
+A project's automations (API 63, in its settings under *Automations*) put work on the board by
+themselves: recurring work such as a weekly dependency update, and events from outside such as a
+new GitHub issue to triage. Each one has a trigger and an action, can be switched on and off, and
+lists its latest runs and deliveries (when, what started it, what happened, and the task).
+
+- **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
+  changes); a time of day on some weekdays, in the host's time zone; or a **webhook**: a POST to
+  `/api/hooks/<id>/<token>` on the host.
+- **Actions.** Create a task in the project from a template: title, description, type (code,
+  plan, artifact, diagram or scratch), agent config, model, effort, To do or Backlog, and whether to
+  start its agent. Or send a message to one of the project's tasks (to its agent as it works, if
+  it's running). Its description says which automation made it and why.
+- **Templates** take `{{…}}` values. From a webhook delivery: `{{body.issue.title}}` (any path in
+  the JSON body, `*` for every item of a list), `{{headers.x-github-event}}`, `{{query.name}}`,
+  `{{event}}` (X-GitHub-Event), `{{action}}`, `{{labels}}` (the issue's, pull request's or
+  discussion's label names) and `{{delivery}}`. From the board: `{{date}}`, `{{time}}`, `{{now}}`,
+  `{{automation}}` and `{{count}}` (deliveries coalesced into the run). A value from a delivery
+  is untrusted: in a description or message it's wrapped in `<untrusted-data>` tags (which it
+  can't close), and the agent is told that what's inside them, and the title, is data, not
+  instructions. Titles are one line of at most 200 characters.
+- **Run now** runs a schedule at once, on or off. For a webhook it's **Test**: a delivery sent
+  from the board (the latest one received, or a body you write) through its filters and
+  templates, without the signature check, duplicate check or coalescing.
+
+**Webhooks.** The webhook route is the one route that doesn't take the board's token. The token in
+its path is the automation's own (compared in constant time) and reaches nothing else: an unknown
+id or a wrong token is the same 404, a delivery can only fill in the templates (not pick the
+project, the task to message, the agent config or anything else), and a message can only go to
+a task in the automation's own project. *Make a new URL* replaces the token.
+
+- **Signature:** with a secret set (GitHub's webhook *Secret*), a delivery must carry a matching
+  `X-Hub-Signature-256` (HMAC-SHA256 of the body), or it's rejected with a 401. The secret is
+  never shown again once its dialog closes.
+- **Filters** on the event, action, labels or any value (`is`, `isn't`, `starts with`, `contains`,
+  `is one of`, `isn't any of`, `is set`, `isn't set`). A delivery that doesn't pass is recorded
+  as filtered out, with the condition it failed.
+- **Duplicates:** a delivery whose `X-GitHub-Delivery` (or `X-Delivery-Id`, `Idempotency-Key`)
+  came in the last 7 days is dropped, even when both arrive at once. One that failed, was
+  rejected or came while the automation was off can be sent again.
+- **Coalescing:** deliveries within a window (up to an hour) make one run with the latest one's
+  values, so a burst of edits is one task. A key (such as `{{body.issue.number}}`) keeps
+  different issues apart.
+- **Limits:** bodies of up to 1 MiB (413 above that), JSON or GitHub's form-encoded `payload`;
+  60 deliveries a minute per automation (429 above that); 20 coalesced runs waiting at once.
+- **Answers:** 202 when it ran (or is waiting to coalesce, or was filtered out), 200 for a
+  duplicate, 401 for a bad signature, 409 while it's off, and 500 if the action failed (the
+  project is archived, say).
+
+A webhook that creates a task and starts its agent lets whoever can send it start an agent on
+the host, with the project's permission mode. Keep that mode asking for approval (or leave the
+task unstarted) when the sender isn't only you.
+
+**Missed runs and restarts.** The scheduler looks every 5 seconds. It claims a due run by moving
+the automation's next run on and recording the run in one transaction before it does anything,
+so a restart can't run it twice. There's no backfill: an interval that came due while the server
+was down (or the host asleep) runs once, then goes on from then; a time of day more than 10
+minutes late is skipped and recorded as missed. A run under way when the server stopped is
+marked as interrupted (it may or may not have made its task) and isn't run again. Coalesced
+deliveries wait in the database and run after a restart. A time of day that the clocks skip
+(daylight saving starts) runs when they've gone forward; one they repeat runs once. An archived
+project's schedules don't run until it's unarchived.
+
+**Reaching the webhook.** The board usually listens on localhost or a LAN, where GitHub can't
+reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the project:
+
+- **A tunnel or proxy** that serves only that path from `http://127.0.0.1:7878`: a Cloudflare
+  tunnel whose ingress rule matches `^/api/hooks/`, Tailscale Funnel on that path, or a reverse
+  proxy on a public machine with a `location /api/hooks/` block. The rest of the API still needs
+  the board's token, but there's no need to publish it.
+- **The connection broker** (`huntaway-broker`, HA-2), once the host dials out to it: deliveries
+  go to `https://<broker>/_broker/h/<host name>/api/hooks/<id>/<token>` (or without
+  `/_broker/h/<host name>` for its default host).
+- **A hub** doesn't pass webhooks on to its linked hosts: its links carry the board's API calls,
+  not raw deliveries with their headers, so the URL has to reach the project's own host.
+
+Set the host's public address in a webhook's settings (*This host's public address*, the
+host setting `public_url`), and the settings show the full URL to give GitHub. In GitHub's
+webhook settings, pick the events to send, `application/json` (or the default form encoding),
+and the same secret.
+
+The API: `GET`/`POST /projects/{id}/automations` (`{name, trigger, action, enabled, secret}`;
+the list comes with the host's `time_zone`), `GET`/`PATCH`/`DELETE /automations/{id}` (`PATCH`
+also takes `rotate_token: true`; a blank `secret` removes it), `POST /automations/{id}/run`
+(`{payload, event}` for a test delivery) and `GET /automations/{id}/runs`. A trigger is
+`{kind: "interval", every_minutes}`, `{kind: "daily", time: "HH:MM", weekdays: ["mon", …]}` or
+`{kind: "webhook", filters: [{path, op, value}], coalesce_seconds, coalesce_key}`; an action
+`{kind: "create_task", title, description, task_type, claude_config_id, model, effort, status,
+start}` or `{kind: "send_to_task", task_id, message}`. Changes and runs are broadcast as
+`automations_changed` events.
+
 ## License
 
 MIT; see [LICENSE](LICENSE).

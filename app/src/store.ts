@@ -651,6 +651,17 @@ export function connectEvents() {
   };
 }
 
+type AutomationListener = (hostId: string, projectId: string, automationId: string) => void;
+const automationListeners = new Set<AutomationListener>();
+
+/** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
+export function onAutomationsChanged(fn: AutomationListener) {
+  automationListeners.add(fn);
+  return () => {
+    automationListeners.delete(fn);
+  };
+}
+
 /**
  * Called with a task as it was (undefined if it wasn't on the board) and as it is when an event changes it, for
  * notifications (notifier.ts). Not when lists of tasks load, at the start and after a reconnect, so a task that's
@@ -699,6 +710,9 @@ export function handleEvent(ev: any) {
       break;
     case "settings_changed":
       s.loadHostSettings(h);
+      break;
+    case "automations_changed":
+      for (const fn of automationListeners) fn(h, ev.project_id, ev.automation_id);
       break;
     case "message":
     case "message_updated": {
