@@ -34,6 +34,11 @@ export interface ThreadModel {
   subagents: Map<string, Subagent>;
   /** tool_use_id → the subagent that made the call, for calls made inside a subagent. */
   callParent: Map<string, string>;
+  /**
+   * The id of the latest message sent to the agent in the main conversation (by the user, the board or another
+   * agent), or 0: a question or plan from before it has been moved past, and isn't answered any more.
+   */
+  lastSent: number;
 }
 
 function resultText(content: Any): string {
@@ -126,6 +131,7 @@ export function buildModel(messages: Message[], running: boolean, prev?: ThreadM
     children,
     subagents,
     callParent,
+    lastSent: lastSent(top, 0),
   };
   built.set(model, { messages, running, earlier, prompted, callAt: items.callAt });
   return model;
@@ -198,10 +204,13 @@ function extend(prev: ThreadModel, was: Built, messages: Message[], running: boo
     }
   }
   const changed = items.items.length !== prev.items.length || items.items.some((it, i) => it !== prev.items[i]);
-  const model = { items: changed ? items.items : prev.items, results, children, subagents, callParent };
+  const model = { items: changed ? items.items : prev.items, results, children, subagents, callParent, lastSent: lastSent(added, prev.lastSent) };
   built.set(model, { messages, running, earlier: was.earlier, prompted, callAt: items.callAt });
   return model;
 }
+
+/** The latest of `after` and the ids of the messages sent to the agent among `messages` (see ThreadModel.lastSent). */
+const lastSent = (messages: Message[], after: number) => messages.reduce((n, m) => (m.kind === "user" && m.id > n ? m.id : n), after);
 
 /** Whether a message could change what buildSubagents makes of a thread, given its subagents so far. */
 function affectsSubagents(m: Message, subagents: Map<string, Subagent>): boolean {

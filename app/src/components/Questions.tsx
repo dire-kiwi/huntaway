@@ -190,13 +190,20 @@ function useBusy() {
 /**
  * A question an agent asked with the board's request_user_input. With options, picking one answers it (or, when it
  * takes several, ticking them and Send), and keys 1–9 pick them; a free-text answer goes with Send or Enter. Answering
- * sends the answer as the user's message. Without options, the reply is typed in the thread as before.
+ * sends the answer as the user's message. Without options, the reply is typed in the thread as before. Once a message
+ * has been sent to the agent after it (`movedOn`), it isn't answered any more.
  */
-export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hostId, taskId }: { id: number; data: Any; hostId: string; taskId: string }) {
+export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hostId, taskId, movedOn }: {
+  id: number;
+  data: Any;
+  hostId: string;
+  taskId: string;
+  movedOn: boolean;
+}) {
   const options: Option[] = Array.isArray(data.options) ? data.options : [];
   const multi = !!data.multi_select;
   const other = data.allow_other !== false;
-  const pending = data.status === "pending";
+  const pending = data.status === "pending" && !movedOn;
   const [picked, setPicked] = useState<string[]>([]);
   const [text, setText] = useState("");
   const { busy, err, run } = useBusy();
@@ -218,6 +225,7 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
         {pending ? "The agent asks" : "The agent asked"}
         {data.status === "answered" && <Outcome tone="good">answered</Outcome>}
         {data.status === "replied" && <Outcome tone="plain">answered in the thread</Outcome>}
+        {data.status === "pending" && movedOn && <Outcome tone="plain">not answered</Outcome>}
       </div>
       <div className={clsx("text-[13.5px] font-semibold whitespace-pre-wrap", pending ? "text-fg" : "text-muted")}>{data.question}</div>
       {options.length > 0 && (
@@ -282,15 +290,15 @@ type Draft = { picked: string[]; other: string };
  * free-text answer (Claude always takes one; Codex says which questions do), and several picks where a question takes
  * them. Keys 1–9 pick in the question that's current; picking the one answer of a question moves on to the next, and
  * answers a lone question outright. The answers go back to the agent as its tool's answers. A question whose run ended
- * first can still be answered: the answers go as the user's message.
+ * first can still be answered, until a message is sent to the agent after it (`movedOn`): the answers go as the user's message.
  */
-export const AskCard = memo(function AskCard({ id, data, hostId, from }: { id: number; data: Any; hostId: string; from?: ReactNode }) {
+export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }: { id: number; data: Any; hostId: string; from?: ReactNode; movedOn: boolean }) {
   const questions = questionsOf(data);
   const codex = data.agent === "codex" || data.tool_name === "request_user_input";
   const host = useHost(hostId);
   const structured = hostSupports(host, QUESTIONS_API);
-  // A run that ended first: answerable by message, by hosts that do that.
-  const late = data.status === "expired" && structured;
+  // A run that ended first: answerable by message, by hosts that do that, while the conversation hasn't moved on.
+  const late = data.status === "expired" && structured && !movedOn;
   const open = data.status === "pending" || late;
   const [drafts, setDrafts] = useState<Draft[]>(() => questions.map(() => ({ picked: [], other: "" })));
   const [current, setCurrent] = useState(0);
@@ -446,20 +454,30 @@ const modeLabel = (m: PermissionMode) => PERMISSION_MODES.find((x) => x.id === m
 
 /**
  * A plan presented with ExitPlanMode: the plan as Markdown, **Approve** (which takes the thread out of Plan mode, into
- * the mode picked beside it) and **Keep planning**, which sends the agent back to it with the user's feedback.
+ * the mode picked beside it) and **Keep planning**, which sends the agent back to it with the user's feedback. As with
+ * questions, one whose run ended first is answered by message until the conversation moves on (`movedOn`).
  */
-export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from }: { data: Any; hostId: string; taskId: string; from?: ReactNode }) {
+export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, movedOn }: {
+  data: Any;
+  hostId: string;
+  taskId: string;
+  from?: ReactNode;
+  movedOn: boolean;
+}) {
   const plan: string = typeof data.input?.plan === "string" ? data.input.plan : "";
   const host = useHost(hostId);
   const structured = hostSupports(host, QUESTIONS_API);
-  const late = data.status === "expired" && structured;
+  const late = data.status === "expired" && structured && !movedOn;
   const open = data.status === "pending" || late;
   const task = useStore((s) => s.tasks[taskId]);
   const project = useProject(task?.project_id);
   const hostMode = useStore((s) => s.hostSettings[hostId]?.default_permission_mode);
-  // What it carries on in by default: the thread's mode without Plan, as approving does on its own.
+  // What it carries on in unless another's picked: the thread's own mode, if it has one other than Plan (the agent
+  // went into plan mode by itself), else its default without Plan, as approving does on its own.
   const inherited: PermissionMode = project?.permission_mode ?? hostMode ?? "default";
-  const [mode, setMode] = useState<PermissionMode>(inherited === "plan" ? "default" : inherited);
+  const own = task?.permission_mode !== "plan" ? task?.permission_mode : null;
+  const [mode, setMode] = useState<PermissionMode>(own ?? (inherited === "plan" ? "default" : inherited));
+  const modes = AFTER_PLAN.includes(mode) ? AFTER_PLAN : [...AFTER_PLAN, mode];
   const [expanded, setExpanded] = useState(open);
   const [feedback, setFeedback] = useState<string | null>(null);
   const { busy, err, run } = useBusy();
@@ -537,10 +555,10 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from }: {
                 onChange={(e) => setMode(e.target.value as PermissionMode)}
                 className="h-7 rounded-md border border-line bg-raised px-1.5 text-[12px] text-fg outline-none hover:border-line-strong focus:border-accent/60"
               >
-                {AFTER_PLAN.map((m) => (
+                {modes.map((m) => (
                   <option key={m} value={m}>
                     {modeLabel(m)}
-                    {m === inherited ? " (thread default)" : ""}
+                    {m === own ? " (this thread's)" : m === inherited ? " (thread default)" : ""}
                   </option>
                 ))}
               </select>

@@ -99,6 +99,9 @@ pub fn answer(s: &Shared, task_id: &str, message_id: i64, answer: Answer) -> Api
     if asked["status"] != "pending" {
         return Err(ApiError::conflict("this question has been answered already"));
     }
+    if crate::permissions::moved_on(s, task_id, message_id)? {
+        return Err(ApiError::conflict("the conversation has moved on since this was asked: reply in the thread instead"));
+    }
     let options: Vec<&str> = asked["options"].as_array().into_iter().flatten().filter_map(|o| o["label"].as_str()).collect();
     let mut choices: Vec<String> = Vec::new();
     for c in &answer.choices {
@@ -324,6 +327,20 @@ mod tests {
             assert_eq!(questions(&s, &task.id)[0].data["status"], "pending");
             s.runs.lock().unwrap().insert(task.id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
             assert!(answer(&s, &task.id, id, pick(&["B"], None)).is_ok());
+        });
+    }
+
+    #[test]
+    fn a_question_the_conversation_has_moved_past_isnt_answered() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (task, run) = running_task(&s);
+            ask_with(&s, &run, "c1", json!({"question": "Which?", "options": ["A", "B"]})).await.unwrap();
+            // A message that doesn't settle it as the user's reply does (the board's own, say).
+            db::insert_message(&s.db(), &task.id, "user", &json!({"text": "Merge it", "auto": true})).unwrap();
+            let id = questions(&s, &task.id)[0].id;
+            assert_eq!(answer(&s, &task.id, id, pick(&["A"], None)).unwrap_err().0, axum::http::StatusCode::CONFLICT);
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().queued_message, None);
         });
     }
 

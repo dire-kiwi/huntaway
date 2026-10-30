@@ -632,14 +632,18 @@ function PromptFrom({ data }: { data: Any }) {
 /** A question the agent asked with request_user_input. */
 function QuestionRow({ id, data, hostId }: { id: number; data: Any; hostId: string }) {
   const taskId = useThread((t) => t.taskId);
-  return <BoardQuestionCard id={id} data={data} hostId={hostId} taskId={taskId} />;
+  const movedOn = useThread((t) => t.lastSent > id);
+  return <BoardQuestionCard id={id} data={data} hostId={hostId} taskId={taskId} movedOn={movedOn} />;
 }
 
 /** A permission prompt: a question or a plan gets its own card. */
 function PromptCard({ id, data, hostId }: { id: number; data: Any; hostId: string }) {
   const taskId = useThread((t) => t.taskId);
-  if (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length) return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} />;
-  if (data.tool_name === "ExitPlanMode") return <PlanCard data={data} hostId={hostId} taskId={taskId} from={<PromptFrom data={data} />} />;
+  // A message's been sent to the agent since: one whose run ended isn't answered any more.
+  const movedOn = useThread((t) => t.lastSent > id);
+  if (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length)
+    return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} movedOn={movedOn} />;
+  if (data.tool_name === "ExitPlanMode") return <PlanCard data={data} hostId={hostId} taskId={taskId} from={<PromptFrom data={data} />} movedOn={movedOn} />;
   return <PermissionCard data={data} hostId={hostId} />;
 }
 

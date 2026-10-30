@@ -146,6 +146,25 @@ test("a question whose run ended is answered by message, and answered ones show 
   });
 });
 
+// HA-9 review: every expired question and plan stayed open, and keys 1-9 answered long-superseded ones.
+test("a question or plan the conversation has moved past isn't answered any more", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Moved on" });
+  const plan = { tool_name: "ExitPlanMode", request_id: "plan-1", status: "expired", input: { plan: "# Plan: Old plan\n\nDo it" } };
+  const items = [["question", colour], ["permission", askData({ status: "expired" })], ["permission", plan], user("Do something else"), ["permission", askData({ request_id: "ask-2", status: "expired", input: { questions: [{ question: "Still open?", options: [{ label: "Yes" }] }] } })]];
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await routeThread(page, task.id, thread(task.id, items));
+    const sent = await capture(page);
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Which colour should the button be?", "wait Old plan", "wait not answered", "wait Still open?"]);
+    // The ones before the user's message are closed; the expired one after it can still be answered.
+    assert.equal(await page.getByRole("button", { name: "Approve" }).count(), 0);
+    assert.equal(await page.getByRole("radio", { name: "Green" }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Send answers" }).count(), 1);
+    await ui.run(["click Which colour should the button be?", "press 1"]);
+    assert.deepEqual(await nth(sent, 1), { path: "/permissions/ask-2", body: { decision: "allow", answers: [["Yes"]] } });
+  });
+});
+
 test("Codex's questions get the same card, and its other prompts say it's Codex asking", async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Codex asks" });
   const codexQuestion = {
@@ -166,6 +185,22 @@ test("Codex's questions get the same card, and its other prompts say it's Codex 
     // A lone question is answered by picking.
     await ui.run(["click text=a.txt"]);
     assert.deepEqual(await nth(sent, 1), { path: "/permissions/cq", body: { decision: "allow", answers: [["a.txt"]] } });
+  });
+});
+
+// HA-9 review: the mode picked for a plan started as the project's or host's, so approving reset the thread's own.
+test("a plan's mode starts as the thread's own", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Own mode" });
+  await server.api("PATCH", `/tasks/${task.id}`, { permission_mode: "acceptEdits" });
+  const plan = { tool_name: "ExitPlanMode", request_id: "plan-1", status: "pending", input: { plan: "Do it" } };
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await routeThread(page, task.id, thread(task.id, [user("Go"), ["permission", plan]]));
+    const sent = await capture(page);
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Plan ready for approval"]);
+    assert.equal(await page.getByLabel("Mode to continue in").inputValue(), "acceptEdits");
+    await ui.run(["click Approve"]);
+    assert.deepEqual((await nth(sent, 1)).body, { decision: "allow", mode: "acceptEdits" });
   });
 });
 

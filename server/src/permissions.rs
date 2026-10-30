@@ -290,6 +290,9 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
     if current != "pending" && !late {
         return Err(ApiError::conflict("this request is no longer pending"));
     }
+    if late && moved_on(s, &task_id, message_id)? {
+        return Err(ApiError::conflict("the conversation has moved on since this was asked: reply in the thread instead"));
+    }
     if let Some(m) = reply.mode.as_deref().filter(|_| plan && allow)
         && (m == "plan" || !db::PERMISSION_MODES.contains(&m))
     {
@@ -406,12 +409,26 @@ fn mode_after_plan(s: &Shared, t: &Task, picked: Option<&str>) -> anyhow::Result
         None => None,
     };
     let inherited = db::inherited_permission_mode(&s.db(), project.as_ref())?;
+    let current = t.permission_mode.as_deref().unwrap_or(&inherited);
     Ok(match picked {
+        // The mode it's in (the agent went into plan mode by itself): a thread's own mode stays its own.
+        Some(m) if m == current && current != "plan" => None,
         Some(m) if m == inherited => Some(Value::Null),
         Some(m) => Some(json!(m)),
-        None if t.permission_mode.as_deref().unwrap_or(&inherited) == "plan" => Some(if inherited == "plan" { json!("default") } else { Value::Null }),
+        None if current == "plan" => Some(if inherited == "plan" { json!("default") } else { Value::Null }),
         None => None,
     })
+}
+
+/// Whether the conversation in `task_id`'s thread has moved on since message `message_id`: a message
+/// has been sent to the agent after it (by the user, the board or another agent). A question or plan
+/// asked before then isn't answered any more.
+pub fn moved_on(s: &Shared, task_id: &str, message_id: i64) -> anyhow::Result<bool> {
+    Ok(s.db().query_row(
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND id>?2)",
+        rusqlite::params![task_id, message_id],
+        |r| r.get(0),
+    )?)
 }
 
 fn set_mode(s: &Shared, task_id: &str, mode: Value) -> ApiResult<()> {
@@ -823,6 +840,59 @@ mod tests {
             let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
             assert_eq!((t.permission_mode.as_deref(), t.queued_message.as_deref()), (Some("acceptEdits"), Some("Your plan is approved: go ahead and implement it.")));
             assert_eq!(prompt_message(&s, &plan)["status"], "allowed");
+        });
+    }
+
+    #[test]
+    fn a_question_or_plan_the_conversation_has_moved_past_isnt_answered() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (task, _) = running_task(&s, None);
+            s.update_task(&task.id, &[("permission_mode", json!("plan"))]).unwrap();
+            let (question, _) = asked(&s, &task, "c1", ASK_USER, two_questions()).await;
+            let (plan, _) = asked(&s, &task, "c2", EXIT_PLAN, json!({"plan": "Do it"})).await;
+            expire_for_task(&s, &task.id);
+            // The user carries on in the thread (here, steering the next run).
+            let m = db::insert_message(&s.db(), &task.id, "user", &json!({"text": "Never mind, do this instead"})).unwrap();
+            s.emit_message(&m);
+
+            let refused = answer(&s, &question, true, false, None, answers(vec![vec!["Summer"], vec![]])).unwrap_err();
+            assert_eq!(refused.0, axum::http::StatusCode::CONFLICT, "{}", refused.1);
+            let refused = answer(&s, &plan, true, false, None, Reply { mode: Some("acceptEdits".into()), ..Default::default() }).unwrap_err();
+            assert_eq!(refused.0, axum::http::StatusCode::CONFLICT);
+            assert!(answer(&s, &plan, false, false, None, Reply { feedback: Some("More".into()), ..Default::default() }).is_err());
+            // Nothing was sent, and the thread's still planning.
+            let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.queued_message, t.permission_mode.as_deref()), (None, Some("plan")));
+            assert_eq!((prompt_message(&s, &question)["status"].clone(), prompt_message(&s, &plan)["status"].clone()), (json!("expired"), json!("expired")));
+        });
+    }
+
+    #[test]
+    fn approving_a_plan_in_the_threads_own_mode_keeps_it() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (task, _) = running_task(&s, None);
+            // Its own mode is Accept edits (the host's default is Ask), and the agent went into plan mode by itself.
+            let task = s.update_task(&task.id, &[("permission_mode", json!("acceptEdits"))]).unwrap().unwrap();
+            let plan = json!({"plan": "Do it"});
+            let (id, told) = asked(&s, &task, "p1", EXIT_PLAN, plan.clone()).await;
+            answer(&s, &id, true, false, None, Reply { mode: Some("acceptEdits".into()), ..Default::default() }).unwrap();
+            assert_eq!(told.await.unwrap()["updatedPermissions"], json!([{"type": "setMode", "mode": "acceptEdits", "destination": "session"}]));
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().permission_mode.as_deref(), Some("acceptEdits"));
+            // Approved without a pick, as before: it's left alone too.
+            let (id, _) = asked(&s, &task, "p2", EXIT_PLAN, plan.clone()).await;
+            decide(&s, &id, true, false, None).unwrap();
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().permission_mode.as_deref(), Some("acceptEdits"));
+            // Picking the default is a change back to it.
+            let (id, _) = asked(&s, &task, "p3", EXIT_PLAN, plan.clone()).await;
+            answer(&s, &id, true, false, None, Reply { mode: Some("default".into()), ..Default::default() }).unwrap();
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().permission_mode, None);
+            // A thread set to Ask itself stays so (rather than following the host's default from now on).
+            let task = s.update_task(&task.id, &[("permission_mode", json!("default"))]).unwrap().unwrap();
+            let (id, _) = asked(&s, &task, "p4", EXIT_PLAN, plan).await;
+            answer(&s, &id, true, false, None, Reply { mode: Some("default".into()), ..Default::default() }).unwrap();
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().permission_mode.as_deref(), Some("default"));
         });
     }
 

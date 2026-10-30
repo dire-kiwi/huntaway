@@ -755,13 +755,15 @@ skipped. Auto-compacting idle sessions is Claude-only.
     same card and are answered by question id; a question marked secret takes a password field
     and its answer isn't shown in the thread. *Dismiss* declines them.
   - A plan (`ExitPlanMode`) shows as Markdown. **Approve** picks the mode the thread carries on
-    in (its default, Accept edits, Auto or Bypass), which the running Claude Code switches to as
+    in (starting at the thread's own mode, if it has one other than Plan, else its default; or
+    Accept edits, Auto or Bypass), which the running Claude Code switches to as
     well (`updatedPermissions` with `setMode`; it can't switch to Bypass, which the board covers
     by allowing every prompt). **Keep planning** sends it back with your feedback.
   - They're asked whatever the thread's mode or *Always allow* list, except *Don't ask*, which
     declines them. A question or plan whose run ended before it was answered (stopped, say) can
     still be answered: the answers (or the approval, or the feedback) go to the agent as your
-    message. Only the first answer counts, so two tabs can't both send one.
+    message. Once a message has been sent to the agent after one (by you, the board or another
+    agent), it isn't answered any more. Only the first answer counts, so two tabs can't both send one.
   - `POST /permissions/{id}` takes `answers` (a list per question of option labels and typed
     answers), `mode` (for a plan approved) and `feedback` (for one sent back) besides `decision`.
 - **Permission modes:** each host has a default mode (its agent defaults), each project can
