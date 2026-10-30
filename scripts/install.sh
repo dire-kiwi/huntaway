@@ -82,7 +82,7 @@ export PATH
 pkg_hint() {
   if [ "$OS" = Darwin ]; then
     echo "  xcode-select --install          # compiler and git"
-    echo "  brew install node rustup && rustup-init -y"
+    echo "  brew install node rust"
   elif command -v pacman >/dev/null 2>&1; then
     echo "  sudo pacman -S --needed git base-devel nodejs npm rustup && rustup default stable"
   elif command -v apt-get >/dev/null 2>&1; then
