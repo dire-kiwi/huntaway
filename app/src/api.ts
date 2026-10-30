@@ -340,6 +340,8 @@ export interface Project {
   auto_review?: boolean;
   /** How many times in a row a review's serious issues go back to the agent to fix (API 12). */
   review_rounds?: number;
+  /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
+  done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
@@ -617,6 +619,68 @@ export interface DiffResult {
   untracked?: string[];
 }
 
+/** A file with changes, as in `git status --short`: its index (`x`) and working tree (`y`) state (API 62). */
+export interface GitFile {
+  path: string;
+  /** Where a renamed or copied file came from. */
+  orig_path: string | null;
+  /** `M`, `A`, `D`, `R`, `C`, `T`, a space for none, `?` for untracked, `U` (and `AA`, `DD`) for a conflict. */
+  x: string;
+  y: string;
+}
+
+export interface GitCommit {
+  sha: string;
+  subject: string;
+  author: string;
+  /** Unix seconds. */
+  time: number;
+  /** Made on the task's branch (after where it left its base), as opposed to before it. */
+  on_branch: boolean;
+  /** Not on the branch's upstream yet. */
+  unpushed: boolean;
+}
+
+export interface GitStash {
+  index: number;
+  sha: string;
+  subject: string;
+  time: number;
+}
+
+/** The Changes tab's view of a task's repository (API 62). */
+export interface GitStatus {
+  available: boolean;
+  reason?: string;
+  /** The top of the working tree. */
+  dir?: string;
+  /** Null before the first commit. */
+  head?: string | null;
+  /** Null when detached. */
+  branch?: string | null;
+  upstream?: string | null;
+  ahead?: number;
+  behind?: number;
+  base?: string | null;
+  merge_base?: string | null;
+  /** What the repository is in the middle of: `merging`, `rebasing`, `cherry-picking` or `reverting`. */
+  state?: string | null;
+  files?: GitFile[];
+  /** There were more files than were listed. */
+  truncated?: boolean;
+  commits?: GitCommit[];
+  stashes?: GitStash[];
+}
+
+export interface GitCommitShown {
+  sha: string;
+  author: string;
+  email: string;
+  time: number;
+  message: string;
+  patch: string;
+}
+
 export interface RestartJob {
   phase: "starting" | "building_ui" | "building_server" | "restarting" | "failed";
   log: string;
@@ -864,7 +928,6 @@ export interface GlobalAgentTools {
   profile_switches: Record<string, Record<string, boolean>>;
 }
 
-/** Agent defaults for a host. */
 /** What starts an automation (API 63): an interval, a time of day (in the host's time zone) on some weekdays, or a webhook delivery. */
 export type AutomationTrigger =
   | { kind: "interval"; every_minutes: number }
@@ -954,6 +1017,7 @@ export interface AutomationInput {
   rotate_token?: boolean;
 }
 
+/** Agent defaults for a host. */
 export interface HostSettings {
   /** Used when the thread, project and profile don't pick a model. */
   default_model: string | null;
@@ -1040,8 +1104,47 @@ export interface DeletionApproval extends ApprovalRequest {
   input: TaskDeletion;
 }
 
+/** An automation as an approval shows it (API 67), with the task its message goes to and its tasks' agent config. */
+export interface AutomationView {
+  /** Empty for one that's being created. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  /** Whether a webhook's deliveries must be signed with a secret. */
+  signed: boolean;
+  target?: { id: string; key: string; title: string; status: Status };
+  config?: { id: string; name: string; agent: string };
+}
+
+/** An automation an agent asked to create, change or delete, shown to the user to approve (API 67). */
+export interface AutomationChange {
+  op: "create" | "update" | "delete";
+  project: { id: string; key: string; name: string; host?: string };
+  /** The thread that asked. */
+  task: { id: string; key?: string; title: string } | null;
+  /** The automation as it would be (or, to delete, as it is). */
+  automation: AutomationView;
+  /** For a change: the automation as it is. */
+  before?: AutomationView;
+  /** For a change, what it changes: name, trigger, action, enabled, generate_secret, secret (removed) or rotate_token. */
+  changes?: string[];
+  /** The host's time zone, which times of day are in. */
+  time_zone?: { name: string | null; offset: string };
+  /** Why, in the agent's words. */
+  reason?: string | null;
+}
+
+/** An automation change waiting for the user to approve it, like a project change (API 67). */
+export interface AutomationApproval extends ApprovalRequest {
+  kind: "automation";
+  tool_name: "create_automation" | "update_automation" | "delete_automation";
+  input: AutomationChange;
+}
+
 /** What only the user decides for an agent, whatever its thread's permission mode. */
-export type Approval = ProjectApproval | DeletionApproval;
+export type Approval = ProjectApproval | DeletionApproval | AutomationApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
@@ -1060,7 +1163,7 @@ export interface HostInfo {
 /** Which of the board's notifications a device gets by push (see notifications.ts). */
 export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean>;
 
-/** A device that gets the board's notifications by Web Push (API 66; see server/src/push.rs). */
+/** A device that gets the board's notifications by Web Push (API 69; see server/src/push.rs). */
 export interface PushDevice {
   id: string;
   /** Its push service's URL for it, which tells this browser's own from the others. */
@@ -1074,7 +1177,7 @@ export interface PushDevice {
 }
 
 export const api = {
-  // Push to devices (API 66): the board's key to subscribe with, and the devices that have.
+  // Push to devices (API 69): the board's key to subscribe with, and the devices that have.
   push: () => get<{ public_key: string; subscriptions: PushDevice[] }>("/push"),
   /** Adds this browser's subscription (`PushSubscription.toJSON()`), or updates it; events are kept unless given. */
   pushSubscribe: (b: { endpoint: string; keys: { p256dh: string; auth: string }; name: string; events?: PushEvents }) =>
@@ -1284,6 +1387,26 @@ export const api = {
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
+  /**
+   * The Changes tab's git (API 62): the status, a file's unstaged or staged diff, and a commit's or stash's. A diff that
+   * isn't UTF-8 comes as a `preview` with `not_utf8` and no `patch`, as lines patched from it would be written back wrong.
+   */
+  gitStatus: (h: string, id: string) => on(h).get<GitStatus>(`/tasks/${enc(id)}/git`),
+  gitDiff: (h: string, id: string, path: string, q: { staged?: boolean; untracked?: boolean }) =>
+    on(h).get<{ patch: string; too_large?: boolean; not_utf8?: boolean; preview?: string }>(`/tasks/${enc(id)}/git/diff?${new URLSearchParams({ path, staged: String(!!q.staged), untracked: String(!!q.untracked) })}`),
+  gitShow: (h: string, id: string, rev: string) => on(h).get<GitCommitShown>(`/tasks/${enc(id)}/git/show?rev=${enc(rev)}`),
+  gitShowStash: (h: string, id: string, sha: string) => on(h).get<{ patch: string }>(`/tasks/${enc(id)}/git/show?rev=${enc(sha)}&stash=true`),
+  /** Stages or unstages the files as they are, or with no paths everything. */
+  gitStage: (h: string, id: string, paths: string[]) => on(h).post(`/tasks/${enc(id)}/git/stage`, { paths }),
+  gitUnstage: (h: string, id: string, paths: string[]) => on(h).post(`/tasks/${enc(id)}/git/unstage`, { paths }),
+  /** Throws away the files' unstaged changes, or with `staged` all of them; untracked files are deleted. */
+  gitDiscard: (h: string, id: string, paths: string[], staged: boolean) => on(h).post(`/tasks/${enc(id)}/git/discard`, { paths, staged }),
+  /** Applies a patch of chosen lines (changes.ts linesPatch) to the index, or the working tree. */
+  gitApply: (h: string, id: string, patch: string, b: { cached: boolean; reverse: boolean }) => on(h).post(`/tasks/${enc(id)}/git/apply`, { patch, ...b }),
+  gitCommit: (h: string, id: string, b: { message: string; amend?: boolean; reword?: boolean }) => on(h).post<{ head: string }>(`/tasks/${enc(id)}/git/commit`, b),
+  gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
+    on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
+  gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
   /** How full the agent's context is, with the latest breakdown (API 40). */
   context: (h: string, id: string) => on(h).get<{ context: ContextSummary | null; detail: ContextDetail | null }>(`/tasks/${enc(id)}/context`),
   /** The skills the task's agent can be asked to use, for the composer's `/` menu (API 54). */
@@ -1303,8 +1426,8 @@ export const api = {
   answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
     on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
-  /** Older hosts ignore `all` and list project changes only. */
-  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true"),
+  /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
+  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true"),
   dirs: (h: string, path?: string) => on(h).get<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** The project's automations, and the time zone their times of day are in (API 63). */
   automations: (h: string, projectId: string) =>
