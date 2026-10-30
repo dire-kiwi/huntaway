@@ -224,9 +224,18 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             permissions::prompt(s, &task, &c.call_id, &tool_name, &c.args["input"], c.args["tool_use_id"].as_str()).await.map_err(|e| format!("{e:#}"))
         }
         "request_user_input" => {
-            let question = c.args["question"].as_str().unwrap_or("The agent needs your input").to_string();
+            let card = crate::questions::card(&c.args)?;
+            let question = card["question"].as_str().unwrap_or("The agent needs your input").to_string();
             s.db().execute("UPDATE runs SET attention=?1 WHERE id=?2", rusqlite::params![question, c.run_id]).map_err(|e| e.to_string())?;
-            Ok(json!({"ok": true, "note": "The user will be notified. End your turn now with your question."}))
+            let options = card["options"].as_array().is_some_and(|o| !o.is_empty());
+            crate::questions::ask(s, &task, &c.call_id, card).map_err(|e| format!("{e:#}"))?;
+            let note = if options {
+                "The user will be notified and shown your question with its options. End your turn now; their answer (the options \
+                 they picked, or what they wrote) comes as their next message."
+            } else {
+                "The user will be notified. End your turn now with your question."
+            };
+            Ok(json!({"ok": true, "note": note}))
         }
         "submit_review" => crate::review::submit(s, &task, &run.id, &c.args).map_err(|e| e.1),
         "wait" => {
@@ -260,14 +269,21 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
                     return Err(format!("The command wasn't approved, so the wait didn't start: {}", answer["message"].as_str().unwrap_or("denied")));
                 }
             }
-            let req = crate::wait::Request { reason, seconds: c.args["seconds"].as_f64(), tasks: watched, command };
+            // Read as the task's GitHub account, which isn't asked about: it only reads.
+            let pull_request = match (&c.args["pull_request"], crate::wait::resuming(&task, &c.call_id)) {
+                (Value::Null, _) | (_, Some(_)) => None,
+                (Value::String(p), _) if p.trim().is_empty() => None,
+                (pr, None) => Some(crate::pr_watch::request(s, &task, pr, &c.args["pull_request_events"]).await?),
+            };
+            let req = crate::wait::Request { reason, seconds: c.args["seconds"].as_f64(), tasks: watched, command, pull_request };
             let started = std::time::Instant::now();
-            let (ended, watched) = crate::wait::wait(s, &run, &task, &c.call_id, req).await.map_err(|e| format!("{e:#}"))?;
+            let (ended, wait) = crate::wait::wait(s, &run, &task, &c.call_id, req).await.map_err(|e| format!("{e:#}"))?;
             let changed: Vec<String> = match &ended {
-                crate::wait::Ended::Tasks(ids) => watched.iter().filter(|w| ids.contains(&w.id)).map(|w| w.key.clone()).collect(),
+                crate::wait::Ended::Tasks(ids) => wait.tasks.iter().filter(|w| ids.contains(&w.id)).map(|w| w.key.clone()).collect(),
                 _ => Vec::new(),
             };
-            let tasks: Vec<Value> = watched
+            let tasks: Vec<Value> = wait
+                .tasks
                 .iter()
                 .map(|w| {
                     let t = db::get_task(&s.db(), &w.id).ok().flatten();
@@ -288,6 +304,18 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             }
             if let crate::wait::Ended::Subagent(agent) = &ended {
                 result["subagent"] = agent.clone();
+            }
+            // Its news, whatever ended the wait, or else how it was when last read.
+            if let Some(pr) = &wait.pull_request {
+                result["pull_request"] = match &pr.news {
+                    Some(news) => {
+                        if !matches!(ended, crate::wait::Ended::PullRequest(_)) {
+                            result["note"] = json!(format!("{} {}", result["note"].as_str().unwrap_or_default(), crate::pr_watch::note(news)));
+                        }
+                        news.clone()
+                    }
+                    None => crate::pr_watch::last(s, &task.id, pr).unwrap_or_else(|| json!({"url": pr.url, "number": pr.number})),
+                };
             }
             Ok(result)
         }
@@ -2795,6 +2823,59 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_waits_on_its_pull_request() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            // The project's repository, on GitHub as o/r.
+            let repo = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
+            std::fs::create_dir_all(&repo).unwrap();
+            for args in [&["init", "-q"][..], &["remote", "add", "origin", "git@github.com:o/r.git"]] {
+                assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
+            }
+            db::update_project(&s.db(), "kiwicd", &[("repo_path", json!(repo))]).unwrap();
+            let t = task(&s, "kiwicd", "Build");
+            let failed = crate::pr_watch::response("me", "a1", &[("Tests / server", "COMPLETED", "FAILURE", true)], &[]);
+            crate::pr_watch::fake(move |_, target| {
+                assert_eq!(target.label(), "o/r#7");
+                Ok(failed.clone())
+            });
+            // A Claude run and a Codex run (in auto mode, whose reviewer reviews waits) call it alike.
+            let claude = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+            let codex = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+            let dir = crate::runs::run_dir(&s, &codex.id);
+            std::fs::create_dir_all(&dir).unwrap();
+            let spec = json!({"cwd": repo, "approval_policy": "on-request", "approvals_reviewer": "auto_review", "sandbox": "workspace-write", "review_waits": true});
+            std::fs::write(dir.join("codex.json"), spec.to_string()).unwrap();
+            std::fs::write(dir.join("spec.json"), json!({"cwd": repo, "args": ["codex-run", dir.join("codex.json")]}).to_string()).unwrap();
+            let mcp = |run: &db::Run, call_id: &str, args: Value| McpCall { task_fields: true, run_id: run.id.clone(), call_id: call_id.into(), tool: "wait".into(), args };
+
+            let v = handle_mcp(&s, mcp(&claude, "c1", json!({"reason": "waiting for CI", "pull_request": "7"}))).await.unwrap();
+            assert_eq!(v["ended"], "pull_request");
+            assert_eq!(v["note"], "Pull request #7: checks failed (Tests / server) (see pull_request).");
+            assert_eq!(v["pull_request"]["checks"]["failed"][0]["name"], "Tests / server");
+            assert_eq!(v["pull_request"]["events"], json!(["checks_failed"]));
+            // Told, a later wait (by URL) times out, saying how it was when last read.
+            let v = handle_mcp(&s, mcp(&codex, "c2", json!({"reason": "waiting for review", "pull_request": "https://github.com/o/r/pull/7", "seconds": 1}))).await.unwrap();
+            assert_eq!(v["ended"], "timeout");
+            assert_eq!((v["pull_request"]["checks"]["outcome"].as_str(), v["pull_request"]["number"].as_u64()), (Some("failed"), Some(7)));
+            assert!(v["pull_request"]["read_at"].is_string(), "{v}");
+            assert_eq!(s.db().query_row("SELECT COUNT(*) FROM permission_requests", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+
+            let err = handle_mcp(&s, mcp(&claude, "c3", json!({"reason": "r", "pull_request": 7, "pull_request_events": ["reviews"]}))).await.unwrap_err();
+            assert!(err.starts_with("pull_request_events takes checks_failed, checks_passed, comments, conflicts"), "{err}");
+            let err = handle_mcp(&s, mcp(&claude, "c4", json!({"reason": "r", "pull_request": "the PR"}))).await.unwrap_err();
+            assert!(err.contains("the PR isn't a pull request"), "{err}");
+            // The pull request's state is kept with the task, and goes with it.
+            assert_eq!(s.db().query_row("SELECT COUNT(*) FROM pr_watches WHERE task_id=?1", [&t.id], |r| r.get::<_, i64>(0)).unwrap(), 1);
+            s.db().execute("DELETE FROM tasks WHERE id=?1", [&t.id]).unwrap();
+            assert_eq!(s.db().query_row("SELECT COUNT(*) FROM pr_watches", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+            std::fs::remove_dir_all(&repo).unwrap();
+        });
+    }
+
+    #[test]
     fn a_retried_wait_wakes_for_a_watched_task_deleted_meanwhile() {
         testing::run(async || {
             let s = state();
@@ -2813,6 +2894,7 @@ mod tests {
                 run_id: run.id.clone(),
                 moved_to: None,
                 subagent_finished: None,
+                pull_request: None,
             };
             s.update_task(&planner.id, &[("agent_wait", json!(w))]).unwrap();
             s.db().execute("DELETE FROM tasks WHERE id=?1", [&worker.id]).unwrap();

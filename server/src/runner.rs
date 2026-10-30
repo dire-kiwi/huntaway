@@ -637,6 +637,8 @@ fn start_run(
     for m in &recorded {
         state.emit_message(m);
     }
+    #[cfg(test)]
+    crate::testing::reached("run:started");
     let mut fields = vec![("running", json!(true)), ("steerable", json!(!compact))];
     // A queued message sent as the last run ends carries on the same stretch of work.
     if !task.running {
@@ -1213,15 +1215,18 @@ pub fn github_account(project: Option<&Project>, profile: &Profile) -> Option<St
 /// when no account is set, which leaves gh's active account. Fails when the account set isn't
 /// signed in to gh, so nothing runs as another account instead.
 pub async fn task_gh_env(state: &Shared, task: &Task) -> Result<Option<crate::gh_mcp::GhEnv>> {
-    let (project, profile) = {
-        let c = state.db();
-        let project = match &task.project_id {
-            Some(id) => Some(db::get_project(&c, id)?.context("project not found")?),
-            None => None,
-        };
-        (project, db::get_profile(&c, &task.profile_id)?.context("profile not found")?)
+    crate::gh_mcp::account_env(task_github_account(state, task)?.as_deref()).await
+}
+
+/// The GitHub account `task`'s runs use (see `github_account`), if one is set.
+pub fn task_github_account(state: &Shared, task: &Task) -> Result<Option<String>> {
+    let c = state.db();
+    let project = match &task.project_id {
+        Some(id) => Some(db::get_project(&c, id)?.context("project not found")?),
+        None => None,
     };
-    crate::gh_mcp::account_env(github_account(project.as_ref(), &profile).as_deref()).await
+    let profile = db::get_profile(&c, &task.profile_id)?.context("profile not found")?;
+    Ok(github_account(project.as_ref(), &profile))
 }
 
 /// What a Claude run with our gh server is told about GitHub. gh in Bash is turned away (see
@@ -1518,9 +1523,11 @@ fn system_prompt(
         "You have access to the `{MCP_SERVER_NAME}` MCP tools for the Huntaway board \
          (list_projects, list_tasks, get_task, get_task_field, create_task, update_task, send_to_task, request_user_input, wait). \
          They also reach other profiles' boards that let your agents in: list_projects shows each project's profile. \
-         When you have nothing to do until something happens (other tasks, CI, a deploy), call `wait` rather than \
-         sleeping or polling: the board then shows you as waiting rather than working. For CI or a deploy, give it a \
-         `command` that exits once it's done (e.g. `gh pr checks <N> --watch`)."
+         When you have nothing to do until something happens (other tasks, CI, reviews, a deploy), call `wait` rather than \
+         sleeping or polling: the board then shows you as waiting rather than working. For CI or reviews on a pull \
+         request, give it the `pull_request` (its number or URL): it ends when the checks fail or pass, someone \
+         comments or reviews, the branch conflicts with its base, or it's merged or closed, and says what happened. For \
+         a deploy, give it a `command` that exits once it's done."
     );
     match (task.kind.as_str(), project) {
         ("task", p) if task.is_scratch() => {
@@ -1566,7 +1573,8 @@ fn system_prompt(
                  Use them to look across projects, create and update tasks, and start agents on \
                  tasks (create_task with start=true, or send_to_task) when the user asks for that. Tasks you create are \
                  recorded as this task's. If you are blocked or need a decision or information from the user, call \
-                 `request_user_input` with your question and then end your turn — the task is flagged \"Needs attention\" \
+                 `request_user_input` with your question (and its `options`, when the choices are known) and then end your \
+                 turn — the task is flagged \"Needs attention\" \
                  and the user's reply resumes this conversation. When you finish, end with a concise summary of what you \
                  did; the task then moves to \"In review\".",
                 task.number, task.title, task.id
@@ -1603,7 +1611,8 @@ fn system_prompt(
             s.push_str(&crate::documents::system_prompt(task, document.unwrap_or("?"), p, group));
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you made or changed; the \
                  task then moves to \"In review\"."
             ));
@@ -1630,7 +1639,8 @@ fn system_prompt(
                  rather than ending your turn. Tasks you create are recorded as this task's: the board shows how \
                  many are done, and `get_task` on this task lists them. Run tasks that build on each other one after the other, and independent ones in \
                  parallel. If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of the tasks you created and where \
                  they stand; the task then moves to \"In review\".",
                 GROUP_TASK_KEY, task.number, task.title, task.id
@@ -1710,7 +1720,8 @@ fn system_prompt(
             }
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you did; the task then \
                  moves to \"In review\". You may create follow-up tasks with `create_task`."
             ));
@@ -2196,7 +2207,7 @@ mod tests {
         };
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
-        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, args: vec![] };
+        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] };
         let dir = std::env::temp_dir().join(format!("ia-runner-{}", crate::util::new_id()));
         let state: Shared = crate::state::AppState::new(c, dir, id, meta);
         runs::TEST_CAN_RUN.set(true);
@@ -2336,7 +2347,7 @@ mod tests {
         crate::testing::run(async || {
             let (state, task, run) = running(true);
             let wait = |call_id: &str| {
-                let w = db::AgentWait { reason: None, since: crate::util::now(), until: crate::util::now(), tasks: vec![], command: None, call_id: call_id.into(), run_id: run.id.clone(), moved_to: None, subagent_finished: None };
+                let w = db::AgentWait { reason: None, since: crate::util::now(), until: crate::util::now(), tasks: vec![], command: None, call_id: call_id.into(), run_id: run.id.clone(), moved_to: None, subagent_finished: None, pull_request: None };
                 state.update_task(&task.id, &[("agent_wait", json!(w))]).unwrap();
             };
             // Its own thread calling another tool means it's working again; a subagent's doesn't.
@@ -2828,9 +2839,11 @@ mod tests {
 
         // Without GitHub (or a branch of its own), it leaves pushing to the user.
         let text = system_prompt(&task, Some(&project), None, &[], None, None, false);
-        assert!(text.contains("Do not push, merge, or switch branches unless asked.") && !text.contains("pull request"), "{text}");
+        assert!(text.contains("Do not push, merge, or switch branches unless asked.") && !text.contains("open a pull request"), "{text}");
         task.branch = None;
-        assert!(!system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false).contains("pull request"));
+        assert!(!system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false).contains("open a pull request"));
+        // Every agent is told it can wait on one, though.
+        assert!(text.contains("For CI or reviews on a pull request, give it the `pull_request`"), "{text}");
     }
 
     #[test]
