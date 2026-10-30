@@ -13,6 +13,7 @@ import {
   type AutomationInput,
   type AutomationRun,
   type AutomationRunStatus,
+  type AutomationTrigger,
   type FilterOp,
   type Project,
   type TaskType,
@@ -84,13 +85,13 @@ function daysText(days: Weekday[]) {
   return days.map((d) => DAY_LABELS[d]).join(", ");
 }
 
-function filterText(f: AutomationFilter) {
+export function filterText(f: AutomationFilter) {
   const value = Array.isArray(f.value) ? f.value.join(", ") : (f.value ?? "");
   return f.op === "exists" || f.op === "not_exists" ? `${f.path} ${OP_LABELS[f.op]}` : `${f.path} ${OP_LABELS[f.op]} ${value}`;
 }
 
-function triggerText(a: Automation, tz: TimeZone | null) {
-  const t = a.trigger;
+/** What starts an automation, e.g. "Every hour" or "At 09:00 on weekdays (Pacific/Auckland)". */
+export function triggerText(t: AutomationTrigger, tz: TimeZone | null) {
   if (t.kind === "interval") return everyText(t.every_minutes);
   if (t.kind === "daily") return `At ${t.time} on ${daysText(t.weekdays)}${tz?.name ? ` (${tz.name})` : ""}`;
   const parts = ["Webhook"];
@@ -233,7 +234,7 @@ function AutomationRow({
             <span className="truncate font-medium">{a.name}</span>
           </div>
           <div className="truncate text-[11.5px] text-faint">
-            {triggerText(a, tz)} · {what}
+            {triggerText(a.trigger, tz)} · {what}
           </div>
         </button>
         <Button
@@ -462,7 +463,8 @@ function inputOf(d: Draft, existing: Automation | null): AutomationInput {
       : { kind: "send_to_task", task_id: d.taskId, message: d.message };
   const b: AutomationInput = { name: d.name, enabled: d.enabled, trigger, action };
   if (d.when === "webhook") {
-    if (d.secret.trim()) b.secret = d.secret.trim();
+    // As it's typed: GitHub signs with it as it is (the server refuses one with spaces around it).
+    if (d.secret.trim()) b.secret = d.secret;
     else if (d.removeSecret && existing?.has_secret) b.secret = "";
   }
   return b;
@@ -783,6 +785,7 @@ function WebhookFields({
   const publicUrl = useStore((s) => s.hostSettings[hostId]?.public_url ?? "");
   const [address, setAddress] = useState(publicUrl);
   const [addressErr, setAddressErr] = useState<string | null>(null);
+  const [rotateErr, setRotateErr] = useState<string | null>(null);
   useEffect(() => {
     setAddress(publicUrl);
   }, [publicUrl]);
@@ -831,7 +834,12 @@ function WebhookFields({
               onClick={async (e) => {
                 e.preventDefault();
                 if (!saved || !confirm("Make a new URL? The current one stops working, so update it wherever it's used.")) return;
-                onRotated(await api.updateAutomation(hostId, saved.id, { rotate_token: true }));
+                setRotateErr(null);
+                try {
+                  onRotated(await api.updateAutomation(hostId, saved.id, { rotate_token: true }));
+                } catch (err) {
+                  setRotateErr(`Couldn't make a new URL: ${(err as Error).message}`);
+                }
               }}
             >
               <RefreshCw size={13} />
@@ -840,6 +848,7 @@ function WebhookFields({
         ) : (
           <div className="text-[12px] text-faint">Shown here once it's saved.</div>
         )}
+        {rotateErr && <div className="text-xs text-red-400">{rotateErr}</div>}
       </Field>
       <Field label="This host's public address" hint="For every webhook on this host. Where a tunnel or the connection broker reaches it from outside.">
         <div className="flex items-center gap-2">

@@ -51,7 +51,7 @@ import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
-import { Button, Field, IconButton, Input, Modal, Textarea, timeAgo, Toggle } from "./ui";
+import { Button, Field, IconButton, Input, MenuButton, Modal, Textarea, timeAgo, Toggle } from "./ui";
 
 // ---------- directory picker ----------
 
@@ -400,8 +400,8 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "review",
     label: "Review",
     icon: <ScanSearch size={14} />,
-    description: "Reviewer agents that check each task's changes before it's merged.",
-    fields: ["auto_review", "review_rounds", "reviewers"],
+    description: "Reviewer agents that check each task's changes before it's merged, and what happens once it is.",
+    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged"],
   },
   {
     id: "prompts",
@@ -454,7 +454,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
     general: true,
     agents: true,
     worktrees: true,
-    review: project.auto_review !== undefined,
+    review: project.auto_review !== undefined || project.done_when_merged !== undefined,
     prompts: hostSupports(host, 27),
     scripts: hostSupports(host, 37),
     tools: hostSupports(host, 21),
@@ -503,7 +503,8 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
   const showSave = current.fields.length > 0 || unsaved.length > 0;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
+      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
+        <MenuButton />
         <button className="no-drag text-[12.5px] text-muted hover:text-fg" onClick={() => navigate({ name: "board", projectId })}>
           {project?.name}
         </button>
@@ -512,7 +513,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* The tabs and the open one are together in the middle, the tabs staying put as it scrolls. */}
-        <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6 md:flex-row md:gap-10">
+        <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6 narrow:gap-4 narrow:p-4 md:flex-row md:gap-10">
           <nav
             role="tablist"
             aria-label="Project settings"
@@ -709,6 +710,16 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
               </>
             )}
 
+            {current.id === "review" && form.done_when_merged !== undefined && (
+              <div className="space-y-1.5">
+                <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
+                <div className="text-[12px] text-faint">
+                  Every few minutes, the pull requests of tasks in In review or Needs attention are checked. A merged one moves its task to Done and
+                  removes its worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
+                </div>
+              </div>
+            )}
+
             {current.id === "prompts" && <ProjectPrompts project={form} onChange={set} />}
 
             {current.id === "scripts" && <ProjectStatusScripts project={form} perColumn={hostSupports(host, 38)} statuses={hostStatuses(host)} onChange={set} />}
@@ -722,7 +733,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
       {showSave && (
         <footer className="shrink-0 border-t border-line">
           {/* Lined up with the open tab: past the tabs' width and the gap after them. */}
-          <div className="mx-auto flex max-w-4xl items-center gap-3 px-6 py-3 md:pl-64">
+          <div className="mx-auto flex max-w-4xl items-center gap-3 px-6 py-3 narrow:px-4 md:pl-64">
             <Button variant="primary" disabled={saving || !unsaved.length} onClick={save}>
               {saving && <Loader2 size={13} className="animate-spin" />} Save changes
             </Button>
@@ -1185,11 +1196,12 @@ export function Settings() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="drag flex h-12 shrink-0 items-center border-b border-line px-5">
+      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
+        <MenuButton />
         <h1 className="text-[14px] font-semibold">Settings</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl space-y-8 p-6">
+        <div className="mx-auto max-w-2xl space-y-8 p-6 narrow:p-4">
           <HostsPanel />
 
           <ClaudeConfigsPanel />

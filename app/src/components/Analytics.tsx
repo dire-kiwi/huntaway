@@ -31,7 +31,7 @@ import { navigate } from "../router";
 import { useStore } from "../store";
 import { Swatch, useTip } from "./chart";
 import { DiskUsage } from "./DiskUsage";
-import { Button, IconButton } from "./ui";
+import { Button, IconButton, MenuButton } from "./ui";
 
 const selectClass = "h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] text-fg outline-none";
 
@@ -229,7 +229,8 @@ export function Analytics() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
+      <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
+        <MenuButton />
         <h1 className="text-[14px] font-semibold">Analytics</h1>
         <div className="no-drag flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5">
           {(["report", "calendar", "disk"] as const).map((t) => (
