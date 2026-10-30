@@ -118,6 +118,8 @@ function GitView({ task }: { task: Task }) {
   const [pane, setPane] = useState<Pane>("unstaged");
   const [cursor, setCursor] = useState(0);
   const [anchor, setAnchor] = useState<number | null>(null);
+  // A range started with `v` follows the cursor; one made with shift (or the mouse) ends at the next plain move.
+  const [sticky, setSticky] = useState(false);
   const [hunkMode, setHunkMode] = useState(false);
   const dragging = useRef(false);
 
@@ -529,7 +531,10 @@ function GitView({ task }: { task: Task }) {
   };
   const moveCursor = (by: number | "first" | "last", extend = false) => {
     if (!file || cur < 0) return;
-    if (extend && anchor === null && !hunkMode) setAnchor(cur);
+    if (extend && anchor === null && !hunkMode) {
+      setAnchor(cur);
+      setSticky(false);
+    } else if (!extend && anchor !== null && !sticky) setAnchor(null);
     let next = cur;
     if (by === "first" || by === "last") next = nearestChange(file, drows, by === "first" ? 0 : drows.length - 1, by === "first" ? 1 : -1);
     else if (hunkMode) {
@@ -547,6 +552,11 @@ function GitView({ task }: { task: Task }) {
       }
     }
     setCursor(next);
+  };
+  const toggleRange = () => {
+    setAnchor(anchor === null ? cur : null);
+    setSticky(true);
+    setHunkMode(false);
   };
   const jumpHunk = (dir: 1 | -1) => {
     if (!file || cur < 0) return;
@@ -588,7 +598,7 @@ function GitView({ task }: { task: Task }) {
           items: [
             { key: "space", label: activePane === "unstaged" ? "Stage" : "Unstage", run: linesAction },
             ...(activePane === "unstaged" ? [{ key: "d", label: "Discard", run: discardLines }] : []),
-            { key: "v", label: anchor === null ? "Select range" : "End range", run: () => setAnchor(anchor === null ? cur : null) },
+            { key: "v", label: anchor === null ? "Select range" : "End range", run: toggleRange },
             { key: "a", label: hunkMode ? "Select lines" : "Select hunk", run: () => setHunkMode(!hunkMode) },
             ...(hasPane(activePane === "unstaged" ? "staged" : "unstaged") ? [{ key: "tab", label: activePane === "unstaged" ? "Staged" : "Unstaged", run: () => switchPane() }] : []),
             { key: "c", label: "Commit", run: startCommit },
@@ -702,7 +712,7 @@ function GitView({ task }: { task: Task }) {
         l: () => jumpHunk(1),
         " ": linesAction,
         d: discardLines,
-        v: () => setAnchor(anchor === null ? cur : null),
+        v: toggleRange,
         a: () => {
           setHunkMode(!hunkMode);
           setAnchor(null);
@@ -794,6 +804,7 @@ function GitView({ task }: { task: Task }) {
       dragging.current = true;
     }
     setHunkMode(false);
+    setSticky(false);
     setInMain(true);
     setSide("files");
   };
