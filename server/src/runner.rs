@@ -2382,6 +2382,17 @@ mod tests {
             finish(&state, &run.id, Outcome::Failed("boom".into()));
             let t = reload(&state, &d.id);
             assert_eq!((t.status.as_str(), t.merging, t.remerge), ("needs_attention", false, true));
+            // Moved on by the board rather than the user (a review starting puts it in In review),
+            // it drops its place all the same: work after that goes to review, not to the queue.
+            state.update_task(&d.id, &[("status", json!("in_review")), ("attention_reason", Value::Null)]).unwrap();
+            assert!(!reload(&state, &d.id).remerge);
+            update(&state, &d.id, json!({"status": "in_progress"})).await.unwrap();
+            let next = db::insert_run(&state.db(), &d.id, "prompt").unwrap();
+            state.runs.lock().unwrap().insert(d.id.clone(), RunHandle { run_id: next.id.clone(), cancel: None });
+            state.update_task(&d.id, &[("running", json!(true))]).unwrap();
+            finish(&state, &next.id, Outcome::Ok);
+            let t = reload(&state, &d.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge), ("in_review", false, false));
         })
     }
 

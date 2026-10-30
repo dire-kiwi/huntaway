@@ -1509,9 +1509,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         if merge || !["ready_for_merge", "needs_attention"].contains(&st) {
             fields.push(("merging", json!(merge)));
         }
-        // Likewise, anywhere but "In progress" (or waiting on the user) drops a task's place to rejoin the queue.
-        if remerge || (current.remerge && !["in_progress", "needs_attention"].contains(&st)) {
-            fields.push(("remerge", json!(remerge)));
+        // Anywhere but "In progress" (or waiting on the user) drops its place to rejoin the queue (see db::update_task).
+        if remerge {
+            fields.push(("remerge", json!(true)));
         }
         // Moving it ends its agent's wait (see wait.rs), told so in the same write.
         if let Some(w) = current.agent_wait.clone().filter(|_| st != current.status) {

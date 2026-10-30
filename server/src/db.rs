@@ -2024,6 +2024,11 @@ pub fn update_task(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result
         if fields.iter().any(|(col, _)| *col == "status" || *col == "resolution") {
             normalize_resolution(c, id)?;
         }
+        // Whoever moves it (the user, a review, a run's end), a task that stepped out of the merge
+        // queue keeps its place to rejoin only while its agent works on it (see Task::remerge).
+        if fields.iter().any(|(col, _)| *col == "status") && !fields.iter().any(|(col, _)| *col == "remerge") {
+            c.execute("UPDATE tasks SET remerge=0 WHERE id=?1 AND remerge=1 AND status NOT IN ('in_progress','needs_attention')", [id])?;
+        }
     }
     get_task(c, id)
 }
