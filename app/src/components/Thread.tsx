@@ -51,7 +51,7 @@ import { useHost, useProject, useStore, useThreadMessages } from "../store";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
-import { ProjectChangeCard, TaskDeletionCard } from "./Approvals";
+import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard } from "./Approvals";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
 import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
@@ -1004,6 +1004,7 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
     case "permission":
       if (it.data.kind === "project") return <ProjectChangeCard data={it.data} hostId={hostId} />;
       if (it.data.kind === "delete_task") return <TaskDeletionCard data={it.data} hostId={hostId} />;
+      if (it.data.kind === "automation") return <AutomationChangeCard data={it.data} hostId={hostId} />;
       return <PermissionCard data={it.data} hostId={hostId} />;
     case "result":
       return <ResultLine data={it.data} />;

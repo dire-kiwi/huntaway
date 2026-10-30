@@ -1034,8 +1034,47 @@ export interface DeletionApproval extends ApprovalRequest {
   input: TaskDeletion;
 }
 
+/** An automation as an approval shows it (API 64), with the task its message goes to and its tasks' agent config. */
+export interface AutomationView {
+  /** Empty for one that's being created. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  /** Whether a webhook's deliveries must be signed with a secret. */
+  signed: boolean;
+  target?: { id: string; key: string; title: string; status: Status };
+  config?: { id: string; name: string; agent: string };
+}
+
+/** An automation an agent asked to create, change or delete, shown to the user to approve (API 64). */
+export interface AutomationChange {
+  op: "create" | "update" | "delete";
+  project: { id: string; key: string; name: string; host?: string };
+  /** The thread that asked. */
+  task: { id: string; key?: string; title: string } | null;
+  /** The automation as it would be (or, to delete, as it is). */
+  automation: AutomationView;
+  /** For a change: the automation as it is. */
+  before?: AutomationView;
+  /** For a change, what it changes: name, trigger, action, enabled, generate_secret, secret (removed) or rotate_token. */
+  changes?: string[];
+  /** The host's time zone, which times of day are in. */
+  time_zone?: { name: string | null; offset: string };
+  /** Why, in the agent's words. */
+  reason?: string | null;
+}
+
+/** An automation change waiting for the user to approve it, like a project change (API 64). */
+export interface AutomationApproval extends ApprovalRequest {
+  kind: "automation";
+  tool_name: "create_automation" | "update_automation" | "delete_automation";
+  input: AutomationChange;
+}
+
 /** What only the user decides for an agent, whatever its thread's permission mode. */
-export type Approval = ProjectApproval | DeletionApproval;
+export type Approval = ProjectApproval | DeletionApproval | AutomationApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
@@ -1264,8 +1303,8 @@ export const api = {
   resolvePermission: (h: string, id: string, decision: "allow" | "allow_always" | "deny", message?: string) =>
     on(h).post(`/permissions/${enc(id)}`, { decision, message }),
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
-  /** Older hosts ignore `all` and list project changes only. */
-  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true"),
+  /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
+  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true"),
   dirs: (h: string, path?: string) => on(h).get<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** The project's automations, and the time zone their times of day are in (API 63). */
   automations: (h: string, projectId: string) =>

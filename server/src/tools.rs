@@ -995,9 +995,11 @@ fn automation_view(
 }
 
 /// What an automation approval asks: `op` (create, update or delete) on `automation` (see
-/// automation_view) in project `p`, asked by the calling agent.
+/// automation_view) in project `p`, asked by the calling agent, with the time zone its times of
+/// day are in.
 fn automation_input(s: &Shared, ctx: &Ctx, op: &str, p: &db::Project, automation: Value) -> Value {
-    json!({"op": op, "project": approval_project(s, p), "task": approval_task(s, ctx), "automation": automation})
+    let time_zone = crate::automations::time_zone();
+    json!({"op": op, "project": approval_project(s, p), "task": approval_task(s, ctx), "automation": automation, "time_zone": time_zone})
 }
 
 /// An automation's action as an agent gives it, checked against project `p`: a message's task

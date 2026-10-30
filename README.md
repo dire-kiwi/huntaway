@@ -899,7 +899,7 @@ can be removed), and the host won't search Asana for it. Its token is kept for w
 
 ### Automations
 
-A project's automations (API 63, in its settings under *Automations*) put work on the board by
+A project's automations (API 63, in its settings under *Automations*; agents' tools for them, API 64) put work on the board by
 themselves: recurring work such as a weekly dependency update, and events from outside such as a
 new GitHub issue to triage. Each one has a trigger and an action, can be switched on and off, and
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
@@ -922,6 +922,22 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
 - **Run now** runs a schedule at once, on or off. For a webhook it's **Test**: a delivery sent
   from the board (the latest one received, or a body you write) through its filters and
   templates, without the signature check, duplicate check or coalescing.
+
+**Agents.** Agents have board tools for automations: `list_automations`, `create_automation`,
+`update_automation`, `delete_automation` and `run_automation` (Run now, or a test delivery). An
+automation keeps making work after the agent is done, and a webhook lets whoever has its URL start
+runs, so creating, changing or deleting one asks the user first, in the same dialog as a project
+change (and as a card in the agent's thread), whatever the thread's permission mode. It shows
+everything the automation would run: its trigger, filters and whether deliveries are signed, the
+task's title and description templates, type, agent config and whether its agent starts, or the
+task a message goes to and the message. A change shows what it changes, and the automation as it
+would be and as it is. Nothing is made or changed unless the user approves, and then exactly what
+they were shown (only the settings that differ, so a change the user made meanwhile stays). Turning
+one off or renaming it isn't asked about. A call retried after a restart waits for the same
+approval. An agent only reaches automations of projects on boards it can use, and an automation
+only acts in its own project. With `generate_secret`, a new webhook secret is made once it's
+approved and returned to the agent, once, with the URL (in full when `public_url` is set), so it
+can set up the sender.
 
 **Webhooks.** The webhook route is the one route that doesn't take the board's token. The token in
 its path is the automation's own (compared in constant time) and reaches nothing else: an unknown
