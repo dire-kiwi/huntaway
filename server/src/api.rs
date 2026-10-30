@@ -798,6 +798,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
             "worktrees_root", "auto_review", "review_rounds", "reviewers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
+            "done_when_merged",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -854,7 +855,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
                 }
                 *v = json!(key);
             }
-            "use_worktrees" | "auto_review" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "done_when_merged" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {

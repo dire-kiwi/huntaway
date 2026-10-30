@@ -476,7 +476,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (`request_user_input` or `AskUserQuestion`, see *Questions and plans*) or presents a plan, a
   tool needs approval, a run fails, or you stop it → *Needs
   attention*; a run finishes cleanly → *In review*. You move cards to *Done* yourself, or to
-  *Ready for merge*.
+  *Ready for merge*; a task whose pull request is merged on GitHub moves to *Done* by itself
+  (see *Pull requests*).
 - **Archived** (API 53): a task that's been in *Done* for two days is archived. It leaves the
   kanban board's *Done* column, which links to it ("N archived"), for the list view's *Archived*
   section, the last one, which starts collapsed. It's still done (a task that depends on it
@@ -896,6 +897,22 @@ Pull request in the task's sidebar. Otherwise, whenever a run of a task with a b
 the task has none yet, the host looks it up with `gh pr view <branch>` (if `gh` is installed and
 signed in; with `--repo` for the GitHub repository the branch is pushed to, as above), so a PR the
 agent opened shows up without it saying so.
+
+A pull request merged on GitHub (by you, or by auto-merge) rather than through *Ready for merge*
+moves its task to *Done* (API 65). Every 3 minutes the host reads the state of the pull requests
+of its tasks in *In review* or *Needs attention*, with one GraphQL query per GitHub account and
+host, as each task's own account (see *GitHub accounts*; gh's active account when none is set).
+When one is merged, its task moves to *Done* (resolution `done`) as if you'd moved it there, its
+thread says so, and its worktree is removed if nothing in it would be lost, as **Remove merged
+worktrees** does (the thread says why when it's kept). When one is closed without being merged, a
+task in *In review* moves to *Needs attention* saying so, and one already there gets a note in its
+thread (its reason stays the agent's). Each happens once per change of state, so a task you move
+back out of *Done* stays where you put it. Tasks whose agent or reviewer is running, tasks being
+merged, a subproject's tasks (its own merge brings them in) and a subproject with open tasks are
+left alone. Turn it off for a project with *Move a task to Done when its pull request is merged on
+GitHub* in its settings (`done_when_merged`, on by default). An agent `wait`ing on its pull
+request is told it was merged and marks the task done itself, as its project's instructions say;
+if its run ends without doing so, the next read moves the task.
 
 ### Preview URLs
 

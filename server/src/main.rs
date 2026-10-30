@@ -16,6 +16,7 @@ mod gh_mcp;
 mod github;
 mod hub;
 mod mcp;
+mod merged;
 mod permissions;
 mod pr_watch;
 mod prompts;
@@ -295,6 +296,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
     automations::start(&state);
+    merged::start(&state);
     relocate::start_recording(&state);
     hub::start(&state)?;
     match (&args.hub_token, args.hubs.is_empty()) {
