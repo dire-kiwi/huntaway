@@ -444,7 +444,12 @@ export function waitTitle(w: AgentWait) {
     .join(" · ");
 }
 
-const PR_WAIT_NEWS: Record<PrWaitEvent, string> = { checks_failed: "failed checks", checks_passed: "passing checks", comments: "new comments or reviews", conflicts: "a conflict" };
+const PR_WAIT_NEWS: Record<PrWaitEvent, string> = {
+  checks_failed: "failed checks",
+  checks_passed: "passing checks",
+  comments: "new comments or reviews",
+  conflicts: "a conflict",
+};
 
 /** "has failed checks, new comments or reviews, or is merged or closed" */
 function prWaitNews(events: PrWaitEvent[]) {

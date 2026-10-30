@@ -498,7 +498,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds by default and at most, since little else can end it early: a longer one is turned
   down with a note to give one or wait 30 seconds at a time), one of the tasks in `tasks` changes status (or is
   deleted), one of its subagents completes, fails or stops, the shell command in `command`
-  exits (API 41, see below), there's news about the pull request in `pull_request` (API 62, see below), a message is sent to the agent (yours or `send_to_task`), the run is stopped, the
+  exits (API 41, see below), there's news about the pull request in `pull_request` (API 62, see
+  below), a message is sent to the agent (yours or `send_to_task`), the run is stopped, the
   task is moved to another column from the board or with `update_task` (*Needs attention* too;
   the board's own moves there and back for a subagent's permission prompt don't count), or the run carries on with other work: another board tool
   call (from the agent or its subagents) or a tool call of the agent's own thread (Claude or

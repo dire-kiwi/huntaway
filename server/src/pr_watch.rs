@@ -766,7 +766,8 @@ pub fn note(news: &Value) -> String {
     let label = news["number"].as_u64().map(|n| format!("#{n}")).unwrap_or_else(|| "The pull request".into());
     let events: Vec<&str> = news["events"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     if events.contains(&"unreadable") {
-        return format!("{}. Check it yourself (pr_view), and wait on it again once it can be read.", news["error"].as_str().unwrap_or("The pull request couldn't be read"));
+        let error = news["error"].as_str().unwrap_or("The pull request couldn't be read");
+        return format!("{error}. Check it yourself (pr_view), and wait on it again once it can be read.");
     }
     let names = |list: &Value| list.as_array().into_iter().flatten().filter_map(|c| c["name"].as_str()).collect::<Vec<_>>().join(", ");
     let mut parts = Vec::new();
@@ -784,8 +785,12 @@ pub fn note(news: &Value) -> String {
             "comments" => {
                 let list = news["comments"].as_array().map_or(&[][..], Vec::as_slice);
                 let n = list.len() + news["more_comments"].as_u64().unwrap_or(0) as usize;
-                let mut who: Vec<&str> = list.iter().filter_map(|c| c["author"].as_str()).collect();
-                who.dedup();
+                let mut who: Vec<&str> = Vec::new();
+                for a in list.iter().filter_map(|c| c["author"].as_str()) {
+                    if !who.contains(&a) {
+                        who.push(a);
+                    }
+                }
                 format!("{n} new comment{} or review{} from {}", if n == 1 { "" } else { "s" }, if n == 1 { "" } else { "s" }, who.join(", "))
             }
             "conflicts" => format!("it conflicts with {}", news["base_branch"].as_str().unwrap_or("its base branch")),
@@ -981,11 +986,22 @@ mod tests {
     #[test]
     fn reads_githubs_response() {
         // dire-kiwi/huntaway#2 as GitHub had it, with a commit status added.
-        let v: Value = serde_json::from_str(r#"{"data":{"viewer":{"login":"imeredith"},"repository":{"pullRequest":{"url":"https://github.com/dire-kiwi/huntaway/pull/2","number":2,"title":"One prompt, several agents","state":"MERGED","isDraft":false,"baseRefName":"master","headRefOid":"efcf49d5e5b97253016fb1fb7775829dd6e38f71","mergeable":"UNKNOWN","mergeStateStatus":"UNKNOWN","reviewDecision":null,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
-            {"__typename":"CheckRun","databaseId":123802950792,"name":"server","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://github.com/dire-kiwi/huntaway/actions/runs/40975665970/job/123802950792","isRequired":false,"checkSuite":{"workflowRun":{"workflow":{"name":"Tests"}}}},
-            {"__typename":"CheckRun","databaseId":123802951119,"name":"app","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://github.com/dire-kiwi/huntaway/actions/runs/40975665970/job/123802951119","isRequired":false,"checkSuite":{"workflowRun":{"workflow":{"name":"Tests"}}}},
-            {"__typename":"StatusContext","context":"Vercel","state":"PENDING","targetUrl":"https://vercel.com/x","createdAt":"2026-10-30T20:00:00Z","isRequired":false}
-        ]}}}}]},"comments":{"nodes":[]},"reviews":{"nodes":[]},"reviewThreads":{"nodes":[]}}}}}"#).unwrap();
+        let v: Value = serde_json::from_str(
+            r#"{"data":{"viewer":{"login":"imeredith"},"repository":{"pullRequest":{
+              "url":"https://github.com/dire-kiwi/huntaway/pull/2","number":2,"title":"One prompt, several agents","state":"MERGED",
+              "isDraft":false,"baseRefName":"master","headRefOid":"efcf49d5e5b97253016fb1fb7775829dd6e38f71","mergeable":"UNKNOWN",
+              "mergeStateStatus":"UNKNOWN","reviewDecision":null,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
+                {"__typename":"CheckRun","databaseId":123802950792,"name":"server","status":"COMPLETED","conclusion":"SUCCESS",
+                 "detailsUrl":"https://github.com/dire-kiwi/huntaway/actions/runs/40975665970/job/123802950792","isRequired":false,
+                 "checkSuite":{"workflowRun":{"workflow":{"name":"Tests"}}}},
+                {"__typename":"CheckRun","databaseId":123802951119,"name":"app","status":"COMPLETED","conclusion":"SUCCESS",
+                 "detailsUrl":"https://github.com/dire-kiwi/huntaway/actions/runs/40975665970/job/123802951119","isRequired":false,
+                 "checkSuite":{"workflowRun":{"workflow":{"name":"Tests"}}}},
+                {"__typename":"StatusContext","context":"Vercel","state":"PENDING","targetUrl":"https://vercel.com/x",
+                 "createdAt":"2026-10-30T20:00:00Z","isRequired":false}
+              ]}}}}]},"comments":{"nodes":[]},"reviews":{"nodes":[]},"reviewThreads":{"nodes":[]}}}}}"#,
+        )
+        .unwrap();
         let p = pr(v);
         let checks: Vec<(&str, CheckState, &str)> = p.checks.iter().map(|c| (c.name.as_str(), c.state, c.key.as_str())).collect();
         assert_eq!(checks, [
@@ -1001,7 +1017,8 @@ mod tests {
 
     #[test]
     fn a_missing_pull_request_is_an_error() {
-        let v = json!({"data": {"viewer": {"login": "me"}, "repository": null}, "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a Repository with the name 'o/r'."}]});
+        let not_found = json!({"type": "NOT_FOUND", "message": "Could not resolve to a Repository with the name 'o/r'."});
+        let v = json!({"data": {"viewer": {"login": "me"}, "repository": null}, "errors": [not_found]});
         assert_eq!(Pr::parse(&v).unwrap_err(), "Could not resolve to a Repository with the name 'o/r'.");
         // Fields it isn't allowed to read don't make it one.
         let mut v = response("me", "a1", &[], &[]);
