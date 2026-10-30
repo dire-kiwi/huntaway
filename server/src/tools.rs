@@ -224,9 +224,17 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             permissions::prompt(s, &task, &c.call_id, &tool_name, &c.args["input"], c.args["tool_use_id"].as_str()).await.map_err(|e| format!("{e:#}"))
         }
         "request_user_input" => {
-            let question = c.args["question"].as_str().unwrap_or("The agent needs your input").to_string();
+            let card = crate::questions::card(&c.args)?;
+            let question = card["question"].as_str().unwrap_or("The agent needs your input").to_string();
             s.db().execute("UPDATE runs SET attention=?1 WHERE id=?2", rusqlite::params![question, c.run_id]).map_err(|e| e.to_string())?;
-            Ok(json!({"ok": true, "note": "The user will be notified. End your turn now with your question."}))
+            let options = card["options"].as_array().is_some_and(|o| !o.is_empty());
+            crate::questions::ask(s, &task, &c.call_id, card).map_err(|e| format!("{e:#}"))?;
+            let note = if options {
+                "The user will be notified and shown your question with its options. End your turn now; their answer (the options they picked, or what they wrote) comes as their next message."
+            } else {
+                "The user will be notified. End your turn now with your question."
+            };
+            Ok(json!({"ok": true, "note": note}))
         }
         "submit_review" => crate::review::submit(s, &task, &run.id, &c.args).map_err(|e| e.1),
         "wait" => {

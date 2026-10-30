@@ -1358,7 +1358,7 @@ pub struct Message {
 }
 
 impl Message {
-    fn from_row(r: &Row) -> rusqlite::Result<Self> {
+    pub fn from_row(r: &Row) -> rusqlite::Result<Self> {
         let data: String = r.get("data")?;
         Ok(Self {
             id: r.get("id")?,

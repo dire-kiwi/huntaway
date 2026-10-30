@@ -103,6 +103,7 @@ fn host_routes() -> Router<Shared> {
         )
         .route("/tasks/{id}", get(get_task).patch(update_task).delete(delete_task))
         .route("/tasks/{id}/messages", get(list_messages).post(send_message))
+        .route("/tasks/{id}/questions/{message_id}", post(answer_question))
         .route("/tasks/{id}/stop", post(stop_task))
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/review", post(review_task))
@@ -1764,7 +1765,22 @@ struct SendBody {
 
 async fn send_message(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
     let t = runner::send(&s, &id, &b.text)?;
+    // The user's reply answers the questions the agent asked (see questions.rs).
+    if !b.text.trim().is_empty() {
+        crate::questions::replied(&s, &t.id);
+    }
     Ok(Json(json!(t)))
+}
+
+/// Answer a question an agent asked with request_user_input, from its card (API 62): the answer
+/// is sent as the user's message.
+async fn answer_question(
+    State(s): State<Shared>,
+    Path((id, message_id)): Path<(String, i64)>,
+    Json(b): Json<crate::questions::Answer>,
+) -> ApiResult<Json<Value>> {
+    let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    Ok(Json(json!(crate::questions::answer(&s, &task.id, message_id, b)?)))
 }
 
 /// Drop the queued message. Returns the task as it was, queued message included.
@@ -1891,6 +1907,9 @@ async fn list_permissions(State(s): State<Shared>, Query(q): Query<PermissionsQu
 struct ResolveBody {
     decision: String,
     message: Option<String>,
+    /// The answers to a question, or how a plan is approved or what to change in it (API 62).
+    #[serde(flatten)]
+    reply: permissions::Reply,
 }
 
 async fn resolve_permission(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<ResolveBody>) -> ApiResult<Json<Value>> {
@@ -1899,7 +1918,7 @@ async fn resolve_permission(State(s): State<Shared>, Path(id): Path<String>, Jso
         "deny" => false,
         _ => return Err(ApiError::bad("decision must be allow, allow_always or deny")),
     };
-    let status = permissions::decide(&s, &id, allow, b.decision == "allow_always", b.message)?;
+    let status = permissions::answer(&s, &id, allow, b.decision == "allow_always", b.message, b.reply)?;
     Ok(Json(json!({"ok": true, "status": status})))
 }
 

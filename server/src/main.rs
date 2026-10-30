@@ -17,6 +17,7 @@ mod hub;
 mod mcp;
 mod permissions;
 mod prompts;
+mod questions;
 mod proto;
 mod pty;
 mod relay;

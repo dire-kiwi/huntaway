@@ -19,6 +19,7 @@ export type Item =
   | { type: "user"; key: string; text: string; auto?: boolean; steered?: boolean }
   | { type: "event"; key: string; level: string; text: string; detail?: string | null }
   | { type: "permission"; key: string; data: Any }
+  | { type: "question"; key: string; id: number; data: Any }
   | { type: "text"; key: string; text: string }
   | { type: "thinking"; key: string; text: string }
   | { type: "tools"; key: string; calls: Call[] }
@@ -269,6 +270,8 @@ class ItemBuilder {
     if (m.kind === "user") this.push({ type: "user", key: k, text: m.data.text ?? "", auto: m.data.auto, steered: m.data.steered });
     else if (m.kind === "event") this.push({ type: "event", key: k, level: m.data.level, text: m.data.text, detail: m.data.detail });
     else if (m.kind === "permission") this.push({ type: "permission", key: k, data: m.data });
+    // A question asked with request_user_input (API 62).
+    else if (m.kind === "question") this.push({ type: "question", key: k, id: m.id, data: m.data });
     else if (m.kind === "claude") {
       const d = m.data;
       const last = this.items.length - 1;

@@ -1566,7 +1566,8 @@ fn system_prompt(
                  Use them to look across projects, create and update tasks, and start agents on \
                  tasks (create_task with start=true, or send_to_task) when the user asks for that. Tasks you create are \
                  recorded as this task's. If you are blocked or need a decision or information from the user, call \
-                 `request_user_input` with your question and then end your turn — the task is flagged \"Needs attention\" \
+                 `request_user_input` with your question (and its `options`, when the choices are known) and then end your \
+                 turn — the task is flagged \"Needs attention\" \
                  and the user's reply resumes this conversation. When you finish, end with a concise summary of what you \
                  did; the task then moves to \"In review\".",
                 task.number, task.title, task.id
@@ -1603,7 +1604,8 @@ fn system_prompt(
             s.push_str(&crate::documents::system_prompt(task, document.unwrap_or("?"), p, group));
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you made or changed; the \
                  task then moves to \"In review\"."
             ));
@@ -1630,7 +1632,8 @@ fn system_prompt(
                  rather than ending your turn. Tasks you create are recorded as this task's: the board shows how \
                  many are done, and `get_task` on this task lists them. Run tasks that build on each other one after the other, and independent ones in \
                  parallel. If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of the tasks you created and where \
                  they stand; the task then moves to \"In review\".",
                 GROUP_TASK_KEY, task.number, task.title, task.id
@@ -1710,7 +1713,8 @@ fn system_prompt(
             }
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you did; the task then \
                  moves to \"In review\". You may create follow-up tasks with `create_task`."
             ));
