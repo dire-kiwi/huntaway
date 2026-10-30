@@ -51,7 +51,7 @@ import { useHost, useProject, useStore, useThreadMessages } from "../store";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
-import { ProjectChangeCard, TaskDeletionCard } from "./Approvals";
+import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard } from "./Approvals";
 import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
@@ -78,7 +78,7 @@ type Any = any;
 
 // ---------- tool calls ----------
 
-function toolMeta(name: string, input: Any, cwd?: string | null): { icon: ReactNode; label: string; summary: string } {
+export function toolMeta(name: string, input: Any, cwd?: string | null): { icon: ReactNode; label: string; summary: string } {
   const rel = (p?: string) => (p && cwd && p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : p ?? "");
   const s = 13;
   switch (name) {
@@ -1030,6 +1030,7 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
     case "permission":
       if (it.data.kind === "project") return <ProjectChangeCard data={it.data} hostId={hostId} />;
       if (it.data.kind === "delete_task") return <TaskDeletionCard data={it.data} hostId={hostId} />;
+      if (it.data.kind === "automation") return <AutomationChangeCard data={it.data} hostId={hostId} />;
       return <PromptCard id={Number(it.key)} data={it.data} hostId={hostId} />;
     case "question":
       return <QuestionRow id={it.id} data={it.data} hostId={hostId} />;

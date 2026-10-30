@@ -13,6 +13,7 @@ mod demo;
 mod disk;
 mod documents;
 mod gh_mcp;
+mod git_view;
 mod github;
 mod hub;
 mod mcp;
@@ -125,6 +126,10 @@ struct ServeArgs {
     /// (defaults to the checkout this binary was built in).
     #[arg(long, env = "IA_SOURCE_DIR")]
     source_dir: Option<PathBuf>,
+    /// A deployment of the board (e.g. https://board.example) to follow: when it runs a newer commit
+    /// than this server, the UI offers to update to it (fetched from the source checkout's origin).
+    #[arg(long, env = "IA_UPDATE_FROM")]
+    update_from: Option<String>,
     /// Name shown for this host on boards (defaults to the hostname).
     #[arg(long, env = "IA_NAME")]
     name: Option<String>,
@@ -145,6 +150,21 @@ struct ServeArgs {
     /// `?token=` (for LAN-only PR previews; anyone who can reach the server gets full control).
     #[arg(long, env = "IA_OPEN_TOKEN")]
     open_token: bool,
+    /// Make a profile NAME with the Claude config in DIR on start, unless there's a profile of
+    /// that name already (repeatable, or comma-separated). For PR previews, with a login mounted in.
+    #[arg(long = "profile", env = "IA_PROFILES", value_name = "NAME=DIR", value_delimiter = ',', value_parser = parse_profile)]
+    profiles: Vec<Option<(String, String)>>,
+}
+
+/// A `--profile` value, `NAME=DIR`. A blank one is none, so a deployment can leave `IA_PROFILES=` empty.
+fn parse_profile(s: &str) -> Result<Option<(String, String)>, String> {
+    if s.trim().is_empty() {
+        return Ok(None);
+    }
+    match s.split_once('=').map(|(name, dir)| (name.trim(), dir.trim())) {
+        Some((name, dir)) if !name.is_empty() && !dir.is_empty() => Ok(Some((name.to_string(), dir.to_string()))),
+        _ => Err(format!("{s:?} isn't NAME=DIR")),
+    }
 }
 
 /// `<data dir>/huntaway`, or `<data dir>/issue-agent` on a machine that ran the board before it
@@ -265,12 +285,24 @@ async fn serve(args: ServeArgs) -> Result<()> {
         started_at: util::now(),
         source_dir,
         running_commit,
+        update_from: args.update_from.clone().map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty()),
         args: std::env::args_os().skip(1).collect(),
     };
     let identity = state::Identity { host_id, host_name, token: token.clone(), hub_token, internal_url };
     let state = state::AppState::new(conn, data_dir.clone(), identity, meta);
     if args.demo {
         demo::seed(&state).await.context("seeding the demo project")?;
+    }
+    // After the demo, which only seeds a host that has no profiles.
+    for (name, dir) in args.profiles.iter().flatten() {
+        let made = db::ensure_profile(&state.db(), name, dir).with_context(|| format!("making profile {name}"))?;
+        if let Some(p) = made {
+            std::fs::create_dir_all(state.profile_scratch_dir(&p.id))?;
+            tracing::info!("made profile {name} with the Claude config in {dir}");
+            if !util::expand_tilde(dir).is_dir() {
+                tracing::warn!("profile {name}'s Claude config {dir} isn't a directory here");
+            }
+        }
     }
     let mut app = api::router(state.clone());
     match find_ui_dir(args.ui_dir) {
@@ -298,6 +330,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     automations::start(&state);
     merged::start(&state);
     relocate::start_recording(&state);
+    admin::start_update_check(&state);
     hub::start(&state)?;
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
@@ -354,5 +387,18 @@ mod tests {
         std::fs::write(dir.join("huntaway.db"), "").unwrap();
         assert_eq!(super::db_path(&dir), dir.join("huntaway.db"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn profile_flags_take_name_dir_pairs() {
+        use clap::Parser;
+        let args = super::ServeArgs::try_parse_from(["huntaway", "--profile", "personal=/claude/personal", "--profile", "a = ~/.a,b=/b=c,"]).unwrap();
+        let pair = |n: &str, d: &str| Some((n.to_string(), d.to_string()));
+        assert_eq!(args.profiles, [pair("personal", "/claude/personal"), pair("a", "~/.a"), pair("b", "/b=c"), None]);
+        // As from an empty IA_PROFILES.
+        assert_eq!(super::ServeArgs::try_parse_from(["huntaway", "--profile", ""]).unwrap().profiles, [None]);
+        for bad in ["personal", "=/claude", "personal=", "personal=/a,b"] {
+            assert!(super::ServeArgs::try_parse_from(["huntaway", "--profile", bad]).is_err(), "{bad}");
+        }
     }
 }

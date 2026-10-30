@@ -1,5 +1,5 @@
 //! Tasks whose pull requests are merged or closed on GitHub (by the user, or by auto-merge)
-//! rather than through *Ready for merge* (API 65). Every `POLL` the server reads the state of the
+//! rather than through *Ready for merge* (API 68). Every `POLL` the server reads the state of the
 //! pull requests (`pr_url`) of the tasks in *In review* or *Needs attention* whose project has
 //! `done_when_merged` on (the default), with one GraphQL query per GitHub account and host (and
 //! `CHUNK` pull requests), as each task's own account (see runner::github_account; gh's active

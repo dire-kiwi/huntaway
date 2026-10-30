@@ -13,8 +13,9 @@
 A <task> is an id, or a key like TES-3 (looked up in $IA_TEST_PROJECT), here and in a path's
 /tasks/<task>. The server comes from
 --env FILE, $IA_TEST_ENV, $IA_TEST_URL and $IA_TEST_TOKEN, or the worktree's .ia-test-env (the
-latest test-server.sh start), in that order. Responses are printed as JSON; an HTTP error exits
-1 with the error body on stderr.
+latest test-server.sh start), in that order. It has to be a test server on 127.0.0.1 (not port
+7878) or a server that hands out its token (`--open-token`, as PR previews do), so never the live
+board. Responses are printed as JSON; an HTTP error exits 1 with the error body on stderr.
 
 `approve-all` allows every pending prompt, denying those whose tool name or input matches
 --deny-pattern; a prompt answered meanwhile (409) is reported, any other HTTP error exits 1.
@@ -75,10 +76,25 @@ class Api:
         self.token = env.get("IA_TEST_TOKEN", "")
         if not self.url or not self.token:
             die("the env has no IA_TEST_URL or IA_TEST_TOKEN")
+        # Test servers and previews only: never the live board, a hub or a linked host.
         host = urllib.parse.urlparse(self.url)
-        # Test servers and previews only: never the live board.
-        if host.port == 7878 or host.hostname in ("code.dire.nz", "desktop"):
+        if host.port == 7878:
             die(f"{self.url} is the live board, not a test server")
+        if host.hostname not in ("127.0.0.1", "localhost", "::1") and not self.hands_out_token():
+            die(f"{self.url} isn't a test server or a preview: only test servers on 127.0.0.1 and servers started with --open-token are allowed")
+
+    def hands_out_token(self):
+        """Whether the server gives its token to anyone (`--open-token`), as previews do and the live board and hubs never do."""
+        try:
+            with urllib.request.urlopen(self.url + "/api/open-token", timeout=30) as r:
+                body = json.loads(r.read().decode())
+        except urllib.error.HTTPError:
+            return False
+        except urllib.error.URLError as e:
+            die(f"{self.url}: {e.reason} (is the server running?)")
+        except ValueError:  # the UI's index.html: there's no such route
+            return False
+        return isinstance(body, dict) and isinstance(body.get("token"), str)
 
     def call(self, method, path, body=None, conflict_ok=False):
         """The response's JSON. An HTTP error exits, except that with `conflict_ok` a 409 comes back

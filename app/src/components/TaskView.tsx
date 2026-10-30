@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, RefreshCw, Square, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, runningAgentSteers, stopTitle, worktreesOn, type DiffResult, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -27,6 +27,7 @@ import { ActivityTime, Button, cost, IconButton, Input, Modal, PrIcon, PreviewDo
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
+const ChangesView = lazy(() => import("./Changes").then((m) => ({ default: m.ChangesView })));
 
 const NO_TOOLS: TerminalTool[] = [];
 
@@ -421,7 +422,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ) : shown === docType ? (
             <DocumentView key={task.id} task={task} onShowThread={() => setTab("thread")} />
           ) : tab === "changes" ? (
-            <DiffView task={task} />
+            <Suspense fallback={null}>
+              <ChangesView task={task} />
+            </Suspense>
           ) : shown === "review" ? (
             <div className="h-full overflow-y-auto">
               <div className="mx-auto max-w-3xl px-5 py-5">
@@ -432,8 +435,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             <Details key={task.id} task={task} mode={mode} className="h-full overflow-y-auto" />
           ) : null}
         </main>
-        {/* A document gets the room. */}
-        {wide && !isTerminalTab(tab) && shown !== docType && (
+        {/* A document, and the changes' panels, get the room. */}
+        {wide && !isTerminalTab(tab) && shown !== docType && shown !== "changes" && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>
@@ -1279,116 +1282,6 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
         </div>
       </div>
     </Modal>
-  );
-}
-
-// ---------- diff ----------
-
-interface FileDiff {
-  path: string;
-  lines: string[];
-  adds: number;
-  dels: number;
-}
-
-function parsePatch(patch: string): FileDiff[] {
-  const files: FileDiff[] = [];
-  let cur: FileDiff | null = null;
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("diff --git")) {
-      const m = line.match(/ b\/(.*)$/);
-      cur = { path: m?.[1] ?? line, lines: [], adds: 0, dels: 0 };
-      files.push(cur);
-      continue;
-    }
-    if (!cur) continue;
-    if (/^(index |--- |\+\+\+ |new file mode|deleted file mode|similarity|rename )/.test(line)) continue;
-    cur.lines.push(line);
-    if (line.startsWith("+")) cur.adds++;
-    else if (line.startsWith("-")) cur.dels++;
-  }
-  return files;
-}
-
-function DiffView({ task }: { task: Task }) {
-  const [diff, setDiff] = useState<DiffResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const load = () => {
-    setLoading(true);
-    api
-      .diff(task.host_id, task.id)
-      .then(setDiff)
-      .catch((e) => setDiff({ available: false, reason: e.message }))
-      .finally(() => setLoading(false));
-  };
-  useEffect(load, [task.id, task.running, task.worktree_state]);
-  const files = useMemo(() => parsePatch(diff?.patch ?? ""), [diff]);
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-4 p-5">
-        <div className="flex items-center gap-3 text-[12.5px] text-muted">
-          {diff?.available && (
-            <>
-              <span>
-                {files.length} file{files.length === 1 ? "" : "s"} changed
-                {diff.base && (
-                  <>
-                    {" "}
-                    vs <span className="font-mono text-fg">{diff.base}</span>
-                  </>
-                )}
-              </span>
-              <span className="text-emerald-400">+{files.reduce((a, f) => a + f.adds, 0)}</span>
-              <span className="text-red-400">−{files.reduce((a, f) => a + f.dels, 0)}</span>
-            </>
-          )}
-          <Button size="sm" variant="ghost" className="ml-auto" onClick={load} disabled={loading}>
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> Refresh
-          </Button>
-        </div>
-        {diff && !diff.available && <div className="text-[13px] text-muted">Diff unavailable: {diff.reason}</div>}
-        {diff?.commits?.trim() && (
-          <div className="rounded-lg border border-line bg-panel/60 p-3">
-            <div className="mb-1.5 text-[11px] font-semibold tracking-wide text-faint uppercase">Commits</div>
-            <pre className="font-mono text-[12px] whitespace-pre-wrap text-muted">{diff.commits.trim()}</pre>
-          </div>
-        )}
-        {diff?.available && files.length === 0 && <div className="py-10 text-center text-[13px] text-faint">No changes yet.</div>}
-        {files.map((f) => (
-          <div key={f.path} className="overflow-hidden rounded-lg border border-line">
-            <button
-              onClick={() => setCollapsed((c) => ({ ...c, [f.path]: !c[f.path] }))}
-              className="flex w-full items-center gap-2 border-b border-line bg-panel-2 px-3 py-2 text-left font-mono text-[12px]"
-            >
-              <ChevronRight size={12} className={clsx("text-faint transition-transform", !collapsed[f.path] && "rotate-90")} />
-              <span className="truncate">{f.path}</span>
-              <span className="ml-auto text-emerald-400">+{f.adds}</span>
-              <span className="text-red-400">−{f.dels}</span>
-            </button>
-            {!collapsed[f.path] && (
-              <pre className="overflow-x-auto bg-[#0c0c10] py-1 font-mono text-[12px] leading-[1.5]">
-                {f.lines.map((l, i) => (
-                  <div
-                    key={i}
-                    className={clsx(
-                      "px-3",
-                      l.startsWith("+") && "bg-emerald-500/10 text-emerald-200",
-                      l.startsWith("-") && "bg-red-500/10 text-red-200",
-                      l.startsWith("@@") && "bg-accent/[0.07] text-accent",
-                      !/^[+\-@]/.test(l) && "text-[#a9a9b8]",
-                    )}
-                  >
-                    {l || " "}
-                  </div>
-                ))}
-              </pre>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 
