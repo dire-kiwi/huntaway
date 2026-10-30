@@ -3083,11 +3083,11 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_version_55_gets_push_subscriptions() {
-        let path = std::env::temp_dir().join(format!("huntaway-v55-{}.db", crate::util::new_id()));
+    fn a_database_from_version_56_gets_push_subscriptions() {
+        let path = std::env::temp_dir().join(format!("huntaway-v56-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
-            c.execute_batch("DROP TABLE push_subscriptions; PRAGMA user_version=55;").unwrap();
+            c.execute_batch("DROP TABLE push_subscriptions; PRAGMA user_version=56;").unwrap();
         }
         let c = open(&path).unwrap();
         assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
