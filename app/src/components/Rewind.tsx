@@ -1,4 +1,4 @@
-// Rewinding a task to before one of its turns (API 67): its files go back to the checkpoint taken
+// Rewinding a task to before one of its turns (API 69): its files go back to the checkpoint taken
 // before the turn, and optionally its branch and its agent's conversation (on the agent's next run).
 import { History, Loader2 } from "lucide-react";
 import { useState } from "react";

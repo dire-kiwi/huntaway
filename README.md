@@ -8,6 +8,7 @@ approve tool calls, and review, stage and commit its changes (lazygit-style).
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
+server/broker/ huntaway-broker: public relay that hosts dial out to, to reach them from anywhere
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -197,6 +198,9 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--name` / `IA_NAME` | hostname | Name this host shows on boards |
 | `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
 | `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
+| `--broker` / `IA_BROKER` | | Broker to dial out to, to be reachable through it (see *Reaching a host from anywhere*) |
+| `--broker-token` / `IA_BROKER_TOKEN` | | Token for `--broker` (the broker's `BROKER_TOKEN`) |
+| `--broker-name` / `IA_BROKER_NAME` | host name, as a slug | Name to reach this host by on the broker |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
@@ -375,6 +379,36 @@ versioning need one manual update (`git pull`, then Rebuild & restart).
 permission mode for its agents. A model set on a thread, project or profile, or a permission
 mode set on a thread or project, takes precedence.
 
+### Reaching a host from anywhere
+
+Away from home, without Tailscale or a VPN, a host can be reached through a **broker**
+(`huntaway-broker`, in `server/broker`): a small public relay that keeps nothing but the list of
+hosts connected to it. The host dials out to it and keeps one websocket open, and the broker
+passes each request it gets down that websocket. The host answers it from its own server, as if
+the client were on the LAN, so no inbound port is needed:
+
+```sh
+huntaway serve --broker https://broker.example.com --broker-token <broker token>   # or IA_BROKER, IA_BROKER_TOKEN
+```
+
+Then open `https://broker.example.com/?token=<host token>` from anywhere: the broker serves that
+host's board, API and websockets. Its token (`huntaway token`) still guards the API, so the broker
+signs no one in; the broker's own token only says which hosts may connect, and `/api/open-token`
+(`--open-token`) isn't served through it. Each host is known on the broker by a name
+(`--broker-name`, by default its own name as lowercase letters, digits and hyphens), and a request
+reaches the host:
+
+- at `/_broker/h/<name>/…`, for anything that takes a base URL: a hub links a host through the
+  broker with `--hub https://broker.example.com/_broker/h/<hub's name>` (the host dials in to a hub
+  that is behind the broker), or **Add host** with the URL `https://broker.example.com/_broker/h/<name>`;
+- otherwise, named by an `X-Huntaway-Host` header, else by the cookie that opening
+  `/_broker/use/<name>` sets (`/_broker/use/<name>?token=…` signs the board in too), else the
+  broker's default host (`--default-host`), else the only host connected.
+
+A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
+whose board links the others) on the broker, and its board shows every host it links. Running the
+broker is in `server/broker/README.md`.
+
 ### Codex agents
 
 A thread whose config is a Codex one runs `huntaway codex-run` under ia-shim instead of
@@ -537,7 +571,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (`request_user_input` or `AskUserQuestion`, see *Questions and plans*) or presents a plan, a
   tool needs approval, a run fails, or you stop it → *Needs
   attention*; a run finishes cleanly → *In review*. You move cards to *Done* yourself, or to
-  *Ready for merge*.
+  *Ready for merge*; a task whose pull request is merged on GitHub moves to *Done* by itself
+  (see *Pull requests*).
 - **Archived** (API 53): a task that's been in *Done* for two days is archived. It leaves the
   kanban board's *Done* column, which links to it ("N archived"), for the list view's *Archived*
   section, the last one, which starts collapsed. It's still done (a task that depends on it
@@ -618,7 +653,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     doesn't leave the old copy running. It's kept in `agent_wait.command` and shown with the
     wait.
   - `pull_request` (API 62) watches a pull request: its number (in the task's repository, the one
-    its branch is pushed to), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
+    its branch is pushed to, whose SSH host alias, like `git@github-work:o/r.git`, is the host
+    `ssh -G` says it stands for), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
     been told yet: a check on its head commit failed (or was cancelled or timed out), all of the
     head's required checks passed (all of its checks, when none is required), someone other than
     the agent's GitHub account commented or reviewed, it started to conflict with its base branch,
@@ -629,7 +665,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     comments with their author, kind (comment, review or review comment), file and line, and their
     text without HTML comments and cut to 800 characters (20 at most). A wait that ends otherwise
     returns how the pull request was when last read (`read_at`). The server reads it with one
-    GraphQL query (`gh api graphql`) a minute, as the task's GitHub account (see *GitHub accounts*)
+    GraphQL query (`gh api graphql`) a minute (and one for each 100 review threads past the first
+    100, up to 1,000), as the task's GitHub account (see *GitHub accounts*)
     and only that one; a failed read is tried again after 2, 4, 8 and 10 minutes, and after 5 in a
     row the wait ends with `events: ["unreadable"]` and the error. The first read is made before
     the wait starts, so a pull request that can't be read fails the call. No one's asked about it:
@@ -689,7 +726,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   it a message). *Review now* in the task's sidebar reviews on demand, once the agent has
   stopped; a task in *In progress* or *Needs attention* moves to *In review* for it. Turn reviews off,
   or set the rounds, in the project's settings (API 12). The task's *Review* tab shows what each
-  round of fixes changed, from its checkpoints (API 67, see *Checkpoints and rewinding*).
+  round of fixes changed, from its checkpoints (API 69, see *Checkpoints and rewinding*).
 - **Several reviewers** (API 29): a project's settings can list more than one reviewer under
   *Reviewers*, each an agent config with an optional model and effort (for example one Codex and
   one Claude, or Fable and Opus). By default there's one, with the task's own config. Each reviews
@@ -767,6 +804,21 @@ skipped. Auto-compacting idle sessions is Claude-only.
   yourself or a run you stopped. The tab title (`(2) Huntaway`) and icon count the tasks that
   need attention, and the desktop app shows the count on its dock or taskbar badge. The settings
   are kept in the browser.
+- **Phones and tablets:** below 700px wide (a phone) the board has a narrow layout. The sidebar
+  is a drawer, opened with the menu button at the start of each page's header and closed once
+  it's taken you somewhere (or with a tap beside it, or Escape). A board shows one column at a
+  time: tabs above it with each column's count pick one, as does swiping sideways, and the board
+  opens on the column picked last (before any is picked, *Needs attention* if it has tasks,
+  else the first column with some). The list view stays as it is, with each task's title on a
+  line of its own. A task opens over the whole screen with a back button, its tabs first in a
+  row that scrolls sideways and its details as a tab. On a touch screen Enter in the composer
+  starts a new line and the send button sends (Ctrl/Cmd+Enter does too). Dialogs and menus fit
+  the screen and scroll, and buttons are larger to tap. Dragging doesn't work on touch screens,
+  so on a phone, and on any touch screen (a tablet keeps the desktop layout), each card and row
+  has a **⋯** button whose menu moves the task to another column as dropping it there does
+  (into *In progress* starts its agent), or completes it as Done, Not done or Won't fix. A task
+  beside a board is at least 480px wide, so it's usable on a tablet. Wider windows and the
+  desktop app keep the desktop layout.
 - **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its
@@ -812,7 +864,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   list with `` ` ``), the commits (the branch's, then a few from its base) and the stashes; the
   main panel shows what's selected: the branch's whole diff against its base, a file's unstaged
   and staged changes, or a commit's or stash's. A task in a worktree of its own has a fifth panel,
-  *Turns* (API 67): its agent's turns, latest first, each showing what that turn changed (see
+  *Turns* (API 69): its agent's turns, latest first, each showing what that turn changed (see
   *Checkpoints* below); `g` rewinds to before one. `1`–`5` or ←/→ move between panels, ↑/↓ (or
   `j`/`k`) through a list, and the bar at the bottom shows the keys for where you are (each one
   can be clicked; `?` lists them all). In the files, space stages or unstages a file or folder,
@@ -831,7 +883,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
   wrong. A host before API 66 shows the branch's diff alone.
-- **Checkpoints and rewinding** (API 67): a task in a worktree of its own keeps a checkpoint of
+- **Checkpoints and rewinding** (API 69): a task in a worktree of its own keeps a checkpoint of
   its files before each of its agent's runs (when anything changed since the last, so the first
   run's is the task's baseline) and after each of the agent's turns, including ones that were
   stopped or failed. A checkpoint is a commit of everything git doesn't ignore in the worktree
@@ -1048,6 +1100,22 @@ the task has none yet, the host looks it up with `gh pr view <branch>` (if `gh` 
 signed in; with `--repo` for the GitHub repository the branch is pushed to, as above), so a PR the
 agent opened shows up without it saying so.
 
+A pull request merged on GitHub (by you, or by auto-merge) rather than through *Ready for merge*
+moves its task to *Done* (API 68). Every 3 minutes the host reads the state of the pull requests
+of its tasks in *In review* or *Needs attention*, with one GraphQL query per GitHub account and
+host, as each task's own account (see *GitHub accounts*; gh's active account when none is set).
+When one is merged, its task moves to *Done* (resolution `done`) as if you'd moved it there, its
+thread says so, and its worktree is removed if nothing in it would be lost, as **Remove merged
+worktrees** does (the thread says why when it's kept). When one is closed without being merged, a
+task in *In review* moves to *Needs attention* saying so, and one already there gets a note in its
+thread (its reason stays the agent's). Each happens once per change of state, so a task you move
+back out of *Done* stays where you put it. Tasks whose agent or reviewer is running, tasks being
+merged, a subproject's tasks (its own merge brings them in) and a subproject with open tasks are
+left alone. Turn it off for a project with *Move a task to Done when its pull request is merged on
+GitHub* in its settings (`done_when_merged`, on by default). An agent `wait`ing on its pull
+request is told it was merged and marks the task done itself, as its project's instructions say;
+if its run ends without doing so, the next read moves the task.
+
 ### Preview URLs
 
 A task can carry a preview URL (Preview in the task's sidebar, or `preview_url` via
@@ -1079,7 +1147,7 @@ can be removed), and the host won't search Asana for it. Its token is kept for w
 
 ### Automations
 
-A project's automations (API 63, in its settings under *Automations*) put work on the board by
+A project's automations (API 63, in its settings under *Automations*; agents' tools for them, API 67) put work on the board by
 themselves: recurring work such as a weekly dependency update, and events from outside such as a
 new GitHub issue to triage. Each one has a trigger and an action, can be switched on and off, and
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
@@ -1102,6 +1170,22 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
 - **Run now** runs a schedule at once, on or off. For a webhook it's **Test**: a delivery sent
   from the board (the latest one received, or a body you write) through its filters and
   templates, without the signature check, duplicate check or coalescing.
+
+**Agents.** Agents have board tools for automations: `list_automations`, `create_automation`,
+`update_automation`, `delete_automation` and `run_automation` (Run now, or a test delivery). An
+automation keeps making work after the agent is done, and a webhook lets whoever has its URL start
+runs, so creating, changing or deleting one asks the user first, in the same dialog as a project
+change (and as a card in the agent's thread), whatever the thread's permission mode. It shows
+everything the automation would run: its trigger, filters and whether deliveries are signed, the
+task's title and description templates, type, agent config and whether its agent starts, or the
+task a message goes to and the message. A change shows what it changes, and the automation as it
+would be and as it is. Nothing is made or changed unless the user approves, and then exactly what
+they were shown (only the settings that differ, so a change the user made meanwhile stays). Turning
+one off or renaming it isn't asked about. A call retried after a restart waits for the same
+approval. An agent only reaches automations of projects on boards it can use, and an automation
+only acts in its own project. With `generate_secret`, a new webhook secret is made once it's
+approved and returned to the agent, once, with the URL (in full when `public_url` is set), so it
+can set up the sender.
 
 **Webhooks.** The webhook route is the one route that doesn't take the board's token. The token in
 its path is the automation's own (compared in constant time) and reaches nothing else: an unknown

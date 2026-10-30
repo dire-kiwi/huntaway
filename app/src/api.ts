@@ -340,6 +340,8 @@ export interface Project {
   auto_review?: boolean;
   /** How many times in a row a review's serious issues go back to the agent to fix (API 12). */
   review_rounds?: number;
+  /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
+  done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
@@ -534,7 +536,7 @@ export interface Task {
   review?: Review | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
-  /** The conversation rollback its agent's next run makes, after a rewind (API 67). */
+  /** The conversation rollback its agent's next run makes, after a rewind (API 69). */
   rewind?: PendingRewind | null;
   cost_usd: number;
   last_activity_at: string;
@@ -648,14 +650,14 @@ export interface GitStash {
   time: number;
 }
 
-/** A conversation rollback waiting for a task's next run (API 67): it goes on from before turn `turn`. */
+/** A conversation rollback waiting for a task's next run (API 69): it goes on from before turn `turn`. */
 export interface PendingRewind {
   turn: number;
   message_id: number;
   session: string;
 }
 
-/** What a turn changed, without the files git brought in by a merge, pull or rebase (API 67). */
+/** What a turn changed, without the files git brought in by a merge, pull or rebase (API 69). */
 export interface TurnStats {
   files: number;
   additions: number;
@@ -665,7 +667,7 @@ export interface TurnStats {
   excluded_count: number;
 }
 
-/** One of the agent's turns with a checkpoint after it (API 67). */
+/** One of the agent's turns with a checkpoint after it (API 69). */
 export interface Turn {
   /** Its number among the task's turns. */
   turn: number;
@@ -851,12 +853,20 @@ export function captureTokenFromUrl() {
   }
 }
 
+let openBoard = false;
+
+/** Whether this board hands out its token (`--open-token`), as PR previews do and the user's own boards never do. */
+export const isOpenBoard = () => openBoard;
+
 /** Servers started with `--open-token` (PR previews) hand out their token; sign in with it. */
 export async function fetchOpenToken() {
   try {
     const res = await fetch("/api/open-token");
     const data = res.ok ? await res.json() : null;
-    if (typeof data?.token === "string" && data.token) setToken(data.token);
+    if (typeof data?.token === "string" && data.token) {
+      setToken(data.token);
+      openBoard = true;
+    }
   } catch {
     /* not offered */
   }
@@ -1004,7 +1014,6 @@ export interface GlobalAgentTools {
   profile_switches: Record<string, Record<string, boolean>>;
 }
 
-/** Agent defaults for a host. */
 /** What starts an automation (API 63): an interval, a time of day (in the host's time zone) on some weekdays, or a webhook delivery. */
 export type AutomationTrigger =
   | { kind: "interval"; every_minutes: number }
@@ -1094,6 +1103,7 @@ export interface AutomationInput {
   rotate_token?: boolean;
 }
 
+/** Agent defaults for a host. */
 export interface HostSettings {
   /** Used when the thread, project and profile don't pick a model. */
   default_model: string | null;
@@ -1180,8 +1190,47 @@ export interface DeletionApproval extends ApprovalRequest {
   input: TaskDeletion;
 }
 
+/** An automation as an approval shows it (API 67), with the task its message goes to and its tasks' agent config. */
+export interface AutomationView {
+  /** Empty for one that's being created. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  /** Whether a webhook's deliveries must be signed with a secret. */
+  signed: boolean;
+  target?: { id: string; key: string; title: string; status: Status };
+  config?: { id: string; name: string; agent: string };
+}
+
+/** An automation an agent asked to create, change or delete, shown to the user to approve (API 67). */
+export interface AutomationChange {
+  op: "create" | "update" | "delete";
+  project: { id: string; key: string; name: string; host?: string };
+  /** The thread that asked. */
+  task: { id: string; key?: string; title: string } | null;
+  /** The automation as it would be (or, to delete, as it is). */
+  automation: AutomationView;
+  /** For a change: the automation as it is. */
+  before?: AutomationView;
+  /** For a change, what it changes: name, trigger, action, enabled, generate_secret, secret (removed) or rotate_token. */
+  changes?: string[];
+  /** The host's time zone, which times of day are in. */
+  time_zone?: { name: string | null; offset: string };
+  /** Why, in the agent's words. */
+  reason?: string | null;
+}
+
+/** An automation change waiting for the user to approve it, like a project change (API 67). */
+export interface AutomationApproval extends ApprovalRequest {
+  kind: "automation";
+  tool_name: "create_automation" | "update_automation" | "delete_automation";
+  input: AutomationChange;
+}
+
 /** What only the user decides for an agent, whatever its thread's permission mode. */
-export type Approval = ProjectApproval | DeletionApproval;
+export type Approval = ProjectApproval | DeletionApproval | AutomationApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
@@ -1419,7 +1468,7 @@ export const api = {
   gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
     on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
   gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
-  /** The task's turns with checkpoints, and the changes between two checkpoints (API 67). */
+  /** The task's turns with checkpoints, and the changes between two checkpoints (API 69). */
   turns: (h: string, id: string) => on(h).get<TurnsResult>(`/tasks/${enc(id)}/turns`),
   turnDiff: (h: string, id: string, from: number, to: number) => on(h).get<TurnDiff>(`/tasks/${enc(id)}/turns/diff?from=${from}&to=${to}`),
   /** Restores the files to before the turn `message_id` started, and optionally the branch and the agent's conversation. */
@@ -1444,8 +1493,8 @@ export const api = {
   answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
     on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
-  /** Older hosts ignore `all` and list project changes only. */
-  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true"),
+  /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
+  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true"),
   dirs: (h: string, path?: string) => on(h).get<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** The project's automations, and the time zone their times of day are in (API 63). */
   automations: (h: string, projectId: string) =>

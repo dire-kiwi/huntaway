@@ -246,7 +246,7 @@ interface Round {
   turns: number;
 }
 
-/** What each round of fixes changed, from the checkpoints taken around it (API 67). */
+/** What each round of fixes changed, from the checkpoints taken around it (API 69). */
 function FixRounds({ task }: { task: Task }) {
   const { data } = useTurns(task);
   const rounds = useMemo(() => {

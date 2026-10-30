@@ -1,11 +1,11 @@
-// A task's turns with checkpoints (API 67): what each of its agent's turns changed, and whether the
+// A task's turns with checkpoints (API 69): what each of its agent's turns changed, and whether the
 // task can be rewound to before it.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, hostSupports, type Task, type Turn, type TurnsResult } from "./api";
 import { onCheckpoints, useHost } from "./store";
 
 /** Whether a task's host keeps checkpoints of its turns. */
-export const hasTurns = (host: Parameters<typeof hostSupports>[0], task: Task) => hostSupports(host, 67) && task.kind === "task" && task.use_worktree;
+export const hasTurns = (host: Parameters<typeof hostSupports>[0], task: Task) => hostSupports(host, 69) && task.kind === "task" && task.use_worktree;
 
 /** A task's turns, fetched again as they change. Null until loaded, and when `enabled` is false or its host is older. */
 export function useTurns(task: Task, enabled = true) {

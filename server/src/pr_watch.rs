@@ -7,7 +7,8 @@
 //! - `conflicts`: it started to conflict with its base branch;
 //! - and, whatever it picked, its being merged or closed.
 //!
-//! The server reads it with one GraphQL query every `POLL`, as the GitHub account the task's gh
+//! The server reads it with one GraphQL query every `POLL` (and one more for each page of review
+//! threads past the first, see `Watcher::read_all`), as the GitHub account the task's gh
 //! tools act as (its project's or profile's, see runner::github_account; gh's active account when
 //! neither picks one), and never as another: an account that isn't signed in fails the read, and
 //! one on another host than the pull request's doesn't start the wait. A read that fails is tried
@@ -48,11 +49,15 @@ pub const GIVE_UP: u32 = 5;
 /// How long a gh call may take.
 const GH_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// The most pages of review threads (100 each) a read goes through.
+const THREAD_PAGES: usize = 10;
+
 /// The most comments a wait lists, and how much of each one's text.
 const LISTED: usize = 20;
 const BODY_MAX: usize = 800;
 
-/// How many comment ids are kept as seen (the reads see the latest ones only).
+/// How many comment ids are kept as seen (the reads see the latest ones only), besides those the
+/// latest read still sees, which are always kept (see `compare`).
 const SEEN_MAX: usize = 2000;
 
 /// A pull request on a GitHub host.
@@ -101,9 +106,13 @@ impl Target {
     /// The pull request a wait was given: its number (`12`, `#12`), `OWNER/REPO#12` or URL. A
     /// number is in `default` (the task's repository: its host and `OWNER/REPO`), and `OWNER/REPO`
     /// on its host.
-    fn parse(given: &str, default: Option<&(String, String)>) -> Result<Self, String> {
+    pub fn parse(given: &str, default: Option<&(String, String)>) -> Result<Self, String> {
         let given = given.trim();
-        let number = |n: &str| n.parse::<u64>().ok().filter(|&n| n > 0);
+        let number = |n: &str| {
+            // A whole number written as a float (`7.0`, as agents send numbers sometimes) is that number.
+            let n = n.split_once('.').filter(|(_, zeros)| !zeros.is_empty() && zeros.bytes().all(|b| b == b'0')).map_or(n, |(whole, _)| whole);
+            n.parse::<u64>().ok().filter(|&n| n > 0)
+        };
         let in_repo = |host: &str, repo: &str, n: u64| {
             let (owner, name) = repo.split_once('/').filter(|(o, n)| ok_name(o) && ok_name(n))?;
             Some(Self { host: host.to_ascii_lowercase(), owner: owner.into(), name: name.into(), number: n })
@@ -187,6 +196,13 @@ pub async fn request(s: &Shared, task: &Task, pr: &Value, events: &Value) -> Res
     if let Some(a) = account.as_deref().and_then(Account::parse)
         && a.host != target.host
     {
+        // Its host came from the task's remote, which may name it in a way that isn't GitHub's.
+        if !given.trim().starts_with("http") {
+            return Err(format!(
+                "this task's repository is pushed to {}, but its GitHub account {a} is on {}: give the pull request's URL (https://{}/OWNER/REPO/pull/NUMBER)",
+                target.host, a.host, a.host
+            ));
+        }
         return Err(format!("{} is on {}, but this task's GitHub account {a} is on {}, so it can't be read", target.label(), target.host, a.host));
     }
     Ok(Request { target, events })
@@ -217,67 +233,41 @@ impl Watcher {
 
     /// The pull request as GitHub has it now.
     async fn read(&mut self) -> Result<Pr, String> {
-        let r = self.query().await;
-        if r.is_err() {
-            self.env = None;
-        }
-        Pr::parse(&r?)
+        Pr::parse(&self.read_all().await?)
     }
 
-    /// The GraphQL query's response.
-    async fn query(&mut self) -> Result<Value, String> {
+    /// The query's response, with the review threads past its first page (`THREAD_PAGES` at most).
+    async fn read_all(&mut self) -> Result<Value, String> {
+        let mut v = self.query(QUERY, None).await?;
+        for _ in 1..THREAD_PAGES {
+            let threads = &v["data"]["repository"]["pullRequest"]["reviewThreads"];
+            let Some(after) = threads["pageInfo"]["endCursor"].as_str().filter(|_| threads["pageInfo"]["hasNextPage"] == true).map(String::from) else {
+                break;
+            };
+            let page = self.query(THREADS, Some(&after)).await?;
+            let more = &page["data"]["repository"]["pullRequest"]["reviewThreads"];
+            let Some(nodes) = more["nodes"].as_array().cloned() else {
+                return Err(Pr::parse(&page).err().unwrap_or_else(|| "GitHub didn't return the pull request's review threads".into()));
+            };
+            let threads = &mut v["data"]["repository"]["pullRequest"]["reviewThreads"];
+            if let Some(list) = threads["nodes"].as_array_mut() {
+                list.extend(nodes);
+            }
+            threads["pageInfo"] = more["pageInfo"].clone();
+        }
+        Ok(v)
+    }
+
+    /// A GraphQL query's response: `query`, for the pull request's threads `after` a cursor if given.
+    async fn query(&mut self, query: &str, after: Option<&str>) -> Result<Value, String> {
         #[cfg(test)]
-        if let Some(r) = FAKE.with_borrow(|f| f.as_ref().map(|f| f(self.account.as_deref(), &self.target))) {
+        if let Some(r) = FAKE.with_borrow(|f| f.as_ref().map(|f| f(self.account.as_deref(), &self.target, after))) {
             return r;
         }
         let t = &self.target;
-        let mut args: Vec<String> = vec![
-            "api".into(),
-            "graphql".into(),
-            "-f".into(),
-            format!("query={QUERY}"),
-            "-f".into(),
-            format!("owner={}", t.owner),
-            "-f".into(),
-            format!("name={}", t.name),
-            "-F".into(),
-            format!("number={}", t.number),
-        ];
-        if t.host != "github.com" {
-            args.extend(["--hostname".into(), t.host.clone()]);
-        }
-        let mut cmd = tokio::process::Command::new(crate::gh_mcp::gh_program());
-        if let Some(account) = &self.account {
-            if self.env.is_none() {
-                self.env = crate::gh_mcp::account_env(Some(account)).await.map_err(|e| format!("{e:#}"))?;
-            }
-            let env = self.env.as_ref().with_context(|| format!("{account} isn't a GitHub account")).map_err(|e| format!("{e:#}"))?;
-            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            env.check(&arg_refs, None).map_err(|e| format!("{e:#}"))?;
-            env.apply(&mut cmd);
-        } else {
-            cmd.env_remove("GH_REPO");
-        }
-        cmd.args(&args)
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GH_NO_UPDATE_NOTIFIER", "1")
-            .env("NO_COLOR", "1")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-        let out = tokio::time::timeout(GH_TIMEOUT, cmd.output())
-            .await
-            .map_err(|_| format!("gh timed out after {} seconds", GH_TIMEOUT.as_secs()))?
-            .map_err(|e| format!("couldn't run gh: {e}"))?;
-        // gh prints GraphQL errors' response too, and exits with 1.
-        match serde_json::from_slice::<Value>(&out.stdout) {
-            Ok(v) if v.is_object() => Ok(v),
-            _ => {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(format!("gh failed: {}", err.trim().trim_start_matches("gh: ")))
-            }
-        }
+        let mut vars = vec![("owner", t.owner.clone()), ("name", t.name.clone())];
+        vars.extend(after.map(|a| ("after", a.to_string())));
+        graphql(self.account.as_deref(), &mut self.env, &t.host, query, &vars, &[("number", t.number)]).await
     }
 
     /// Read the pull request and see what's news to the agent of `task_id` since it was last told
@@ -294,6 +284,76 @@ impl Watcher {
         let row = Row { seen: quiet, pending, last: summary(&pr), polled_at: crate::util::now() };
         store(&c, task_id, &key, &row).map_err(|e| format!("{e:#}"))?;
         Ok(news.map(|(report, _)| report))
+    }
+}
+
+/// Run the GraphQL `query` on `host` with string `vars` and number `numbers`, as `account` (gh's
+/// active account when None, see Watcher). `env` keeps gh's environment for the account between
+/// calls; it's made when missing, and dropped when a call fails so the next one makes it again.
+pub async fn graphql(
+    account: Option<&str>,
+    env: &mut Option<GhEnv>,
+    host: &str,
+    query: &str,
+    vars: &[(&str, String)],
+    numbers: &[(&str, u64)],
+) -> Result<Value, String> {
+    let r = graphql_once(account, env, host, query, vars, numbers).await;
+    if r.is_err() {
+        *env = None;
+    }
+    r
+}
+
+async fn graphql_once(
+    account: Option<&str>,
+    env: &mut Option<GhEnv>,
+    host: &str,
+    query: &str,
+    vars: &[(&str, String)],
+    numbers: &[(&str, u64)],
+) -> Result<Value, String> {
+    let mut args: Vec<String> = vec!["api".into(), "graphql".into(), "-f".into(), format!("query={query}")];
+    for (k, v) in vars {
+        args.extend(["-f".into(), format!("{k}={v}")]);
+    }
+    for (k, n) in numbers {
+        args.extend(["-F".into(), format!("{k}={n}")]);
+    }
+    if host != "github.com" {
+        args.extend(["--hostname".into(), host.to_string()]);
+    }
+    let mut cmd = tokio::process::Command::new(crate::gh_mcp::gh_program());
+    if let Some(account) = account {
+        if env.is_none() {
+            *env = crate::gh_mcp::account_env(Some(account)).await.map_err(|e| format!("{e:#}"))?;
+        }
+        let env = env.as_ref().with_context(|| format!("{account} isn't a GitHub account")).map_err(|e| format!("{e:#}"))?;
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        env.check(&arg_refs, None).map_err(|e| format!("{e:#}"))?;
+        env.apply(&mut cmd);
+    } else {
+        cmd.env_remove("GH_REPO");
+    }
+    cmd.args(&args)
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(GH_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| format!("gh timed out after {} seconds", GH_TIMEOUT.as_secs()))?
+        .map_err(|e| format!("couldn't run gh: {e}"))?;
+    // gh prints GraphQL errors' response too, and exits with 1.
+    match serde_json::from_slice::<Value>(&out.stdout) {
+        Ok(v) if v.is_object() => Ok(v),
+        _ => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            Err(format!("gh failed: {}", err.trim().trim_start_matches("gh: ")))
+        }
     }
 }
 
@@ -435,9 +495,22 @@ fn store(c: &Connection, task_id: &str, key: &str, row: &Row) -> anyhow::Result<
 
 // ---------- the pull request ----------
 
+/// The review threads a read gets (100 at a time, the oldest first, so that new ones on a busy pull
+/// request are on later pages), with the latest comments of each.
+macro_rules! threads {
+    ($args:literal) => {
+        concat!(
+            "reviewThreads(first: 100",
+            $args,
+            ") { pageInfo { hasNextPage endCursor } nodes { path comments(last: 20) { nodes { id author { login } body url createdAt path line originalLine } } } }"
+        )
+    };
+}
+
 /// The query a read makes: the pull request's state, its head commit's checks, and its latest
 /// comments, reviews and review comments, with who's asking (`viewer`).
-const QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) {
+const QUERY: &str = concat!(
+    "query($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -449,10 +522,26 @@ const QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) {
       } } } } } }
       comments(last: 50) { nodes { id author { login } body url createdAt } }
       reviews(last: 50) { nodes { id author { login } state body url submittedAt } }
-      reviewThreads(first: 100) { nodes { path comments(last: 20) { nodes { id author { login } body url createdAt path line originalLine } } } }
+      ",
+    threads!(""),
+    "
     }
   }
-}";
+}"
+);
+
+/// The query for the review threads after the first page's (see `Watcher::read_all`).
+const THREADS: &str = concat!(
+    "query($owner: String!, $name: String!, $number: Int!, $after: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      ",
+    threads!(", after: $after"),
+    "
+    }
+  }
+}"
+);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum CheckState {
@@ -647,9 +736,15 @@ fn compare(seen: Option<&Seen>, pr: &Pr, events: &[String]) -> (Seen, Option<(Va
     if conflicting == Some(false) {
         quiet.conflicting = false;
     }
+    // Over SEEN_MAX, the oldest ids that this read doesn't see go: one it sees would be news again.
+    let visible: std::collections::HashSet<&str> = pr.remarks.iter().map(|r| r.id.as_str()).collect();
     let trim = |remarks: &mut Vec<String>| {
-        let extra = remarks.len().saturating_sub(SEEN_MAX);
-        remarks.drain(..extra);
+        let mut extra = remarks.len().saturating_sub(SEEN_MAX);
+        remarks.retain(|id| {
+            let drop = extra > 0 && !visible.contains(id.as_str());
+            extra -= drop as usize;
+            !drop
+        });
     };
     trim(&mut quiet.remarks);
 
@@ -791,7 +886,9 @@ pub fn note(news: &Value) -> String {
                         who.push(a);
                     }
                 }
-                format!("{n} new comment{} or review{} from {}", if n == 1 { "" } else { "s" }, if n == 1 { "" } else { "s" }, who.join(", "))
+                // Deleted users' (GitHub's "ghost") comments have no author.
+                let who = if who.is_empty() { "someone".to_string() } else { who.join(", ") };
+                format!("{n} new comment{} or review{} from {who}", if n == 1 { "" } else { "s" }, if n == 1 { "" } else { "s" })
             }
             "conflicts" => format!("it conflicts with {}", news["base_branch"].as_str().unwrap_or("its base branch")),
             "merged" => "it was merged".into(),
@@ -805,17 +902,24 @@ pub fn note(news: &Value) -> String {
 // ---------- tests ----------
 
 #[cfg(test)]
-type Fake = Box<dyn Fn(Option<&str>, &Target) -> Result<Value, String>>;
+type Fake = Box<dyn Fn(Option<&str>, &Target, Option<&str>) -> Result<Value, String>>;
 
 #[cfg(test)]
 thread_local! {
-    /// A fake GitHub for this thread's test: what each read gets, given the account it's read as.
+    /// A fake GitHub for this thread's test: what each query gets, given the account it's read as
+    /// and the cursor a query for more review threads gives.
     static FAKE: std::cell::RefCell<Option<Fake>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Answer this thread's reads with `f` (given the account and the pull request) rather than GitHub.
 #[cfg(test)]
 pub fn fake(f: impl Fn(Option<&str>, &Target) -> Result<Value, String> + 'static) {
+    fake_pages(move |account, target, _| f(account, target));
+}
+
+/// As `fake`, given the cursor of each query for more review threads too.
+#[cfg(test)]
+fn fake_pages(f: impl Fn(Option<&str>, &Target, Option<&str>) -> Result<Value, String> + 'static) {
     FAKE.set(Some(Box::new(f)));
 }
 
@@ -867,6 +971,8 @@ mod tests {
         let t = |host: &str, owner: &str, name: &str, number| Target { host: host.into(), owner: owner.into(), name: name.into(), number };
         assert_eq!(Target::parse("12", Some(&repo)), Ok(t("github.com", "o", "r", 12)));
         assert_eq!(Target::parse(" #12 ", Some(&repo)), Ok(t("github.com", "o", "r", 12)));
+        assert_eq!(Target::parse("12.0", Some(&repo)), Ok(t("github.com", "o", "r", 12)));
+        assert_eq!(Target::parse("other/thing#3.00", Some(&repo)), Ok(t("github.com", "other", "thing", 3)));
         assert_eq!(Target::parse("other/thing#3", Some(&repo)), Ok(t("github.com", "other", "thing", 3)));
         assert_eq!(Target::parse("https://github.com/a/b/pull/9/files#diff-1", None), Ok(t("github.com", "a", "b", 9)));
         assert_eq!(Target::parse("https://www.github.com/a/b/pull/9", None), Ok(t("github.com", "a", "b", 9)));
@@ -874,7 +980,7 @@ mod tests {
         assert_eq!(Target::parse("5", Some(&ghe)), Ok(t("acme.ghe.com", "o", "r", 5)));
         assert_eq!(Target::parse("https://ACME.ghe.com/o/r/pull/5", None).unwrap().label(), "acme.ghe.com/o/r#5");
         assert!(Target::parse("12", None).unwrap_err().contains("give its URL"));
-        for bad in ["", "0", "abc", "https://github.com/a/b/issues/9", "https://github.com/a/b/pull/x", "a/b/c#1", "o/r#"] {
+        for bad in ["", "0", "0.0", "12.5", "12.", "1e3", "abc", "https://github.com/a/b/issues/9", "https://github.com/a/b/pull/x", "a/b/c#1", "o/r#"] {
             assert!(Target::parse(bad, Some(&repo)).is_err(), "{bad}");
         }
         let w = Request { target: t("acme.ghe.com", "o", "r", 5), events: all() }.stored(None);
@@ -1031,6 +1137,97 @@ mod tests {
         assert_eq!(trimmed("<!-- a -->Hi<!-- b --> there <!-- unclosed"), "Hi there");
         let long = "é".repeat(BODY_MAX + 5);
         assert_eq!(trimmed(&long), format!("{}… [5 more characters]", "é".repeat(BODY_MAX)));
+    }
+
+    /// `n` review threads with a comment each, `T<first>`… (each one later than the one before).
+    fn threads(first: usize, n: usize) -> Vec<Value> {
+        (first..first + n)
+            .map(|i| json!({"path": "a.rs", "comments": {"nodes": [{"id": format!("T{i}"), "author": {"login": "carol"}, "body": "x", "url": "u",
+                "createdAt": format!("2026-10-31T01:{:02}:{:02}Z", i / 60, i % 60), "path": "a.rs", "line": i, "originalLine": null}]}}))
+            .collect()
+    }
+
+    #[test]
+    fn reads_every_page_of_review_threads() {
+        crate::testing::run(async || {
+            // 250 threads: the first page comes with the pull request, the rest after it.
+            let afters = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let afters2 = afters.clone();
+            fake_pages(move |_, _, after| {
+                afters2.borrow_mut().push(after.map(String::from));
+                let (first, more) = match after {
+                    None => (0, true),
+                    Some("c1") => (100, true),
+                    Some("c2") => (200, false),
+                    Some(other) => panic!("{other}"),
+                };
+                let page = json!({"pageInfo": {"hasNextPage": more, "endCursor": format!("c{}", first / 100 + 1)}, "nodes": threads(first, if more { 100 } else { 50 })});
+                let mut v = response("me", "a1", &[], &[]);
+                if after.is_none() {
+                    v["data"]["repository"]["pullRequest"]["reviewThreads"] = page;
+                } else {
+                    v = json!({"data": {"repository": {"pullRequest": {"reviewThreads": page}}}});
+                }
+                Ok(v)
+            });
+            let mut w = Watcher { target: Target::parse("https://github.com/o/r/pull/7", None).unwrap(), account: None, env: None };
+            let p = w.read().await.unwrap();
+            assert_eq!(*afters.borrow(), [None, Some("c1".into()), Some("c2".into())]);
+            assert_eq!(p.remarks.len(), 250);
+            // So a comment on the newest thread is news.
+            let seen = Seen { remarks: p.remarks[..249].iter().map(|r| r.id.clone()).collect(), ..Default::default() };
+            let (report, _) = compare(Some(&seen), &p, &all()).1.unwrap();
+            assert_eq!(report["comments"][0]["line"], 249);
+            // A page that can't be read fails the read.
+            fake_pages(|_, _, after| match after {
+                None => {
+                    let mut v = response("me", "a1", &[], &[]);
+                    v["data"]["repository"]["pullRequest"]["reviewThreads"] = json!({"pageInfo": {"hasNextPage": true, "endCursor": "c1"}, "nodes": []});
+                    Ok(v)
+                }
+                Some(_) => Ok(json!({"data": null, "errors": [{"message": "rate limited"}]})),
+            });
+            assert_eq!(w.read().await.unwrap_err(), "rate limited");
+        });
+        // The queries are GraphQL GitHub takes (their braces balance, and the cursor is only in the second).
+        for q in [QUERY, THREADS] {
+            assert_eq!(q.matches('{').count(), q.matches('}').count(), "{q}");
+            assert!(q.contains("reviewThreads(first: 100") && q.contains("pageInfo { hasNextPage endCursor }"), "{q}");
+        }
+        assert!(!QUERY.contains("$after") && THREADS.contains("after: $after"));
+    }
+
+    #[test]
+    fn ids_a_read_still_sees_stay_seen() {
+        // More ids seen than are kept, the oldest of which a read still sees (a busy pull request's
+        // first review threads): those that go are ones it doesn't see.
+        let mut v = response("me", "a1", &[], &[]);
+        v["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"] = json!(threads(0, 100));
+        let p = pr(v);
+        let mut remarks: Vec<String> = (0..100).map(|i| format!("T{i}")).collect();
+        remarks.extend((0..SEEN_MAX).map(|i| format!("old{i}")));
+        let seen = Seen { remarks, ..Default::default() };
+        let (quiet, news) = compare(Some(&seen), &p, &all());
+        assert!(news.is_none(), "{news:?}");
+        assert_eq!(quiet.remarks.len(), SEEN_MAX);
+        assert!((0..100).all(|i| quiet.remarks.contains(&format!("T{i}"))));
+        assert!(!quiet.remarks.contains(&"old99".to_string()) && quiet.remarks.contains(&"old100".to_string()));
+        // Seen again, they still aren't news.
+        assert!(compare(Some(&quiet), &p, &all()).1.is_none());
+    }
+
+    #[test]
+    fn deleted_users_comments_are_from_someone() {
+        let mut v = response("me", "a1", &[], &[("01", "ghost", "Hm")]);
+        v["data"]["repository"]["pullRequest"]["comments"]["nodes"][0]["author"] = Value::Null;
+        let (report, _) = compare(Some(&Seen::default()), &pr(v.clone()), &all()).1.unwrap();
+        assert_eq!(note(&report), "Pull request #7: 1 new comment or review from someone (see pull_request).");
+        // With others', those are named.
+        let mut v2 = response("me", "a1", &[], &[("02", "bob", "x")]);
+        let ghost = v["data"]["repository"]["pullRequest"]["comments"]["nodes"][0].clone();
+        v2["data"]["repository"]["pullRequest"]["comments"]["nodes"].as_array_mut().unwrap().push(ghost);
+        let (report, _) = compare(Some(&Seen::default()), &pr(v2), &all()).1.unwrap();
+        assert_eq!(note(&report), "Pull request #7: 2 new comments or reviews from bob (see pull_request).");
     }
 
     #[test]
