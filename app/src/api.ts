@@ -775,12 +775,20 @@ export function captureTokenFromUrl() {
   }
 }
 
+let openBoard = false;
+
+/** Whether this board hands out its token (`--open-token`), as PR previews do and the user's own boards never do. */
+export const isOpenBoard = () => openBoard;
+
 /** Servers started with `--open-token` (PR previews) hand out their token; sign in with it. */
 export async function fetchOpenToken() {
   try {
     const res = await fetch("/api/open-token");
     const data = res.ok ? await res.json() : null;
-    if (typeof data?.token === "string" && data.token) setToken(data.token);
+    if (typeof data?.token === "string" && data.token) {
+      setToken(data.token);
+      openBoard = true;
+    }
   } catch {
     /* not offered */
   }
