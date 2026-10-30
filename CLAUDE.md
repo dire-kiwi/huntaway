@@ -77,8 +77,9 @@ Keep test servers fully separate from it:
     server started from this worktree (`.ia-test-env` links to its env file).
 - Use `scripts/ia-api` for the API rather than curl and python. It finds the server from
   `$IA_TEST_ENV` (or `--env <file>`, or `.ia-test-env`), prints JSON, exits 1 with the error on
-  an HTTP error or a wrong path, and refuses to touch the live board. A task can be given by key
-  (`TES-1`, in the seeded project) as well as by id, in paths too.
+  an HTTP error or a wrong path, and refuses to touch the live board: it only calls test servers
+  on 127.0.0.1 and servers started with `--open-token`, such as PR previews. A task can be given
+  by key (`TES-1`, in the seeded project) as well as by id, in paths too.
   - `ia-api get|post|patch|delete <path> [json]`, with or without the `/api` prefix.
   - `ia-api new-task <title> ['{"description": …}']` (in the seeded project), `ia-api start
     <task>` (as dragging it to In progress does: moving a task to `in_progress` with a PATCH

@@ -121,5 +121,50 @@ class ApproveAll(unittest.TestCase):
         self.assertEqual(e.exception.code, 1)
 
 
+class OnlyTestServers(unittest.TestCase):
+    def connect(self, url, answer=None):
+        """Api(url), with GET /api/open-token answered by `answer` (bytes, or an exception to raise); its stderr if it refuses."""
+        asked = []
+
+        def urlopen(req, timeout=None):
+            asked.append(req if isinstance(req, str) else req.full_url)
+            if isinstance(answer, Exception):
+                raise answer
+            return io.BytesIO(answer)
+
+        real, ia_api.urllib.request.urlopen = ia_api.urllib.request.urlopen, urlopen
+        err = io.StringIO()
+        try:
+            with redirect_stderr(err):
+                ia_api.Api({"IA_TEST_URL": url, "IA_TEST_TOKEN": "t"})
+            return asked, None
+        except SystemExit:
+            return asked, err.getvalue()
+        finally:
+            ia_api.urllib.request.urlopen = real
+
+    def test_a_test_server_is_taken_without_asking(self):
+        for url in ("http://127.0.0.1:41234", "http://localhost:5000/", "http://[::1]:41234"):
+            self.assertEqual(self.connect(url, AssertionError("asked")), ([], None))
+
+    def test_port_7878_is_the_live_board(self):
+        for url in ("http://127.0.0.1:7878", "http://board.example:7878"):
+            asked, err = self.connect(url, b'{"token": "t"}')
+            self.assertIn("is the live board", err)
+
+    def test_another_host_has_to_hand_out_its_token(self):
+        self.assertEqual(self.connect("https://pr7.board.example/", b'{"token": "abc"}'), (["https://pr7.board.example/api/open-token"], None))
+
+    def test_another_host_that_keeps_its_token_is_refused(self):
+        unauthorized = urllib.error.HTTPError("u", 401, "Unauthorized", {}, io.BytesIO(b""))
+        for answer in (b"<!doctype html><html></html>", b'{"ok": true}', b'["t"]', unauthorized):
+            asked, err = self.connect("https://board.example", answer)
+            self.assertIn("isn't a test server or a preview", err, answer)
+
+    def test_a_host_that_doesnt_answer_says_so(self):
+        asked, err = self.connect("https://board.example", urllib.error.URLError("Name or service not known"))
+        self.assertIn("Name or service not known (is the server running?)", err)
+
+
 if __name__ == "__main__":
     unittest.main()
