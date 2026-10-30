@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { startServer, withBrowser } from "./harness.mjs";
+import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 // Review of IA-227: with two Codex configs that both have a model, `!model` is the picked config's whatever order their
 // models come in, so a prompt doesn't run with another login because its models answered first.
@@ -13,8 +11,7 @@ let personal;
 before(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
-  mkdirSync(repo);
-  execFileSync("git", ["init", "-q", repo]);
+  gitRepo(repo);
   const [profile] = await server.api("GET", "/profiles");
   work = await server.api("POST", "/claude-configs", { name: "Work", config_dir: `${server.dataDir}/work`, agent: "codex" });
   personal = await server.api("POST", "/claude-configs", { name: "Personal", config_dir: `${server.dataDir}/personal`, agent: "codex" });

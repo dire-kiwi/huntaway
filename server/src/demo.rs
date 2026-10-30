@@ -163,7 +163,7 @@ pub async fn seed(s: &Shared) -> Result<()> {
     let project = create_project_inner(
         s,
         &profile.id,
-        CreateProject { name: "Demo".into(), repo_path: path_str(&repo), key: Some("DEMO".into()), base_branch: None, use_worktrees: None },
+        CreateProject { name: "Demo".into(), repo_path: path_str(&repo), key: Some("DEMO".into()), base_branch: None, use_worktrees: Some(false) },
     )
     .await
     .map_err(|e| anyhow!(e.1))?;

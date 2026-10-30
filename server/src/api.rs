@@ -86,6 +86,7 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}", get(get_project).patch(update_project).delete(delete_project))
         .route("/projects/{id}/tasks", get(list_project_tasks).post(create_task))
         .route("/projects/{id}/remove-merged-worktrees", post(remove_merged_worktrees))
+        .route("/projects/{id}/setup-thread", post(start_setup_thread))
         .route("/projects/{id}/automations", get(crate::automations::list_handler).post(crate::automations::create_handler))
         .route(
             "/automations/{id}",
@@ -1850,6 +1851,75 @@ async fn remove_merged_worktrees(State(s): State<Shared>, Path(id): Path<String>
     Ok(Json(json!({"results": worktree::remove_merged(&s, &id).await?})))
 }
 
+#[derive(Deserialize, Default)]
+pub struct StartSetupThread {
+    /// What the user adds to the agent's instructions, if anything.
+    #[serde(default)]
+    pub message: String,
+}
+
+async fn start_setup_thread(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<StartSetupThread>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(start_setup_thread_inner(&s, &id, b).await?)))
+}
+
+/// `POST /projects/{id}/setup-thread` (API 66): the project's setup thread (see
+/// db::Project::setup_task_id), whose agent helps the user make its folder a git repository with
+/// a commit, so its tasks can have worktrees. A new one is started with `message` after its
+/// instructions; one the project has already is returned as it is.
+pub async fn start_setup_thread_inner(s: &Shared, project_id: &str, b: StartSetupThread) -> ApiResult<db::Task> {
+    // So two at once make one thread.
+    let _changing = s.project_changes.lock().await;
+    let project = db::get_project(&s.db(), project_id)?.ok_or_else(|| ApiError::not_found("project"))?;
+    let existing = match &project.setup_task_id {
+        Some(t) => db::get_task(&s.db(), t)?,
+        None => None,
+    };
+    if let Some(t) = existing {
+        return Ok(t);
+    }
+    if project.is_git && project.has_commits {
+        return Err(ApiError::conflict(format!("{} is ready for worktrees already", project.repo_path)));
+    }
+    let setup = CreateTask {
+        title: "Get the folder ready for worktrees".into(),
+        description: setup_instructions(&project),
+        use_worktree: Some(false),
+        ..Default::default()
+    };
+    let t = create_task_inner(s, &project.id, setup)?;
+    let p = db::update_project(&s.db(), &project.id, &[("setup_task_id", json!(t.id))])?.ok_or_else(|| ApiError::not_found("project"))?;
+    s.emit(json!({"type": "project", "project": p}));
+    // Kept as the project's thread even if its agent can't start, to try again from.
+    runner::send(s, &t.id, b.message.trim())
+}
+
+/// What a project's setup thread's agent is asked to do (see start_setup_thread_inner).
+fn setup_instructions(p: &db::Project) -> String {
+    let now = if !p.is_git {
+        "It isn't a git repository yet."
+    } else {
+        "It's a git repository, but it has no commits yet (or the branch checked out has none)."
+    };
+    format!(
+        "Huntaway runs each of this project's tasks in a git worktree of its own, on a branch of its own, so several agents can \
+         work on the project at once without getting in each other's way. For that, the project's folder `{}` has to be the top \
+         folder of a git repository, with a commit checked out for the tasks' branches to start from. {now} Until it is, the \
+         board shows this thread in place of the project's tasks.\n\n\
+         Help me get it ready:\n\n\
+         1. Look at what's in the folder and tell me briefly what you find. If it's inside another git repository (such as a \
+         home folder kept in git), say so, and ask me before making a repository of its own in it.\n\
+         2. If it isn't a repository yet, run `git init` there (with `main` as the branch, unless I say otherwise).\n\
+         3. Before the first commit, add a `.gitignore` for what shouldn't be committed, such as dependencies, build output, \
+         local environment files and secrets. Ask me when you're unsure whether something belongs in the repository.\n\
+         4. Make the first commit.\n\
+         5. Ask me whether to put the repository on GitHub (or another remote), and if I want to, set that up and push.\n\n\
+         Ask me before anything that's hard to undo, such as deleting or moving files, rewriting history or pushing. Once the \
+         repository has a commit, the board shows the project's tasks again, and new tasks get their own worktrees. End with \
+         a short summary of what you set up.",
+        p.repo_path
+    )
+}
+
 async fn task_diff(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(worktree::diff(&s, &id).await?))
 }
@@ -2588,6 +2658,43 @@ pub(crate) mod tests {
 
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             assert!(create_task_inner(&s, &p.id, task("after")).unwrap().use_worktree);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn a_folder_not_ready_for_worktrees_gets_one_setup_thread() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            assert!(!p.is_git && !p.has_commits && p.setup_task_id.is_none());
+            // This host can't run agents, so its agent doesn't start, but the thread is kept to try again from.
+            let e = start_setup_thread_inner(&s, &p.id, StartSetupThread { message: "Use trunk".into() }).await.unwrap_err();
+            assert!(e.1.contains("can't run agents"), "{}", e.1);
+            let p = db::get_project(&s.db(), &p.id).unwrap().unwrap();
+            let id = p.setup_task_id.clone().unwrap();
+            let t = db::get_task(&s.db(), &id).unwrap().unwrap();
+            assert_eq!((t.project_id.as_deref(), t.use_worktree, t.task_type.as_deref()), (Some(p.id.as_str()), false, None));
+            assert!(t.description.contains("isn't a git repository yet") && t.description.contains(&p.repo_path), "{}", t.description);
+            // Asked again (from another tab, say), it's the same thread.
+            crate::runs::TEST_CAN_RUN.set(true);
+            assert_eq!(start_setup_thread_inner(&s, &p.id, StartSetupThread::default()).await.unwrap().id, id);
+            assert_eq!(db::list_tasks_for_project(&s.db(), &p.id, "task").unwrap().len(), 1);
+            crate::runs::TEST_CAN_RUN.set(false);
+
+            let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).status().unwrap().success());
+            git(&["init", "-q"]);
+            let p = db::get_project(&s.db(), &p.id).unwrap().unwrap();
+            assert!(p.is_git && !p.has_commits);
+            git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first"]);
+            assert!(db::get_project(&s.db(), &p.id).unwrap().unwrap().has_commits);
+            // One that's ready gets no new thread.
+            db::update_project(&s.db(), &p.id, &[("setup_task_id", Value::Null)]).unwrap();
+            let e = start_setup_thread_inner(&s, &p.id, StartSetupThread::default()).await.unwrap_err();
+            assert!(e.1.contains("ready for worktrees already"), "{}", e.1);
             std::fs::remove_dir_all(&dir).ok();
         })
     }

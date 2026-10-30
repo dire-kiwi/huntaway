@@ -532,12 +532,18 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         // Projects' automations and their runs (see automations.rs).
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V55} PRAGMA user_version=55; COMMIT;"))?;
     }
+    if version < 56 {
+        // The thread that helps get a project's folder ready for worktrees (see Project::setup_task_id).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='setup_task_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN setup_task_id TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=56; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 55;
+pub const VERSION: i64 = 56;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -984,6 +990,14 @@ pub struct Project {
     /// Whether the repo is a git repository (looked up when the project is loaded).
     #[serde(default)]
     pub is_git: bool,
+    /// Whether it has a commit checked out, which a worktree needs to branch from (looked up
+    /// when the project is loaded; false when it isn't a git repository).
+    #[serde(default)]
+    pub has_commits: bool,
+    /// The task whose thread helps the user get the folder ready for worktrees (a git
+    /// repository with a commit), which the board shows in its place until it is (API 66).
+    #[serde(default)]
+    pub setup_task_id: Option<String>,
     /// Falls back to the host's default mode when unset.
     pub permission_mode: Option<String>,
     pub model: Option<String>,
@@ -1035,6 +1049,8 @@ impl Project {
             status_scripts: json_or_default(r.get("status_scripts")?),
             use_worktrees: r.get("use_worktrees")?,
             is_git: crate::util::is_git_root(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            has_commits: crate::util::has_commits(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            setup_task_id: r.get("setup_task_id")?,
             permission_mode: r.get("permission_mode")?,
             model: r.get("model")?,
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
@@ -2032,7 +2048,7 @@ const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
     "reviewers", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
-    "archived_at", "github_account",
+    "archived_at", "github_account", "setup_task_id",
 ];
 
 pub fn update_project(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Project>> {

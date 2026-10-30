@@ -61,6 +61,10 @@ export const dependencyQueued = (t: Task) => !!t.waiting && t.status === "in_pro
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
 export const worktreesOn = (p: Project) => p.use_worktrees && p.is_git !== false;
 
+/** Whether the project wants worktrees but its folder can't have them yet (not a git repository, or one with no
+ * commit to branch from), so the board shows its setup thread instead of its tasks (API 66). */
+export const needsWorktreeSetup = (p: Project, h: Host | undefined) => hostSupports(h, 66) && p.use_worktrees && !(p.is_git && p.has_commits);
+
 export const isMerged = (t: Task) => t.status === "done" && (t.resolution ?? "done") === "done";
 
 /** How long a task stays in Done before it's archived. */
@@ -331,6 +335,10 @@ export interface Project {
   use_worktrees: boolean;
   /** Whether the repo is a git repository (API 31). */
   is_git?: boolean;
+  /** Whether it has a commit checked out for worktrees to branch from (API 66). */
+  has_commits?: boolean;
+  /** The task whose thread helps get the folder ready for worktrees (API 66). */
+  setup_task_id?: string | null;
   /** Falls back to the host's default mode when null (API 2; always set by older hosts). */
   permission_mode: PermissionMode | null;
   model: string | null;
@@ -1137,6 +1145,7 @@ export const api = {
   updateProject: (h: string, id: string, b: Partial<Project> & { move_repo?: boolean; archived?: boolean }) => on(h).patch<Project>(`/projects/${enc(id)}`, b),
   deleteProject: (h: string, id: string) => on(h).del(`/projects/${enc(id)}`),
   /** Remove the worktrees of the project's done tasks that are merged and have nothing uncommitted (API 39). */
+  startSetupThread: (h: string, id: string, message: string) => on(h).post<Task>(`/projects/${enc(id)}/setup-thread`, { message }),
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
