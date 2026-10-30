@@ -365,6 +365,8 @@ async fn head(top: &Path) -> Result<Option<String>> {
 /// The tree of everything in the worktree at `top` that git doesn't ignore, and its HEAD, as a
 /// commit (`last`'s, when nothing has changed since it).
 async fn snapshot(top: &Path, last: Option<&Checkpoint>) -> Result<Snap> {
+    // Before the files, so a commit made meanwhile shows up in the files rather than only in HEAD.
+    let head = head(top).await?;
     let scratch = ScratchIndex::new(top, true).await?;
     let env = scratch.env();
     let untracked = run_ok(top, &["ls-files", "-z", "--others", "--exclude-standard"], &env, None).await?;
@@ -388,7 +390,6 @@ async fn snapshot(top: &Path, last: Option<&Checkpoint>) -> Result<Snap> {
     }
     let tree = run_ok(top, &["write-tree"], &env, None).await?.text();
     drop(scratch);
-    let head = head(top).await?;
     if let Some(l) = last.filter(|l| l.tree == tree && l.head == head) {
         return Ok(Snap { sha: l.sha.clone(), tree, head });
     }
@@ -513,6 +514,8 @@ pub fn after_turn(state: &Shared, run_id: &str, status: &str) {
         Ok(None) => return,
         Err(e) => return tracing::warn!(run = run_id, "couldn't look up a run for its checkpoint: {e:#}"),
     };
+    // A turn the agent starts by itself (a background task finishing, say) didn't start with a message.
+    let _ = state.db().execute("UPDATE runs SET turn_message_id=NULL WHERE id=?1", [run_id]);
     if !wanted(state, &task, &run) {
         return;
     }
@@ -952,9 +955,9 @@ async fn rewind_now(state: &Shared, task_id: &str, b: &RewindBody) -> ApiResult<
         return Err(ApiError::conflict("A merge, rebase or cherry-pick is in progress in the worktree: finish or abort it first"));
     }
     let rows = list(&state.db(), task_id)?;
+    // The first turn the message started (the agent may have gone on by itself after it).
     let turn = rows
         .iter()
-        .rev()
         .find(|r| r.kind == "turn" && r.message_id == Some(b.message_id) && r.stale == 0)
         .ok_or_else(|| ApiError::bad("there's no checkpoint for this message's turn (or a rewind has gone back past it)"))?;
     let before = turn.before_n.and_then(|n| rows.iter().find(|r| r.n == n)).ok_or_else(|| ApiError::conflict("there's no checkpoint from before this turn"))?;
@@ -992,18 +995,26 @@ async fn rewind_now(state: &Shared, task_id: &str, b: &RewindBody) -> ApiResult<
     })
     .await?;
 
+    // The branch goes back once the files have: checked first, so a refusal leaves everything as it was.
     let moved = match (&before.head, &snap.head) {
         (Some(old), Some(cur)) if b.branch && old != cur => {
             let ancestor = run(&top, &["merge-base", "--is-ancestor", old, cur], &[], None).await?.ok;
             if !ancestor {
                 return Err(ApiError::conflict("The branch has been rewritten since (a rebase or reset), so it can't be moved back: rewind the files only"));
             }
-            run_ok(&top, &["reset", "-q", "--soft", old], &[], None).await?;
             Some((old.clone(), cur.clone()))
         }
         _ => None,
     };
-    let restored = restore(&top, &snap.tree, &before.tree, moved.as_ref().map(|(o, c)| (o.as_str(), c.as_str()))).await?;
+    let kept_ref = ref_name(task_id, kept.n);
+    let failed = |e: anyhow::Error| ApiError::conflict(format!("The rewind stopped part way: {e:#}. The files as they were are kept in {kept_ref} ({}).", kept.sha));
+    let restored = restore(&top, &snap.tree, &before.tree).await.map_err(failed)?;
+    let mut unstage = restored.changed.clone();
+    if let Some((old, cur)) = &moved {
+        run_ok(&top, &["reset", "-q", "--soft", old], &[], None).await.map_err(failed)?;
+        unstage.extend(names(&top, old, cur).await.map_err(failed)?.into_iter().filter(|p| !restored.hidden.contains(p)));
+    }
+    unstaged(&top, &unstage).await.map_err(failed)?;
 
     let stale = if matches!(convo, Convo::Nothing) { 1 } else { 2 };
     state.db().execute("UPDATE checkpoints SET stale=MAX(stale, ?3) WHERE task_id=?1 AND n>?2 AND n<>?4", params![task_id, before.n, stale, kept.n])?;
@@ -1023,7 +1034,11 @@ async fn rewind_now(state: &Shared, task_id: &str, b: &RewindBody) -> ApiResult<
     let branch = moved.as_ref().map(|(old, cur)| format!("; the branch is back at {} (from {})", &old[..old.len().min(8)], &cur[..cur.len().min(8)])).unwrap_or_default();
     let mut detail = format!("The files as they were are kept in {} ({}).", ref_name(task_id, kept.n), kept.sha);
     if !restored.skipped.is_empty() {
-        detail.push_str(&format!("\nLeft as they are (submodules, or marked skip-worktree or assume-unchanged): {}", restored.skipped.join(", ")));
+        detail.push_str(&format!(
+            "\nLeft as they are (submodules and other repositories, files marked skip-worktree or assume-unchanged, and files or folders the \
+             checkpoints don't have, such as ignored ones): {}",
+            restored.skipped.join(", ")
+        ));
     }
     state.add_event(
         task_id,
@@ -1063,22 +1078,27 @@ pub async fn cancel_rewind(State(s): State<Shared>, UrlPath(id): UrlPath<String>
 pub struct Restored {
     pub written: usize,
     pub removed: usize,
-    /// Files left as they are: submodules, and files the index marks skip-worktree or assume-unchanged.
+    /// Files left as they are: submodules and other repositories, files the index marks
+    /// skip-worktree or assume-unchanged, and files the checkpoints don't have (see `safe_to_write`).
     pub skipped: Vec<String>,
+    /// The files written or removed.
+    changed: BTreeSet<Vec<u8>>,
+    /// The files marked skip-worktree or assume-unchanged.
+    hidden: HashSet<Vec<u8>>,
 }
 
 /// Make the worktree at `top`, whose files are `now` (a tree from `snapshot`), have the files of
-/// tree `to`: only the files that differ are written or removed (ignored files and the rest are
-/// left alone), and in the index those go back to how they are in HEAD. `moved` is the HEAD the
-/// branch was moved back to and the one it was at, whose changes go out of the index too.
-async fn restore(top: &Path, now: &str, to: &str, moved: Option<(&str, &str)>) -> Result<Restored> {
+/// tree `to`: only the files that differ are written or removed, and only where nothing else would
+/// go with them (ignored files and the rest are left alone).
+async fn restore(top: &Path, now: &str, to: &str) -> Result<Restored> {
     let raw = run_ok(top, &["diff-tree", "-r", "-z", "--no-renames", now, to], &[], None).await?;
-    let hidden: HashSet<Vec<u8>> = {
+    let mut out = Restored::default();
+    out.hidden = {
         let o = run_ok(top, &["ls-files", "-v", "-z"], &[], None).await?;
         split_nul(&o.stdout).filter(|e| e.len() > 2 && (e[0] == b'S' || e[0].is_ascii_lowercase())).map(|e| e[2..].to_vec()).collect()
     };
-    let mut out = Restored::default();
-    let (mut write, mut remove) = (Vec::new(), Vec::new());
+    // (path, whether `now` has it)
+    let (mut write, mut remove): (Vec<(Vec<u8>, bool)>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
     let mut fields = raw.stdout.split(|b| *b == 0);
     while let Some(meta) = fields.next() {
         if meta.is_empty() {
@@ -1089,33 +1109,69 @@ async fn restore(top: &Path, now: &str, to: &str, moved: Option<(&str, &str)>) -
         let meta = String::from_utf8_lossy(meta);
         let mut m = meta.trim_start_matches(':').split(' ');
         let (old_mode, new_mode) = (m.next().unwrap_or(""), m.next().unwrap_or(""));
-        if old_mode == "160000" || new_mode == "160000" || hidden.contains(path) {
+        if old_mode == "160000" || new_mode == "160000" || out.hidden.contains(path) {
             out.skipped.push(lossy(path));
         } else if new_mode == "000000" {
             remove.push(path.to_vec());
         } else {
-            write.push(path.to_vec());
+            write.push((path.to_vec(), old_mode != "000000"));
         }
     }
-    for p in &remove {
-        if remove_file(top, p)? {
+    for p in remove {
+        if remove_file(top, &p)? {
             out.removed += 1;
+            out.changed.insert(p);
         }
     }
+    let (write, left): (Vec<_>, Vec<_>) = write.into_iter().partition(|(p, in_now)| safe_to_write(top, p, *in_now));
+    out.skipped.extend(left.iter().map(|(p, _)| lossy(p)));
     if !write.is_empty() {
         let scratch = ScratchIndex::new(top, false).await?;
         run_ok(top, &["read-tree", to], &scratch.env(), None).await?;
-        run_ok(top, &["checkout-index", "-f", "-z", "--stdin"], &scratch.env(), Some(&nul_list(write.iter().map(Vec::as_slice)))).await?;
+        run_ok(top, &["checkout-index", "-f", "-z", "--stdin"], &scratch.env(), Some(&nul_list(write.iter().map(|(p, _)| p.as_slice())))).await?;
         out.written = write.len();
-    }
-    let mut unstage: BTreeSet<Vec<u8>> = write.into_iter().chain(remove).collect();
-    if let Some((old, cur)) = moved {
-        unstage.extend(names(top, old, cur).await?.into_iter().filter(|p| !hidden.contains(p)));
-    }
-    if !unstage.is_empty() && head(top).await?.is_some() {
-        run_ok(top, &["--literal-pathspecs", "reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"], &[], Some(&nul_list(unstage.iter().map(Vec::as_slice)))).await?;
+        out.changed.extend(write.into_iter().map(|(p, _)| p));
     }
     Ok(out)
+}
+
+/// Whether the file `rel` can be written in the worktree at `top` without losing anything that
+/// isn't in the checkpoint taken just before (`in_now`: that has the file): `checkout-index -f`
+/// would remove a folder in its way with all that's in it, and overwrite whatever is there.
+/// So not where a folder is (one the restore didn't empty: it holds ignored files, say), not
+/// inside another repository or through a symlink, and not over a file the checkpoint doesn't
+/// have (one ignored since, too big, or unreadable).
+fn safe_to_write(top: &Path, rel: &[u8], in_now: bool) -> bool {
+    let rel = Path::new(OsStr::from_bytes(rel));
+    let Some(parts) = rel.components().map(|c| if let Component::Normal(p) = c { Some(p) } else { None }).collect::<Option<Vec<_>>>() else { return false };
+    let Some((name, dirs)) = parts.split_last() else { return false };
+    let mut dir = top.to_path_buf();
+    for d in dirs {
+        dir.push(d);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(m) if m.is_dir() => {
+                if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+                    return false;
+                }
+            }
+            Ok(_) => return false,
+            // Not there: nothing below it is either.
+            Err(_) => return true,
+        }
+    }
+    match std::fs::symlink_metadata(dir.join(name)) {
+        Err(_) => true,
+        Ok(m) if m.is_dir() => false,
+        Ok(_) => in_now,
+    }
+}
+
+/// Put `paths` back in the index as they are in HEAD.
+async fn unstaged(top: &Path, paths: &BTreeSet<Vec<u8>>) -> Result<()> {
+    if !paths.is_empty() && head(top).await?.is_some() {
+        run_ok(top, &["--literal-pathspecs", "reset", "-q", "--pathspec-from-file=-", "--pathspec-file-nul"], &[], Some(&nul_list(paths.iter().map(Vec::as_slice)))).await?;
+    }
+    Ok(())
 }
 
 /// Remove the file `rel` from the worktree at `top` (not a folder, and nothing through a symlink),
@@ -1417,6 +1473,98 @@ mod tests {
             assert_eq!((read(&wt, "local.cfg").as_deref(), read(&wt, "au.txt").as_deref()), (Some("mine, changed\n"), Some("mine\n")));
             let flags = sh(&wt, &["ls-files", "-v", "local.cfg", "au.txt"]);
             assert_eq!(flags, "h au.txt\nS local.cfg\n");
+        })
+    }
+
+    #[test]
+    fn a_rewind_never_writes_over_what_the_checkpoints_dont_have() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (t, wt, _) = task_repo(&s, false).await;
+            write(&wt, "x", "a file\n");
+            write(&wt, "sub/file", "a folder\n");
+            write(&wt, "local.cfg", "old\n");
+            let git = |dir: &Path, args: &[&str]| sh(dir, &[&["-c", "user.name=t", "-c", "user.email=t@t"][..], args].concat());
+            let m = turn(&s, &t.id, "one", || {
+                // A file becomes a folder, with an ignored file and another repository in it.
+                std::fs::remove_file(wt.join("x")).unwrap();
+                write(&wt, "x/a", "a\n");
+                write(&wt, "x/keep.log", "ignored\n");
+                write(&wt, "x/vendor/f", "theirs\n");
+                git(&wt.join("x/vendor"), &["init", "-q"]);
+                git(&wt.join("x/vendor"), &["add", "f"]);
+                git(&wt.join("x/vendor"), &["commit", "-qm", "v"]);
+                write(&wt, "x/vendor/wip", "uncommitted\n");
+                // A folder becomes another repository.
+                std::fs::remove_dir_all(wt.join("sub")).unwrap();
+                write(&wt, "sub/mine", "mine\n");
+                git(&wt.join("sub"), &["init", "-q"]);
+                git(&wt.join("sub"), &["add", "mine"]);
+                git(&wt.join("sub"), &["commit", "-qm", "s"]);
+                // A file the checkpoints had becomes ignored, and changes.
+                write(&wt, ".gitignore", "*.log\nlocal.cfg\n");
+                write(&wt, "local.cfg", "new\n");
+            })
+            .await;
+            let r = do_rewind(&s, &t.id, m, false, false).await.unwrap();
+            let mut skipped: Vec<String> = serde_json::from_value(r["skipped"].clone()).unwrap();
+            skipped.sort();
+            assert_eq!(skipped, ["local.cfg", "sub", "sub/file", "x", "x/vendor"]);
+            assert!(!wt.join("x/a").exists());
+            assert_eq!(read(&wt, "x/keep.log").as_deref(), Some("ignored\n"));
+            assert_eq!(read(&wt, "x/vendor/wip").as_deref(), Some("uncommitted\n"));
+            assert!(wt.join("x/vendor/.git").is_dir());
+            assert_eq!((read(&wt, "sub/mine").as_deref(), read(&wt, "sub/file")), (Some("mine\n"), None));
+            assert_eq!(read(&wt, "local.cfg").as_deref(), Some("new\n"));
+            assert_eq!(read(&wt, ".gitignore").as_deref(), Some("*.log\n"));
+        })
+    }
+
+    #[test]
+    fn a_rewind_that_fails_part_way_leaves_the_branch_alone() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (t, wt, _) = task_repo(&s, false).await;
+            let m = turn(&s, &t.id, "one", || {
+                write(&wt, "a.txt", "a\n");
+                sh(&wt, &["add", "a.txt"]);
+                sh(&wt, &["commit", "-qm", "a"]);
+                write(&wt, "ro/f.txt", "f\n");
+            })
+            .await;
+            let head = sh(&wt, &["rev-parse", "HEAD"]);
+            // A file it can't remove.
+            let ro = wt.join("ro");
+            std::fs::set_permissions(&ro, std::os::unix::fs::PermissionsExt::from_mode(0o555)).unwrap();
+            let e = do_rewind(&s, &t.id, m, false, true).await.unwrap_err();
+            std::fs::set_permissions(&ro, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            assert!(e.1.contains("part way") && e.1.contains(&ref_prefix(&t.id)), "{}", e.1);
+            assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), head);
+            // Once it can, it goes through, branch and all.
+            do_rewind(&s, &t.id, m, false, true).await.unwrap();
+            assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), sh(&wt, &["rev-parse", "master"]));
+            assert_eq!(files(&wt), "");
+        })
+    }
+
+    #[test]
+    fn a_rewind_goes_to_before_the_first_turn_a_message_started() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (t, wt, _) = task_repo(&s, false).await;
+            let (run, m) = start(&s, &t.id, "go");
+            let task = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            before_run(&s, &task, &run).await;
+            write(&wt, "a.txt", "a\n");
+            after_turn(&s, &run.id, "done");
+            // The agent goes on by itself (a background task finished), with no message of the user's.
+            write(&wt, "b.txt", "b\n");
+            after_turn(&s, &run.id, "done");
+            let cps = settled(&s, &t.id).await;
+            let turns: Vec<(Option<i64>, Option<i64>)> = cps.iter().filter(|c| c.kind == "turn").map(|c| (c.turn, c.message_id)).collect();
+            assert_eq!(turns, [(Some(1), Some(m)), (Some(2), None)]);
+            do_rewind(&s, &t.id, m, false, false).await.unwrap();
+            assert!(!wt.join("a.txt").exists() && !wt.join("b.txt").exists());
         })
     }
 

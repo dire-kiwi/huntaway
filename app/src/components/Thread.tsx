@@ -790,7 +790,10 @@ export const Thread = memo(function Thread({
   const turnsCtx = useMemo(() => {
     const list = turns.data?.turns;
     if (!list?.length) return null;
-    return { byMessage: new Map(list.filter((t) => t.message_id !== null).map((t) => [t.message_id!, t])), rewind: setRewinding };
+    // A message's first turn (the agent can go on by itself after it).
+    const byMessage = new Map<number, Turn>();
+    for (const t of list) if (t.message_id !== null && !byMessage.has(t.message_id)) byMessage.set(t.message_id, t);
+    return { byMessage, rewind: setRewinding };
   }, [turns.data]);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, pages?.subagents);
   const items = useStableGroupKeys(model.items, task.id);

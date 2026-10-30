@@ -914,10 +914,13 @@ skipped. Auto-compacting idle sessions is Claude-only.
   - **Rewinding:** hovering one of your messages in the thread shows *Rewind to here* (or `g` in
     the *Turns* panel). It puts the worktree's files back to the checkpoint taken before that
     message's turn: only the files that differ are written or removed (never through a symlink),
-    files git ignores (build output) are left alone, and so are submodules and files marked
-    `skip-worktree` or `assume-unchanged`. Those files go back to HEAD in the index. The files
-    as they were are kept as a checkpoint of their own (named in the thread's note). If commits
-    were made since, the branch can be moved back too (`git reset --soft`, off by default). The
+    files git ignores (build output) are left alone, and so are submodules and other repositories,
+    files marked `skip-worktree` or `assume-unchanged`, and whatever the checkpoints don't have
+    that a restored file would replace (a folder in its way that still holds ignored files, or a
+    file ignored since); the note in the thread lists them. Those files go back to HEAD in the
+    index. The files as they were are kept as a checkpoint of their own (named in the note). If
+    commits were made since, the branch can be moved back too (`git reset --soft`, after the
+    files, off by default). The
     agent's conversation can go back with it, so it carries on from before that message: its
     next run resumes Claude Code's session with `--resume-session-at` (the session's last message
     from the turn before) or reverts the Codex thread with `thread/revert` (to before the turn);

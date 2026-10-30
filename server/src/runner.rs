@@ -2055,6 +2055,12 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     let task_id = run.task_id.as_str();
     let queued = {
         let mut runs = state.runs.lock().unwrap();
+        // A turn the agent never ended (stopped, failed or killed) gets its checkpoint here, while
+        // the run still holds the thread: before a rewind or the next run (a queued message) can
+        // ask for theirs.
+        if run.status == "running" && !run.between_turns && run.kind != "compact" {
+            crate::checkpoints::after_turn(state, run_id, if matches!(outcome, Outcome::Failed(_)) { "failed" } else { "stopped" });
+        }
         if runs.get(task_id).is_some_and(|h| h.run_id == run_id) {
             runs.remove(task_id);
         }
@@ -2073,11 +2079,6 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     };
     #[cfg(test)]
     crate::testing::reached("finish:released");
-    // A turn the agent never ended (stopped, failed or killed) gets its checkpoint here, before the
-    // next run (a queued message) takes one of its own.
-    if run.status == "running" && !run.between_turns && run.kind != "compact" {
-        crate::checkpoints::after_turn(state, run_id, if matches!(outcome, Outcome::Failed(_)) { "failed" } else { "stopped" });
-    }
     let _ = state.db().execute(
         "UPDATE runs SET status='exited', ended_at=?1 WHERE id=?2",
         rusqlite::params![crate::util::now(), run_id],
