@@ -814,6 +814,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
             "worktrees_root", "auto_review", "review_rounds", "reviewers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
+            "done_when_merged",
             "watch_pull_requests",
         ],
     );
@@ -874,7 +875,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
             "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
                 return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
             }
-            "use_worktrees" | "auto_review" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "done_when_merged" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {

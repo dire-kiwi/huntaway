@@ -340,6 +340,8 @@ export interface Project {
   auto_review?: boolean;
   /** How many times in a row a review's serious issues go back to the agent to fix (API 12). */
   review_rounds?: number;
+  /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
+  done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
@@ -353,7 +355,7 @@ export interface Project {
   archived_at?: string | null;
   /** Overrides the profile's GitHub account; null uses the profile's (API 50). */
   github_account?: string | null;
-  /** Which news about an In review task's pull request wakes its agent (API 68). */
+  /** Which news about an In review task's pull request wakes its agent (API 69). */
   watch_pull_requests?: WatchPullRequests;
   created_at: string;
 }

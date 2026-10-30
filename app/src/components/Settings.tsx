@@ -498,7 +498,17 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
             </div>
           )}
 
-          {hostSupports(host, 68) && (
+          {form.done_when_merged !== undefined && (
+            <div className="space-y-1.5">
+              <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
+              <div className="text-[12px] text-faint">
+                Every few minutes, the pull requests of tasks in In review or Needs attention are checked. A merged one moves its task to Done and
+                removes its worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
+              </div>
+            </div>
+          )}
+
+          {hostSupports(host, 69) && (
             <Field
               label="Watch pull requests in review"
               hint="While a task is in In review, the board reads its pull request every couple of minutes and sends its agent what's new, which starts its turn. Only comments and reviews from people who can push to the repository (its owner, members and collaborators) count, not those from bots or from the agents' own GitHub account (yours too, if you share it)."
