@@ -53,11 +53,12 @@ import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subage
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
 import { lineRange, removeComments, reviewMessage, useReview, withComments, type LineComment } from "../lineComments";
-import { ProjectChangeCard, TaskDeletionCard } from "./Approvals";
+import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard } from "./Approvals";
 import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
+import { TOUCH_QUERY } from "../narrow";
 import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
 
 // ---------- markdown ----------
@@ -688,13 +689,13 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
       {pending ? <ToolInput name={data.tool_name} input={data.input} /> : <div className="truncate font-mono text-[12px] text-faint">{m.summary}</div>}
       {pending && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")}>
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")} className="narrow:px-4">
             <Check size={13} /> Allow
           </Button>
-          <Button size="sm" disabled={busy} onClick={() => decide("allow_always")}>
+          <Button size="sm" disabled={busy} onClick={() => decide("allow_always")} className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal">
             Always allow {data.tool_name} for this thread
           </Button>
-          <Button size="sm" variant="danger" disabled={busy} onClick={() => decide("deny")}>
+          <Button size="sm" variant="danger" disabled={busy} onClick={() => decide("deny")} className="narrow:px-4">
             Deny
           </Button>
           {err && <span className="self-center text-xs text-red-400">{err}</span>}
@@ -903,13 +904,13 @@ export const Thread = memo(function Thread({
             </div>
           )}
           {viewed && (
-            <div key={viewed.id} className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6">
+            <div key={viewed.id} className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4">
               <InMainThread.Provider value={false}>
                 <SubagentThread sub={viewed} />
               </InMainThread.Provider>
             </div>
           )}
-          <div ref={list} className={clsx("mx-auto w-full max-w-3xl space-y-4 px-5 py-6", viewed && "hidden")}>
+          <div ref={list} className={clsx("mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4", viewed && "hidden")}>
             {messages && items.length === 0 && !task.running && !pages?.more && empty}
             <ItemList items={items} running={task.running} hostId={task.host_id} cwd={cwd} />
             <StreamingText taskId={task.id} onGrow={follow} />
@@ -1013,7 +1014,7 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
           <div
             title={it.steered ? "Sent while the agent was working; it read it here" : undefined}
             className={clsx(
-              "max-w-[85%] rounded-2xl rounded-br-md border px-3.5 py-2 text-[13.5px] whitespace-pre-wrap",
+              "max-w-[85%] rounded-2xl rounded-br-md border px-3.5 py-2 text-[13.5px] whitespace-pre-wrap narrow:break-words",
               it.auto ? "border-line bg-transparent text-muted italic" : "border-line-strong bg-raised",
             )}
           >
@@ -1032,6 +1033,7 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
     case "permission":
       if (it.data.kind === "project") return <ProjectChangeCard data={it.data} hostId={hostId} />;
       if (it.data.kind === "delete_task") return <TaskDeletionCard data={it.data} hostId={hostId} />;
+      if (it.data.kind === "automation") return <AutomationChangeCard data={it.data} hostId={hostId} />;
       return <PromptCard id={Number(it.key)} data={it.data} hostId={hostId} />;
     case "question":
       return <QuestionRow id={it.id} data={it.data} hostId={hostId} />;
@@ -1333,12 +1335,26 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
     };
   }, [draftKey, drop]);
 
-  useLayoutEffect(() => {
+  const fitText = () => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "0px";
     el.style.height = Math.min(el.scrollHeight, 260) + "px";
-  }, [text]);
+  };
+  useLayoutEffect(fitText, [text]);
+  // And when it gets wider or narrower, which wraps the text again (a phone turned round, say).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fitText();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const send = () => {
     const files = attach.files;
@@ -1372,7 +1388,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
 
   const canStartEmpty = task.kind === "task" && !task.session_id && !task.running;
   return (
-    <div className="shrink-0 px-5 pb-4">
+    <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
         {(err || modeControl.err) && <div className="mb-2 text-xs text-red-400">{err || modeControl.err}</div>}
         {unsaved && (
@@ -1434,7 +1450,8 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 modeControl.cycle();
                 return;
               }
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              // On a touch screen's keyboard Enter starts a new line, and the send button sends (as Ctrl/Cmd+Enter does).
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!matchMedia(TOUCH_QUERY).matches || e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 send();
               }
@@ -1460,7 +1477,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
           <DraftAttachments draft={attach} hostId={task.host_id} className="px-4 pt-1 pb-2" />
           <div className="flex items-center gap-2 px-3 pb-2">
             <ModeSelect control={modeControl} running={task.running} />
-            <span className="text-[11px] text-faint">
+            <span className="text-[11px] text-faint narrow:min-w-0 narrow:truncate">
               {task.session_id ? `session ${task.session_id.slice(0, 8)}` : "new session"}
               {task.model ? ` · ${task.model}` : ""}
               {task.effort ? ` · ${task.effort} effort` : ""}
@@ -1472,7 +1489,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                   onClick={send}
                   disabled={busy || attach.uploading}
                   title={canSteer && !task.queued_message ? "Send to the agent now (Enter)" : "Queue (Enter)"}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
                 </button>
@@ -1484,7 +1501,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                     api.stop(task.host_id, task.id).catch((e) => setErr(`Couldn't stop the agent: ${(e as Error).message}`));
                   }}
                   title={stopTitle(task, canSteer)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15 narrow:h-9 narrow:w-9"
                 >
                   <Square size={11} fill="currentColor" />
                 </button>
@@ -1493,7 +1510,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                   onClick={send}
                   disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !comments.length && !canStartEmpty)}
                   title="Send (Enter)"
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
                 </button>

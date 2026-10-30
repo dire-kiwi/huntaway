@@ -5,7 +5,7 @@ import type { Status } from "../api";
 import { EMPTY_QUERY, filterCount, isFiltering, SORTS, TASK_FLAGS, TASK_KINDS, toggled, type BoardQuery, type SortKey, type TaskKind } from "../boardQuery";
 import { ContextMenu, StatusIcon } from "./ui";
 
-const BUTTON = "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors";
+const BUTTON = "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors narrow:h-8";
 const BUTTON_STATE = (active: boolean) => (active ? "border-accent/50 bg-accent/10 text-fg" : "border-line text-muted hover:text-fg");
 
 /** Whether a key press is meant for the page rather than a field being typed in, or a dialog or menu. */
@@ -26,7 +26,7 @@ export function SearchBox({ value, onChange }: { value: string; onChange: (v: st
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   return (
-    <div className="relative">
+    <div className="relative narrow:min-w-0 narrow:flex-1">
       <Search size={13} className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-faint" />
       <input
         ref={ref}
@@ -41,7 +41,7 @@ export function SearchBox({ value, onChange }: { value: string; onChange: (v: st
         aria-label="Search tasks"
         title="Search the board's tasks by key, title, description, branch or project (/)"
         className={clsx(
-          "h-7 w-36 rounded-md border bg-panel pr-6 pl-7 text-[12.5px] text-fg placeholder:text-faint outline-none transition-[width] focus:w-56 focus:border-accent/60 lg:w-48",
+          "h-7 w-36 rounded-md border bg-panel pr-6 pl-7 text-[12.5px] text-fg placeholder:text-faint outline-none transition-[width] focus:w-56 focus:border-accent/60 lg:w-48 narrow:h-8 narrow:w-full narrow:focus:w-full",
           value ? "border-accent/50 lg:w-56" : "border-line",
         )}
       />
@@ -245,7 +245,7 @@ export function FilterBar({
   const named = <T,>(options: FilterOption<T>[], id: T) => options.find((o) => o.id === id)?.label ?? String(id);
   const search = query.search.trim();
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-panel/60 px-5 py-1.5 text-[12px] text-muted">
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-panel/60 px-5 py-1.5 text-[12px] text-muted narrow:px-3">
       {tools}
       {isFiltering(query) && (
         <>
