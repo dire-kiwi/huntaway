@@ -343,6 +343,8 @@ export interface Project {
   auto_review?: boolean;
   /** How many times in a row a review's serious issues go back to the agent to fix (API 12). */
   review_rounds?: number;
+  /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
+  done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
@@ -498,7 +500,7 @@ export interface Task {
   run_started_at?: string | null;
   /** Its agent is merging it (moved to "Ready for merge" and not done yet). Hosts before API 4 omit it. */
   merging?: boolean;
-  /** Its agent stepped out of the merge queue to make changes; it rejoins the queue when the agent is done (API 67). */
+  /** Its agent stepped out of the merge queue to make changes; it rejoins the queue when the agent is done (API 69). */
   remerge?: boolean;
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
@@ -931,7 +933,6 @@ export interface GlobalAgentTools {
   profile_switches: Record<string, Record<string, boolean>>;
 }
 
-/** Agent defaults for a host. */
 /** What starts an automation (API 63): an interval, a time of day (in the host's time zone) on some weekdays, or a webhook delivery. */
 export type AutomationTrigger =
   | { kind: "interval"; every_minutes: number }
@@ -1021,6 +1022,7 @@ export interface AutomationInput {
   rotate_token?: boolean;
 }
 
+/** Agent defaults for a host. */
 export interface HostSettings {
   /** Used when the thread, project and profile don't pick a model. */
   default_model: string | null;
@@ -1107,8 +1109,47 @@ export interface DeletionApproval extends ApprovalRequest {
   input: TaskDeletion;
 }
 
+/** An automation as an approval shows it (API 67), with the task its message goes to and its tasks' agent config. */
+export interface AutomationView {
+  /** Empty for one that's being created. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  /** Whether a webhook's deliveries must be signed with a secret. */
+  signed: boolean;
+  target?: { id: string; key: string; title: string; status: Status };
+  config?: { id: string; name: string; agent: string };
+}
+
+/** An automation an agent asked to create, change or delete, shown to the user to approve (API 67). */
+export interface AutomationChange {
+  op: "create" | "update" | "delete";
+  project: { id: string; key: string; name: string; host?: string };
+  /** The thread that asked. */
+  task: { id: string; key?: string; title: string } | null;
+  /** The automation as it would be (or, to delete, as it is). */
+  automation: AutomationView;
+  /** For a change: the automation as it is. */
+  before?: AutomationView;
+  /** For a change, what it changes: name, trigger, action, enabled, generate_secret, secret (removed) or rotate_token. */
+  changes?: string[];
+  /** The host's time zone, which times of day are in. */
+  time_zone?: { name: string | null; offset: string };
+  /** Why, in the agent's words. */
+  reason?: string | null;
+}
+
+/** An automation change waiting for the user to approve it, like a project change (API 67). */
+export interface AutomationApproval extends ApprovalRequest {
+  kind: "automation";
+  tool_name: "create_automation" | "update_automation" | "delete_automation";
+  input: AutomationChange;
+}
+
 /** What only the user decides for an agent, whatever its thread's permission mode. */
-export type Approval = ProjectApproval | DeletionApproval;
+export type Approval = ProjectApproval | DeletionApproval | AutomationApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
@@ -1365,8 +1406,8 @@ export const api = {
   answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
     on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
-  /** Older hosts ignore `all` and list project changes only. */
-  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true"),
+  /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
+  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true"),
   dirs: (h: string, path?: string) => on(h).get<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** The project's automations, and the time zone their times of day are in (API 63). */
   automations: (h: string, projectId: string) =>

@@ -537,7 +537,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (`request_user_input` or `AskUserQuestion`, see *Questions and plans*) or presents a plan, a
   tool needs approval, a run fails, or you stop it → *Needs
   attention*; a run finishes cleanly → *In review*. You move cards to *Done* yourself, or to
-  *Ready for merge*.
+  *Ready for merge*; a task whose pull request is merged on GitHub moves to *Done* by itself
+  (see *Pull requests*).
 - **Archived** (API 53): a task that's been in *Done* for two days is archived. It leaves the
   kanban board's *Done* column, which links to it ("N archived"), for the list view's *Archived*
   section, the last one, which starts collapsed. It's still done (a task that depends on it
@@ -1012,6 +1013,22 @@ the task has none yet, the host looks it up with `gh pr view <branch>` (if `gh` 
 signed in; with `--repo` for the GitHub repository the branch is pushed to, as above), so a PR the
 agent opened shows up without it saying so.
 
+A pull request merged on GitHub (by you, or by auto-merge) rather than through *Ready for merge*
+moves its task to *Done* (API 68). Every 3 minutes the host reads the state of the pull requests
+of its tasks in *In review* or *Needs attention*, with one GraphQL query per GitHub account and
+host, as each task's own account (see *GitHub accounts*; gh's active account when none is set).
+When one is merged, its task moves to *Done* (resolution `done`) as if you'd moved it there, its
+thread says so, and its worktree is removed if nothing in it would be lost, as **Remove merged
+worktrees** does (the thread says why when it's kept). When one is closed without being merged, a
+task in *In review* moves to *Needs attention* saying so, and one already there gets a note in its
+thread (its reason stays the agent's). Each happens once per change of state, so a task you move
+back out of *Done* stays where you put it. Tasks whose agent or reviewer is running, tasks being
+merged, a subproject's tasks (its own merge brings them in) and a subproject with open tasks are
+left alone. Turn it off for a project with *Move a task to Done when its pull request is merged on
+GitHub* in its settings (`done_when_merged`, on by default). An agent `wait`ing on its pull
+request is told it was merged and marks the task done itself, as its project's instructions say;
+if its run ends without doing so, the next read moves the task.
+
 ### Preview URLs
 
 A task can carry a preview URL (Preview in the task's sidebar, or `preview_url` via
@@ -1043,7 +1060,7 @@ can be removed), and the host won't search Asana for it. Its token is kept for w
 
 ### Automations
 
-A project's automations (API 63, in its settings under *Automations*) put work on the board by
+A project's automations (API 63, in its settings under *Automations*; agents' tools for them, API 67) put work on the board by
 themselves: recurring work such as a weekly dependency update, and events from outside such as a
 new GitHub issue to triage. Each one has a trigger and an action, can be switched on and off, and
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
@@ -1066,6 +1083,22 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
 - **Run now** runs a schedule at once, on or off. For a webhook it's **Test**: a delivery sent
   from the board (the latest one received, or a body you write) through its filters and
   templates, without the signature check, duplicate check or coalescing.
+
+**Agents.** Agents have board tools for automations: `list_automations`, `create_automation`,
+`update_automation`, `delete_automation` and `run_automation` (Run now, or a test delivery). An
+automation keeps making work after the agent is done, and a webhook lets whoever has its URL start
+runs, so creating, changing or deleting one asks the user first, in the same dialog as a project
+change (and as a card in the agent's thread), whatever the thread's permission mode. It shows
+everything the automation would run: its trigger, filters and whether deliveries are signed, the
+task's title and description templates, type, agent config and whether its agent starts, or the
+task a message goes to and the message. A change shows what it changes, and the automation as it
+would be and as it is. Nothing is made or changed unless the user approves, and then exactly what
+they were shown (only the settings that differ, so a change the user made meanwhile stays). Turning
+one off or renaming it isn't asked about. A call retried after a restart waits for the same
+approval. An agent only reaches automations of projects on boards it can use, and an automation
+only acts in its own project. With `generate_secret`, a new webhook secret is made once it's
+approved and returned to the agent, once, with the URL (in full when `public_url` is set), so it
+can set up the sender.
 
 **Webhooks.** The webhook route is the one route that doesn't take the board's token. The token in
 its path is the automation's own (compared in constant time) and reaches nothing else: an unknown

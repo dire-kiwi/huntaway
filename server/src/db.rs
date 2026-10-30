@@ -533,17 +533,34 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V55} PRAGMA user_version=55; COMMIT;"))?;
     }
     if version < 56 {
+        // Whether a task whose pull request was merged on GitHub moves to Done (see merged.rs),
+        // on until it's turned off, and what its last read found.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='done_when_merged'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN done_when_merged INTEGER NOT NULL DEFAULT 1;" };
+        conn.execute_batch(&format!(
+            "BEGIN; {add}
+             CREATE TABLE IF NOT EXISTS pr_states (
+               task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+               pr_url TEXT NOT NULL,
+               state TEXT NOT NULL,
+               updated_at TEXT NOT NULL,
+               PRIMARY KEY (task_id, pr_url)
+             );
+             PRAGMA user_version=56; COMMIT;"
+        ))?;
+    }
+    if version < 57 {
         // A merging task that stepped out of the merge queue to fix something (see Task::remerge).
         let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='remerge'", [], |r| r.get(0))?;
         let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN remerge INTEGER NOT NULL DEFAULT 0;" };
-        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=56; COMMIT;"))?;
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=57; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 56;
+pub const VERSION: i64 = 57;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -997,6 +1014,9 @@ pub struct Project {
     pub claude_config_ids: Option<Vec<String>>,
     /// Review each task's work when it moves to "In review" (see review.rs).
     pub auto_review: bool,
+    /// Move a task to Done when its pull request is merged on GitHub (see merged.rs).
+    #[serde(default = "yes")]
+    pub done_when_merged: bool,
     /// How many times in a row a review's serious issues go back to the agent to fix before
     /// the task is left for the user.
     pub review_rounds: u32,
@@ -1045,6 +1065,7 @@ impl Project {
             model: r.get("model")?,
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
             auto_review: r.get("auto_review")?,
+            done_when_merged: r.get("done_when_merged")?,
             review_rounds: r.get("review_rounds")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             start_prompt: r.get("start_prompt")?,
@@ -1770,6 +1791,19 @@ pub fn list_tasks_for_profile(c: &Connection, profile_id: &str) -> Result<Vec<Ta
     Ok(rows)
 }
 
+/// Tasks in "In review" or "Needs attention" with a pull request, not running or merging, in
+/// projects whose merged pull requests move them to Done (see merged.rs).
+pub fn tasks_with_open_prs(c: &Connection) -> Result<Vec<Task>> {
+    let mut st = c.prepare(
+        "SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id
+         WHERE t.kind='task' AND t.status IN ('in_review','needs_attention') AND t.pr_url IS NOT NULL AND t.merging=0 AND t.running=0
+           AND t.task_type IS NULL AND p.done_when_merged=1
+         ORDER BY t.project_id, t.number",
+    )?;
+    let rows = st.query_map([], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 /// The task holding a merge slot: merging, and either running or waiting on the user. Each
 /// project has one slot for its top-level tasks and one per subproject (`parent_id`), since
 /// those merge into different branches.
@@ -2060,7 +2094,7 @@ fn normalize_resolution(c: &Connection, id: &str) -> Result<()> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account",
 ];
 
@@ -3018,13 +3052,13 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_version_55_gets_remerge() {
-        let path = std::env::temp_dir().join(format!("huntaway-v55-{}.db", crate::util::new_id()));
+    fn a_database_from_version_56_gets_remerge() {
+        let path = std::env::temp_dir().join(format!("huntaway-v56-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(
                 "ALTER TABLE tasks DROP COLUMN remerge;
-                 PRAGMA user_version=55;
+                 PRAGMA user_version=56;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
                  INSERT INTO tasks (id,profile_id,kind,number,title,description,status,position,merging,last_activity_at,created_at,updated_at)
                    VALUES ('t','p','task',1,'t','','ready_for_merge',0,1,'1','1','1');",

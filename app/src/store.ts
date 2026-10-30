@@ -716,8 +716,8 @@ export function handleEvent(ev: any) {
       break;
     case "message":
     case "message_updated": {
-      // A project change or deletion asked for (or answered) in any thread.
-      if (ev.message?.kind === "permission" && ["project", "delete_task"].includes(ev.message.data?.kind)) {
+      // A project change, deletion or automation asked for (or answered) in any thread.
+      if (ev.message?.kind === "permission" && ["project", "delete_task", "automation"].includes(ev.message.data?.kind)) {
         const a: HostApproval = { ...ev.message.data, task_id: ev.task_id, created_at: ev.message.created_at, host_id: h };
         approvalsLoading.changed(a);
         useStore.setState((st) => ({ approvals: withApproval(st.approvals, a) }));

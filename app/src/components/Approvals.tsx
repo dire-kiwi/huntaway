@@ -1,7 +1,20 @@
 import clsx from "clsx";
-import { ArrowRight, Check, ShieldAlert, Trash2, X } from "lucide-react";
-import { useState } from "react";
-import { api, PERMISSION_MODES, STATUSES, type Approval, type DeletionApproval, type ProjectApproval, type ProjectChange, type TaskDeletion } from "../api";
+import { ArrowRight, Check, Clock, ShieldAlert, Trash2, Webhook, X, Zap } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  api,
+  PERMISSION_MODES,
+  STATUSES,
+  type Approval,
+  type AutomationApproval,
+  type AutomationChange,
+  type AutomationView,
+  type DeletionApproval,
+  type ProjectApproval,
+  type ProjectChange,
+  type TaskDeletion,
+} from "../api";
+import { filterText, triggerText } from "./Automations";
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Button, Modal } from "./ui";
@@ -97,6 +110,9 @@ export function ProjectChangeDetail({ change }: { change: ProjectChange }) {
 /** A task as an approval names it: its key and title. */
 const taskName = (t: { key?: string; title: string }) => (t.key ? `${t.key} ${t.title}` : t.title);
 
+/** What an agent asks to do to an automation, e.g. "wants to add an automation to". */
+const AUTOMATION_ASKS = { create: "wants to add an automation to", update: "wants to change an automation in", delete: "wants to delete an automation in" };
+
 /** The question an approval asks, e.g. "IA-12 wants to change Issue Agent" or "IA-12 wants to delete IA-3". */
 function Asker({ approval }: { approval: Approval }) {
   const { input } = approval;
@@ -105,7 +121,14 @@ function Asker({ approval }: { approval: Approval }) {
   return (
     <p className="mb-3 text-[13px] text-muted">
       <span className="text-fg">{who}</span>{" "}
-      {approval.kind === "delete_task" ? (
+      {approval.kind === "automation" ? (
+        <>
+          {AUTOMATION_ASKS[approval.input.op]} the project{" "}
+          <span className="text-fg">
+            {project?.name} ({project?.key})
+          </span>
+        </>
+      ) : approval.kind === "delete_task" ? (
         <>
           wants to delete the task <span className="text-fg">{taskName(approval.input.delete)}</span>
           {project ? ` in ${project.name}` : ""}
@@ -166,6 +189,155 @@ export function TaskDeletionDetail({ deletion }: { deletion: TaskDeletion }) {
   );
 }
 
+const STATUS_NAMES = { todo: "To do", backlog: "Backlog" };
+const TYPE_NAMES: Record<string, string> = { plan: "Plan", artifact: "Artifact", diagram: "Diagram", scratch: "Scratch task" };
+
+/** One line of an automation's summary: a label, and what it is. */
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[7.5rem_1fr] items-baseline gap-2">
+      <span className="text-[12px] text-faint">{label}</span>
+      <div className="min-w-0 text-fg">{children}</div>
+    </div>
+  );
+}
+
+const Mono = ({ children }: { children: ReactNode }) => <span className="font-mono text-[12px] break-words">{children}</span>;
+
+/** What an automation does and what starts it, as an approval shows it: everything that will run. */
+export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; tz?: AutomationChange["time_zone"]; tone?: "from" | "to" }) {
+  const t = a.trigger;
+  const act = a.action;
+  return (
+    <div className={clsx("space-y-2 text-[13px]", tone === "from" && "opacity-70")}>
+      <Row label="Name">{a.name}</Row>
+      <Row label="When">
+        <span className="inline-flex items-center gap-1.5">
+          {t.kind === "webhook" ? <Webhook size={13} className="shrink-0 text-muted" /> : <Clock size={13} className="shrink-0 text-muted" />}
+          {t.kind === "webhook" ? "Each delivery to its webhook URL" : triggerText(t, tz ?? null)}
+        </span>
+        {!a.enabled && <div className="text-[12px] text-faint">Off: it doesn't run until it's turned on.</div>}
+      </Row>
+      {t.kind === "webhook" && (
+        <>
+          <Row label="Filters">
+            {t.filters.length ? (
+              <ul className="space-y-0.5">
+                {t.filters.map((f, i) => (
+                  <li key={i}>
+                    <Mono>{filterText(f)}</Mono>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-amber-200/90">None: every delivery runs it</span>
+            )}
+          </Row>
+          {t.coalesce_seconds > 0 && (
+            <Row label="Coalescing">
+              Deliveries within {t.coalesce_seconds}s make one run
+              {t.coalesce_key && (
+                <>
+                  , by <Mono>{t.coalesce_key}</Mono>
+                </>
+              )}
+            </Row>
+          )}
+          <Row label="Signature">
+            {a.signed ? (
+              "Deliveries must be signed with its secret"
+            ) : (
+              <span className="text-amber-200/90">Not checked: anyone with its URL can run it</span>
+            )}
+          </Row>
+        </>
+      )}
+      {act.kind === "create_task" ? (
+        <>
+          <Row label="Creates a task">
+            <Mono>{act.title}</Mono>
+          </Row>
+          <Row label="Description">
+            <Block text={act.description} tone={tone} />
+          </Row>
+          <Row label="Settings">
+            {[
+              act.task_type ? TYPE_NAMES[act.task_type] ?? act.task_type : "Code task",
+              a.config ? a.config.name : "project's agent config",
+              act.model ? `model ${act.model}` : null,
+              act.effort ? `effort ${act.effort}` : null,
+              `in ${STATUS_NAMES[act.status] ?? act.status}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </Row>
+          <Row label="Agent">
+            {act.start ? <span className="text-amber-200/90">Starts straight away, with the project's permission mode</span> : "Not started: the task waits on the board"}
+          </Row>
+        </>
+      ) : (
+        <>
+          <Row label="Messages">{a.target ? taskName(a.target) : <Mono>{act.task_id}</Mono>}</Row>
+          <Row label="Message">
+            <Block text={act.message} tone={tone} />
+          </Row>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A change to an automation's settings, by what it changes, e.g. "Trigger" or "A new signing secret". */
+const CHANGE_LABELS: Record<string, string> = {
+  name: "Name",
+  enabled: "On",
+  trigger: "Trigger",
+  action: "Action",
+  generate_secret: "A new signing secret (returned to the agent)",
+  secret: "Removes the signing secret: deliveries aren't checked",
+  rotate_token: "A new webhook URL (the old one stops working)",
+};
+
+/** What an agent asked to do to an automation: everything a new one would run, or a change from what it does now. */
+export function AutomationChangeDetail({ change }: { change: AutomationChange }) {
+  const { reason, automation: a, before, op } = change;
+  return (
+    <div className="space-y-3 text-[13px]">
+      {reason && <div className="rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-2 text-muted">{reason}</div>}
+      {op === "update" && before && (
+        <ul className="space-y-1">
+          {(change.changes ?? []).map((k) => (
+            <li key={k} className="flex min-w-0 items-center gap-2">
+              <span className="rounded bg-st-attention/15 px-1.5 py-0.5 text-[11px] text-st-attention">{CHANGE_LABELS[k] ?? k}</span>
+              {k === "name" && (
+                <span className="flex min-w-0 items-center gap-2 font-mono text-[12px]">
+                  <span className="truncate text-faint line-through">{before.name}</span>
+                  <ArrowRight size={12} className="shrink-0 text-faint" />
+                  <span className="truncate text-fg">{a.name}</span>
+                </span>
+              )}
+              {k === "enabled" && <span className="text-[12px]">{a.enabled ? "Turns it on" : "Turns it off"}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className={clsx("rounded-md border bg-[#0c0c10] px-3 py-2", op === "delete" ? "border-red-500/30" : "border-st-attention/30")}>
+        {op === "update" && <div className="mb-2 text-[12px] text-muted">As it would be:</div>}
+        <AutomationSummary a={a} tz={change.time_zone} />
+      </div>
+      {op === "update" && before && (change.changes ?? []).some((k) => k === "trigger" || k === "action") && (
+        <details className="rounded-md border border-line px-3 py-2">
+          <summary className="cursor-pointer text-[12px] text-muted">As it is now</summary>
+          <div className="mt-2">
+            <AutomationSummary a={before} tz={change.time_zone} tone="from" />
+          </div>
+        </details>
+      )}
+      {op === "delete" && <p className="text-muted">It stops running, and its history goes with it. The tasks it made stay.</p>}
+    </div>
+  );
+}
+
 function useDecide(hostId: string, requestId: string) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -183,9 +355,19 @@ function useDecide(hostId: string, requestId: string) {
   return { busy, err, decide };
 }
 
-function DecideButtons({ hostId, approval, onLater }: { hostId: string; approval: Pick<Approval, "request_id" | "kind">; onLater?: () => void }) {
+/** Whether an approval is to delete something (a task, or an automation). */
+const isDeletion = (a: Pick<Approval, "kind" | "input">) => a.kind === "delete_task" || (a.kind === "automation" && (a.input as AutomationChange).op === "delete");
+
+const TITLES = { project: "Approve a project change?", delete_task: "Delete a task?" };
+
+function approvalTitle(a: Approval) {
+  if (a.kind === "automation") return a.input.op === "delete" ? "Delete an automation?" : "Approve an automation?";
+  return TITLES[a.kind];
+}
+
+function DecideButtons({ hostId, approval, onLater }: { hostId: string; approval: Pick<Approval, "request_id" | "kind" | "input">; onLater?: () => void }) {
   const { busy, err, decide } = useDecide(hostId, approval.request_id);
-  const deletion = approval.kind === "delete_task";
+  const deletion = isDeletion(approval);
   return (
     <div className="flex flex-wrap items-center gap-2">
       {deletion ? (
@@ -211,7 +393,7 @@ function DecideButtons({ hostId, approval, onLater }: { hostId: string; approval
 }
 
 /**
- * Asks the user to approve each project change (and confirm each task deletion) an agent is
+ * Asks the user to approve each project change and automation (and confirm each task deletion) an agent is
  * waiting on, on any host, wherever they are in the app. "Decide later" hides one until it's
  * asked again (it stays in its thread).
  */
@@ -232,15 +414,27 @@ export function ProjectApprovals() {
       onClose={close}
       title={
         <span className="flex items-center gap-2">
-          {a.kind === "delete_task" ? <Trash2 size={15} className="text-red-400" /> : <ShieldAlert size={15} className="text-st-attention" />}
-          {a.kind === "delete_task" ? "Delete a task?" : "Approve a project change?"}
+          {isDeletion(a) ? (
+            <Trash2 size={15} className="text-red-400" />
+          ) : a.kind === "automation" ? (
+            <Zap size={15} className="text-st-attention" />
+          ) : (
+            <ShieldAlert size={15} className="text-st-attention" />
+          )}
+          {approvalTitle(a)}
           {waiting.length > 1 && <span className="text-[12px] font-normal text-faint">1 of {waiting.length}</span>}
         </span>
       }
     >
       <Asker approval={a} />
       <div className="max-h-[55vh] overflow-auto">
-        {a.kind === "delete_task" ? <TaskDeletionDetail deletion={a.input} /> : <ProjectChangeDetail change={a.input} />}
+        {a.kind === "delete_task" ? (
+          <TaskDeletionDetail deletion={a.input} />
+        ) : a.kind === "automation" ? (
+          <AutomationChangeDetail change={a.input} />
+        ) : (
+          <ProjectChangeDetail change={a.input} />
+        )}
       </div>
       <div className="mt-4 flex items-center gap-3 border-t border-line pt-3">
         <div className="flex-1">
@@ -328,6 +522,49 @@ export function ProjectChangeCard({ data, hostId }: { data: ProjectApproval; hos
       ) : (
         <button className="truncate text-left font-mono text-[12px] text-faint hover:text-muted" onClick={() => setOpen(true)}>
           {(data.input.changes ?? []).map((c) => c.field).join(", ")}
+        </button>
+      )}
+      {pending && (
+        <div className="mt-3">
+          <DecideButtons hostId={hostId} approval={data} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const AUTOMATION_CARD = { create: "Add the automation", update: "Change the automation", delete: "Delete the automation" };
+
+/** An automation an agent asked to create, change or delete, in its thread: the same question as the dialog, and its answer once given. */
+export function AutomationChangeCard({ data, hostId }: { data: AutomationApproval; hostId: string }) {
+  const pending = data.status === "pending";
+  const [open, setOpen] = useState(false);
+  const { op, automation: a } = data.input;
+  const deletion = op === "delete";
+  return (
+    <div
+      className={clsx(
+        "rounded-lg border p-3",
+        !pending ? "border-line bg-panel/60" : deletion ? "border-red-500/40 bg-red-500/[0.05]" : "border-st-attention/50 bg-st-attention/[0.06]",
+      )}
+    >
+      <div className="mb-2 flex items-center gap-2 text-[13px]">
+        {deletion ? (
+          <Trash2 size={15} className={pending ? "text-red-400" : "text-faint"} />
+        ) : (
+          <Zap size={15} className={pending ? "text-st-attention" : "text-faint"} />
+        )}
+        <span className={clsx("min-w-0 truncate", pending ? "text-fg" : "text-muted")}>
+          {AUTOMATION_CARD[op]} <span className="font-medium">{a.name}</span>
+          {op === "create" ? ` to ${data.input.project.name}` : ` in ${data.input.project.name}`}
+        </span>
+        {!pending && <Answer status={data.status} deletion={deletion} />}
+      </div>
+      {pending || open ? (
+        <AutomationChangeDetail change={data.input} />
+      ) : (
+        <button className="truncate text-left text-[12px] text-faint hover:text-muted" onClick={() => setOpen(true)}>
+          {data.input.reason || (a.trigger.kind === "webhook" ? "From a webhook" : triggerText(a.trigger, data.input.time_zone ?? null))}
         </button>
       )}
       {pending && (
