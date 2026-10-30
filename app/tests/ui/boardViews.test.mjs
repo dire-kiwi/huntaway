@@ -31,6 +31,9 @@ test("the board's other views show its tasks, and the one picked stays", async (
 
     // Timeline: the demo's tasks have never run.
     await ui.run(["click Timeline view", "wait Agents running", "wait Nothing ran in this window"]);
+    // HA-5 review: the hour's window has its axis whatever minute it is now.
+    await ui.run(["click 1h"]);
+    await page.waitForFunction(() => document.querySelectorAll("[data-tick]").length >= 5);
 
     // Live: the task waiting on an answer gets a tile to answer it from.
     await ui.run(["click Live view", "wait A task waiting on an answer", "wait css=input[placeholder='Reply to the agent…']"]);

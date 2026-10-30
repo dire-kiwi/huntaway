@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, hostSupports, type Project, type Task } from "../api";
 import { usePanel, openTask } from "../router";
 import { keyPrefix, useStore } from "../store";
+import { ticks } from "../timeline";
 import { duration, StatusIcon, STATUS_COLOR, useClock } from "./ui";
 import type { OnMenu } from "./Board";
 
@@ -107,34 +108,6 @@ function useReports(tasks: Task[], from: number, to: number) {
     // `to` moves on every minute; asking again each time is what keeps the bars of the runs going up to date.
   }, [pairs, from, to, running, hostsKey]);
   return { data, errors };
-}
-
-/** Where the axis gets a line and a label: every few minutes, hours, a day or a week, on local time. */
-function ticks(from: number, to: number): { at: number; label: string; day: boolean }[] {
-  const span = to - from;
-  const minutes = span <= 2 * 3600_000 ? 10 : span <= 8 * 3600_000 ? 60 : span <= 26 * 3600_000 ? 180 : span <= 4 * 86400_000 ? 720 : 0;
-  const days = minutes ? 0 : span <= 8 * 86400_000 ? 1 : 7;
-  const out: { at: number; label: string; day: boolean }[] = [];
-  const d = new Date(from);
-  d.setSeconds(0, 0);
-  if (minutes >= 60) d.setMinutes(0);
-  if (!minutes) d.setHours(0, 0);
-  for (let guard = 0; d.getTime() < to && guard < 500; guard++) {
-    const at = d.getTime();
-    const midnight = d.getHours() === 0 && d.getMinutes() === 0;
-    const onStep = minutes ? (d.getHours() * 60 + d.getMinutes()) % minutes === 0 : days === 1 || d.getDay() === 1;
-    if (at >= from && onStep)
-      out.push({
-        at,
-        day: midnight,
-        label: midnight
-          ? d.toLocaleDateString([], { weekday: "short", day: "numeric" })
-          : d.toLocaleTimeString([], minutes < 60 ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" }),
-      });
-    if (minutes) d.setMinutes(d.getMinutes() + Math.min(minutes, 60));
-    else d.setDate(d.getDate() + 1);
-  }
-  return out;
 }
 
 const clock = (t: number) => new Date(t).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
@@ -267,7 +240,7 @@ export function TimelineView({ tasks, projectOf, onMenu }: { tasks: Task[]; proj
             <div className="w-[300px] shrink-0" />
             <div className="relative h-full flex-1 mr-5">
               {axis.map((t) => (
-                <span key={t.at} className={clsx("absolute bottom-1 -translate-x-1/2 text-[11px] whitespace-nowrap tabular-nums", t.day ? "text-muted" : "text-faint")} style={{ left: x(t.at) }}>
+                <span key={t.at} data-tick className={clsx("absolute bottom-1 -translate-x-1/2 text-[11px] whitespace-nowrap tabular-nums", t.day ? "text-muted" : "text-faint")} style={{ left: x(t.at) }}>
                   {t.label}
                 </span>
               ))}
