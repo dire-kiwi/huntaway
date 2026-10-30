@@ -25,7 +25,6 @@ import { navigate, openTask, usePanel, type Route } from "../router";
 import { profileNames, taskKey, useStore } from "../store";
 import { ProfileAvatar } from "./Board";
 import { ReminderModal, reminderItems, starItem, useReminderClock } from "./Reminders";
-import { DesktopUpdateButton } from "./Desktop";
 import { ReloadButton, UpdateButton } from "./Server";
 import { UsagePanel } from "./Usage";
 import { ArchiveProjectModal, NewProjectModal } from "./Settings";
@@ -829,7 +828,6 @@ export function Sidebar({ route }: { route: Route }) {
       <div className="border-t border-line p-2">
         <ReloadButton />
         <UpdateButton />
-        <DesktopUpdateButton />
         <NavItem active={route.name === "settings"} onClick={() => navigate({ name: "settings" })} icon={<Settings size={15} />}>
           Settings
         </NavItem>

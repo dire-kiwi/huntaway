@@ -24,6 +24,8 @@ pub struct ServerMeta {
     pub source_dir: Option<PathBuf>,
     /// HEAD of the source checkout when this process started.
     pub running_commit: Option<String>,
+    /// `--update-from`: a deployment of the board whose commit this host offers to update to.
+    pub update_from: Option<String>,
     /// Arguments to re-exec with.
     pub args: Vec<OsString>,
 }
@@ -69,6 +71,7 @@ pub async fn status(state: &Shared) -> Result<Value> {
         "restart": job,
     });
     let Some(src) = &meta.source_dir else { return Ok(v) };
+    let deployed = state.deployed.lock().unwrap().clone();
     let head = head_commit(src).await;
     let branch = git(src, &["symbolic-ref", "--short", "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string());
     let dirty = git(src, &["status", "--porcelain", "--untracked-files=no"]).await.map(|o| !o.stdout.trim().is_empty()).unwrap_or(false);
@@ -83,7 +86,87 @@ pub async fn status(state: &Shared) -> Result<Value> {
     v["source_branch"] = json!(branch);
     v["dirty"] = json!(dirty);
     v["new_commits"] = json!(new_commits);
+    // API 62: what the deployment this host follows runs, and its commits that this server doesn't
+    // (only when it's ahead: not for a checkout that has moved on or diverged from it).
+    if let Some(url) = &meta.update_from {
+        let mut deployed_commits = Vec::new();
+        if let (Some(running), Some(commit)) = (&meta.running_commit, deployed.as_ref().and_then(|d| d.commit.as_ref())) {
+            if running != commit && git(src, &["merge-base", "--is-ancestor", running, commit]).await?.ok {
+                let o = git(src, &["log", "--format=%h %s", "-n", "30", &format!("{running}..{commit}")]).await?;
+                deployed_commits = o.stdout.lines().map(String::from).collect();
+            }
+        }
+        v["update_from"] = json!(url);
+        v["deployed"] = json!(deployed);
+        v["deployed_commits"] = json!(deployed_commits);
+    }
     Ok(v)
+}
+
+/// What `--update-from`'s deployment reported when last checked.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Deployed {
+    /// The commit it runs (kept from an earlier check while it can't be reached).
+    pub commit: Option<String>,
+    pub checked_at: String,
+    pub error: Option<String>,
+}
+
+const DEPLOYED_EVERY: Duration = Duration::from_secs(5 * 60);
+
+/// With `--update-from`, check every few minutes which commit that deployment runs, and fetch it
+/// from origin, so `status` can list its commits and the UI offer to update to it.
+pub fn start_update_check(state: &Shared) {
+    let Some(url) = state.meta.update_from.clone() else { return };
+    if state.meta.source_dir.is_none() {
+        tracing::warn!("--update-from needs a source checkout to update; ignoring it");
+        return;
+    }
+    tracing::info!("following the commit deployed at {url}");
+    let st = state.clone();
+    tokio::spawn(async move {
+        loop {
+            check_deployed(&st, &url).await;
+            tokio::time::sleep(DEPLOYED_EVERY).await;
+        }
+    });
+}
+
+/// Ask `url` which commit it runs (its unauthenticated `/api/health`, API 62+) and make sure the
+/// source checkout has it, then record the result in `state.deployed`.
+pub async fn check_deployed(state: &Shared, url: &str) {
+    let previous = state.deployed.lock().unwrap().clone();
+    let result = async {
+        let res = crate::hub::http().get(format!("{url}/api/health")).timeout(Duration::from_secs(15)).send().await?.error_for_status()?;
+        let health: Value = res.json().await?;
+        let commit = health["commit"].as_str().map(str::trim).filter(|c| !c.is_empty()).map(String::from);
+        let commit = commit.with_context(|| format!("{url} doesn't say which commit it runs (it needs API 62, and IA_COMMIT without a checkout)"))?;
+        let src = state.meta.source_dir.as_deref().context("no source checkout")?;
+        if state.meta.running_commit.as_deref() != Some(&commit) && !has_commit(src, &commit).await {
+            let fetched = tokio::time::timeout(Duration::from_secs(120), git(src, &["fetch", "--quiet", "origin"])).await.context("git fetch origin timed out")??;
+            if !fetched.ok {
+                bail!("git fetch origin failed: {}", fetched.stderr.trim());
+            }
+            if !has_commit(src, &commit).await {
+                bail!("{url} runs {}, which isn't on this checkout's origin", &commit[..commit.len().min(7)]);
+            }
+        }
+        anyhow::Ok(commit)
+    }
+    .await;
+    let now = crate::util::now();
+    let deployed = match result {
+        Ok(commit) => Deployed { commit: Some(commit), checked_at: now, error: None },
+        Err(e) => {
+            tracing::warn!("checking {url} for updates: {e:#}");
+            Deployed { commit: previous.and_then(|d| d.commit), checked_at: now, error: Some(format!("{e:#}")) }
+        }
+    };
+    *state.deployed.lock().unwrap() = Some(deployed);
+}
+
+async fn has_commit(dir: &Path, commit: &str) -> bool {
+    git(dir, &["cat-file", "-e", &format!("{commit}^{{commit}}")]).await.is_ok_and(|o| o.ok)
 }
 
 /// Start a restart in the background. With `rebuild`, the UI and server are rebuilt
@@ -315,4 +398,115 @@ pub async fn update_from_origin(state: &Shared, commit: &str) -> ApiResult<Value
     }
     start(state, true)?;
     Ok(json!({"ok": true, "commit": commit}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing;
+
+    fn sh(dir: &Path, args: &[&str]) -> String {
+        let o = std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).current_dir(dir).output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    fn commit(dir: &Path, msg: &str) -> String {
+        sh(dir, &["commit", "-q", "--allow-empty", "-m", msg]);
+        sh(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// A server whose `/api/health` says it runs `commit` (or none).
+    async fn deployment(commit: Option<String>) -> String {
+        let app = axum::Router::new().route("/api/health", axum::routing::get(move || async move { axum::Json(json!({"ok": true, "commit": commit})) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    /// An origin with one commit, cloned as the source checkout: (origin, checkout, commit).
+    fn checkout() -> (PathBuf, PathBuf, String) {
+        let root = std::env::temp_dir().join(format!("ia-admin-{}", crate::util::new_id()));
+        let origin = root.join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        sh(&origin, &["init", "-q", "-b", "master"]);
+        let first = commit(&origin, "first");
+        sh(&root, &["clone", "-q", &path_str(&origin), "src"]);
+        (origin, root.join("src"), first)
+    }
+
+    #[test]
+    fn offers_the_commits_a_deployment_runs_ahead_of_this_host() {
+        testing::run(async || {
+            let (origin, src, _) = checkout();
+            let ahead = { commit(&origin, "second"); commit(&origin, "third") };
+            let url = deployment(Some(ahead.clone())).await;
+            let state = host_at(&src, &url);
+            check_deployed(&state, &url).await;
+            let d = state.deployed.lock().unwrap().clone().unwrap();
+            assert_eq!((d.commit.as_deref(), d.error), (Some(ahead.as_str()), None));
+            // Fetched from origin, so the status lists what it adds.
+            let v = status(&state).await.unwrap();
+            let subjects: Vec<_> = v["deployed_commits"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().split_once(' ').unwrap().1.to_string()).collect();
+            assert_eq!(subjects, ["third", "second"]);
+            assert_eq!(v["update_from"], url);
+        });
+    }
+
+    /// A host following `url` from the checkout `src`, running its HEAD.
+    fn host_at(src: &Path, url: &str) -> Shared {
+        let head = sh(src, &["rev-parse", "HEAD"]);
+        testing::state_with(ServerMeta {
+            boot_id: String::new(),
+            started_at: String::new(),
+            source_dir: Some(src.to_path_buf()),
+            running_commit: Some(head),
+            update_from: Some(url.into()),
+            args: vec![],
+        })
+    }
+
+    #[test]
+    fn offers_nothing_for_a_deployment_behind_or_beside_this_host() {
+        testing::run(async || {
+            let (origin, src, first) = checkout();
+            // This host is ahead of what's deployed.
+            commit(&src, "local");
+            let url = deployment(Some(first.clone())).await;
+            let state = host_at(&src, &url);
+            check_deployed(&state, &url).await;
+            let v = status(&state).await.unwrap();
+            assert_eq!(v["deployed"]["commit"], first);
+            assert_eq!(v["deployed_commits"], json!([]));
+            // Diverged: the deployment runs a commit beside this host's.
+            let beside = commit(&origin, "elsewhere");
+            let url = deployment(Some(beside.clone())).await;
+            let state = host_at(&src, &url);
+            check_deployed(&state, &url).await;
+            let v = status(&state).await.unwrap();
+            assert_eq!((v["deployed"]["commit"].as_str(), v["deployed"]["error"].is_null()), (Some(beside.as_str()), true));
+            assert_eq!(v["deployed_commits"], json!([]));
+        });
+    }
+
+    #[test]
+    fn keeps_the_last_commit_when_a_check_fails() {
+        testing::run(async || {
+            let (origin, src, _) = checkout();
+            let ahead = commit(&origin, "second");
+            let url = deployment(Some(ahead.clone())).await;
+            let state = host_at(&src, &url);
+            check_deployed(&state, &url).await;
+            // One that doesn't say (from before API 62), or a commit origin doesn't have.
+            for (commit, why) in [(None, "doesn't say which commit"), (Some("0".repeat(40)), "isn't on this checkout's origin")] {
+                let other = deployment(commit).await;
+                check_deployed(&state, &other).await;
+                let d = state.deployed.lock().unwrap().clone().unwrap();
+                assert_eq!(d.commit.as_deref(), Some(ahead.as_str()));
+                assert!(d.error.as_deref().is_some_and(|e| e.contains(why)), "{d:?}");
+            }
+            assert_eq!(status(&state).await.unwrap()["deployed_commits"].as_array().unwrap().len(), 1);
+        });
+    }
 }

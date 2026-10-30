@@ -8,14 +8,16 @@
 // Remote mode: set `serverUrl` (and `token`) in ~/.config/huntaway/desktop.json
 // to use a server running on another machine.
 //
-// The packaged app (`npm run dist`, an Arch package) updates itself from GitHub Releases; see updater.cjs.
+// Installed with scripts/install.sh, it runs from a source checkout and updates like any host: the
+// server's Rebuild & restart, or Update when it follows a deployment (IA_UPDATE_FROM). The window
+// reloads onto the new UI, and the app relaunches itself if the update changed this directory.
 
 const { app, BrowserWindow, shell } = require("electron");
 const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const updater = require("./updater.cjs");
 
 /** `dir`, or `legacy` from before the rename to Huntaway if only that one exists. */
 function renamed(dir, legacy) {
@@ -139,6 +141,19 @@ function errorPage(message) {
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
 
+/** This process's own code (this directory) and the Electron that npm installed, to see when an update changed them. */
+function mainStamp() {
+  const hash = crypto.createHash("sha256");
+  for (const f of fs.readdirSync(__dirname).sort()) hash.update(f).update(fs.readFileSync(path.join(__dirname, f)));
+  try {
+    hash.update(JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version);
+  } catch {
+    /* packaged, or not installed */
+  }
+  return hash.digest("hex");
+}
+const startStamp = mainStamp();
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -148,7 +163,15 @@ async function createWindow() {
     backgroundColor: "#0b0b0e",
     autoHideMenuBar: true,
     title: "Huntaway",
-    webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },
+    webPreferences: { contextIsolation: true, sandbox: true },
+  });
+  // The board reloads once a rebuild has restarted the server. If that changed the app itself, start the new one.
+  win.webContents.on("did-finish-load", () => {
+    if (mainStamp() !== startStamp) {
+      console.log("the desktop app changed on disk; relaunching");
+      app.relaunch();
+      app.quit();
+    }
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -163,10 +186,7 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
-  updater.setup();
-  createWindow();
-});
+app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -179,7 +199,7 @@ app.on("activate", () => {
 app.on("before-quit", (e) => {
   // Agents run under ia-shim and outlive the server; the next start picks them back up.
   if (!serverProc) return;
-  // Wait for it to exit, so that a relaunch (after an update) starts a new server rather than finding this one still up.
+  // Wait for it to exit, so that a relaunch (after an update) starts a new server rather than finding this one going down.
   e.preventDefault();
   if (stopping) return;
   stopping = true;

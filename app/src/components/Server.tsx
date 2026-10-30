@@ -1,8 +1,7 @@
 import clsx from "clsx";
-import { CircleAlert, GitCommitHorizontal, Loader2, RotateCw } from "lucide-react";
+import { CircleAlert, Download, GitCommitHorizontal, Loader2, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type ServerStatus } from "../api";
-import { desktop } from "../desktop";
 import { useStore } from "../store";
 import { useNewUiBuild } from "../uiVersion";
 import { Button, Modal, timeAgo, Toggle } from "./ui";
@@ -36,13 +35,14 @@ function useServerStatus(pollMs: number) {
 
 const short = (sha?: string | null) => (sha ? sha.slice(0, 7) : "unknown");
 
-/** Sidebar prompt shown when the source checkout has commits this server isn't running. */
+/** Sidebar prompt shown when the source checkout, or the deployment this server follows (`--update-from`), has commits it isn't running. */
 export function UpdateButton() {
   const { status } = useServerStatus(30_000);
   const live = useStore((s) => s.restart);
   const [open, setOpen] = useState(false);
   const busy = live && live.phase !== "failed";
-  const pending = status?.new_commits?.length ?? 0;
+  const deployed = status?.deployed_commits?.length ?? 0;
+  const pending = deployed || (status?.new_commits?.length ?? 0);
   if (!busy && pending === 0 && !open) return null;
   return (
     <>
@@ -51,9 +51,9 @@ export function UpdateButton() {
         className="mb-1 flex h-8 w-full items-center gap-2.5 rounded-md bg-accent/10 px-2.5 text-[12.5px] text-accent hover:bg-accent/15"
       >
         {busy ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />}
-        <span className="truncate">{busy ? PHASES[live.phase] : `${pending} new commit${pending === 1 ? "" : "s"} · Restart`}</span>
+        <span className="truncate">{busy ? PHASES[live.phase] : `${pending} new commit${pending === 1 ? "" : "s"} · ${deployed ? "Update" : "Restart"}`}</span>
       </button>
-      {open && status && <RestartModal status={status} onClose={() => setOpen(false)} />}
+      {open && status && <RestartModal status={status} update={deployed > 0} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -79,14 +79,23 @@ export function ReloadButton() {
 /** Server section on the Settings page. */
 export function ServerPanel() {
   const { status } = useServerStatus(15_000);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<"restart" | "update" | null>(null);
+  const deployed = status?.deployed;
+  const ahead = status?.deployed_commits?.length ?? 0;
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[13px] font-semibold">Server</h2>
-        <Button size="sm" onClick={() => setOpen(true)} disabled={!status}>
-          <RotateCw size={13} /> Rebuild &amp; restart
-        </Button>
+        <div className="flex gap-2">
+          {ahead > 0 && (
+            <Button size="sm" variant="primary" onClick={() => setOpen("update")}>
+              <Download size={13} /> Update to {short(deployed?.commit)}
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setOpen("restart")} disabled={!status}>
+            <RotateCw size={13} /> Rebuild &amp; restart
+          </Button>
+        </div>
       </div>
       <div className="space-y-1.5 rounded-xl border border-line p-4 text-[12.5px] text-muted">
         {status ? (
@@ -110,26 +119,44 @@ export function ServerPanel() {
                   <span>, the same as the running server</span>
                 )}
               </div>
-            ) : desktop ? (
-              <div>No source checkout found, so restart reuses the current binary. A server that came with the desktop app updates with it (see Desktop app below).</div>
             ) : (
               <div>No source checkout found, so restart reuses the current binary. Start the server with --source-dir to enable rebuilds.</div>
+            )}
+            {status.update_from && (
+              <div>
+                Follows <span className="font-mono">{status.update_from}</span>
+                {deployed?.commit && (
+                  <>
+                    , which runs <span className="font-mono text-fg">{short(deployed.commit)}</span>
+                    {ahead > 0 ? (
+                      <span className="text-accent">, {ahead} commit(s) ahead of this server</span>
+                    ) : deployed.commit === status.running_commit ? (
+                      <span>, the same as this server</span>
+                    ) : null}
+                  </>
+                )}
+                {deployed ? ` (checked ${timeAgo(deployed.checked_at)})` : ", not checked yet"}
+                {deployed?.error && <div className="mt-1 font-mono text-[11.5px] text-red-300">{deployed.error}</div>}
+              </div>
             )}
           </>
         ) : (
           <div>Loading…</div>
         )}
       </div>
-      {open && status && <RestartModal status={status} onClose={() => setOpen(false)} />}
+      {open && status && <RestartModal status={status} update={open === "update"} onClose={() => setOpen(null)} />}
     </section>
   );
 }
 
-export function RestartModal({ status, onClose }: { status: ServerStatus; onClose: () => void }) {
+/** Rebuild and restart, or with `update` first fast-forward the checkout to the commit its `--update-from` deployment runs. */
+export function RestartModal({ status, update, onClose }: { status: ServerStatus; update?: boolean; onClose: () => void }) {
   const live = useStore((s) => s.restart);
   const [rebuild, setRebuild] = useState(!!status.source_dir);
   const [err, setErr] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
+  // The commit to update to, kept from when the modal opened.
+  const [target] = useState(update && status.deployed_commits?.length ? (status.deployed?.commit ?? null) : null);
   const logRef = useRef<HTMLPreElement>(null);
   // Seed with the server's view in case the restart began elsewhere.
   const job = live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null);
@@ -167,21 +194,33 @@ export function RestartModal({ status, onClose }: { status: ServerStatus; onClos
     setErr(null);
     useStore.setState({ restart: { phase: "starting", error: null, log: [] } });
     try {
-      await api.restartServer(useStore.getState().localHostId!, { rebuild });
+      const host = useStore.getState().localHostId!;
+      if (target) {
+        if ((await api.updateServer(host, target)).up_to_date) {
+          useStore.setState({ restart: null });
+          onClose();
+        }
+      } else await api.restartServer(host, { rebuild });
     } catch (e) {
       useStore.setState({ restart: null });
       setErr((e as Error).message);
     }
   };
 
-  const commits = status.new_commits ?? [];
+  const commits = (target ? status.deployed_commits : status.new_commits) ?? [];
   return (
-    <Modal title="Rebuild & restart server" onClose={inProgress ? () => {} : onClose} width="max-w-2xl">
+    <Modal title={target ? "Update server" : "Rebuild & restart server"} onClose={inProgress ? () => {} : onClose} width="max-w-2xl">
       <div className="space-y-4 text-[13px]">
         {!job && (
           <>
             <p className="text-muted">
-              {rebuild ? (
+              {target ? (
+                <>
+                  Fetches <span className="font-mono text-fg">{short(target)}</span>, which {status.update_from} runs, from origin and fast-forwards{" "}
+                  <span className="font-mono text-fg">{status.source_dir}</span> to it. Then it rebuilds the UI and server and restarts in place. If either
+                  build fails, the current server keeps running.
+                </>
+              ) : rebuild ? (
                 <>
                   Rebuilds the UI (<code>npm run build</code>) and server (<code>cargo build --release</code>) from{" "}
                   <span className="font-mono text-fg">{status.source_dir}</span>, then restarts in place. If either build fails, the current server keeps
@@ -194,7 +233,7 @@ export function RestartModal({ status, onClose }: { status: ServerStatus; onClos
             {commits.length > 0 && (
               <div className="rounded-lg border border-line bg-panel/60 p-3">
                 <div className="mb-1.5 text-[11px] font-semibold tracking-wide text-faint uppercase">
-                  New on {status.source_branch ?? "the checkout"} since this server started
+                  {target ? `Deployed at ${status.update_from}, not on this server` : `New on ${status.source_branch ?? "the checkout"} since this server started`}
                 </div>
                 <ul className="max-h-40 space-y-0.5 overflow-y-auto font-mono text-[12px] text-muted">
                   {commits.map((c) => (
@@ -212,13 +251,18 @@ export function RestartModal({ status, onClose }: { status: ServerStatus; onClos
                 picks them back up.
               </p>
             )}
-            {status.dirty && <Warning>The source checkout has uncommitted changes, and they'll be included in the build.</Warning>}
+            {status.dirty &&
+              (target ? (
+                <Warning>The source checkout has uncommitted changes, so it can't be updated. Commit or discard them first.</Warning>
+              ) : (
+                <Warning>The source checkout has uncommitted changes, and they'll be included in the build.</Warning>
+              ))}
             {status.source_branch && status.source_branch !== "master" && status.source_branch !== "main" && (
               <Warning>
                 The source checkout is on <span className="font-mono">{status.source_branch}</span>, not master.
               </Warning>
             )}
-            {status.source_dir && <Toggle checked={rebuild} onChange={setRebuild} label="Rebuild before restarting" />}
+            {status.source_dir && !target && <Toggle checked={rebuild} onChange={setRebuild} label="Rebuild before restarting" />}
           </>
         )}
 
@@ -250,7 +294,7 @@ export function RestartModal({ status, onClose }: { status: ServerStatus; onClos
           )}
           {(!job || job.phase === "failed") && (
             <Button variant="primary" onClick={start}>
-              <RotateCw size={13} /> {job ? "Try again" : rebuild ? "Rebuild & restart" : "Restart"}
+              <RotateCw size={13} /> {job ? "Try again" : target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart"}
             </Button>
           )}
         </div>

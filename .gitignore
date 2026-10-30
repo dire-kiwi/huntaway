@@ -6,4 +6,3 @@ __pycache__/
 .env.*
 *.pem
 *.key
-/app/release
