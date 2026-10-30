@@ -7,7 +7,8 @@
 //! - `conflicts`: it started to conflict with its base branch;
 //! - and, whatever it picked, its being merged or closed.
 //!
-//! The server reads it with one GraphQL query every `POLL`, as the GitHub account the task's gh
+//! The server reads it with one GraphQL query every `POLL` (and one more for each page of review
+//! threads past the first, see `Watcher::read_all`), as the GitHub account the task's gh
 //! tools act as (its project's or profile's, see runner::github_account; gh's active account when
 //! neither picks one), and never as another: an account that isn't signed in fails the read, and
 //! one on another host than the pull request's doesn't start the wait. A read that fails is tried

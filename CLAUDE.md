@@ -8,9 +8,12 @@ See `README.md` for layout, build and run instructions.
 - If a task changed code, open a pull request for its branch before you finish (see below). Tasks
   with no code changes don't need one.
 - When asked to merge (for example, after the task is moved to *Ready for merge*), commit and push
-  any outstanding work, wait for the PR's checks to pass (`wait` with the command
-  `gh pr checks <N> --watch`), then merge it with the gh tools' `pr_merge`. Don't merge while checks
-  are pending or failing, and don't merge into `master` locally.
+  any outstanding work, wait for the PR's checks to pass (`wait` with `pull_request: <N>` and
+  `pull_request_events: ["checks_failed", "checks_passed"]`), then merge it with the gh tools'
+  `pr_merge`. `master` has no required checks, so "all checks passed" means those that had started
+  when GitHub was read: check `pr_checks` once more before merging, and wait again if a check is
+  still pending. Don't merge while checks are pending or failing, and don't merge into `master`
+  locally.
 - Use the `gh` MCP server's tools for GitHub (`pr_create`, `pr_view`, `pr_checks`, `pr_merge`, `api`,
   and `gh` for any other gh command), not `gh` in Bash, which agents' runs block.
 - Once a task's branch has been merged into its base (`master`, or a subproject's branch for a task

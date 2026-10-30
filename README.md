@@ -532,7 +532,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     doesn't leave the old copy running. It's kept in `agent_wait.command` and shown with the
     wait.
   - `pull_request` (API 62) watches a pull request: its number (in the task's repository, the one
-    its branch is pushed to), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
+    its branch is pushed to, whose SSH host alias, like `git@github-work:o/r.git`, is the host
+    `ssh -G` says it stands for), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
     been told yet: a check on its head commit failed (or was cancelled or timed out), all of the
     head's required checks passed (all of its checks, when none is required), someone other than
     the agent's GitHub account commented or reviewed, it started to conflict with its base branch,
@@ -543,7 +544,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
     comments with their author, kind (comment, review or review comment), file and line, and their
     text without HTML comments and cut to 800 characters (20 at most). A wait that ends otherwise
     returns how the pull request was when last read (`read_at`). The server reads it with one
-    GraphQL query (`gh api graphql`) a minute, as the task's GitHub account (see *GitHub accounts*)
+    GraphQL query (`gh api graphql`) a minute (and one for each 100 review threads past the first
+    100, up to 1,000), as the task's GitHub account (see *GitHub accounts*)
     and only that one; a failed read is tried again after 2, 4, 8 and 10 minutes, and after 5 in a
     row the wait ends with `events: ["unreadable"]` and the error. The first read is made before
     the wait starts, so a pull request that can't be read fails the call. No one's asked about it:
