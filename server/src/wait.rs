@@ -963,6 +963,12 @@ mod tests {
             let err = format!("{:#}", wait(&s, &run, &task, "c1", on_pr(30.0)).await.unwrap_err());
             assert_eq!(err, "The wait didn't start: o/r#7 couldn't be read: Could not resolve to a Repository with the name 'o/r'.");
             assert_eq!(reload(&s, &task.id).agent_wait, None);
+            // A host from the task's remote that isn't GitHub's (an SSH alias ssh doesn't know) asks for the URL.
+            gh.set(Err("gh failed: none of the git remotes configured for this repository point to a known GitHub host".into()));
+            let target = Target { host: "github-work".into(), ..o_r(7) };
+            let req = Request { pull_request: Some(pr_watch::Request { target, events: vec![] }), ..secs(30.0) };
+            let err = format!("{:#}", wait(&s, &run, &task, "c2", req).await.unwrap_err());
+            assert!(err.ends_with("known GitHub host (if github-work isn't a GitHub host, give the pull request's URL)"), "{err}");
         });
     }
 
