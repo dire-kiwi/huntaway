@@ -493,13 +493,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
 - **Waiting** (API 36): an agent with nothing to do until something happens (the tasks it
-  created, CI, a deploy) calls the `wait` tool (`reason`, `seconds`, `tasks`) instead of sleeping,
+  created, CI and reviews, a deploy) calls the `wait` tool (`reason`, `seconds`, `tasks`) instead of sleeping,
   polling or ending its turn. The call blocks until the first of: the wait period is over (10
-  minutes unless given, an hour at most; for a wait with neither `tasks` nor a `command`, 30
+  minutes unless given, an hour at most; for a wait with no `tasks`, `command` or `pull_request`, 30
   seconds by default and at most, since little else can end it early: a longer one is turned
-  down with a note to give a command or wait 30 seconds at a time), one of the tasks in `tasks` changes status (or is
+  down with a note to give one or wait 30 seconds at a time), one of the tasks in `tasks` changes status (or is
   deleted), one of its subagents completes, fails or stops, the shell command in `command`
-  exits (API 41, see below), a message is sent to the agent (yours or `send_to_task`), the run is stopped, the
+  exits (API 41, see below), there's news about the pull request in `pull_request` (API 62, see
+  below), a message is sent to the agent (yours or `send_to_task`), the run is stopped, the
   task is moved to another column from the board or with `update_task` (*Needs attention* too;
   the board's own moves there and back for a subagent's permission prompt don't count), or the run carries on with other work: another board tool
   call (from the agent or its subagents) or a tool call of the agent's own thread (Claude or
@@ -530,6 +531,32 @@ skipped. Auto-compacting idle sessions is Claude-only.
     that started it is gone, however it went (restarting, exiting or crashing), so a restart
     doesn't leave the old copy running. It's kept in `agent_wait.command` and shown with the
     wait.
+  - `pull_request` (API 62) watches a pull request: its number (in the task's repository, the one
+    its branch is pushed to), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
+    been told yet: a check on its head commit failed (or was cancelled or timed out), all of the
+    head's required checks passed (all of its checks, when none is required), someone other than
+    the agent's GitHub account commented or reviewed, it started to conflict with its base branch,
+    or (always) it was merged or closed. `pull_request_events` picks some of `checks_failed`,
+    `checks_passed`, `comments` and `conflicts` (all by default). The call returns `ended:
+    "pull_request"` with `pull_request`: its state (merge state, review decision, checks' outcome
+    with the failed ones' names and links, and those still running), the events, and the new
+    comments with their author, kind (comment, review or review comment), file and line, and their
+    text without HTML comments and cut to 800 characters (20 at most). A wait that ends otherwise
+    returns how the pull request was when last read (`read_at`). The server reads it with one
+    GraphQL query (`gh api graphql`) a minute, as the task's GitHub account (see *GitHub accounts*)
+    and only that one; a failed read is tried again after 2, 4, 8 and 10 minutes, and after 5 in a
+    row the wait ends with `events: ["unreadable"]` and the error. The first read is made before
+    the wait starts, so a pull request that can't be read fails the call. No one's asked about it:
+    it only reads. What the agent has been told about each pull request is kept with the task
+    (`pr_watches`, DB 54), across its waits and runs and server restarts: the comments and reviews
+    it has seen, the head commit whose checks' outcome it was told, and whether it was told of a
+    conflict. A wait reports what happened since the last one on that pull request, so a review
+    left while the agent works between waits ends the next one straight away, and a restart
+    doesn't report old comments again. The first wait on a pull request counts its comments as
+    seen but reports how its checks ended and a conflict. News counts as told once a call returns
+    it (a call that ends otherwise returns it too): a run that was stopped meanwhile leaves it for
+    the next wait. It's kept in `agent_wait.pull_request`, and the card and list show *watching
+    #N* after the agent's reason, linked to the pull request.
 - **Ready for merge:** moving a task there (once its agent has stopped) asks its agent to merge
   the work: its pull request if there is one, otherwise the branch, following the project's own
   instructions. The card stays in *Ready for merge* while the agent works. If the agent needs
@@ -812,7 +839,7 @@ host fails.
 account's host; it uses the account's token over HTTPS, and pushes over SSH use the host's SSH
 keys (or the SSH alias the remote names). The host's own gh calls for a task (finding its pull
 request, checking a merged one before removing its worktree) and the commands of the agent's
-`wait` calls use the same account. A wait's command doesn't get the token: `gh` on its `PATH` is a
+`wait` calls use the same account, as do the reads of a wait's pull request. A wait's command doesn't get the token: `gh` on its `PATH` is a
 script that runs `huntaway gh-run`, which checks each call's targets as the tools do and runs gh
 with the token. An account that isn't signed in to gh fails the tool call
 (and a `wait` with a command, without running it) with a message saying so, and the host skips its
