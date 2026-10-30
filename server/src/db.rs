@@ -515,19 +515,33 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=53; COMMIT;"))?;
     }
     if version < 54 {
+        // What a task's agent has been told about each pull request it waited on (see pr_watch.rs).
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS pr_watches (
+               task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+               pr TEXT NOT NULL,
+               state TEXT NOT NULL,
+               updated_at TEXT NOT NULL,
+               PRIMARY KEY (task_id, pr)
+             );
+             PRAGMA user_version=54; COMMIT;",
+        )?;
+    }
+    if version < 55 {
         // Projects' automations and their runs (see automations.rs).
-        conn.execute_batch(&format!("BEGIN; {SCHEMA_V54} PRAGMA user_version=54; COMMIT;"))?;
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V55} PRAGMA user_version=55; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 54;
+pub const VERSION: i64 = 55;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
-const SCHEMA_V54: &str = r#"
+const SCHEMA_V55: &str = r#"
 CREATE TABLE IF NOT EXISTS automations (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -1237,6 +1251,24 @@ pub struct AgentWait {
     /// across a server restart).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_finished: Option<Value>,
+    /// A pull request whose news ends the wait (API 62, see pr_watch.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<WaitPr>,
+}
+
+/// The pull request a wait watches.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WaitPr {
+    pub url: String,
+    /// `OWNER/REPO`, or `HOST/OWNER/REPO` off github.com.
+    pub repo: String,
+    pub number: u64,
+    /// What ends the wait (see pr_watch::EVENTS); its being merged or closed always does.
+    pub events: Vec<String>,
+    /// What a read found that ends the wait, kept until the call returns (also across a server
+    /// restart), with what the agent has been told once it has (see pr_watch::News).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub news: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -2818,11 +2850,11 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_version_53_gets_automations() {
-        let path = std::env::temp_dir().join(format!("huntaway-v53-{}.db", crate::util::new_id()));
+    fn a_database_from_version_54_gets_automations() {
+        let path = std::env::temp_dir().join(format!("huntaway-v54-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
-            c.execute_batch("DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version=53;").unwrap();
+            c.execute_batch("DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version=54;").unwrap();
         }
         let c = open(&path).unwrap();
         assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
@@ -2956,6 +2988,35 @@ mod tests {
         assert_eq!(get_task(&c, "t").unwrap().unwrap().fanout_id, None);
         let t = update_task(&c, "t", &[("fanout_id", json!("f1"))]).unwrap().unwrap();
         assert_eq!(t.fanout_id.as_deref(), Some("f1"));
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_53_gets_pull_request_watches() {
+        let path = std::env::temp_dir().join(format!("huntaway-v53-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "DROP TABLE pr_watches;
+                 PRAGMA user_version=53;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,description,status,position,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'t','','todo',0,'1','1','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        c.execute("INSERT INTO pr_watches (task_id,pr,state,updated_at) VALUES ('t','github.com/o/r#1','{}','1')", []).unwrap();
+        // A stored wait from before it had a pull request is read as one without.
+        let w = json!({"since": "1", "until": "2", "call_id": "c", "run_id": "r"});
+        assert_eq!(update_task(&c, "t", &[("agent_wait", w)]).unwrap().unwrap().agent_wait.unwrap().pull_request, None);
+        // They go with their task.
+        c.execute("DELETE FROM tasks WHERE id='t'", []).unwrap();
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM pr_watches", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

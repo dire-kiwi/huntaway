@@ -1943,7 +1943,7 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 /// set) and effort. Also, for a board that can't run agents itself, the linked host its
 /// workspace scratch chats go to (`scratch_host`, a link id). And the TUI programs offered as
 /// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`). And the
-/// address it's reached at from outside (`public_url`, API 62), which its automations' webhook
+/// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
 /// URLs are shown with.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     if let Some(e) = b.get("default_effort").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) {

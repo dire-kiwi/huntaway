@@ -17,6 +17,7 @@ mod github;
 mod hub;
 mod mcp;
 mod permissions;
+mod pr_watch;
 mod prompts;
 mod proto;
 mod pty;
