@@ -20,6 +20,7 @@ import {
   type Project,
   type PromptField,
   type Reviewer,
+  type WatchPullRequests,
 } from "../api";
 import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "../githubRepos";
 import { groupNames } from "../projectGroups";
@@ -495,6 +496,23 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
               </Field>
               {hostSupports(host, 29) && <ProjectReviewers project={form} onChange={(v) => set("reviewers", v)} />}
             </div>
+          )}
+
+          {hostSupports(host, 64) && (
+            <Field
+              label="Watch pull requests in review"
+              hint="While a task is in In review, the board reads its pull request every couple of minutes and sends its agent what's new, which starts its turn. Comments from bots and from the agents' own GitHub account (yours too, if you share it) don't count."
+            >
+              <select
+                value={form.watch_pull_requests ?? "off"}
+                onChange={(e) => set("watch_pull_requests", e.target.value as WatchPullRequests)}
+                className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+              >
+                <option value="off">Off</option>
+                <option value="failures">Failed checks and conflicts wake the agent</option>
+                <option value="all">Failed checks, conflicts, comments and reviews wake the agent</option>
+              </select>
+            </Field>
           )}
 
           {prompts && <ProjectPrompts project={form} onChange={set} />}

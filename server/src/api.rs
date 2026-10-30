@@ -797,6 +797,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
             "worktrees_root", "auto_review", "review_rounds", "reviewers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
+            "watch_pull_requests",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -852,6 +853,9 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
                     check_key(s, &before.profile_id, Some(&before.id), &key)?;
                 }
                 *v = json!(key);
+            }
+            "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
+                return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
             }
             "use_worktrees" | "auto_review" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
@@ -2564,6 +2568,26 @@ pub(crate) mod tests {
 
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             assert!(create_task_inner(&s, &p.id, task("after")).unwrap().use_worktree);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn projects_watch_pull_requests_in_review_once_asked_to() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            assert_eq!(p.watch_pull_requests, "off");
+            let set = async |v: Value| update_project_inner(&s, &p.id, json!({ "watch_pull_requests": v }).as_object().unwrap()).await;
+            for mode in ["failures", "all", "off"] {
+                assert_eq!(set(json!(mode)).await.unwrap().watch_pull_requests, mode);
+            }
+            for bad in [json!("everything"), Value::Null, json!(true)] {
+                assert!(set(bad).await.is_err());
+            }
             std::fs::remove_dir_all(&dir).ok();
         })
     }
