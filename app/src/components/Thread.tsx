@@ -76,7 +76,7 @@ type Any = any;
 
 // ---------- tool calls ----------
 
-function toolMeta(name: string, input: Any, cwd?: string | null): { icon: ReactNode; label: string; summary: string } {
+export function toolMeta(name: string, input: Any, cwd?: string | null): { icon: ReactNode; label: string; summary: string } {
   const rel = (p?: string) => (p && cwd && p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : p ?? "");
   const s = 13;
   switch (name) {
