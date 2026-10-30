@@ -549,12 +549,33 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=56; COMMIT;"
         ))?;
     }
+    if version < 57 {
+        // Plans, artifacts and diagrams are labels any task can have, with a document each
+        // (see documents.rs), rather than types of task. A task that was one of those types gets
+        // its type as its label, and keeps working in its own folder (as a `work_dir` in the data
+        // dir), where its agent's conversation is.
+        let has = |table: &str, column: &str| {
+            conn.query_row(&format!("SELECT COUNT(*) > 0 FROM pragma_table_info('{table}') WHERE name='{column}'"), [], |r| r.get::<_, bool>(0))
+        };
+        let tasks = if has("tasks", "labels")? { "" } else { "ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]';" };
+        let documents = if has("documents", "label")? { "" } else { "ALTER TABLE documents ADD COLUMN label TEXT NOT NULL DEFAULT 'plan';" };
+        conn.execute_batch(&format!(
+            "BEGIN; {tasks} {documents}
+             UPDATE documents SET label=(SELECT t.task_type FROM tasks t WHERE t.id=documents.task_id)
+               WHERE (SELECT t.task_type FROM tasks t WHERE t.id=documents.task_id) IN ('plan','artifact','diagram');
+             DROP INDEX IF EXISTS documents_task;
+             CREATE UNIQUE INDEX documents_task ON documents(task_id, label, version);
+             UPDATE tasks SET labels=json_array(task_type), work_dir=COALESCE(work_dir, 'documents/' || id), task_type=NULL
+               WHERE task_type IN ('plan','artifact','diagram');
+             PRAGMA user_version=57; COMMIT;"
+        ))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 56;
+pub const VERSION: i64 = 57;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -806,9 +827,12 @@ pub fn set_setting(c: &Connection, key: &str, value: Option<&str>) -> Result<()>
 }
 
 pub const STATUSES: &[&str] = &["todo", "in_progress", "needs_attention", "in_review", "ready_for_merge", "done", "backlog"];
-/// What a task can make besides code (see Task::task_type and documents.rs), or `scratch`
-/// for a scratch task (see Task::is_scratch).
-pub const TASK_TYPES: &[&str] = &["plan", "artifact", "diagram", SCRATCH];
+/// What a task can be besides a code task: `scratch`, for a scratch task (see Task::is_scratch).
+pub const TASK_TYPES: &[&str] = &[SCRATCH];
+/// The labels a task can have, each a document its agent writes besides its other work (see
+/// Task::labels and documents.rs), in the order the task shows them. They were task types of their
+/// own before API 69, which still accepts them as a new task's `task_type`.
+pub const LABELS: &[&str] = &["plan", "artifact", "diagram"];
 /// The task type of a scratch task.
 pub const SCRATCH: &str = "scratch";
 /// What a new task's type can also be, to make it a subproject (API 51). It's kept as
@@ -1094,16 +1118,20 @@ pub struct Task {
     /// The task whose agent created this one (with the `create_task` tool), if any.
     #[serde(default)]
     pub created_by: Option<String>,
-    /// What a task makes, if not code: one of TASK_TYPES. Its agent writes a document (an HTML
-    /// plan or artifact, or a Mermaid diagram) that the board keeps and shows (see documents.rs),
-    /// or for a scratch task, nothing in particular (see is_scratch).
+    /// What a task is, if not a code task: one of TASK_TYPES (a scratch task, see is_scratch).
     #[serde(default)]
     pub task_type: Option<String>,
-    /// Where a scratch task made from a scratch chat works: the chat's folder, where its
-    /// conversation is. Other tasks with a type work in their own folder (see documents::dir).
+    /// Some of LABELS: the documents its agent writes (an HTML plan or artifact, or a Mermaid
+    /// diagram) besides its other work, which the board keeps and shows (see documents.rs).
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Where the task's agent works, if not where its kind and project say: for a scratch task
+    /// made from a scratch chat, the chat's folder, where its conversation is; for a task made as a
+    /// plan, artifact or diagram before they were labels, its own folder (relative, in the data
+    /// dir; see documents::work_dir). Other scratch tasks work in their own folder too.
     #[serde(default)]
     pub work_dir: Option<String>,
-    /// When its document last changed, so clients know to fetch it again.
+    /// When one of its documents last changed, so clients know to fetch them again.
     #[serde(default)]
     pub document_at: Option<String>,
     pub number: i64,
@@ -1399,6 +1427,7 @@ impl Task {
             group_name: r.get("group_name")?,
             created_by: r.get("created_by")?,
             task_type: r.get("task_type")?,
+            labels: json_list(r.get("labels")?),
             document_at: r.get("document_at")?,
             work_dir: r.get("work_dir")?,
             number: r.get("number")?,
@@ -2023,7 +2052,7 @@ pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -2910,6 +2939,53 @@ mod tests {
         assert!(check_resolution("done", &json!("maybe")).is_err());
         assert!(check_resolution("done", &json!(1)).is_err());
         assert!(check_resolution("in_review", &json!("done")).is_err());
+    }
+
+    #[test]
+    fn a_database_from_version_56_has_its_plan_artifact_and_diagram_tasks_labelled() {
+        let path = std::env::temp_dir().join(format!("huntaway-v56-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "DROP INDEX documents_task;
+                 ALTER TABLE documents DROP COLUMN label;
+                 CREATE UNIQUE INDEX documents_task ON documents(task_id, version);
+                 ALTER TABLE tasks DROP COLUMN labels;
+                 PRAGMA user_version=56;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,task_type,work_dir,number,title,status,last_activity_at,created_at,updated_at)
+                   VALUES ('plan','p','task','plan',NULL,1,'Plan','in_review','1','1','1'),
+                          ('art','p','task','artifact',NULL,2,'Page','todo','1','1','1'),
+                          ('chat','p','task','scratch','/chat',1,'Chat','done','1','1','1'),
+                          ('code','p','task',NULL,NULL,3,'Code','todo','1','1','1');
+                 INSERT INTO documents (task_id,version,content,open,created_at,updated_at)
+                   VALUES ('plan',1,'<h1>1</h1>',0,'1','1'), ('plan',2,'<h1>2</h1>',0,'1','1'), ('art',1,'<p>',0,'1','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let task = |id: &str| get_task(&c, id).unwrap().unwrap();
+        let (plan, art, chat, code) = (task("plan"), task("art"), task("chat"), task("code"));
+        assert_eq!((plan.task_type, plan.labels, plan.work_dir.as_deref()), (None, vec!["plan".to_string()], Some("documents/plan")));
+        assert_eq!((art.task_type, art.labels, art.work_dir.as_deref()), (None, vec!["artifact".to_string()], Some("documents/art")));
+        assert_eq!((chat.task_type.as_deref(), chat.labels.len(), chat.work_dir.as_deref()), (Some(SCRATCH), 0, Some("/chat")));
+        assert_eq!((code.task_type, code.labels.len(), code.work_dir), (None, 0, None));
+        let docs: Vec<(String, String, i64)> = c
+            .prepare("SELECT task_id, label, version FROM documents ORDER BY task_id, version")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let doc = |t: &str, l: &str, v| (t.to_string(), l.to_string(), v);
+        assert_eq!(docs, vec![doc("art", "artifact", 1), doc("plan", "plan", 1), doc("plan", "plan", 2)]);
+        // Another label's version 1 can sit beside the plan's.
+        c.execute("INSERT INTO documents (task_id,label,version,content,created_at,updated_at) VALUES ('plan','diagram',1,'x','1','1')", []).unwrap();
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 
     #[test]

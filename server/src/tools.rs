@@ -573,6 +573,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
                 status: str_arg("status"),
                 resolution: str_arg("resolution"),
                 start: args["start"].as_bool().filter(|b| *b).map(Value::Bool),
+                labels: Some(args["labels"].clone()),
                 ..Default::default()
             };
             let marks = new_task_marks(args)?;
@@ -617,6 +618,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
                 claude_config_id: None,
                 depends_on: dependency_ids(s, ctx, &args["depends_on"], profile)?,
                 task_type: str_arg("type"),
+                labels: Some(args["labels"].clone()),
                 external_links: None,
                 fanout_id: None,
             };
@@ -627,7 +629,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;
             let mut body = Map::new();
-            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url"] {
+            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "labels"] {
                 if !args[k].is_null() {
                     body.insert(k.into(), args[k].clone());
                 }
@@ -1390,10 +1392,11 @@ fn summarize(s: &Shared, t: &Task) -> Value {
     if let (None, Some(g)) = (&t.project_id, &t.group_name) {
         v["group_task"] = json!(g);
     }
-    // Where a plan, artifact or diagram is, for agents on this host to read.
-    if let (Some(tt), Some(file)) = (&t.task_type, crate::documents::path(s, t)) {
-        v["type"] = json!(tt);
-        v["document"] = json!(crate::util::path_str(&file));
+    // Its labels, and where the plan, artifact or diagram each asks for is, for agents on this host to read.
+    let documents = crate::documents::paths(s, t);
+    if !documents.is_empty() {
+        v["labels"] = json!(documents.iter().map(|(l, _)| l).collect::<Vec<_>>());
+        v["documents"] = documents.iter().map(|(l, f)| (l.to_string(), json!(crate::util::path_str(f)))).collect::<serde_json::Map<_, _>>().into();
     }
     if t.is_scratch() {
         v["type"] = json!(db::SCRATCH);
@@ -1594,6 +1597,7 @@ mod tests {
             claude_config_id: None,
             depends_on: None,
             task_type: None,
+            labels: None,
             external_links: None,
             fanout_id: None,
         };
