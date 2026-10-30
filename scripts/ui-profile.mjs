@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // How much main-thread time the board UI spends loading and handling live events, against a test server.
 //
-//   node scripts/ui-profile.mjs --env <file|data dir> --task <task id> [--cpu] [--chromium <path>]
+//   node scripts/ui-profile.mjs --env <file|data dir> --task <task id> [--changes] [--cpu] [--chromium <path>]
 //
 // It opens the task's project board, opens the task (give it a long thread), then feeds the page websocket
 // events as agents would send them (through page.routeWebSocket, so nothing is written on the server):
@@ -9,6 +9,11 @@
 // script, layout and total main-thread time (Chrome's Performance metrics) and the JS heap. With --cpu
 // it also prints the functions that took the most time (build the UI with `npx vite build --minify false`
 // first for readable names).
+//
+// With --changes it measures the task's Changes tab instead (give it a big diff: changes in its worktree, the
+// first row of its files list a folder with them in, and its second row the biggest file): opening the tab on
+// the folder's diffs, the next seconds (highlighting, which comes from a worker), going into the file, moving
+// the cursor through its lines, scrolling it, and switching it to the split layout and back.
 //
 // Numbers vary from run to run and machine to machine: compare runs on the same machine, before and after.
 import { open, readEnv } from "./ui-check.mjs";
@@ -18,6 +23,7 @@ function args(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--cpu") o.cpu = true;
+    else if (a === "--changes") o.changes = true;
     else if (["--env", "--task", "--chromium"].includes(a)) o[a.slice(2)] = argv[++i];
     else throw new Error(`unknown argument ${a} (see the top of ${import.meta.url})`);
   }
@@ -101,6 +107,43 @@ const taskEvents = async (n) => {
     await sleep(50);
   }
 };
+
+if (o.changes) {
+  await measure("load the board", async () => {
+    await page.goto(`${env.url}/p/${task.project_id}`);
+    await page.locator(`[data-task="${task.id}"]`).first().waitFor();
+  });
+  await togglePanel(task.id);
+  await page.getByRole("button", { name: /^thread$/i }).waitFor();
+  const keys = async (key, n, ms = 30) => {
+    for (let i = 0; i < n; i++) {
+      await page.keyboard.press(key);
+      await sleep(ms);
+    }
+  };
+  await measure("open the Changes tab (a folder's diffs)", async () => {
+    await page.getByRole("button", { name: /^changes$/i }).click();
+    await page.getByText("Unstaged", { exact: true }).first().waitFor({ timeout: 30000 });
+  });
+  await measure("the next 3 s (highlighting)", () => sleep(3000));
+  await measure("into the first file's diff", async () => {
+    await keys("j", 1);
+    await keys("Enter", 1);
+    await page.getByText("Unstaged changes", { exact: true }).waitFor({ timeout: 30000 });
+    await sleep(3000);
+  });
+  await measure("60 cursor moves", () => keys("j", 60));
+  await measure("20 pages down", () => keys("PageDown", 20, 50));
+  await measure("split, then unified", async () => {
+    await keys("|", 1);
+    await sleep(1500);
+    await keys("|", 1);
+  });
+  await ui.close();
+  console.log();
+  console.table(Object.fromEntries(rows.map(({ name, ...r }) => [name, r])));
+  process.exit(0);
+}
 
 await measure("load the board", async () => {
   await page.goto(`${env.url}/p/${task.project_id}`);

@@ -20,6 +20,7 @@ import {
   LocateFixed,
   Map as MapIcon,
   Maximize2,
+  MessageSquare,
   Pencil,
   Search,
   ShieldOff,
@@ -51,6 +52,7 @@ import { useHost, useProject, useStore, useThreadMessages } from "../store";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
+import { lineRange, removeComments, reviewMessage, useReview, withComments, type LineComment } from "../lineComments";
 import { ProjectChangeCard, TaskDeletionCard } from "./Approvals";
 import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
@@ -1156,6 +1158,39 @@ function ModeSelect({ control, running }: { control: ReturnType<typeof useModeCo
   );
 }
 
+/** The diff's comments waiting to go with the next message: each one's file and lines, and its note. */
+function ComposerComments({ task, comments }: { task: Task; comments: LineComment[] }) {
+  return (
+    <div className="border-b border-line px-4 py-2" data-comments>
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-faint">
+        <MessageSquare size={11} className="text-accent" />
+        {comments.length === 1 ? "A comment" : `${comments.length} comments`} on the diff, sent with this message
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {comments.map((c) => (
+          <span
+            key={c.id}
+            title={`${c.path}, ${lineRange(c)} (${c.source})\n\n${c.note}`}
+            className="flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-line-strong bg-raised py-0.5 pr-0.5 pl-2 text-[11.5px]"
+          >
+            <span className="shrink-0 font-mono text-muted">
+              {c.path.split("/").pop()}:{c.start === c.end ? c.start : `${c.start}–${c.end}`}
+            </span>
+            <span className="max-w-[28ch] min-w-0 truncate text-fg">{c.note}</span>
+            <button
+              onClick={() => removeComments(task.host_id, task.id, [c.id])}
+              title="Remove the comment"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-faint hover:bg-white/10 hover:text-fg"
+            >
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** A user message: its text, and the files attached to it. */
 function UserText({ text, hostId }: { text: string; hostId: string }) {
   const { text: body, files } = useMemo(() => splitAttachments(text), [text]);
@@ -1209,7 +1244,7 @@ function saveComposerDraft(key: string, text: string, files: AttachmentRef[]) {
 }
 
 /** `typed` once `sent` has gone: what was typed after it while it was sending, or all of it if what was sent was changed. */
-export const afterSent = (typed: string, sent: string) => (typed.startsWith(sent) ? typed.slice(sent.length).replace(/^\s+/, "") : typed);
+export const afterSent = (typed: string, sent: string) => (sent && typed.startsWith(sent) ? typed.slice(sent.length).replace(/^\s+/, "") : typed);
 
 /** How a send ended: what went (text as typed, and files), or why it didn't. */
 type SendEnd = { sent: string; files: AttachmentRef[] } | { error: string };
@@ -1222,7 +1257,8 @@ type SendEnd = { sent: string; files: AttachmentRef[] } | { error: string };
 const sending = new Map<string, number>();
 const sendWatchers = new Map<string, Set<(end: SendEnd) => void>>();
 
-async function sendDraft(key: string, task: Task, body: string, sent: string, files: AttachmentRef[]) {
+/** Sends a message: what was typed (`sent`), the files attached and the diff comments in it (by id) come off the draft once it's gone. */
+async function sendDraft(key: string, task: Task, body: string, sent: string, files: AttachmentRef[], comments: string[] = []): Promise<SendEnd> {
   sending.set(key, (sending.get(key) ?? 0) + 1);
   let end: SendEnd;
   try {
@@ -1230,6 +1266,7 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
     // Off the saved draft as well, for when no composer shows it.
     const d = loadComposerDraft(key);
     if (d) saveComposerDraft(key, afterSent(d.text, sent), d.files.filter((f) => !files.some((x) => x.id === f.id)));
+    removeComments(task.host_id, task.id, comments);
     end = { sent, files };
   } catch (e) {
     end = { error: (e as Error).message };
@@ -1238,7 +1275,19 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
   if (n) sending.set(key, n);
   else sending.delete(key);
   for (const watch of sendWatchers.get(key) ?? []) watch(end);
+  return end;
 }
+
+/** Sends the task's diff comments (from the Changes tab) on their own, as the composer would with nothing typed. */
+export const sendComments = (task: Task, comments: LineComment[]) =>
+  sendDraft(
+    composerDraftKey(task),
+    task,
+    reviewMessage(comments),
+    "",
+    [],
+    comments.map((c) => c.id),
+  );
 
 export function Composer({ task, placeholder }: { task: Task; placeholder?: string }) {
   const draftKey = composerDraftKey(task);
@@ -1257,6 +1306,8 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   const blocked = task.running && !canQueue;
   const attach = useAttachmentDraft(task.host_id, hostSupports(host, 18), saved?.files);
   const skills = useSkillMenu(task, text, setText);
+  // Comments on lines of the diff (the Changes tab's), which go with the message.
+  const { comments } = useReview(task.host_id, task.id);
   // Saved as it's written. Files still uploading are left out until they're on the host.
   const draftJson = JSON.stringify({ text, files: attach.files });
   useEffect(() => {
@@ -1291,12 +1342,19 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
 
   const send = () => {
     const files = attach.files;
-    const body = withAttachments(text.trim(), files);
+    const body = withAttachments(withComments(text, comments), files);
     if (blocked || busy || attach.uploading) return;
     if (!body && (task.session_id || task.running)) return;
     setBusy(true);
     setErr(null);
-    sendDraft(draftKey, task, body, text, files);
+    void sendDraft(
+      draftKey,
+      task,
+      body,
+      text,
+      files,
+      comments.map((c) => c.id),
+    );
   };
 
   /** Take the queued message back into the composer to edit it. */
@@ -1361,6 +1419,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
               </button>
             </div>
           )}
+          {comments.length > 0 && <ComposerComments task={task} comments={comments} />}
           <SkillMenu menu={skills} />
           {skills.hint && <SkillHint item={skills.hint} />}
           <textarea
@@ -1382,7 +1441,9 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
             }}
             rows={1}
             placeholder={
-              task.running
+              comments.length && !blocked
+                ? `Add a message to the comment${comments.length === 1 ? "" : "s"}, or press Enter to send ${comments.length === 1 ? "it" : "them"}…`
+                : task.running
                 ? canQueue
                   ? task.queued_message
                     ? "Add to the queued message…"
@@ -1406,7 +1467,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
             </span>
             <div className="ml-auto flex items-center gap-1.5">
               <AttachButton draft={attach} />
-              {task.running && canQueue && (text.trim() || attach.items.length > 0) && (
+              {task.running && canQueue && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
                 <button
                   onClick={send}
                   disabled={busy || attach.uploading}
@@ -1430,7 +1491,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
               ) : (
                 <button
                   onClick={send}
-                  disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !canStartEmpty)}
+                  disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !comments.length && !canStartEmpty)}
                   title="Send (Enter)"
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint"
                 >

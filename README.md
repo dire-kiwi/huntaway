@@ -828,6 +828,26 @@ skipped. Auto-compacting idle sessions is Claude-only.
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
   wrong. A host before API 66 shows the branch's diff alone.
+- **Diffs and comments for the agent:** the Changes tab's diffs are highlighted for their
+  file's language (by extension or name; the theme is the board's own colours), with
+  [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`app/src/highlight.worker.ts`),
+  so a big diff doesn't hold up the page. Each language's grammar is fetched the first time a
+  file in it is shown; a file's diff is highlighted once it's scrolled near, each hunk on its own
+  (lines show plain until then), and files with more than 5000 lines in their diff, and lines over
+  1000 characters, are left plain. `|` (or *unified*/*split* in the main panel's title) shows
+  diffs side by side or unified, and the choice is kept in the browser. Lines can be commented on
+  for the agent: `n` comments on the line under the cursor or the range or hunk picked (when
+  staging), or on the lines picked by their numbers in a commit's, the branch's or a folder's diff
+  (click, shift-click or drag over them); a line's comment button (on hover) does the same for it,
+  or for what's picked if it's one of those lines. The note is written under the lines (Enter adds
+  it, Esc leaves it for later), and the comments wait there, in a bar at the bottom of the tab (a
+  list that goes to each one, *Send to the agent* and *Discard*) and as chips in the thread's
+  composer, until a message takes them: the bar's button sends them alone, and a message sent from
+  the composer takes them after what's typed. Either way they go as one message, each with its
+  file, its lines (numbered in the new version, or the old one for removed lines), the lines as
+  the diff has them and its note, and while the agent works it's queued or steered as any message
+  is then. Comments, and notes still being written, are kept in the browser per task
+  (`app/src/lineComments.ts`), as composer drafts are.
 - **Terminals:** a task's *Terminal* tab opens a shell (xterm.js) in its worktree, or where its
   agent runs if it has none. It is a tmux session on the task's host, on a tmux server of its
   own (`tmux -L ia-<host id>`, so your other tmux sessions aren't touched, though `~/.tmux.conf`
