@@ -21,7 +21,7 @@ use tokio::process::Command;
 use crate::db::{Project, Task};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{path_str, truncate};
-use crate::worktree::{self, Output};
+use crate::worktree;
 
 /// Past this a file's diff isn't sent, and only the whole file can be staged.
 const MAX_DIFF: usize = 4 << 20;
@@ -31,8 +31,16 @@ const MAX_FILES: usize = 5000;
 const MAX_COMMITS: usize = 300;
 const BASE_COMMITS: usize = 30;
 
+/// What a git command did. Its output is decoded lossily, so `utf8` says whether it was text a patch can be made from.
+struct Out {
+    ok: bool,
+    stdout: String,
+    stderr: String,
+    utf8: bool,
+}
+
 /// Runs git in `dir` with paths unquoted and no editor, with `input` on its stdin.
-async fn run(dir: &Path, args: &[&str], input: Option<&str>) -> Result<Output> {
+async fn run(dir: &Path, args: &[&str], input: Option<&str>) -> Result<Out> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(dir)
@@ -56,19 +64,25 @@ async fn run(dir: &Path, args: &[&str], input: Option<&str>) -> Result<Output> {
     };
     let (_, out) = tokio::join!(write, child.wait_with_output());
     let out = out.context("failed to run git")?;
-    Ok(Output {
+    Ok(Out {
         ok: out.status.success(),
         stdout: String::from_utf8_lossy(&out.stdout).to_string(),
         stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+        utf8: std::str::from_utf8(&out.stdout).is_ok(),
     })
 }
 
-/// `run`, failing with git's own message (a 409: the repository isn't in a state for it) when git does.
+/// Git's own message for a command that failed (a 409: the repository isn't in a state for it).
+fn failed(o: &Out) -> ApiError {
+    let msg = [o.stderr.trim(), o.stdout.trim()].into_iter().find(|m| !m.is_empty()).unwrap_or("git failed");
+    ApiError::conflict(msg.to_string())
+}
+
+/// `run`, failing with git's own message when git does.
 async fn run_ok(dir: &Path, args: &[&str], input: Option<&str>) -> ApiResult<String> {
     let o = run(dir, args, input).await?;
     if !o.ok {
-        let msg = [o.stderr.trim(), o.stdout.trim()].into_iter().find(|m| !m.is_empty()).unwrap_or("git failed");
-        return Err(ApiError::conflict(msg.to_string()));
+        return Err(failed(&o));
     }
     Ok(o.stdout)
 }
@@ -270,7 +284,10 @@ pub struct DiffQuery {
 const DIFF_ARGS: [&str; 4] = ["--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
 
 /// `GET /tasks/{id}/git/diff?path=&staged=&untracked=`: a file's (or folder's) unstaged or staged
-/// changes, without rename detection, for the UI to make patches of chosen lines from.
+/// changes, without rename detection, for the UI to make patches of chosen lines from. A diff that
+/// isn't UTF-8 (a file in another encoding) comes as a `preview` with `not_utf8` and no `patch`: a
+/// patch made from it would have U+FFFD where its other bytes were, and `git apply` would write those
+/// into the file wherever they're in added lines, so such a file is only staged or discarded whole.
 pub async fn diff(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q): Query<DiffQuery>) -> ApiResult<Json<Value>> {
     check_path(&q.path)?;
     let top = top(&s, &id).await?;
@@ -278,24 +295,26 @@ pub async fn diff(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q
     args.extend(DIFF_ARGS);
     let o = if q.untracked {
         args.extend(["--no-index", "--", "/dev/null", &q.path]);
-        let o = run(&top, &args, None).await?;
-        // It exits 1 when there's a difference.
-        if !o.ok && o.stdout.is_empty() {
-            return Err(ApiError::conflict(o.stderr.trim().to_string()));
-        }
-        o.stdout
+        run(&top, &args, None).await?
     } else {
         args.push("--no-renames");
         if q.staged {
             args.push("--cached");
         }
         args.extend(["--", &q.path]);
-        run_ok(&top, &args, None).await?
+        run(&top, &args, None).await?
     };
-    if o.len() > MAX_DIFF {
+    // `--no-index` exits 1 when there's a difference.
+    if !o.ok && !(q.untracked && !o.stdout.is_empty()) {
+        return Err(failed(&o));
+    }
+    if o.stdout.len() > MAX_DIFF {
         return Ok(Json(json!({"patch": "", "too_large": true})));
     }
-    Ok(Json(json!({"patch": o})))
+    if !o.utf8 {
+        return Ok(Json(json!({"patch": "", "not_utf8": true, "preview": o.stdout})));
+    }
+    Ok(Json(json!({"patch": o.stdout})))
 }
 
 #[derive(Deserialize)]
@@ -786,6 +805,38 @@ mod tests {
             assert_eq!(sh(&repo, &["diff", "--cached", "--name-only"]), "b\n");
             let _ = unstage(at(&s).0, at(&s).1, paths(&[])).await.unwrap();
             assert_eq!(sh(&repo, &["diff", "--cached", "--name-only"]), "");
+        })
+    }
+
+    // A patch made from a lossily decoded diff wrote U+FFFD into the index in place of a Latin-1 byte.
+    #[test]
+    fn files_not_in_utf8_are_staged_whole_not_by_line() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (id, wt) = task_repo(&s).await;
+            let at = |s: &Shared| (State(s.clone()), UrlPath(id.clone()));
+            let raw = |rev: &str| std::process::Command::new("git").arg("-C").arg(&wt).args(["show", rev]).output().unwrap().stdout;
+            let get = async |s: &Shared, path: &str, staged: bool, untracked: bool| {
+                diff(at(s).0, at(s).1, Query(DiffQuery { path: path.into(), staged, untracked })).await.unwrap().0
+            };
+            // A Latin-1 line added to f.txt, and an untracked Latin-1 file.
+            let mut f = std::fs::read(wt.join("f.txt")).unwrap();
+            f.extend_from_slice(b"caf\xe9\n");
+            std::fs::write(wt.join("f.txt"), &f).unwrap();
+            std::fs::write(wt.join("latin.txt"), b"na\xefve\n").unwrap();
+            for (path, untracked, line) in [("f.txt", false, "+caf\u{fffd}\n"), ("latin.txt", true, "+na\u{fffd}ve\n")] {
+                let d = get(&s, path, false, untracked).await;
+                assert_eq!((d["patch"].as_str(), d["not_utf8"].as_bool()), (Some(""), Some(true)), "{path}: {d}");
+                assert!(d["preview"].as_str().unwrap().contains(line), "{path}: {d}");
+            }
+            // Staged whole, their bytes are kept; and the staged diff isn't for staging by line either.
+            let _ = stage(at(&s).0, at(&s).1, paths(&["f.txt", "latin.txt"])).await.unwrap();
+            assert_eq!((raw(":f.txt"), raw(":latin.txt")), (f, b"na\xefve\n".to_vec()));
+            assert_eq!(get(&s, "f.txt", true, false).await["not_utf8"], true);
+            // UTF-8 text that isn't ASCII is staged by line as before.
+            std::fs::write(wt.join("utf8.txt"), "café\n").unwrap();
+            let d = get(&s, "utf8.txt", false, true).await;
+            assert!(d["patch"].as_str().unwrap().contains("+café\n") && d.get("not_utf8").is_none(), "{d}");
         })
     }
 }

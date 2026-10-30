@@ -1178,10 +1178,13 @@ export const api = {
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
-  /** The Changes tab's git (API 62): the status, a file's unstaged or staged diff, and a commit's or stash's. */
+  /**
+   * The Changes tab's git (API 62): the status, a file's unstaged or staged diff, and a commit's or stash's. A diff that
+   * isn't UTF-8 comes as a `preview` with `not_utf8` and no `patch`, as lines patched from it would be written back wrong.
+   */
   gitStatus: (h: string, id: string) => on(h).get<GitStatus>(`/tasks/${enc(id)}/git`),
   gitDiff: (h: string, id: string, path: string, q: { staged?: boolean; untracked?: boolean }) =>
-    on(h).get<{ patch: string; too_large?: boolean }>(`/tasks/${enc(id)}/git/diff?${new URLSearchParams({ path, staged: String(!!q.staged), untracked: String(!!q.untracked) })}`),
+    on(h).get<{ patch: string; too_large?: boolean; not_utf8?: boolean; preview?: string }>(`/tasks/${enc(id)}/git/diff?${new URLSearchParams({ path, staged: String(!!q.staged), untracked: String(!!q.untracked) })}`),
   gitShow: (h: string, id: string, rev: string) => on(h).get<GitCommitShown>(`/tasks/${enc(id)}/git/show?rev=${enc(rev)}`),
   gitShowStash: (h: string, id: string, sha: string) => on(h).get<{ patch: string }>(`/tasks/${enc(id)}/git/show?rev=${enc(sha)}&stash=true`),
   /** Stages or unstages the files as they are, or with no paths everything. */

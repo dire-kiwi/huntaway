@@ -696,7 +696,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   keys pressed while a change is being made wait for it, so pressing space again stages the next
   line. The staged lines are a patch the UI makes from the diff it shows (`app/src/changes.ts`),
   applied with `git apply --cached`; if the file has changed since, git refuses it and the view
-  shows why. A host before API 62 shows the branch's diff alone.
+  shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
+  discarded whole, as a patch made from the text the view shows would write its other bytes back
+  wrong. A host before API 62 shows the branch's diff alone.
 - **Terminals:** a task's *Terminal* tab opens a shell (xterm.js) in its worktree, or where its
   agent runs if it has none. It is a tmux session on the task's host, on a tmux server of its
   own (`tmux -L ia-<host id>`, so your other tmux sessions aren't touched, though `~/.tmux.conf`

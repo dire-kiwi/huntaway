@@ -59,6 +59,10 @@ interface FileDiffs {
   unstaged: string;
   staged: string;
   tooLarge: boolean;
+  /** Diffs that aren't UTF-8 (files in other encodings): shown, but never patched by line (see git_view::diff). */
+  unstagedPreview: string;
+  stagedPreview: string;
+  notUtf8: boolean;
   error?: string;
 }
 
@@ -229,14 +233,14 @@ function GitView({ task }: { task: Task }) {
   const [fileDiffs, setFileDiffs] = useState<FileDiffs | null>(null);
   const target = side === "files" ? fileRow : undefined;
   const targetSig = target && `${target.key}\n${target.files.map((f) => `${f.x}${f.y}${f.path}`).join("\n")}`;
-  const keepDiffs = (d: FileDiffs) => setFileDiffs((p) => (p && p.key === d.key && p.unstaged === d.unstaged && p.staged === d.staged && p.tooLarge === d.tooLarge && !p.error ? p : d));
+  const keepDiffs = (d: FileDiffs) => setFileDiffs((p) => (p && JSON.stringify(p) === JSON.stringify(d) ? p : d));
   useEffect(() => {
     if (!target) return;
     let stale = false;
     const key = target.key;
     loadFileDiffs(h, id, target)
       .then((d) => !stale && keepDiffs(d))
-      .catch((e) => !stale && setFileDiffs({ key, unstaged: "", staged: "", tooLarge: false, error: errText(e) }));
+      .catch((e) => !stale && setFileDiffs({ ...NO_DIFFS, key, error: errText(e) }));
     return () => {
       stale = true;
     };
@@ -245,6 +249,8 @@ function GitView({ task }: { task: Task }) {
   const diffs = fileDiffs && target && fileDiffs.key === target.key ? fileDiffs : null;
   const unstagedFiles = useMemo(() => parseDiff(diffs?.unstaged ?? ""), [diffs?.unstaged]);
   const stagedFiles = useMemo(() => parseDiff(diffs?.staged ?? ""), [diffs?.staged]);
+  const unstagedPreview = useMemo(() => parseDiff(diffs?.unstagedPreview ?? ""), [diffs?.unstagedPreview]);
+  const stagedPreview = useMemo(() => parseDiff(diffs?.stagedPreview ?? ""), [diffs?.stagedPreview]);
   // A single file's diffs can be staged by line.
   const single = !!target?.file;
   const paneFile = (p: Pane) => (single ? ((p === "unstaged" ? unstagedFiles : stagedFiles)[0] ?? null) : null);
@@ -503,7 +509,7 @@ function GitView({ task }: { task: Task }) {
       if (!fileRow) return;
       if (!fileRow.file) return setCollapsed((c) => toggled(c, fileRow.key));
       // Still loading, it goes in, and comes out again if there's nothing to stage.
-      if (diffs && !hasPane("unstaged") && !hasPane("staged")) return setFlash({ text: diffs.tooLarge ? "The diff is too big to stage by line" : "No lines to stage in this file" });
+      if (diffs && !hasPane("unstaged") && !hasPane("staged")) return setFlash({ text: diffs.tooLarge ? "The diff is too big to stage by line" : diffs.notUtf8 ? NOT_UTF8 : "No lines to stage in this file" });
     }
     setInMain(true);
   };
@@ -1011,6 +1017,7 @@ function GitView({ task }: { task: Task }) {
             <>
               {diffs?.error && <Note error>{diffs.error}</Note>}
               {diffs?.tooLarge && <Note>The diff is too big to show: stage or discard the whole file from the files panel.</Note>}
+              {diffs?.notUtf8 && <Note>{NOT_UTF8}: stage or discard it whole from the files panel.</Note>}
               {(["unstaged", "staged"] as Pane[])
                 .filter((p) => (p === "unstaged" ? hasUnstaged : hasStaged)(target!.file!))
                 .map((p) => {
@@ -1025,7 +1032,10 @@ function GitView({ task }: { task: Task }) {
                       className="flex-1"
                       right={inMain && on && hunkMode ? <span className="text-accent">hunk</span> : inMain && on && anchor !== null ? <span className="text-accent">range</span> : null}
                     >
-                      {!f ? null : linesStageable(f) ? (
+                      {!f ? (
+                        // Shown as it is, never as lines to stage.
+                        (p === "unstaged" ? unstagedPreview : stagedPreview).length > 0 && <PatchView files={p === "unstaged" ? unstagedPreview : stagedPreview} empty="" />
+                      ) : linesStageable(f) ? (
                         <StagingDiff
                           file={f}
                           rows={on ? drows : diffRows(f)}
@@ -1051,8 +1061,8 @@ function GitView({ task }: { task: Task }) {
                     <>
                       {diffs.error && <Note error>{diffs.error}</Note>}
                       {diffs.tooLarge && <Note>Some of the diffs are too big to show.</Note>}
-                      {unstagedFiles.length > 0 && <PatchView files={unstagedFiles} head={<Section>Unstaged</Section>} empty="" />}
-                      {stagedFiles.length > 0 && <PatchView files={stagedFiles} head={<Section>Staged</Section>} empty="" />}
+                      {unstagedFiles.length + unstagedPreview.length > 0 && <PatchView files={[...unstagedFiles, ...unstagedPreview]} head={<Section>Unstaged</Section>} empty="" />}
+                      {stagedFiles.length + stagedPreview.length > 0 && <PatchView files={[...stagedFiles, ...stagedPreview]} head={<Section>Staged</Section>} empty="" />}
                     </>
                   )
                 ) : (
@@ -1089,12 +1099,15 @@ function mainTitle(side: Side, status: GitStatus, row: FileRow | undefined, comm
   return stash ? `stash@{${stash.index}}` : "Stash";
 }
 
+const NO_DIFFS: FileDiffs = { key: "", unstaged: "", staged: "", tooLarge: false, unstagedPreview: "", stagedPreview: "", notUtf8: false };
+const NOT_UTF8 = "This file isn't UTF-8 text, so its lines can't be staged one by one";
+
 async function loadFileDiffs(h: string, id: string, r: FileRow): Promise<FileDiffs> {
   const one = async (path: string, q: { staged?: boolean; untracked?: boolean }) => {
     const d = await api.gitDiff(h, id, path, q);
-    return { patch: d.patch, tooLarge: !!d.too_large };
+    return { patch: d.patch, tooLarge: !!d.too_large, preview: d.preview ?? "", notUtf8: !!d.not_utf8 };
   };
-  const none = { patch: "", tooLarge: false };
+  const none = { patch: "", tooLarge: false, preview: "", notUtf8: false };
   const path = rowPath(r);
   const [u, s] = await Promise.all([
     r.files.some((f) => hasUnstaged(f) && !untracked(f)) ? one(path, {}) : none,
@@ -1107,6 +1120,9 @@ async function loadFileDiffs(h: string, id: string, r: FileRow): Promise<FileDif
     unstaged: [u, ...added].map((d) => d.patch).join(""),
     staged: s.patch,
     tooLarge: [u, s, ...added].some((d) => d.tooLarge),
+    unstagedPreview: [u, ...added].map((d) => d.preview).join(""),
+    stagedPreview: s.preview,
+    notUtf8: [u, s, ...added].some((d) => d.notUtf8),
   };
 }
 
