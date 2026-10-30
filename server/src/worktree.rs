@@ -885,24 +885,37 @@ async fn gh_json(dir: &Path, args: &[&str], env: Option<&crate::gh_mcp::GhEnv>) 
 
 /// Diff of the task's work against the merge-base with its base branch,
 /// including uncommitted and untracked changes.
-pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
+/// Where a task's changes are: its worktree once it's ready, else the project's repository.
+pub fn changes_dir(state: &Shared, task_id: &str) -> Result<(PathBuf, Task, Project)> {
     let (task, project) = load(state, task_id)?;
     let dir = match (&task.worktree_path, task.worktree_state.as_str()) {
         (Some(p), "ready") => PathBuf::from(p),
         _ => PathBuf::from(&project.repo_path),
     };
-    if !is_git_repo(&dir).await {
-        return Ok(json!({"available": false, "reason": "not a git repository"}));
-    }
+    Ok((dir, task, project))
+}
+
+/// The base branch a task's changes are compared with, and where its branch left it (only known in
+/// the task's own worktree).
+pub async fn changes_base(dir: &Path, task: &Task, project: &Project) -> (Option<String>, Option<String>) {
     let base = task.base_branch.clone().or(project.base_branch.clone()).filter(|b| !b.is_empty());
     let merge_base = match &base {
         Some(b) if task.worktree_state == "ready" => {
             // The task may have started from the base branch's upstream.
-            let b = compare_ref(&dir, b).await;
-            git(&dir, &["merge-base", &b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string())
+            let b = compare_ref(dir, b).await;
+            git(dir, &["merge-base", &b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string())
         }
         _ => None,
     };
+    (base, merge_base)
+}
+
+pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
+    let (dir, task, project) = changes_dir(state, task_id)?;
+    if !is_git_repo(&dir).await {
+        return Ok(json!({"available": false, "reason": "not a git repository"}));
+    }
+    let (base, merge_base) = changes_base(&dir, &task, &project).await;
     let from = merge_base.clone().unwrap_or_else(|| "HEAD".into());
     // Mark untracked files as intent-to-add would mutate the index; instead diff them separately.
     let tracked = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from]).await?.stdout;

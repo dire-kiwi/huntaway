@@ -12,6 +12,7 @@ mod demo;
 mod disk;
 mod documents;
 mod gh_mcp;
+mod git_view;
 mod github;
 mod hub;
 mod mcp;
