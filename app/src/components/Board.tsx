@@ -1027,7 +1027,7 @@ export function NewTaskModal({
   // The highlighting behind the editor, sized to its text area (without a scrollbar) and scrolled with it.
   const mirror = useRef<HTMLDivElement>(null);
   const marker = useRef<HTMLSpanElement>(null);
-  const [listAt, setListAt] = useState<{ top: number; left: number } | null>(null);
+  const list = useRef<HTMLDivElement>(null);
   const [scrolled, setScrolled] = useState(0);
   useLayoutEffect(() => {
     const ta = input.current;
@@ -1047,10 +1047,39 @@ export function NewTaskModal({
     const ta = input.current;
     const m = mirror.current;
     if (m && ta) m.scrollTop = ta.scrollTop;
-    const k = marker.current;
-    const next = listOpen && k && m && ta ? { top: k.offsetTop + k.offsetHeight - m.scrollTop + 2, left: Math.max(0, Math.min(k.offsetLeft, ta.clientWidth - 288)) } : null;
-    setListAt((cur) => (cur?.top === next?.top && cur?.left === next?.left ? cur : next));
   }, [listOpen, completing?.start, description, scrolled]);
+  // The completion list is fixed to the window (the dialog's body scrolls, and would clip it): under the caret, or over
+  // it when there's more room there, no taller than that room, and moved with the caret as the dialog scrolls.
+  useLayoutEffect(() => {
+    if (!listOpen) return;
+    const place = (rendered = false) => {
+      const k = marker.current;
+      const ta = input.current;
+      const l = list.current;
+      if (!k || !ta || !l) return;
+      const at = k.getBoundingClientRect();
+      const box = ta.getBoundingClientRect();
+      const below = window.innerHeight - at.bottom - 10;
+      const above = at.top - 10;
+      const up = l.scrollHeight > below && above > below;
+      l.style.maxHeight = `${Math.max(80, up ? above : below)}px`;
+      l.style.top = `${up ? Math.max(8, at.top - 2 - l.offsetHeight) : at.bottom + 2}px`;
+      l.style.left = `${Math.max(box.left, Math.min(at.left, box.left + ta.clientWidth - l.offsetWidth))}px`;
+      if (!rendered) return;
+      // Keeps the highlighted option in view when the list scrolls (not while the wheel scrolls it).
+      const lit = l.querySelector<HTMLElement>("[aria-selected=true]");
+      if (lit && lit.offsetTop < l.scrollTop) l.scrollTop = lit.offsetTop;
+      else if (lit && lit.offsetTop + lit.offsetHeight > l.scrollTop + l.clientHeight) l.scrollTop = lit.offsetTop + lit.offsetHeight - l.clientHeight;
+    };
+    place(true);
+    const move = () => place();
+    window.addEventListener("scroll", move, true);
+    window.addEventListener("resize", move);
+    return () => {
+      window.removeEventListener("scroll", move, true);
+      window.removeEventListener("resize", move);
+    };
+  });
   const highlighted: ReactNode[] = [];
   {
     let at = 0;
@@ -1190,12 +1219,12 @@ export function NewTaskModal({
             onPaste={attach.onPaste}
             className={clsx(EDITOR_TEXT, "relative block w-full resize-y bg-transparent text-transparent caret-fg outline-none selection:bg-accent/30 placeholder:text-faint")}
           />
-          {listOpen && listAt && (
+          {listOpen && (
             <div
+              ref={list}
               role="listbox"
               aria-label={TOKEN_HELP.find((h) => h.prefix === completing!.prefix)!.what}
-              className="absolute z-10 w-72 rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
-              style={{ top: listAt.top, left: listAt.left }}
+              className="fixed z-10 w-72 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
               // Keeps the editor focused, so picking doesn't close the list first.
               onMouseDown={(e) => e.preventDefault()}
             >

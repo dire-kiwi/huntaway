@@ -49,3 +49,37 @@ test("a dialog taller than the window keeps its buttons in view", async () => {
     assert.match(JSON.stringify(await server.api("GET", `/projects/${project.id}/automations`)), /"name":"Nightly check"/, "the automation was saved");
   });
 });
+
+// The new task editor's completion list hung past the dialog's bottom edge, and the dialog's scrolling body cut it off.
+test("the new task editor's completion list isn't clipped by the dialog", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, "click New task", "wait [role=dialog]"]);
+    await page.keyboard.type("one\ntwo\nthree\nfour\nfive\nsix\nseven\n#");
+    await ui.run(["wait [role=listbox]"]);
+    const shown = () =>
+      page.getByRole("listbox").evaluate((l) => {
+        const last = [...l.querySelectorAll("[role=option]")].at(-1);
+        const r = last.getBoundingClientRect();
+        // On top where it is (not under the dialog's clipping), and inside the window.
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { inWindow: r.top >= 0 && r.bottom <= window.innerHeight, onTop: !!hit && last.contains(hit), count: l.querySelectorAll("[role=option]").length };
+      });
+    let s = await shown();
+    assert.ok(s.count > 1, `options listed (${s.count})`);
+    assert.ok(s.inWindow && s.onTop, `the last option shows: ${JSON.stringify(s)}`);
+
+    // With little room under the caret it opens above it, and the arrow keys still pick from it.
+    await ui.run(["size 1200x480"]);
+    s = await shown();
+    assert.ok(s.inWindow && s.onTop, `the last option shows in a short window: ${JSON.stringify(s)}`);
+    await page.keyboard.press("ArrowUp");
+    const lit = await page.getByRole("listbox").evaluate((l) => {
+      const o = l.querySelector("[aria-selected=true]");
+      const r = o.getBoundingClientRect();
+      const lr = l.getBoundingClientRect();
+      return { last: o === [...l.querySelectorAll("[role=option]")].at(-1), visible: r.top >= lr.top && r.bottom <= lr.bottom + 1 };
+    });
+    assert.ok(lit.last && lit.visible, `ArrowUp from the first highlights the last option, in view: ${JSON.stringify(lit)}`);
+  });
+});
