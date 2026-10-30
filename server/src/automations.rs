@@ -202,7 +202,7 @@ impl Automation {
         })
     }
 
-    fn is_webhook(&self) -> bool {
+    pub fn is_webhook(&self) -> bool {
         matches!(self.trigger, Trigger::Webhook { .. })
     }
 
@@ -398,7 +398,7 @@ fn weekday(d: &str) -> Option<Weekday> {
 }
 
 /// A trigger as it's stored: checked, and tidied (weekdays in order, each once).
-fn check_trigger(t: Trigger) -> ApiResult<Trigger> {
+pub fn check_trigger(t: Trigger) -> ApiResult<Trigger> {
     Ok(match t {
         Trigger::Interval { every_minutes } if !(MIN_INTERVAL_MINUTES..=MAX_INTERVAL_MINUTES).contains(&every_minutes) => {
             return Err(bad(format!("every_minutes must be from {MIN_INTERVAL_MINUTES} to {MAX_INTERVAL_MINUTES} (31 days)")));
@@ -443,7 +443,7 @@ fn check_trigger(t: Trigger) -> ApiResult<Trigger> {
 
 /// An action as it's stored: checked against the automation's project, so it can only make tasks
 /// there, with its agent configs, and only message its tasks.
-fn check_action(c: &Connection, project: &db::Project, a: Action) -> ApiResult<Action> {
+pub fn check_action(c: &Connection, project: &db::Project, a: Action) -> ApiResult<Action> {
     let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     Ok(match a {
         Action::CreateTask { title, description, task_type, claude_config_id, model, effort, status, start } => {
@@ -528,7 +528,7 @@ pub fn next_daily<Tz: TimeZone>(tz: &Tz, at: NaiveTime, days: &[Weekday], after:
 }
 
 /// The host's time zone, as the settings show it: its name where the system says, and its offset now.
-fn time_zone() -> Value {
+pub fn time_zone() -> Value {
     let name = std::env::var("TZ").ok().map(|t| t.trim_start_matches(':').to_string()).filter(|t| !t.is_empty()).or_else(|| {
         let link = std::fs::read_link("/etc/localtime").ok()?;
         let link = link.to_string_lossy();
@@ -1216,7 +1216,7 @@ pub fn start(s: &Shared) {
 
 /// An automation as the API shows it: its webhook path, and whether it has a secret (never the
 /// secret itself), and its latest run.
-fn to_json(c: &Connection, a: &Automation) -> Value {
+pub fn to_json(c: &Connection, a: &Automation) -> Value {
     let mut v = json!({
         "id": a.id,
         "project_id": a.project_id,
@@ -1238,7 +1238,7 @@ fn to_json(c: &Connection, a: &Automation) -> Value {
 }
 
 /// A run, with the key and title of its task.
-fn run_json(c: &Connection, r: &Run) -> Value {
+pub fn run_json(c: &Connection, r: &Run) -> Value {
     let mut v = json!(r);
     if let Some(t) = r.task_id.as_deref().and_then(|id| db::get_task(c, id).ok().flatten()) {
         let key = t.project_id.as_deref().and_then(|p| db::get_project(c, p).ok().flatten()).map(|p| p.key).unwrap_or_else(|| "T".into());
@@ -1251,11 +1251,11 @@ fn project(c: &Connection, id: &str) -> ApiResult<db::Project> {
     db::get_project(c, id)?.ok_or_else(|| ApiError::not_found("project"))
 }
 
-fn automation(c: &Connection, id: &str) -> ApiResult<Automation> {
+pub fn automation(c: &Connection, id: &str) -> ApiResult<Automation> {
     get(c, id)?.ok_or_else(|| ApiError::not_found("automation"))
 }
 
-fn check_name(v: &Value) -> ApiResult<String> {
+pub fn check_name(v: &Value) -> ApiResult<String> {
     match v.as_str().map(str::trim) {
         Some(n) if !n.is_empty() && n.chars().count() <= 100 => Ok(n.to_string()),
         _ => Err(bad("name must be 1 to 100 characters")),
@@ -1271,7 +1271,7 @@ fn check_secret(v: &Value) -> ApiResult<Option<String>> {
     }
 }
 
-fn parse<T: serde::de::DeserializeOwned>(what: &str, v: &Value) -> ApiResult<T> {
+pub fn parse<T: serde::de::DeserializeOwned>(what: &str, v: &Value) -> ApiResult<T> {
     serde_json::from_value(v.clone()).map_err(|e| bad(format!("{what}: {e}")))
 }
 
@@ -1322,10 +1322,15 @@ pub async fn get_handler(State(s): State<Shared>, Path(id): Path<String>) -> Api
 /// `PATCH /automations/{id}`: any of `name`, `enabled`, `trigger`, `action`, `secret` (blank
 /// clears it) and `rotate_token` (a new webhook URL; the old one stops working).
 pub async fn update_handler(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
+    let a = update(&s, &id, &b)?;
+    Ok(Json(to_json(&s.db(), &a)))
+}
+
+pub fn update(s: &Shared, id: &str, b: &Map<String, Value>) -> ApiResult<Automation> {
     let now = Utc::now();
     let a = {
         let c = s.db();
-        let a = automation(&c, &id)?;
+        let a = automation(&c, id)?;
         let p = project(&c, &a.project_id)?;
         let name = match b.get("name") {
             Some(v) => check_name(v)?,
@@ -1358,35 +1363,47 @@ pub async fn update_handler(State(s): State<Shared>, Path(id): Path<String>, Jso
             "UPDATE automations SET name=?2, enabled=?3, trigger=?4, action=?5, secret=?6, token=?7, next_run_at=?8, updated_at=?9 WHERE id=?1",
             params![a.id, name, enabled, json!(trigger).to_string(), json!(action).to_string(), secret, token, next, fmt(now)],
         )?;
-        automation(&c, &id)?
+        automation(&c, id)?
     };
-    changed(&s, &a);
-    Ok(Json(to_json(&s.db(), &a)))
+    changed(s, &a);
+    Ok(a)
 }
 
 pub async fn delete_handler(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let a = automation(&s.db(), &id)?;
-    s.db().execute("DELETE FROM automations WHERE id=?1", [&id])?;
-    changed(&s, &a);
+    delete(&s, &id)?;
     Ok(Json(json!({"ok": true})))
+}
+
+pub fn delete(s: &Shared, id: &str) -> ApiResult<Automation> {
+    let a = automation(&s.db(), id)?;
+    s.db().execute("DELETE FROM automations WHERE id=?1", [id])?;
+    // Agents waiting to change or delete it are told it's gone.
+    crate::permissions::expire_for_automation(s, id);
+    changed(s, &a);
+    Ok(a)
 }
 
 #[derive(Deserialize, Default)]
 pub struct RunNow {
     /// For a webhook: the test delivery's body (else the latest delivery's, or `{}`).
     #[serde(default)]
-    payload: Option<Value>,
+    pub payload: Option<Value>,
     /// For a webhook: its event (`X-GitHub-Event`), e.g. `issues`.
     #[serde(default)]
-    event: Option<String>,
+    pub event: Option<String>,
 }
 
 /// `POST /automations/{id}/run`: runs it now, whether or not it's on. A webhook's runs a test
 /// delivery through its filters (not its signature check, deduplication or coalescing).
 pub async fn run_handler(State(s): State<Shared>, Path(id): Path<String>, body: Option<Json<RunNow>>) -> ApiResult<Json<Value>> {
-    let b = body.map(|Json(b)| b).unwrap_or_default();
     let a = automation(&s.db(), &id)?;
-    let run = if a.is_webhook() {
+    let run = run_now(&s, &a, body.map(|Json(b)| b).unwrap_or_default()).await?;
+    Ok(Json(run_json(&s.db(), &run)))
+}
+
+/// Runs `a` now (see run_handler).
+pub async fn run_now(s: &Shared, a: &Automation, b: RunNow) -> ApiResult<Run> {
+    Ok(if a.is_webhook() {
         let latest = latest_delivery(&s.db(), &a.id)?;
         let mut delivery = match b.payload {
             Some(body) => Delivery { body, ..Default::default() },
@@ -1399,13 +1416,12 @@ pub async fn run_handler(State(s): State<Shared>, Path(id): Path<String>, body: 
         for h in ["x-github-delivery", "x-delivery-id", "idempotency-key"] {
             delivery.headers.remove(h);
         }
-        receive(&s, &a, delivery, None).await?
+        receive(s, a, delivery, None).await?
     } else {
         let r = Run::new(&a.id, "manual", "running", Utc::now());
         insert_run(&s.db(), &r)?;
-        run_action(&s, &a, &r.id, "manual", None, 1).await.unwrap_or(r)
-    };
-    Ok(Json(run_json(&s.db(), &run)))
+        run_action(s, a, &r.id, "manual", None, 1).await.unwrap_or(r)
+    })
 }
 
 /// The latest delivery kept, for the next test delivery.
