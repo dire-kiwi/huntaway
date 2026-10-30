@@ -56,7 +56,7 @@ import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
-import { Button, RunningDot, waitTitle } from "./ui";
+import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
 
 // ---------- markdown ----------
 
@@ -911,7 +911,12 @@ export const Thread = memo(function Thread({
               <div className="flex items-center gap-2 text-[12.5px] text-muted">
                 {task.agent_wait ? (
                   <>
-                    <Hourglass size={12} className="shrink-0" /> <span title={waitTitle(task.agent_wait)}>Waiting{task.agent_wait.reason ? `: ${task.agent_wait.reason}` : "…"}</span>
+                    <Hourglass size={12} className="shrink-0" />{" "}
+                    {task.agent_wait.pull_request ? (
+                      <WaitReason wait={{ ...task.agent_wait, reason: `Waiting${task.agent_wait.reason ? `: ${task.agent_wait.reason}` : ""}` }} />
+                    ) : (
+                      <span title={waitTitle(task.agent_wait)}>Waiting{task.agent_wait.reason ? `: ${task.agent_wait.reason}` : "…"}</span>
+                    )}
                   </>
                 ) : (
                   <>

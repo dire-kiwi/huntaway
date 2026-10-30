@@ -178,21 +178,23 @@ fn board_tools() -> Value {
         },
         {
             "name": "wait",
-            "description": format!("Wait without doing anything, e.g. for the tasks you created to finish, or for CI, a deploy or a background command. \
-                The call blocks until the wait period is over, one of the listed tasks changes status, a subagent completes, fails or stops, your command exits, a message is sent to you, the run is \
+            "description": format!("Wait without doing anything, e.g. for the tasks you created to finish, for a pull request's checks or reviews, or for a deploy or a background command. \
+                The call blocks until the wait period is over, one of the listed tasks changes status, there's news about your pull_request, a subagent completes, fails or stops, your command exits, a message is sent to you, the run is \
                 stopped, or you make another tool call (your subagents' tool calls other than board tools don't count), and says which. Meanwhile your task stays where it is (it doesn't need the user's attention) and the board shows it \
                 as waiting rather than working, with your reason. Use it instead of sleeping or polling in a loop; call it again to keep \
-                waiting. Without tasks or a command, a wait lasts {} seconds at most, as little but a message or a subagent can end it early: to wait for CI \
-                or a deploy, give a command that exits once it's ready, or check and wait again. To wait for the user, use request_user_input instead.",
+                waiting. Without tasks, a command or a pull request, a wait lasts {} seconds at most, as little but a message or a subagent can end it early: for CI \
+                or reviews on a pull request, give pull_request; for a deploy, give a command that exits once it's ready, or check and wait again. To wait for the user, use request_user_input instead.",
                 crate::wait::UNWATCHED_MAX_SECS),
             "inputSchema": {"type": "object", "properties": {
-                "reason": {"type": "string", "description": "What you're waiting for, shown on the board (e.g. 'waiting on OBP-1 and OWC-1', 'waiting for CI')"},
+                "reason": {"type": "string", "description": "What you're waiting for, shown on the board (e.g. 'waiting on OBP-1 and OWC-1', 'waiting for CI and review')"},
                 "seconds": {"type": "number", "minimum": 1, "maximum": crate::wait::MAX_SECS, "description": format!(
-                    "How long to wait at most (with tasks or a command: default {}, at most {}; without them: default and at most {})",
+                    "How long to wait at most (with tasks, a command or a pull request: default {}, at most {}; without them: default and at most {})",
                     crate::wait::DEFAULT_SECS, crate::wait::MAX_SECS, crate::wait::UNWATCHED_MAX_SECS
                 )},
                 "tasks": {"type": "array", "items": {"type": "string"}, "description": "Tasks (ids or keys like ABC-12, on this host) to watch: the wait ends as soon as one of them changes status"},
-                "command": {"type": "string", "description": "A shell command (bash) to run in your working directory while you wait: the wait ends as soon as it exits, and returns its exit code and the end of its output. Use one that blocks until what you're waiting for is ready (e.g. 'gh pr checks 12 --watch'), or loop until it is (e.g. 'until curl -sf https://example.com/health; do sleep 15; done'). It's approved like your Bash calls, and stopped with everything it started if the wait ends first."}
+                "pull_request": {"type": "string", "description": "A pull request to watch: its number (in your task's repository), OWNER/REPO#NUMBER or URL. The wait ends on news about it you haven't been told yet (see pull_request_events): its head commit's checks finished (one failed, or all the required ones passed), someone other than your GitHub account commented or reviewed, it started to conflict with its base branch, or it was merged or closed. It says what happened in pull_request: the failed checks with their links, new comments with their author, file, line and text, and its merge state. What you've been told is remembered across waits, so after acting on the news wait on it again: a comment made meanwhile ends that wait straight away. The first wait on a pull request reports how its checks ended and a conflict, but not its earlier comments. GitHub is read every minute or so, as your GitHub account."},
+                "pull_request_events": {"type": "array", "items": {"type": "string", "enum": crate::pr_watch::EVENTS}, "description": "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does."},
+                "command": {"type": "string", "description": "A shell command (bash) to run in your working directory while you wait: the wait ends as soon as it exits, and returns its exit code and the end of its output. Use one that blocks until what you're waiting for is ready (e.g. 'gh run watch 123'), or loop until it is (e.g. 'until curl -sf https://example.com/health; do sleep 15; done'). It's approved like your Bash calls, and stopped with everything it started if the wait ends first. For a pull request, give pull_request instead."}
             }, "required": ["reason"]}
         },
         {
