@@ -15,6 +15,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
+               install.sh: install the desktop app from source (Linux, macOS)
 ```
 
 Agents survive server restarts, and one board can span several machines. Each machine runs
@@ -197,6 +198,7 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
 | `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
+| `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 
@@ -234,6 +236,13 @@ checkout, streaming the log, then re-execs the new binary with the same argument
 stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
 
+With `--update-from <url>`, the server also follows that deployment of the board. Every five
+minutes it asks the deployment which commit it runs (its unauthenticated `/api/health` reports
+it, API 65) and fetches it from the checkout's `origin`. When that commit is ahead of the running
+one, the sidebar shows **N new commits · Update**. Update fast-forwards the checkout to the commit
+(it refuses if the checkout is dirty, or has diverged from the commit), then rebuilds and restarts
+as above. Settings → Server shows the commit the deployment runs and when it was last checked.
+
 ### Network access
 
 Every API call needs the token in `<data-dir>/auth_token` (sent as a bearer token; the
@@ -254,7 +263,58 @@ reverse proxy.
 
 Setting `serverUrl` makes the desktop app a client of a remote server instead of starting one.
 An `http:` one counts as a secure page in the app, so it can show notifications.
-Packaging an AppImage: `npm run dist` (needs `electron-builder`; not exercised yet).
+
+### Installing the desktop app
+
+`scripts/install.sh` installs the desktop app from source on Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway/master/scripts/install.sh | bash
+```
+
+It checks for git, Node.js 22.12+, npm, Rust 1.85+ and a C compiler (and warns if `claude`/`codex`
+or `tmux` are missing), then clones the repository to `~/.local/share/huntaway-app` (`--dir`) and
+builds the UI and the server there. Last, it adds **Huntaway** to the app launcher: on Linux a
+`huntaway-app.desktop` entry that runs `~/.local/bin/huntaway-desktop`, and on macOS
+`~/Applications/Huntaway.app` (a renamed copy of the checkout's Electron whose app runs the
+checkout's). Run it again to update an install by hand or to change its options (`--help`).
+
+The app runs from that checkout like `npm run electron`, so it updates like a host: **Rebuild &
+restart** builds whatever the checkout has. With `--update-from https://board.example` (or
+`HUNTAWAY_UPDATE_FROM`) it also follows the board deployed there: the launcher starts its server
+with `IA_UPDATE_FROM`, and once the deployment runs a newer commit the sidebar shows **N new
+commits · Update** (and Settings → Server shows **Update to <commit>**). Updating fetches that commit
+from the checkout's `origin`, fast-forwards to it, rebuilds and restarts. When the update changed
+the app itself (`app/electron/`, or the Electron version), the app relaunches once the board has
+reloaded. Agents keep running throughout.
+
+The launcher also puts the folders of `node`, `npm`, `cargo`, `git` and the agent CLIs on `PATH`,
+as found at install time, since a desktop session may not have them. Run the script again after
+moving any of them, for example to another nvm Node version. Like `npm run electron`, the app uses
+a server already listening on its port (7878 by default) and starts its own otherwise. In that
+case the app updates through that server, which follows a deployment only if it was started with
+`--update-from`.
+
+### Release builds
+
+Publishing a GitHub release runs `.github/workflows/release.yml`, which builds the release's tag
+and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
+
+| File | What |
+|---|---|
+| `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
+| `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
+| `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+
+The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
+`PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
+from the Dock or an app launcher. A release build isn't a checkout, so **Rebuild & restart** and
+**Update** don't apply to it: install a newer release to update it. The Mac build is ad-hoc signed,
+not signed with a Developer ID, so macOS blocks a downloaded copy until you run
+`xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
+run `npm run dist` in `app/`, which puts them in `app/release/`. To build an existing release
+again, use Actions → Release → Run workflow with its tag, which replaces its files.
 
 ## Hosts
 
@@ -473,7 +533,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (with the repository's `.agents/skills`). Both add the project's own and global skills, less the
   ones it turns off. The menu reloads when the task moves to another config.
 - **Status transitions:** running → *In progress*; the agent asks a question
-  (`request_user_input`), a tool needs approval, a run fails, or you stop it → *Needs
+  (`request_user_input` or `AskUserQuestion`, see *Questions and plans*) or presents a plan, a
+  tool needs approval, a run fails, or you stop it → *Needs
   attention*; a run finishes cleanly → *In review*. You move cards to *Done* yourself, or to
   *Ready for merge*.
 - **Archived** (API 53): a task that's been in *Done* for two days is archived. It leaves the
@@ -737,14 +798,42 @@ skipped. Auto-compacting idle sessions is Claude-only.
   error, the message stays on screen until you press Enter (API 13).
 - **Permissions:** in *Ask* mode, Claude's permission prompts are routed
   (`--permission-prompt-tool`) to an approval card in the thread: Allow, Always allow (for
-  that thread), or Deny.
+  that thread), or Deny. Codex's approvals get the same card, which names the agent asking.
+- **Questions and plans** (API 64) are cards in the thread rather than approvals, and the task's
+  card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
+  Keys 1–9 pick an option in the latest one that's waiting, unless you're typing.
+  - `request_user_input` can give `options` (each a `label` and a `description`, up to nine),
+    `multi_select` and `allow_other` (whether a free-text answer is offered too; it is by
+    default). The card's buttons answer it, and the answer goes as your message (the question
+    quoted, then the options picked or what you wrote), which resumes the agent. A reply typed in
+    the thread settles it too. The agent's turn ends when it asks, so it stays answerable after
+    its run ends (`POST /tasks/{id}/questions/{message id}` with `choices` and `text`).
+  - Claude's `AskUserQuestion` shows its questions with their headers, options and descriptions,
+    multi-select and an *Other* answer. The answers go back the way headless Claude Code takes
+    them, in the tool's input (`updatedInput.answers`, each question's text to its answers joined
+    with commas). Codex's own questions (`item/tool/requestUserInput`, in its plan mode) get the
+    same card and are answered by question id; a question marked secret takes a password field
+    and its answer isn't shown in the thread. *Dismiss* declines them.
+  - A plan (`ExitPlanMode`) shows as Markdown. **Approve** picks the mode the thread carries on
+    in (starting at the thread's own mode, if it has one other than Plan, else its default; or
+    Accept edits, Auto or Bypass), which the running Claude Code switches to as
+    well (`updatedPermissions` with `setMode`; it can't switch to Bypass, which the board covers
+    by allowing every prompt). **Keep planning** sends it back with your feedback.
+  - They're asked whatever the thread's mode or *Always allow* list, except *Don't ask*, which
+    declines them. A question or plan whose run ended before it was answered (stopped, say) can
+    still be answered: the answers (or the approval, or the feedback) go to the agent as your
+    message. Once a message has been sent to the agent after one (by you, the board or another
+    agent), it isn't answered any more. Only the first answer counts, so two tabs can't both send one.
+  - `POST /permissions/{id}` takes `answers` (a list per question of option labels and typed
+    answers), `mode` (for a plan approved) and `feedback` (for one sent back) besides `decision`.
 - **Permission modes:** each host has a default mode (its agent defaults), each project can
   set its own (Settings, or *Host default*), and every thread can override it from the selector under the message box (Shift+Tab cycles Ask → Accept edits →
   Auto → Plan). Modes map to Claude's `--permission-mode`: *Ask* (`default`), *Accept edits*,
   *Auto* (Claude's classifier), *Plan*, *Don't ask* (deny anything not already allowed) and
   *Bypass*. A change applies from the next message, except that switching to Bypass or Don't ask
   also settles prompts in the current run. Approving a plan (`ExitPlanMode`) moves a thread
-  in Plan mode back to its default mode (Ask if that's Plan too).
+  in Plan mode back to its default mode (Ask if that's Plan too), or to the mode picked on the
+  plan's card.
 - **Analytics** (sidebar) tracks when you prompted which project and task, for timesheets. It's
   built from the threads' own history (your messages, starting a task, moving it to *Ready for
   merge*, and agent runs), so it covers work from before it existed, across every host with the
@@ -899,7 +988,7 @@ can be removed), and the host won't search Asana for it. Its token is kept for w
 
 ### Automations
 
-A project's automations (API 63, in its settings under *Automations*; agents' tools for them, API 64) put work on the board by
+A project's automations (API 63, in its settings under *Automations*; agents' tools for them, API 66) put work on the board by
 themselves: recurring work such as a weekly dependency update, and events from outside such as a
 new GitHub issue to triage. Each one has a trigger and an action, can be switched on and off, and
 lists its latest runs and deliveries (when, what started it, what happened, and the task).

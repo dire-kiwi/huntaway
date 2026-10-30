@@ -52,6 +52,8 @@ import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subage
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
 import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard } from "./Approvals";
+import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
+import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
 import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
@@ -606,6 +608,45 @@ function EventLine({ level, text, detail }: { level: string; text: string; detai
   );
 }
 
+/** Which subagent asked for a prompt (its link opens the subagent's thread), unless it's the thread that's shown. */
+function PromptFrom({ data }: { data: Any }) {
+  const taskId = useThread((t) => t.taskId);
+  const show = useSubagentView((s) => s.show);
+  const viewing = useSubagentView((s) => s.open[taskId]);
+  const fromId = useThread((t) => (data.tool_use_id ? t.callParent.get(data.tool_use_id) : undefined));
+  // In the subagent's own thread, it's plain where the prompt is from.
+  const from = useThread((t) => (fromId && fromId !== viewing ? t.subagents.get(fromId) : undefined));
+  if (!from) return null;
+  return (
+    <button
+      onClick={() => show(taskId, from.id)}
+      className="flex min-w-0 items-center gap-1 text-[12px] text-faint hover:text-muted"
+      title="Open the subagent's thread"
+    >
+      <Bot size={12} className="shrink-0" />
+      <span className="truncate">from {subagentTitle(from)}</span>
+    </button>
+  );
+}
+
+/** A question the agent asked with request_user_input. */
+function QuestionRow({ id, data, hostId }: { id: number; data: Any; hostId: string }) {
+  const taskId = useThread((t) => t.taskId);
+  const movedOn = useThread((t) => t.lastSent > id);
+  return <BoardQuestionCard id={id} data={data} hostId={hostId} taskId={taskId} movedOn={movedOn} />;
+}
+
+/** A permission prompt: a question or a plan gets its own card. */
+function PromptCard({ id, data, hostId }: { id: number; data: Any; hostId: string }) {
+  const taskId = useThread((t) => t.taskId);
+  // A message's been sent to the agent since: one whose run ended isn't answered any more.
+  const movedOn = useThread((t) => t.lastSent > id);
+  if (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length)
+    return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} movedOn={movedOn} />;
+  if (data.tool_name === "ExitPlanMode") return <PlanCard data={data} hostId={hostId} taskId={taskId} from={<PromptFrom data={data} />} movedOn={movedOn} />;
+  return <PermissionCard data={data} hostId={hostId} />;
+}
+
 const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: Any; hostId: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -622,30 +663,15 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
     }
   };
   const m = toolMeta(data.tool_name, data.input);
-  const taskId = useThread((t) => t.taskId);
-  const show = useSubagentView((s) => s.show);
-  const viewing = useSubagentView((s) => s.open[taskId]);
-  const fromId = useThread((t) => (data.tool_use_id ? t.callParent.get(data.tool_use_id) : undefined));
-  // In the subagent's own thread, it's plain where the prompt is from.
-  const from = useThread((t) => (fromId && fromId !== viewing ? t.subagents.get(fromId) : undefined));
   return (
     <div className={clsx("rounded-lg border p-3", pending ? "border-st-attention/50 bg-st-attention/[0.06]" : "border-line bg-panel/60")}>
       <div className="mb-2 flex items-center gap-2 text-[13px]">
         <ShieldQuestion size={15} className={pending ? "text-st-attention" : "text-faint"} />
         <span className={pending ? "text-fg" : "text-muted"}>
-          {pending ? "Claude wants to use " : "Permission for "}
+          {pending ? `${data.agent === "codex" ? "Codex" : "Claude"} wants to use ` : "Permission for "}
           <span className="font-mono">{data.tool_name}</span>
         </span>
-        {from && (
-          <button
-            onClick={() => show(taskId, from.id)}
-            className="flex min-w-0 items-center gap-1 text-[12px] text-faint hover:text-muted"
-            title="Open the subagent's thread"
-          >
-            <Bot size={12} className="shrink-0" />
-            <span className="truncate">from {subagentTitle(from)}</span>
-          </button>
-        )}
+        <PromptFrom data={data} />
         {!pending && (
           <span
             className={clsx(
@@ -1005,7 +1031,9 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       if (it.data.kind === "project") return <ProjectChangeCard data={it.data} hostId={hostId} />;
       if (it.data.kind === "delete_task") return <TaskDeletionCard data={it.data} hostId={hostId} />;
       if (it.data.kind === "automation") return <AutomationChangeCard data={it.data} hostId={hostId} />;
-      return <PermissionCard data={it.data} hostId={hostId} />;
+      return <PromptCard id={Number(it.key)} data={it.data} hostId={hostId} />;
+    case "question":
+      return <QuestionRow id={it.id} data={it.data} hostId={hostId} />;
     case "result":
       return <ResultLine data={it.data} />;
     case "compact":

@@ -637,6 +637,8 @@ fn start_run(
     for m in &recorded {
         state.emit_message(m);
     }
+    #[cfg(test)]
+    crate::testing::reached("run:started");
     let mut fields = vec![("running", json!(true)), ("steerable", json!(!compact))];
     // A queued message sent as the last run ends carries on the same stretch of work.
     if !task.running {
@@ -1571,7 +1573,8 @@ fn system_prompt(
                  Use them to look across projects, create and update tasks, and start agents on \
                  tasks (create_task with start=true, or send_to_task) when the user asks for that. Tasks you create are \
                  recorded as this task's. If you are blocked or need a decision or information from the user, call \
-                 `request_user_input` with your question and then end your turn — the task is flagged \"Needs attention\" \
+                 `request_user_input` with your question (and its `options`, when the choices are known) and then end your \
+                 turn — the task is flagged \"Needs attention\" \
                  and the user's reply resumes this conversation. When you finish, end with a concise summary of what you \
                  did; the task then moves to \"In review\".",
                 task.number, task.title, task.id
@@ -1608,7 +1611,8 @@ fn system_prompt(
             s.push_str(&crate::documents::system_prompt(task, document.unwrap_or("?"), p, group));
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you made or changed; the \
                  task then moves to \"In review\"."
             ));
@@ -1635,7 +1639,8 @@ fn system_prompt(
                  rather than ending your turn. Tasks you create are recorded as this task's: the board shows how \
                  many are done, and `get_task` on this task lists them. Run tasks that build on each other one after the other, and independent ones in \
                  parallel. If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of the tasks you created and where \
                  they stand; the task then moves to \"In review\".",
                 GROUP_TASK_KEY, task.number, task.title, task.id
@@ -1715,7 +1720,8 @@ fn system_prompt(
             }
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question and then end your turn — the task is flagged \"Needs attention\" and the user's reply \
+                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
+                 flagged \"Needs attention\" and the user's reply \
                  resumes this conversation. When you finish, end with a concise summary of what you did; the task then \
                  moves to \"In review\". You may create follow-up tasks with `create_task`."
             ));
@@ -2201,7 +2207,7 @@ mod tests {
         };
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
-        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, args: vec![] };
+        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] };
         let dir = std::env::temp_dir().join(format!("ia-runner-{}", crate::util::new_id()));
         let state: Shared = crate::state::AppState::new(c, dir, id, meta);
         runs::TEST_CAN_RUN.set(true);
