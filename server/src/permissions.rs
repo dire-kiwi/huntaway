@@ -39,13 +39,19 @@ pub async fn prompt(s: &Shared, task: &Task, call_id: &str, tool_name: &str, inp
 }
 
 /// Ask the user to approve what an agent asked for with `tool` (see tools.rs), a request of
-/// `kind`: a change to a project (`project`, from update_project) or deleting a task
-/// (`delete_task`). Only the user decides these, whatever the thread's permission mode: Ok(Ok(input)) once they
+/// `kind`: a change to a project (`project`, from update_project), deleting a task
+/// (`delete_task`), or creating, changing or deleting one of a project's automations
+/// (`automation`, from the automation tools). Only the user decides these, whatever the thread's permission mode: Ok(Ok(input)) once they
 /// approve it, with the input they approved (the first asked for this call, if it's retried), or
 /// Ok(Err(reason)) if they deny it or the run ends first.
 pub async fn approve(s: &Shared, task: &Task, call_id: &str, kind: &str, tool: &str, input: &Value) -> anyhow::Result<Result<Value, String>> {
     let data = json!({"kind": kind, "tool_name": tool, "input": input});
-    let question = if kind == "delete_task" { "Delete a task?" } else { "Approve a project change?" };
+    let question = match kind {
+        "delete_task" => "Delete a task?",
+        "automation" if input["op"] == "delete" => "Delete an automation?",
+        "automation" => "Approve an automation?",
+        _ => "Approve a project change?",
+    };
     let id = request(s, task, call_id, kind, tool, input, data, question)?;
     if let Err(note) = decision(s, &id).await? {
         return Ok(Err(note));
@@ -57,11 +63,12 @@ pub async fn approve(s: &Shared, task: &Task, call_id: &str, kind: &str, tool: &
     }
 }
 
-/// What MCP call `call_id` asked the user to approve (a project change or a deletion), if it asked.
+/// What MCP call `call_id` asked the user to approve (a project change, a deletion or an
+/// automation), if it asked.
 pub fn asked(s: &Shared, call_id: &str) -> anyhow::Result<Option<Value>> {
     let input: Option<String> = s
         .db()
-        .query_row("SELECT input FROM permission_requests WHERE call_id=?1 AND kind IN ('project','delete_task')", [call_id], |r| r.get(0))
+        .query_row("SELECT input FROM permission_requests WHERE call_id=?1 AND kind IN ('project','delete_task','automation')", [call_id], |r| r.get(0))
         .ok();
     Ok(input.map(|i| serde_json::from_str(&i)).transpose()?)
 }
@@ -231,15 +238,16 @@ pub fn decide(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
 }
 
 /// The project changes agents are waiting for the user to approve, oldest first, each with
-/// the thread that asked, and with `deletions` the tasks they're waiting to delete too (older
-/// UIs only know project changes).
-pub fn pending_approvals(s: &Shared, deletions: bool) -> anyhow::Result<Vec<Value>> {
+/// the thread that asked, with `deletions` the tasks they're waiting to delete too, and with
+/// `automations` the automations they're waiting to create, change or delete (older UIs only
+/// know project changes, or those and deletions).
+pub fn pending_approvals(s: &Shared, deletions: bool, automations: bool) -> anyhow::Result<Vec<Value>> {
     let c = s.db();
     let mut st = c.prepare(
         "SELECT p.task_id, p.created_at, m.data FROM permission_requests p JOIN messages m ON m.id=p.message_id
-         WHERE (p.kind='project' OR (?1 AND p.kind='delete_task')) AND p.status='pending' ORDER BY p.created_at",
+         WHERE (p.kind='project' OR (?1 AND p.kind='delete_task') OR (?2 AND p.kind='automation')) AND p.status='pending' ORDER BY p.created_at",
     )?;
-    let rows = st.query_map([deletions], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+    let rows = st.query_map([deletions, automations], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
     let mut out = Vec::new();
     for row in rows {
         let (task_id, created_at, data) = row?;
@@ -291,11 +299,11 @@ pub fn expire_for_run(s: &Shared, run_id: &str) {
 }
 
 /// Expire the unanswered approvals of changes to a project that's being deleted (and of
-/// deleting its tasks), asked from any thread.
+/// deleting its tasks, and of its automations), asked from any thread.
 pub fn expire_for_project(s: &Shared, project_id: &str) {
     expire(
         s,
-        "SELECT id, message_id FROM permission_requests WHERE kind IN ('project','delete_task') AND status='pending' AND json_extract(input, '$.project.id')=?1",
+        "SELECT id, message_id FROM permission_requests WHERE kind IN ('project','delete_task','automation') AND status='pending' AND json_extract(input, '$.project.id')=?1",
         project_id,
     );
 }
@@ -307,6 +315,16 @@ pub fn expire_deletions_of(s: &Shared, task_id: &str) {
         s,
         "SELECT id, message_id FROM permission_requests WHERE kind='delete_task' AND status='pending' AND json_extract(input, '$.delete.id')=?1",
         task_id,
+    );
+}
+
+/// Expire the unanswered requests to change or delete an automation that's been deleted, asked
+/// from any thread.
+pub fn expire_for_automation(s: &Shared, automation_id: &str) {
+    expire(
+        s,
+        "SELECT id, message_id FROM permission_requests WHERE kind='automation' AND status='pending' AND json_extract(input, '$.automation.id')=?1",
+        automation_id,
     );
 }
 

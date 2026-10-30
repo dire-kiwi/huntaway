@@ -1917,12 +1917,15 @@ struct ApprovalsQuery {
     /// Deletions too (API 58); older hosts ignore it and list project changes only.
     #[serde(default)]
     all: bool,
+    /// Automations too (API 64).
+    #[serde(default)]
+    automations: bool,
 }
 
-/// Project changes (and with `?all=true`, task deletions) agents are waiting for the user to
-/// approve (see permissions::approve).
+/// Project changes (and with `?all=true`, task deletions, and with `?automations=true`,
+/// automations) agents are waiting for the user to approve (see permissions::approve).
 async fn project_approvals(State(s): State<Shared>, Query(q): Query<ApprovalsQuery>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(permissions::pending_approvals(&s, q.all)?)))
+    Ok(Json(json!(permissions::pending_approvals(&s, q.all, q.automations)?)))
 }
 
 // ---------- host settings ----------
