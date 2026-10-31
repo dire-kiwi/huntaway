@@ -3330,6 +3330,8 @@ mod tests {
         assert!(text.contains("the labels plan, diagram") && text.contains("a plan (HTML) to /d/plan.html and a Mermaid diagram to /d/diagram.mmd"), "{text}");
         assert!(text.contains("don't commit them") && text.contains("The plan comes first") && text.contains("carry it out in this task"), "{text}");
         assert!(text.contains("<ia-steps>") && text.contains("Mermaid source") && !text.contains("Rather than changing code"), "{text}");
+        assert!(text.contains("<ia-diagram><pre>flowchart LR") && text.contains("Always use Mermaid for plan diagrams"), "{text}");
+        assert!(!text.contains("<ia-diagram><svg"), "{text}");
         // And it starts with the project's instructions.
         assert!(start_prompt(&task, Some(&project), "").contains("Write a failing test first."));
     }
