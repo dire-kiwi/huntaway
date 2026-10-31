@@ -70,6 +70,8 @@ jobs:
         if: matrix.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y libarchive-tools
 
+      # The app's version, and the server's (`huntaway --version`). A cargo command without --locked updates the
+      # workspace's own entries in Cargo.lock, so that the --locked build passes, and leaves the dependencies alone.
       - name: Version
         working-directory: app
         run: |
@@ -77,6 +79,11 @@ jobs:
           [ -n "$TAG" ] || version="0.0.0-pr.${{ github.event.number }}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           npm version --no-git-tag-version --allow-same-version "$version"
+          cd ../server
+          node -e 'const fs = require("node:fs"); const toml = fs.readFileSync("Cargo.toml", "utf8");
+            fs.writeFileSync("Cargo.toml", toml.replace(/^version = ".*"$/m, `version = "${process.argv[1]}"`))' "$version"
+          cargo metadata --format-version 1 >/dev/null
+          grep -A1 '^name = "huntaway"$' Cargo.lock | grep -qxF "version = \"$version\""
 
       - name: npm ci
         working-directory: app
@@ -90,6 +97,25 @@ jobs:
       - name: Package the desktop app
         working-directory: app
         run: npx electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
+
+      # What an installed app reads to update itself: the version, and the shell stamp (app/electron/stamp.cjs) and
+      # Electron of the desktop app, which say whether the update changes the app or only the server and the UI. The
+      # stamp is checked against the one the packaged app computes from its app.asar, with its own Electron.
+      - name: Release manifest
+        if: matrix.os == 'linux'
+        working-directory: app
+        run: |
+          node -e 'const fs = require("node:fs"); const { shellStamp } = require("./electron/stamp.cjs");
+            const electron = require("./node_modules/electron/package.json").version;
+            const manifest = { version: process.env.VERSION, shell: shellStamp("electron", electron), electron };
+            fs.writeFileSync(`release/huntaway-${process.env.VERSION}-release.json`, JSON.stringify(manifest, null, 2) + "\n")'
+          cat "release/huntaway-$VERSION-release.json"
+          asar="$PWD/release/linux-unpacked/resources/app.asar/electron"
+          packaged=$(ELECTRON_RUN_AS_NODE=1 release/linux-unpacked/huntaway-desktop -e \
+            "console.log(require('$asar/stamp.cjs').shellStamp('$asar', process.versions.electron))")
+          node -e 'const m = require(process.argv[1]); if (m.shell !== process.argv[2]) {
+            console.error(`the packaged app has stamp ${process.argv[2]}, the manifest ${m.shell}`); process.exit(1) }' \
+            "./release/huntaway-$VERSION-release.json" "$packaged"
 
       # The server on its own, for hosts: huntaway and ia-shim with the UI in ui/ beside them, where the server looks.
       - name: Package the server
@@ -109,6 +135,7 @@ jobs:
             app/release/*.dmg
             app/release/*.zip
             app/release/*.tar.gz
+            app/release/*.json
           if-no-files-found: error
           retention-days: ${{ env.TAG && 1 || 7 }}
 
@@ -133,6 +160,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          files=(release/*.{AppImage,pacman,dmg,zip,tar.gz})
+          files=(release/*.{AppImage,pacman,dmg,zip,tar.gz,json})
           ls -l "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
