@@ -761,6 +761,8 @@ export interface GitStatus {
   reason?: string;
   /** The top of the working tree. */
   dir?: string;
+  /** Where the project's folder is in it (`web/`) when it's only part of the repository: the files and commits are its own (API 77). */
+  folder?: string | null;
   /** Null before the first commit. */
   head?: string | null;
   /** Null when detached. */

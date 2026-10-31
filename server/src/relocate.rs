@@ -440,6 +440,13 @@ async fn check_same_repo(project: &Project, old: &Path, new: &Path, tasks: &[Tas
         if roots.split(' ').any(|r| theirs.split(' ').any(|o| o == r)) {
             return Ok(());
         }
+        // A shallow clone's history starts where it was cut off, which is no root once the rest is
+        // fetched: the commit is in the history all the same.
+        for r in roots.split(' ') {
+            if worktree::git(new, &["merge-base", "--is-ancestor", r, "HEAD"]).await.is_ok_and(|o| o.ok) {
+                return Ok(());
+            }
+        }
         return not_it("it has none of the commits the project's history started from");
     }
     // …or, when the board doesn't know its history, its tasks' branches.
@@ -907,6 +914,32 @@ mod tests {
             sh(&empty, &["init", "-q"]);
             let e = update(&s, &p, json!({"repo_path": path_str(&empty)})).await.unwrap_err();
             assert!(e.1.contains("has no commits"), "{}", e.1);
+        });
+    }
+
+    // HA-42: a shallow clone's history starts where it was cut off, so once the rest was fetched
+    // its moved folder had none of the commits the board had seen it start from.
+    #[test]
+    fn tells_a_moved_shallow_clone_once_its_history_is_fetched() {
+        testing::run(async || {
+            let s = testing::state();
+            let upstream = temp("upstream");
+            repo(&upstream);
+            for n in 1..=3 {
+                sh(&upstream, &["commit", "-q", "--allow-empty", "-m", &format!("commit {n}")]);
+            }
+            let old = temp("shallow");
+            let url = format!("file://{}", path_str(&upstream));
+            sh(&upstream, &["clone", "-q", "--depth", "1", &url, &path_str(&old)]);
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let b = CreateProject { name: "s".into(), repo_path: path_str(&old), key: Some("X".into()), base_branch: Some("master".into()), use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let new = old.with_file_name("unshallowed");
+            std::fs::rename(&old, &new).unwrap();
+            sh(&new, &["fetch", "-q", "--unshallow"]);
+            assert_ne!(fingerprint(&new).await, p.repo_root.clone().unwrap());
+            let p = update(&s, &p, json!({"repo_path": path_str(&new)})).await.unwrap();
+            assert_eq!(p.repo_path, path_str(&new));
         });
     }
 
