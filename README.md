@@ -470,8 +470,10 @@ token, and give it only to your own hosts. A name stays with the host that took 
 a secret key in its data dir (`broker_key`), and the broker refuses the name to any other host while
 that one is connected and for an hour after it goes. A second host with the same name (two machines
 with the same host name, say) is refused with a message saying so, and keeps trying until the name
-is free: give it its own `--broker-name`. The broker keeps names in memory only, so after it
-restarts, the first host to connect under a name has it.
+is free: give it its own `--broker-name`. Give the broker a state file (`--state`) to keep names
+across its restarts: without one, they're kept in memory only, and after it restarts the first host
+to connect under a name has it (hosts reconnect within 30 seconds, so someone else with the broker's
+token would have to win that race).
 
 ### Codex agents
 
