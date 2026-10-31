@@ -5,7 +5,7 @@ import { api, canRunAgents, hostSupports, type AgentTools, type GlobalAgentTools
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../store";
 import { HostSelect } from "./Hosts";
-import { Button, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
+import { Button, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useConfirm } from "./ui";
 
 const SKILL_TEMPLATE = `---
 name: my-skill
@@ -49,6 +49,7 @@ export function ProjectAgentTools({ project }: { project: Project }) {
   useEffect(() => {
     reload();
   }, [reload]);
+  const confirm = useConfirm();
   const run = async (fn: () => Promise<unknown>) => {
     setErr(null);
     try {
@@ -104,7 +105,15 @@ export function ProjectAgentTools({ project }: { project: Project }) {
         lastSeen={lastSeen}
         onToggleOther={(name, on) => toggleOther("disabled_skills", name, on)}
         onToggle={(s, enabled) => run(() => api.updateSkill(hostId, project.id, s.id, { enabled }))}
-        onDelete={(s) => confirm(`Delete the skill "${s.name}"?`) && run(() => api.deleteSkill(hostId, project.id, s.id))}
+        onDelete={(s) =>
+          confirm.ask({
+            title: `Delete skill ${s.name}`,
+            body: `Delete the skill "${s.name}"?`,
+            action: "Delete skill",
+            danger: true,
+            onConfirm: () => api.deleteSkill(hostId, project.id, s.id).then(reload),
+          })
+        }
         onSave={async (skill, content) => {
           if (skill) await api.updateSkill(hostId, project.id, skill.id, { content });
           else await api.createSkill(hostId, project.id, { content });
@@ -118,7 +127,15 @@ export function ProjectAgentTools({ project }: { project: Project }) {
         lastSeen={lastSeen}
         onToggleOther={(name, on) => toggleOther("disabled_mcp_servers", name, on)}
         onUpdate={(s, b) => run(() => api.updateMcpServer(hostId, project.id, s.id, b))}
-        onDelete={(s) => confirm(`Delete the MCP server "${s.name}"?`) && run(() => api.deleteMcpServer(hostId, project.id, s.id))}
+        onDelete={(s) =>
+          confirm.ask({
+            title: `Delete MCP server ${s.name}`,
+            body: `Delete the MCP server "${s.name}"?`,
+            action: "Delete server",
+            danger: true,
+            onConfirm: () => api.deleteMcpServer(hostId, project.id, s.id).then(reload),
+          })
+        }
         onSave={async (server, b) => {
           if (server) await api.updateMcpServer(hostId, project.id, server.id, b);
           else await api.createMcpServer(hostId, project.id, b);
@@ -126,6 +143,7 @@ export function ProjectAgentTools({ project }: { project: Project }) {
         }}
       />
       {err && <div className="text-xs text-red-400">{err}</div>}
+      {confirm.dialog}
     </>
   );
 }
@@ -633,6 +651,7 @@ export function GlobalAgentToolsPanel() {
     setTools(null);
     reload();
   }, [reload]);
+  const confirm = useConfirm();
   if (!hostId) return null;
   const run = async (fn: () => Promise<unknown>) => {
     setErr(null);
@@ -670,8 +689,13 @@ export function GlobalAgentToolsPanel() {
           variant="ghost"
           title="Delete"
           onClick={() =>
-            confirm(`Delete "${item.name}" from every profile and project on this host?`) &&
-            run(() => (kind === "skill" ? api.deleteGlobalSkill(hostId, item.id) : api.deleteGlobalMcpServer(hostId, item.id)))
+            confirm.ask({
+              title: `Delete ${item.name}`,
+              body: `Delete "${item.name}" from every profile and project on this host?`,
+              action: kind === "skill" ? "Delete skill" : "Delete server",
+              danger: true,
+              onConfirm: () => (kind === "skill" ? api.deleteGlobalSkill(hostId, item.id) : api.deleteGlobalMcpServer(hostId, item.id)).then(reload),
+            })
           }
         >
           <Trash2 size={13} />
@@ -743,6 +767,7 @@ export function GlobalAgentToolsPanel() {
         </div>
       )}
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
+      {confirm.dialog}
       {editing?.kind === "skill" && (
         <SkillEditor
           skill={editing.item as ProjectSkill | null}

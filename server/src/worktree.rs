@@ -60,6 +60,23 @@ pub async fn current_branch(dir: &Path) -> Option<String> {
     o.ok.then(|| o.stdout.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+/// Whether git takes `name` for a branch name (`git check-ref-format --branch`), run outside any
+/// repository so that `@{-1}` (the branch checked out before) isn't taken for the one it names.
+pub async fn valid_branch_name(name: &str) -> bool {
+    let run = Command::new("git")
+        .args(["check-ref-format", "--branch", name])
+        .current_dir("/")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await;
+    !name.contains("@{") && run.is_ok_and(|st| st.success())
+}
+
 /// The worktree (main checkout included) that has `branch_ref` checked out, if any.
 async fn checked_out_in(repo: &Path, branch_ref: &str) -> Option<PathBuf> {
     let list = git_ok(repo, &["worktree", "list", "--porcelain"]).await.ok()?;
@@ -135,22 +152,30 @@ async fn upstream(repo: &Path, base: &str) -> Option<Upstream> {
 }
 
 /// Fetch `up` (unless it's in the repository itself).
-async fn fetch(repo: &Path, up: &Upstream) -> Result<()> {
+async fn fetch(repo: &Path, up: &Upstream, account: Option<&str>) -> Result<()> {
     if up.remote == "." {
         return Ok(());
     }
     let refspec = format!("+{}:{}", up.merge, up.tracking);
-    match tokio::time::timeout(Duration::from_secs(60), git_ok(repo, &["fetch", "--quiet", "--no-tags", &up.remote, &refspec])).await {
-        Ok(r) => r.map(|_| ()),
+    let run = async {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(repo).stdin(Stdio::null()).env("GIT_TERMINAL_PROMPT", "0").kill_on_drop(true);
+        crate::gh_mcp::authenticate_fetch(&mut cmd, repo, &up.remote, account).await?;
+        let out = cmd.args(["fetch", "--quiet", "--no-tags", &up.remote, &refspec]).output().await.context("failed to run git fetch")?;
+        if !out.status.success() { bail!("git fetch {} failed: {}", up.remote, String::from_utf8_lossy(&out.stderr).trim()) }
+        Ok(())
+    };
+    match tokio::time::timeout(Duration::from_secs(60), run).await {
+        Ok(r) => r,
         Err(_) => bail!("git fetch {} timed out", up.remote),
     }
 }
 
 /// Fetch base branch `base`'s upstream (see `upstream`), returning its name (e.g. `origin/master`),
 /// or None when it has none.
-async fn fetch_upstream(repo: &Path, base: &str) -> Result<Option<String>> {
+async fn fetch_upstream(repo: &Path, base: &str, account: Option<&str>) -> Result<Option<String>> {
     let Some(up) = upstream(repo, base).await else { return Ok(None) };
-    fetch(repo, &up).await?;
+    fetch(repo, &up, account).await?;
     Ok(Some(up.name().to_string()))
 }
 
@@ -183,11 +208,11 @@ struct Start {
 /// local branch is fast-forwarded when it can be. When the two have diverged it's the upstream,
 /// which is where the task's pull request goes; when the local branch is ahead (with commits
 /// that aren't pushed), it's the local branch. If the fetch fails, it goes by the last one.
-async fn start_point(repo: &Path, base: &str) -> Start {
+async fn start_point(repo: &Path, base: &str, account: Option<&str>) -> Start {
     let mut start = Start { rev: base.to_string(), from: base.to_string(), notes: Vec::new() };
     let Some(up) = upstream(repo, base).await else { return start };
     let name = up.name().to_string();
-    if let Err(e) = fetch(repo, &up).await {
+    if let Err(e) = fetch(repo, &up, account).await {
         start.notes.push(("warn", format!("Could not fetch {name}; branching from the copy fetched before"), Some(format!("{e:#}"))));
     }
     let Some(theirs) = commit(repo, &up.tracking).await else { return start };
@@ -225,6 +250,10 @@ async fn start_point(repo: &Path, base: &str) -> Start {
     }
     start
 }
+
+/// How long a setup or teardown script may run (an install or a build, say): it holds the task's
+/// setup lock and its project's folder in place meanwhile, so one that hangs is stopped.
+pub const SCRIPT_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 /// Run a project script with bash. With a time limit, it's stopped (with everything it started)
 /// if it runs over.
@@ -391,7 +420,8 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
             if branch_exists {
                 git_ok(&repo, &["worktree", "add", &wt_s, &branch]).await?;
             } else {
-                let start = start_point(&repo, &base).await;
+                let account = crate::runner::task_github_account(state, &task)?;
+                let start = start_point(&repo, &base, account.as_deref()).await;
                 for (level, text, detail) in start.notes {
                     state.add_event(task_id, level, text, detail);
                 }
@@ -404,7 +434,7 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
 
         if !project.setup_script.trim().is_empty() {
             state.add_event(task_id, "info", "Running setup script…", None);
-            let log = run_script(&project.setup_script, &wt, &script_env(&project, &task, &wt, &branch), None).await?;
+            let log = run_script(&project.setup_script, &wt, &script_env(&project, &task, &wt, &branch), Some(SCRIPT_LIMIT)).await?;
             state.add_event(task_id, "info", "Setup script finished", Some(truncate(&log, 20000)));
         }
         Ok::<_, anyhow::Error>((wt, branch, base))
@@ -488,9 +518,9 @@ async fn uncommitted(wt: &Path) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
-/// Run git in `dir`, returning what it prints as bytes (for file names, which needn't be UTF-8).
-async fn git_bytes(dir: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
-    let out = Command::new("git")
+/// Run git in `dir` with arguments that needn't be UTF-8 (file names), whether it succeeds or not.
+async fn git_output(dir: &Path, args: &[&OsStr]) -> Result<std::process::Output> {
+    Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -499,7 +529,12 @@ async fn git_bytes(dir: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
         .kill_on_drop(true)
         .output()
         .await
-        .context("failed to run git")?;
+        .context("failed to run git")
+}
+
+/// Run git in `dir`, returning what it prints as bytes (for file names, which needn't be UTF-8).
+async fn git_bytes(dir: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
+    let out = git_output(dir, args).await?;
     if !out.status.success() {
         let args: Vec<_> = args.iter().map(|a| a.to_string_lossy()).collect();
         bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
@@ -528,7 +563,7 @@ pub async fn teardown(state: &Shared, task_id: &str, force: bool, delete_branch:
         // Its terminal would be left in a deleted directory.
         crate::terminal::kill_all(state, task_id).await;
         if !project.teardown_script.trim().is_empty() {
-            match run_script(&project.teardown_script, &wt, &script_env(&project, &task, &wt, &branch), None).await {
+            match run_script(&project.teardown_script, &wt, &script_env(&project, &task, &wt, &branch), Some(SCRIPT_LIMIT)).await {
                 Ok(log) => state.add_event(task_id, "info", "Teardown script finished", Some(truncate(&log, 20000))),
                 Err(e) if force => state.add_event(task_id, "warn", "Teardown script failed (continuing)", Some(format!("{e:#}"))),
                 Err(e) => {
@@ -583,6 +618,14 @@ pub async fn teardown(state: &Shared, task_id: &str, force: bool, delete_branch:
     Ok(state.update_task(task_id, &fields)?.unwrap())
 }
 
+/// Whether an agent is working in the task's worktree: its own, or one of its reviewers, whose
+/// threads run there too.
+pub fn agent_in_worktree(state: &Shared, task_id: &str) -> bool {
+    // Read (and the database unlocked) before checking runs, which are locked first elsewhere.
+    let reviews = db::review_threads(&state.db(), task_id);
+    state.is_running(task_id) || reviews.is_ok_and(|r| r.iter().any(|r| r.running || state.is_running(&r.id)))
+}
+
 /// What `remove_if_merged` did with a done task's worktree.
 #[derive(Debug, PartialEq)]
 pub enum Removal {
@@ -601,11 +644,7 @@ pub async fn remove_if_merged(state: &Shared, task_id: &str, fetch: bool) -> Res
     let kept = |why: &str| Ok(Removal::Kept(why.to_string()));
     locked(task_id, async || {
         let (task, project) = load(state, task_id)?;
-        let busy = || {
-            // Read (and the database unlocked) before checking runs, which are locked first elsewhere.
-            let reviews = db::review_threads(&state.db(), task_id);
-            state.is_running(task_id) || reviews.is_ok_and(|r| r.iter().any(|r| r.running || state.is_running(&r.id)))
-        };
+        let busy = || agent_in_worktree(state, task_id);
         if task.kind != "task" || task.status != "done" {
             return kept("it isn't done");
         }
@@ -631,8 +670,9 @@ pub async fn remove_if_merged(state: &Shared, task_id: &str, fetch: bool) -> Res
             return Ok(Removal::Kept(format!("it has {n} uncommitted or untracked file{}", if n == 1 { "" } else { "s" })));
         }
         let head = git_ok(&wt, &["rev-parse", "--verify", "HEAD"]).await?.trim().to_string();
+        let account = crate::runner::task_github_account(state, &task)?;
         let env = crate::runner::task_gh_env(state, &task).await;
-        let Some(merged_into) = merged_into(&repo, &wt, &base, task.branch.as_deref(), &head, fetch, &env).await else {
+        let Some(merged_into) = merged_into(&repo, &wt, &base, task.branch.as_deref(), &head, fetch, account.as_deref(), &env).await else {
             return Ok(Removal::Kept(format!("its work isn't merged into {base}")));
         };
         // Started meanwhile (fetching takes a while)?
@@ -664,6 +704,7 @@ async fn merged_into(
     branch: Option<&str>,
     head: &str,
     fetch: bool,
+    account: Option<&str>,
     gh_env: &Result<Option<crate::gh_mcp::GhEnv>>,
 ) -> Option<String> {
     let contains = |rev: String| async move { git(repo, &["merge-base", "--is-ancestor", head, &rev]).await.is_ok_and(|o| o.ok) };
@@ -672,7 +713,7 @@ async fn merged_into(
     }
     if let Some(up) = upstream(repo, base).await {
         if fetch {
-            let _ = self::fetch(repo, &up).await;
+            let _ = self::fetch(repo, &up, account).await;
         }
         if contains(up.tracking.clone()).await {
             return Some(up.name().to_string());
@@ -701,8 +742,10 @@ pub async fn remove_merged(state: &Shared, project_id: &str) -> Result<Vec<Value
     let mut bases: Vec<String> = tasks.iter().filter_map(|t| t.base_branch.clone().or(project.base_branch.clone())).filter(|b| !b.is_empty()).collect();
     bases.sort();
     bases.dedup();
+    let profile = db::get_profile(&state.db(), &project.profile_id)?.context("profile not found")?;
+    let account = crate::runner::github_account(Some(&project), &profile);
     for base in bases {
-        if let Err(e) = fetch_upstream(&repo, &base).await {
+        if let Err(e) = fetch_upstream(&repo, &base, account.as_deref()).await {
             tracing::warn!(project = project_id, "couldn't fetch {base}'s upstream: {e:#}");
         }
     }
@@ -769,6 +812,25 @@ pub async fn has_work_to_merge(state: &Shared, task: &Task) -> bool {
         (Some(wt), "ready") => dirty(PathBuf::from(wt)).await,
         _ => false,
     }
+}
+
+/// Whether moving a task to Done would leave work of its unmerged (API 75), for the board to ask
+/// first: it has work to merge (see `has_work_to_merge`) and its pull request, if it has one,
+/// isn't merged on GitHub (squashed or rebased, its commits aren't in its base branch). Tasks with
+/// a document (kept by the board) have none. A pull request that can't be read in a few seconds
+/// counts as not merged.
+pub async fn unmerged(state: &Shared, task: &Task) -> bool {
+    if task.kind != "task" || task.task_type.is_some() || !has_work_to_merge(state, task).await {
+        return false;
+    }
+    let Some(url) = task.pr_url.clone() else { return true };
+    let pr = async {
+        let project = db::get_project(&state.db(), task.project_id.as_deref()?).ok().flatten()?;
+        // Not as another account when the task's isn't signed in.
+        let env = crate::runner::task_gh_env(state, task).await.ok()?;
+        gh_json(Path::new(&project.repo_path), &["pr", "view", &url, "--json", "state"], env.as_ref()).await
+    };
+    !matches!(tokio::time::timeout(Duration::from_secs(5), pr).await, Ok(Some(pr)) if pr["state"] == "MERGED")
 }
 
 /// Look up the pull request for a task's branch with `gh` once its agent's run ends, and keep
@@ -962,11 +1024,16 @@ pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
     // Mark untracked files as intent-to-add would mutate the index; instead diff them separately.
     let tracked = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from]).await?.stdout;
     let patch = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", &from]).await?.stdout;
-    let untracked_list = git(&dir, &["ls-files", "--others", "--exclude-standard"]).await?.stdout;
+    // NUL-separated, so names git would quote (not ASCII, or with a newline) come as they are, and
+    // after `--`, so a name starting with `-` isn't taken for an option.
+    let untracked_list = git_bytes(&dir, &["ls-files", "-z", "--others", "--exclude-standard"].map(OsStr::new)).await?;
+    let untracked: Vec<&OsStr> = untracked_list.split(|b| *b == 0).filter(|f| !f.is_empty()).map(OsStr::from_bytes).collect();
     let mut untracked_patch = String::new();
-    for f in untracked_list.lines().take(50) {
-        let o = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--no-index", "/dev/null", f]).await?;
-        untracked_patch.push_str(&o.stdout);
+    for f in untracked.iter().take(50) {
+        let args = ["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--no-index", "--", "/dev/null"].map(OsStr::new);
+        // It exits 1 when the files differ, which they do.
+        let o = git_output(&dir, &[&args[..], &[*f]].concat()).await?;
+        untracked_patch.push_str(&String::from_utf8_lossy(&o.stdout));
     }
     let commits = match &merge_base {
         Some(mb) => git(&dir, &["log", "--oneline", &format!("{mb}..HEAD")]).await?.stdout,
@@ -980,7 +1047,7 @@ pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
         "commits": commits,
         "stat": tracked,
         "patch": truncate(&format!("{patch}{untracked_patch}"), 2_000_000),
-        "untracked": untracked_list.lines().collect::<Vec<_>>(),
+        "untracked": untracked.iter().map(|f| f.to_string_lossy()).collect::<Vec<_>>(),
     }))
 }
 
@@ -1105,6 +1172,28 @@ mod tests {
         (repo, t, wt, branch)
     }
 
+    // HA-42: untracked files were listed without -z, so a name git quotes (not ASCII) or one starting
+    // with `-` dropped out of the branch's diff.
+    #[test]
+    fn the_diff_has_every_untracked_file_whatever_its_name() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, t, wt, _) = task_with_work(&s).await;
+            for name in ["café.txt", "-n.txt", "plain.txt"] {
+                std::fs::write(wt.join(name), format!("in {name}\n")).unwrap();
+            }
+            let d = diff(&s, &t.id).await.unwrap();
+            let mut untracked: Vec<&str> = d["untracked"].as_array().unwrap().iter().map(|f| f.as_str().unwrap()).collect();
+            untracked.sort();
+            assert_eq!(untracked, ["-n.txt", "café.txt", "plain.txt"]);
+            let patch = d["patch"].as_str().unwrap();
+            for name in ["café.txt", "-n.txt", "plain.txt"] {
+                assert!(patch.contains(&format!("+in {name}\n")), "{name}: {patch}");
+            }
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
     fn kept(why: &str) -> Removal {
         Removal::Kept(why.to_string())
     }
@@ -1188,6 +1277,37 @@ mod tests {
             assert_eq!((&results[0]["removed"], &results[0]["detail"]), (&json!(true), &json!("merged into origin/master")));
             assert!(!wt.exists());
             std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_task_with_commits_its_base_lacks_is_unmerged() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let repo = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            std::fs::create_dir_all(&repo).unwrap();
+            sh(&repo, &["init", "-q", "-b", "master"]);
+            sh(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&repo), key: Some("X".into()), base_branch: Some("master".into()), use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "Do it".into(), ..Default::default() }).unwrap();
+            let t = setup(&s, &t.id).await.unwrap();
+            let (wt, branch) = (PathBuf::from(t.worktree_path.clone().unwrap()), t.branch.clone().unwrap());
+            // Nothing done yet.
+            assert!(!unmerged(&s, &t).await);
+            std::fs::write(wt.join("notes"), "1").unwrap();
+            assert!(unmerged(&s, &t).await);
+            sh(&wt, &["add", "notes"]);
+            sh(&wt, &["commit", "-qm", "work"]);
+            assert!(unmerged(&s, &t).await);
+            // A document is kept by the board, not merged.
+            let doc = db::update_task(&s.db(), &t.id, &[("task_type", json!("plan"))]).unwrap().unwrap();
+            assert!(!unmerged(&s, &doc).await);
+            let t = db::update_task(&s.db(), &t.id, &[("task_type", Value::Null)]).unwrap().unwrap();
+            sh(&repo, &["merge", "-q", "--no-ff", "-m", "merge", &branch]);
+            assert!(!unmerged(&s, &t).await);
+            std::fs::remove_dir_all(&repo).ok();
         })
     }
 
@@ -1298,6 +1418,37 @@ mod tests {
             assert_eq!(head, latest, "{log}");
             assert!(log.contains("Could not fetch origin/master; branching from the copy fetched before"), "{log}");
             std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn worktree_fetches_use_the_project_account_before_the_profile_account() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, task, _, _) = task_with_work(&s).await;
+            let gh = repo.join("fake-gh");
+            // No real login or network: make gh fail and identify the account it was asked for.
+            std::fs::write(&gh, "#!/bin/sh\necho \"$*\" >&2\nexit 1\n").unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::gh_mcp::TEST_GH_PROGRAM.set(Some(path_str(&gh)));
+            sh(&repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+            sh(&repo, &["update-ref", "refs/remotes/origin/master", "master"]);
+            sh(&repo, &["branch", "--set-upstream-to=origin/master", "master"]);
+            let pid = task.project_id.as_ref().unwrap();
+            s.db().execute("UPDATE profiles SET github_account='profile-login' WHERE id=?1", [&task.profile_id]).unwrap();
+            s.db().execute("UPDATE projects SET github_account='project-login' WHERE id=?1", [pid]).unwrap();
+            for (title, expected) in [("Project account", "project-login"), ("Profile account", "profile-login")] {
+                let t = create_task_inner(&s, pid, CreateTask { title: title.into(), ..Default::default() }).unwrap();
+                let t = setup(&s, &t.id).await.unwrap();
+                let log = db::list_messages(&s.db(), &t.id).unwrap();
+                let warning = log.iter().find(|m| m.kind == "event" && m.data["level"] == "warn").unwrap();
+                let detail = warning.data["detail"].as_str().unwrap();
+                assert!(detail.contains(&format!("--user={expected}")), "{detail}");
+                assert_eq!(rev(Path::new(t.worktree_path.as_ref().unwrap()), "HEAD"), rev(&repo, "master"));
+                s.db().execute("UPDATE projects SET github_account=NULL WHERE id=?1", [pid]).unwrap();
+            }
+            crate::gh_mcp::TEST_GH_PROGRAM.set(None);
+            std::fs::remove_dir_all(&repo).ok();
         })
     }
 

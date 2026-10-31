@@ -71,14 +71,16 @@ impl Entry {
 /// Our streams by id.
 type Streams = Arc<Mutex<HashMap<u64, Entry>>>;
 
-/// Keep a connection to the broker at `url`, as `name`.
-pub fn dial_out(s: &Shared, url: String, token: String, name: String) {
+/// Keep a connection to the broker at `url`, as `name`. `key` is our secret on the broker: it keeps
+/// `name` for whoever took it first with theirs.
+pub fn dial_out(s: &Shared, url: String, token: String, name: String, key: String) {
+    let _ = s.broker_url.set(format!("{}/_broker/h/{name}", url.trim_end_matches('/')));
     let s = s.clone();
     tokio::spawn(async move {
         let mut backoff = 1;
         loop {
             let started = std::time::Instant::now();
-            if let Err(e) = session(&s, &url, &token, &name).await {
+            if let Err(e) = session(&s, &url, &token, &name, &key).await {
                 tracing::warn!("broker {url}: {e:#}");
             }
             // A connection that lasted a while starts over at a quick retry.
@@ -91,13 +93,13 @@ pub fn dial_out(s: &Shared, url: String, token: String, name: String) {
     });
 }
 
-async fn session(s: &Shared, url: &str, token: &str, name: &str) -> Result<()> {
+async fn session(s: &Shared, url: &str, token: &str, name: &str, key: &str) -> Result<()> {
     let ws_url = format!("{}/_broker/connect", url.trim_end_matches('/').replacen("http", "ws", 1));
     let mut req = ws_url.into_client_request()?;
     req.headers_mut().insert("Authorization", format!("Bearer {token}").parse()?);
     let (ws, _) = tokio_tungstenite::connect_async(req).await.context("connecting")?;
     let (mut sink, mut stream) = ws.split();
-    let hello = Ctl::Hello { name: name.into(), host_id: s.host_id.clone(), version: env!("CARGO_PKG_VERSION").into(), protocol: proto::PROTOCOL };
+    let hello = Ctl::Hello { name: name.into(), host_id: s.host_id.clone(), version: env!("CARGO_PKG_VERSION").into(), protocol: proto::PROTOCOL, key: Some(key.into()) };
     sink.send(TMessage::Text(serde_json::to_string(&hello)?.into())).await?;
     match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
         Ok(Some(Ok(TMessage::Text(t)))) => match serde_json::from_str::<Ctl>(&t)? {
@@ -595,7 +597,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(1500)).await;
             assert_eq!(live_ws("/test/ws-stuck-2"), 1);
             // Connecting again under the same name makes the broker hang up on the first connection.
-            dial_out(&s, b.clone(), BROKER_TOKEN.into(), "desktop".into());
+            dial_out(&s, b.clone(), BROKER_TOKEN.into(), "desktop".into(), "desktop-key".into());
             until("the host still relays the websocket", Duration::from_secs(1), || live_ws("/test/ws-stuck-2") == 0).await;
             client.abort();
         })
@@ -626,7 +628,7 @@ mod tests {
         let s = testing::state_as(Identity { host_id: id.into(), host_name: id.into(), token: format!("{id}-tok"), hub_token: format!("{id}-hub"), internal_url });
         let app = crate::api::router(s.clone()).route("/api/open-token", axum::routing::get(crate::open_token(s.token.clone()))).merge(extra);
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
-        dial_out(&s, broker.into(), BROKER_TOKEN.into(), id.into());
+        dial_out(&s, broker.into(), BROKER_TOKEN.into(), id.into(), format!("{id}-key"));
         // Connected once the broker passes a request to it.
         for _ in 0..100 {
             if call("GET", &format!("{broker}/_broker/h/{id}/api/health"), &[]).await.0 == 200 {

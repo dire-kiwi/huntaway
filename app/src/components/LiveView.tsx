@@ -2,14 +2,15 @@ import clsx from "clsx";
 import { Check, Map as MapIcon, Maximize2, MessageCircleQuestion, Send, ShieldQuestion, X } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ownWorkDir, type Message, type Project, type Task } from "../api";
-import { openTask, usePanel } from "../router";
+import { openTask, usePanelOpen } from "../router";
 import { keyPrefix, useStore, useThreadMessages } from "../store";
+import { useDelta } from "../deltas";
 import { threadModel, type Item } from "../threadModel";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { toolMeta } from "./Thread";
 import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { CardState, StatusIcon } from "./ui";
-import type { OnMenu } from "./Board";
+import type { OnMenu } from "./TaskCard";
 
 /**
  * Every agent that's working, or was a moment ago, side by side: a tile for each, with the tail of
@@ -126,12 +127,12 @@ export function PendingPrompts({ task }: { task: Task }) {
 function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu?: OnMenu }) {
   const messages = useThreadMessages(task.id);
   const earlier = useStore((s) => s.threads[task.id]?.subagents);
-  const delta = useStore((s) => s.deltas[task.id]);
+  const delta = useDelta(task.id);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
   const cwd = task.worktree_path ?? ownWorkDir(task);
   const lines = useMemo(() => tail(model.items, cwd), [model.items, cwd]);
   const prompts = pendingPrompts(model.items);
-  const open = usePanel()?.taskId === task.id;
+  const open = usePanelOpen(task.id);
   const [text, setText] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -217,28 +218,31 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
           </div>
         )}
       </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-        className="flex shrink-0 items-center gap-1 border-t border-line bg-panel-2 px-2 py-1.5"
-      >
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={task.running ? "Message the agent while it works…" : "Reply to the agent…"}
-          className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-fg outline-none placeholder:text-faint"
-        />
-        {err && (
-          <span className="max-w-[40%] truncate text-[11px] text-red-400" title={err}>
-            {err}
-          </span>
-        )}
-        <button type="submit" disabled={!text.trim()} className="rounded p-1 text-faint hover:bg-raised hover:text-fg disabled:opacity-30" title="Send (Enter)">
-          <Send size={12} />
-        </button>
-      </form>
+      {/* No reply box on a task in Backlog or Done with no agent running: a message there would start one. */}
+      {(task.running || (task.status !== "backlog" && task.status !== "done")) && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+          className="flex shrink-0 items-center gap-1 border-t border-line bg-panel-2 px-2 py-1.5"
+        >
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={task.running ? "Message the agent while it works…" : "Reply to the agent…"}
+            className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-fg outline-none placeholder:text-faint"
+          />
+          {err && (
+            <span className="max-w-[40%] truncate text-[11px] text-red-400" title={err}>
+              {err}
+            </span>
+          )}
+          <button type="submit" disabled={!text.trim()} className="rounded p-1 text-faint hover:bg-raised hover:text-fg disabled:opacity-30" title="Send (Enter)">
+            <Send size={12} />
+          </button>
+        </form>
+      )}
     </div>
   );
 }

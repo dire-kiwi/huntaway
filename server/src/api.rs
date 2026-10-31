@@ -124,6 +124,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
+        .route("/tasks/{id}/unmerged", get(task_unmerged))
         .route("/tasks/{id}/git", get(git_view::status))
         .route("/tasks/{id}/git/diff", get(git_view::diff))
         .route("/tasks/{id}/git/show", get(git_view::show))
@@ -247,11 +248,8 @@ struct CreateProfile {
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
-    let name = b.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::bad("name is required"));
-    }
     let c = s.db();
+    let name = &check_profile_name(&c, None, &json!(b.name))?;
     let ids = match (b.claude_config_ids, b.claude_config_dir) {
         (Some(ids), _) => check_config_ids(&c, ids)?,
         (None, Some(dir)) => vec![db::config_for_dir(&c, name, &dir)?],
@@ -281,14 +279,18 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     };
     let c = s.db();
     let current = db::get_profile(&c, &id)?.ok_or_else(|| ApiError::not_found("profile"))?;
-    let mut fields = pick(&b, &["name", "default_model"]);
+    let mut fields = pick(&b, &["default_model"]);
+    if let Some(v) = b.get("name") {
+        fields.push(("name", json!(check_profile_name(&c, Some(&id), v)?)));
+    }
     if let Some((token, user)) = asana {
         fields.push(("asana_token", token));
         fields.push(("asana_user", user));
     }
     if let Some(v) = b.get("agent_access") {
-        let name = b.get("name").and_then(Value::as_str).unwrap_or(&current.name);
-        fields.push(("agent_access", json!(check_agent_access(name, v)?)));
+        let name = fields.iter().find(|(k, _)| *k == "name").and_then(|(_, v)| v.as_str()).unwrap_or(&current.name);
+        let access = check_agent_access(name, v)?;
+        fields.push(("agent_access", json!(access)));
     }
     if let Some(v) = b.get("github_account") {
         fields.push(("github_account", check_github_account(v)?));
@@ -403,7 +405,37 @@ fn check_clone_dir(v: &Value) -> ApiResult<Value> {
     Ok(json!(dir))
 }
 
+/// A project's or task's base branch: null (or blank) for the default, else a name git takes for a
+/// branch, as an agent may set it to anything.
+async fn check_base_branch(v: &Value) -> ApiResult<Value> {
+    let name = match v {
+        Value::Null => return Ok(Value::Null),
+        Value::String(b) => b.trim(),
+        _ => return Err(ApiError::bad("base_branch must be null or a string")),
+    };
+    if name.is_empty() {
+        return Ok(Value::Null);
+    }
+    if !worktree::valid_branch_name(name).await {
+        return Err(ApiError::bad(format!("base_branch {name:?} isn't a valid branch name")));
+    }
+    Ok(json!(name))
+}
+
 /// Profile names whose agents may use a profile's board, tidied (`*` for every profile).
+/// A profile's name, trimmed: required, and not another profile's in any case, as other profiles
+/// grant access by name (see `check_agent_access`). `own` is the profile it's for, if it exists.
+fn check_profile_name(c: &rusqlite::Connection, own: Option<&str>, v: &Value) -> ApiResult<String> {
+    let name = v.as_str().map(str::trim).unwrap_or_default();
+    if name.is_empty() {
+        return Err(ApiError::bad("name is required"));
+    }
+    if let Some(p) = db::list_profiles(c)?.into_iter().find(|p| Some(p.id.as_str()) != own && p.name.eq_ignore_ascii_case(name)) {
+        return Err(ApiError::conflict(format!("there's a profile named {} already", p.name)));
+    }
+    Ok(name.to_string())
+}
+
 fn check_agent_access(own_name: &str, v: &Value) -> ApiResult<Vec<String>> {
     let names: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("agent_access must be a list of profile names"))?;
     let mut names: Vec<String> = names.into_iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty() && n != own_name).collect();
@@ -484,7 +516,7 @@ async fn create_claude_config(State(s): State<Shared>, Json(b): Json<CreateClaud
 async fn update_claude_config(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     let mut fields = pick(&b, &["name", "config_dir", "agent"]);
     for (k, v) in fields.iter_mut() {
-        let t = v.as_str().unwrap_or("").trim().to_string();
+        let t = v.as_str().ok_or_else(|| ApiError::bad(format!("{k} must be a string")))?.trim().to_string();
         if *k == "name" && t.is_empty() {
             return Err(ApiError::bad("name is required"));
         }
@@ -511,6 +543,9 @@ async fn update_claude_config(State(s): State<Shared>, Path(id): Path<String>, J
 }
 
 async fn delete_claude_config(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    if db::get_claude_config(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("Claude config"));
+    }
     let running: i64 = s.db().query_row("SELECT COUNT(*) FROM tasks WHERE claude_config_id=?1 AND running=1", [&id], |r| r.get(0))?;
     if running > 0 {
         return Err(ApiError::conflict("agents are running with this config; stop them first"));
@@ -521,16 +556,35 @@ async fn delete_claude_config(State(s): State<Shared>, Path(id): Path<String>) -
     Ok(Json(json!({"ok": true})))
 }
 
+/// Deletes a profile with its projects (see delete_project_inner), its threads in no project, and
+/// its folder in the data dir.
 async fn delete_profile(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let running: Vec<String> = {
+    if db::get_profile(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("profile"));
+    }
+    // Archived ones too.
+    let projects = db::list_projects(&s.db(), &id)?;
+    for p in projects {
+        delete_project_inner(&s, &p.id).await?;
+    }
+    // Its scratch and group tasks, and their review threads.
+    let rest: Vec<String> = {
         let c = s.db();
-        let mut st = c.prepare("SELECT id FROM tasks WHERE profile_id=?1")?;
+        let mut st = c.prepare("SELECT id FROM tasks WHERE profile_id=?1 ORDER BY kind='review' DESC, created_at")?;
         st.query_map([&id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
     };
-    for t in running {
-        runner::abort(&s, &t);
+    for t in rest {
+        // A review thread goes with its task, so it may be gone already.
+        let Some(t) = db::get_task(&s.db(), &t)? else { continue };
+        delete_one(&s, &t, false).await?;
     }
     s.db().execute("DELETE FROM profiles WHERE id=?1", [&id])?;
+    let dir = s.data_dir.join("profiles").join(&id);
+    if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            tracing::warn!("removing {} after deleting its profile: {e}", dir.display());
+        }
+    }
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!({"ok": true})))
 }
@@ -580,8 +634,8 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
     }
     let repo = repo.canonicalize().unwrap_or(repo);
     let is_git = worktree::is_git_repo(&repo).await;
-    let base_branch = match b.base_branch.filter(|b| !b.trim().is_empty()) {
-        Some(b) => Some(b),
+    let base_branch = match check_base_branch(&json!(b.base_branch)).await?.as_str() {
+        Some(b) => Some(b.to_string()),
         None if is_git => worktree::current_branch(&repo).await,
         None => None,
     };
@@ -598,12 +652,7 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
             check_key(s, profile_id, None, &k)?;
             k
         }
-        // A derived key steers clear of the group and scratch tasks' ones, and of the profile's projects' keys.
-        None => {
-            let base = Some(derive_key(&name)).filter(|k| !reserved(k)).unwrap_or_else(|| format!("{}P", derive_key(&name)));
-            let projects = db::list_projects(&s.db(), profile_id)?;
-            (1..).map(|n| if n == 1 { base.clone() } else { format!("{base}{n}") }).find(|k| key_owner(&projects, None, k).is_none()).unwrap_or(base)
-        }
+        None => new_project_key(s, profile_id, &name)?,
     };
     let id = new_id();
     let base = s.data_dir.join("projects").join(&id);
@@ -630,6 +679,14 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
     let p = db::update_project(&s.db(), &p.id, &[("repo_root", json!(repo_root))])?.unwrap_or(p);
     s.emit(json!({"type": "project", "project": p}));
     Ok(p)
+}
+
+/// The key a new project named `name` gets on profile `profile_id` if it isn't given one. A
+/// derived key steers clear of the group and scratch tasks' ones, and of the profile's projects' keys.
+pub fn new_project_key(s: &Shared, profile_id: &str, name: &str) -> anyhow::Result<String> {
+    let base = Some(derive_key(name)).filter(|k| !reserved(k)).unwrap_or_else(|| format!("{}P", derive_key(name)));
+    let projects = db::list_projects(&s.db(), profile_id)?;
+    Ok((1..).map(|n| if n == 1 { base.clone() } else { format!("{base}{n}") }).find(|k| key_owner(&projects, None, k).is_none()).unwrap_or(base))
 }
 
 #[derive(Deserialize)]
@@ -704,7 +761,7 @@ pub async fn update_project_inner(s: &Shared, id: &str, b: &Map<String, Value>) 
     // the key this one checked, or store old keys this one would overwrite.
     let _changing = s.project_changes.lock().await;
     let before = db::get_project(&s.db(), id)?.ok_or_else(|| ApiError::not_found("project"))?;
-    let mut fields = project_fields(s, &before, b)?;
+    let mut fields = project_fields(s, &before, b).await?;
     // Archiving is stored on its own, once the other changes check out (see archive).
     let mut archive_now = false;
     if let Some(i) = fields.iter().position(|(k, _)| *k == "archived") {
@@ -814,7 +871,7 @@ fn archive(s: &Shared, p: &db::Project) -> ApiResult<()> {
 
 /// The project fields in `b`, checked and as they're stored, for a change to `before`.
 /// `archived` stays as given, for update_project_inner to turn into `archived_at`.
-pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) -> ApiResult<Vec<(&'static str, Value)>> {
+pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) -> ApiResult<Vec<(&'static str, Value)>> {
     let mut fields = pick(
         b,
         &[
@@ -860,6 +917,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
                 }
                 *v = json!(path_str(&expand_tilde(path)));
             }
+            "base_branch" => *v = check_base_branch(v).await?,
             "name" => {
                 let name = v.as_str().map(str::trim).unwrap_or_default();
                 if name.is_empty() {
@@ -917,6 +975,19 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
             _ => {}
         }
     }
+    // A relative worktrees folder would be made against the server's folder but used by git from
+    // the repository's, which puts worktrees in the main checkout; and it can't be the checkout.
+    if let Some((_, root)) = fields.iter().find(|(k, _)| *k == "worktrees_root") {
+        let root = PathBuf::from(root.as_str().unwrap_or_default());
+        let repo = fields.iter().find(|(k, _)| *k == "repo_path").and_then(|(_, v)| v.as_str()).unwrap_or(&before.repo_path);
+        if !root.is_absolute() {
+            return Err(ApiError::bad("worktrees_root must be an absolute path, or start with ~/"));
+        }
+        let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.components().collect());
+        if canon(&root) == canon(std::path::Path::new(repo)) {
+            return Err(ApiError::bad("worktrees_root can't be the repository folder: give it a folder of its own"));
+        }
+    }
     Ok(fields)
 }
 
@@ -954,28 +1025,77 @@ async fn delete_project(State(s): State<Shared>, Path(id): Path<String>) -> ApiR
     Ok(Json(json!({"ok": true})))
 }
 
-/// Deletes a project with its tasks and their threads and worktrees (not their branches).
+/// Deletes a project with its tasks and their threads and worktrees (not their branches), and
+/// its folder in the data dir.
 pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
     let project = db::get_project(&s.db(), id)?.ok_or_else(|| ApiError::not_found("project"))?;
-    let tasks: Vec<db::Task> = {
-        let c = s.db();
-        let mut all = db::list_tasks_for_project(&c, id, "task")?;
-        all.extend(db::list_tasks_for_project(&c, id, "review")?);
-        all
-    };
+    // All its threads: tasks, review threads and any other kind.
+    let tasks = db::project_threads(&s.db(), id)?;
     // Settled before the threads go, so the dialog asking about them (or this project) goes too.
     permissions::expire_for_project(s, id);
+    let repo = PathBuf::from(&project.repo_path);
+    let mut files = std::collections::HashSet::new();
     for t in &tasks {
         runner::abort(s, &t.id);
         permissions::expire_for_task(s, &t.id);
+        terminal::kill_all(s, &t.id).await;
+        files.extend(crate::attachments::of_task(&s.db(), &t.id)?);
         // Remove worktrees but keep branches so no committed work is lost.
         if let Some(wt) = &t.worktree_path {
-            crate::checkpoints::forget(s, &t.id, std::path::Path::new(&project.repo_path)).await;
-            let _ = worktree::git(&PathBuf::from(&project.repo_path), &["worktree", "remove", "--force", wt]).await;
+            crate::checkpoints::forget(s, &t.id, &repo).await;
+            let _ = worktree::git(&repo, &["worktree", "remove", "--force", wt]).await;
         }
     }
+    if tasks.iter().any(|t| t.worktree_path.is_some()) {
+        let _ = worktree::git(&repo, &["worktree", "prune"]).await;
+    }
+    let runs: Vec<String> = {
+        let c = s.db();
+        let mut st = c.prepare("SELECT r.id FROM runs r JOIN tasks t ON t.id=r.task_id WHERE t.project_id=?1")?;
+        st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
     s.db().execute("DELETE FROM projects WHERE id=?1", [id])?;
+    crate::runs::remove_finished(s, &runs);
+    for t in &tasks {
+        // Any agent asking to delete one is told it's gone (see tools::delete_task).
+        permissions::expire_deletions_of(s, &t.id);
+        crate::documents::remove(s, &t.id);
+    }
+    // Unless another task refers to them too.
+    if let Err(e) = crate::attachments::remove_unreferenced(s, &files) {
+        tracing::warn!("removing attachments while deleting project {id} failed: {e:#}");
+    }
+    remove_project_dir(s, id)?;
     s.emit(json!({"type": "project_deleted", "id": id}));
+    Ok(())
+}
+
+/// Removes a deleted project's folder in the data dir (its scratch and worktrees folders, unless
+/// they were moved, and its skills), unless what's left on the host is in it: a repository, a
+/// worktree, or a folder another project was pointed at.
+fn remove_project_dir(s: &Shared, id: &str) -> ApiResult<()> {
+    let dir = s.data_dir.join("projects").join(id);
+    let Ok(meta) = std::fs::symlink_metadata(&dir) else { return Ok(()) };
+    if !meta.is_dir() {
+        return Ok(());
+    }
+    let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let root = canonical(&dir);
+    let used: Vec<String> = {
+        let c = s.db();
+        let mut st = c.prepare(
+            "SELECT repo_path FROM projects UNION SELECT scratch_path FROM projects UNION SELECT worktrees_root FROM projects
+             UNION SELECT worktree_path FROM tasks WHERE worktree_path IS NOT NULL UNION SELECT work_dir FROM tasks WHERE work_dir IS NOT NULL",
+        )?;
+        st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    if let Some(p) = used.iter().map(PathBuf::from).find(|p| p.is_absolute() && canonical(p).starts_with(&root)) {
+        tracing::warn!("keeping {} after deleting its project: {} is in it", dir.display(), p.display());
+        return Ok(());
+    }
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        tracing::warn!("removing {} after deleting its project: {e}", dir.display());
+    }
     Ok(())
 }
 
@@ -988,7 +1108,11 @@ struct TaskListQuery {
 
 async fn list_project_tasks(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<TaskListQuery>) -> ApiResult<Json<Value>> {
     let kind = q.kind.unwrap_or_else(|| "task".into());
-    Ok(Json(json!(db::list_tasks_for_project(&s.db(), &id, &kind)?)))
+    let c = s.db();
+    if db::get_project(&c, &id)?.is_none() {
+        return Err(ApiError::not_found("project"));
+    }
+    Ok(Json(json!(db::list_tasks_for_project(&c, &id, &kind)?)))
 }
 
 async fn list_profile_tasks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -1444,6 +1568,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         ],
     );
     check_reminder(Some(&current), &mut fields)?;
+    if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "base_branch") {
+        *v = check_base_branch(v).await?;
+    }
     if let Some(v) = b.get("labels") {
         if current.kind != "task" {
             return Err(ApiError::bad("only a task can have labels"));
@@ -1551,12 +1678,13 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     if remerge && !(current.merging && s.is_running(id) && b.get("status").and_then(Value::as_str) == Some("in_progress")) {
         return Err(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"));
     }
-    // Moving a task to "Ready for merge" asks its agent to merge it (if agents can run here),
-    // once no other task in its project is merging.
+    // Moving a task to "Ready for merge" asks its agent to merge it, once no other task in its
+    // project is merging. On a host that can't run agents it joins the queue all the same, and
+    // its merge starts once they can (see runner::start_queued_merges).
     let mut merge = false;
     if let Some(v) = fields.iter().find(|(k, _)| *k == "status").map(|(_, v)| v.clone()) {
         let st = v.as_str().filter(|st| STATUSES.contains(st)).ok_or_else(|| ApiError::bad(format!("status must be one of {STATUSES:?}")))?;
-        merge = st == "ready_for_merge" && current.status != st && current.kind == "task" && crate::runs::can_run_agents(s);
+        merge = st == "ready_for_merge" && current.status != st && current.kind == "task";
         if st != "needs_attention" {
             fields.push(("attention_reason", Value::Null));
         }
@@ -1601,9 +1729,42 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         let end = db::end_position(&s.db(), current.project_id.as_deref(), "ready_for_merge", "task")?;
         fields.push(("position", json!(end)));
     }
-    let t = s.update_task(id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
+    // What was checked against the task as it was read is checked again under the lock the change
+    // is made with, so that two requests at once can't both pass (and, say, both start a merge).
+    let worktree_settings = fields.iter().any(|(k, _)| *k == "use_worktree" || *k == "base_branch");
+    let config = fields.iter().any(|(k, _)| *k == "claude_config_id");
+    let unsubproject = current.subproject && fields.iter().any(|(k, v)| *k == "subproject" && *v == json!(false));
+    let mut refused = None;
+    let still = |c: &rusqlite::Connection| -> anyhow::Result<bool> {
+        let Some(now) = db::get_task(c, id)? else { return Ok(true) };
+        let running = now.running || db::has_active_run(c, id)?;
+        refused = if to_merge && now.status != current.status {
+            Some(ApiError::conflict(format!("the task was moved to {} meanwhile", now.status)))
+        } else if merge && running {
+            Some(ApiError::conflict("the agent is still running; wait for it to finish before moving the task to Ready for merge"))
+        } else if worktree_settings && now.worktree_state != "none" {
+            Some(ApiError::conflict("tear down the worktree before changing worktree settings"))
+        } else if config && (now.session_id.is_some() || running) {
+            Some(ApiError::conflict("the agent has already started with its Claude config"))
+        } else if remerge && !(now.merging && running) {
+            Some(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"))
+        } else if unsubproject && !db::subproject_tasks(c, id)?.is_empty() {
+            Some(ApiError::conflict("the subproject still has tasks; delete them first"))
+        } else {
+            None
+        };
+        Ok(refused.is_none())
+    };
+    let updated = s.update_task_if(id, &fields, still)?;
+    if let Some(e) = refused {
+        return Err(e);
+    }
+    let t = updated.ok_or_else(|| ApiError::not_found("task"))?;
     if remerge {
         s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
+    }
+    if merge && !crate::runs::can_run_agents(s) {
+        s.add_event(id, "warn", "Agents can't run on this host yet (no Claude Code or Codex found), so the task waits in the merge queue until they can", None);
     }
     // Unpinned, the title catches up with what the task is about now.
     if unpinned {
@@ -1895,8 +2056,9 @@ async fn review_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResu
 }
 
 async fn setup_worktree(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    if s.is_running(&id) {
-        return Err(ApiError::conflict("agent is running"));
+    // Reviewers work in the worktree too.
+    if worktree::agent_in_worktree(&s, &id) {
+        return Err(ApiError::conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it"));
     }
     let t = worktree::setup(&s, &id).await.map_err(|e| ApiError::bad(format!("{e:#}")))?;
     Ok(Json(json!(t)))
@@ -1911,8 +2073,9 @@ struct TeardownBody {
 }
 
 async fn teardown_worktree(State(s): State<Shared>, Path(id): Path<String>, body: Option<Json<TeardownBody>>) -> ApiResult<Json<Value>> {
-    if s.is_running(&id) {
-        return Err(ApiError::conflict("agent is running"));
+    // Reviewers work in the worktree too.
+    if worktree::agent_in_worktree(&s, &id) {
+        return Err(ApiError::conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it"));
     }
     let b = body.map(|b| b.0).unwrap_or_default();
     let t = worktree::teardown(&s, &id, b.force, b.delete_branch).await.map_err(|e| ApiError::conflict(format!("{e:#}")))?;
@@ -2002,6 +2165,12 @@ async fn task_diff(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult
     Ok(Json(worktree::diff(&s, &id).await?))
 }
 
+/// Whether moving the task to Done would leave work of its unmerged (see worktree::unmerged).
+async fn task_unmerged(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let t = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    Ok(Json(json!({"unmerged": worktree::unmerged(&s, &t).await})))
+}
+
 // ---------- terminal ----------
 
 /// `?tool=<id>` picks one of the host's terminal tools instead of the task's shell.
@@ -2023,14 +2192,20 @@ async fn terminal_status(State(s): State<Shared>, Path(id): Path<String>, Query(
 }
 
 async fn kill_terminal(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+    if db::get_task(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("task"));
+    }
     // A tool that was removed from the settings can still be ended.
     terminal::kill(&s, &id, q.tool.as_deref().filter(|t| !t.is_empty())).await;
     Ok(Json(json!({"ok": true})))
 }
 
 /// The board still has this tool open: keep its session (see `terminal::start_reaper`).
-async fn terminal_keepalive(Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+async fn terminal_keepalive(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
     let tool = q.tool.filter(|t| !t.is_empty()).ok_or_else(|| ApiError::bad("tool is required"))?;
+    if db::get_task(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("task"));
+    }
     terminal::keepalive(&id, &tool);
     Ok(Json(json!({"ok": true})))
 }
@@ -2763,6 +2938,101 @@ pub(crate) mod tests {
         })
     }
 
+    /// A git repository with a commit on master, and a project on it: (folder, project).
+    async fn git_project(s: &Shared) -> (PathBuf, db::Project) {
+        let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).status().unwrap().success());
+        git(&["init", "-q", "-b", "master"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+        let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("X".into()), base_branch: None, use_worktrees: None };
+        (dir.clone(), create_project_inner(s, &profile.id, b).await.unwrap())
+    }
+
+    // HA-42: a relative worktrees_root put worktrees in the main checkout, and base branches weren't checked.
+    #[test]
+    fn worktree_settings_are_checked() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let set = async |v: Value| update_project_inner(&s, &p.id, v.as_object().unwrap()).await;
+            for bad in [
+                json!({"worktrees_root": "worktrees"}),
+                json!({"worktrees_root": "./w"}),
+                json!({"worktrees_root": path_str(&dir)}),
+                json!({"worktrees_root": format!("{}/", path_str(&dir))}),
+                json!({"worktrees_root": format!("{}/../{}", path_str(&dir), dir.file_name().unwrap().to_string_lossy())}),
+                json!({"base_branch": "a..b"}),
+                json!({"base_branch": "-x"}),
+                json!({"base_branch": "@{-1}"}),
+                json!({"base_branch": "with space"}),
+                json!({"base_branch": "main.lock"}),
+                json!({"base_branch": 3}),
+            ] {
+                let err = set(bad.clone()).await.unwrap_err();
+                assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+            }
+            let p2 = db::get_project(&s.db(), &p.id).unwrap().unwrap();
+            assert_eq!((p2.worktrees_root.as_str(), p2.base_branch.as_deref()), (p.worktrees_root.as_str(), Some("master")));
+            let inside = dir.join(".worktrees");
+            let p2 = set(json!({"worktrees_root": path_str(&inside), "base_branch": " feature/x "})).await.unwrap();
+            assert_eq!((p2.worktrees_root, p2.base_branch.as_deref()), (path_str(&inside), Some("feature/x")));
+            assert_eq!(set(json!({"base_branch": ""})).await.unwrap().base_branch, None);
+
+            // A task's too, which its agent may set.
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let task = async |v: Value| update_task_inner(&s, &t.id, v.as_object().unwrap()).await;
+            for bad in ["a..b", "-x", "HEAD:x", "x~1"] {
+                assert_eq!(task(json!({"base_branch": bad})).await.unwrap_err().0, StatusCode::BAD_REQUEST, "{bad}");
+            }
+            assert_eq!(task(json!({"base_branch": "release/1.2"})).await.unwrap().base_branch.as_deref(), Some("release/1.2"));
+            assert_eq!(task(json!({"base_branch": " "})).await.unwrap().base_branch, None);
+            let b = CreateProject { name: "y".into(), repo_path: path_str(&dir), key: Some("Y".into()), base_branch: Some("no..pe".into()), use_worktrees: None };
+            assert_eq!(create_project_inner(&s, &p.profile_id, b).await.unwrap_err().0, StatusCode::BAD_REQUEST);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    // HA-42: setting up or tearing down a worktree checked only the task's own agent, not its reviewers'.
+    #[test]
+    fn a_worktree_isnt_torn_down_or_set_up_under_a_reviewer() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let r = NewTask { profile_id: &t.profile_id, project_id: t.project_id.as_deref(), kind: "review", title: "Review", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let r = db::insert_task(&s.db(), r).unwrap();
+            db::update_task(&s.db(), &r.id, &[("parent_id", json!(t.id)), ("running", json!(true))]).unwrap();
+            let teardown = async || teardown_worktree(State(s.clone()), Path(t.id.clone()), None).await;
+            assert_eq!(teardown().await.unwrap_err().0, StatusCode::CONFLICT);
+            assert_eq!(setup_worktree(State(s.clone()), Path(t.id.clone())).await.unwrap_err().0, StatusCode::CONFLICT);
+            assert!(std::path::Path::new(t.worktree_path.as_deref().unwrap()).exists());
+            db::update_task(&s.db(), &r.id, &[("running", json!(false))]).unwrap();
+            assert_eq!(teardown().await.unwrap().0["worktree_state"], "none");
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    // HA-42: moved to Ready for merge where agents couldn't run, a task never joined the merge queue.
+    #[test]
+    fn ready_for_merge_queues_the_merge_even_before_agents_can_run() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let wt = PathBuf::from(t.worktree_path.as_deref().unwrap());
+            assert!(std::process::Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]).status().unwrap().success());
+            assert!(!crate::runs::can_run_agents(&s));
+            let t = update_task_inner(&s, &t.id, json!({"status": "ready_for_merge"}).as_object().unwrap()).await.unwrap();
+            assert_eq!((t.status.as_str(), t.merging), ("ready_for_merge", true));
+            assert_eq!(db::queued_merges(&s.db(), Some(&p.id), None).unwrap().len(), 1);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
     #[test]
     fn a_folder_not_ready_for_worktrees_gets_one_setup_thread() {
         crate::testing::run(async || {
@@ -3137,6 +3407,135 @@ pub(crate) mod tests {
             // The agent exits after its task (and with it the run's row) is gone.
             runner::on_exit(&s, &run.id, None, Some(15), None, "");
             assert!(!s.is_running(&task.id));
+        })
+    }
+
+    // HA-37: deleting a profile left its worktrees registered in their repositories, and its
+    // folders, runs and documents behind.
+    #[test]
+    fn deleting_a_profile_cleans_up_after_its_projects_and_threads() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let app = router(s.clone());
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let wt = t.worktree_path.clone().unwrap();
+            let worktrees = || String::from_utf8(std::process::Command::new("git").arg("-C").arg(&dir).args(["worktree", "list"]).output().unwrap().stdout).unwrap();
+            assert!(worktrees().contains(&wt));
+            // A finished run, and a scratch task's documents.
+            let run = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+            s.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
+            let run_dir = crate::runs::run_dir(&s, &run.id);
+            std::fs::create_dir_all(&run_dir).unwrap();
+            std::fs::write(run_dir.join("exit"), "0").unwrap();
+            let scratch = create_scratch_task_inner(&s, &p.profile_id, CreateTask::default()).unwrap();
+            let docs = crate::documents::dir(&s, &scratch.id);
+            std::fs::create_dir_all(&docs).unwrap();
+            std::fs::write(docs.join("notes.md"), "x").unwrap();
+            std::fs::create_dir_all(s.profile_scratch_dir(&p.profile_id)).unwrap();
+            let project_dir = s.data_dir.join("projects").join(&p.id);
+            assert!(project_dir.is_dir());
+
+            assert_eq!(call(&app, "DELETE", &format!("/api/profiles/{}", p.profile_id)).await, (200, json!({"ok": true})));
+            assert!(!worktrees().contains(&wt), "{}", worktrees());
+            assert!(!std::path::Path::new(&wt).exists());
+            assert!(!project_dir.exists() && !run_dir.exists() && !docs.exists());
+            assert!(!s.data_dir.join("profiles").join(&p.profile_id).exists());
+            assert!(db::get_task(&s.db(), &scratch.id).unwrap().is_none());
+            // The branch is kept.
+            assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(["rev-parse", "--verify", "-q", t.branch.as_deref().unwrap()]).status().unwrap().success());
+            assert_eq!(call(&app, "DELETE", &format!("/api/profiles/{}", p.profile_id)).await.0, 404);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn deleting_a_project_keeps_its_folder_if_another_uses_it() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, a) = git_project(&s).await;
+            let (dir_b, b) = git_project(&s).await;
+            let shared = s.data_dir.join("projects").join(&a.id).join("shared");
+            update_project_inner(&s, &b.id, json!({"worktrees_root": path_str(&shared)}).as_object().unwrap()).await.unwrap();
+            delete_project_inner(&s, &a.id).await.unwrap();
+            assert!(s.data_dir.join("projects").join(&a.id).is_dir());
+            delete_project_inner(&s, &b.id).await.unwrap();
+            assert!(!s.data_dir.join("projects").join(&b.id).exists());
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::remove_dir_all(&dir_b).ok();
+        })
+    }
+
+    #[test]
+    fn unknown_ids_get_a_404() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let app = router(s.clone());
+            for (method, path) in [
+                ("DELETE", "/api/profiles/nope"),
+                ("DELETE", "/api/claude-configs/nope"),
+                ("DELETE", "/api/tasks/nope/terminal"),
+                ("POST", "/api/tasks/nope/terminal/keepalive?tool=x"),
+                ("GET", "/api/projects/nope/tasks"),
+            ] {
+                assert_eq!(call(&app, method, path).await.0, 404, "{method} {path}");
+            }
+        })
+    }
+
+    // HA-37: a blank name made a profile's clone folder ~, and one renamed to another's took its grants.
+    #[test]
+    fn profile_names_are_required_and_unique() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let create = async |name: Value| create_profile(State(s.clone()), Json(serde_json::from_value(json!({"name": name})).unwrap())).await;
+            let personal = create(json!(" personal ")).await.unwrap().0;
+            assert_eq!(personal["name"], "personal");
+            let work = create(json!("work")).await.unwrap().0;
+            assert_eq!(create(json!("Personal")).await.unwrap_err().0, StatusCode::CONFLICT);
+            assert_eq!(create(json!(" ")).await.unwrap_err().0, StatusCode::BAD_REQUEST);
+            let rename = async |id: &Value, name: Value| update_profile(State(s.clone()), Path(id.as_str().unwrap().into()), Json(json!({"name": name}).as_object().unwrap().clone())).await;
+            for (bad, status) in [(json!(""), StatusCode::BAD_REQUEST), (json!(" "), StatusCode::BAD_REQUEST), (json!(3), StatusCode::BAD_REQUEST), (Value::Null, StatusCode::BAD_REQUEST), (json!(" PERSONAL"), StatusCode::CONFLICT)] {
+                assert_eq!(rename(&work["id"], bad.clone()).await.unwrap_err().0, status, "{bad}");
+            }
+            assert_eq!(db::get_profile(&s.db(), work["id"].as_str().unwrap()).unwrap().unwrap().name, "work");
+            // Its own name in another case is fine.
+            assert_eq!(rename(&personal["id"], json!("Personal")).await.unwrap().0["name"], "Personal");
+            assert_eq!(rename(&work["id"], json!(" office ")).await.unwrap().0["name"], "office");
+        })
+    }
+
+    #[test]
+    fn claude_config_fields_must_be_strings() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let cfg = db::insert_claude_config(&s.db(), "c", "/claude/c", "claude").unwrap();
+            for bad in [json!({"config_dir": 3}), json!({"config_dir": null}), json!({"name": false}), json!({"agent": 1})] {
+                let res = update_claude_config(State(s.clone()), Path(cfg.id.clone()), Json(bad.as_object().unwrap().clone())).await;
+                assert_eq!(res.unwrap_err().0, StatusCode::BAD_REQUEST, "{bad}");
+            }
+            assert_eq!(db::get_claude_config(&s.db(), &cfg.id).unwrap().unwrap().config_dir, "/claude/c");
+            let res = update_claude_config(State(s.clone()), Path(cfg.id.clone()), Json(json!({"config_dir": ""}).as_object().unwrap().clone())).await;
+            assert_eq!(res.unwrap().0["config_dir"], "");
+        })
+    }
+
+    // HA-37: two moves to Ready for merge at once both started a merge.
+    #[test]
+    fn two_moves_to_ready_for_merge_at_once_queue_one_merge() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let wt = PathBuf::from(t.worktree_path.as_deref().unwrap());
+            assert!(std::process::Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]).status().unwrap().success());
+            let body = json!({"status": "ready_for_merge"});
+            let (a, b) = tokio::join!(update_task_inner(&s, &t.id, body.as_object().unwrap()), update_task_inner(&s, &t.id, body.as_object().unwrap()));
+            let codes: Vec<Option<StatusCode>> = [&a, &b].iter().map(|r| r.as_ref().err().map(|e| e.0)).collect();
+            assert!(codes.contains(&None) && codes.contains(&Some(StatusCode::CONFLICT)), "{codes:?}");
+            std::fs::remove_dir_all(&dir).ok();
         })
     }
 }

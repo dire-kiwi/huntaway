@@ -50,6 +50,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type RewindResult, type Task, type Turn } from "../api";
 import { useHost, useProject, useStore, useThreadMessages } from "../store";
+import { useDelta } from "../deltas";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
@@ -59,7 +60,7 @@ import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
-import { TOUCH_QUERY } from "../narrow";
+import { useTouch } from "../narrow";
 import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
 import { RewindDialog, RewindNote } from "./Rewind";
 import { useTurns } from "../turns";
@@ -869,11 +870,6 @@ export const Thread = memo(function Thread({
   // Another subagent (or the main conversation) tries a page that failed again.
   useEffect(() => setOlderFailed(false), [viewKey]);
 
-  useEffect(() => {
-    pinned.current = true;
-    mainScroll.current = null;
-    setOlderFailed(false);
-  }, [task.id]);
 
   // Escape goes back from a subagent's thread (before the task panel takes it to close).
   useEffect(() => {
@@ -1006,11 +1002,22 @@ function useStableGroupKeys(items: Item[], taskId: string): Item[] {
   }, [items, taskId]);
 }
 
-/** The agent's reply as it streams in (not yet saved as a message). `onGrow` keeps the thread scrolled to it. */
+/**
+ * The agent's reply as it streams in (not yet saved as a message), as plain text: drawing it as markdown
+ * again for each token would take longer the longer it got. The saved message is markdown. A paragraph
+ * each, so a token changes (and lays out again) only the last one. `onGrow` keeps the thread scrolled to it.
+ */
 function StreamingText({ taskId, onGrow }: { taskId: string; onGrow: () => void }) {
-  const delta = useStore((s) => s.deltas[taskId]);
+  const delta = useDelta(taskId);
   useLayoutEffect(onGrow, [delta, onGrow]);
-  return delta ? <Markdown text={delta} /> : null;
+  if (!delta) return null;
+  return (
+    <div className="prose-chat break-words whitespace-pre-wrap">
+      {delta.split(/\n{2,}/).map((p, i) => (
+        <p key={i}>{p}</p>
+      ))}
+    </div>
+  );
 }
 
 // Memoized: the thread redraws for changes to its task (e.g. its context use), which leave the items as they were.
@@ -1163,7 +1170,7 @@ function ModeSelect({ control, running }: { control: ReturnType<typeof useModeCo
     <div ref={root} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        title={`Permission mode: ${current.description} (Shift+Tab to cycle)`}
+        title={`Permission mode: ${current.description} (Shift+Tab in the message box to cycle; Escape, Shift+Tab to leave the box)`}
         className={clsx(
           "flex h-6 items-center gap-1 rounded-md border border-line px-1.5 text-[11.5px] hover:border-line-strong hover:bg-white/5",
           MODE_STYLE[mode].className,
@@ -1363,12 +1370,17 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   const [err, setErr] = useState<string | null>(null);
   const [unsaved, setUnsaved] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Set by Escape, so the next Shift+Tab leaves the field rather than cycling the permission mode.
+  const tabLeaves = useRef(false);
   const modeControl = useModeControl(task);
   // Hosts before API 10 refuse messages while the agent is running.
   const host = useHost(task.host_id);
   const canQueue = hostSupports(host, 10);
   // A message goes to the running agent straight away, if its run takes them.
   const canSteer = runningAgentSteers(host, task);
+  // On a touch screen's keyboard Enter starts a new line, and the send button sends (as Ctrl/Cmd+Enter does).
+  const touch = useTouch();
+  const enter = touch ? "" : " (Enter)";
   const blocked = task.running && !canQueue;
   const attach = useAttachmentDraft(task.host_id, hostSupports(host, 18), saved?.files);
   const skills = useSkillMenu(task, text, setText);
@@ -1521,13 +1533,15 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
             onPaste={attach.onPaste}
             onKeyDown={(e) => {
               if (skills.onKeyDown(e)) return;
-              if (e.key === "Tab" && e.shiftKey) {
+              // Shift+Tab cycles the permission mode; after Escape it moves focus out of the field, as it does elsewhere.
+              const leaving = tabLeaves.current;
+              tabLeaves.current = e.key === "Escape" || (leaving && e.key === "Shift");
+              if (e.key === "Tab" && e.shiftKey && !leaving) {
                 e.preventDefault();
                 modeControl.cycle();
                 return;
               }
-              // On a touch screen's keyboard Enter starts a new line, and the send button sends (as Ctrl/Cmd+Enter does).
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!matchMedia(TOUCH_QUERY).matches || e.ctrlKey || e.metaKey)) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!touch || e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 send();
               }
@@ -1564,7 +1578,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 <button
                   onClick={send}
                   disabled={busy || attach.uploading}
-                  title={canSteer && !task.queued_message ? "Send to the agent now (Enter)" : "Queue (Enter)"}
+                  title={(canSteer && !task.queued_message ? "Send to the agent now" : "Queue") + enter}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
@@ -1585,7 +1599,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 <button
                   onClick={send}
                   disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !comments.length && !canStartEmpty)}
-                  title="Send (Enter)"
+                  title={`Send${enter}`}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}

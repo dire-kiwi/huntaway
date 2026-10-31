@@ -125,6 +125,8 @@ export interface Host {
   /** Commit the host runs, if it runs from a git checkout. */
   commit?: string | null;
   last_seen?: string | null;
+  /** When the hub last heard from a connected host (API 78); pings keep it within about 20s. */
+  last_message_at?: string;
 }
 
 export interface Profile {
@@ -759,6 +761,8 @@ export interface GitStatus {
   reason?: string;
   /** The top of the working tree. */
   dir?: string;
+  /** Where the project's folder is in it (`web/`) when it's only part of the repository: the files and commits are its own (API 77). */
+  folder?: string | null;
   /** Null before the first commit. */
   head?: string | null;
   /** Null when detached. */
@@ -880,22 +884,57 @@ export function captureTokenFromUrl() {
   }
 }
 
-let openBoard = false;
+// Whether this board handed out its token last time ("1") or not ("0"), so that a load with a token stored needn't wait
+// for /api/open-token, nor ask a board that doesn't hand it out (and have the browser log the 404).
+const OPEN_KEY = "ia.openBoard";
+const openFlag = () => {
+  try {
+    return localStorage.getItem(OPEN_KEY);
+  } catch {
+    return null;
+  }
+};
+let openBoard = openFlag() === "1";
 
 /** Whether this board hands out its token (`--open-token`), as PR previews do and the user's own boards never do. */
 export const isOpenBoard = () => openBoard;
 
-/** Servers started with `--open-token` (PR previews) hand out their token; sign in with it. */
-export async function fetchOpenToken() {
-  try {
-    const res = await fetch("/api/open-token");
-    const data = res.ok ? await res.json() : null;
-    if (typeof data?.token === "string" && data.token) {
-      setToken(data.token);
-      openBoard = true;
+/** Whether to ask for the open token on this load: always without a token, else unless the board didn't hand it out before. */
+export const shouldFetchOpenToken = () => !getToken() || openFlag() !== "0";
+
+let fetching: Promise<boolean> | null = null;
+/**
+ * Servers started with `--open-token` (PR previews) hand out their token; sign in with it. Resolves to whether that
+ * changed the token (a rebuilt preview's is new). Calls made at once share one request.
+ */
+export function fetchOpenToken(): Promise<boolean> {
+  return (fetching ??= (async () => {
+    try {
+      const res = await fetch("/api/open-token");
+      const data = res.ok ? await res.json() : null;
+      if (typeof data?.token === "string" && data.token) {
+        openBoard = true;
+        remember("1");
+        if (data.token === getToken()) return false;
+        setToken(data.token);
+        return true;
+      }
+      if (res.status === 404) {
+        openBoard = false;
+        remember("0");
+      }
+    } catch {
+      /* not offered */
     }
+    return false;
+  })().finally(() => (fetching = null)));
+}
+
+function remember(open: "0" | "1") {
+  try {
+    localStorage.setItem(OPEN_KEY, open);
   } catch {
-    /* not offered */
+    /* asked again next time */
   }
 }
 
@@ -907,22 +946,24 @@ export class ApiError extends Error {
   }
 }
 
-let onUnauthorized: () => void = () => {};
-export function setUnauthorizedHandler(fn: () => void) {
+/** Called when the server turns down a request, with the token it was made with. */
+let onUnauthorized: (token: string) => void = () => {};
+export function setUnauthorizedHandler(fn: (token: string) => void) {
   onUnauthorized = fn;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const token = getToken();
   const res = await fetch(`/api${path}`, {
     method,
     headers: {
-      Authorization: `Bearer ${getToken()}`,
+      Authorization: `Bearer ${token}`,
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
-    onUnauthorized();
+    onUnauthorized(token);
     throw new ApiError(401, "Unauthorized");
   }
   const data = await res.json().catch(() => null);
@@ -1183,6 +1224,27 @@ export interface ProjectChange {
   reason?: string | null;
 }
 
+/** A project an agent asked to add, shown to the user to approve: the folder its agents would work in (API 76). */
+export interface ProjectCreation {
+  op: "create";
+  /** As it would be added (it has no id yet). */
+  project: { id: string; key: string; name: string; host?: string };
+  /** The thread that asked. */
+  task: { id: string; key?: string; title: string } | null;
+  /** The profile whose board it's added to. */
+  board: string;
+  /** The folder, with symlinks resolved. */
+  repo_path: string;
+  /** False when the folder is created. */
+  exists: boolean;
+  /** Whether it's a git repository. */
+  git: boolean;
+  /** The permission mode its tasks get: the host's default. */
+  permission_mode: string;
+  /** Why, in the agent's words. */
+  reason?: string | null;
+}
+
 /** A task an agent asked to delete, shown to the user to confirm (API 58). */
 export interface TaskDeletion {
   /** The deleted task's project, if it's in one. */
@@ -1211,6 +1273,13 @@ export interface ProjectApproval extends ApprovalRequest {
   kind: "project";
   tool_name: "update_project";
   input: ProjectChange;
+}
+
+/** A project an agent asked to add, waiting for approval like a project change (API 76). */
+export interface ProjectCreationApproval extends ApprovalRequest {
+  kind: "project";
+  tool_name: "create_project";
+  input: ProjectCreation;
 }
 
 /** A task deletion waiting for the user to confirm it, like a project change (API 58). */
@@ -1260,7 +1329,7 @@ export interface AutomationApproval extends ApprovalRequest {
 }
 
 /** What only the user decides for an agent, whatever its thread's permission mode. */
-export type Approval = ProjectApproval | DeletionApproval | AutomationApproval;
+export type Approval = ProjectApproval | ProjectCreationApproval | DeletionApproval | AutomationApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
@@ -1511,6 +1580,8 @@ export const api = {
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
+  /** Whether moving the task to Done would leave its work unmerged (API 75). */
+  unmerged: (h: string, id: string) => on(h).get<{ unmerged: boolean }>(`/tasks/${enc(id)}/unmerged`),
   /**
    * The Changes tab's git (API 62): the status, a file's unstaged or staged diff, and a commit's or stash's. A diff that
    * isn't UTF-8 comes as a `preview` with `not_utf8` and no `patch`, as lines patched from it would be written back wrong.

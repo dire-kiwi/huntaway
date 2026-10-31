@@ -98,14 +98,23 @@ test("a webhook's URL that can't be renewed, and a secret with spaces around it,
   });
   await withBrowser(server, { allowErrors: [/status of (400|500)/] }, async (ui) => {
     const { page } = ui;
-    page.on("dialog", (d) => d.accept());
     await page.route(`**/automations/${made.id}`, (r) =>
       r.request().method() === "PATCH" && r.request().postDataJSON()?.rotate_token
         ? r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "disk full" }) })
         : r.fallback(),
     );
-    await ui.run([`goto /p/${project.id}/settings/automations`, "click Renewed hook", "wait Edit Renewed hook", "click Make a new URL", "wait Couldn't make a new URL: disk full"]);
+    const asking = 'role=dialog[name="Make a new URL"]';
+    await ui.run([
+      `goto /p/${project.id}/settings/automations`,
+      "click Renewed hook",
+      "wait Edit Renewed hook",
+      "click Make a new URL",
+      `click ${asking} >> role=button[name="Make a new URL"]`,
+      `wait ${asking} >> text=disk full`,
+    ]);
     assert.equal((await server.api("GET", `/automations/${made.id}`)).hook_path, made.hook_path);
+    // HA-40: Escape closes the confirmation, not the editor under it too.
+    await ui.run(["press Escape", `gone ${asking}`, "wait Edit Renewed hook"]);
 
     const secret = page.getByRole("textbox", { name: "Secret", exact: true });
     await secret.fill("s3cret ");

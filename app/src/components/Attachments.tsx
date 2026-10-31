@@ -132,7 +132,8 @@ export function DraftAttachments({ draft, hostId, className }: { draft: Attachme
                 type="button"
                 onClick={() => draft.remove(it.key)}
                 title="Remove"
-                className="absolute -top-1.5 -right-1.5 hidden h-4.5 w-4.5 items-center justify-center rounded-full border border-line-strong bg-panel-2 text-muted group-hover:flex hover:text-fg"
+                aria-label={`Remove ${it.name}`}
+                className="absolute -top-1.5 -right-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full border border-line-strong bg-panel-2 text-muted opacity-0 group-hover:opacity-100 hover:text-fg focus-visible:opacity-100 touch:opacity-100"
               >
                 <X size={10} />
               </button>
