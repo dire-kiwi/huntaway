@@ -1,7 +1,10 @@
 //! What a host and the broker say to each other over the websocket the host opens to
 //! `/_broker/connect`.
 //!
-//! Text frames carry `Ctl` messages as JSON. Binary frames carry a stream's data: its id (8 bytes,
+//! With managed tunnels, Welcome supplies a per-tunnel connector token and endpoint. Only
+//! registration and heartbeats use this websocket; application traffic uses the tunnel.
+//!
+//! In legacy relay mode, text frames carry `Ctl` messages as JSON. Binary frames carry a stream's data: its id (8 bytes,
 //! big-endian), a kind byte (`DATA` or `TEXT`), then the bytes. A stream is one request from a
 //! client. The broker sends `Req`, then the request body as data and `End` (nothing when `body` is
 //! false), and the host answers `Head`, the response body as data and `End`. For a websocket
@@ -44,9 +47,16 @@ pub enum Ctl {
         protocol: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
+        /// A separate loopback listener that refuses LAN-only routes such as open-token.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin_port: Option<u16>,
     },
     /// Broker → host: it's reachable as `name` now.
-    Welcome { name: String },
+    Welcome {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tunnel: Option<Tunnel>,
+    },
     /// Broker → host, every 20 seconds, so the connection is seen to be alive (websocket pings
     /// don't get through every proxy). The host answers `Pong`.
     Ping,
@@ -79,6 +89,19 @@ pub enum Ctl {
         #[serde(default)]
         reason: Option<String>,
     },
+}
+
+/// A managed endpoint and its connector credential. Never log the token.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub struct Tunnel {
+    pub url: String,
+    pub token: String,
+}
+
+impl std::fmt::Debug for Tunnel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tunnel").field("url", &self.url).finish_non_exhaustive()
+    }
 }
 
 pub fn encode(id: u64, kind: u8, bytes: &[u8]) -> Vec<u8> {
@@ -221,5 +244,8 @@ mod tests {
         let req = Ctl::Req { id: 3, method: "GET".into(), path: "/api/info".into(), headers: vec![], body: false, ws: false };
         assert_eq!(serde_json::to_value(&req).unwrap(), serde_json::json!({"t": "req", "id": 3, "method": "GET", "path": "/api/info", "headers": [], "body": false, "ws": false}));
         assert_eq!(serde_json::from_str::<Ctl>(r#"{"t":"close","id":3}"#).unwrap(), Ctl::Close { id: 3, code: None, reason: None });
+        assert_eq!(serde_json::from_str::<Ctl>(r#"{"t":"welcome","name":"desktop"}"#).unwrap(), Ctl::Welcome { name: "desktop".into(), tunnel: None });
+        let hello: Ctl = serde_json::from_str(r#"{"t":"hello","name":"desktop","host_id":"id","version":"0","protocol":1}"#).unwrap();
+        assert!(matches!(hello, Ctl::Hello { origin_port: None, key: None, .. }));
     }
 }

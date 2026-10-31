@@ -332,7 +332,8 @@ fn spawn_outbound(s: &Shared, link: Link) {
 
 /// Follow an outbound link's events; the link counts as connected while this is up.
 pub async fn run_outbound(s: &Shared, link: &Link, mode: &str) -> Result<()> {
-    let (url, token) = (link.url.clone().context("link has no url")?, link.token.clone().context("link has no token")?);
+    let token = link.token.clone().context("link has no token")?;
+    let url = crate::broker::resolve(link.url.as_deref().context("link has no url")?, Some(&link.id)).await?;
     // The token goes in a header rather than the URL, which proxies and brokers on the way log.
     let ws_url = format!("{}/api/host/ws", url.trim_end_matches('/').replacen("http", "ws", 1));
     let mut ws_req = ws_url.into_client_request()?;
@@ -534,6 +535,7 @@ pub fn dial_out(s: &Shared, hub: String, token: String) {
 }
 
 async fn tunnel_to(s: &Shared, hub: &str, token: &str) -> Result<()> {
+    let hub = crate::broker::resolve(hub, None).await?;
     let url = format!("{}/api/hub/connect", hub.trim_end_matches('/').replacen("http", "ws", 1));
     let mut req = url.into_client_request()?;
     req.headers_mut().insert("Authorization", format!("Bearer {token}").parse()?);
@@ -841,8 +843,9 @@ pub struct AddHost {
 /// Link a host we can reach directly.
 pub async fn add_host(State(s): State<Shared>, Json(b): Json<AddHost>) -> ApiResult<Json<Value>> {
     let url = b.url.trim().trim_end_matches('/').to_string();
+    let endpoint = crate::broker::resolve(&url, None).await.map_err(|e| ApiError::bad(format!("can't resolve {url}: {e:#}")))?;
     let info: Value = http()
-        .get(format!("{url}/api/info"))
+        .get(format!("{endpoint}/api/info"))
         .bearer_auth(b.token.trim())
         .timeout(Duration::from_secs(10))
         .send()

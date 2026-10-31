@@ -3,7 +3,7 @@ name = "huntaway-broker"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Public relay for Huntaway hosts: hosts dial out to it, and browsers and hubs reach them through it"
+description = "Connection broker for Huntaway hosts: managed Cloudflare endpoints or a legacy relay"
 
 [lib]
 path = "src/lib.rs"
@@ -19,6 +19,7 @@ clap = { version = "4.6.7", features = ["derive", "env"] }
 futures = "0.3.34"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 # Hashes of hosts' keys, for the state file (`--state`).
 sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["full"] }

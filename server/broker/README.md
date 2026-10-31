@@ -1,43 +1,78 @@
 # huntaway-broker
 
-A public relay for Huntaway hosts that can't be reached directly (at home, behind NAT, without Tailscale or a VPN).
-Hosts dial out to it and keep a websocket open; browsers and hubs reach them through it. The broker relays all HTTP
-requests and responses and websocket traffic sent to its host URLs for as long as they're in use, including uploads,
-board events and terminals. It doesn't hand clients off to a direct connection, so plan for the bandwidth and
-availability of an ongoing relay. Clients using a host's LAN or Tailscale/VPN URL bypass it; enabling `--broker`
-doesn't route the host's other network traffic through it.
+Public access for Huntaway hosts behind NAT, without Tailscale or a VPN. In **managed tunnel mode** it handles
+connection setup and endpoint discovery; application traffic travels through Cloudflare Tunnel. Without tunnel
+configuration it keeps the **legacy relay** transport, carrying application traffic on hosts' outbound websockets.
+A hub combines linked hosts into one board; either transport can expose that hub.
 
-A hub combines linked hosts into one board; the broker provides public access to a host, which may itself be that
-hub. How hosts connect and how a request picks a host is in the main README,
-[Reaching a host from anywhere](../../README.md#reaching-a-host-from-anywhere); the wire protocol is in `src/proto.rs`.
+How hosts connect and how clients select one is in the main README,
+[Reaching a host from anywhere](../../README.md#reaching-a-host-from-anywhere). Registration and relay messages are
+in `src/proto.rs`. Agents' own model-provider and git traffic is independent of the public transport.
 
-## Could the broker only establish connections?
+## Managed tunnels: broker handles setup only
 
-Yes, with a different transport design. A broker could discover a host's reachable endpoint and authorize access,
-then let the client connect to that endpoint for normal HTTP and websocket traffic. Introducing two ends doesn't
-by itself make a host behind NAT reachable, so that endpoint still needs a public HTTPS address, a VPN or a tunnel.
+This follows [T3 Connect's split](https://github.com/pingdotgg/t3code/blob/main/docs/internals/t3-connect.md): the
+broker manages endpoints, while normal HTTP and websocket traffic uses a separate tunnel service. Cloudflare
+still carries that traffic for the session; this isn't peer-to-peer NAT traversal.
 
-[T3 Connect](https://github.com/pingdotgg/t3code/blob/main/docs/internals/t3-connect.md) uses this split: its relay
-Worker manages links, bootstrap credentials and tunnel allocations, while normal session traffic follows
-`client ↔ Cloudflare Tunnel ↔ cloudflared on the host ↔ host server`. The Worker is outside that traffic path,
-but Cloudflare still carries the traffic for the session. Its automation webhook forwarding is an exception.
+Build the broker (`cd server && cargo build --release -p huntaway-broker`), serve it behind HTTPS, and configure:
 
-Huntaway could adopt that model by adding tunnel provisioning and lifecycle management, endpoint discovery and a
-client connection flow that authenticates with the chosen host endpoint. That would move session bandwidth and
-availability requirements from `huntaway-broker` to the tunnel service. It isn't a mode of the current broker;
-today the host's outbound websocket to it carries both setup and application traffic.
+```sh
+export BROKER_TOKEN='<secret shared only with your hosts, at least 16 characters>'
+export BROKER_CLOUDFLARE_ACCOUNT='<32-character Cloudflare account id>'
+export BROKER_CLOUDFLARE_ZONE='<32-character DNS zone id>'
+export BROKER_CLOUDFLARE_TOKEN='<Cloudflare API token>'
+target/release/huntaway-broker --port 8080 --state /var/lib/huntaway-broker/state.json \
+  --tunnel-domain hosts.example.com --default-host desktop
+```
 
-For a direct connection through NAT without a tunnel service in the traffic path, another option would be
-[WebRTC data channels with ICE/STUN](https://webrtc.org/getting-started/peer-connections). That would need a new
-application transport and a TURN or existing relay fallback when a direct path can't be established. A signalling
-broker alone wouldn't guarantee connectivity on every network.
+The domain must be in the configured Cloudflare DNS zone. The API token needs **Account → Cloudflare Tunnel → Edit**
+on that account and **Zone → DNS → Edit** on that zone. It stays on the broker; it isn't sent to hosts or browsers.
+The state file preserves name ownership, so it is required. The broker never replaces an existing DNS record that
+isn't already the host's proxied tunnel CNAME: choose an unused hostname or remove the conflicting record yourself.
 
-## Running it
+On each host, [install cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)
+and run the usual `huntaway serve --broker https://broker.example.com --broker-token <broker token>`.
+`IA_CLOUDFLARED_BIN` can name another connector binary. Huntaway starts it with a per-tunnel token in its environment,
+not its arguments, and restarts it after an exit. Its origin is a separate loopback listener that blocks
+`/api/open-token`, even if the LAN listener uses `--open-token`.
+
+A host called `desktop` gets `https://desktop.hosts.example.com`. Opening the broker's URL selects a host and sends
+an uncached 307 redirect, preserving the path and query (including `?token=`). The board loads, authenticates and
+opens websockets at the host's hostname, so board traffic doesn't pass through this process. Current hubs use
+`GET /_broker/resolve/<name>` (or `/_broker/resolve` for the default host) before authenticating or opening a
+websocket. It returns `{"host_id":"…","url":"https://desktop.hosts.example.com"}` with `Cache-Control: no-store`;
+it never returns the connector token. Saved links resolve again on reconnect, and reject a changed host id.
+
+Upgrade hosts and hubs before switching the broker to managed tunnels. Old host registrations are refused with
+an upgrade message; old clients don't know to discover endpoints before opening websockets. Browser tokens saved
+on the broker site don't transfer to the new hostname: sign in there with the host token. Send webhooks straight
+to that hostname, since many senders won't follow a redirect. The public endpoint still enforces the host's token.
+
+The connector runs independently of the broker connection. Existing board sessions and the tunnel URL keep
+working while the broker is down; registration, discovery and provisioning need the broker. Restarting a host
+reconciles its loopback origin port, reuses its tunnel and DNS record, and starts a new connector. Cloudflare
+availability and bandwidth limits apply to session traffic. Hosts reconnect to the broker within 30 seconds;
+provisioning failures retry too, with a diagnostic in the host log. Check the installed connector and outbound
+Cloudflare connectivity if the tunnel URL stays unavailable. Initial DNS and connector startup can take a short
+time after registration; retry the public URL once the connector has registered.
+
+Tunnels and DNS records are deliberately retained when hosts or the broker disconnect, to keep names stable and
+avoid interrupting working sessions. There is no automatic cloud resource cleanup. To retire a host, stop it and
+remove its tunnel and CNAME in Cloudflare as well as its reservation from the broker state file while the broker
+is stopped. Tunnel names start with `huntaway-` and a digest of the hostname and owner; find the tunnel id in the
+hostname's CNAME (`<id>.cfargotunnel.com`). A different owner taking an expired broker name won't silently replace
+that DNS record. A partially completed provisioning attempt is reconciled on retry, without allocating a tunnel
+per reconnect. Keep the host's data dir (`host_id` and `broker_key`) to retain its allocation.
+
+## Legacy relay
 
 ```sh
 cd server && cargo build --release -p huntaway-broker
 BROKER_TOKEN=$(openssl rand -hex 32) target/release/huntaway-broker --port 8080 --state /var/lib/huntaway-broker/state.json [--default-host desktop]
 ```
+
+## Shared settings and name reservations
 
 | Flag / env | Default | |
 |---|---|---|
@@ -45,23 +80,28 @@ BROKER_TOKEN=$(openssl rand -hex 32) target/release/huntaway-broker --port 8080 
 | `--port` / `BROKER_PORT` | `8080` | |
 | `--token` / `BROKER_TOKEN` | (required) | What hosts connect with (`huntaway serve --broker-token`), at least 16 characters |
 | `--default-host` / `BROKER_DEFAULT_HOST` | | The host for requests that don't pick one |
-| `--state` / `BROKER_STATE` | | A file to keep the names hosts took in, across restarts (below) |
+| `--state` / `BROKER_STATE` | | Name reservations across restarts; required with managed tunnels |
+| `--tunnel-domain` / `BROKER_TUNNEL_DOMAIN` | | Enable managed tunnels below this DNS domain |
+| `--cloudflare-account` / `BROKER_CLOUDFLARE_ACCOUNT` | | Cloudflare account id for managed tunnels |
+| `--cloudflare-zone` / `BROKER_CLOUDFLARE_ZONE` | | Cloudflare DNS zone id |
+| `--cloudflare-token` / `BROKER_CLOUDFLARE_TOKEN` | | API token for tunnel and DNS provisioning (prefer env) |
 
-It speaks plain HTTP, so serve it behind a TLS proxy (Caddy, nginx, a Cloudflare tunnel) on a public address, and
+The broker speaks plain HTTP, so serve it behind a TLS proxy (Caddy, nginx, a Cloudflare tunnel) on a public address, and
 give hosts the `https://` URL. It keeps no data but its `--state` file, if it has one (on a volume, in a container).
 Things to know about the proxy in front of it:
 
 - It has to pass websockets through, and leave them open: hosts hold one all the time. The broker sends a message on
-  it every 20 seconds, so idle timeouts of a minute or more are fine. Don't stop it when it's idle (a scale-to-zero
-  platform would cut hosts off).
+  it every 20 seconds, so idle timeouts of a minute or more are fine after registration. For managed tunnel
+  provisioning, allow two minutes for the initial welcome. Don't stop it when it's idle (a scale-to-zero platform
+  would cut registration off; in managed mode existing tunnel traffic would continue).
 - Don't put a password (basic auth) in front of it: hosts and the board's API calls can't send one. Each host's own
   token guards its API, and the broker's token guards who can connect as a host. Anyone with the broker's token can
   connect under a name that's free and be sent its clients' requests (with their host tokens), so give it only to
   your own hosts.
-- A proxy's request size limit applies to uploads through it (Cloudflare's is 100 MB, which only matters for
+- In legacy relay mode, a proxy's request size limit applies to uploads through it (Cloudflare's is 100 MB, which only matters for
   **Copy login** of a large Claude config).
 
-Each request or websocket through the broker has at most 256 KiB in flight each way, so a slow client or host holds
+In legacy relay mode, each request or websocket through the broker has at most 256 KiB in flight each way, so a slow client or host holds
 up only its own request and the broker's memory stays bounded. A host has at most 128 requests in flight through it.
 When it has that many, a new one takes the place of the one whose client has left data waiting longest. A request
 or websocket that makes no progress for 60 seconds (its client takes nothing of what's waiting for it, or the host

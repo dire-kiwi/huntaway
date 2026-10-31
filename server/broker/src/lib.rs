@@ -1,8 +1,9 @@
 //! The broker: a public relay for Huntaway hosts that can't be reached directly (at home, behind
-//! NAT, without Tailscale).
+//! NAT, without Tailscale). Managed Cloudflare endpoints keep this broker outside the application
+//! traffic path; without Cloudflare configuration, the original relay transport stays available.
 //!
 //! A host dials out to `/_broker/connect` (`huntaway serve --broker <url>`) and keeps that
-//! websocket open. Every other request the broker gets is passed down it to a host, which answers
+//! websocket open. In legacy relay mode, every other request is passed down it to a host, which answers
 //! it from its own server: the board's UI, its API and its websockets. The broker keeps nothing
 //! but the list of connected hosts and the names they took. It doesn't sign anyone in: the host's own token
 //! still guards its API.
@@ -46,6 +47,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 pub mod proto;
+pub mod cloudflare;
 
 use proto::Ctl;
 
@@ -89,11 +91,13 @@ pub struct Config {
     pub hold: Duration,
     /// Where the names taken are kept across restarts (`--state`). Without it they're kept in memory only.
     pub state: Option<PathBuf>,
+    /// Provision Cloudflare endpoints instead of relaying application traffic.
+    pub cloudflare: Option<cloudflare::Cloudflare>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { token: String::new(), default_host: None, max_streams: MAX_STREAMS, stall: STALL, hold: HOLD, state: None }
+        Config { token: String::new(), default_host: None, max_streams: MAX_STREAMS, stall: STALL, hold: HOLD, state: None, cloudflare: None }
     }
 }
 
@@ -238,6 +242,9 @@ fn minutes(d: Duration) -> String {
 
 /// A connected host.
 struct Host {
+    host_id: String,
+    managed: bool,
+    endpoint: Mutex<Option<String>>,
     name: String,
     max_streams: usize,
     tx: mpsc::UnboundedSender<Message>,
@@ -489,6 +496,8 @@ pub fn router(cfg: Config) -> anyhow::Result<Router> {
     b.save(&b.names.lock().unwrap())?;
     Ok(Router::new()
         .route("/_broker/connect", get(connect))
+        .route("/_broker/resolve/{name}", get(resolve))
+        .route("/_broker/resolve", get(resolve_default))
         .route("/_broker/health", get(|| async { Json(json!({"ok": true})) }))
         .route("/_broker/use/{name}", get(use_host))
         .route("/_broker/h/{name}", any(prefixed))
@@ -521,7 +530,7 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
         _ => None,
     };
     let refuse = |error: String| Message::Text(serde_json::to_string(&Ctl::Refused { error }).unwrap_or_default().into());
-    let (name, owner) = match hello {
+    let (name, owner, origin_port) = match hello {
         Some(Ctl::Hello { protocol, .. }) if protocol != proto::PROTOCOL => {
             let _ = sink.send(refuse(format!("the broker speaks protocol {}, the host {protocol}", proto::PROTOCOL))).await;
             return;
@@ -538,16 +547,53 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             let _ = sink.send(refuse("bad key".into())).await;
             return;
         }
-        Some(Ctl::Hello { name, host_id, key, .. }) => (name, Owner { host_id, key: key.filter(|k| !k.is_empty()).map(|k| hash(&k)) }),
+        Some(Ctl::Hello { origin_port, ref key, .. }) if b.cfg.cloudflare.is_some()
+            && (origin_port.is_none_or(|p| p == 0) || key.as_ref().is_none_or(|k| k.is_empty())) => {
+            let _ = sink.send(refuse("managed tunnels need a current host with a private origin listener and a host key; update Huntaway".into())).await;
+            return;
+        }
+        Some(Ctl::Hello { name, host_id, key, origin_port, .. }) =>
+            (name, Owner { host_id, key: key.filter(|k| !k.is_empty()).map(|k| hash(&k)) }, origin_port),
         _ => return,
     };
     let host_id = owner.host_id.clone();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-    let host = Arc::new(Host { name: name.clone(), max_streams: b.cfg.max_streams, tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
+    // Serialize reconciliation, including taking the name: an older connection mustn't overwrite
+    // the new connection's origin after it was replaced. No database/name lock spans a network call.
+    let provisioning = match &b.cfg.cloudflare {
+        Some(cf) => match tokio::time::timeout(Duration::from_secs(20), cf.provisioning.lock()).await {
+            Ok(guard) => Some(guard),
+            Err(_) => { let _ = sink.send(refuse("the broker is busy provisioning tunnels; try again".into())).await; return; }
+        },
+        None => None,
+    };
+    let owner_key = owner.key.map(hex).unwrap_or_default();
+    let host = Arc::new(Host {
+        host_id: host_id.clone(), managed: b.cfg.cloudflare.is_some(), endpoint: Mutex::new(None), name: name.clone(),
+        max_streams: b.cfg.max_streams, tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1),
+    });
     if let Err(error) = take_name(&b, &name, owner, &host) {
         let _ = sink.send(refuse(error)).await;
         return;
     }
+    let tunnel = if let Some(cf) = &b.cfg.cloudflare {
+        match tokio::time::timeout(Duration::from_secs(90), cf.provision(&name, &format!("{host_id}/{owner_key}"), origin_port.unwrap())).await {
+            Ok(Ok(tunnel)) => {
+                *host.endpoint.lock().unwrap() = Some(tunnel.url.clone());
+                Some(tunnel)
+            }
+            result => {
+                let error = match result { Ok(Err(e)) => format!("couldn't provision a tunnel: {e:#}"), _ => "tunnel provisioning timed out".into() };
+                let _ = sink.send(refuse(error)).await;
+                release_name(&b, &name, &host);
+                return;
+            }
+        }
+    } else { None };
+    drop(provisioning);
+    // The welcome must be first: the writer's immediate heartbeat can otherwise win the race.
+    let welcome = Message::Text(serde_json::to_string(&Ctl::Welcome { name: name.clone(), tunnel }).unwrap().into());
+    if sink.send(welcome).await.is_err() { release_name(&b, &name, &host); return; }
     let writer = tokio::spawn(async move {
         let mut ping = tokio::time::interval(PING);
         loop {
@@ -574,7 +620,6 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             }
         })
     };
-    host.send(&Ctl::Welcome { name: name.clone() });
     tracing::info!("host {name} ({host_id}) connected");
     loop {
         let msg = match tokio::time::timeout(SILENCE, stream.next()).await {
@@ -607,15 +652,7 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             _ => {}
         }
     }
-    // The name is kept for the host a while, unless it connected again meanwhile.
-    {
-        let mut names = b.names.lock().unwrap();
-        if let Some(n) = names.get_mut(&name).filter(|n| n.host.as_ref().is_some_and(|h| Arc::ptr_eq(h, &host))) {
-            n.host = None;
-            n.left = Instant::now();
-            b.save_or_warn(&names);
-        }
-    }
+    release_name(&b, &name, &host);
     // The requests in flight end (with what the host sent of them).
     for (_, e) in host.streams.lock().unwrap().drain() {
         e.queue.end(false);
@@ -624,6 +661,15 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
     watchdog.abort();
     writer.abort();
     tracing::info!("host {name} disconnected");
+}
+
+fn release_name(b: &Broker, name: &str, host: &Arc<Host>) {
+    let mut names = b.names.lock().unwrap();
+    if let Some(n) = names.get_mut(name).filter(|n| n.host.as_ref().is_some_and(|h| Arc::ptr_eq(h, host))) {
+        n.host = None;
+        n.left = Instant::now();
+        b.save_or_warn(&names);
+    }
 }
 
 /// Take `name` for `host`, unless it's kept for another. A host that connects again (its old
@@ -672,6 +718,33 @@ fn to_stream(host: &Host, id: u64, ev: Event, last: bool) {
 
 // ---------- clients ----------
 
+/// Discovery carries no host token and never redirects. Hubs resolve before authenticating or
+/// opening a websocket (which cannot follow the browser's redirect). Old relay brokers answer 404.
+async fn resolve(State(b): State<Arc<Broker>>, Path(name): Path<String>) -> Response {
+    discovery_response(b.host(&name).ok_or_else(|| "host isn't connected to the broker".into()))
+}
+
+async fn resolve_default(State(b): State<Arc<Broker>>, headers: HeaderMap) -> Response {
+    discovery_response(selected(&b, &headers))
+}
+
+fn discovery_response(host: Result<Arc<Host>, String>) -> Response {
+    let mut response = match host {
+        Err(e) => fail("/api/resolve", StatusCode::BAD_GATEWAY, &e),
+        Ok(host) => {
+            let endpoint = host.endpoint.lock().unwrap().clone();
+            match endpoint {
+                Some(url) => Json(json!({"host_id": host.host_id, "url": url})).into_response(),
+                None if !host.managed => StatusCode::NOT_FOUND.into_response(),
+                None => fail("/api/resolve", StatusCode::SERVICE_UNAVAILABLE, "host tunnel is being provisioned"),
+            }
+        }
+    };
+    response.headers_mut().insert("x-huntaway-broker", HeaderValue::from_static("1"));
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 /// `/_broker/use/<name>`: send this browser to that host from now on.
 async fn use_host(Path(name): Path<String>, req: Request) -> Response {
     if !proto::valid_name(&name) {
@@ -709,14 +782,21 @@ async fn prefixed(State(b): State<Arc<Broker>>, Path(params): Path<HashMap<Strin
 /// Any other path: on the host the request picks (see the module's comment).
 async fn picked(State(b): State<Arc<Broker>>, req: Request) -> Response {
     let path = req.uri().path_and_query().map(|p| p.to_string()).unwrap_or_else(|| "/".into());
-    let wanted = req
-        .headers()
+    let host = selected(&b, req.headers());
+    match host {
+        Ok(h) => forward(h, path, req).await,
+        Err(e) => fail(req.uri().path(), StatusCode::BAD_GATEWAY, &e),
+    }
+}
+
+fn selected(b: &Broker, headers: &HeaderMap) -> Result<Arc<Host>, String> {
+    let wanted = headers
         .get(HOST_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(String::from)
-        .or_else(|| cookie(req.headers(), COOKIE))
+        .or_else(|| cookie(headers, COOKIE))
         .or_else(|| b.cfg.default_host.clone());
-    let host = match &wanted {
+    match &wanted {
         Some(name) => b.host(name).ok_or_else(|| format!("host {name} isn't connected to the broker")),
         None => {
             let names = b.names.lock().unwrap();
@@ -727,10 +807,6 @@ async fn picked(State(b): State<Arc<Broker>>, req: Request) -> Response {
                 (Some(_), Some(_)) => Err("several hosts are connected to the broker: open /_broker/use/<name> to pick one".into()),
             }
         }
-    };
-    match host {
-        Ok(h) => forward(h, path, req).await,
-        Err(e) => fail(req.uri().path(), StatusCode::BAD_GATEWAY, &e),
     }
 }
 
@@ -760,6 +836,15 @@ fn is_websocket(req: &Request) -> bool {
 
 /// Pass a request to `host` and its answer back.
 async fn forward(host: Arc<Host>, path: String, req: Request) -> Response {
+    if host.managed {
+        let endpoint = host.endpoint.lock().unwrap().clone();
+        return match endpoint {
+            Some(url) => (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, format!("{url}{path}")),
+                (header::CACHE_CONTROL, "no-store".into()), (header::REFERRER_POLICY, "no-referrer".into())]).into_response(),
+            None => fail(&path, StatusCode::SERVICE_UNAVAILABLE, "host tunnel is being provisioned"),
+        };
+    }
+
     let ws = is_websocket(&req);
     let (mut parts, body) = req.into_parts();
     let upgrade = if ws {
@@ -946,9 +1031,68 @@ mod tests {
         LIVE.lock().unwrap().iter().filter(|h| *h == host).count()
     }
 
+    #[test]
+    fn managed_hosts_are_discovered_and_redirected_without_relaying_requests() {
+        run(async {
+            let (cf, api) = cloudflare::tests::fake().await;
+            let b = broker_with(Config { cloudflare: Some(cf), ..Default::default() }).await;
+            let mut req = format!("ws://{b}/_broker/connect").into_client_request().unwrap();
+            req.headers_mut().insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
+            let (mut host, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+            let hello = Ctl::Hello { name: "desktop".into(), host_id: "host-1".into(), key: Some("key".into()),
+                version: "test".into(), protocol: proto::PROTOCOL, origin_port: Some(12345) };
+            host.send(TMessage::Text(serde_json::to_string(&hello).unwrap().into())).await.unwrap();
+            loop {
+                if let TMessage::Text(t) = host.next().await.unwrap().unwrap() {
+                    match serde_json::from_str::<Ctl>(&t).unwrap() {
+                        Ctl::Welcome { tunnel: Some(tunnel), .. } => { assert_eq!(tunnel.token, "connector-secret"); break; },
+                        Ctl::Ping => {},
+                        other => panic!("unexpected handshake {other:?}"),
+                    }
+                }
+            }
+            let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+            let resolve = client.get(format!("http://{b}/_broker/resolve/desktop")).send().await.unwrap();
+            assert_eq!(resolve.headers()["cache-control"], "no-store");
+            let info: serde_json::Value = resolve.json().await.unwrap();
+            assert_eq!(info, json!({"host_id": "host-1", "url": "https://desktop.hosts.example.com"}));
+            assert!(!info.to_string().contains("connector-secret"));
+            let default: serde_json::Value = client.get(format!("http://{b}/_broker/resolve")).send().await.unwrap().json().await.unwrap();
+            assert_eq!(default, info);
+            let request = client.post(format!("http://{b}/_broker/h/desktop/api/tasks/a%2Fb?token=host-token"))
+                .body("upload body").send().await.unwrap();
+            assert_eq!(request.status(), 307);
+            assert_eq!(request.headers()["location"], "https://desktop.hosts.example.com/api/tasks/a%2Fb?token=host-token");
+            assert_eq!(request.headers()["referrer-policy"], "no-referrer");
+            assert_eq!(client.get(format!("http://{b}/")).send().await.unwrap().headers()["location"], "https://desktop.hosts.example.com/");
+            assert_eq!(api.lock().unwrap().calls.len(), 6);
+            // Application requests never become Req frames on the registration channel.
+            while let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_millis(50), host.next()).await {
+                if let TMessage::Text(t) = msg { assert!(matches!(serde_json::from_str::<Ctl>(&t).unwrap(), Ctl::Ping)); }
+            }
+            host.close(None).await.unwrap();
+            for _ in 0..100 {
+                if client.get(format!("http://{b}/_broker/resolve/desktop")).send().await.unwrap().status() == 502 { return; }
+                tokio::task::yield_now().await;
+            }
+            panic!("offline endpoint was still discoverable");
+        });
+    }
+
+    #[test]
+    fn managed_brokers_refuse_legacy_hosts_instead_of_silently_relaying() {
+        run(async {
+            let (cf, api) = cloudflare::tests::fake().await;
+            let b = broker_with(Config { cloudflare: Some(cf), ..Default::default() }).await;
+            let err = named_host(&b, "desktop", "old-host", Some("key")).await.unwrap_err();
+            assert!(err.contains("update Huntaway"), "{err}");
+            assert!(api.lock().unwrap().calls.is_empty());
+        });
+    }
+
     const TOKEN: &str = "broker-token-0123456789";
 
-    fn run(body: impl Future<Output = ()>) {
+    pub(crate) fn run(body: impl Future<Output = ()>) {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async { tokio::time::timeout(Duration::from_secs(30), body).await.expect("test still running after 30s") });
     }
@@ -973,7 +1117,7 @@ mod tests {
         req.headers_mut().insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
         let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
         let (mut sink, mut source) = ws.split();
-        let hello = Ctl::Hello { name: name.into(), host_id: name.into(), version: "0".into(), protocol: proto::PROTOCOL, key: Some(format!("{name}-key")) };
+        let hello = Ctl::Hello { name: name.into(), host_id: name.into(), version: "0".into(), protocol: proto::PROTOCOL, key: Some(format!("{name}-key")), origin_port: None };
         sink.send(TMessage::Text(serde_json::to_string(&hello).unwrap().into())).await.unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel::<Ctl>();
         let (sent, ws_id) = (Arc::new(Mutex::new(Instant::now())), Arc::new(AtomicU64::new(0)));
@@ -1063,7 +1207,7 @@ mod tests {
         let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
         let (mut sink, mut source) = ws.split();
         let text = |c: &Ctl| TMessage::Text(serde_json::to_string(c).unwrap().into());
-        let hello = Ctl::Hello { name: name.into(), host_id: host_id.into(), version: "0".into(), protocol: proto::PROTOCOL, key: key.map(String::from) };
+        let hello = Ctl::Hello { name: name.into(), host_id: host_id.into(), version: "0".into(), protocol: proto::PROTOCOL, key: key.map(String::from), origin_port: None };
         sink.send(text(&hello)).await.unwrap();
         match source.next().await {
             Some(Ok(TMessage::Text(t))) => match serde_json::from_str::<Ctl>(&t).unwrap() {
