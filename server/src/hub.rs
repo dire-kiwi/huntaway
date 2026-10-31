@@ -442,20 +442,28 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
             }
         });
     }
+    // A websocket pong needn't come from the host: through a broker, it's our own relay to the broker that
+    // answers our pings. So once the host has answered a `Down::Ping`, only its messages count.
+    let mut answers_pings = false;
+    let mut deadline = tokio::time::Instant::now() + SILENCE;
     loop {
-        let msg = match tokio::time::timeout(SILENCE, stream.next()).await {
+        let msg = match tokio::time::timeout_at(deadline, stream.next()).await {
             Ok(msg) => msg,
             Err(_) => {
                 tracing::info!("nothing from host {name} for {}s", SILENCE.as_secs());
                 break;
             }
         };
-        conn.heard();
         let text = match msg {
-            Some(Ok(WsMessage::Text(t))) => t.to_string(),
+            Some(Ok(WsMessage::Text(t))) => Some(t.to_string()),
             Some(Ok(WsMessage::Close(_)) | Err(_)) | None => break,
-            _ => continue,
+            _ => None,
         };
+        if text.is_some() || !answers_pings {
+            conn.heard();
+            deadline = tokio::time::Instant::now() + SILENCE;
+        }
+        let Some(text) = text else { continue };
         match serde_json::from_str::<Up>(&text) {
             Ok(Up::Res { id, status, body }) => {
                 if let Kind::Tunnel { pending, .. } = &conn.kind {
@@ -479,7 +487,8 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
                     }
                 }
             }
-            Ok(Up::Hello { .. } | Up::Pong) => {}
+            Ok(Up::Pong) => answers_pings = true,
+            Ok(Up::Hello { .. }) => {}
             Err(e) => tracing::warn!("bad tunnel message from {name}: {e}"),
         }
     }
@@ -1240,6 +1249,38 @@ mod tests {
             assert!(!Arc::ptr_eq(&first, &second));
             tokio::time::sleep(SILENCE * 2).await;
             assert!(find_link(&hub, "host").is_some_and(|l| Arc::ptr_eq(&l, &second)));
+        })
+    }
+
+    #[test]
+    fn a_host_dialled_in_through_a_broker_over_a_dead_connection_reconnects() {
+        crate::testing::run(async || {
+            const BROKER_TOKEN: &str = "broker-token-0123456789";
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let broker = l.local_addr().unwrap();
+            let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..Default::default() });
+            tokio::spawn(async move { axum::serve(l, app).await });
+            // The hub is on the broker, which it reaches its own API from.
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let internal_url = format!("http://{}", l.local_addr().unwrap());
+            let id = crate::state::Identity { host_id: "hub".into(), host_name: "hub".into(), token: "hub-tok".into(), hub_token: "hub-hub".into(), internal_url };
+            let hub = crate::testing::state_as(id);
+            let app = crate::api::router(hub.clone());
+            tokio::spawn(async move { axum::serve(l, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await });
+            crate::broker::dial_out(&hub, format!("http://{broker}"), BROKER_TOKEN.into(), "hub".into());
+
+            // The host dials the hub at the broker, over a connection that dies.
+            let host = node("host", "laptop");
+            let _ = crate::api::router(host.clone());
+            let proxy = Proxy::new(broker).await;
+            dial_out(&host, format!("http://{}/_broker/h/hub", proxy.addr), "hub-hub".into());
+            let first = until("the host to dial in", || find_link(&hub, "host")).await;
+            assert_eq!(first.request("GET", "/api/info", None).await.unwrap().0, 200);
+
+            // The hub's relay to the broker answers its websocket pings, but the host doesn't answer its `Down::Ping`.
+            proxy.freeze();
+            let second = until("the host to dial in again", || find_link(&hub, "host").filter(|l| !Arc::ptr_eq(l, &first))).await;
+            assert_eq!(second.request("GET", "/api/info", None).await.unwrap().0, 200);
         })
     }
 
