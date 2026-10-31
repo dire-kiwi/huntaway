@@ -822,7 +822,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   these. `GET /project-approvals` lists the ones waiting. From API 45 a new repository path is checked before asking
   (it must be the same repository, or with `move_repo` a free path to move the folder to), and
   approving `move_repo` moves the folder.
-  From API 75 `create_project` asks too, before anything is made: the dialog (*Add a project?*)
+  From API 76 `create_project` asks too, before anything is made: the dialog (*Add a project?*)
   shows the folder with symlinks resolved (and whether it exists yet, or is a git repository),
   the name and key it would get, the board, and the host's default permission mode, which its
   tasks get. The path must be absolute (or start with `~/`). Its tasks' agents work in that

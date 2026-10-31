@@ -1183,7 +1183,7 @@ export interface ProjectChange {
   reason?: string | null;
 }
 
-/** A project an agent asked to add, shown to the user to approve: the folder its agents would work in (API 75). */
+/** A project an agent asked to add, shown to the user to approve: the folder its agents would work in (API 76). */
 export interface ProjectCreation {
   op: "create";
   /** As it would be added (it has no id yet). */
@@ -1234,7 +1234,7 @@ export interface ProjectApproval extends ApprovalRequest {
   input: ProjectChange;
 }
 
-/** A project an agent asked to add, waiting for approval like a project change (API 75). */
+/** A project an agent asked to add, waiting for approval like a project change (API 76). */
 export interface ProjectCreationApproval extends ApprovalRequest {
   kind: "project";
   tool_name: "create_project";
