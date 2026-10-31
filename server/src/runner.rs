@@ -126,6 +126,7 @@ fn steered(state: &Shared, run: &Run, id: &str) -> Result<()> {
     };
     // It answers a question the agent asked. Taken in after a turn ended, it starts a new one;
     // after a stop ended the turn, the run is then no longer stopped (see `stop`).
+    let new_turn: bool = state.db().query_row("SELECT between_turns FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
     state.db().execute(
         "UPDATE runs SET attention=NULL, between_turns=0, stop_requested = CASE WHEN stop_requested=2 THEN 0 ELSE stop_requested END WHERE id=?1",
         [&run.id],
@@ -134,7 +135,10 @@ fn steered(state: &Shared, run: &Run, id: &str) -> Result<()> {
     if steer.from_agent {
         msg["from_agent"] = json!(true);
     }
-    state.add_message(task_id, "user", msg)?;
+    let message = state.add_message(task_id, "user", msg)?;
+    if new_turn {
+        state.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![message.id, run.id])?;
+    }
     if let Some(t) = task {
         state.emit_task(&t);
     }
@@ -217,7 +221,7 @@ fn has_queued(state: &Shared, runs: &std::collections::HashMap<String, RunHandle
 /// run's start takes it (see `start_run`), so it isn't lost if the server stops in between.
 /// Returns whether a new run started.
 fn send_queued(state: &Shared, task_id: &str) -> bool {
-    match send_message(state, task_id, None, false, "prompt") {
+    match send_message(state, task_id, None, false, "prompt", None) {
         Ok(_) => true,
         Err(e) => {
             // Unless another run has taken it, or is going to.
@@ -229,6 +233,15 @@ fn send_queued(state: &Shared, task_id: &str) -> bool {
         }
     }
 }
+
+/// Other tasks wait to merge while this one does, so a merge that turns out to need changes
+/// steps out of the queue to make them (see Task::remerge).
+const STEP_OUT: &str = "Tasks queued to merge after this one wait while you merge it. Bringing the branch up to date, resolving \
+    simple conflicts, waiting for checks and re-running flaky ones are part of merging. But if the merge needs changes to this task's \
+    work (checks that fail because of it, review comments to address, conflicts that need more than a simple resolution), step out of \
+    the merge queue first so the next task can merge meanwhile: call `update_task` to set this task's status to `in_progress`, with \
+    `remerge` true. Then make the changes, check them, commit and push, and end your turn without merging: the board puts the task \
+    back at the end of the merge queue and asks you to merge again when its turn comes.";
 
 /// Ask the agent on a task that was moved to "Ready for merge" to merge its work. The task
 /// stays in that column while it does; the agent moves it to "Done" once merged.
@@ -254,7 +267,7 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
     };
     let mut text = format!(
         "The user moved this task to \"Ready for merge\". {what}.\n\n{}\n\nIf you can't merge, call `request_user_input` \
-         explaining why. Once it is merged, call `update_task` to set this task's status to `done`.",
+         explaining why. Once it is merged, call `update_task` to set this task's status to `done`.\n\n{STEP_OUT}",
         crate::prompts::merge(project.as_ref())
     );
     if task.subproject {
@@ -334,6 +347,12 @@ pub fn send_as(state: &Shared, task_id: &str, text: &str, auto: bool) -> ApiResu
     send_run(state, task_id, text, auto, false, "prompt")
 }
 
+/// Send a review's issues back to the task's agent to fix: round `round` of fixes, which the
+/// message is marked with (`review_round`, see checkpoints.rs).
+pub fn send_fixes(state: &Shared, task_id: &str, text: &str, round: u32) -> ApiResult<Task> {
+    send_message(state, task_id, Some(db::Queued::new(text, false)), true, "prompt", Some(round))
+}
+
 /// Like `send`, for a message another thread's agent sent (MCP `send_to_task`). It's marked so
 /// prompt analytics don't count it as the user's.
 pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<Task> {
@@ -346,7 +365,7 @@ pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Tas
 }
 
 fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: bool, kind: &str) -> ApiResult<Task> {
-    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind)?;
+    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
     // The user's prompt may have moved the task on, so its title follows (see title::refresh).
     if kind == "prompt" && !auto && !from_agent && crate::title::worth_asking(text) && !is_compact(text) {
         crate::title::refresh(state, task_id);
@@ -357,7 +376,7 @@ fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: b
 /// Send `message` on a thread. A message the user (or another agent) sent goes with the one
 /// queued there, if any. Without one, it sends just that, and nothing if another run has (see
 /// `send_queued`).
-fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto: bool, kind: &str) -> ApiResult<Task> {
+fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto: bool, kind: &str, review_round: Option<u32>) -> ApiResult<Task> {
     let only_queued = message.is_none();
     let message = message.unwrap_or_else(db::Queued::empty);
     let task = db::get_task(&state.db(), task_id)?.ok_or_else(|| ApiError::not_found("task"))?;
@@ -403,6 +422,9 @@ fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto
             let mut msg = json!({"text": text});
             if auto {
                 msg["auto"] = json!(true);
+            }
+            if let Some(round) = review_round {
+                msg["review_round"] = json!(round);
             }
             if from_agent {
                 msg["from_agent"] = json!(true);
@@ -494,7 +516,7 @@ fn start_waiting(state: &Shared, t: &Task) {
     let queued = db::get_task(&state.db(), &t.id).map(|t| t.and_then(|t| t.queued_message).is_some_and(|q| !q.trim().is_empty()));
     let sent = match queued {
         // It stays queued until the run's start takes it.
-        Ok(true) => send_message(state, &t.id, None, false, "prompt"),
+        Ok(true) => send_message(state, &t.id, None, false, "prompt", None),
         Ok(false) if t.session_id.is_none() => send_as(state, &t.id, "", true),
         Ok(false) => send_as(state, &t.id, "The tasks this one was waiting for are merged (or no longer needed), so carry on with it.", true),
         Err(e) => Err(e.into()),
@@ -636,6 +658,10 @@ fn start_run(
     };
     for m in &recorded {
         state.emit_message(m);
+    }
+    // The message its first turn starts with (see checkpoints.rs).
+    if let Some(m) = recorded.iter().find(|m| m.kind == "user") {
+        let _ = state.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![m.id, run.id]);
     }
     #[cfg(test)]
     crate::testing::reached("run:started");
@@ -900,6 +926,11 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     add_dirs.extend(group.iter().map(|p| p.repo_path.clone()));
     tokio::fs::create_dir_all(crate::util::expand_tilde(&cwd)).await.ok();
+    // A checkpoint of the worktree before the agent changes it (see checkpoints.rs), taken after
+    // any rewind asked for meanwhile, whose conversation rollback this run makes.
+    crate::checkpoints::before_run(state, &task, run).await;
+    task = db::get_task(&state.db(), task_id)?.ok_or_else(|| anyhow!("task not found"))?;
+    let rewind = crate::checkpoints::pending_rewind(&task).cloned();
     // Setting up a subproject task's worktree may have set up the subproject's too.
     let parent = match (&task.parent_id, task.kind.as_str()) {
         (Some(id), "task") => db::get_task(&state.db(), id)?,
@@ -1020,6 +1051,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             approved_mcp_servers: tools.mcp_servers.keys().filter(|n| tools.allowed.contains(&crate::agent_tools::tool_prefix(n))).cloned().collect(),
             disabled_mcp_tools,
             review_waits: approvals_reviewer == "auto_review",
+            revert_before_turn: rewind.as_ref().and_then(|r| r.before_turn.clone()),
         };
         let launch = Launch {
             run_id: run.id.clone(),
@@ -1035,7 +1067,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             codex: Some(spec),
         };
         tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting codex");
-        return started(state, run, launch).await;
+        started(state, run, launch).await?;
+        rewound(state, task_id, rewind);
+        return Ok(());
     }
 
     let mut args: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
@@ -1093,6 +1127,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
     if let Some(sid) = &task.session_id {
         push("--resume", sid);
+        if let Some(at) = rewind.as_ref().and_then(|r| r.resume_at.as_deref()) {
+            push("--resume-session-at", at);
+        }
     }
     if let Some(m) = &model {
         push("--model", m);
@@ -1128,7 +1165,21 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         codex: None,
     };
     tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting claude");
-    started(state, run, launch).await
+    started(state, run, launch).await?;
+    rewound(state, task_id, rewind);
+    Ok(())
+}
+
+/// A run started with the conversation rollback a rewind asked for (see checkpoints.rs): it's done
+/// with. One for another session than the run's is dropped too.
+fn rewound(state: &Shared, task_id: &str, rewind: Option<crate::checkpoints::Rewind>) {
+    let cleared = state.update_task_if(task_id, &[("rewind", Value::Null)], |c| Ok(db::get_task(c, task_id)?.is_some_and(|t| t.rewind.is_some())));
+    if let Err(e) = cleared {
+        tracing::warn!(task = task_id, "clearing the conversation rollback: {e:#}");
+    }
+    if let Some(r) = rewind {
+        state.add_event(task_id, "info", format!("The conversation goes on from before turn {}", r.turn), None);
+    }
 }
 
 /// The board tools a Claude run gets without asking (`--allowedTools`). In auto mode that's all
@@ -1911,6 +1962,10 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
                 return Ok(());
             }
             let tool_result = v["type"] == "user" && v["message"]["content"].as_array().is_some_and(|c| c.iter().any(|b| b["type"] == "tool_result"));
+            // The conversation's latest message, where a rewind can resume it (see checkpoints::Rewind).
+            if let Some(uuid) = v["uuid"].as_str().filter(|_| v["parent_tool_use_id"].is_null()) {
+                state.db().execute("UPDATE runs SET agent_at=?1 WHERE id=?2", rusqlite::params![uuid, run.id])?;
+            }
             state.add_message(task_id, "claude", v)?;
             // A tool call may have changed the task's document: the task shows it as it's written.
             if tool_result {
@@ -1974,6 +2029,8 @@ pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut resul
         }
     }
     state.db().execute("UPDATE runs SET saw_result=1, between_turns=1, result_error=?1 WHERE id=?2", rusqlite::params![error, run.id])?;
+    let status = if stopping == 1 { "stopped" } else if error.is_some() { "failed" } else { "done" };
+    crate::checkpoints::after_turn(state, &run.id, status);
     // A turn that ended isn't waiting any more, even if the agent gave up on the call.
     crate::wait::ended(state, &run.task_id, &run.id);
     crate::documents::turn_ended(state, &run.task_id);
@@ -1998,6 +2055,12 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     let task_id = run.task_id.as_str();
     let queued = {
         let mut runs = state.runs.lock().unwrap();
+        // A turn the agent never ended (stopped, failed or killed) gets its checkpoint here, while
+        // the run still holds the thread: before a rewind or the next run (a queued message) can
+        // ask for theirs.
+        if run.status == "running" && !run.between_turns && run.kind != "compact" {
+            crate::checkpoints::after_turn(state, run_id, if matches!(outcome, Outcome::Failed(_)) { "failed" } else { "stopped" });
+        }
         if runs.get(task_id).is_some_and(|h| h.run_id == run_id) {
             runs.remove(task_id);
         }
@@ -2058,6 +2121,8 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         // The agent marked its own task done (e.g. after merging it).
         (Outcome::Ok, None) if task.status == "done" => (None, None),
         (Outcome::Ok, None) if task.merging => (Some("needs_attention"), Some("The agent finished without marking the task merged".into())),
+        // It stepped out of the merge queue to make changes, and now rejoins it.
+        (Outcome::Ok, None) if task.remerge => (Some("ready_for_merge"), None),
         (Outcome::Ok, None) => (Some("in_review"), None),
     };
     // The queued message carries on the conversation, so the task stays where it is.
@@ -2068,6 +2133,12 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     if is_task {
         if let Some(s) = status {
             fields.push(("status", json!(s)));
+        }
+        if status == Some("ready_for_merge") {
+            // At the back of the queue, as the tasks behind it moved up while it was away.
+            let end = db::end_position(&state.db(), task.project_id.as_deref(), "ready_for_merge", "task").unwrap_or(task.position);
+            fields.extend([("merging", json!(true)), ("remerge", json!(false)), ("position", json!(end))]);
+            state.add_event(task_id, "info", "Back in the merge queue", None);
         }
     }
     let updated = match end_run(state, task_id, run_id, &fields) {
@@ -2312,6 +2383,71 @@ mod tests {
 
     fn result(subtype: &str, total_cost: f64) -> Value {
         json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "total_cost_usd": total_cost, "num_turns": 1})
+    }
+
+    #[test]
+    fn a_merge_that_needs_changes_lets_the_queue_go_and_rejoins_it() {
+        crate::testing::run(async || {
+            let (state, a, run) = running(false);
+            let a = state.update_task(&a.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap().unwrap();
+            let nt = db::NewTask { profile_id: &a.profile_id, project_id: None, kind: "task", title: "b", description: "", status: "ready_for_merge", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let b = db::insert_task(&state.db(), nt).unwrap();
+            let b = state.update_task(&b.id, &[("merging", json!(true)), ("position", json!(a.position + 1.0))]).unwrap().unwrap();
+            let slot = |state: &Shared| db::active_merge(&state.db(), None, None).unwrap().map(|t| t.id);
+            let queue = |state: &Shared| db::queued_merges(&state.db(), None, None).unwrap().into_iter().map(|t| t.id).collect::<Vec<_>>();
+            assert_eq!((slot(&state), queue(&state)), (Some(a.id.clone()), vec![b.id.clone()]));
+            let update = async |state: &Shared, id: &str, body: Value| crate::api::update_task_inner(state, id, body.as_object().unwrap()).await;
+
+            // Only a merging task steps out, into In progress.
+            assert!(update(&state, &a.id, json!({"status": "in_review", "remerge": true})).await.is_err());
+            assert!(update(&state, &a.id, json!({"status": "in_progress", "remerge": "yes"})).await.is_err());
+            let t = update(&state, &a.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.remerge, t.running), ("in_progress", false, true, true));
+            assert!(update(&state, &b.id, json!({"status": "in_progress", "remerge": true})).await.is_err());
+            // B can merge while A makes its changes.
+            assert_eq!((slot(&state), queue(&state)), (None, vec![b.id.clone()]));
+            // Waiting on the user keeps its place to come back to.
+            let t = update(&state, &a.id, json!({"status": "needs_attention"})).await.unwrap();
+            assert!(t.remerge);
+            assert_eq!(slot(&state), None);
+            update(&state, &a.id, json!({"status": "in_progress"})).await.unwrap();
+
+            // Done, it rejoins the end of the queue, rather than going to In review.
+            finish(&state, &run.id, Outcome::Ok);
+            let t = reload(&state, &a.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge, t.running), ("ready_for_merge", true, false, false));
+            assert!(t.position > b.position);
+            assert_eq!((slot(&state), queue(&state)), (None, vec![b.id.clone(), a.id.clone()]));
+
+            // Moved to another column meanwhile, it's out of the queue for good.
+            let (state, c, run) = running(false);
+            state.update_task(&c.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            update(&state, &c.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            let t = update(&state, &c.id, json!({"status": "todo"})).await.unwrap();
+            assert_eq!((t.merging, t.remerge), (false, false));
+            update(&state, &c.id, json!({"status": "in_progress"})).await.unwrap();
+            finish(&state, &run.id, Outcome::Ok);
+            assert_eq!(reload(&state, &c.id).status, "in_review");
+
+            // A run that fails leaves it for the user, still to rejoin once its agent is done.
+            let (state, d, run) = running(false);
+            state.update_task(&d.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            update(&state, &d.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            finish(&state, &run.id, Outcome::Failed("boom".into()));
+            let t = reload(&state, &d.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge), ("needs_attention", false, true));
+            // Moved on by the board rather than the user (a review starting puts it in In review),
+            // it drops its place all the same: work after that goes to review, not to the queue.
+            state.update_task(&d.id, &[("status", json!("in_review")), ("attention_reason", Value::Null)]).unwrap();
+            assert!(!reload(&state, &d.id).remerge);
+            update(&state, &d.id, json!({"status": "in_progress"})).await.unwrap();
+            let next = db::insert_run(&state.db(), &d.id, "prompt").unwrap();
+            state.runs.lock().unwrap().insert(d.id.clone(), RunHandle { run_id: next.id.clone(), cancel: None });
+            state.update_task(&d.id, &[("running", json!(true))]).unwrap();
+            finish(&state, &next.id, Outcome::Ok);
+            let t = reload(&state, &d.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge), ("in_review", false, false));
+        })
     }
 
     #[test]

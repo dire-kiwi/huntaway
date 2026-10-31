@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -24,7 +24,7 @@ import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Button, cost, IconButton, Input, Modal, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, isSubmitShortcut } from "./ui";
+import { ActivityTime, Button, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, isSubmitShortcut } from "./ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
@@ -729,6 +729,12 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             Queued to merge. Another task in this project is merging; this one starts when it's done.
           </div>
         )}
+        {rejoinsMerge(task) && (
+          <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
+            Stepped out of the merge queue to make changes, so the tasks behind it could merge. It rejoins the end of the queue when its
+            agent is done, unless you move it to another column first.
+          </div>
+        )}
         {dependencyQueued(task) && (
           <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
             Queued. Its agent starts once the tasks it depends on are merged.
@@ -1234,15 +1240,17 @@ function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
           <Toggle checked={force} onChange={setForce} label="Discard uncommitted changes" />
           <Toggle checked={deleteBranch} onChange={setDeleteBranch} label="Also delete the branch" />
         </div>
-        {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={go}>
-            {busy && <Loader2 size={13} className="animate-spin" />} Tear down
-          </Button>
-        </div>
+        <ModalFooter className="space-y-4">
+          {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="danger" disabled={busy} onClick={go}>
+              {busy && <Loader2 size={13} className="animate-spin" />} Tear down
+            </Button>
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );
@@ -1286,14 +1294,14 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
             label={task.subproject && children > 0 ? `Also delete branch ${task.branch} and its tasks' branches` : `Also delete branch ${task.branch}`}
           />
         )}
-        <div className="flex justify-end gap-2">
+        <ModalFooter className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="danger" disabled={busy} onClick={go}>
             Delete
           </Button>
-        </div>
+        </ModalFooter>
       </div>
     </Modal>
   );

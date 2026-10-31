@@ -51,7 +51,7 @@ import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
-import { Button, Field, IconButton, Input, MenuButton, Modal, Textarea, timeAgo, Toggle } from "./ui";
+import { Button, Field, IconButton, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
 
 // ---------- directory picker ----------
 
@@ -348,21 +348,23 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
             <Input value={key} placeholder="auto" onChange={(e) => setKey(e.target.value.toUpperCase())} maxLength={6} />
           </Field>
         </div>
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          {fromGithub ? (
-            <Button variant="primary" disabled={busy || !repo || !clonePathNow.trim()} onClick={submit}>
-              {busy && <Loader2 size={13} className="animate-spin" />} {busy ? "Cloning…" : "Clone and add project"}
+        <ModalFooter className="space-y-4">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
             </Button>
-          ) : (
-            <Button variant="primary" disabled={busy || !path} onClick={submit}>
-              Add project
-            </Button>
-          )}
-        </div>
+            {fromGithub ? (
+              <Button variant="primary" disabled={busy || !repo || !clonePathNow.trim()} onClick={submit}>
+                {busy && <Loader2 size={13} className="animate-spin" />} {busy ? "Cloning…" : "Clone and add project"}
+              </Button>
+            ) : (
+              <Button variant="primary" disabled={busy || !path} onClick={submit}>
+                Add project
+              </Button>
+            )}
+          </div>
+        </ModalFooter>
       </div>
     </Modal>
   );
@@ -758,7 +760,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
           <p className="mb-4 text-[13px] text-muted">
             This deletes the project, its tasks and their threads, and removes their worktrees. Task branches stay in the repository.
           </p>
-          <div className="flex justify-end gap-2">
+          <ModalFooter className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setConfirm(false)}>
               Cancel
             </Button>
@@ -771,7 +773,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
             >
               Delete project
             </Button>
-          </div>
+          </ModalFooter>
         </Modal>
       )}
     </div>
@@ -1094,15 +1096,17 @@ export function ArchiveProjectModal({ project, onClose }: { project: Project; on
         The project goes off the board: out of the sidebar, the inbox and its group, and agents can&apos;t add tasks to it. Its tasks, worktrees and branches are
         kept. To bring it back, unarchive it in Settings → Archived projects.
       </p>
-      {err && <div className="mb-3 text-xs text-red-400">{err}</div>}
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button variant="primary" disabled={busy} onClick={archive}>
-          <Archive size={13} /> Archive project
-        </Button>
-      </div>
+      <ModalFooter>
+        {err && <div className="mb-3 text-xs text-red-400">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy} onClick={archive}>
+            <Archive size={13} /> Archive project
+          </Button>
+        </div>
+      </ModalFooter>
     </Modal>
   );
 }
