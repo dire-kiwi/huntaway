@@ -942,7 +942,8 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
 
 /// Fails for gh commands no agent gets, whatever its permission mode (the gh tool's approval
 /// doesn't apply in auto or bypass): `gh auth` (`gh auth token` would put the account's token in
-/// the thread), and those that change what later gh commands run (extensions, aliases, settings).
+/// the thread, as would `config get` of a host's `oauth_token`), and those that change what later
+/// gh commands run (extensions, aliases, settings).
 /// gh's command comes first: a flag before it could take the next argument as its value, so
 /// only `--help` and `--version` may.
 fn refuse<S: AsRef<str>>(args: &[S]) -> Result<()> {
@@ -953,6 +954,10 @@ fn refuse<S: AsRef<str>>(args: &[S]) -> Result<()> {
         ["extension" | "extensions" | "ext", ..] => "gh extension",
         ["alias", "set" | "import" | "delete", ..] => "changing gh's aliases",
         ["config", "set" | "clear-cache", ..] => "changing gh's settings",
+        // A host's settings are its login, token and all (`config get -h HOST oauth_token` prints it).
+        ["config", "get", ref rest @ ..] if rest.iter().any(|a| a.contains("oauth_token") || a.starts_with("-h") || a.starts_with("--host")) => {
+            "reading a host's gh settings"
+        }
         _ => return Ok(()),
     };
     bail!("{refused} isn't available to agents; ask the user to run it")
@@ -1202,6 +1207,10 @@ mod tests {
             &["alias", "set", "co", "!sh -c x"],
             &["config", "set", "editor", "x"],
             &["-R", "o/r", "auth", "token"],
+            &["config", "get", "-h", "github.com", "oauth_token"],
+            &["config", "get", "oauth_token", "--host=github.com"],
+            &["config", "get", "-hgithub.com", "user"],
+            &["config", "get", "oauth_token"],
         ] {
             let err = command("gh", &json!({"args": refused})).unwrap_err().to_string();
             assert!(err.contains("isn't available to agents") || err.contains("put gh's command first"), "{refused:?}: {err}");

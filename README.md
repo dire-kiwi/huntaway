@@ -1182,7 +1182,8 @@ request, checking a merged one before removing its worktree) and the commands of
 `wait` calls use the same account, as do the reads of a wait's pull request. A wait's command doesn't get the token: `gh` on its `PATH` is a
 script that runs `huntaway gh-run`, which checks each call's targets as the tools do and runs gh
 with the token. The `gh` tool (and `gh` in a wait's command) refuses `gh auth` (`gh auth token`
-would put the token in the thread), `gh extension` and changes to gh's aliases and settings
+would put the token in the thread), `config get` of a host's settings (with `-h`/`--host`, or of
+`oauth_token`, which prints the token too), `gh extension` and changes to gh's aliases and settings
 (`alias set`, `alias import`, `alias delete`, `config set`, `config clear-cache`), whatever the
 thread's permission mode, and gh's command has to come first (only `--help` and `--version` may
 come before it). An account that isn't signed in to gh fails the tool call
