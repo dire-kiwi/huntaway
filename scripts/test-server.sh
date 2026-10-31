@@ -7,7 +7,7 @@
 #   scripts/test-server.sh stop [<data-dir>]
 #
 # Options (anything else goes to `huntaway serve`):
-#   --seed         add a "test" profile on $IA_TEST_CLAUDE_CONFIG (default ~/.claude-personal)
+#   --seed         (needs jq and curl) add a "test" profile on $IA_TEST_CLAUDE_CONFIG (default ~/.claude-personal)
 #                  with default model $IA_TEST_MODEL (default haiku), and a project on a fresh
 #                  git repo in <data-dir>/repo
 #   --fake-claude  run agents with scripts/fake-claude (prints a reply and a result, no model);
@@ -152,6 +152,11 @@ start() {
     done
   fi
   [[ -n $bin && -x $bin ]] || { echo "no huntaway build in $root/server/target; run cargo build there first" >&2; exit 1; }
+  if [[ -n $do_seed ]]; then
+    for tool in jq curl; do
+      command -v "$tool" > /dev/null || { echo "--seed needs $tool, which isn't on PATH" >&2; exit 1; }
+    done
+  fi
 
   local dir
   dir="$(mktemp -d -t ia-test-XXXXXX)"

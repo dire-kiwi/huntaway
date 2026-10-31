@@ -12,6 +12,7 @@ Set these in the server's environment (before test-server.sh, which keeps them f
   IA_FAKE_CLAUDE_TEXT    the assistant's reply (default "Fake reply to: <prompt>")
   IA_FAKE_CLAUDE_RESULT  the result's subtype (default success; anything else is an error)
   IA_FAKE_CLAUDE_EXIT    exit status (default 0)
+  IA_FAKE_CLAUDE_TITLE   the title that title generation prints (default "Fake title")
 """
 import json
 import os

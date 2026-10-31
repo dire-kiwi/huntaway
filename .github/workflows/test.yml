@@ -1,5 +1,5 @@
-# Runs the server and UI tests on each pull request, on GitHub-hosted runners. It needs no secrets, so
-# pull requests from forks run it too. Deployments live outside this repository.
+# Runs the server and UI tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request, on
+# GitHub-hosted runners. It needs no secrets, so pull requests from forks run it too. Deployments live outside this repository.
 name: Tests
 
 on:
@@ -65,3 +65,48 @@ jobs:
       - name: npm test
         working-directory: app
         run: npm test
+
+  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
+  # scripts/ia-api's tests.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: server
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: npm ci
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      # The runners have no /usr/bin/chromium, so scripts/ui-check.mjs falls back to Playwright's own headless browser.
+      - name: Chromium
+        working-directory: app
+        run: npx playwright-core install --with-deps --only-shell chromium
+
+      # Only the binaries the checks run, with no test binary beside them (see the server job's note on memory).
+      - name: cargo build
+        working-directory: server
+        run: cargo build --locked
+
+      - name: Browser checks
+        working-directory: app
+        run: npm run test:ui
+
+      - name: ia-api tests
+        run: python3 scripts/ia-api-test.py

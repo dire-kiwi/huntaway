@@ -6,12 +6,13 @@ import { createRequire } from "node:module";
 import { after, before, test } from "node:test";
 import { frameDoc } from "../../src/htmlFrame.ts";
 import { themedPlan } from "../../src/planTheme.ts";
+import { defaultChromium } from "../../../scripts/ui-check.mjs";
 
 const { chromium } = createRequire(import.meta.url)("playwright-core");
 const css = fs.readFileSync(new URL("../../src/planTheme.css", import.meta.url), "utf8");
 
 let browser;
-before(async () => (browser = await chromium.launch({ executablePath: "/usr/bin/chromium" })));
+before(async () => (browser = await chromium.launch({ executablePath: defaultChromium() })));
 after(() => browser?.close());
 
 test("<ia-html> is a page of its own: its scripts work as in a page, its styles stay in it, and its frame fits it", async () => {

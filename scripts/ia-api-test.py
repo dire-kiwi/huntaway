@@ -121,6 +121,58 @@ class ApproveAll(unittest.TestCase):
         self.assertEqual(e.exception.code, 1)
 
 
+class TaskKeys(unittest.TestCase):
+    """task_id: project keys in $IA_TEST_PROJECT (or a former key), and S-/G- keys in a profile's tasks."""
+
+    class Api(ia_api.Api):
+        def __init__(self, env=None):
+            super().__init__({"IA_TEST_URL": "http://127.0.0.1:1", "IA_TEST_TOKEN": "t", **(env or {})})
+            self.asked = []
+
+        def call(self, method, path, body=None, **_):
+            self.asked.append(path)
+            if path == "/projects/pr":
+                return {"id": "pr", "key": "TES", "former_keys": ["OLD"]}
+            if path == "/projects/pr/tasks":
+                return [{"id": "tes-1", "number": 1, "project_id": "pr"}, {"id": "tes-2", "number": 2, "project_id": "pr"}]
+            if path == "/profiles":
+                return [{"id": "a"}, {"id": "b"}]
+            if path == "/profiles/a/tasks":
+                return [{"id": "tes-2", "number": 2, "project_id": "pr"}, {"id": "a-s2", "number": 2, "project_id": None, "task_type": "scratch"},
+                        {"id": "a-g2", "number": 2, "project_id": None, "group_name": "g"}, {"id": "a-s3", "number": 3, "project_id": None, "task_type": "scratch"}]
+            if path == "/profiles/b/tasks":
+                return [{"id": "b-s3", "number": 3, "project_id": None, "task_type": "scratch"}]
+            raise AssertionError(f"unexpected {method} {path}")
+
+    def resolve(self, ref, **env):
+        api = self.Api(env)
+        err = io.StringIO()
+        try:
+            with redirect_stderr(err):
+                return api.task_id(ref), api.asked
+        except SystemExit:
+            return None, err.getvalue()
+
+    def test_project_keys(self):
+        self.assertEqual(self.resolve("tes-2", IA_TEST_PROJECT="pr")[0], "tes-2")
+        self.assertEqual(self.resolve("OLD-1", IA_TEST_PROJECT="pr")[0], "tes-1")
+        # One list of the project's tasks, without ?kind= (scratch tasks are kind task now).
+        self.assertEqual(self.resolve("TES-1", IA_TEST_PROJECT="pr")[1], ["/projects/pr", "/projects/pr/tasks"])
+        self.assertIn("isn't a key of project TES", self.resolve("XYZ-1", IA_TEST_PROJECT="pr")[1])
+        self.assertIn("no task TES-9", self.resolve("TES-9", IA_TEST_PROJECT="pr")[1])
+        self.assertIn("no IA_TEST_PROJECT", self.resolve("TES-1")[1])
+
+    def test_scratch_and_group_keys(self):
+        self.assertEqual(self.resolve("S-2", IA_TEST_PROJECT="pr")[0], "a-s2")
+        self.assertEqual(self.resolve("g-2")[0], "a-g2")
+        self.assertEqual(self.resolve("S-3", IA_TEST_PROFILE="b"), ("b-s3", ["/profiles/b/tasks"]))
+        self.assertIn("more than one profile", self.resolve("S-3")[1])
+        self.assertIn("no task G-3", self.resolve("G-3")[1])
+
+    def test_ids_are_left_alone(self):
+        self.assertEqual(self.resolve("0b6f1c2e-uuid"), ("0b6f1c2e-uuid", []))
+
+
 class OnlyTestServers(unittest.TestCase):
     def connect(self, url, answer=None):
         """Api(url), with GET /api/open-token answered by `answer` (bytes, or an exception to raise); its stderr if it refuses."""
