@@ -164,7 +164,11 @@ impl AppState {
                 true => db::get_task(&c, id)?.map(|t| t.status),
                 false => None,
             };
-            let Some(t) = db::update_task(&c, id, fields)? else { return Ok(None) };
+            let mut fields = fields.to_vec();
+            if let Some(preview) = preview_following_pr(&c, id, &fields)? {
+                fields.push(("preview_url", preview));
+            }
+            let Some(t) = db::update_task(&c, id, &fields)? else { return Ok(None) };
             if let Some(old) = &old_status {
                 self.status_changed(&c, &t, old);
             }
@@ -228,6 +232,23 @@ impl AppState {
     pub fn profile_scratch_dir(&self, profile_id: &str) -> PathBuf {
         self.data_dir.join("profiles").join(profile_id).join("scratch")
     }
+}
+
+/// The preview URL task `id` gets with `fields`' change to its pull request, when its project
+/// previews pull requests (`Project::pr_preview_url`) and the task has no preview URL or the
+/// one its old pull request got: one set otherwise (by hand, or in `fields`) stays.
+fn preview_following_pr(c: &Connection, id: &str, fields: &[(&str, Value)]) -> anyhow::Result<Option<Value>> {
+    let Some((_, pr)) = fields.iter().find(|(k, _)| *k == "pr_url") else { return Ok(None) };
+    if fields.iter().any(|(k, _)| *k == "preview_url") {
+        return Ok(None);
+    }
+    let Some(t) = db::get_task(c, id)? else { return Ok(None) };
+    let Some(p) = t.project_id.as_deref().map(|pid| db::get_project(c, pid)).transpose()?.flatten() else { return Ok(None) };
+    if p.pr_preview_url.is_none() || t.preview_url.is_some() && t.preview_url != p.preview_for(t.pr_url.as_deref()) {
+        return Ok(None);
+    }
+    let preview = p.preview_for(pr.as_str());
+    Ok((preview != t.preview_url).then(|| json!(preview)))
 }
 
 /// The lock on `AppState`'s database. Derefs to the connection.

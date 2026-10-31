@@ -1188,6 +1188,7 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["auto_review"] = json!(p.auto_review);
     out["review_rounds"] = json!(p.review_rounds);
     out["watch_pull_requests"] = json!(p.watch_pull_requests);
+    out["pr_preview_url"] = json!(p.pr_preview_url);
     out["reviewers"] = json!(p.reviewers);
     out["group_name"] = json!(p.group_name);
     out["archived"] = json!(p.archived_at.is_some());

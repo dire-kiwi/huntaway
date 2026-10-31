@@ -360,6 +360,8 @@ export interface Project {
   github_account?: string | null;
   /** Which news about an In review task's pull request wakes its agent (API 72). */
   watch_pull_requests?: WatchPullRequests;
+  /** Where its tasks' pull requests are previewed, with {pr} for the number: a task with a pull request gets it as its preview_url (API 73). */
+  pr_preview_url?: string | null;
   created_at: string;
 }
 

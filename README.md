@@ -1162,6 +1162,14 @@ A task can carry a preview URL (Preview in the task's sidebar, or `preview_url` 
 shows a dot linking to it: yellow until the URL answers `200`, then green. The server the board
 is served from checks it every 2 seconds while the board is visible.
 
+A project whose pull requests get preview deployments can say where, under *Pull request
+previews* in its settings' Review tab (`pr_preview_url`, API 73), with `{pr}` for the pull
+request's number, e.g. `https://pr{pr}.example.com/`. A task then gets its pull request's preview
+as its preview URL whenever its pull request is set or found (see above), and saving the setting
+fills it in for the project's tasks that already have one (except done tasks, whose previews are
+gone). A preview URL set otherwise, by hand or by its agent, stays; one the setting made follows
+the task's pull request, and a change to the setting.
+
 ### Asana tasks
 
 A task can be linked to the Asana tasks it's for (API 57): **Link Asana task…** under Asana in

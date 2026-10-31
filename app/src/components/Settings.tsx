@@ -403,8 +403,8 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "review",
     label: "Review",
     icon: <ScanSearch size={14} />,
-    description: "Reviewer agents that check each task's changes before it's merged, and what happens once it is.",
-    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged", "watch_pull_requests"],
+    description: "Reviewer agents that check each task's changes before it's merged, where its pull request is previewed, and what happens once it's merged.",
+    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged", "watch_pull_requests", "pr_preview_url"],
   },
   {
     id: "prompts",
@@ -481,6 +481,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
     if ("model" in body) body.model = body.model || null;
     if ("group_name" in body) body.group_name = body.group_name?.trim() || null;
     if ("github_account" in body) body.github_account = body.github_account || null;
+    if ("pr_preview_url" in body) body.pr_preview_url = body.pr_preview_url?.trim() || null;
     if ("claude_config_ids" in body) body.claude_config_ids = body.claude_config_ids?.length ? body.claude_config_ids : null;
     try {
       const p = await api.updateProject(project.host_id, projectId, body);
@@ -737,6 +738,15 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                   <option value="failures">Failed checks and conflicts wake the agent</option>
                   <option value="all">Failed checks, conflicts, comments and reviews wake the agent</option>
                 </select>
+              </Field>
+            )}
+
+            {current.id === "review" && hostSupports(host, 73) && (
+              <Field
+                label="Pull request previews"
+                hint="Where each task's pull request is previewed, with {pr} for its number. A task with a pull request gets it as its preview URL, which its card links to while it's in In review, and those it has already are filled in when you save. A preview URL set by hand stays."
+              >
+                <Input value={form.pr_preview_url ?? ""} placeholder="https://pr{pr}.example.com/" onChange={(e) => set("pr_preview_url", e.target.value)} />
               </Field>
             )}
 
