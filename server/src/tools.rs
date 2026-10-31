@@ -621,6 +621,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
                 labels: Some(args["labels"].clone()),
                 external_links: None,
                 fanout_id: None,
+                start_from: Some(args["start_from"].clone()).filter(|v| !v.is_null()),
             };
             let marks = new_task_marks(args)?;
             let t = api::create_task_inner(s, &project.id, body)?;
@@ -629,7 +630,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;
             let mut body = Map::new();
-            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge", "labels"] {
+            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge", "labels", "start_from"] {
                 if !args[k].is_null() {
                     body.insert(k.into(), args[k].clone());
                 }
@@ -1454,6 +1455,14 @@ fn summarize(s: &Shared, t: &Task) -> Value {
             v["depends_on"] = json!(deps);
         }
     }
+    if let Some(sf) = &t.start_from {
+        let key = project_key(s, t);
+        v["start_from"] = json!(sf.describe(&s.db(), &key));
+        // Where that took it, once its worktree is made: what its pull request targets.
+        if t.branch.is_some() {
+            v["base_branch"] = json!(t.base_branch);
+        }
+    }
     if t.waiting {
         v["queued_for_dependencies"] = json!(true);
     }
@@ -1671,6 +1680,7 @@ mod tests {
             labels: None,
             external_links: None,
             fanout_id: None,
+            start_from: None,
         };
         api::create_task_inner(s, project, body).map_err(|e| e.1).unwrap()
     }

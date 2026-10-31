@@ -113,6 +113,11 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         Some(b) => Some(worktree::compare_ref(&dir, &b).await),
         None => None,
     };
+    // Started from a commit its base branch doesn't have: its work is what's after that commit.
+    let base = match (&task.start_from, base) {
+        (Some(db::StartFrom::Commit { .. }), Some(b)) => worktree::changes_base(&dir, &task, &project).await.1.or(Some(b)),
+        (_, b) => b,
+    };
     let mut elsewhere = false;
     if let Some(b) = &base {
         let merge_base = worktree::git(&dir, &["merge-base", b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string());

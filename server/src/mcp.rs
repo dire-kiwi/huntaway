@@ -147,6 +147,10 @@ fn board_tools() -> Value {
         "type": "array", "items": {"type": "string"},
         "description": "Tasks in the same project (ids or keys like ABC-12) that have to be merged (done) before this task's agent starts. Until then, starting it queues it in in_progress. Replaces the task's current list; [] clears it."
     });
+    let start_from = json!({
+        "type": "string",
+        "description": "What the task's git worktree starts from, before it's made (by default the project's base branch): another task's key (e.g. ABC-12) to stack this task on its branch, a branch (local or on the remote), a pull request (#12 or its URL), or a commit SHA. A task or pull request's branch is what this task's pull request targets and its changes are compared with. Prefix with task:, branch:, pr: or commit: if it could be read as another. Only before the task's branch exists; not for a subproject's tasks. Empty string resets it."
+    });
     let starred = json!({"type": "boolean", "description": "Star the task (true) or unstar it (false): starred tasks are listed in the board's sidebar"});
     let remind_at = json!({
         "type": "string",
@@ -254,6 +258,7 @@ fn board_tools() -> Value {
                 "labels": labels,
                 "type": {"type": "string", "enum": ["scratch", "subproject"], "description": "'scratch' for a scratch task, whose agent works in its own folder for whatever the user asks, without a worktree, branch or merge: in no project (keyed S-<n>) unless you give project_id or subproject, where it can read the repository (and the subproject's worktree). Or 'subproject', the same as is_subproject. Leave out for a normal task."},
                 "depends_on": depends_on,
+                "start_from": start_from,
                 "starred": starred,
                 "remind_at": remind_at,
                 "reminder": reminder
@@ -261,7 +266,7 @@ fn board_tools() -> Value {
         },
         {
             "name": "update_task",
-            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
+            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels, dependencies or what its worktree starts from (before it's made), star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
             "inputSchema": {"type": "object", "properties": {
                 "task_id": task_ref,
                 "profile": profile,
@@ -274,6 +279,7 @@ fn board_tools() -> Value {
                 "labels": labels,
                 "remerge": {"type": "boolean", "description": "With status in_progress, on a task that's merging: it steps out of the merge queue so the next task can merge, and rejoins the end of the queue when its agent's run ends, rather than going to in_review."},
                 "depends_on": depends_on,
+                "start_from": start_from,
                 "starred": starred,
                 "remind_at": remind_at,
                 "reminder": reminder

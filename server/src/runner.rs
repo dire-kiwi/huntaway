@@ -260,14 +260,15 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
         };
         (project, open)
     };
-    let base = task.base_branch.clone().or_else(|| project.as_ref().and_then(|p| p.base_branch.clone()));
+    let mut base = task.base_branch.clone().or_else(|| project.as_ref().and_then(|p| p.base_branch.clone()));
+    let stacked = stacked_merge(state, task, project.as_ref(), &mut base)?;
     let into = base.map(|b| format!("`{b}`")).unwrap_or_else(|| "the base branch".into());
     let what = match &task.branch {
         Some(br) => format!("Merge branch `{br}` into {into}"),
         None => format!("Merge this task's work into {into}"),
     };
     let mut text = format!(
-        "The user moved this task to \"Ready for merge\". {what}.\n\n{}\n\nIf you can't merge, call `request_user_input` \
+        "The user moved this task to \"Ready for merge\". {what}.{stacked}\n\n{}\n\nIf you can't merge, call `request_user_input` \
          explaining why. Once it is merged, call `update_task` to set this task's status to `done`.\n\n{STEP_OUT}",
         crate::prompts::merge(project.as_ref())
     );
@@ -283,6 +284,43 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
         }
     }
     send_as(state, &task.id, &text, true)
+}
+
+/// What a merge request says of a task stacked on another task's or a pull request's branch (see
+/// db::StartFrom), and where it merges: into that branch while the other is open, as stacked pull
+/// requests do, and once the task it's stacked on is merged, into where that went instead (`base`
+/// is moved there), as GitHub retargets a pull request whose base branch is deleted.
+fn stacked_merge(state: &Shared, task: &Task, project: Option<&Project>, base: &mut Option<String>) -> ApiResult<String> {
+    let (Some(b), Some(_)) = (task.base_branch.clone(), &task.branch) else { return Ok(String::new()) };
+    let key = key_prefix(task, project);
+    Ok(match &task.start_from {
+        Some(db::StartFrom::Task { task_id }) => {
+            let Some(other) = db::get_task(&state.db(), task_id)?.filter(|o| o.branch.as_deref() == Some(b.as_str())) else { return Ok(String::new()) };
+            let them = format!("{key}-{}", other.number);
+            if db::is_merged(&other) {
+                let to = other.base_branch.clone().or_else(|| project.and_then(|p| p.base_branch.clone())).filter(|t| !t.is_empty());
+                let shown = to.as_deref().map(|t| format!("`{t}`")).unwrap_or_else(|| "its base branch".into());
+                *base = to;
+                format!(
+                    " This task is stacked on {them}, which is merged already, so merge it into {shown} instead of {them}'s branch `{b}`: \
+                     if its pull request still targets `{b}`, change its base to {shown} first, and bring the branch up to date with \
+                     {shown} (rebasing it onto {shown} without {them}'s commits if they were squashed or rebased)."
+                )
+            } else {
+                format!(
+                    " This task is stacked on {them} (\"{}\", {}), which isn't merged yet: merging it puts its work on {them}'s branch \
+                     `{b}`, to reach the project's base branch when {them} is merged.",
+                    other.title,
+                    other.status.replace('_', " ")
+                )
+            }
+        }
+        Some(db::StartFrom::PullRequest { number, .. }) => format!(
+            " This task started from pull request #{number}'s branch `{b}`. If that pull request is merged by now, merge this one \
+             into where it went instead, changing this task's pull request's base first and bringing its branch up to date."
+        ),
+        _ => String::new(),
+    })
 }
 
 /// Held while picking a project's next merge, so two merges can't take its slot at once.
@@ -1835,6 +1873,15 @@ fn system_prompt(
                     task.base_branch.as_ref().map(|b| format!(" (branched from `{b}`)")).unwrap_or_default(),
                     // It pushes the branch for its pull request.
                     if github.is_some() { "merge or switch branches" } else { "push, merge, or switch branches" }
+                ));
+            }
+            // Stacked on another task's (or pull request's) branch, which it merges into rather than the project's.
+            if let (Some(sf @ (db::StartFrom::Task { .. } | db::StartFrom::PullRequest { .. })), Some(b), Some(_)) = (&task.start_from, &task.base_branch, &task.branch) {
+                let on = if matches!(sf, db::StartFrom::Task { .. }) { "another task" } else { "a pull request" };
+                s.push_str(&format!(
+                    " This task is stacked on {on}: `{b}` is that {}'s branch, so your work is compared with it and your pull request \
+                     targets it, and its own changes aren't yours to review or redo.",
+                    if matches!(sf, db::StartFrom::Task { .. }) { "task" } else { "pull request" }
                 ));
             }
             if task.subproject {
