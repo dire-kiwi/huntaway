@@ -1183,7 +1183,11 @@ query, a repository's homepage) doesn't count. One about a repository whose remo
 host fails.
 `git_push` takes a remote's name, all of whose push URLs (as git rewrites them) must be on the
 account's host; it uses the account's token over HTTPS, and pushes over SSH use the host's SSH
-keys (or the SSH alias the remote names). The host's own gh calls for a task (finding its pull
+keys (or the SSH alias the remote names). Worktree setup and merged-worktree cleanup also use
+the selected account for fetches from HTTPS remotes on its GitHub host, without changing git's
+saved configuration. SSH and local fetches keep git's usual authentication. If a fetch fails,
+setup logs the reason in the warning's details and branches from the locally available copy.
+The host's own gh calls for a task (finding its pull
 request, checking a merged one before removing its worktree) and the commands of the agent's
 `wait` calls use the same account, as do the reads of a wait's pull request. A wait's command doesn't get the token: `gh` on its `PATH` is a
 script that runs `huntaway gh-run`, which checks each call's targets as the tools do and runs gh
