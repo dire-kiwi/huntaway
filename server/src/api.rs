@@ -124,6 +124,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
+        .route("/tasks/{id}/unmerged", get(task_unmerged))
         .route("/tasks/{id}/git", get(git_view::status))
         .route("/tasks/{id}/git/diff", get(git_view::diff))
         .route("/tasks/{id}/git/show", get(git_view::show))
@@ -2000,6 +2001,12 @@ fn setup_instructions(p: &db::Project) -> String {
 
 async fn task_diff(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(worktree::diff(&s, &id).await?))
+}
+
+/// Whether moving the task to Done would leave work of its unmerged (see worktree::unmerged).
+async fn task_unmerged(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let t = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    Ok(Json(json!({"unmerged": worktree::unmerged(&s, &t).await})))
 }
 
 // ---------- terminal ----------

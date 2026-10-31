@@ -19,6 +19,7 @@ import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgres
 import { documentInfo, DocumentView, LABEL_INFO, TaskTypeBadge } from "./Document";
 import { ReviewDot, reviewParts, ReviewSummary } from "./Review";
 import { Dependencies } from "./Dependencies";
+import { useConfirmDone } from "./ConfirmDone";
 import { ReminderButton, saveMarks, StarButton, useCanMark } from "./Reminders";
 import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
@@ -672,8 +673,10 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
       .catch((e) => setDescErr(`Couldn't save the description: ${(e as Error).message}`));
   };
 
-  const setStatus = (status: Status) => {
+  const { confirmDone, dialog: doneDialog } = useConfirmDone();
+  const setStatus = async (status: Status) => {
     setStatusErr(null);
+    if (status === "done" && !(await confirmDone(task))) return;
     api.updateTask(task.host_id, task.id, { status }).catch((e) => setStatusErr(e.message));
   };
   const setResolution = (resolution: Resolution) => {
@@ -990,6 +993,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
 
       {teardown && <TeardownModal task={task} onClose={() => setTeardown(false)} />}
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
+      {doneDialog}
     </aside>
   );
 }
