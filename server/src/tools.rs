@@ -758,9 +758,10 @@ const AGENT_FIELDS: &[&str] = &[
 ];
 
 /// The settings it only changes once the user approves: they run commands on the host, decide
-/// what agents may do without asking, or move where the work happens.
+/// what agents may do without asking, move where the work happens, or bring the repository's
+/// ignored files (secrets, say) into worktrees.
 pub const APPROVAL_FIELDS: &[&str] =
-    &["permission_mode", "setup_script", "teardown_script", "status_script", "status_scripts", "repo_path", "move_repo", "use_worktrees", "worktrees_root"];
+    &["permission_mode", "setup_script", "teardown_script", "copy_files", "link_folders", "status_script", "status_scripts", "repo_path", "move_repo", "use_worktrees", "worktrees_root"];
 
 /// `update_project`: the changes in `args`, asking the user first if any of them need it.
 /// Nothing changes if they don't approve.
@@ -1252,6 +1253,8 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["worktrees_root"] = json!(p.worktrees_root);
     out["setup_script"] = json!(p.setup_script);
     out["teardown_script"] = json!(p.teardown_script);
+    out["copy_files"] = json!(p.copy_files);
+    out["link_folders"] = json!(p.link_folders);
     out["status_script"] = json!(p.status_script);
     out["status_scripts"] = json!(p.status_scripts);
     out["is_git"] = json!(p.is_git);
@@ -2777,6 +2780,31 @@ mod tests {
             let v = call(&s, &me("c6"), "update_project", same).await.unwrap();
             assert_eq!((&v["status_scripts"], &v["reviewers"]), (&json!({}), &json!([])));
             assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn files_brought_into_worktrees_need_the_users_approval() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            let caller = task(&s, "kiwicd", "Caller");
+            let me = |call_id: &str| Ctx { task: Some(caller.clone()), call_id: Some(call_id.into()), ..ctx(&p) };
+            let change = json!({"copy_files": ".env", "link_folders": "models"});
+            let (c1, c2) = (me("c1"), me("c2"));
+            let (res, asked) = tokio::join!(call(&s, &c1, "update_project", change.clone()), answer_approval(&s, false));
+            assert!(res.unwrap_err().contains("didn't approve changing copy_files, link_folders"));
+            let fields: Vec<&str> = asked["input"]["changes"].as_array().unwrap().iter().filter_map(|c| c["field"].as_str()).collect();
+            assert_eq!(fields, ["copy_files", "link_folders"]);
+            let project = db::get_project(&s.db(), "kiwicd").unwrap().unwrap();
+            assert_eq!((project.copy_files.as_str(), project.link_folders.as_str()), ("", ""));
+            let (res, _) = tokio::join!(call(&s, &c2, "update_project", change), answer_approval(&s, true));
+            let v = res.unwrap();
+            assert_eq!((&v["copy_files"], &v["link_folders"]), (&json!(".env"), &json!("models")));
+            // Checked like the API checks them, before asking.
+            let err = call(&s, &me("c3"), "update_project", json!({"link_folders": "../elsewhere"})).await.unwrap_err();
+            assert!(err.contains("link_folders: ../elsewhere"), "{err}");
         });
     }
 

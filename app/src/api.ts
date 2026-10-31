@@ -347,6 +347,10 @@ export interface Project {
   base_branch: string | null;
   setup_script: string;
   teardown_script: string;
+  /** Ignored files copied into each new worktree from the repository, as .gitignore-style patterns, one per line (API 82). */
+  copy_files?: string;
+  /** Ignored folders of the repository symlinked into each new worktree, one per line (API 82). */
+  link_folders?: string;
   /** Runs whenever one of the project's tasks changes status (API 37). */
   status_script?: string;
   /** A script per status, run when a task moves into it (API 38). */
@@ -372,9 +376,9 @@ export interface Project {
   done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
-  /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 82). */
+  /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 83). */
   auto_summary?: boolean;
-  /** Who writes those summaries; null is the task's config with the default model and effort (API 82). */
+  /** Who writes those summaries; null is the task's config with the default model and effort (API 83). */
   summarizer?: Reviewer | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
@@ -448,7 +452,7 @@ export interface Review {
 
 export type SummaryState = "running" | "done" | "failed" | "stopped";
 
-/** A summary of a task's changes, written once its review passed (API 82). */
+/** A summary of a task's changes, written once its review passed (API 83). */
 export interface ChangeSummary {
   /** The summary thread: a task of kind "review" and type "summary" whose parent is the task. */
   thread_id: string;
@@ -498,7 +502,7 @@ export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
-/** A review thread that summarises its task's changes rather than reviewing them (API 82): its type is "summary". */
+/** A review thread that summarises its task's changes rather than reviewing them (API 83): its type is "summary". */
 export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "summary";
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
@@ -615,7 +619,7 @@ export interface Task {
   reminder?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
-  /** The latest summary of its changes (API 82). */
+  /** The latest summary of its changes (API 83). */
   summary?: ChangeSummary | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;

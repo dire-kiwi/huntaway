@@ -401,8 +401,8 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "worktrees",
     label: "Worktrees",
     icon: <GitBranch size={14} />,
-    description: "Where tasks do their work, and the scripts that set up and tear down each task's worktree.",
-    fields: ["base_branch", "use_worktrees", "worktrees_root", "setup_script", "teardown_script"],
+    description: "Where tasks do their work, the files each task's worktree gets from the repository, and the scripts that set up and tear it down.",
+    fields: ["base_branch", "use_worktrees", "worktrees_root", "copy_files", "link_folders", "setup_script", "teardown_script"],
   },
   {
     id: "review",
@@ -664,11 +664,45 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                     <Input className="font-mono text-[12px]" value={form.worktrees_root} onChange={(e) => set("worktrees_root", e.target.value)} />
                   </Field>
                 </div>
+                {hostSupports(host, 82) && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field
+                      label="Files to copy"
+                      hint={
+                        <>
+                          Git-ignored files copied from the repository folder into each new worktree, before the setup script. One .gitignore-style pattern
+                          per line: <code>.env</code> at any depth, <code>/.env</code> only at the top. A <code>.worktreeinclude</code> in the repository is
+                          read too. Files the worktree has already are left alone.
+                        </>
+                      }
+                    >
+                      <Textarea
+                        rows={4}
+                        className="font-mono text-[12px]"
+                        placeholder={".env\n/config/*.local.json"}
+                        value={form.copy_files ?? ""}
+                        onChange={(e) => set("copy_files", e.target.value)}
+                      />
+                    </Field>
+                    <Field
+                      label="Folders to link"
+                      hint="Git-ignored folders of the repository linked into each new worktree instead of copied, one path per line. Changes made through a link change the original; removing the worktree only removes the link."
+                    >
+                      <Textarea
+                        rows={4}
+                        className="font-mono text-[12px]"
+                        placeholder={"node_modules\nmodels/cache"}
+                        value={form.link_folders ?? ""}
+                        onChange={(e) => set("link_folders", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                )}
                 <Field
                   label="Setup script"
                   hint={
                     <>
-                      Runs with bash in each new worktree, e.g. installing dependencies or copying <code>.env</code>. Available variables: $IA_REPO_PATH,
+                      Runs with bash in each new worktree, e.g. installing dependencies. Available variables: $IA_REPO_PATH,
                       $IA_WORKTREE_PATH, $IA_BRANCH, $IA_TASK_ID, $IA_TASK_NUMBER, $IA_PROJECT_KEY.
                     </>
                   }
@@ -676,7 +710,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                   <Textarea
                     rows={5}
                     className="font-mono text-[12px]"
-                    placeholder={'cp "$IA_REPO_PATH/.env" .env\nnpm install'}
+                    placeholder="npm install"
                     value={form.setup_script}
                     onChange={(e) => set("setup_script", e.target.value)}
                   />
@@ -720,7 +754,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
               </>
             )}
 
-            {current.id === "review" && hostSupports(host, 82) && form.auto_summary !== undefined && (
+            {current.id === "review" && hostSupports(host, 83) && form.auto_summary !== undefined && (
               <>
                 <div className="space-y-1.5">
                   <Toggle checked={form.auto_summary} onChange={(v) => set("auto_summary", v)} label="Summarise each task's changes once its review passes" />

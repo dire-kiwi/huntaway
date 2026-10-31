@@ -226,8 +226,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const tabs: Tab[] = [...labels, ...(group || scratch || docsOnly ? ["thread"] : ["thread", "changes"])];
   const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch;
   if (reviews) tabs.push("review");
-  // Once there's a summary, or a review that passed to summarise (API 82): the tabs fit a phone's width until then.
-  const summaries = reviews && hostSupports(host, 82) && (!!task.summary || task.review?.state === "passed");
+  // Once there's a summary, or a review that passed to summarise (API 83): the tabs fit a phone's width until then.
+  const summaries = reviews && hostSupports(host, 83) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
@@ -494,7 +494,7 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
   const project = useProject(thread.project_id);
   const [rootRef, wide] = useWide();
   const key = parent && `${project?.key ?? "T"}-${parent.number}`;
-  // Which of the task's reviewers this is, when it has several. A summary thread summarises its changes instead (API 82).
+  // Which of the task's reviewers this is, when it has several. A summary thread summarises its changes instead (API 83).
   const reviewer = parent?.review && reviewParts(parent.review).find((p) => p.thread_id === thread.id)?.label;
   const summary = isSummaryThread(thread);
   const back = () => (parent ? openTask(parent.id) : project ? navigate({ name: "board", projectId: project.id }) : history.back());

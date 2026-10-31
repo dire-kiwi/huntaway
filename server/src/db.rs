@@ -651,6 +651,17 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=65; COMMIT;")?;
     }
     if version < 66 {
+        // Ignored files copied, and folders linked, into each new task worktree (see worktree_files.rs).
+        let mut add = String::new();
+        for col in ["copy_files", "link_folders"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name=?1", [col], |r| r.get(0))?;
+            if !has {
+                add.push_str(&format!("ALTER TABLE projects ADD COLUMN {col} TEXT NOT NULL DEFAULT '';"));
+            }
+        }
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=66; COMMIT;"))?;
+    }
+    if version < 67 {
         // A summary of each task's changes once its review passes (see summary.rs): whether a
         // project makes them and who writes them, and the task's latest. Added only if they
         // aren't there, in case another migration takes this version first.
@@ -661,14 +672,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                 conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
             }
         }
-        conn.execute_batch("PRAGMA user_version=66; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=67; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 66;
+pub const VERSION: i64 = 67;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1142,6 +1153,13 @@ pub struct Project {
     pub base_branch: Option<String>,
     pub setup_script: String,
     pub teardown_script: String,
+    /// Ignored files copied into each new task worktree from the repository folder, as
+    /// .gitignore-style patterns, one per line (see worktree_files.rs).
+    #[serde(default)]
+    pub copy_files: String,
+    /// Ignored folders of the repository linked into each new task worktree, one per line.
+    #[serde(default)]
+    pub link_folders: String,
     /// Runs whenever one of the project's tasks changes status (see status_script.rs).
     pub status_script: String,
     /// A script per status, run when one of the project's tasks moves into it.
@@ -1227,6 +1245,8 @@ impl Project {
             base_branch: r.get("base_branch")?,
             setup_script: r.get("setup_script")?,
             teardown_script: r.get("teardown_script")?,
+            copy_files: r.get("copy_files")?,
+            link_folders: r.get("link_folders")?,
             status_script: r.get("status_script")?,
             status_scripts: json_or_default(r.get("status_scripts")?),
             use_worktrees: r.get("use_worktrees")?,
@@ -2383,6 +2403,7 @@ const PROJECT_COLUMNS: &[&str] = &[
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
     "reviewers", "auto_summary", "summarizer", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
+    "copy_files", "link_folders",
 ];
 
 pub fn update_project(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Project>> {
@@ -3613,6 +3634,36 @@ mod tests {
     }
 
     #[test]
+    fn a_database_at_version_66_gets_the_summary_columns() {
+        // As master's build left it, with copy_files and link_folders (66) and no summaries yet.
+        let path = std::env::temp_dir().join(format!("huntaway-v66-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN auto_summary;
+                 ALTER TABLE projects DROP COLUMN summarizer;
+                 ALTER TABLE tasks DROP COLUMN summary;
+                 PRAGMA user_version=66;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert!(p.auto_summary);
+        assert_eq!(p.summarizer, None);
+        let t = insert_task(&c, NewTask { profile_id: "p", project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
+        assert!(t.summary.is_none());
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn a_database_at_version_62_gets_projects_pr_preview_url() {
         // As master's build left it, with push_subscriptions (62) and no pr_preview_url yet.
         let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
@@ -3636,6 +3687,33 @@ mod tests {
         assert_eq!(p.preview_for(Some("https://github.com/o/r/pull/3/files")).as_deref(), Some("https://pr3.example.com/"));
         assert_eq!(p.preview_for(Some("https://example.com/o/r/issues/3")), None);
         assert_eq!(p.preview_for(None), None);
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_at_version_65_gets_projects_copy_files_and_link_folders() {
+        let path = std::env::temp_dir().join(format!("huntaway-v65-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN copy_files;
+                 ALTER TABLE projects DROP COLUMN link_folders;
+                 PRAGMA user_version=65;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!((p.copy_files.as_str(), p.link_folders.as_str()), ("", ""));
+        let p = update_project(&c, "pr", &[("copy_files", json!(".env")), ("link_folders", json!("models"))]).unwrap().unwrap();
+        assert_eq!((p.copy_files.as_str(), p.link_folders.as_str()), (".env", "models"));
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

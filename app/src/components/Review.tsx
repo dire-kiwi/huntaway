@@ -238,7 +238,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
   );
 }
 
-/** A task's summary tab: the summary of its changes written once its review passed (API 82), and a way to write one. */
+/** A task's summary tab: the summary of its changes written once its review passed (API 83), and a way to write one. */
 export function ChangeSummaryView({ task }: { task: Task }) {
   const s = task.summary;
   const auto = useProject(task.project_id)?.auto_summary;

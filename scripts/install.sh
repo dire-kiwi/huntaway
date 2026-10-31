@@ -117,9 +117,10 @@ fetch_source() {
 build() {
   say "Building the UI"
   # npm install once there's a node_modules, as Rebuild & restart does: npm ci would delete the Electron a running app is using.
+  # --no-save keeps it from rewriting package-lock.json, which would stop a hub's Update ("uncommitted changes").
   local npm_install=ci
-  [ -d "$DIR/app/node_modules" ] && npm_install=install
-  (cd "$DIR/app" && npm "$npm_install" --no-audit --no-fund && npm run build)
+  [ -d "$DIR/app/node_modules" ] && npm_install="install --no-save"
+  (cd "$DIR/app" && npm $npm_install --no-audit --no-fund && npm run build)
   say "Building the server (the first build takes a few minutes)"
   (cd "$DIR/server" && cargo build --release --locked)
 }
