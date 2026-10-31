@@ -264,7 +264,7 @@ fn board_tools() -> Value {
                 "status": {"type": "string", "enum": status_enum},
                 "resolution": resolution,
                 "pr_url": {"type": "string", "description": "The task's pull request; the board links it from the task's card. Empty string clears it."},
-                "preview_url": {"type": "string", "description": "Where the task's work can be tried (e.g. its PR's preview deployment); the board shows whether it's up. Empty string clears it."},
+                "preview_url": {"type": "string", "description": "Where the task's work can be tried (e.g. its PR's preview deployment); the board shows whether it's up. A project that previews its pull requests fills it in from pr_url. Empty string clears it."},
                 "labels": labels,
                 "remerge": {"type": "boolean", "description": "With status in_progress, on a task that's merging: it steps out of the merge queue so the next task can merge, and rejoins the end of the queue when its agent's run ends, rather than going to in_review."},
                 "depends_on": depends_on,
