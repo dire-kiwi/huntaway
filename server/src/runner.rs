@@ -4,6 +4,7 @@
 //! state is the `runs` table plus the run's files.
 
 use anyhow::{Context, Result, anyhow};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
@@ -998,27 +999,11 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             None => Default::default(),
         };
         let gh_tools = uses_gh_server(&tools);
-        let mut instructions = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
-        if permission_mode == "plan" {
-            instructions.push_str(
-                " You are in plan mode: investigate and propose a plan, but don't change any files. The user will \
-                 switch modes once they approve it.",
-            );
-        }
+        let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+        let profiles = db::list_profiles(&state.db())?;
+        let to = Told { codex: true, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
+        let mut instructions = instructions(base, &task, &to);
         let own_gh = tools.mcp_servers.contains_key(crate::gh_mcp::SERVER_NAME);
-        if gh_tools {
-            // Codex's sandbox may keep `gh` in the shell off the network, and its GitHub app (the
-            // codex_apps server's github tools) may not reach the user's repositories. Codex has
-            // no hook to turn gh in the shell away, so it's only told.
-            instructions.push_str(&format!(
-                " For GitHub, use the `{0}` MCP server's tools (e.g. `{0}.pr_view`, `{0}.pr_diff`), which run gh with \
-                 the user's login{1}: don't run `gh` in your shell, which may not reach GitHub{2}, and the codex_apps \
-                 GitHub tools may not have access to this repository.",
-                crate::gh_mcp::SERVER_NAME,
-                github_account.as_ref().map(|a| format!(" as the GitHub account {a}")).unwrap_or_default(),
-                if github_account.is_some() { " or would act as another account" } else { "" },
-            ));
-        }
         // Reviewers read and report (see the Claude arguments below).
         let mut disabled_mcp_tools = std::collections::HashMap::new();
         if task.kind == "review" && !own_gh {
@@ -1095,14 +1080,10 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
-    let mut prompt_extra = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
-    if gh_tools {
-        prompt_extra.push_str(&gh_note(github_account.as_deref()));
-    }
-    if task.kind != "review" {
-        prompt_extra.push_str(&profiles_note(&db::list_profiles(&state.db())?, &profile));
-    }
-    push("--append-system-prompt", &prompt_extra);
+    let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+    let profiles = db::list_profiles(&state.db())?;
+    let to = Told { codex: false, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
+    push("--append-system-prompt", &instructions(base, &task, &to));
     push("--permission-mode", &permission_mode);
     if permission_mode != "bypassPermissions" {
         push("--permission-prompt-tool", &format!("mcp__{MCP_SERVER_NAME}__permission_prompt"));
@@ -1286,6 +1267,138 @@ pub fn task_github_account(state: &Shared, task: &Task) -> Result<Option<String>
     };
     let profile = db::get_profile(&c, &task.profile_id)?.context("profile not found")?;
     Ok(github_account(project.as_ref(), &profile))
+}
+
+/// What else decides what a run is told (see `instructions`).
+struct Told<'a> {
+    /// It runs on Codex rather than Claude Code.
+    codex: bool,
+    /// In plan mode, which Codex is told of (Claude Code tells Claude itself).
+    plan: bool,
+    /// It has our gh server (see uses_gh_server).
+    gh_tools: bool,
+    github_account: Option<&'a str>,
+    /// The host's profiles, and the run's own.
+    profiles: &'a [Profile],
+    profile: &'a Profile,
+}
+
+/// What a run is told on top of its agent's own system prompt: Claude Code's `--append-system-prompt`, or Codex's
+/// developer instructions (to which `launch` adds a reviewer's sandbox). `base`: what system_prompt says.
+fn instructions(mut s: String, task: &Task, to: &Told) -> String {
+    if to.codex && to.plan {
+        s.push_str(
+            " You are in plan mode: investigate and propose a plan, but don't change any files. The user will \
+             switch modes once they approve it.",
+        );
+    }
+    if to.gh_tools && to.codex {
+        // Codex's sandbox may keep `gh` in the shell off the network, and its GitHub app (the
+        // codex_apps server's github tools) may not reach the user's repositories. Codex has
+        // no hook to turn gh in the shell away, so it's only told.
+        s.push_str(&format!(
+            " For GitHub, use the `{0}` MCP server's tools (e.g. `{0}.pr_view`, `{0}.pr_diff`), which run gh with \
+             the user's login{1}: don't run `gh` in your shell, which may not reach GitHub{2}, and the codex_apps \
+             GitHub tools may not have access to this repository.",
+            crate::gh_mcp::SERVER_NAME,
+            to.github_account.map(|a| format!(" as the GitHub account {a}")).unwrap_or_default(),
+            if to.github_account.is_some() { " or would act as another account" } else { "" },
+        ));
+    } else if to.gh_tools {
+        s.push_str(&gh_note(to.github_account));
+    }
+    // Which profiles' boards it can't use, so it asks rather than make a project that may be there.
+    if task.kind != "review" {
+        s.push_str(&profiles_note(to.profiles, to.profile));
+    }
+    s
+}
+
+/// The options of a new thread that change what it's told (see `preview`).
+#[derive(Deserialize, Default)]
+pub struct PreviewOptions {
+    /// `task` (the default), `subproject` or `scratch`.
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// Some of db::LABELS, comma-separated.
+    #[serde(default)]
+    pub labels: Option<String>,
+    /// For a task: whether it has its own worktree (by default, as the project's new tasks do).
+    #[serde(default)]
+    pub worktree: Option<bool>,
+    /// `claude` or `codex` (by default, what a new task in the project runs on).
+    #[serde(default)]
+    pub runtime: Option<String>,
+    /// Its permission mode (by default, the project's).
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+}
+
+/// What the agent of a new thread in `project` would be told on top of its agent's own system prompt (see
+/// `instructions`), for the project's settings to show: a task numbered as the project's next, with the options given
+/// and the project's settings as they are now. Its title and id are placeholders. Also gives whether it's on Codex, and its
+/// permission mode (the one given, or else the one it inherits).
+pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> ApiResult<(String, bool, String)> {
+    let kind = o.r#type.as_deref().unwrap_or("task");
+    if !["task", "subproject", "scratch"].contains(&kind) {
+        return Err(ApiError::bad(format!("unknown type {kind:?}: it's task, subproject or scratch")));
+    }
+    let given: Vec<&str> = o.labels.as_deref().unwrap_or("").split(',').filter(|l| !l.trim().is_empty()).collect();
+    let labels = crate::documents::check_labels(&json!(given)).map_err(ApiError::bad)?;
+    if o.permission_mode.as_deref().is_some_and(|m| !db::PERMISSION_MODES.contains(&m)) {
+        return Err(ApiError::bad(format!("permission_mode must be one of {:?}", db::PERMISSION_MODES)));
+    }
+    let (number, profile, profiles) = {
+        let c = state.db();
+        let number: i64 = c.query_row("SELECT next_number FROM projects WHERE id=?1", [&project.id], |r| r.get(0))?;
+        (number, db::get_profile(&c, &project.profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?, db::list_profiles(&c)?)
+    };
+    let use_worktree = match kind {
+        "subproject" => true,
+        "scratch" => false,
+        _ => o.worktree.unwrap_or(project.use_worktrees),
+    } && project.is_git;
+    let mut task: Task = serde_json::from_value(json!({
+        "id": "<task id>", "profile_id": profile.id, "project_id": project.id, "kind": "task", "subproject": kind == "subproject",
+        "task_type": (kind == "scratch").then_some(db::SCRATCH), "labels": labels, "number": number, "title": "Task title",
+        "description": "", "status": "in_progress", "position": 0.0, "use_worktree": use_worktree, "worktree_state": "none",
+        "running": false, "merging": false, "auto_allow": [], "cost_usd": 0.0,
+        "last_activity_at": "", "created_at": "", "updated_at": "", "permission_mode": o.permission_mode,
+    }))
+    .map_err(anyhow::Error::from)?;
+    // Where `worktree::setup` would put it.
+    if use_worktree {
+        let name = worktree::folder_name(project, &task);
+        let repo = crate::util::expand_tilde(&project.repo_path);
+        let base = match project.base_branch.as_deref().filter(|b| !b.is_empty()) {
+            Some(b) => b.to_string(),
+            None => worktree::current_branch(&repo).await.unwrap_or_else(|| "HEAD".into()),
+        };
+        task.worktree_path = Some(path_str(&std::path::PathBuf::from(&project.worktrees_root).join(&name)));
+        task.branch = Some(format!("ia/{}-{name}", project.key.to_lowercase()));
+        task.base_branch = Some(base);
+    }
+    let github = match &task.branch {
+        Some(_) => worktree::github(&crate::util::expand_tilde(&project.repo_path), task.base_branch.as_deref()).await,
+        None => None,
+    };
+    let documents: Vec<(&str, String)> = crate::documents::paths(state, &task).into_iter().map(|(l, p)| (l, path_str(&p))).collect();
+    let tools = crate::agent_tools::for_preview(state, &project.id)?;
+    let (permission_mode, codex) = {
+        let c = state.db();
+        let codex = match o.runtime.as_deref() {
+            Some("codex") => true,
+            Some("claude") => false,
+            Some(r) => return Err(ApiError::bad(format!("unknown runtime {r:?}: it's claude or codex"))),
+            None => db::task_is_codex(&c, &task)?,
+        };
+        (task.effective_permission_mode(&c, Some(project))?, codex)
+    };
+    let gh_tools = uses_gh_server(&tools);
+    let account = github_account(Some(project), &profile);
+    let base = system_prompt(&task, Some(project), None, &[], &documents, github.as_ref(), gh_tools);
+    let to = Told { codex, plan: permission_mode == "plan", gh_tools, github_account: account.as_deref(), profiles: &profiles, profile: &profile };
+    Ok((instructions(base, &task, &to), codex, permission_mode))
 }
 
 /// What a Claude run with our gh server is told about GitHub. gh in Bash is turned away (see
@@ -2964,6 +3077,66 @@ mod tests {
         let text = system_prompt(&task, None, None, &group, &[], None, true);
         assert!(text.contains("task G-1 (\"Plan it\"") && text.contains("Web (key WEB, id pr, repository /src/web)"), "{text}");
         assert!(start_prompt(&task, None, "").starts_with("# G-1: Plan it\n"));
+    }
+
+    #[test]
+    fn previews_what_a_new_thread_in_a_project_is_told() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let repo = std::env::temp_dir().join(format!("ia-preview-{}", crate::util::new_id()));
+            std::fs::create_dir_all(&repo).unwrap();
+            let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
+            git(&["init", "-q", "-b", "main"]);
+            git(&["remote", "add", "origin", "git@github.com:o/web.git"]);
+            let project = {
+                let c = state.db();
+                let p = db::insert_profile(&c, "me", &[], None).unwrap();
+                let repo_path = path_str(&repo);
+                let np = db::NewProject {
+                    id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: &repo_path, scratch_path: "/s", worktrees_root: "/w", base_branch: Some("main"), use_worktrees: true,
+                };
+                db::insert_project(&c, np).unwrap()
+            };
+            let preview = async |q: Value| preview(&state, &project, &serde_json::from_value(q).unwrap()).await;
+
+            // A task as the project's new ones are, numbered as its next.
+            let (text, codex, mode) = preview(json!({})).await.unwrap();
+            assert!(!codex && mode == "default");
+            assert!(text.starts_with("You are an agent working on task WEB-1 (\"Task title\") on the Huntaway board."), "{text}");
+            assert!(text.contains("worktree at /w/1-task-title on branch `ia/web-1-task-title` (branched from `main`)"), "{text}");
+            assert!(text.contains("on GitHub (o/web)") && text.contains("pr_create with repo `o/web`, head `ia/web-1-task-title` and base `main`"), "{text}");
+            let profiles = db::list_profiles(&state.db()).unwrap();
+            assert!(text.contains(&gh_note(None)) && text.ends_with(&profiles_note(&profiles, &profiles[0])), "{text}");
+            // Making it doesn't make a task, or take the number.
+            let (again, ..) = preview(json!({})).await.unwrap();
+            assert_eq!(again, text);
+            assert!(db::list_tasks_for_project(&state.db(), "pr", "task").unwrap().is_empty());
+
+            // The options a new thread is made with.
+            let (text, ..) = preview(json!({"labels": "plan,diagram"})).await.unwrap();
+            assert!(text.contains("This task has the labels plan, diagram on the board") && text.contains("<task id>/plan.html"), "{text}");
+            let (text, ..) = preview(json!({"worktree": false})).await.unwrap();
+            assert!(!text.contains("worktree") && !text.contains("open a pull request"), "{text}");
+            let (text, ..) = preview(json!({"type": "scratch"})).await.unwrap();
+            assert!(text.contains("This scratch task is in the project Web") && !text.contains("worktree at"), "{text}");
+            let (text, ..) = preview(json!({"type": "subproject", "worktree": false})).await.unwrap();
+            assert!(text.contains("This task is a subproject") && text.contains("worktree at /w/1-task-title"), "{text}");
+            let (text, codex, mode) = preview(json!({"runtime": "codex", "permission_mode": "plan"})).await.unwrap();
+            assert!(codex && mode == "plan" && text.contains("You are in plan mode") && text.contains("`gh.pr_view`") && !text.contains(&gh_note(None)), "{text}");
+            let (text, ..) = preview(json!({"permission_mode": "plan"})).await.unwrap();
+            assert!(!text.contains("You are in plan mode"), "Claude Code tells Claude itself: {text}");
+            // A thread inherits the host's mode, when the project has none.
+            db::set_setting(&state.db(), "default_permission_mode", Some("plan")).unwrap();
+            let (text, _, mode) = preview(json!({"runtime": "codex"})).await.unwrap();
+            assert!(mode == "plan" && text.contains("You are in plan mode"), "{text}");
+            let (text, _, mode) = preview(json!({"runtime": "codex", "permission_mode": "default"})).await.unwrap();
+            assert!(mode == "default" && !text.contains("You are in plan mode"), "{text}");
+
+            for bad in [json!({"type": "review"}), json!({"labels": "nope"}), json!({"runtime": "gpt"}), json!({"permission_mode": "yolo"})] {
+                assert_eq!(preview(bad).await.unwrap_err().0, axum::http::StatusCode::BAD_REQUEST);
+            }
+            std::fs::remove_dir_all(&repo).ok();
+        })
     }
 
     #[test]

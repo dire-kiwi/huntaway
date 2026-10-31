@@ -16,6 +16,12 @@ pub fn new_token() -> String {
     )
 }
 
+/// Compares secrets (tokens, webhook secrets) without giving away, by how long it takes, how much
+/// of one matched.
+pub fn same_secret(a: &str, b: &str) -> bool {
+    aws_lc_rs::constant_time::verify_slices_are_equal(a.as_bytes(), b.as_bytes()).is_ok()
+}
+
 /// Expand a leading `~` to the user's home directory.
 pub fn expand_tilde(p: &str) -> PathBuf {
     let p = p.trim();

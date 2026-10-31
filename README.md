@@ -13,6 +13,7 @@ app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)
+               ui-check.mjs: drives a test server's board in Chromium, for screenshots and checks
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
@@ -192,7 +193,8 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
-Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
+Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
+servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+).
 
 ### Server options
 
@@ -204,6 +206,7 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--ui-dir` / `IA_UI_DIR` | auto | Built UI (`app/dist`) |
 | `IA_CLAUDE_BIN` | `claude` | Claude Code binary |
 | `IA_CODEX_BIN` | `codex` | Codex binary |
+| `--token` / `IA_TOKEN` | generated | Use this access token instead of the one in the data dir (a secret shared by deployments) |
 | `--name` / `IA_NAME` | hostname | Name this host shows on boards |
 | `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
 | `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
@@ -324,7 +327,7 @@ An `http:` one counts as a secure page in the app, so it can show notifications.
 curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway/master/scripts/install.sh | bash
 ```
 
-It checks for git, Node.js 22.12+, npm, Rust 1.85+ and a C compiler (and warns if `claude`/`codex`
+It checks for git, Node.js 22.12+, npm, Rust 1.89+ and a C compiler (and warns if `claude`/`codex`
 or `tmux` are missing), then clones the repository to `~/.local/share/huntaway-app` (`--dir`) and
 builds the UI and the server there. Last, it adds **Huntaway** to the app launcher: on Linux a
 `huntaway-app.desktop` entry that runs `~/.local/bin/huntaway-desktop`, and on macOS
@@ -823,7 +826,11 @@ skipped. Auto-compacting idle sessions is Claude-only.
   merge. The board keeps the parts it relies on around them (which branch, how to report a
   verdict, setting the task to done). A prompt left as the default (or cleared) follows the
   default, which `GET /default-prompts` returns. Agents can read and change them with
-  `get_project` and `update_project` (API 27).
+  `get_project` and `update_project` (API 27). Below them, a read-only preview shows what the
+  board adds to the agent's own system prompt for a new thread in the project, with the options a
+  thread is made with (task, subproject or scratch task, labels, its own worktree, Claude Code or
+  Codex, and Codex's plan mode) and the project's saved settings (`GET
+  /projects/{id}/system-prompt`, API 80).
 - **Project changes by agents** (API 44): `update_project` changes any project setting but its
   agent configs, which only the user changes; agents can't delete projects. Its name, key, base
   branch, model, prompts, reviews and group change straight away. A change to its permission
@@ -1253,6 +1260,14 @@ A task can carry a preview URL (Preview in the task's sidebar, or `preview_url` 
 `update_task`), for example its PR's preview deployment. While the task is *In review*, its card
 shows a dot linking to it: yellow until the URL answers `200`, then green. The server the board
 is served from checks it every 2 seconds while the board is visible.
+
+A project whose pull requests get preview deployments can say where, under *Pull request
+previews* in its settings' Review tab (`pr_preview_url`, API 79), with `{pr}` for the pull
+request's number, e.g. `https://pr{pr}.example.com/`. A task then gets its pull request's preview
+as its preview URL whenever its pull request is set or found (see above), and saving the setting
+fills it in for the project's tasks that already have one (except done tasks, whose previews are
+gone). A preview URL set otherwise, by hand or by its agent, stays; one the setting made follows
+the task's pull request, and a change to the setting.
 
 ### Asana tasks
 

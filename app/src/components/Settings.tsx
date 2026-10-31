@@ -22,14 +22,18 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { useShallow } from "zustand/react/shallow";
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../agents";
 import {
+  AGENTS,
   agentOf,
   api,
   getToken,
+  LABELS,
   hostStatuses,
   hostSupports,
   PERMISSION_MODES,
   setToken,
+  type Agent,
   type ClaudeConfig,
+  type DocumentType,
   type Status,
   type PermissionMode,
   type DirListing,
@@ -38,6 +42,7 @@ import {
   type Project,
   type PromptField,
   type Reviewer,
+  type SystemPromptOptions,
   type WatchPullRequests,
 } from "../api";
 import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "../githubRepos";
@@ -403,8 +408,8 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "review",
     label: "Review",
     icon: <ScanSearch size={14} />,
-    description: "Reviewer agents that check each task's changes before it's merged, and what happens once it is.",
-    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged", "watch_pull_requests"],
+    description: "Reviewer agents that check each task's changes before it's merged, where its pull request is previewed, and what happens once it's merged.",
+    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged", "watch_pull_requests", "pr_preview_url"],
   },
   {
     id: "prompts",
@@ -481,6 +486,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
     if ("model" in body) body.model = body.model || null;
     if ("group_name" in body) body.group_name = body.group_name?.trim() || null;
     if ("github_account" in body) body.github_account = body.github_account || null;
+    if ("pr_preview_url" in body) body.pr_preview_url = body.pr_preview_url?.trim() || null;
     if ("claude_config_ids" in body) body.claude_config_ids = body.claude_config_ids?.length ? body.claude_config_ids : null;
     try {
       const p = await api.updateProject(project.host_id, projectId, body);
@@ -740,7 +746,18 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
               </Field>
             )}
 
+            {current.id === "review" && hostSupports(host, 79) && (
+              <Field
+                label="Pull request previews"
+                hint="Where each task's pull request is previewed, with {pr} for its number. A task with a pull request gets it as its preview URL, which its card links to while it's in In review, and those it has already are filled in when you save. A preview URL set by hand stays."
+              >
+                <Input value={form.pr_preview_url ?? ""} placeholder="https://pr{pr}.example.com/" onChange={(e) => set("pr_preview_url", e.target.value)} />
+              </Field>
+            )}
+
             {current.id === "prompts" && <ProjectPrompts project={form} onChange={set} />}
+
+            {current.id === "prompts" && hostSupports(host, 80) && <SystemPromptPreview project={project} />}
 
             {current.id === "scripts" && <ProjectStatusScripts project={form} perColumn={hostSupports(host, 38)} statuses={hostStatuses(host)} onChange={set} />}
 
@@ -944,6 +961,103 @@ function ProjectPrompts({ project, onChange }: { project: Project; onChange: (fi
             </div>
           );
         })}
+    </div>
+  );
+}
+
+/** What the agent of a new thread in the project is told on top of its agent's own system prompt, for the options a
+ *  thread is made with. Read-only: it's the board's, from the project's saved settings. */
+function SystemPromptPreview({ project }: { project: Project }) {
+  const [type, setType] = useState<NonNullable<SystemPromptOptions["type"]>>("task");
+  const [labels, setLabels] = useState<DocumentType[]>([]);
+  const [worktree, setWorktree] = useState<boolean | null>(null);
+  const [runtime, setRuntime] = useState<Agent | null>(null);
+  // Unset until it's switched, the thread's mode is the one it inherits (the project's, else the host's).
+  const [plan, setPlan] = useState<boolean | null>(null);
+  const [preview, setPreview] = useState<{ text: string; runtime: Agent; permission_mode: PermissionMode } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const worktrees = worktree ?? (project.use_worktrees && project.is_git !== false);
+  const hostMode = useStore((s) => s.hostSettings[project.host_id]?.default_permission_mode);
+  useEffect(() => {
+    let live = true;
+    const q: SystemPromptOptions = {
+      type,
+      labels: labels.join(","),
+      worktree: type === "task" ? worktrees : undefined,
+      runtime: runtime ?? undefined,
+      permission_mode: plan === null ? undefined : plan ? "plan" : "default",
+    };
+    api.systemPromptPreview(project.host_id, project.id, q).then(
+      (p) => {
+        if (!live) return;
+        setPreview(p);
+        setErr(null);
+      },
+      (e) => live && setErr((e as Error).message),
+    );
+    return () => {
+      live = false;
+    };
+    // Again when the project or the host's default mode changes, as they go into it.
+  }, [project, hostMode, type, labels, worktrees, runtime, plan]);
+  const shownRuntime = runtime ?? preview?.runtime ?? "claude";
+  return (
+    <div className="space-y-2.5 border-t border-line pt-5">
+      <div className="space-y-1">
+        <span className="block text-xs font-medium text-muted">System prompt</span>
+        <span className="block text-xs text-faint">
+          What the board adds to the agent's own system prompt for a new thread in this project, with the options picked here and the project's
+          saved settings. It's for the project's next task number, with a placeholder title and id. It isn't editable.
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <select className={pickerClass} title="Type" aria-label="Type" value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+          <option value="task">Task</option>
+          <option value="subproject">Subproject</option>
+          <option value="scratch">Scratch task</option>
+        </select>
+        <select className={pickerClass} title="Agent" aria-label="Agent" value={shownRuntime} onChange={(e) => setRuntime(e.target.value as Agent)}>
+          {AGENTS.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <div className="flex items-center gap-1" role="group" aria-label="Labels">
+          {LABELS.map((l) => {
+            const on = labels.includes(l);
+            return (
+              <button
+                key={l}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setLabels(on ? labels.filter((x) => x !== l) : LABELS.filter((x) => x === l || labels.includes(x)))}
+                className={clsx(
+                  "rounded-md border px-2 py-0.5 text-[12px]",
+                  on ? "border-accent/50 bg-accent/15 text-accent" : "border-line text-muted hover:text-fg",
+                )}
+              >
+                {l}
+              </button>
+            );
+          })}
+        </div>
+        {type === "task" && <Toggle checked={worktrees} onChange={setWorktree} label="Own worktree" />}
+        {shownRuntime === "codex" && <Toggle checked={plan ?? preview?.permission_mode === "plan"} onChange={setPlan} label="Plan mode" />}
+      </div>
+      {err ? (
+        <div className="text-xs text-red-400">Couldn't load the system prompt: {err}</div>
+      ) : (
+        <pre
+          aria-label="System prompt"
+          className={clsx(
+            "max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-panel px-2.5 py-2 font-sans text-[12.5px] text-fg",
+            !preview && "text-faint",
+          )}
+        >
+          {preview?.text ?? "Loading…"}
+        </pre>
+      )}
     </div>
   );
 }

@@ -43,8 +43,8 @@ minutes after each push it's rebuilt from the PR's head, and it's removed when t
   idle and wakes on the next request.
 - It also has a `personal` profile (`--profile`, see `README.md`) on a Claude login shared by every
   preview, so agents can run there. Don't log it out or change that login's settings from a preview.
-- Its address isn't kept in this public repository. The board project's instructions give it: once
-  the PR's preview is up, put it in the task's `preview_url` with `update_task`, so the card links it.
+- Its address isn't kept in this public repository. The board project's *Pull request previews*
+  setting has it, and the board fills in the task's `preview_url` from its PR, so the card links it.
 
 ## Testing in a worktree
 

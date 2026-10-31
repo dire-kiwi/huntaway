@@ -364,6 +364,8 @@ export function TaskBoard({
   /** Moves `task` into column `status` before task `before`, or after its last task shown: as dropping it there does. */
   const moveTask = async (task: Task, status: Status, before: string | null) => {
     const id = task.id;
+    // Dropped on its own top half (the drop line shows above it): it stays where it is.
+    if (before === id) return;
     // Dragged from the Archived section back into Done, it's done from now (and archived again in two days).
     const unarchive = status === "done" && isArchived(task, Date.now());
     // Sorted, it keeps its place in its own column, and goes last in another.

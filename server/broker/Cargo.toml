@@ -2,6 +2,7 @@
 name = "huntaway-broker"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
 description = "Public relay for Huntaway hosts: hosts dial out to it, and browsers and hubs reach them through it"
 
 [lib]

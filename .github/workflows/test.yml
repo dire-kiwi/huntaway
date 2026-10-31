@@ -5,12 +5,16 @@ name: Tests
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # Two pull requests that were each green against an older master can still break it together.
+  push:
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: test-pr-${{ github.event.number }}
+  group: test-${{ github.event.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

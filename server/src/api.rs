@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::state::{ApiError, ApiResult, Shared};
-use crate::util::{derive_key, expand_tilde, new_id, path_str};
+use crate::util::{derive_key, expand_tilde, new_id, path_str, same_secret};
 use crate::{admin, agent_tools, git_view, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
 
 /// This host's API (`/api/...`) plus the hub endpoints that span hosts.
@@ -91,6 +91,7 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}/tasks", get(list_project_tasks).post(create_task))
         .route("/projects/{id}/remove-merged-worktrees", post(remove_merged_worktrees))
         .route("/projects/{id}/setup-thread", post(start_setup_thread))
+        .route("/projects/{id}/system-prompt", get(system_prompt_preview))
         .route("/projects/{id}/automations", get(crate::automations::list_handler).post(crate::automations::create_handler))
         .route(
             "/automations/{id}",
@@ -177,11 +178,11 @@ async fn auth(State(s): State<Shared>, headers: HeaderMap, req: Request, next: N
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| t == s.token);
+        .is_some_and(|t| same_secret(t, &s.token));
     let query_ok = req
         .uri()
         .query()
-        .map(|q| q.split('&').any(|kv| kv.strip_prefix("token=").is_some_and(|t| t == s.token)))
+        .map(|q| q.split('&').any(|kv| kv.strip_prefix("token=").is_some_and(|t| same_secret(t, &s.token))))
         .unwrap_or(false);
     if header_ok || query_ok {
         next.run(req).await
@@ -281,7 +282,13 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     let current = db::get_profile(&c, &id)?.ok_or_else(|| ApiError::not_found("profile"))?;
     let mut fields = pick(&b, &["default_model"]);
     if let Some(v) = b.get("name") {
-        fields.push(("name", json!(check_profile_name(&c, Some(&id), v)?)));
+        // Its name unchanged passes even if another profile has it in another case (allowed
+        // before HA-37), since the profile form sends it with every save.
+        let name = match v.as_str().map(str::trim) {
+            Some(n) if n == current.name => n.to_string(),
+            _ => check_profile_name(&c, Some(&id), v)?,
+        };
+        fields.push(("name", json!(name)));
     }
     if let Some((token, user)) = asana {
         fields.push(("asana_token", token));
@@ -574,17 +581,13 @@ async fn delete_profile(State(s): State<Shared>, Path(id): Path<String>) -> ApiR
         st.query_map([&id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
     };
     for t in rest {
-        // A review thread goes with its task, so it may be gone already.
+        // Review threads go first, so each is cleaned up on its own rather than in its task's
+        // cascade. One may have been deleted meanwhile.
         let Some(t) = db::get_task(&s.db(), &t)? else { continue };
         delete_one(&s, &t, false).await?;
     }
     s.db().execute("DELETE FROM profiles WHERE id=?1", [&id])?;
-    let dir = s.data_dir.join("profiles").join(&id);
-    if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
-        if let Err(e) = std::fs::remove_dir_all(&dir) {
-            tracing::warn!("removing {} after deleting its profile: {e}", dir.display());
-        }
-    }
+    remove_unused_dir(&s, &s.data_dir.join("profiles").join(&id), "profile")?;
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!({"ok": true})))
 }
@@ -828,6 +831,11 @@ pub async fn update_project_inner(s: &Shared, id: &str, b: &Map<String, Value>) 
         }
     };
     s.emit(json!({"type": "project", "project": p}));
+    if p.pr_preview_url != before.pr_preview_url
+        && let Err(e) = follow_pr_previews(s, &before, &p)
+    {
+        tracing::error!(project = %p.id, "updating its tasks' preview URLs: {e:#}");
+    }
     // Its tasks waiting for their dependencies or a merge slot while it was archived can go now.
     if before.archived_at.is_some() && p.archived_at.is_none() {
         runner::start_next_merge(s, Some(&p.id));
@@ -844,6 +852,26 @@ pub async fn update_project_inner(s: &Shared, id: &str, b: &Map<String, Value>) 
         }
     }
     Ok(p)
+}
+
+/// Gives project `p`'s tasks their pull requests' previews from its new `pr_preview_url`, in
+/// place of those from the old one (`before`'s). A preview URL set otherwise stays, and done
+/// tasks without one get none: their previews are gone.
+fn follow_pr_previews(s: &Shared, before: &db::Project, p: &db::Project) -> anyhow::Result<()> {
+    let tasks = db::list_tasks_for_project(&s.db(), &p.id, "task")?;
+    for t in tasks {
+        let ours = match &t.preview_url {
+            Some(_) => t.preview_url == before.preview_for(t.pr_url.as_deref()),
+            None => t.status != "done",
+        };
+        let preview = p.preview_for(t.pr_url.as_deref());
+        if ours && preview != t.preview_url {
+            // Unless the task changed meanwhile.
+            let unchanged = |c: &rusqlite::Connection| Ok(db::get_task(c, &t.id)?.is_some_and(|now| now.preview_url == t.preview_url && now.pr_url == t.pr_url));
+            s.update_task_if(&t.id, &[("preview_url", json!(preview))], unchanged)?;
+        }
+    }
+    Ok(())
 }
 
 /// Archives `p`, unless one of its agents is running: their tasks would be off the board.
@@ -881,6 +909,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "github_account",
             "done_when_merged",
             "watch_pull_requests",
+            "pr_preview_url",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -906,6 +935,15 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             // null (or blank) uses the profile's.
             "github_account" => *v = check_github_account(v)?,
+            // null (or blank) previews none.
+            "pr_preview_url" => {
+                let url = v.as_str().map(str::trim).unwrap_or_default();
+                let ok = (url.starts_with("http://") || url.starts_with("https://")) && url.contains("{pr}");
+                if !(v.is_null() || v.is_string()) || !(url.is_empty() || ok) {
+                    return Err(ApiError::bad("pr_preview_url must be null or an http(s) URL with {pr} for the pull request's number"));
+                }
+                *v = if url.is_empty() { Value::Null } else { json!(url) };
+            }
             // null falls back to the host's default mode.
             "permission_mode" if !(v.is_null() || v.as_str().is_some_and(|m| PERMISSION_MODES.contains(&m))) => {
                 return Err(ApiError::bad(format!("permission_mode must be null or one of {PERMISSION_MODES:?}")));
@@ -1071,16 +1109,22 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
 }
 
 /// Removes a deleted project's folder in the data dir (its scratch and worktrees folders, unless
-/// they were moved, and its skills), unless what's left on the host is in it: a repository, a
-/// worktree, or a folder another project was pointed at.
+/// they were moved, and its skills), unless what's left on the host is in it (see remove_unused_dir).
 fn remove_project_dir(s: &Shared, id: &str) -> ApiResult<()> {
-    let dir = s.data_dir.join("projects").join(id);
-    let Ok(meta) = std::fs::symlink_metadata(&dir) else { return Ok(()) };
+    remove_unused_dir(s, &s.data_dir.join("projects").join(id), "project")
+}
+
+/// Removes a deleted project's or profile's (`what`) folder in the data dir, unless what's left on
+/// the host is in it: a repository, a worktree, or a folder another project or task was pointed at.
+fn remove_unused_dir(s: &Shared, dir: &std::path::Path, what: &str) -> ApiResult<()> {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else { return Ok(()) };
     if !meta.is_dir() {
         return Ok(());
     }
     let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    let root = canonical(&dir);
+    // A path that doesn't exist yet isn't resolved, so through a symlinked data dir it can only
+    // match the folder as it's named.
+    let roots = [canonical(dir), dir.to_path_buf()];
     let used: Vec<String> = {
         let c = s.db();
         let mut st = c.prepare(
@@ -1089,12 +1133,13 @@ fn remove_project_dir(s: &Shared, id: &str) -> ApiResult<()> {
         )?;
         st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
     };
-    if let Some(p) = used.iter().map(PathBuf::from).find(|p| p.is_absolute() && canonical(p).starts_with(&root)) {
-        tracing::warn!("keeping {} after deleting its project: {} is in it", dir.display(), p.display());
+    let inside = |p: &std::path::Path| p.is_absolute() && roots.iter().any(|r| canonical(p).starts_with(r) || p.starts_with(r));
+    if let Some(p) = used.iter().map(PathBuf::from).find(|p| inside(p)) {
+        tracing::warn!("keeping {} after deleting its {what}: {} is in it", dir.display(), p.display());
         return Ok(());
     }
-    if let Err(e) = std::fs::remove_dir_all(&dir) {
-        tracing::warn!("removing {} after deleting its project: {e}", dir.display());
+    if let Err(e) = std::fs::remove_dir_all(dir) {
+        tracing::warn!("removing {} after deleting its {what}: {e}", dir.display());
     }
     Ok(())
 }
@@ -1568,6 +1613,30 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         ],
     );
     check_reminder(Some(&current), &mut fields)?;
+    // A title is text that isn't blank, and a description is text (null clears it): anything else is
+    // turned away rather than kept as JSON text, or left to the database to refuse with a 500.
+    if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "title") {
+        let title = v.as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| ApiError::bad("title must be a non-empty string"))?;
+        *v = json!(title);
+    }
+    if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "description") {
+        match v {
+            Value::String(_) => {}
+            Value::Null => *v = json!(""),
+            _ => return Err(ApiError::bad("description must be a string")),
+        }
+    }
+    // SQLite keeps a value of the wrong type as it is (text in a REAL column, say), and the row
+    // can't be read back after: every list with the task in it would fail until it's repaired by hand.
+    if fields.iter().any(|(k, v)| *k == "position" && !v.is_number()) {
+        return Err(ApiError::bad("position must be a number"));
+    }
+    if fields.iter().any(|(k, v)| *k == "use_worktree" && !v.is_boolean()) {
+        return Err(ApiError::bad("use_worktree must be true or false"));
+    }
+    if fields.iter().any(|(k, v)| *k == "model" && !(v.is_null() || v.is_string())) {
+        return Err(ApiError::bad("model must be a string or null"));
+    }
     if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "base_branch") {
         *v = check_base_branch(v).await?;
     }
@@ -2082,6 +2151,14 @@ async fn teardown_worktree(State(s): State<Shared>, Path(id): Path<String>, body
     Ok(Json(json!(t)))
 }
 
+/// `GET /projects/{id}/system-prompt` (API 80): what the agent of a new thread in the project is told on top of its
+/// agent's own system prompt, for the options given (see runner::preview): `{text, runtime, permission_mode}`.
+async fn system_prompt_preview(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<runner::PreviewOptions>) -> ApiResult<Json<Value>> {
+    let project = db::get_project(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("project"))?;
+    let (text, codex, mode) = runner::preview(&s, &project, &q).await?;
+    Ok(Json(json!({"text": text, "runtime": if codex { "codex" } else { "claude" }, "permission_mode": mode})))
+}
+
 /// Remove the worktrees of the project's done tasks that are merged and have nothing
 /// uncommitted (see worktree::remove_if_merged): `{"results": [{task_id, number, title, removed,
 /// detail}]}`, one for each done task that had a worktree.
@@ -2296,6 +2373,12 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 /// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
 /// URLs are shown with.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
+    // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.
+    for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
+        if b.get(key).is_some_and(|v| !(v.is_null() || v.is_string())) {
+            return Err(ApiError::bad(format!("{key} must be a string or null")));
+        }
+    }
     if let Some(e) = b.get("default_effort").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) {
         if !db::EFFORTS.contains(&e) {
             return Err(ApiError::bad(format!("default_effort must be one of {:?}", db::EFFORTS)));
@@ -2794,6 +2877,62 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_tasks_fields_are_checked_for_type_before_theyre_stored() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            let project = db::insert_project(&s.db(), project).unwrap();
+            let t = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "Fix it", "description": "How"})).unwrap()).unwrap();
+            let set = async |v: Value| update_task_inner(&s, &t.id, v.as_object().unwrap()).await;
+            for bad in [
+                json!({"title": null}),
+                json!({"title": ""}),
+                json!({"title": "  "}),
+                json!({"title": {"a": 1}}),
+                json!({"title": 7}),
+                json!({"description": 42}),
+                json!({"description": ["x"]}),
+                // Stored as text in a REAL or INTEGER column, these would make the row unreadable.
+                json!({"position": "top"}),
+                json!({"position": null}),
+                json!({"use_worktree": "yes"}),
+                json!({"use_worktree": 1}),
+                json!({"model": 3}),
+                json!({"base_branch": ["main"]}),
+            ] {
+                let err = set(bad.clone()).await.unwrap_err();
+                assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+            }
+            // Nothing stuck: the task reads back as it was, in every list.
+            let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert_eq!((t.title.as_str(), t.description.as_str(), t.position, t.use_worktree), ("Fix it", "How", t.position, false));
+            assert_eq!(db::list_tasks_for_project(&s.db(), &project.id, "task").unwrap().len(), 1);
+            assert_eq!(set(json!({"position": 2.5, "use_worktree": true, "model": "haiku", "base_branch": null})).await.unwrap().position, 2.5);
+            let t = set(json!({"title": " Fixed ", "description": null})).await.unwrap();
+            assert_eq!((t.title.as_str(), t.description.as_str()), ("Fixed", ""));
+        })
+    }
+
+    #[test]
+    fn a_setting_of_the_wrong_type_is_refused_rather_than_cleared() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let set = async |v: Value| update_settings(State(s.clone()), Json(v.as_object().unwrap().clone())).await.map(|j| j.0);
+            let out = set(json!({"default_model": "haiku", "default_effort": "high"})).await.unwrap();
+            assert_eq!((out["default_model"].as_str(), out["default_effort"].as_str()), (Some("haiku"), Some("high")));
+            for bad in [json!({"default_model": 123}), json!({"default_permission_mode": 5}), json!({"default_effort": ["high"]}), json!({"scratch_host": true})] {
+                let err = set(bad.clone()).await.unwrap_err();
+                assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+            }
+            let out = set(json!({})).await.unwrap();
+            assert_eq!((out["default_model"].as_str(), out["default_effort"].as_str()), (Some("haiku"), Some("high")), "nothing cleared");
+            let out = set(json!({"default_model": null, "default_effort": ""})).await.unwrap();
+            assert!(out["default_model"].is_null() && out["default_effort"].is_null(), "null and blank clear: {out}");
+        })
+    }
+
+    #[test]
     fn tasks_link_to_asana_tasks() {
         crate::testing::run(async || {
             let s = crate::testing::state();
@@ -3067,6 +3206,64 @@ pub(crate) mod tests {
             let e = start_setup_thread_inner(&s, &p.id, StartSetupThread::default()).await.unwrap_err();
             assert!(e.1.contains("ready for worktrees already"), "{}", e.1);
             std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn tasks_get_their_pull_requests_previews() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            let project = db::insert_project(&s.db(), project).unwrap();
+            let body = |v: Value| serde_json::from_value::<CreateTask>(v).unwrap();
+            let task = |title: &str| create_task_inner(&s, &project.id, body(json!({"title": title}))).unwrap().id;
+            let update = async |id: &str, v: Value| update_task_inner(&s, id, v.as_object().unwrap()).await.unwrap();
+            let set = async |v: Value| update_project_inner(&s, &project.id, json!({"pr_preview_url": v}).as_object().unwrap()).await;
+            let preview = |id: &str| db::get_task(&s.db(), id).unwrap().unwrap().preview_url;
+            let pr = |n: u32| json!(format!("https://github.com/o/web/pull/{n}"));
+
+            // Before the project has one, from the pull requests they already had.
+            let (open, own, done, none) = (task("Open"), task("Own"), task("Done"), task("No PR"));
+            update(&open, json!({"pr_url": pr(4)})).await;
+            update(&own, json!({"pr_url": pr(5), "preview_url": "https://staging.example.com/"})).await;
+            update(&done, json!({"pr_url": pr(6), "status": "done"})).await;
+            assert_eq!(preview(&open), None);
+            for bad in [json!("https://pr.example.com/"), json!("pr{pr}.example.com"), json!(3)] {
+                assert!(set(bad.clone()).await.is_err(), "{bad}");
+            }
+            assert_eq!(set(json!(" https://pr{pr}.example.com/b ")).await.unwrap().pr_preview_url.as_deref(), Some("https://pr{pr}.example.com/b"));
+            assert_eq!(preview(&open).as_deref(), Some("https://pr4.example.com/b"));
+            // One set otherwise stays, a done task's preview is gone, and without a PR there's none.
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            assert_eq!((preview(&done), preview(&none)), (None, None));
+
+            // Its new pull request's, from then on.
+            update(&none, json!({"pr_url": pr(7)})).await;
+            assert_eq!(preview(&none).as_deref(), Some("https://pr7.example.com/b"));
+            update(&none, json!({"pr_url": pr(8)})).await;
+            assert_eq!(preview(&none).as_deref(), Some("https://pr8.example.com/b"));
+            s.update_task(&task("Found"), &[("pr_url", pr(9))]).unwrap();
+            let found = db::list_tasks_for_project(&s.db(), &project.id, "task").unwrap().into_iter().find(|t| t.title == "Found").unwrap();
+            assert_eq!(found.preview_url.as_deref(), Some("https://pr9.example.com/b"));
+            update(&none, json!({"pr_url": ""})).await;
+            assert_eq!(preview(&none), None);
+            update(&own, json!({"pr_url": pr(10)})).await;
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            // One given with it wins.
+            update(&none, json!({"pr_url": pr(11), "preview_url": "https://mine.example.com/"})).await;
+            assert_eq!(preview(&none).as_deref(), Some("https://mine.example.com/"));
+
+            // Changing it moves those it made, and clearing it takes them off.
+            set(json!("https://{pr}.preview.example.com/")).await.unwrap();
+            assert_eq!(preview(&open).as_deref(), Some("https://4.preview.example.com/"));
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            assert_eq!(preview(&none).as_deref(), Some("https://mine.example.com/"));
+            assert_eq!(set(json!("")).await.unwrap().pr_preview_url, None);
+            assert_eq!((preview(&open), preview(&found.id)), (None, None));
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            update(&open, json!({"pr_url": pr(12)})).await;
+            assert_eq!(preview(&open), None);
         })
     }
 
@@ -3503,6 +3700,62 @@ pub(crate) mod tests {
             // Its own name in another case is fine.
             assert_eq!(rename(&personal["id"], json!("Personal")).await.unwrap().0["name"], "Personal");
             assert_eq!(rename(&work["id"], json!(" office ")).await.unwrap().0["name"], "office");
+        })
+    }
+
+    // HA-47: two profiles named in different cases before HA-37 got a 409 on every save of either.
+    #[test]
+    fn profiles_sharing_a_name_in_another_case_can_still_be_saved() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let upper = db::insert_profile(&s.db(), "Work", &[], None).unwrap();
+            let lower = db::insert_profile(&s.db(), "work", &[], None).unwrap();
+            let save = async |id: &str, body: Value| update_profile(State(s.clone()), Path(id.into()), Json(body.as_object().unwrap().clone())).await;
+            for p in [&upper, &lower] {
+                let saved = save(&p.id, json!({"name": format!(" {} ", p.name), "default_model": "haiku"})).await.unwrap().0;
+                assert_eq!((saved["name"].as_str(), saved["default_model"].as_str()), (Some(p.name.as_str()), Some("haiku")));
+            }
+            // A change of case is still checked.
+            assert_eq!(save(&lower.id, json!({"name": "WORK"})).await.unwrap_err().0, StatusCode::CONFLICT);
+            assert_eq!(save(&lower.id, json!({"name": "office"})).await.unwrap().0["name"], "office");
+        })
+    }
+
+    // HA-47: deleting a profile removed its folder even with another project's worktrees in it.
+    #[test]
+    fn deleting_a_profile_keeps_its_folder_if_a_project_uses_it() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let gone = db::insert_profile(&s.db(), "gone", &[], None).unwrap();
+            let folder = s.data_dir.join("profiles").join(&gone.id);
+            std::fs::create_dir_all(folder.join("scratch")).unwrap();
+            let (dir, p) = git_project(&s).await;
+            s.db().execute("UPDATE projects SET worktrees_root=?1 WHERE id=?2", [&path_str(&folder.join("worktrees")), &p.id]).unwrap();
+            let _ = delete_profile(State(s.clone()), Path(gone.id.clone())).await.unwrap();
+            assert!(folder.is_dir());
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::remove_dir_all(&s.data_dir).ok();
+        })
+    }
+
+    // HA-47: through a symlinked data dir, a used path that didn't exist yet didn't keep its folder.
+    #[test]
+    fn a_folder_is_kept_for_a_path_in_it_through_a_symlink() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let tmp = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            std::fs::create_dir_all(tmp.join("real/projects/x")).unwrap();
+            std::os::unix::fs::symlink(tmp.join("real"), tmp.join("link")).unwrap();
+            let dir = tmp.join("link/projects/x");
+            let (repo, p) = git_project(&s).await;
+            s.db().execute("UPDATE projects SET worktrees_root=?1 WHERE id=?2", [&path_str(&dir.join("worktrees")), &p.id]).unwrap();
+            remove_unused_dir(&s, &dir, "project").unwrap();
+            assert!(tmp.join("real/projects/x").is_dir());
+            s.db().execute("UPDATE projects SET worktrees_root=?1 WHERE id=?2", [&path_str(&tmp.join("elsewhere")), &p.id]).unwrap();
+            remove_unused_dir(&s, &dir, "project").unwrap();
+            assert!(!tmp.join("real/projects/x").exists());
+            std::fs::remove_dir_all(&repo).ok();
+            std::fs::remove_dir_all(&tmp).ok();
         })
     }
 

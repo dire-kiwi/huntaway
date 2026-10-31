@@ -370,6 +370,8 @@ export interface Project {
   github_account?: string | null;
   /** Which news about an In review task's pull request wakes its agent (API 72). */
   watch_pull_requests?: WatchPullRequests;
+  /** Where its tasks' pull requests are previewed, with {pr} for the number: a task with a pull request gets it as its preview_url (API 79). */
+  pr_preview_url?: string | null;
   created_at: string;
 }
 
@@ -377,6 +379,17 @@ export interface Project {
 export type WatchPullRequests = "off" | "failures" | "all";
 
 export type PromptField = "start_prompt" | "review_prompt" | "merge_prompt";
+
+/** The options of a new thread that change what its agent is told (see api.systemPromptPreview). Unset ones are as a new
+ *  task in the project has them. */
+export interface SystemPromptOptions {
+  type?: "task" | "subproject" | "scratch";
+  /** Some of LABELS, comma-separated. */
+  labels?: string;
+  worktree?: boolean;
+  runtime?: Agent;
+  permission_mode?: PermissionMode;
+}
 
 /** One of a project's reviewers (API 29). Null fields use the task's config and the default model and effort. */
 export interface Reviewer {
@@ -946,10 +959,20 @@ export class ApiError extends Error {
   }
 }
 
-/** Called when the server turns down a request, with the token it was made with. */
-let onUnauthorized: (token: string) => void = () => {};
-export function setUnauthorizedHandler(fn: (token: string) => void) {
+/** Called when the server turns down a request, with the token it was made with and the request's path (see unauthorizedHere). */
+let onUnauthorized: (token: string, path: string) => void = () => {};
+export function setUnauthorizedHandler(fn: (token: string, path: string) => void) {
   onUnauthorized = fn;
+}
+
+/**
+ * Whether a 401 for `path` means this board's token is wrong: a request to this hub, or to its own host
+ * through it. A linked host answers 401 when the link's token no longer matches its own (its data dir
+ * was made again, say), which is that host's trouble, not a reason to sign the user out of the board.
+ */
+export function unauthorizedHere(path: string, localHostId: string | null): boolean {
+  const m = /^\/h\/([^/?#]+)/.exec(path);
+  return !m || (localHostId !== null && decodeURIComponent(m[1]) === localHostId);
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -963,7 +986,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
-    onUnauthorized(token);
+    onUnauthorized(token, path);
     throw new ApiError(401, "Unauthorized");
   }
   const data = await res.json().catch(() => null);
@@ -1454,6 +1477,11 @@ export const api = {
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
+  /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
+  systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>
+    on(h).get<{ text: string; runtime: Agent; permission_mode: PermissionMode }>(
+      `/projects/${enc(id)}/system-prompt?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))}`,
+    ),
   /** The project's own skills and MCP servers, and the ones from elsewhere it turns off (API 21). */
   agentTools: (h: string, projectId: string) => on(h).get<AgentTools>(`/projects/${enc(projectId)}/agent-tools`),
   updateAgentTools: (h: string, projectId: string, b: { disabled_skills?: string[]; disabled_mcp_servers?: string[] }) =>
@@ -1556,6 +1584,7 @@ export const api = {
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
   updateTask: (h: string, id: string, b: Partial<Task>) => {
+    // Noted before the request: the task event it causes reaches every tab before the response does.
     if (b.status) noteMove(h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);
   },

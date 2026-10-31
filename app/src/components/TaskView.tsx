@@ -692,7 +692,15 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   const setStatus = async (status: Status) => {
     setErr("status", null);
     if (status === "done" && !(await confirmDone(task))) return;
-    api.updateTask(task.host_id, task.id, { status }).catch((e) => setErr("status", e.message));
+    try {
+      await api.updateTask(task.host_id, task.id, { status });
+      // Into "In progress" from the list, as from a drop on the board: a fresh task's agent starts (where one can run).
+      if (status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host)) {
+        await api.send(task.host_id, task.id, "");
+      }
+    } catch (e) {
+      setErr("status", (e as Error).message);
+    }
   };
   const setResolution = (resolution: Resolution) => {
     setErr("status", null);

@@ -122,6 +122,15 @@ function findServerBinary() {
   return candidates.find((p) => fs.existsSync(p));
 }
 
+/** Whether `url` is one for a browser (http, https or mailto), rather than a file or another app's scheme. */
+function isWebUrl(url) {
+  try {
+    return ["http:", "https:", "mailto:"].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Whether a fetch failed because nothing listens there, rather than a server that's slow (still starting, or busy). */
@@ -271,23 +280,42 @@ async function createWindow() {
       app.quit();
     }
   });
+  // Links open in the browser, web links only: a plan or artifact is a page an agent wrote, and its
+  // scripts can open popups, so file:, custom schemes and the like stay out of the OS handlers.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isWebUrl(url)) shell.openExternal(url);
     return { action: "deny" };
   });
-  // The error page's Retry.
+  // The error page's Retry; otherwise the window stays on the board: a file dropped outside a drop zone, or
+  // a link dragged in, would replace it (a web link opens in the browser instead).
   win.webContents.on("will-navigate", (e, url) => {
-    if (url !== RETRY_URL) return;
-    e.preventDefault();
-    void load(win);
+    if (url === RETRY_URL) {
+      e.preventDefault();
+      void load(win);
+      return;
+    }
+    let origin = null;
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      /* not a URL the window should go to either */
+    }
+    if (boardOrigin && origin !== boardOrigin) {
+      e.preventDefault();
+      if (isWebUrl(url)) shell.openExternal(url);
+    }
   });
   await load(win);
 }
+
+/** The board's origin once it has loaded, the one navigation the window takes. */
+let boardOrigin = null;
 
 async function load(win) {
   try {
     const { base, token } = await resolveTarget(() => void serverLost(win));
     const ui = process.env.IA_DEV_URL || base;
+    boardOrigin = new URL(ui).origin;
     await win.loadURL(`${ui}/${token ? `?token=${encodeURIComponent(token)}` : ""}`);
   } catch (e) {
     if (!win.isDestroyed()) await win.loadURL(errorPage(e.message || e));
