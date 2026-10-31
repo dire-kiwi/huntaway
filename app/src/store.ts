@@ -209,6 +209,41 @@ function startHostLoad(h: string, gen = refreshes.get(h)?.started ?? 0) {
 /** Each host's refreshes, numbered as they start, and the latest one in the store: an older one that ends later is dropped. */
 const refreshes = new Map<string, { started: number; applied: number }>();
 
+/** Profile list loads, numbered as they start, and the latest one in the store: an older one that ends later is dropped. */
+const profileLoads = { started: 0, applied: 0 };
+
+/** The loadAll under way, the one queued to start after it (see loadAll), and the hosts lists numbered like profileLoads. */
+const allLoads: { running: Promise<void> | null; queued: Promise<void> | null; started: number; applied: number } = {
+  running: null,
+  queued: null,
+  started: 0,
+  applied: 0,
+};
+/** How long a queued loadAll waits for the one under way at most. */
+const LOAD_ALL_WAIT_MS = 2000;
+
+type SetState = (partial: Partial<State>) => void;
+
+function startLoadAll(set: SetState, get: () => State) {
+  const gen = ++allLoads.started;
+  const run = (async () => {
+    const hosts = await api.hosts();
+    // A newer load read them later (and loads the rest with them).
+    if (allLoads.applied > gen) return;
+    allLoads.applied = gen;
+    const localHostId = hosts.find((h) => h.local)?.id ?? null;
+    set({ hosts, localHostId, authed: true });
+    // A board-only hub isn't among the usable hosts, but its settings pick the scratch host.
+    await Promise.all([get().loadProfiles(), localHostId && get().loadHostSettings(localHostId)]);
+  })();
+  allLoads.running = run;
+  const done = () => {
+    if (allLoads.running === run) allLoads.running = null;
+  };
+  run.then(done, done);
+  return run;
+}
+
 /** Collisions already logged: host ids and the task id. */
 const collisions = new Set<string>();
 
@@ -265,15 +300,22 @@ export const useStore = create<State>((set, get) => ({
 
   setAuthed: (v) => set({ authed: v }),
 
-  loadAll: async () => {
-    const hosts = await api.hosts();
-    const localHostId = hosts.find((h) => h.local)?.id ?? null;
-    set({ hosts, localHostId, authed: true });
-    // A board-only hub isn't among the usable hosts, but its settings pick the scratch host.
-    await Promise.all([get().loadProfiles(), localHostId && get().loadHostSettings(localHostId)]);
+  loadAll: () => {
+    // A burst of calls (a reconnect, then hosts_changed for each link coming back) shares one more load after the one
+    // under way, which starts after them and so reads what they were for; but not more than a moment after them, so
+    // a slow host doesn't hold back the others' changes. Loads that overlap then apply in order.
+    if (allLoads.queued) return allLoads.queued;
+    if (!allLoads.running) return startLoadAll(set, get);
+    const queued = Promise.race([allLoads.running.catch(() => {}), new Promise((r) => setTimeout(r, LOAD_ALL_WAIT_MS))]).then(() => {
+      allLoads.queued = null;
+      return startLoadAll(set, get);
+    });
+    allLoads.queued = queued;
+    return queued;
   },
 
   loadProfiles: async () => {
+    const gen = ++profileLoads.started;
     const online = boardHosts(get().hosts);
     const [lists, configs] = await Promise.all([
       Promise.all(online.map((h) => api.profiles(h.id).then((ps) => tag(ps, h.id)).catch(() => [] as Profile[]))),
@@ -281,6 +323,9 @@ export const useStore = create<State>((set, get) => ({
         online.filter((h) => hostSupports(h, 20)).map((h) => api.claudeConfigs(h.id).then((cs) => tag(cs, h.id)).catch(() => [] as ClaudeConfig[])),
       ),
     ]);
+    // A newer load read them later (and refreshes the hosts' tasks with them).
+    if (profileLoads.applied > gen) return;
+    profileLoads.applied = gen;
     const profiles = lists.flat();
     set({ profiles, claudeConfigs: configs.flat() });
     get().loadUsage().catch(() => {});
@@ -614,6 +659,21 @@ export function useProfileName(x: { host_id: string; profile_id: string } | unde
 
 let socket: WebSocket | null = null;
 let retry = 0;
+/** The reconnect waiting out its backoff. */
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let wakeListening = false;
+
+/**
+ * Reconnects now rather than at the end of the backoff (up to 32 s), when the network comes back or the page is shown
+ * again, as after a laptop wakes.
+ */
+function reconnectNow() {
+  if (socket || !retryTimer || document.visibilityState === "hidden") return;
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  retry = 0;
+  connectEvents();
+}
 
 /**
  * Connects to the events, and loads everything once connected (again after a reconnect, for the events missed), so
@@ -622,6 +682,11 @@ let retry = 0;
  */
 export function connectEvents() {
   if (socket) return;
+  if (!wakeListening) {
+    wakeListening = true;
+    window.addEventListener("online", reconnectNow);
+    document.addEventListener("visibilitychange", reconnectNow);
+  }
   const ws = new WebSocket(wsUrl());
   socket = ws;
   let opened = false;
@@ -638,7 +703,10 @@ export function connectEvents() {
     // Not with a wrong token: the token screen reloads the page with the new one.
     if (useStore.getState().authed === false) return;
     retry = Math.min(retry + 1, 6);
-    setTimeout(connectEvents, 500 * 2 ** retry);
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      connectEvents();
+    }, 500 * 2 ** retry);
   };
   ws.onmessage = (e) => {
     let ev;
@@ -772,7 +840,7 @@ export function handleEvent(ev: any) {
         s.loadApprovals(ev.host_id);
         // The open threads' missed messages too (e.g. an approval's answer).
         for (const taskId of Object.keys(s.messages)) if (s.tasks[taskId]?.host_id === ev.host_id) s.loadMessages(taskId, true).catch(() => {});
-      } else s.refreshProfileData().catch(() => {});
+      } else s.loadAll().catch(() => {}); // the hub's own events lagged: hosts and profiles may have changed too
       break;
     case "restart":
       if (h !== s.localHostId) break;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 
 // The app's modules import each other without extensions, as Vite allows.
 const hook = `export async function resolve(spec, ctx, next) {
@@ -256,4 +256,104 @@ test("a refresh that ends before a newer one doesn't hold that one back", async 
   const s = useStore.getState();
   assert.deepEqual(Object.keys(s.tasks), ["a"]);
   assert.deepEqual(s.projects.map((p) => p.name), ["new name"]);
+});
+
+// HA-38: two profile loads whose answers came out of order (after a reconnect, profiles_changed and hosts_changed): the
+// older list landed last without a profile created meanwhile, and its refresh (newer than the other's) dropped that
+// profile's tasks.
+test("a profile load that ends after a newer one doesn't undo it", async () => {
+  const lists = [];
+  api.profiles = () => new Promise((resolve) => lists.push(resolve));
+  api.claudeConfigs = () => Promise.resolve([]);
+  api.projects = (_h, p, archived) => Promise.resolve(archived ? [] : [{ id: `proj-${p}`, profile_id: p, name: p }]);
+  api.groupTasks = () => Promise.resolve([]);
+  api.projectTasks = (_h, id, kind) =>
+    Promise.resolve(kind === "task" ? [{ id: `task-${id}`, profile_id: id.slice(5), project_id: id, kind: "task", title: id }] : []);
+  useStore.setState({
+    refreshHost,
+    loadHostSettings: async () => {},
+    loadApprovals: async () => {},
+    loadUsage: async () => {},
+    hosts: [{ ...host("local"), api_version: 56 }],
+    localHostId: "local",
+    profiles: [],
+    projects: [],
+    archived: [],
+    tasks: {},
+    messages: {},
+  });
+  const older = useStore.getState().loadProfiles();
+  const newer = useStore.getState().loadProfiles();
+  await new Promise((r) => setTimeout(r));
+  assert.equal(lists.length, 2);
+  lists[1]([{ id: "a", name: "a" }, { id: "b", name: "b" }]);
+  await newer;
+  lists[0]([{ id: "a", name: "a" }]);
+  await older;
+  const s = useStore.getState();
+  assert.deepEqual(s.profiles.map((p) => p.id), ["a", "b"]);
+  assert.deepEqual(Object.keys(s.tasks).sort(), ["task-proj-a", "task-proj-b"]);
+});
+
+// HA-38: a burst of loads (a reconnect, then hosts_changed) makes one more after the one under way, not one each.
+test("loads of everything that come while one runs share one that starts after it", async () => {
+  const answers = [];
+  api.hosts = () => new Promise((resolve) => answers.push(resolve));
+  useStore.setState({ loadProfiles: async () => {}, loadHostSettings: async () => {} });
+  const first = useStore.getState().loadAll();
+  const second = useStore.getState().loadAll();
+  const third = useStore.getState().loadAll();
+  assert.equal(second, third);
+  await new Promise((r) => setTimeout(r));
+  assert.equal(answers.length, 1);
+  answers[0]([host("local")]);
+  await first;
+  await new Promise((r) => setTimeout(r));
+  // The second read the hosts after the calls that came while the first ran.
+  assert.equal(answers.length, 2);
+  answers[1]([host("local"), host("remote")]);
+  await second;
+  assert.deepEqual(useStore.getState().hosts.map((h) => h.id), ["local", "remote"]);
+  // With none under way, the next call loads at once.
+  const next = useStore.getState().loadAll();
+  await new Promise((r) => setTimeout(r));
+  assert.equal(answers.length, 3);
+  answers[2]([host("local")]);
+  await next;
+});
+
+// HA-38: a resync from the hub itself (its events to this page lagged) reloaded tasks but not hosts or profiles.
+test("a hub resync reloads everything", () => {
+  let loads = 0;
+  const { loadAll } = useStore.getState();
+  useStore.setState({ loadAll: async () => void loads++ });
+  handleEvent({ type: "resync" });
+  useStore.setState({ loadAll });
+  assert.equal(loads, 1);
+});
+
+// HA-38: the queued load doesn't wait long for one held up by a slow host, and the slow one's older hosts list, landing
+// last, doesn't replace the newer one's.
+test("a load of everything queued behind a slow one starts anyway, and the slow one's list is dropped", async () => {
+  const answers = [];
+  api.hosts = () => new Promise((resolve) => answers.push(resolve));
+  useStore.setState({ loadProfiles: async () => {}, loadHostSettings: async () => {} });
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const slow = useStore.getState().loadAll();
+    const queued = useStore.getState().loadAll();
+    const flush = () => new Promise((r) => setImmediate(r));
+    await flush();
+    assert.equal(answers.length, 1);
+    mock.timers.tick(2000);
+    await flush();
+    assert.equal(answers.length, 2);
+    answers[1]([host("local"), host("remote")]);
+    await queued;
+    answers[0]([host("local")]);
+    await slow;
+    assert.deepEqual(useStore.getState().hosts.map((h) => h.id), ["local", "remote"]);
+  } finally {
+    mock.timers.reset();
+  }
 });
