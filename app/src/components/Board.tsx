@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Folder, FolderGit2, Gauge, GanttChart, GitBranch, Inbox, Kanban, Layers, Link2, List, MessagesSquare, MonitorPlay, Network, NotebookPen, Plus, Settings2, X } from "lucide-react";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type WheelEvent } from "react";
+import { Archive, CheckCheck, ChevronLeft, ChevronRight, Clock, Cpu, Ellipsis, Folder, FolderGit2, Gauge, GanttChart, GitBranch, GitMerge, Inbox, Kanban, Layers, Link2, List, MessagesSquare, MonitorPlay, Network, NotebookPen, Plus, Settings2, X } from "lucide-react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode, type UIEvent, type WheelEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   agentOf,
@@ -13,7 +13,11 @@ import {
   isMerged,
   isScratch,
   mergeQueued,
+  LABELS,
+  LABELS_API,
+  rejoinsMerge,
   STATUSES,
+  taskLabels,
   worktreesOn,
   type ClaudeConfig,
   type DocumentType,
@@ -33,7 +37,7 @@ import { harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type
 import { groupProjects, groupTasks, inGroupTaskGroup } from "../projectGroups";
 import { dropPosition } from "../taskOrder";
 import { allValues, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens, type Token, type TokenPrefix, type Vocab } from "../taskTokens";
-import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKind, taskMatcher, type BoardQuery, type SortKey, type TaskKind } from "../boardQuery";
+import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKinds, taskMatcher, type BoardQuery, type SortKey, type TaskKind } from "../boardQuery";
 import { FilterBar, FilterMenu, SearchBox, SortMenu, type FilterOption } from "./BoardControls";
 import { navigate, openTask, usePanel } from "../router";
 import { isGroupTask, keyPrefix, scratchHost, useAvailableConfigs, useHost, useStore } from "../store";
@@ -46,12 +50,13 @@ import { DependencyBadge } from "./Dependencies";
 import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
-import { SCRATCH_TYPE, TASK_TYPES, TaskTypeBadge } from "./Document";
+import { documentInfo, LABEL_INFO, SCRATCH_TYPE, TaskTypeBadge } from "./Document";
 import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
 import { LiveView } from "./LiveView";
-import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide } from "./ui";
+import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, MenuButton, Modal, ModalFooter, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide, type MenuItem } from "./ui";
+import { useNarrow, useTouch } from "../narrow";
 
 /** How many of a subproject's tasks are done. */
 export type Progress = { done: number; total: number };
@@ -101,7 +106,7 @@ export function useCreatedProgress(): Record<string, Progress> {
     for (const t of Object.values(all)) {
       if (t.kind !== "task" || !t.created_by) continue;
       const creator = all[t.created_by];
-      if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : creator.task_type === "plan")) continue;
+      if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : taskLabels(creator).includes("plan"))) continue;
       const p = (by[t.created_by] ??= { done: 0, total: 0 });
       p.total++;
       if (t.status === "done") p.done++;
@@ -124,6 +129,20 @@ export function GroupTaskBadge({ progress, compact }: { progress?: Progress; com
     <span className="flex items-center gap-1 text-accent" title="Group task: plans the work of the group's projects and creates their tasks">
       <Folder size={11} /> {progress?.total ? `${progress.done}/${progress.total} done` : "group task"}
     </span>
+  );
+}
+
+/** A scratch task's badge, and its labels': a plan's with how the tasks it created are doing (`progress`, which a group
+ *  task or a subproject shows on its own badge). */
+function TypeBadges({ task, progress, compact }: { task: Task; progress?: Progress; compact?: boolean }) {
+  const ownProgress = isGroupTask(task) || task.subproject ? undefined : progress;
+  return (
+    <>
+      {isScratch(task) && <TaskTypeBadge type="scratch" compact={compact} />}
+      {taskLabels(task).map((l) => (
+        <TaskTypeBadge key={l} type={l} progress={l === "plan" ? ownProgress : undefined} compact={compact} />
+      ))}
+    </>
   );
 }
 
@@ -185,11 +204,36 @@ function SubprojectBoardButton({ task, icon }: { task: Task; icon?: boolean }) {
   );
 }
 
-/** Opens a task's menu at a right-click. */
-export type OnMenu = (e: MouseEvent, task: Task) => void;
+/** Opens a task's menu at a right-click, or with `move` from its menu button (which moves it to another column). */
+export type OnMenu = (e: MouseEvent, task: Task, move?: boolean) => void;
 
 /** `onMenu` decides whether to replace the browser's menu (preventDefault). */
 const menuHandler = (task: Task, onMenu?: OnMenu) => onMenu && ((e: MouseEvent) => onMenu(e, task));
+
+/**
+ * The button that opens a task's menu to move it to another column: what dragging it does, where that doesn't work. On
+ * phones and touch screens only.
+ */
+function MoveButton({ task, onMenu, className }: { task: Task; onMenu?: OnMenu; className?: string }) {
+  const narrow = useNarrow();
+  const touch = useTouch();
+  if (!onMenu || !(narrow || touch)) return null;
+  return (
+    <button
+      title="Move to…"
+      aria-label={`Move ${task.title} to…`}
+      aria-haspopup="menu"
+      className={clsx("flex shrink-0 items-center justify-center rounded-md text-faint hover:bg-white/5 hover:text-fg", className)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onMenu(e, task, true);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <Ellipsis size={16} />
+    </button>
+  );
+}
 
 /** A card or row that opens its task: a button to the keyboard and screen readers too (Enter or Space opens it). */
 const opensTask = (task: Task, open: boolean) => ({
@@ -244,10 +288,15 @@ export const TaskCard = memo(function TaskCard({
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           {task.subproject && <SubprojectBadge progress={progress} compact />}
           {isGroupTask(task) && <GroupTaskBadge progress={progress} compact />}
-          {task.task_type && <TaskTypeBadge type={task.task_type} progress={isGroupTask(task) ? undefined : progress} compact />}
+          <TypeBadges task={task} progress={progress} compact />
           {mergeQueued(task) && (
             <span className={clsx(CARD_BADGE, "text-muted")} title="Queued to merge: waits for the merge in progress in this project">
               <Clock size={11} /> <Wide>queued to merge</Wide>
+            </span>
+          )}
+          {rejoinsMerge(task) && (
+            <span className={clsx(CARD_BADGE, "text-muted")} title="Stepped out of the merge queue to make changes: rejoins it when its agent is done">
+              <GitMerge size={11} /> <Wide>rejoins merge queue</Wide>
             </span>
           )}
           <DependencyBadge task={task} project={project} compact />
@@ -256,6 +305,7 @@ export const TaskCard = memo(function TaskCard({
           <TaskMarks task={task} compact />
         </div>
         <CardState task={task} />
+        <MoveButton task={task} onMenu={onMenu} className="-my-2.5 -mr-2 h-8 w-8" />
       </div>
       <div className={clsx("text-[13px] leading-snug", task.status === "done" && task.resolution === "wont_fix" ? "text-muted" : "text-fg")}>{task.title}</div>
       {task.attention_reason && task.status === "needs_attention" && (
@@ -408,10 +458,18 @@ export function ModelPicker({
   );
 }
 
-/** What the new task dialog makes: code (null), a subproject, a document or a scratch task. */
+/** What the new task dialog makes: code (null), a subproject or a scratch task. */
 type NewTaskType = TaskType | "subproject" | null;
 
-const documentTypeOf = (t: NewTaskType): DocumentType | null => (t === "plan" || t === "artifact" || t === "diagram" ? t : null);
+/** The labels, which `/` names too: `/plan /diagram` gives a task both. */
+const LABEL_WORDS: string[] = LABELS;
+const isLabelWord = (w: string | undefined): w is DocumentType => LABEL_WORDS.includes(w ?? "");
+
+/** "a plan and a diagram". */
+function labelList(labels: DocumentType[]) {
+  const words = labels.map((l) => ({ plan: "a plan", artifact: "an artifact", diagram: "a diagram" })[l]);
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : (words[0] ?? "");
+}
 
 /** A subproject, which the new task dialog offers as a type of task in a project that uses worktrees (API 17). */
 const SUBPROJECT_TYPE = {
@@ -435,7 +493,7 @@ type Suggestion = { value: string; label: string; hint?: string };
 
 /** The token prefixes, in the order the legend and the placeholder give them. */
 const TOKEN_HELP: { prefix: TokenPrefix; what: string; asks: string }[] = [
-  { prefix: "/", what: "type", asks: "a type" },
+  { prefix: "/", what: "type or label", asks: "a type or label" },
   { prefix: "@", what: "where", asks: "where it goes" },
   { prefix: "!", what: "model", asks: "a model (or several, for a task each)" },
   { prefix: "^", what: "effort", asks: "effort" },
@@ -553,18 +611,15 @@ export function NewTaskModal({
   const project = atProject ?? baseProject;
   // The project's host decides which types it offers, while the task is in no project too.
   const projectHost = useHost(project?.host_id);
-  // What it makes: code (null); a subproject, with its own board of tasks (API 17); a plan,
-  // artifact or diagram, which its agent writes in the task's own folder rather than a worktree
-  // (API 42); or a scratch task, whose agent works in its own folder on whatever it's asked
-  // (in no project, API 47, or in the project, API 51). Each is offered where it can go.
-  const types = hostSupports(projectHost, 42);
+  // What it is: code (null); a subproject, with its own board of tasks (API 17); or a scratch task, whose agent
+  // works in its own folder on whatever it's asked (in no project, API 47, or in the project, API 51). Each is offered
+  // where it can go. Labels come on top (see below).
   const canSubproject = !subproject && !!project && hostSupports(projectHost, 17) && worktreesOn(project);
   const projectScratch = !!project && hostSupports(projectHost, 51);
   // The types it can be, by the project's host (or the scratch task's, in no project).
   const typeTabs: { id: NewTaskType; label: string; icon: ReactNode; hint: string }[] = [
     ...(project ? [{ id: null, label: "Task", icon: <FolderGit2 size={12} />, hint: "Its agent works on the code" }] : []),
     ...(canSubproject ? [SUBPROJECT_TYPE] : []),
-    ...(project && types ? TASK_TYPES : []),
     ...(scratch || projectScratch ? [SCRATCH_TYPE] : []),
   ];
   const typeOf = (word: string | undefined) => typeTabs.find((t) => typeWord(t.id) === word);
@@ -593,8 +648,8 @@ export function NewTaskModal({
   const offered: NewTaskType[] = noProject
     ? ["scratch"]
     : asGroup
-      ? [null, ...(types ? TASK_TYPES.map((t) => t.id) : [])]
-      : [null, ...(canSubproject ? ["subproject" as const] : []), ...(types ? TASK_TYPES.map((t) => t.id) : []), ...(projectScratch ? ["scratch" as const] : [])];
+      ? [null]
+      : [null, ...(canSubproject ? ["subproject" as const] : []), ...(projectScratch ? ["scratch" as const] : [])];
 
   const agents = canRunAgents(host);
   const hostCount = hosts.length;
@@ -686,9 +741,15 @@ export function NewTaskModal({
     const m = h.model ? (c?.models.find((x) => x.id === h.model)?.label ?? h.model) : inherits ? `default model (${inherits})` : "default model";
     return pickConfig && c ? `${m} · ${c.name}` : m;
   };
+  // Labels, each a document its agent writes besides its other work, shown in a tab of the task (API 71). A host from
+  // API 42 makes a task of one of them as its type instead (a plan, artifact or diagram task), which is a code task in
+  // a project or a group task, and makes only the document.
+  const labelling = hostSupports(host, LABELS_API);
+  const labelTypes = !labelling && hostSupports(host, 42) && !noProject && taskType === null;
+  const labelWords = labelling || labelTypes ? LABEL_WORDS : [];
   const tokens = resolve({
     "@": atVocab,
-    "/": offered.map(typeWord),
+    "/": [...offered.map(typeWord), ...labelWords],
     "!": modelVocab,
     ...(efforts ? { "^": [DEFAULT_WORD, ...effortList] } : {}),
     ...(deps ? { "#": depTasks.map(depKey) } : {}),
@@ -699,11 +760,13 @@ export function NewTaskModal({
   // What its agent is given: the description without its tokens.
   const text = stripTokens(description, tokens);
 
-  const docType = documentTypeOf(taskType);
+  const labels = LABELS.filter((l) => allValues(tokens, "/").includes(l));
+  // On a host before API 71, the label it's made as (one at most).
+  const docType = labelTypes ? (labels[0] ?? null) : null;
   // A subproject's branch is what its tasks branch from, so it and they get worktrees.
   const asSubproject = taskType === "subproject";
-  const codeTask = taskType === null || asSubproject;
-  const noun = taskType === "scratch" ? "scratch task" : asGroup && !docType ? "group task" : (taskType ?? "task");
+  const codeTask = (taskType === null && !docType) || asSubproject;
+  const noun = taskType === "scratch" ? "scratch task" : asGroup && !docType ? "group task" : (docType ?? taskType ?? "task");
 
   const attach = useAttachmentDraft(target.host_id, hostSupports(host, 18), saved?.files);
   // The Asana tasks it's for (API 57), in the profile it goes in, unless that has Asana turned off.
@@ -734,16 +797,19 @@ export function NewTaskModal({
   const worktreePref = worktreeChoice ?? (!!inProject && worktreesOn(inProject));
   // Tasks made from one prompt each get a worktree too, so their agents don't change the same checkout (as in t3code).
   const worktree = !!inProject && codeTask && (worktreePref || fanout || asSubproject || !!subproject);
-  // What can't be made a task for each of several harnesses.
+  // What can't be made a task for each of several harnesses. A group task coordinates its group's work, so it takes one,
+  // unless it has labels: then they write documents to compare.
   const fanoutBlock = !fanout
     ? null
     : asSubproject
       ? "A subproject has one agent, so it takes one model."
-      : asGroup && !docType
+      : asGroup && !docType && !labels.length
         ? "A group task has one agent, so it takes one model."
         : worktree && inProject?.is_git === false
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
+  // A host before API 71 makes a task of one label's type.
+  const labelBlock = labelTypes && labels.length > 1 ? `${host?.name ?? "This host"} makes a task of one of plan, artifact or diagram, not several: update it for labels.` : null;
   // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
   // out, with its token sent as text); which config a `!` names a model of, when a config of the same agent before it
   // (the picked one, then in order) may have the model too (so it doesn't depend on which answers first); and whether the effort picked
@@ -789,7 +855,7 @@ export function NewTaskModal({
       ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${takeOut(failedFor.map((f) => f.config))}, or open the dialog again to try again.`
       : null;
   // While they're loading, creating it waits for them (see whenLoaded).
-  const submitBlock = fanoutBlock ?? (modelsLoading ? null : modelsBlock);
+  const submitBlock = labelBlock ?? fanoutBlock ?? (modelsLoading ? null : modelsBlock);
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
   const setStart = (v: boolean) => {
@@ -889,6 +955,7 @@ export function NewTaskModal({
         // The server titles it from the description.
         const runEffort = efforts && pickedEffort && runEfforts(run).includes(pickedEffort) ? pickedEffort : undefined;
         const common = {
+          ...(labelling && labels.length ? { labels } : {}),
           description: withAttachments(text, attach.files),
           start,
           status,
@@ -909,7 +976,7 @@ export function NewTaskModal({
                     use_worktree: worktree,
                     ...(subproject ? { parent_id: subproject.id } : {}),
                     // Sent as the flag, which hosts before API 51 take too.
-                    ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : {}),
+                    ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : docType ? { task_type: docType } : {}),
                     ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
                   }),
           );
@@ -986,7 +1053,10 @@ export function NewTaskModal({
     submit();
   });
   const suggestions: Record<TokenPrefix, Suggestion[]> = {
-    "/": typeTabs.map((t) => ({ value: typeWord(t.id), label: t.label, hint: t.hint })),
+    "/": [
+      ...typeTabs.map((t) => ({ value: typeWord(t.id), label: t.label, hint: t.hint })),
+      ...LABEL_INFO.filter((l) => labelWords.includes(l.id)).map((l) => ({ value: l.id, label: labelling ? `${l.label} label` : l.label, hint: l.hint })),
+    ],
     "@": subproject
       ? []
       : [
@@ -1031,7 +1101,7 @@ export function NewTaskModal({
   // The highlighting behind the editor, sized to its text area (without a scrollbar) and scrolled with it.
   const mirror = useRef<HTMLDivElement>(null);
   const marker = useRef<HTMLSpanElement>(null);
-  const [listAt, setListAt] = useState<{ top: number; left: number } | null>(null);
+  const list = useRef<HTMLDivElement>(null);
   const [scrolled, setScrolled] = useState(0);
   useLayoutEffect(() => {
     const ta = input.current;
@@ -1051,10 +1121,39 @@ export function NewTaskModal({
     const ta = input.current;
     const m = mirror.current;
     if (m && ta) m.scrollTop = ta.scrollTop;
-    const k = marker.current;
-    const next = listOpen && k && m && ta ? { top: k.offsetTop + k.offsetHeight - m.scrollTop + 2, left: Math.max(0, Math.min(k.offsetLeft, ta.clientWidth - 288)) } : null;
-    setListAt((cur) => (cur?.top === next?.top && cur?.left === next?.left ? cur : next));
   }, [listOpen, completing?.start, description, scrolled]);
+  // The completion list is fixed to the window (the dialog's body scrolls, and would clip it): under the caret, or over
+  // it when there's more room there, no taller than that room, and moved with the caret as the dialog scrolls.
+  useLayoutEffect(() => {
+    if (!listOpen) return;
+    const place = (rendered = false) => {
+      const k = marker.current;
+      const ta = input.current;
+      const l = list.current;
+      if (!k || !ta || !l) return;
+      const at = k.getBoundingClientRect();
+      const box = ta.getBoundingClientRect();
+      const below = window.innerHeight - at.bottom - 10;
+      const above = at.top - 10;
+      const up = l.scrollHeight > below && above > below;
+      l.style.maxHeight = `${Math.max(80, up ? above : below)}px`;
+      l.style.top = `${up ? Math.max(8, at.top - 2 - l.offsetHeight) : at.bottom + 2}px`;
+      l.style.left = `${Math.max(box.left, Math.min(at.left, box.left + ta.clientWidth - l.offsetWidth))}px`;
+      if (!rendered) return;
+      // Keeps the highlighted option in view when the list scrolls (not while the wheel scrolls it).
+      const lit = l.querySelector<HTMLElement>("[aria-selected=true]");
+      if (lit && lit.offsetTop < l.scrollTop) l.scrollTop = lit.offsetTop;
+      else if (lit && lit.offsetTop + lit.offsetHeight > l.scrollTop + l.clientHeight) l.scrollTop = lit.offsetTop + lit.offsetHeight - l.clientHeight;
+    };
+    place(true);
+    const move = () => place();
+    window.addEventListener("scroll", move, true);
+    window.addEventListener("resize", move);
+    return () => {
+      window.removeEventListener("scroll", move, true);
+      window.removeEventListener("resize", move);
+    };
+  });
   const highlighted: ReactNode[] = [];
   {
     let at = 0;
@@ -1087,7 +1186,7 @@ export function NewTaskModal({
 
   // The prefixes that can set something here, for the legend and the placeholder, with an example of each.
   const example: Partial<Record<TokenPrefix, string>> = {
-    ...(typeTabs.length > 1 ? { "/": typeTabs.some((t) => t.id === "plan") ? "plan" : typeWord(typeTabs.find((t) => t.id !== offered[0])?.id ?? null) } : {}),
+    ...(labelWords.length ? { "/": "plan" } : typeTabs.length > 1 ? { "/": typeWord(typeTabs.find((t) => t.id !== offered[0])?.id ?? null) } : {}),
     ...(atVocab.length ? { "@": placeNames[(projects ?? []).findIndex((p) => p.id !== project?.id)] ?? atVocab[0] } : {}),
     "!": modelList[0]?.id ?? DEFAULT_WORD,
     ...(efforts ? { "^": effortList.includes("high") ? "high" : (effortList[0] ?? DEFAULT_WORD) } : {}),
@@ -1098,7 +1197,8 @@ export function NewTaskModal({
 
   // What the tokens set, and what a token set (its × takes it out).
   const setBy = (prefix: TokenPrefix) => tokens.some((t) => t.prefix === prefix && t.value !== undefined);
-  const removeKind = (prefix: TokenPrefix) => () => untoken((t) => t.prefix === prefix);
+  const removeKind = (prefix: TokenPrefix) => () => untoken((t) => t.prefix === prefix && !(prefix === "/" && isLabelWord(t.value)));
+  const typeSet = tokens.some((t) => t.prefix === "/" && t.value !== undefined && !isLabelWord(t.value));
   const typeInfo = typeTabs.find((t) => t.id === taskType);
   const modelLabel = (m: string) => modelList.find((x) => x.id === m)?.label ?? m;
   const where = subproject
@@ -1150,11 +1250,11 @@ export function NewTaskModal({
                 ? "Ask anything, or describe what to try out or look into (markdown). Its agent works in its own folder, with no repository, and can use the board."
                 : taskType === "scratch"
                   ? "Ask anything about the project, or describe what to look into or try out (markdown). Its agent works in its own folder, reads the repository and can use the board."
-                  : taskType === "plan"
+                  : docType === "plan"
                     ? "Describe what to plan. Its agent looks into it and writes an HTML plan that you iterate on together (markdown)."
-                    : taskType === "artifact"
+                    : docType === "artifact"
                       ? "Describe the artifact: what it's for and what it should show or do (markdown). Its agent designs it as an HTML page, kept and shown in the task."
-                      : taskType === "diagram"
+                      : docType === "diagram"
                         ? "Describe what to diagram: the flow, structure or sequence to show (markdown). Its agent draws it as a Mermaid diagram."
                         : asGroup
                           ? "Describe the work. Its agent plans it across the group's projects and creates their tasks (markdown)."
@@ -1194,17 +1294,17 @@ export function NewTaskModal({
             onPaste={attach.onPaste}
             className={clsx(EDITOR_TEXT, "relative block w-full resize-y bg-transparent text-transparent caret-fg outline-none selection:bg-accent/30 placeholder:text-faint")}
           />
-          {listOpen && listAt && (
+          {listOpen && (
             <div
+              ref={list}
               role="listbox"
               aria-label={TOKEN_HELP.find((h) => h.prefix === completing!.prefix)!.what}
-              className="absolute z-10 w-72 rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
-              style={{ top: listAt.top, left: listAt.left }}
+              className="fixed z-10 w-72 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
               // Keeps the editor focused, so picking doesn't close the list first.
               onMouseDown={(e) => e.preventDefault()}
             >
               <div className="px-2 pt-1 pb-1 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
-                {{ "/": "Type", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
+                {{ "/": "Type or label", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
               </div>
               {matches.map((s, i) => (
                 <button
@@ -1234,10 +1334,20 @@ export function NewTaskModal({
               icon={asGroup && !docType ? <Folder size={12} /> : typeInfo.icon}
               label={asGroup && !docType ? "Group task" : typeInfo.label}
               title={typeInfo.hint}
-              onRemove={setBy("/") ? removeKind("/") : undefined}
+              onRemove={typeSet ? removeKind("/") : undefined}
               removeTitle="Remove the type"
             />
           )}
+          {labels.map((l) => (
+            <ReadsChip
+              key={l}
+              icon={documentInfo(l).icon}
+              label={labelling ? documentInfo(l).label : `${documentInfo(l).label} task`}
+              title={documentInfo(l).hint}
+              onRemove={() => untoken((t) => t.prefix === "/" && t.value === l)}
+              removeTitle={labelling ? "Remove the label" : "Remove the type"}
+            />
+          ))}
           <ReadsChip
             icon={noProject ? <NotebookPen size={12} /> : asGroup ? <Folder size={12} /> : <FolderGit2 size={12} />}
             label={noProject ? `No project (${scratch!.name})` : asGroup ? group : subproject ? `${project!.key}-${subproject.number}` : project!.name}
@@ -1307,7 +1417,7 @@ export function NewTaskModal({
         </div>
         <DraftAttachments draft={attach} hostId={target.host_id} />
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pt-1">
-          {!subproject && inProject && taskType === null && !fanout && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
+          {!subproject && inProject && codeTask && !asSubproject && !fanout && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
           {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
           {pickConfig && <ConfigSelect className={pickerClass} configs={configs} value={config} onChange={setConfig} />}
           <div className="-my-1 ml-auto flex items-center gap-1">
@@ -1344,6 +1454,12 @@ export function NewTaskModal({
             board and create and start tasks{subproject ? " (in the subproject)" : ""}. There's no worktree, review or merge.
           </div>
         )}
+        {labelling && labels.length > 0 && (
+          <div className="text-[12px] text-muted">
+            Besides its other work, its agent writes {labelList(labels)} in the task's own folder, each shown in a tab of the task.
+            {labels.includes("plan") && " It writes the plan first, for you to agree on before it starts the work."}
+          </div>
+        )}
         {docType && (
           <div className="text-[12px] text-muted">
             {asGroup
@@ -1359,6 +1475,7 @@ export function NewTaskModal({
               : "It gets its own worktree and thread, and a board of tasks: each branches from the subproject's branch and merges back into it, and the subproject is merged as a whole through its own pull request."}
           </div>
         )}
+        {labelBlock && <div className="text-[12px] text-amber-300">{labelBlock}</div>}
         {fanout && (
           <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>
             {fanoutBlock ??
@@ -1373,34 +1490,36 @@ export function NewTaskModal({
             {whenLoaded && " It's created once they're in."}
           </div>
         )}
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
-          <span className="mr-auto flex min-w-0 items-center gap-3">
-            <Toggle checked={addAnother} onChange={changeAddAnother} label="Add another" />
-            {created && (
-              <span className="truncate text-xs text-muted" title={created.title}>
-                Created {created.key}
-              </span>
-            )}
-          </span>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
-            {many
-              ? start && deps && dependsOn.length
-                ? `Create & queue ${runs.length}`
-                : start
-                  ? `Create & start ${runs.length}`
-                  : `Create ${runs.length} ${noun}s`
-              : start && deps && dependsOn.length
-                ? "Create & queue"
-                : start
-                  ? "Create & start"
-                  : `Create ${noun}`}
-            <span className="translate-y-px text-[11px] font-normal text-white/60">{SUBMIT_KEYS}</span>
-          </Button>
-        </div>
+        <ModalFooter className="space-y-3">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
+            <span className="mr-auto flex min-w-0 items-center gap-3">
+              <Toggle checked={addAnother} onChange={changeAddAnother} label="Add another" />
+              {created && (
+                <span className="truncate text-xs text-muted" title={created.title}>
+                  Created {created.key}
+                </span>
+              )}
+            </span>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
+              {many
+                ? start && deps && dependsOn.length
+                  ? `Create & queue ${runs.length}`
+                  : start
+                    ? `Create & start ${runs.length}`
+                    : `Create ${runs.length} ${noun}s`
+                : start && deps && dependsOn.length
+                  ? "Create & queue"
+                  : start
+                    ? "Create & start"
+                    : `Create ${noun}`}
+              <span className="translate-y-px text-[11px] font-normal text-white/60 touch:hidden">{SUBMIT_KEYS}</span>
+            </Button>
+          </div>
+        </ModalFooter>
       </form>
       {pickingLink && (
         <AsanaPicker
@@ -1435,31 +1554,40 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
       {...opensTask(task, open)}
       onContextMenu={menuHandler(task, onMenu)}
       data-task={task.id}
-      className={clsx("flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset", open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : "bg-panel/60")}
+      className={clsx(
+        "flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset narrow:flex-wrap narrow:gap-x-2 narrow:px-3",
+        open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : "bg-panel/60",
+      )}
     >
       <span className="pt-0.5">
         <StatusIcon status={task.status} />
       </span>
-      <span className="w-14 shrink-0 pt-px font-mono text-[11.5px] text-faint">
+      <span className="w-14 shrink-0 pt-px font-mono text-[11.5px] text-faint narrow:w-auto">
         {keyPrefix(task, project)}-{task.number}
       </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] text-fg">{task.title}</div>
+      <div className="min-w-0 flex-1 narrow:order-last narrow:basis-full narrow:pl-[22px]">
+        <div className="truncate text-[13px] text-fg narrow:line-clamp-2 narrow:whitespace-normal">{task.title}</div>
         {task.attention_reason && task.status === "needs_attention" && (
           <div className="mt-0.5 line-clamp-2 text-[12px] text-amber-200/80">{task.attention_reason}</div>
         )}
         {agentWaiting(task) && <WaitReason wait={agentWaiting(task)!} className="mt-0.5 truncate text-[12px] text-muted" />}
       </div>
-      <div className="flex shrink-0 items-center gap-3 pt-px text-[11.5px] text-faint">
+      {/* On a phone, the title goes on a line of its own under these. */}
+      <div className="flex shrink-0 items-center gap-3 pt-px text-[11.5px] text-faint narrow:min-w-0 narrow:flex-1 narrow:gap-2 narrow:overflow-hidden">
         <TaskMarks task={task} />
         {task.subproject && <SubprojectBadge progress={progress} />}
         {task.subproject && <SubprojectBoardButton task={task} />}
         {isGroupTask(task) && <GroupTaskBadge progress={progress} />}
-        {task.task_type && <TaskTypeBadge type={task.task_type} progress={isGroupTask(task) ? undefined : progress} />}
+        <TypeBadges task={task} progress={progress} />
         {task.running && <RunState task={task} />}
         {mergeQueued(task) && (
           <span className="flex items-center gap-1 text-muted" title="Waits for the merge in progress in this project">
             <Clock size={11} /> queued to merge
+          </span>
+        )}
+        {rejoinsMerge(task) && (
+          <span className="flex items-center gap-1 text-muted" title="Stepped out of the merge queue to make changes: rejoins it when its agent is done">
+            <GitMerge size={11} /> rejoins merge queue
           </span>
         )}
         <DependencyBadge task={task} project={project} />
@@ -1471,10 +1599,11 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
         {cost(task.cost_usd) && <span>{cost(task.cost_usd)}</span>}
-        <span className="w-14 text-right">
+        <span className="w-14 text-right narrow:ml-auto narrow:w-auto narrow:shrink-0">
           <ActivityTime task={task} />
         </span>
       </div>
+      <MoveButton task={task} onMenu={onMenu} className="-my-1.5 -mr-1.5 h-8 w-8" />
     </div>
   );
 });
@@ -1501,6 +1630,8 @@ const ARCHIVED_KEY = "ia.board.archived";
 const WIDE_BOARD = 1180;
 // How the boards sort their tasks, on this client.
 const SORT_KEY = "ia.board.sort";
+// The column the narrow layout's board shows (one at a time), on this client.
+const COLUMN_KEY = "ia.board.column";
 // Each board's search and filters, in this tab (so they last over a reload, and don't stay on forever).
 const queryKey = (board: string) => `ia.board.query.${board}`;
 
@@ -1552,13 +1683,14 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
       header={({ controls, newTask }) =>
         subproject ? (
           <header className="drag flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
+            <MenuButton />
             <IconButton className="no-drag" title={`Back to ${project.name}`} onClick={() => navigate({ name: "board", projectId })}>
               <ChevronLeft size={16} />
             </IconButton>
-            <button className="no-drag text-[12.5px] text-muted hover:text-fg" onClick={() => navigate({ name: "board", projectId })}>
+            <button className="no-drag text-[12.5px] text-muted hover:text-fg narrow:hidden" onClick={() => navigate({ name: "board", projectId })}>
               {project.name}
             </button>
-            <ChevronRight size={12} className="text-faint" />
+            <ChevronRight size={12} className="text-faint narrow:hidden" />
             <Layers size={14} className="shrink-0 text-accent" />
             <span className="font-mono text-[12px] text-faint">
               {project.key}-{subproject.number}
@@ -1573,19 +1705,18 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
             <div className="no-drag ml-auto flex items-center gap-1.5">
               {controls}
               <Button size="sm" variant="ghost" onClick={() => openTask(subproject.id)} title="The subproject's own agent, which plans and coordinates its tasks">
-                {subproject.running ? <RunningDot /> : <MessagesSquare size={14} />} Thread
+                {subproject.running ? <RunningDot /> : <MessagesSquare size={14} />} <span className="narrow:hidden">Thread</span>
               </Button>
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
+              <NewTaskButton onClick={newTask} />
             </div>
           </header>
         ) : (
-          <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
-            <FolderGit2 size={16} className="text-muted" />
+          <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
+            <MenuButton />
+            <FolderGit2 size={16} className="shrink-0 text-muted narrow:hidden" />
             <div className="flex min-w-0 items-baseline gap-2">
-              <h1 className="shrink-0 text-[14px] font-semibold">{project.name}</h1>
-              <span className="truncate font-mono text-[11.5px] text-faint">
+              <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{project.name}</h1>
+              <span className="truncate font-mono text-[11.5px] text-faint narrow:hidden">
                 {hostCount > 1 && <span className="mr-1.5 font-sans text-muted">{host?.name} ·</span>}
                 {project.repo_path}
               </span>
@@ -1595,9 +1726,7 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
               <IconButton title="Project settings" onClick={() => navigate({ name: "projectSettings", projectId })}>
                 <Settings2 size={15} />
               </IconButton>
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
+              <NewTaskButton onClick={newTask} />
             </div>
           </header>
         )
@@ -1627,11 +1756,12 @@ export function GroupBoard({ hostId, group }: { hostId: string; group: string })
         `${group} has no projects any more, so only its group tasks are left. Their agents can still run, and you can delete them; put a project back in the group to plan in it again.`
       }
       header={({ controls, newTask }) => (
-        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
-          <Folder size={16} className="shrink-0 text-muted" />
+        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
+          <MenuButton />
+          <Folder size={16} className="shrink-0 text-muted narrow:hidden" />
           <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="shrink-0 text-[14px] font-semibold">{group}</h1>
-            <span className="min-w-0 truncate text-[11.5px] text-faint">
+            <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{group}</h1>
+            <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
               {hostCount > 1 && <span className="mr-1.5 text-muted">{host?.name} ·</span>}
               {projects.map((p, i) => (
                 <span key={p.id}>
@@ -1645,11 +1775,7 @@ export function GroupBoard({ hostId, group }: { hostId: string; group: string })
           </div>
           <div className="no-drag ml-auto flex items-center gap-1.5">
             {controls}
-            {projects.length > 0 && (
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
-            )}
+            {projects.length > 0 && <NewTaskButton onClick={newTask} />}
           </div>
         </header>
       )}
@@ -1709,9 +1835,11 @@ function TaskBoard({
   const [archivedOpen, setArchivedOpen] = useState(() => localStorage.getItem(ARCHIVED_KEY) === "open");
   const [dropTarget, setDropTarget] = useState<{ status: Status; before: string | null } | null>(null);
   const [dropErr, setDropErr] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; taskId: string } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; taskId: string; move?: boolean } | null>(null);
   const [picking, setPicking] = useState<Task | null>(null);
   const [query, setQuery] = useState(() => loadQuery(boardKey));
+  const narrow = useNarrow();
+  const [column, setColumn] = useState<Status | null>(() => localStorage.getItem(COLUMN_KEY) as Status | null);
   useEffect(() => {
     if (isFiltering(query)) sessionStorage.setItem(queryKey(boardKey), JSON.stringify(query));
     else sessionStorage.removeItem(queryKey(boardKey));
@@ -1754,7 +1882,7 @@ function TaskBoard({
   }, [hosts, hostId, projects, profiles]);
   const progress = useProgress();
   const createdProgress = useCreatedProgress();
-  const progressOf = (t: Task) => (isGroupTask(t) || t.task_type === "plan" ? createdProgress[t.id] : progress[t.id]);
+  const progressOf = (t: Task) => (isGroupTask(t) || (!t.subproject && taskLabels(t).includes("plan")) ? createdProgress[t.id] : progress[t.id]);
   const parentId = subproject?.id ?? null;
   // Project ids are only unique on their host.
   const byId = useMemo(() => new Map(projects.map((p) => [`${p.host_id}:${p.id}`, p])), [projects]);
@@ -1805,7 +1933,7 @@ function TaskBoard({
   const statusOptions: FilterOption<Status>[] = statuses.map((s) => ({ id: s.id, label: s.label }));
   const kinds = useMemo(() => {
     const on = new Set<TaskKind>(query.kinds);
-    for (const ts of [...Object.values(columns), archived]) for (const t of ts) on.add(taskKind(t));
+    for (const ts of [...Object.values(columns), archived]) for (const t of ts) for (const k of taskKinds(t)) on.add(k);
     return [...on];
   }, [columns, archived, query.kinds]);
   const projectOptions = useMemo(() => {
@@ -1856,6 +1984,54 @@ function TaskBoard({
       return next;
     });
 
+  // The narrow layout's board shows one column at a time, picked above it or by swiping sideways: the one picked
+  // last, while it's shown. Until one is picked, what needs attention, or else the first column with tasks.
+  const firstColumn = () => {
+    const work = shownStatuses.filter((s) => s.id !== "backlog");
+    return (work.find((s) => s.id === "needs_attention" && shown[s.id].length) ?? work.find((s) => shown[s.id].length) ?? work[0] ?? shownStatuses[0])?.id;
+  };
+  const shownColumn = column && shownStatuses.some((s) => s.id === column) ? column : firstColumn();
+  // Which that is is settled once the board has tasks, so it doesn't change under you as they move.
+  const settle = !column && total > 0 ? shownColumn : undefined;
+  useEffect(() => {
+    if (settle) setColumn(settle);
+  }, [settle]);
+  const columnIndex = shownStatuses.findIndex((s) => s.id === shownColumn);
+  const columnsRef = useRef<HTMLDivElement>(null);
+  const columnTabsRef = useRef<HTMLDivElement>(null);
+  /** The column being scrolled to, which the columns passed on the way don't take over from. */
+  const scrollingTo = useRef<{ index: number; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const pickColumn = (s: Status) => {
+    setColumn(s);
+    localStorage.setItem(COLUMN_KEY, s);
+  };
+  useLayoutEffect(() => {
+    const el = columnsRef.current;
+    if (!el || columnIndex < 0) return;
+    columnTabsRef.current?.querySelector("[aria-selected=true]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // At once when the board opens, smoothly from one column to another.
+    const smooth = el.dataset.shown === "1";
+    el.dataset.shown = "1";
+    const left = columnIndex * el.clientWidth;
+    if (Math.abs(el.scrollLeft - left) <= 1) return;
+    if (smooth) {
+      clearTimeout(scrollingTo.current?.timer);
+      scrollingTo.current = { index: columnIndex, timer: setTimeout(() => (scrollingTo.current = null), 800) };
+    }
+    el.scrollTo({ left, behavior: smooth ? "smooth" : "instant" });
+  }, [columnIndex, narrow, view]);
+  const onColumnsScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const i = Math.round(el.scrollLeft / el.clientWidth);
+    if (Math.abs(el.scrollLeft - i * el.clientWidth) > 2) return;
+    if (scrollingTo.current) {
+      if (scrollingTo.current.index === i) scrollingTo.current = null;
+      return;
+    }
+    const s = shownStatuses[i]?.id;
+    if (s && s !== shownColumn) pickColumn(s);
+  };
+
   const onDragOver = (e: DragEvent, status: Status) => {
     if (!e.dataTransfer.types.includes("text/task-id")) return;
     e.preventDefault();
@@ -1870,13 +2046,17 @@ function TaskBoard({
     if (dropTarget?.status !== status || dropTarget.before !== beforeId) setDropTarget({ status, before: beforeId });
   };
 
-  const onDrop = async (e: DragEvent, status: Status) => {
+  const onDrop = (e: DragEvent, status: Status) => {
     e.preventDefault();
-    const id = e.dataTransfer.getData("text/task-id");
     const target = dropTarget;
     setDropTarget(null);
-    const task = all[id];
-    if (!task) return;
+    const task = all[e.dataTransfer.getData("text/task-id")];
+    if (task) moveTask(task, status, target?.before ?? null);
+  };
+
+  /** Moves `task` into column `status` before task `before`, or after its last task shown: as dropping it there does. */
+  const moveTask = async (task: Task, status: Status, before: string | null) => {
+    const id = task.id;
     // Dragged from the Archived section back into Done, it's done from now (and archived again in two days).
     const unarchive = status === "done" && isArchived(task, Date.now());
     // Sorted, it keeps its place in its own column, and goes last in another.
@@ -1884,7 +2064,7 @@ function TaskBoard({
     const col = columns[status].filter((t) => t.id !== id);
     // Before the card it's dropped above, or after the last card shown, which with filters may not be the column's last.
     const last = shown[status].filter((t) => t.id !== id).at(-1);
-    const idx = sort !== "manual" ? -1 : target?.before ? col.findIndex((t) => t.id === target.before) : last ? col.findIndex((t) => t.id === last.id) + 1 : -1;
+    const idx = sort !== "manual" ? -1 : before ? col.findIndex((t) => t.id === before) : last ? col.findIndex((t) => t.id === last.id) + 1 : -1;
     const { position, moves } = dropPosition(col, idx === -1 ? col.length : idx);
     if (task.status === status && task.position === position && !moves.length && !unarchive) return;
     const host = hostOf(task);
@@ -1929,26 +2109,43 @@ function TaskBoard({
   // Older hosts have no resolutions, so their tasks keep the browser's menu. The same function
   // from render to render, so the (memoized) cards don't all redraw.
   const onMenu = useCallback(
-    (e: MouseEvent, task: Task) => {
-      if (!hostSupports(hosts.find((h) => h.id === task.host_id), 19)) return;
+    (e: MouseEvent, task: Task, move?: boolean) => {
+      if (!move && !hostSupports(hosts.find((h) => h.id === task.host_id), 19)) return;
       e.preventDefault();
-      setMenu({ x: e.clientX, y: e.clientY, taskId: task.id });
+      // From its menu button, under the button.
+      const r = move ? (e.currentTarget as HTMLElement).getBoundingClientRect() : null;
+      setMenu({ x: r ? r.right : e.clientX, y: r ? r.bottom + 4 : e.clientY, taskId: task.id, move });
     },
     [hosts],
   );
 
   const menuTask = menu && all[menu.taskId];
+  /** The columns to move a task to from its menu: all but Done where Done's resolutions follow them. */
+  const moveItems = (task: Task): MenuItem[] =>
+    statuses
+      .filter((s) => s.id !== "done" || !hostSupports(hostOf(task), 19))
+      .map((s) => ({
+        label: (
+          <span className="flex items-center gap-2">
+            <StatusIcon status={s.id} size={13} /> {s.label}
+          </span>
+        ),
+        checked: task.status === s.id,
+        onSelect: () => task.status !== s.id && moveTask(task, s.id, null),
+      }));
   const canAdd = !!project || !!scratch;
 
   // A column or section with nothing to show: filtered out, or empty.
   const emptyText = (status: Status) =>
     columns[status].length
       ? "No matching tasks"
-      : status === "in_progress"
-        ? "Drop a task here to start its agent"
-        : status === "ready_for_merge"
-          ? "Drop a task here to have its agent merge it"
-          : "No tasks";
+      : narrow
+        ? "No tasks"
+        : status === "in_progress"
+          ? "Drop a task here to start its agent"
+          : status === "ready_for_merge"
+            ? "Drop a task here to have its agent merge it"
+            : "No tasks";
 
   // Every view's name on a roomy board, the current one's on a wide one, and only icons on a narrow one.
   const labelled = (id: BoardView) => roomy || (wide && view === id);
@@ -1962,15 +2159,38 @@ function TaskBoard({
           aria-pressed={view === id}
           onClick={() => changeView(id)}
           className={clsx(
-            "inline-flex h-6 items-center gap-1 rounded text-xs font-medium transition-colors",
+            "inline-flex h-6 items-center gap-1 rounded text-xs font-medium transition-colors narrow:h-8",
             labelled(id) ? "px-2" : "px-1.5",
             view === id ? "bg-raised text-fg" : "text-muted hover:text-fg",
           )}
         >
-          <Icon size={13} /> {labelled(id) && label}
+          <Icon size={13} /> {labelled(id) && <span className="narrow:hidden">{label}</span>}
         </button>
       ))}
     </div>
+  );
+
+  /** A column's cards, with where a dragged one would go, and what it says when it has none. */
+  const cards = (status: Status) => (
+    <>
+      {shown[status].map((t) => (
+        <div key={t.id}>
+          {dropTarget?.status === status && dropTarget.before === t.id && <DropLine status={status} />}
+          <TaskCard task={t} project={projectOf(t)} progress={progressOf(t)} onMenu={onMenu} />
+        </div>
+      ))}
+      {sort === "manual" && dropTarget?.status === status && dropTarget.before === null && <DropLine status={status} />}
+      {shown[status].length === 0 && <div className="px-2 py-6 text-center text-[12px] text-faint">{emptyText(status)}</div>}
+      {status === "done" && shownArchived.length > 0 && (
+        <button
+          onClick={showArchived}
+          title="Tasks done for two days or more are in the list view"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] text-faint transition-colors hover:bg-raised/40 hover:text-fg"
+        >
+          <Archive size={12} /> {shownArchived.length} archived
+        </button>
+      )}
+    </>
   );
 
   const queryControls = (
@@ -1990,12 +2210,12 @@ function TaskBoard({
   return (
     <div ref={setRoot} className="flex h-full min-h-0 flex-col">
       {header({ controls, newTask: () => setNewIn("todo") })}
-      {notice && <div className="border-b border-line bg-panel/60 px-5 py-2 text-[12.5px] text-muted">{notice}</div>}
+      {notice && <div className="border-b border-line bg-panel/60 px-5 py-2 text-[12.5px] text-muted narrow:px-3">{notice}</div>}
       {(filtering || !wide) && (
         <FilterBar query={query} onChange={setQuery} tools={!wide && queryControls} shown={shownCount} total={total} statuses={statusOptions} projects={projectOptions} />
       )}
       {dropErr && (
-        <div className="flex items-center gap-2 border-b border-line bg-red-500/10 px-5 py-2 text-[12.5px] text-red-300">
+        <div className="flex items-center gap-2 border-b border-line bg-red-500/10 px-5 py-2 text-[12.5px] text-red-300 narrow:px-3">
           <span className="min-w-0 flex-1">{dropErr}</span>
           <IconButton className="h-6 w-6" title="Dismiss" onClick={() => setDropErr(null)}>
             <X size={14} />
@@ -2012,7 +2232,7 @@ function TaskBoard({
         <GraphView tasks={shownTasks} projectOf={projectOf} progressOf={progressOf} onMenu={onMenu} />
       ) : view === "list" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="space-y-5 p-6">
+          <div className="space-y-5 p-6 narrow:p-3">
             {shownStatuses.map((s) => {
               const items = shown[s.id];
               // The backlog is open or collapsed in both views at once, and starts collapsed.
@@ -2103,6 +2323,53 @@ function TaskBoard({
             )}
           </div>
         </div>
+      ) : narrow ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div ref={columnTabsRef} role="tablist" aria-label="Columns" className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-line px-3 py-2 [scrollbar-width:none]">
+            {shownStatuses.map((s) => (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={s.id === shownColumn}
+                onClick={() => pickColumn(s.id)}
+                className={clsx(
+                  "flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] transition-colors",
+                  s.id === shownColumn ? "border-accent/50 bg-accent/10 text-fg" : "border-line text-muted",
+                )}
+              >
+                <StatusIcon status={s.id} size={13} />
+                {s.label}
+                <span className="text-faint">{shown[s.id].length}</span>
+              </button>
+            ))}
+          </div>
+          <div ref={columnsRef} onScroll={onColumnsScroll} className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
+            {shownStatuses.map((s) => (
+              <section
+                key={s.id}
+                role="tabpanel"
+                aria-label={s.label}
+                inert={s.id !== shownColumn}
+                onDragOver={(e) => onDragOver(e, s.id)}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
+                }}
+                onDrop={(e) => onDrop(e, s.id)}
+                className="h-full w-full shrink-0 snap-start snap-always space-y-2 overflow-y-auto px-3 pt-3 pb-6"
+              >
+                {cards(s.id)}
+                {canAdd && CAN_ADD.has(s.id) && (
+                  <button
+                    onClick={() => setNewIn(s.id)}
+                    className="flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line text-[12.5px] text-muted hover:text-fg"
+                  >
+                    <Plus size={14} /> New task in {s.label}
+                  </button>
+                )}
+              </section>
+            ))}
+          </div>
+        </div>
       ) : (
         <div ref={kanbanRef} onWheel={onKanbanWheel} className="kanban-scroll min-h-0 flex-1 overflow-x-auto">
           {/* w-max keeps the right padding when the columns overflow; min-w-full lets them grow to fill a wide window. */}
@@ -2164,25 +2431,7 @@ function TaskBoard({
                     </div>
                   </div>
                   {/* pt-px leaves room for the open card's ring, which the scroll area would clip at the top. */}
-                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pt-px pb-3">
-                    {shown[s.id].map((t) => (
-                      <div key={t.id}>
-                        {dropTarget?.status === s.id && dropTarget.before === t.id && <DropLine status={s.id} />}
-                        <TaskCard task={t} project={projectOf(t)} progress={progressOf(t)} onMenu={onMenu} />
-                      </div>
-                    ))}
-                    {sort === "manual" && dropTarget?.status === s.id && dropTarget.before === null && <DropLine status={s.id} />}
-                    {shown[s.id].length === 0 && <div className="px-2 py-6 text-center text-[12px] text-faint">{emptyText(s.id)}</div>}
-                    {s.id === "done" && shownArchived.length > 0 && (
-                      <button
-                        onClick={showArchived}
-                        title="Tasks done for two days or more are in the list view"
-                        className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-[12px] text-faint transition-colors hover:bg-raised/40 hover:text-fg"
-                      >
-                        <Archive size={12} /> {shownArchived.length} archived
-                      </button>
-                    )}
-                  </div>
+                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pt-px pb-3">{cards(s.id)}</div>
                 </section>
               ),
             )}
@@ -2193,13 +2442,23 @@ function TaskBoard({
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          title={`Complete ${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number} as`}
+          title={`${menu.move ? "Move" : "Complete"} ${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number} ${menu.move ? "to" : "as"}`}
           items={[
-            ...(Object.keys(RESOLUTION_LABELS) as Resolution[]).map((r) => ({
-              label: RESOLUTION_LABELS[r],
-              checked: menuTask.status === "done" && menuTask.resolution === r,
-              onSelect: () => complete(menuTask, r),
-            })),
+            ...(menu.move ? moveItems(menuTask) : []),
+            ...(hostSupports(hostOf(menuTask), 19)
+              ? (Object.keys(RESOLUTION_LABELS) as Resolution[]).map((r, i) => ({
+                  label: menu.move ? (
+                    <span className="flex items-center gap-2">
+                      <StatusIcon status="done" size={13} /> {RESOLUTION_LABELS[r]}
+                    </span>
+                  ) : (
+                    RESOLUTION_LABELS[r]
+                  ),
+                  checked: menuTask.status === "done" && menuTask.resolution === r,
+                  divider: i === 0,
+                  onSelect: () => complete(menuTask, r),
+                }))
+              : []),
             ...(hostSupports(hostOf(menuTask), REMINDERS_API)
               ? [starItem(menuTask, setDropErr, true), ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr)]
               : []),
@@ -2222,6 +2481,15 @@ function TaskBoard({
         />
       )}
     </div>
+  );
+}
+
+/** A board's New task button: just its + in the narrow layout. */
+function NewTaskButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button size="sm" variant="primary" onClick={onClick} aria-label="New task" className="narrow:h-9 narrow:w-9 narrow:px-0">
+      <Plus size={14} /> <span className="narrow:hidden">New task</span>
+    </Button>
   );
 }
 
@@ -2258,22 +2526,19 @@ export function ProfileBoard({ profile }: { profile: string }) {
       targets={targets}
       scratch={scratch}
       header={({ controls, newTask }) => (
-        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
+        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
+          <MenuButton />
           <ProfileAvatar name={profile} />
           <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="shrink-0 text-[14px] font-semibold">{profile}</h1>
-            <span className="min-w-0 truncate text-[11.5px] text-faint">
+            <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{profile}</h1>
+            <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
               {hosts.length > 1 && <span className="mr-1.5 text-muted">{on.map((h) => h.name).join(", ")} ·</span>}
               {projects.length ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : "No projects yet"}
             </span>
           </div>
           <div className="no-drag ml-auto flex items-center gap-1.5">
             {controls}
-            {(targets.length > 0 || scratch) && (
-              <Button size="sm" variant="primary" onClick={newTask}>
-                <Plus size={14} /> New task
-              </Button>
-            )}
+            {(targets.length > 0 || scratch) && <NewTaskButton onClick={newTask} />}
           </div>
         </header>
       )}

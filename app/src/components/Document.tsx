@@ -11,8 +11,8 @@ import type { Progress } from "./Board";
 import { Composer, Markdown } from "./Thread";
 import { Button, CARD_BADGE, copyText, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "./ui";
 
-/** What each type of task makes (API 42), in the order the new task dialog offers them. */
-export const TASK_TYPES: { id: DocumentType; label: string; icon: ReactNode; file: string; hint: string }[] = [
+/** What each label asks its task's agent for (API 71; types of task from API 42), in the order tasks show them. */
+export const LABEL_INFO: { id: DocumentType; label: string; icon: ReactNode; file: string; hint: string }[] = [
   { id: "plan", label: "Plan", icon: <ClipboardList size={12} />, file: "plan.html", hint: "An HTML plan its agent writes and you iterate on together" },
   {
     id: "artifact",
@@ -24,7 +24,7 @@ export const TASK_TYPES: { id: DocumentType; label: string; icon: ReactNode; fil
   { id: "diagram", label: "Diagram", icon: <Workflow size={12} />, file: "diagram.mmd", hint: "A Mermaid diagram" },
 ];
 
-/** A scratch task, which the new task dialog offers after them: in no project (API 47), or in a project (API 51). */
+/** A scratch task, which the new task dialog offers as a type: in no project (API 47), or in a project (API 51). */
 export const SCRATCH_TYPE = {
   id: "scratch" as const,
   label: "Scratch",
@@ -32,13 +32,14 @@ export const SCRATCH_TYPE = {
   hint: "Its agent works in its own folder, with no worktree, on whatever you ask: in a project it reads the repository, in no project it has none",
 };
 
-export const documentInfo = (t: DocumentType) => TASK_TYPES.find((x) => x.id === t) ?? TASK_TYPES[0];
+export const documentInfo = (t: DocumentType) => LABEL_INFO.find((x) => x.id === t) ?? LABEL_INFO[0];
 
-export const taskTypeInfo = (t: TaskType): { label: string; icon: ReactNode; hint: string; file?: string } =>
-  t === "scratch" ? SCRATCH_TYPE : (TASK_TYPES.find((x) => x.id === t) ?? TASK_TYPES[0]);
+export const taskTypeInfo = (t: TaskType | DocumentType): { label: string; icon: ReactNode; hint: string; file?: string } =>
+  t === "scratch" ? SCRATCH_TYPE : documentInfo(t);
 
-/** A plan, artifact, diagram or scratch task on a card: what it makes, or for a plan, how its tasks are doing. `compact`: the icon, and the words once the card has room. */
-export function TaskTypeBadge({ type, progress, compact }: { type: TaskType; progress?: Progress; compact?: boolean }) {
+/** A scratch task, or a task's label, on a card: what it is or makes, or for a plan, how the tasks it created are doing.
+ *  `compact`: the icon, and the words once the card has room. */
+export function TaskTypeBadge({ type, progress, compact }: { type: TaskType | DocumentType; progress?: Progress; compact?: boolean }) {
   const info = taskTypeInfo(type);
   if (compact)
     return (
@@ -114,12 +115,11 @@ async function sendPlanAnswers(task: Task, fields: PlanField[], version: number)
 }
 
 /**
- * A plan, artifact or diagram task's document, as its agent writes it, with the versions from
- * earlier turns, and a composer to ask for changes.
+ * A task's document for one of its labels (a plan, artifact or diagram), as its agent writes it, with
+ * the versions from earlier turns, and a composer to ask for changes.
  */
-export function DocumentView({ task, onShowThread }: { task: Task; onShowThread: () => void }) {
-  // Keyed by the task, so another task starts over.
-  const type = task.task_type as DocumentType;
+export function DocumentView({ task, label: type, onShowThread }: { task: Task; label: DocumentType; onShowThread: () => void }) {
+  // Keyed by the task and label, so another starts over.
   const info = documentInfo(type);
   // Null follows the latest version.
   const [picked, setPicked] = useState<number | null>(null);
@@ -130,7 +130,7 @@ export function DocumentView({ task, onShowThread }: { task: Task; onShowThread:
   useEffect(() => {
     let live = true;
     api
-      .document(task.host_id, task.id, picked ?? undefined)
+      .document(task.host_id, task.id, type, picked ?? undefined)
       .then((d) => {
         if (!live) return;
         setDoc(d);
@@ -140,7 +140,7 @@ export function DocumentView({ task, onShowThread }: { task: Task; onShowThread:
     return () => {
       live = false;
     };
-  }, [task.host_id, task.id, picked, task.document_at]);
+  }, [task.host_id, task.id, type, picked, task.document_at]);
 
   const messages = useThreadMessages(task.id);
   const reply = useMemo(() => (task.running ? null : lastReply(messages)), [messages, task.running]);
@@ -243,7 +243,7 @@ export function DocumentView({ task, onShowThread }: { task: Task; onShowThread:
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3 text-[12px]">
-        <span className="flex items-center gap-1.5 text-muted">
+        <span className="flex items-center gap-1.5 text-muted narrow:hidden">
           {info.icon} {info.label}
         </span>
         {versions.length > 0 && (
@@ -284,9 +284,10 @@ export function DocumentView({ task, onShowThread }: { task: Task; onShowThread:
                 <button
                   key={m.label}
                   onClick={() => setSource(m.on)}
-                  className={clsx("flex h-5 items-center gap-1 rounded px-1.5 text-[11.5px]", source === m.on ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                  aria-label={m.label}
+                  className={clsx("flex h-5 items-center gap-1 rounded px-1.5 text-[11.5px] narrow:h-7 narrow:px-2", source === m.on ? "bg-raised text-fg" : "text-muted hover:text-fg")}
                 >
-                  {m.icon} {m.label}
+                  {m.icon} <span className="narrow:hidden">{m.label}</span>
                 </button>
               ))}
             </div>

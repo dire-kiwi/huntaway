@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Check, Map as MapIcon, Maximize2, MessageCircleQuestion, Send, ShieldQuestion, X } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, type Message, type Project, type Task } from "../api";
+import { api, ownWorkDir, type Message, type Project, type Task } from "../api";
 import { openTask, usePanel } from "../router";
 import { keyPrefix, useStore, useThreadMessages } from "../store";
 import { threadModel, type Item } from "../threadModel";
@@ -50,7 +50,7 @@ const asks = (data: Any) => (QUESTION_TOOLS.includes(data.tool_name) && question
 function PromptLine({ data, task }: { data: Any; task: Task }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const m = toolMeta(data.tool_name, data.input, task.worktree_path ?? task.work_dir ?? null);
+  const m = toolMeta(data.tool_name, data.input, task.worktree_path ?? ownWorkDir(task));
   if (asks(data)) {
     const plan = data.tool_name === "ExitPlanMode";
     const text = plan ? "A plan to review" : questionsOf(data)[0].question;
@@ -128,7 +128,7 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
   const earlier = useStore((s) => s.threads[task.id]?.subagents);
   const delta = useStore((s) => s.deltas[task.id]);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
-  const cwd = task.worktree_path ?? task.work_dir ?? null;
+  const cwd = task.worktree_path ?? ownWorkDir(task);
   const lines = useMemo(() => tail(model.items, cwd), [model.items, cwd]);
   const prompts = pendingPrompts(model.items);
   const open = usePanel()?.taskId === task.id;

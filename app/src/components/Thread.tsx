@@ -12,6 +12,7 @@ import {
   Clock,
   FileText,
   Globe,
+  History,
   Hourglass,
   Layers,
   LayoutGrid,
@@ -46,7 +47,7 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type Task } from "../api";
+import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type RewindResult, type Task, type Turn } from "../api";
 import { useHost, useProject, useStore, useThreadMessages } from "../store";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
@@ -56,7 +57,10 @@ import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
+import { TOUCH_QUERY } from "../narrow";
 import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
+import { RewindDialog, RewindNote } from "./Rewind";
+import { useTurns } from "../turns";
 
 // ---------- markdown ----------
 
@@ -686,13 +690,13 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
       {pending ? <ToolInput name={data.tool_name} input={data.input} /> : <div className="truncate font-mono text-[12px] text-faint">{m.summary}</div>}
       {pending && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")}>
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")} className="narrow:px-4">
             <Check size={13} /> Allow
           </Button>
-          <Button size="sm" disabled={busy} onClick={() => decide("allow_always")}>
+          <Button size="sm" disabled={busy} onClick={() => decide("allow_always")} className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal">
             Always allow {data.tool_name} for this thread
           </Button>
-          <Button size="sm" variant="danger" disabled={busy} onClick={() => decide("deny")}>
+          <Button size="sm" variant="danger" disabled={busy} onClick={() => decide("deny")} className="narrow:px-4">
             Deny
           </Button>
           {err && <span className="self-center text-xs text-red-400">{err}</span>}
@@ -780,6 +784,17 @@ export const Thread = memo(function Thread({
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, []);
 
+  // The turns with checkpoints, for rewinding to before one of the user's messages (API 70).
+  const turns = useTurns(task);
+  const [rewinding, setRewinding] = useState<Turn | null>(null);
+  const turnsCtx = useMemo(() => {
+    const list = turns.data?.turns;
+    if (!list?.length) return null;
+    // A message's first turn (the agent can go on by itself after it).
+    const byMessage = new Map<number, Turn>();
+    for (const t of list) if (t.message_id !== null && !byMessage.has(t.message_id)) byMessage.set(t.message_id, t);
+    return { byMessage, rewind: setRewinding };
+  }, [turns.data]);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, pages?.subagents);
   const items = useStableGroupKeys(model.items, task.id);
   const data = useMemo(
@@ -901,15 +916,17 @@ export const Thread = memo(function Thread({
             </div>
           )}
           {viewed && (
-            <div key={viewed.id} className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6">
+            <div key={viewed.id} className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4">
               <InMainThread.Provider value={false}>
                 <SubagentThread sub={viewed} />
               </InMainThread.Provider>
             </div>
           )}
-          <div ref={list} className={clsx("mx-auto w-full max-w-3xl space-y-4 px-5 py-6", viewed && "hidden")}>
+          <div ref={list} className={clsx("mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4", viewed && "hidden")}>
             {messages && items.length === 0 && !task.running && !pages?.more && empty}
-            <ItemList items={items} running={task.running} hostId={task.host_id} cwd={cwd} />
+            <TurnsCtx.Provider value={turnsCtx}>
+              <ItemList items={items} running={task.running} hostId={task.host_id} cwd={cwd} />
+            </TurnsCtx.Provider>
             <StreamingText taskId={task.id} onGrow={follow} />
             {task.running && (
               <div className="flex items-center gap-2 text-[12.5px] text-muted">
@@ -933,6 +950,9 @@ export const Thread = memo(function Thread({
         </div>
         {/* A fresh draft per task: its attachments are on this task's host. */}
         <Composer key={task.id} task={task} placeholder={placeholder} />
+        {rewinding && (
+          <RewindDialog task={task} turn={rewinding} head={turns.data?.head} onClose={() => setRewinding(null)} onDone={(r, convo) => rewound(task, r, convo)} />
+        )}
       </div>
     </ThreadCtx.Provider>
   );
@@ -1003,15 +1023,43 @@ const ItemList = memo(function ItemList({ items, running, hostId, cwd }: { items
 });
 
 /** Memoized: a new message leaves the items it doesn't change as they were (see buildModel), and their rows with them. */
+/** The thread's turns with checkpoints, by the message each started with, and how to rewind to before one (API 70). */
+const TurnsCtx = createContext<{ byMessage: Map<number, Turn>; rewind: (t: Turn) => void } | null>(null);
+
+/** Beside a user message that started a turn: rewind the task to before it, or that it was rewound. */
+function RewindMark({ id }: { id: string }) {
+  const turns = useContext(TurnsCtx);
+  const turn = turns?.byMessage.get(Number(id));
+  if (!turns || !turn) return null;
+  if (turn.stale)
+    return (
+      <span className="mr-2 self-center text-[11px] text-faint" title="A rewind went back to before this message">
+        rewound
+      </span>
+    );
+  if (!turn.rewind.ok) return null;
+  return (
+    <button
+      className="mr-1 self-center rounded p-1 text-faint opacity-0 group-hover:opacity-100 hover:bg-white/5 hover:text-fg focus:opacity-100"
+      title="Rewind to here: put the files back to how they were before this message"
+      aria-label="Rewind to here"
+      onClick={() => turns.rewind(turn)}
+    >
+      <History size={13} />
+    </button>
+  );
+}
+
 const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running: boolean; hostId: string; cwd?: string | null }) {
   switch (it.type) {
     case "user":
       return (
-        <div className="flex justify-end">
+        <div className="group flex justify-end">
+          <RewindMark id={it.key} />
           <div
             title={it.steered ? "Sent while the agent was working; it read it here" : undefined}
             className={clsx(
-              "max-w-[85%] rounded-2xl rounded-br-md border px-3.5 py-2 text-[13.5px] whitespace-pre-wrap",
+              "max-w-[85%] rounded-2xl rounded-br-md border px-3.5 py-2 text-[13.5px] whitespace-pre-wrap narrow:break-words",
               it.auto ? "border-line bg-transparent text-muted italic" : "border-line-strong bg-raised",
             )}
           >
@@ -1241,6 +1289,23 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
   for (const watch of sendWatchers.get(key) ?? []) watch(end);
 }
 
+/** The composers showing each draft, to put text into. */
+const composerFills = new Map<string, (text: string, files: AttachmentRef[]) => void>();
+
+/**
+ * After a rewind that took the conversation back: the message rewound to goes into the task's composer (ahead of
+ * what's there), to edit and send again. Not the board's own messages (a review's issues, say).
+ */
+export function rewound(task: Task, r: RewindResult, conversation: boolean) {
+  if (!conversation || r.message.auto || !r.message.text?.trim()) return;
+  const { text, files } = splitAttachments(r.message.text.trim());
+  const key = composerDraftKey(task);
+  const fill = composerFills.get(key);
+  if (fill) return fill(text, files);
+  const d = loadComposerDraft(key);
+  saveComposerDraft(key, d?.text.trim() ? `${text}\n\n${d.text}` : text, [...files, ...(d?.files ?? [])]);
+}
+
 export function Composer({ task, placeholder }: { task: Task; placeholder?: string }) {
   const draftKey = composerDraftKey(task);
   const [saved] = useState(() => loadComposerDraft(draftKey));
@@ -1283,12 +1348,37 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
     };
   }, [draftKey, drop]);
 
-  useLayoutEffect(() => {
+  const fitText = () => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "0px";
     el.style.height = Math.min(el.scrollHeight, 260) + "px";
-  }, [text]);
+  };
+  useLayoutEffect(fitText, [text]);
+  // And when it gets wider or narrower, which wraps the text again (a phone turned round, say).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fitText();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // A rewound message to edit and send again (see `rewound`).
+  const restore = useRef(attach.restore);
+  restore.current = attach.restore;
+  useEffect(() => {
+    composerFills.set(draftKey, (fill, files) => {
+      setText((cur) => (cur.trim() ? `${fill}\n\n${cur}` : fill));
+      restore.current(files);
+      ref.current?.focus();
+    });
+    return () => void composerFills.delete(draftKey);
+  }, [draftKey]);
 
   const send = () => {
     const files = attach.files;
@@ -1315,8 +1405,9 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
 
   const canStartEmpty = task.kind === "task" && !task.session_id && !task.running;
   return (
-    <div className="shrink-0 px-5 pb-4">
+    <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
+        <RewindNote task={task} />
         {(err || modeControl.err) && <div className="mb-2 text-xs text-red-400">{err || modeControl.err}</div>}
         {unsaved && (
           <div className="mb-2 text-xs text-amber-400">
@@ -1376,7 +1467,8 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 modeControl.cycle();
                 return;
               }
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              // On a touch screen's keyboard Enter starts a new line, and the send button sends (as Ctrl/Cmd+Enter does).
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!matchMedia(TOUCH_QUERY).matches || e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 send();
               }
@@ -1400,7 +1492,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
           <DraftAttachments draft={attach} hostId={task.host_id} className="px-4 pt-1 pb-2" />
           <div className="flex items-center gap-2 px-3 pb-2">
             <ModeSelect control={modeControl} running={task.running} />
-            <span className="text-[11px] text-faint">
+            <span className="text-[11px] text-faint narrow:min-w-0 narrow:truncate">
               {task.session_id ? `session ${task.session_id.slice(0, 8)}` : "new session"}
               {task.model ? ` · ${task.model}` : ""}
               {task.effort ? ` · ${task.effort} effort` : ""}
@@ -1412,7 +1504,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                   onClick={send}
                   disabled={busy || attach.uploading}
                   title={canSteer && !task.queued_message ? "Send to the agent now (Enter)" : "Queue (Enter)"}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
                 </button>
@@ -1424,7 +1516,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                     api.stop(task.host_id, task.id).catch((e) => setErr(`Couldn't stop the agent: ${(e as Error).message}`));
                   }}
                   title={stopTitle(task, canSteer)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15 narrow:h-9 narrow:w-9"
                 >
                   <Square size={11} fill="currentColor" />
                 </button>
@@ -1433,7 +1525,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                   onClick={send}
                   disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !canStartEmpty)}
                   title="Send (Enter)"
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
                 </button>

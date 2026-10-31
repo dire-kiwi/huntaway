@@ -50,9 +50,13 @@ test("filters leave out columns and cards, and come off one by one", async () =>
 
 // IA-217: with a filter on, a task dropped below a column's last card goes after that card, not after the tasks filtered out.
 test("a task dropped under a filtered column goes after its last card shown", async () => {
+  // Plan and diagram are labels (HA-27): the card to drag gets one, so a filter by them keeps it and leaves out the
+  // artifact at the bottom of In review.
+  const drag = (await tasks())["Try dragging this card to another column"];
+  await server.api("PATCH", `/tasks/${drag.id}`, { labels: ["plan"] });
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}`, "wait Something being worked on", "click Filter", "click css=[role=menuitemcheckbox] >> text=Code task"]);
+    await ui.run([`goto /p/${project.id}`, "wait Something being worked on", "click Filter", "click css=[role=menuitemcheckbox] >> text=Diagram"]);
     await ui.run(["click css=[role=menuitemcheckbox] >> text=Plan", "press Escape", "gone Has a reminder", "gone A release notes card"]);
     const review = column(page, "In review");
     await page.locator("[data-task]", { hasText: "Try dragging this card" }).dragTo(review, { targetPosition: { x: 100, y: 600 } });
@@ -68,6 +72,7 @@ test("a task dropped under a filtered column goes after its last card shown", as
     const t = await tasks();
     assert.equal(t["Try dragging this card to another column"].status, "in_review");
   });
+  await server.api("PATCH", `/tasks/${drag.id}`, { labels: [] });
 });
 
 // IA-217: sorted other than by hand, the columns are in that order, and a drop only moves a task to another column (at its end).

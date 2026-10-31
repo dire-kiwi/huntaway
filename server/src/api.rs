@@ -130,6 +130,9 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/git/commit", post(git_view::commit))
         .route("/tasks/{id}/git/stash", post(git_view::stash))
         .route("/tasks/{id}/git/reset", post(git_view::reset))
+        .route("/tasks/{id}/turns", get(crate::checkpoints::turns))
+        .route("/tasks/{id}/turns/diff", get(crate::checkpoints::diff))
+        .route("/tasks/{id}/rewind", post(crate::checkpoints::rewind).delete(crate::checkpoints::cancel_rewind))
         .route("/tasks/{id}/context", get(crate::context::get))
         .route("/tasks/{id}/skills", get(agent_tools::for_task))
         .route("/tasks/{id}/document", get(crate::documents::get))
@@ -962,6 +965,7 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         permissions::expire_for_task(s, &t.id);
         // Remove worktrees but keep branches so no committed work is lost.
         if let Some(wt) = &t.worktree_path {
+            crate::checkpoints::forget(s, &t.id, std::path::Path::new(&project.repo_path)).await;
             let _ = worktree::git(&PathBuf::from(&project.repo_path), &["worktree", "remove", "--force", wt]).await;
         }
     }
@@ -1019,10 +1023,15 @@ pub struct CreateTask {
     /// Tasks (ids) in the project that have to be merged before its agent starts.
     #[serde(default)]
     pub depends_on: Option<Vec<String>>,
-    /// What the task makes, if not code: one of db::TASK_TYPES (see documents.rs). In a
-    /// project, also `subproject` (db::SUBPROJECT), the same as `subproject: true`.
+    /// What the task is, if not a code task: one of db::TASK_TYPES. In a project, also
+    /// `subproject` (db::SUBPROJECT), the same as `subproject: true`. One of db::LABELS (a task
+    /// type before API 71) gives the task that label.
     #[serde(default)]
     pub task_type: Option<String>,
+    /// Some of db::LABELS, each a document its agent writes besides its other work (see
+    /// documents.rs).
+    #[serde(default)]
+    pub labels: Option<Value>,
     /// The tasks elsewhere it's for (see `check_external_links`).
     #[serde(default)]
     pub external_links: Option<Value>,
@@ -1084,12 +1093,27 @@ fn new_task_fanout(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
     }
 }
 
-/// Check a new task's requested type (blank for none).
+/// Check a new task's requested type (blank for none). A label (a type before API 71) is
+/// none: see new_task_labels.
 fn check_task_type(task_type: Option<&str>) -> ApiResult<Option<&str>> {
     match task_type.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) if db::LABELS.contains(&t) => Ok(None),
         Some(t) if !db::TASK_TYPES.contains(&t) => Err(ApiError::bad(format!("task_type must be one of {:?}", db::TASK_TYPES))),
         t => Ok(t),
     }
+}
+
+/// The labels a new task asks for, as an update to make once it's created: its `labels`, and a
+/// `task_type` that's one of them, as it was before API 71.
+fn new_task_labels(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
+    let mut asked: Vec<Value> = match &b.labels {
+        Some(Value::Array(a)) => a.clone(),
+        Some(Value::Null) | None => Vec::new(),
+        Some(_) => return Err(ApiError::bad("labels must be a list of strings")),
+    };
+    asked.extend(b.task_type.as_deref().map(str::trim).filter(|t| db::LABELS.contains(t)).map(|t| json!(t)));
+    let labels = crate::documents::check_labels(&Value::Array(asked)).map_err(ApiError::bad)?;
+    Ok((!labels.is_empty()).then(|| ("labels", json!(labels))))
 }
 
 async fn create_scratch_task(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<CreateTask>) -> ApiResult<Json<Value>> {
@@ -1102,7 +1126,7 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
     if db::get_profile(&s.db(), profile_id)?.is_none() {
         return Err(ApiError::not_found("profile"));
     }
-    if b.kind.as_deref().is_some_and(|k| k != "task") || b.task_type.as_deref().is_some_and(|t| !t.trim().is_empty() && t.trim() != db::SCRATCH) {
+    if b.kind.as_deref().is_some_and(|k| k != "task") || check_task_type(b.task_type.as_deref())?.is_some_and(|t| t != db::SCRATCH) {
         return Err(ApiError::bad("a task in no project is a scratch task"));
     }
     if b.parent_id.is_some() || b.subproject == Some(true) || b.use_worktree == Some(true) || b.depends_on.as_ref().is_some_and(|d| !d.is_empty()) {
@@ -1127,6 +1151,7 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
     let config = pick_config(&s.db(), profile_id, None, b.claude_config_id.as_deref())?;
     let links = new_task_links(&b)?;
     let fanout = new_task_fanout(&b)?;
+    let labels = new_task_labels(&b)?;
     let t = db::insert_scratch_task(
         &s.db(),
         NewTask {
@@ -1142,7 +1167,7 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
             claude_config_id: config.as_deref(),
         },
     )?;
-    let fields: Vec<_> = resolution.map(|r| ("resolution", json!(r))).into_iter().chain(links).chain(fanout).collect();
+    let fields: Vec<_> = resolution.map(|r| ("resolution", json!(r))).into_iter().chain(links).chain(fanout).chain(labels).collect();
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     s.emit_task(&t);
     let start = match b.start {
@@ -1203,6 +1228,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
     let config = pick_config(&s.db(), &id, None, b.claude_config_id.as_deref())?;
     let fanout = new_task_fanout(&b)?;
     let links = new_task_links(&b)?;
+    let labels = new_task_labels(&b)?;
     let t = db::insert_group_task(
         &s.db(),
         NewTask {
@@ -1219,7 +1245,7 @@ async fn create_group_task(State(s): State<Shared>, Path(id): Path<String>, Json
         },
         group,
     )?;
-    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).chain(fanout).collect();
+    let fields: Vec<_> = task_type.map(|tt| ("task_type", json!(tt))).into_iter().chain(links).chain(fanout).chain(labels).collect();
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     std::fs::create_dir_all(s.profile_scratch_dir(&id)).ok();
     s.emit_task(&t);
@@ -1291,10 +1317,14 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
     }
     let task_type = if as_subproject { None } else { check_task_type(b.task_type.as_deref())? };
     if task_type.is_some() && (kind != "task" || subproject) {
-        return Err(ApiError::bad("only a task that isn't a subproject can be a plan, artifact, diagram or scratch task"));
+        return Err(ApiError::bad("only a task that isn't a subproject can be a scratch task"));
+    }
+    let labels = new_task_labels(&b)?;
+    if labels.is_some() && kind != "task" {
+        return Err(ApiError::bad("only a task can have labels"));
     }
     // A subproject's branch is what its tasks branch from, so it and they work in worktrees. A
-    // plan, artifact, diagram or scratch task works in its own folder instead (see documents.rs).
+    // scratch task works in its own folder instead (see documents.rs).
     let use_worktree =
         kind == "task" && task_type.is_none() && (subproject || parent.is_some() || b.use_worktree.unwrap_or(project.use_worktrees && project.is_git));
     let effort = b.effort.as_deref().filter(|e| !e.is_empty());
@@ -1344,6 +1374,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
     if let Some(tt) = task_type {
         fields.push(("task_type", json!(tt)));
     }
+    fields.extend(labels);
     fields.extend(links);
     fields.extend(fanout);
     let t = db::update_task(&s.db(), &t.id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
@@ -1397,8 +1428,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     let current = db::get_task(&s.db(), id)?.ok_or_else(|| ApiError::not_found("task"))?;
     // A task with no changes to merge (and so no pull request) skips the merge and is done.
     let to_merge = b.get("status").and_then(Value::as_str) == Some("ready_for_merge") && current.status != "ready_for_merge" && current.kind == "task";
-    // A plan, artifact or diagram is kept by the board, not merged.
-    let nothing_to_merge = to_merge && (current.task_type.is_some() || !worktree::has_work_to_merge(s, &current).await);
+    // A scratch task, or one that makes only documents (which the board keeps), has nothing to merge.
+    let own_folder = current.is_scratch() || crate::documents::documents_only(&current);
+    let nothing_to_merge = to_merge && (own_folder || !worktree::has_work_to_merge(s, &current).await);
     let mut fields = pick(
         b,
         &[
@@ -1407,6 +1439,12 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         ],
     );
     check_reminder(Some(&current), &mut fields)?;
+    if let Some(v) = b.get("labels") {
+        if current.kind != "task" {
+            return Err(ApiError::bad("only a task can have labels"));
+        }
+        fields.push(("labels", json!(crate::documents::check_labels(v).map_err(ApiError::bad)?)));
+    }
     if fields.iter().any(|(k, v)| *k == "title_pinned" && !v.is_boolean()) {
         return Err(ApiError::bad("title_pinned must be true or false"));
     }
@@ -1420,9 +1458,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     if current.project_id.is_none() && fields.iter().any(|(k, v)| ["subproject", "use_worktree"].contains(k) && *v == json!(true)) {
         return Err(ApiError::bad("a task without a project can't have a worktree or be a subproject"));
     }
-    // Nor does a plan, artifact, diagram or scratch task, which works in its own folder.
-    if current.task_type.is_some() && fields.iter().any(|(k, v)| ["subproject", "use_worktree"].contains(k) && *v == json!(true)) {
-        return Err(ApiError::bad("a plan, artifact, diagram or scratch task can't have a worktree or be a subproject"));
+    // Nor does one that works in its own folder.
+    if own_folder && fields.iter().any(|(k, v)| ["subproject", "use_worktree"].contains(k) && *v == json!(true)) {
+        return Err(ApiError::bad("a scratch task, or one that makes only documents, can't have a worktree or be a subproject"));
     }
     if let Some(v) = fields.iter().find(|(k, _)| *k == "subproject").map(|(_, v)| v.clone()) {
         let on = v.as_bool().ok_or_else(|| ApiError::bad("subproject must be true or false"))?;
@@ -1497,6 +1535,17 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         let at = v.as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).ok_or_else(|| ApiError::bad("done_at must be an RFC 3339 time"))?;
         *v = json!(at.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
     }
+    // A merging task's agent can step out of the merge queue to fix what the merge turned up,
+    // and the task rejoins the queue when its run ends (see Task::remerge).
+    let remerge = match b.get("remerge") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(on)) => *on,
+        Some(_) => return Err(ApiError::bad("remerge must be true or false")),
+    };
+    // Its agent's run ending is what brings it back, so the agent has to be at work.
+    if remerge && !(current.merging && s.is_running(id) && b.get("status").and_then(Value::as_str) == Some("in_progress")) {
+        return Err(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"));
+    }
     // Moving a task to "Ready for merge" asks its agent to merge it (if agents can run here),
     // once no other task in its project is merging.
     let mut merge = false;
@@ -1514,6 +1563,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         if merge || !["ready_for_merge", "needs_attention"].contains(&st) {
             fields.push(("merging", json!(merge)));
         }
+        // Anywhere but "In progress" (or waiting on the user) drops its place to rejoin the queue (see db::update_task).
+        if remerge {
+            fields.push(("remerge", json!(true)));
+        }
         // Moving it ends its agent's wait (see wait.rs), told so in the same write.
         if let Some(w) = current.agent_wait.clone().filter(|_| st != current.status) {
             fields.push(("agent_wait", json!(db::AgentWait { moved_to: Some(st.to_string()), ..w })));
@@ -1529,10 +1582,12 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         merge = false;
         fields.retain(|(k, _)| !["status", "merging", "position"].contains(k));
         fields.extend([("status", json!("done")), ("merging", json!(false))]);
-        let why = match &current.task_type {
-            Some(_) if current.is_scratch() => "Nothing to merge (a scratch task has no repository), so it's done".into(),
-            Some(tt) => format!("Nothing to merge (the board keeps the task's {tt}), so it's done"),
-            None => "Nothing to merge (the task has no changes), so it's done".into(),
+        let why = if current.is_scratch() {
+            "Nothing to merge (a scratch task has no repository), so it's done"
+        } else if own_folder {
+            "Nothing to merge (the board keeps the task's documents), so it's done"
+        } else {
+            "Nothing to merge (the task has no changes), so it's done"
         };
         s.add_event(id, "info", why, None);
     }
@@ -1542,6 +1597,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         fields.push(("position", json!(end)));
     }
     let t = s.update_task(id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
+    if remerge {
+        s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
+    }
     // Unpinned, the title catches up with what the task is about now.
     if unpinned {
         title::refresh(s, id);
@@ -2665,8 +2723,12 @@ pub(crate) mod tests {
             assert_eq!(t2.number, 2);
             assert_eq!(crate::documents::work_dir(&s, &t2), Some(crate::documents::dir(&s, &t2.id)));
             assert_eq!(runner::work_dir(&s, &t2).unwrap(), crate::documents::dir(&s, &t2.id));
+            // It can have labels too, also given as a type as before API 71.
+            let planned = create_scratch_task_inner(&s, &profile.id, CreateTask { task_type: Some("plan".into()), ..Default::default() }).unwrap();
+            assert_eq!((planned.task_type.as_deref(), planned.labels.as_slice()), (Some("scratch"), ["plan".to_string()].as_slice()));
             for bad in [
-                CreateTask { task_type: Some("plan".into()), ..Default::default() },
+                CreateTask { task_type: Some("essay".into()), ..Default::default() },
+                CreateTask { labels: Some(json!(["essay"])), ..Default::default() },
                 CreateTask { use_worktree: Some(true), ..Default::default() },
                 CreateTask { subproject: Some(true), ..Default::default() },
                 CreateTask { kind: Some("review".into()), ..Default::default() },
@@ -2761,7 +2823,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn plans_artifacts_and_diagrams_work_in_their_own_folder() {
+    fn any_task_can_have_labels() {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
@@ -2771,38 +2833,60 @@ pub(crate) mod tests {
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let labelled = |l: Value| CreateTask { title: "Draw it".into(), labels: Some(l), ..Default::default() };
             let typed = |t: &str| CreateTask { title: "Draw it".into(), task_type: Some(t.into()), ..Default::default() };
+            let labels = |t: &db::Task| t.labels.iter().map(String::as_str).collect::<Vec<_>>().join(",");
 
-            // No worktree, even in a project that uses them.
-            let plan = create_task_inner(&s, &p.id, typed("plan")).unwrap();
-            assert_eq!((plan.task_type.as_deref(), plan.use_worktree), (Some("plan"), false));
+            // A code task, in a worktree, with a plan and a diagram.
+            let plan = create_task_inner(&s, &p.id, labelled(json!(["diagram", "plan"]))).unwrap();
+            assert_eq!((plan.task_type.as_deref(), labels(&plan).as_str(), plan.use_worktree), (None, "plan,diagram", true));
+            // A type that's a label, as before API 71, is that label.
+            let old = create_task_inner(&s, &p.id, CreateTask { labels: Some(json!(["artifact"])), ..typed("plan") }).unwrap();
+            assert_eq!((old.task_type.as_deref(), labels(&old).as_str(), old.use_worktree), (None, "plan,artifact", true));
             assert!(create_task_inner(&s, &p.id, typed("essay")).is_err());
-            assert!(create_task_inner(&s, &p.id, CreateTask { subproject: Some(true), ..typed("plan") }).is_err());
-            assert!(create_task_inner(&s, &p.id, CreateTask { kind: Some("scratch".into()), ..typed("plan") }).is_err());
-            assert_eq!(create_task_inner(&s, &p.id, typed(" ")).unwrap().task_type, None);
-            let set = |b: Value| {
-                let (s, id) = (s.clone(), plan.id.clone());
+            assert!(create_task_inner(&s, &p.id, labelled(json!(["essay"]))).is_err());
+            assert!(create_task_inner(&s, &p.id, labelled(json!("plan"))).is_err());
+            let sp = create_task_inner(&s, &p.id, CreateTask { subproject: Some(true), ..typed("plan") }).unwrap();
+            assert_eq!((sp.subproject, labels(&sp).as_str()), (true, "plan"));
+            assert!(create_task_inner(&s, &p.id, CreateTask { kind: Some("review".into()), ..typed("plan") }).is_err());
+            assert_eq!(labels(&create_task_inner(&s, &p.id, typed(" ")).unwrap()), "");
+
+            // Labels can be added and taken off.
+            let set = |id: &str, b: Value| {
+                let (s, id) = (s.clone(), id.to_string());
                 async move { update_task_inner(&s, &id, b.as_object().unwrap()).await }
             };
-            assert!(set(json!({"use_worktree": true})).await.is_err());
-            assert!(set(json!({"subproject": true})).await.is_err());
+            assert_eq!(labels(&set(&plan.id, json!({"labels": ["artifact", "plan"]})).await.unwrap()), "plan,artifact");
+            assert!(set(&plan.id, json!({"labels": ["poem"]})).await.is_err());
+            assert!(set(&plan.id, json!({"labels": "plan"})).await.is_err());
+            assert_eq!(labels(&set(&plan.id, json!({"labels": []})).await.unwrap()), "");
+            // A labelled task without changes has nothing to merge, as any task.
+            set(&plan.id, json!({"labels": ["plan"], "use_worktree": false})).await.unwrap();
+            let merged = set(&plan.id, json!({"status": "ready_for_merge"})).await.unwrap();
+            assert_eq!(merged.status, "done");
 
+            // A plan task from before labels (as the migration leaves it) still works in its own folder.
+            let fields = [("labels", json!(["plan"])), ("use_worktree", json!(false)), ("work_dir", json!(format!("documents/{}", old.id)))];
+            let old = db::update_task(&s.db(), &old.id, &fields).unwrap().unwrap();
+            assert_eq!(runner::work_dir(&s, &old).unwrap(), crate::documents::dir(&s, &old.id));
+            assert!(set(&old.id, json!({"use_worktree": true})).await.is_err());
+            assert!(set(&old.id, json!({"subproject": true})).await.is_err());
             // The board keeps the document, so there's nothing to merge.
-            let done = set(json!({"status": "ready_for_merge"})).await.unwrap();
+            let done = set(&old.id, json!({"status": "ready_for_merge"})).await.unwrap();
             assert_eq!((done.status.as_str(), done.resolution.as_deref(), done.merging), ("done", Some("done"), false));
 
-            // A group task can be one too.
+            // A group task can have them too.
             update_project_inner(&s, &p.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
-            let b = CreateGroupTask { group: "Shop".into(), task: typed("diagram") };
+            let b = CreateGroupTask { group: "Shop".into(), task: labelled(json!(["diagram"])) };
             let Json(g) = create_group_task(State(s.clone()), Path(profile.id.clone()), Json(b)).await.unwrap();
-            assert_eq!((g["task_type"].as_str(), g["group_name"].as_str()), (Some("diagram"), Some("Shop")));
+            assert_eq!((&g["task_type"], &g["labels"], g["group_name"].as_str()), (&Value::Null, &json!(["diagram"]), Some("Shop")));
             let b = CreateGroupTask { group: "Shop".into(), task: typed("poem") };
             assert!(create_group_task(State(s.clone()), Path(profile.id.clone()), Json(b)).await.is_err());
             let b = CreateGroupTask { group: "Shop".into(), task: typed("scratch") };
             assert!(create_group_task(State(s.clone()), Path(profile.id.clone()), Json(b)).await.is_err());
 
             // Its folder goes with it.
-            let folder = crate::documents::dir(&s, &plan.id);
+            let folder = crate::documents::dir(&s, &done.id);
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(folder.join("plan.html"), "<h1>Plan</h1>").unwrap();
             // So do its finished runs' folders; one still stopping is left for runs::prune.
@@ -2848,7 +2932,7 @@ pub(crate) mod tests {
             update_project_inner(&s, &p.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
             let grouped = |id: &str| CreateGroupTask { group: "Shop".into(), task: CreateTask { task_type: Some("plan".into()), ..fanned(id) } };
             let Json(g) = create_group_task(State(s.clone()), Path(profile.id.clone()), Json(grouped("f-3"))).await.unwrap();
-            assert_eq!((g["task_type"].as_str(), g["fanout_id"].as_str()), (Some("plan"), Some("f-3")));
+            assert_eq!((&g["labels"], g["fanout_id"].as_str()), (&json!(["plan"]), Some("f-3")));
             for bad in ["a b", "x/y", &"z".repeat(65)] {
                 assert!(create_task_inner(&s, &p.id, fanned(bad)).is_err(), "{bad}");
                 assert!(create_scratch_task_inner(&s, &profile.id, fanned(bad)).is_err(), "{bad}");
