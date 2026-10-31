@@ -175,6 +175,5 @@ test("Codex children show their metadata, nested transcript and permission sourc
     await ui.run(["click from Inspect config", "wait Codex child looking at config.", "wait Codex follow-up findings.", "wait gpt-6.1-sol", "wait Permission for Bash", "gone Main Codex summary."]);
     await ui.run(["click Open subagent thread", "wait Nested Codex findings.", "press Escape", "wait Codex follow-up findings.", "press Escape", "wait Main Codex summary."]);
     await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('Inspect config')", "wait Codex child looking at config."]);
-    await ui.run(["shot /tmp/ia152-codex-subagent.png"]);
   });
 });

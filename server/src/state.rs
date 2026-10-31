@@ -80,6 +80,9 @@ pub struct AppState {
     pub deleting: Mutex<HashMap<String, usize>>,
     /// Web Push to devices (see push.rs).
     pub push: crate::push::PushState,
+    /// A test state's `data_dir`, removed when the state goes (see testing::state).
+    #[cfg(test)]
+    pub test_dir: OnceLock<crate::testing::TempDir>,
 }
 
 pub type Shared = Arc<AppState>;
@@ -115,6 +118,8 @@ impl AppState {
             relocating: Mutex::new(Default::default()),
             deleting: Mutex::new(HashMap::new()),
             push: Default::default(),
+            #[cfg(test)]
+            test_dir: OnceLock::new(),
         })
     }
 

@@ -651,8 +651,7 @@ mod tests {
     }
 
     fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ia-relocate-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         dir.canonicalize().unwrap().join(name)
     }
 

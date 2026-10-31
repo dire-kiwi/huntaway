@@ -1129,8 +1129,7 @@ mod tests {
     #[test]
     fn finds_the_github_remote_pull_requests_go_to() {
         crate::testing::run(async || {
-            let repo = std::env::temp_dir().join(format!("ia-gh-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             sh(&repo, &["init", "-q", "-b", "master"]);
             assert_eq!(github(&repo, Some("master")).await, None);
             sh(&repo, &["remote", "add", "history", "git@github.com:o/history.git"]);
@@ -1163,7 +1162,7 @@ mod tests {
     #[test]
     fn an_ssh_host_alias_is_the_host_it_stands_for() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-ssh-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             let repo = dir.join("repo");
             std::fs::create_dir_all(&repo).unwrap();
             std::fs::write(dir.join("ssh_config"), "Host github-work\n  HostName github.com\n  IdentityFile ~/.ssh/work\nHost ghe\n  HostName GHE.acme.com\n").unwrap();
@@ -1189,8 +1188,7 @@ mod tests {
     /// repository, the task and its worktree and branch.
     async fn task_with_work(s: &Shared) -> (PathBuf, Task, PathBuf, String) {
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let repo = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&repo).unwrap();
+        let repo = crate::testing::temp_dir();
         sh(&repo, &["init", "-q", "-b", "master"]);
         std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
         sh(&repo, &["add", "."]);
@@ -1285,7 +1283,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let root = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             let (origin, repo, other) = (root.join("origin"), root.join("repo"), root.join("other"));
             std::fs::create_dir_all(&root).unwrap();
             sh(&root, &["init", "-q", "--bare", "-b", "master", &path_str(&origin)]);
@@ -1321,7 +1319,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let root = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             let repo = root.join("repo");
             std::fs::create_dir_all(&repo).unwrap();
             sh(&repo, &["init", "-q", "-b", "master"]);
@@ -1358,8 +1356,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let repo = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             sh(&repo, &["init", "-q", "-b", "master"]);
             sh(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
             let b = CreateProject { name: "x".into(), repo_path: path_str(&repo), key: Some("X".into()), base_branch: Some("master".into()), use_worktrees: None };
@@ -1389,7 +1386,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let root = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             let (origin, repo, other) = (root.join("origin"), root.join("repo"), root.join("other"));
             std::fs::create_dir_all(&root).unwrap();
             sh(&root, &["init", "-q", "--bare", "-b", "master", &path_str(&origin)]);

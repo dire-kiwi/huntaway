@@ -42,9 +42,10 @@ jobs:
         working-directory: server
         run: cargo build --locked
 
+      # In a TMPDIR of its own, failing if the tests leave anything in it (they used to fill /tmp).
       - name: cargo test
         working-directory: server
-        run: cargo test --locked
+        run: ../scripts/check-tmp-leftovers.sh cargo test --locked
 
   app:
     runs-on: ubuntu-latest

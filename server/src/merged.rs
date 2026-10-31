@@ -328,8 +328,7 @@ mod tests {
     /// A project on a fresh repository, with a task in In review whose worktree has a commit and
     /// whose pull request is `url`: the repository, project id and task.
     async fn task_in_review(s: &Shared, profile: &str, url: &str) -> (PathBuf, String, Task) {
-        let repo = std::env::temp_dir().join(format!("ia-merged-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&repo).unwrap();
+        let repo = crate::testing::temp_dir();
         sh(&repo, &["init", "-q", "-b", "master"]);
         sh(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
         let b = CreateProject { name: "x".into(), repo_path: crate::util::path_str(&repo), key: None, base_branch: Some("master".into()), use_worktrees: None };

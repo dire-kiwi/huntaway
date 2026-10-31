@@ -276,7 +276,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             // Neither has a login, so the one that's fetched fails without going to the network.
-            let dir = std::env::temp_dir().join(format!("ia-usage-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir().join("claude");
             let (off, on) = {
                 let c = s.db();
                 let off = db::insert_claude_config(&c, "off", &dir.to_string_lossy(), "claude").unwrap();

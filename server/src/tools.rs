@@ -2576,7 +2576,7 @@ mod tests {
         testing::run(async || {
             let s = state();
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-del-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             let repo = dir.join("repo");
             std::fs::create_dir_all(&repo).unwrap();
             let git = |args: &[&str]| {
@@ -2788,7 +2788,7 @@ mod tests {
             s.update_task(&caller.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap();
             let caller = db::get_task(&s.db(), &caller.id).unwrap().unwrap();
             let me = |call_id: &str| Ctx { task: Some(caller.clone()), call_id: Some(call_id.into()), ..ctx(&p) };
-            let root = std::env::temp_dir().join(format!("ia-create-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             std::fs::create_dir_all(root.join("home")).unwrap();
             let root = root.canonicalize().unwrap();
             let home = root.join("home");
@@ -3142,8 +3142,7 @@ mod tests {
             let s = state();
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
-            let repo = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             db::update_project(&s.db(), "kiwicd", &[("repo_path", json!(repo))]).unwrap();
             let planner = task(&s, "kiwicd", "Plan");
             let run = db::insert_run(&s.db(), &planner.id, "prompt").unwrap();
@@ -3183,8 +3182,7 @@ mod tests {
             let s = state();
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
-            let repo = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             db::update_project(&s.db(), "kiwicd", &[("repo_path", json!(repo))]).unwrap();
             let planner = task(&s, "kiwicd", "Plan");
             let launched = |mode: &str, allowed: &str| {
@@ -3266,8 +3264,7 @@ mod tests {
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
             // The project's repository, on GitHub as o/r.
-            let repo = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             for args in [&["init", "-q"][..], &["remote", "add", "origin", "git@github.com:o/r.git"]] {
                 assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
             }

@@ -625,8 +625,7 @@ mod tests {
     }
 
     fn tempdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!("ia-disk-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&p).unwrap();
+        let p = crate::testing::temp_dir();
         p
     }
 }
