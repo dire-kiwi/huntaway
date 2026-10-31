@@ -388,9 +388,10 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
 
 /**
  * An HTML page in a sandboxed frame: its scripts run, but in an origin of their own, so it can't
- * reach the board (or its token). It keeps its scroll position as the page changes, and leaves
- * `inset` pixels at its bottom for what covers it. With `plan`, `html` is a plan's content, shown in
- * the theme, with the answers to its questions that haven't been sent put back in each time it loads.
+ * reach the board (or its token), nor show alerts or prompts (no allow-modals) that would pass for the app's own. It
+ * keeps its scroll position as the page changes, and leaves `inset` pixels at its bottom for what covers it. With
+ * `plan`, `html` is a plan's content, shown in the theme, with the answers to its questions that haven't been sent put
+ * back in each time it loads.
  */
 function HtmlFrame({
   frame,
@@ -441,7 +442,7 @@ function HtmlFrame({
       title={title}
       srcDoc={doc}
       onLoad={sendInset}
-      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals"
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
       referrerPolicy="no-referrer"
       className={clsx("block h-full w-full", plan ? "bg-bg" : "bg-white")}
     />
