@@ -130,6 +130,9 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/git/commit", post(git_view::commit))
         .route("/tasks/{id}/git/stash", post(git_view::stash))
         .route("/tasks/{id}/git/reset", post(git_view::reset))
+        .route("/tasks/{id}/turns", get(crate::checkpoints::turns))
+        .route("/tasks/{id}/turns/diff", get(crate::checkpoints::diff))
+        .route("/tasks/{id}/rewind", post(crate::checkpoints::rewind).delete(crate::checkpoints::cancel_rewind))
         .route("/tasks/{id}/context", get(crate::context::get))
         .route("/tasks/{id}/skills", get(agent_tools::for_task))
         .route("/tasks/{id}/document", get(crate::documents::get))
@@ -958,6 +961,7 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         permissions::expire_for_task(s, &t.id);
         // Remove worktrees but keep branches so no committed work is lost.
         if let Some(wt) = &t.worktree_path {
+            crate::checkpoints::forget(s, &t.id, std::path::Path::new(&project.repo_path)).await;
             let _ = worktree::git(&PathBuf::from(&project.repo_path), &["worktree", "remove", "--force", wt]).await;
         }
     }

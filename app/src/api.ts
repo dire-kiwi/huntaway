@@ -541,6 +541,8 @@ export interface Task {
   review?: Review | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
+  /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
+  rewind?: PendingRewind | null;
   cost_usd: number;
   last_activity_at: string;
   created_at: string;
@@ -651,6 +653,82 @@ export interface GitStash {
   sha: string;
   subject: string;
   time: number;
+}
+
+/** A conversation rollback waiting for a task's next run (API 70): it goes on from before turn `turn`. */
+export interface PendingRewind {
+  turn: number;
+  message_id: number;
+  session: string;
+}
+
+/** What a turn changed, without the files git brought in by a merge, pull or rebase (API 70). */
+export interface TurnStats {
+  files: number;
+  additions: number;
+  deletions: number;
+  /** The files left out (the first 200), and how many. */
+  excluded: string[];
+  excluded_count: number;
+}
+
+/** One of the agent's turns with a checkpoint after it (API 70). */
+export interface Turn {
+  /** Its number among the task's turns. */
+  turn: number;
+  /** Its checkpoint, and the one it started from (null when there's none, as for a turn from before checkpoints). */
+  n: number;
+  before_n: number | null;
+  run_id: string | null;
+  /** The user message it started with, and its text. */
+  message_id: number | null;
+  text: string;
+  auto: boolean;
+  /** Set for a round of fixes a review sent back. */
+  review_round: number | null;
+  /** done, stopped or failed */
+  status: string | null;
+  /** A rewind has gone back to before it. */
+  stale: boolean;
+  /** When it ended. */
+  at: string;
+  /** HEAD after it, and before it. */
+  head: string | null;
+  before_head: string | null;
+  stats: TurnStats | null;
+  /** Both of its checkpoints are there to diff. */
+  diff: boolean;
+  /** Whether the task can be rewound to before it, and its agent's conversation with it (`fresh`: it starts over). */
+  rewind: { ok: true; conversation: { ok: true; fresh: boolean } | { ok: false; reason: string } } | { ok: false; reason: string };
+}
+
+export interface TurnsResult {
+  available: boolean;
+  reason?: string;
+  turns: Turn[];
+  head?: string | null;
+  rewind?: PendingRewind | null;
+  agent?: "claude" | "codex";
+}
+
+export interface TurnDiff {
+  patch: string;
+  too_large: boolean;
+  stats: TurnStats;
+  excluded: string[];
+}
+
+export interface RewindResult {
+  task: Task;
+  written: number;
+  removed: number;
+  /** Files left as they were: submodules, and ones marked skip-worktree or assume-unchanged. */
+  skipped: string[];
+  branch: { from: string; to: string } | null;
+  /** The ref the replaced files are kept in. */
+  kept: string;
+  /** The message rewound to, to edit and send again. */
+  message: { text: string | null; auto: boolean };
 }
 
 /** The Changes tab's view of a task's repository (API 62). */
@@ -1395,6 +1473,12 @@ export const api = {
   gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
     on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
   gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
+  /** The task's turns with checkpoints, and the changes between two checkpoints (API 70). */
+  turns: (h: string, id: string) => on(h).get<TurnsResult>(`/tasks/${enc(id)}/turns`),
+  turnDiff: (h: string, id: string, from: number, to: number) => on(h).get<TurnDiff>(`/tasks/${enc(id)}/turns/diff?from=${from}&to=${to}`),
+  /** Restores the files to before the turn `message_id` started, and optionally the branch and the agent's conversation. */
+  rewind: (h: string, id: string, b: { message_id: number; conversation: boolean; branch: boolean }) => on(h).post<RewindResult>(`/tasks/${enc(id)}/rewind`, b),
+  cancelRewind: (h: string, id: string) => on(h).del<Task>(`/tasks/${enc(id)}/rewind`),
   /** How full the agent's context is, with the latest breakdown (API 40). */
   context: (h: string, id: string) => on(h).get<{ context: ContextSummary | null; detail: ContextDetail | null }>(`/tasks/${enc(id)}/context`),
   /** The skills the task's agent can be asked to use, for the composer's `/` menu (API 54). */

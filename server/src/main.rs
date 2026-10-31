@@ -7,6 +7,7 @@ mod codex;
 mod context;
 mod analytics;
 mod changes;
+mod checkpoints;
 mod api;
 mod asana;
 mod db;
