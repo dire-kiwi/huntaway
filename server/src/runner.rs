@@ -500,6 +500,20 @@ pub fn wait_for_limit(state: &Shared, task: &Task, config_name: &str, until: &st
     Ok(stopped.unwrap_or(updated))
 }
 
+/// A task waiting for its config's usage limit to reset was moved to another config before its
+/// agent started: it no longer waits for that reset, and starts on the new config, unless that
+/// one holds it too (see usage::before_run) or what it depends on isn't merged yet.
+pub fn config_changed(state: &Shared, task_id: &str) {
+    let Ok(Some(t)) = db::get_task(&state.db(), task_id) else { return };
+    if !(t.waiting && t.limit_reset_at.is_some()) || state.is_running(task_id) {
+        return;
+    }
+    // Still waiting, for start_unblocked to start it (or leave it for its dependencies).
+    let _ = state.update_task(task_id, &[("limit_reset_at", Value::Null)]);
+    state.add_event(task_id, "info", "Its config changed, so it no longer waits for the old one's usage limit", None);
+    start_unblocked(state, t.project_id.as_deref());
+}
+
 pub fn task_key_prefix(state: &Shared, task: &Task) -> String {
     let project = task.project_id.as_deref().and_then(|pid| db::get_project(&state.db(), pid).ok().flatten());
     key_prefix(task, project.as_ref()).to_string()
@@ -540,7 +554,13 @@ fn start_waiting(state: &Shared, t: &Task) {
     }
     let _ = state.update_task(&t.id, &[("waiting", json!(false)), ("limit_reset_at", Value::Null)]);
     let limit = t.limit_reset_at.is_some();
-    let why = if limit { "Its usage limit has reset, so its agent is carrying on" } else { "Nothing it depends on is left to merge, so its agent is starting" };
+    let why = if limit {
+        "Its usage limit has reset, so its agent is carrying on"
+    } else if t.depends_on.is_empty() {
+        "Its agent is starting"
+    } else {
+        "Nothing it depends on is left to merge, so its agent is starting"
+    };
     state.add_event(&t.id, "info", why, None);
     // Bound first: the db lock can't be held while sending.
     let queued = db::get_task(&state.db(), &t.id).map(|t| t.and_then(|t| t.queued_message).is_some_and(|q| !q.trim().is_empty()));
@@ -3969,6 +3989,69 @@ mod tests {
             let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
             assert_eq!((t.status.as_str(), t.waiting, t.limit_reset_at.as_deref()), ("in_progress", true, Some(at.as_str())));
             assert_eq!(crate::usage::out_until(&state, &configs[0].id).as_deref(), Some(at.as_str()));
+        })
+    }
+
+    #[test]
+    fn a_message_to_a_task_waiting_for_its_reset_is_queued() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let get = |state: &Shared, id: &str| db::get_task(&state.db(), id).unwrap().unwrap();
+            // Asked to wait, with neither setting on.
+            let state = crate::testing::state();
+            let (task, _) = out_of_usage_setup(&state, "claude", false, false, false);
+            let (resets, at) = reset_in(2);
+            run_out(&state, &task, resets);
+            crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap();
+            let t = send(&state, &task.id, "x").unwrap();
+            assert!(!state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("x")));
+            // An empty send (Start) doesn't start it either.
+            send_message(&state, &task.id, Some(db::Queued::new("", false)), false, "prompt", None).unwrap();
+            assert!(!state.is_running(&task.id) && get(&state, &task.id).waiting);
+
+            // Waiting by itself, after a restart forgot that the config is out.
+            let state = crate::testing::state();
+            let (task, _) = out_of_usage_setup(&state, "claude", true, false, false);
+            run_out(&state, &task, resets);
+            state.usage.lock().unwrap().clear();
+            let t = send(&state, &task.id, "y").unwrap();
+            assert!(!state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("y")));
+            crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_task_waiting_for_a_reset_moved_to_another_config_starts_there() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let (resets, _) = reset_in(2);
+            let refused = json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets}});
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, false, true);
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &refused);
+            assert!(send(&state, &task.id, "Go").unwrap().waiting);
+            let b = serde_json::Map::from_iter([("claude_config_id".to_string(), json!(configs[1].id))]);
+            crate::api::update_task_inner(&state, &task.id, &b).await.unwrap();
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert!(state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at, t.claude_config_id.as_deref(), t.queued_message), (false, None, Some(configs[1].id.as_str()), None));
+            stop(&state, &task.id);
+
+            // Moved to another config that's out too: it waits for that one's reset.
+            let (later, at) = reset_in(3);
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, false, true);
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &refused);
+            crate::usage::on_rate_limit_event(&state, &configs[1].id, &json!({"rate_limit_info": {"status": "rejected", "resetsAt": later}}));
+            send(&state, &task.id, "Go").unwrap();
+            let b = serde_json::Map::from_iter([("claude_config_id".to_string(), json!(configs[1].id))]);
+            crate::api::update_task_inner(&state, &task.id, &b).await.unwrap();
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert!(!state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("Go")));
+            crate::runs::TEST_CAN_RUN.set(false);
         })
     }
 }

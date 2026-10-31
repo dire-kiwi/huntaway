@@ -584,6 +584,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
     config that's out, starts on the next of its project's (or profile's) configs for the same
     agent (Claude Code or Codex) that isn't out. A task that has started stays on its config,
     which holds its conversation.
+  A waiting task keeps waiting, whatever these settings say: a message sent to it (or *Start*)
+  joins its queue. Moved to another config before its agent has started, it stops waiting for
+  the old config's reset and starts on the new one (or waits for that one's, if it's out too).
   Whether a config is out is kept in memory by the host the config is on, from its own runs,
   so a restart forgets it until a run is refused again; a waiting task keeps its reset time
   in the database and carries on after a restart. Codex doesn't say which limit refused it,

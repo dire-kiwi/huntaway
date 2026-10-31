@@ -1862,6 +1862,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
             runner::wait_for_dependencies(s, &t, &unmet, Some(db::Queued::new("", false)))?;
         }
     }
+    // Waiting for its old config's usage limit, it doesn't any more.
+    if config {
+        runner::config_changed(s, id);
+    }
     // This may have merged a task others wait for, or dropped what this one waits for.
     if fields.iter().any(|(k, _)| ["status", "resolution", "depends_on"].contains(k)) {
         runner::start_unblocked(s, t.project_id.as_deref());

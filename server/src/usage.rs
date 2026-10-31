@@ -302,6 +302,13 @@ pub fn reset_due(limit_reset_at: &str) -> bool {
 /// start a task that hasn't run yet on the next config with room (`limit_switch`), or queue it
 /// until the limit resets (`limit_wait`). Returns the task if it's been queued.
 pub fn before_run(s: &Shared, task: &db::Task, message: Option<db::Queued>) -> ApiResult<Option<db::Task>> {
+    // Already waiting for a reset (by itself or when asked, see `wait_for_reset`): a message
+    // joins the queue, whatever the profile's settings and even if a restart has forgotten
+    // that the config is out.
+    if let Some(until) = task.limit_reset_at.as_deref().filter(|t| task.waiting && !reset_due(t)) {
+        let config = db::task_claude_config(&s.db(), task)?.map(|c| c.name).unwrap_or_else(|| "its config".into());
+        return Ok(Some(crate::runner::wait_for_limit(s, task, &config, until, message)?));
+    }
     let (profile, config, project) = {
         let c = s.db();
         let Some(profile) = db::get_profile(&c, &task.profile_id)? else { return Ok(None) };
