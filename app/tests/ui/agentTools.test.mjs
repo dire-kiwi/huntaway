@@ -21,7 +21,7 @@ test("fast clicks on skill switches all reach the server", async () => {
       await route.continue();
     });
     await ui.run([`goto /p/${project.id}/settings/tools`, "click Skills from Claude configs"]);
-    for (const name of names) await page.getByRole("button", { name, exact: true }).click();
+    for (const name of names) await page.getByRole("switch", { name, exact: true }).click();
     let saved;
     for (const end = Date.now() + 5000; Date.now() < end; await page.waitForTimeout(100)) {
       saved = (await server.api("GET", `/projects/${project.id}/agent-tools`)).disabled_skills;
