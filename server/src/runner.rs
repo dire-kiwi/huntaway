@@ -2240,7 +2240,7 @@ fn end_run(state: &Shared, task_id: &str, run_id: &str, fields: &[(&str, Value)]
     state.update_task_if(task_id, fields, |c| Ok(!db::later_run(c, task_id, run_id)?))
 }
 
-fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
+pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     let Ok(Some(run)) = db::get_run(&state.db(), run_id) else { return forget(state, run_id) };
     let task_id = run.task_id.as_str();
     let queued = {

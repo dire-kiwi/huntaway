@@ -127,6 +127,8 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
         .route("/tasks/{id}/unmerged", get(task_unmerged))
+        .route("/tasks/{id}/fanout", get(crate::fanout::get))
+        .route("/tasks/{id}/fanout/pick", post(crate::fanout::pick))
         .route("/tasks/{id}/git", get(git_view::status))
         .route("/tasks/{id}/git/diff", get(git_view::diff))
         .route("/tasks/{id}/git/show", get(git_view::show))
