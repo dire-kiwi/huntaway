@@ -598,12 +598,7 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
             check_key(s, profile_id, None, &k)?;
             k
         }
-        // A derived key steers clear of the group and scratch tasks' ones, and of the profile's projects' keys.
-        None => {
-            let base = Some(derive_key(&name)).filter(|k| !reserved(k)).unwrap_or_else(|| format!("{}P", derive_key(&name)));
-            let projects = db::list_projects(&s.db(), profile_id)?;
-            (1..).map(|n| if n == 1 { base.clone() } else { format!("{base}{n}") }).find(|k| key_owner(&projects, None, k).is_none()).unwrap_or(base)
-        }
+        None => new_project_key(s, profile_id, &name)?,
     };
     let id = new_id();
     let base = s.data_dir.join("projects").join(&id);
@@ -630,6 +625,14 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
     let p = db::update_project(&s.db(), &p.id, &[("repo_root", json!(repo_root))])?.unwrap_or(p);
     s.emit(json!({"type": "project", "project": p}));
     Ok(p)
+}
+
+/// The key a new project named `name` gets on profile `profile_id` if it isn't given one. A
+/// derived key steers clear of the group and scratch tasks' ones, and of the profile's projects' keys.
+pub fn new_project_key(s: &Shared, profile_id: &str, name: &str) -> anyhow::Result<String> {
+    let base = Some(derive_key(name)).filter(|k| !reserved(k)).unwrap_or_else(|| format!("{}P", derive_key(name)));
+    let projects = db::list_projects(&s.db(), profile_id)?;
+    Ok((1..).map(|n| if n == 1 { base.clone() } else { format!("{base}{n}") }).find(|k| key_owner(&projects, None, k).is_none()).unwrap_or(base))
 }
 
 #[derive(Deserialize)]

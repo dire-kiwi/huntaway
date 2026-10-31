@@ -107,7 +107,7 @@ fn allowed(s: &Shared, id: &str, task_id: &str, tool_name: &str, input: &Value) 
 }
 
 /// Ask the user to approve what an agent asked for with `tool` (see tools.rs), a request of
-/// `kind`: a change to a project (`project`, from update_project), deleting a task
+/// `kind`: a new project or a change to one (`project`, from create_project and update_project), deleting a task
 /// (`delete_task`), or creating, changing or deleting one of a project's automations
 /// (`automation`, from the automation tools). Only the user decides these, whatever the thread's permission mode: Ok(Ok(input)) once they
 /// approve it, with the input they approved (the first asked for this call, if it's retried), or
@@ -118,6 +118,7 @@ pub async fn approve(s: &Shared, task: &Task, call_id: &str, kind: &str, tool: &
         "delete_task" => "Delete a task?",
         "automation" if input["op"] == "delete" => "Delete an automation?",
         "automation" => "Approve an automation?",
+        "project" if tool == "create_project" => "Add a project?",
         _ => "Approve a project change?",
     };
     let id = request(s, task, call_id, kind, tool, input, data, question)?;
