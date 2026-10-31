@@ -956,7 +956,7 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
                 bail!("bad remote or branch");
             }
             // A branch name, not a refspec: `+HEAD:refs/heads/master` would force-push master.
-            if branch.contains([':', '+', '^', '~', '*', '?', '[', '\\']) || branch.contains("..") || branch.contains(char::is_whitespace) {
+            if !branch_name(branch) {
                 bail!("branch must be a branch name");
             }
             // HEAD pushes the current branch under its own name, and -u makes it the upstream.
@@ -966,6 +966,19 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
         _ => bail!("unknown tool {tool}"),
     }
     Ok(Command { program: "gh", args, ok_codes, repo: s("repo").map(String::from) })
+}
+
+/// Whether git_push's `branch` is a branch name git would take (`git check-ref-format --branch`)
+/// rather than a refspec: a leading `+` forces the push and a `:` names another ref to push to.
+/// A `+` further in is part of the name (`feature/c++`).
+fn branch_name(branch: &str) -> bool {
+    !branch.is_empty()
+        && !branch.starts_with(['-', '+', '/'])
+        && !branch.ends_with(['/', '.'])
+        && branch != "@"
+        && !["..", "//", "@{"].iter().any(|s| branch.contains(s))
+        && !branch.contains(|c: char| c.is_whitespace() || c.is_control() || [':', '^', '~', '*', '?', '[', '\\'].contains(&c))
+        && branch.split('/').all(|part| !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
 /// Fails for gh commands no agent gets, whatever its permission mode (the gh tool's approval
@@ -1257,8 +1270,11 @@ mod tests {
         assert_eq!((push.program, push.args), ("git", vec!["push".to_string(), "-u".into(), "origin".into(), "HEAD".into()]));
         assert_eq!(command("git_push", &json!({"branch": "ia/x-1_fix.it"})).unwrap().args, ["push", "-u", "origin", "ia/x-1_fix.it"]);
         // A branch name, not a refspec that would push (or force-push) another ref.
-        for bad in ["+HEAD:refs/heads/master", "HEAD:master", ":master", "-f", "a b", "a..b", "x^", "*"] {
-            assert!(command("git_push", &json!({"branch": bad})).is_err(), "{bad}");
+        for bad in ["+HEAD:refs/heads/master", "HEAD:master", ":master", "-f", "a b", "a..b", "x^", "*", "+master", "a[b", "@", "a@{1}", "a/.b", "a.lock", "a/", "a.", "a//b", "a\tb"] {
+            assert!(command("git_push", &json!({"branch": bad})).is_err(), "{bad:?}");
+        }
+        for good in ["feature/c++", "HEAD", "v1.2", "a@b", "x+"] {
+            assert_eq!(command("git_push", &json!({"branch": good})).unwrap().args, ["push", "-u", "origin", good]);
         }
     }
 

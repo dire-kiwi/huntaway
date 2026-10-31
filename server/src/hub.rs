@@ -118,7 +118,17 @@ impl LinkConn {
     }
 
     /// Call the host's API. `path` starts with `/api/` and may carry a query string.
+    ///
+    /// The host turning down the link's token (its own changed since it was linked: its data dir was made again, say) is
+    /// a 502, not its 401, which the UI takes to mean the board's own token is wrong.
     pub async fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value)> {
+        Ok(match self.send(method, path, body).await? {
+            (401, _) => (502, json!({"error": format!("host {} didn't accept this hub's token for it; link it again", self.name)})),
+            r => r,
+        })
+    }
+
+    async fn send(&self, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value)> {
         match &self.kind {
             Kind::Http { url, token, client } => {
                 let m = reqwest::Method::from_bytes(method.as_bytes())?;
@@ -1123,6 +1133,29 @@ mod tests {
         })
     }
 
+    // HA-49: the UI took any 401 from its own host as the board's token being wrong, and ignored the rest, even
+    // while it didn't know yet which host was its own. Now only the board's token being wrong is a 401.
+    #[test]
+    fn only_the_boards_own_token_is_a_401_through_the_proxy() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            // A host whose token has changed since it was linked.
+            let stale = Router::new().route("/api/profiles", axum::routing::get(|| async { (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))) }));
+            link_http(&s, "stale", stale, 0).await;
+            let app = crate::api::router(s.clone());
+            let err = json!({"error": "host stale didn't accept this hub's token for it; link it again"});
+            assert_eq!(call(&app, "GET", "/api/h/stale/profiles").await, (502, err.clone()));
+            assert_eq!(call(&app, "GET", "/api/h/h/profiles").await.0, 200);
+            // The hub's own calls to it too.
+            let e = host_request(&s, "stale", "GET", "/api/profiles", None).await.unwrap_err();
+            assert_eq!((e.0, e.1.as_str()), (StatusCode::BAD_GATEWAY, err["error"].as_str().unwrap()));
+            for host in ["h", "stale"] {
+                let req = Request::builder().uri(format!("/api/h/{host}/profiles")).header("authorization", "Bearer wrong").body(Body::empty()).unwrap();
+                assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED, "{host}");
+            }
+        })
+    }
+
     fn node(id: &str, name: &str) -> Shared {
         crate::testing::state_as(crate::state::Identity {
             host_id: id.into(),
@@ -1264,7 +1297,7 @@ mod tests {
             const BROKER_TOKEN: &str = "broker-token-0123456789";
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let broker = l.local_addr().unwrap();
-            let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..Default::default() });
+            let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..Default::default() }).unwrap();
             tokio::spawn(async move { axum::serve(l, app).await });
             // The hub is on the broker, which it reaches its own API from.
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

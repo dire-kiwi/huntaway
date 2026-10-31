@@ -121,11 +121,14 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/questions/{message_id}", post(answer_question))
         .route("/tasks/{id}/stop", post(stop_task))
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
+        .route("/tasks/{id}/wait-for-limit", post(crate::usage::wait_for_reset))
         .route("/tasks/{id}/review", post(review_task))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
         .route("/tasks/{id}/unmerged", get(task_unmerged))
+        .route("/tasks/{id}/fanout", get(crate::fanout::get))
+        .route("/tasks/{id}/fanout/pick", post(crate::fanout::pick))
         .route("/tasks/{id}/git", get(git_view::status))
         .route("/tasks/{id}/git/diff", get(git_view::diff))
         .route("/tasks/{id}/git/show", get(git_view::show))
@@ -246,6 +249,12 @@ struct CreateProfile {
     /// See `db::Profile::asana_enabled` (API 60).
     #[serde(default = "yes")]
     asana_enabled: bool,
+    /// See `db::Profile::limit_wait` (API 81).
+    #[serde(default)]
+    limit_wait: bool,
+    /// See `db::Profile::limit_switch` (API 81).
+    #[serde(default)]
+    limit_switch: bool,
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -261,6 +270,7 @@ async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -
     let clone_dir = check_clone_dir(&b.clone_dir)?;
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
+    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch))]);
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -307,6 +317,11 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     }
     if let Some(v) = b.get("asana_enabled") {
         fields.push(("asana_enabled", json!(v.as_bool().ok_or_else(|| ApiError::bad("asana_enabled must be true or false"))?)));
+    }
+    for key in ["limit_wait", "limit_switch"] {
+        if let Some(v) = b.get(key) {
+            fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
+        }
     }
     if let Some(v) = b.get("claude_config_ids") {
         let ids: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("claude_config_ids must be a list of config ids"))?;
@@ -910,6 +925,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "done_when_merged",
             "watch_pull_requests",
             "pr_preview_url",
+            "copy_files",
+            "link_folders",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -943,6 +960,15 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
                     return Err(ApiError::bad("pr_preview_url must be null or an http(s) URL with {pr} for the pull request's number"));
                 }
                 *v = if url.is_empty() { Value::Null } else { json!(url) };
+            }
+            // One per line; null is none.
+            "copy_files" | "link_folders" => {
+                if !(v.is_null() || v.is_string()) {
+                    return Err(ApiError::bad(format!("{k} must be a string, one entry per line")));
+                }
+                let text = v.as_str().map(str::trim).unwrap_or_default();
+                crate::worktree_files::check(k, text).map_err(ApiError::bad)?;
+                *v = json!(text);
             }
             // null falls back to the host's default mode.
             "permission_mode" if !(v.is_null() || v.as_str().is_some_and(|m| PERMISSION_MODES.contains(&m))) => {
@@ -1848,6 +1874,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         if !unmet.is_empty() {
             runner::wait_for_dependencies(s, &t, &unmet, Some(db::Queued::new("", false)))?;
         }
+    }
+    // Waiting for its old config's usage limit, it doesn't any more.
+    if config {
+        runner::config_changed(s, id);
     }
     // This may have merged a task others wait for, or dropped what this one waits for.
     if fields.iter().any(|(k, _)| ["status", "resolution", "depends_on"].contains(k)) {

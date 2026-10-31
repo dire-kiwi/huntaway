@@ -9,6 +9,7 @@ import {
   EFFORTS,
   hostCompat,
   hostSupports,
+  LIMITS_API,
   MODEL_ALIASES,
   PERMISSION_MODES,
   type ClaudeConfig,
@@ -573,6 +574,8 @@ export function ProfileForm({
   const [github, setGithub] = useState(initial?.github_account ?? "");
   const [cloneDir, setCloneDir] = useState(initial?.clone_dir ?? "");
   const [asana, setAsana] = useState(usesAsana(initial));
+  const [limitWait, setLimitWait] = useState(!!initial?.limit_wait);
+  const [limitSwitch, setLimitSwitch] = useState(!!initial?.limit_switch);
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
   const { busy, error: err, run } = useAsyncAction();
@@ -582,6 +585,7 @@ export function ProfileForm({
   const cloning = hostSupports(hosts.find((h) => h.id === host), 55);
   const linking = hostSupports(hosts.find((h) => h.id === host), LINKS_API);
   const asanaToggle = hostSupports(hosts.find((h) => h.id === host), ASANA_TOGGLE_API);
+  const limits = hostSupports(hosts.find((h) => h.id === host), LIMITS_API);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
@@ -596,6 +600,7 @@ export function ProfileForm({
         ...(accounts ? { github_account: github || null } : {}),
         ...(cloning ? { clone_dir: cloneDir.trim() || null } : {}),
         ...(asanaToggle ? { asana_enabled: asana } : {}),
+        ...(limits ? { limit_wait: limitWait, limit_switch: limitSwitch } : {}),
       };
       if (initial) await api.updateProfile(initial.host_id, initial.id, body);
       else {
@@ -660,6 +665,21 @@ export function ProfileForm({
               : initial
                 ? "Finds the Asana tasks you link tasks to, with a personal access token kept on this host."
                 : "Finds the Asana tasks you link tasks to. Connect it with a personal access token once the profile is created."}
+          </span>
+        </div>
+      )}
+      {limits && (
+        <div className="space-y-1.5">
+          <span className="block text-xs font-medium text-muted">When a config runs out of usage</span>
+          <Toggle checked={limitWait} onChange={setLimitWait} label="Wait for the limit to reset, then carry on" />
+          <Toggle checked={limitSwitch} onChange={setLimitSwitch} label="Start new tasks on the next config with room" />
+          <span className="block text-xs text-faint">
+            {limitWait
+              ? "A task whose agent runs out waits in In progress until the limit resets and then carries on, and a task started on a config that's out waits for it too."
+              : "Off, a task whose agent runs out needs your attention, and offers to carry on once the limit resets."}{" "}
+            {limitSwitch
+              ? "A task that hasn't started yet starts on the next of its configs (of the same agent) that isn't out, instead of its own."
+              : ""}
           </span>
         </div>
       )}
