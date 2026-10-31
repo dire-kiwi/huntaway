@@ -4054,4 +4054,54 @@ mod tests {
             crate::runs::TEST_CAN_RUN.set(false);
         })
     }
+
+    #[test]
+    fn a_config_on_extra_usage_isnt_out() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, true, true);
+            // What a plan with extra usage reports on every turn past its limit, while the turns go on.
+            let (resets, _) = reset_in(2);
+            let info = json!({"status": "rejected", "resetsAt": resets, "rateLimitType": "five_hour", "overageStatus": "allowed", "isUsingOverage": true,
+                "unifiedWindows": {"five_hour": {"utilization": 1, "resetsAt": resets, "status": "rejected"}}});
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &json!({"type": "rate_limit_event", "rate_limit_info": info}));
+            assert_eq!(crate::usage::out_until(&state, &configs[0].id), None);
+            let t = send(&state, &task.id, "Go").unwrap();
+            assert!(state.is_running(&task.id));
+            assert_eq!((t.waiting, t.claude_config_id.as_deref()), (false, Some(configs[0].id.as_str())), "neither held nor moved");
+            stop(&state, &task.id);
+            crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_merge_out_of_usage_keeps_its_place_in_the_merge_queue() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let (task, _) = out_of_usage_setup(&state, "claude", false, false, false);
+            let np = db::NewProject { id: "pr", profile_id: &task.profile_id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            db::insert_project(&state.db(), np).unwrap();
+            state.db().execute("UPDATE tasks SET project_id='pr' WHERE id=?1", [&task.id]).unwrap();
+            // Its merge run is refused for the usage limit.
+            let (resets, _) = reset_in(2);
+            let run = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+            state.runs.lock().unwrap().insert(task.id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
+            state.update_task(&task.id, &[("running", json!(true)), ("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            for line in refused_lines(resets) {
+                handle_line(&state, &run, &line.to_string()).unwrap();
+            }
+            on_exit(&state, &run.id, Some(0), None, None, "");
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.waiting), ("needs_attention", true, false));
+            assert!(t.limit_reset_at.is_some());
+
+            // It can't wait out of the merge queue, where another merge could take its slot.
+            let err = crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap_err();
+            assert!(err.1.contains("merge"), "{}", err.1);
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.waiting), ("needs_attention", true, false));
+            assert_eq!(db::active_merge(&state.db(), Some("pr"), None).unwrap().map(|m| m.id), Some(task.id.clone()), "it still holds the merge slot");
+        })
+    }
 }
