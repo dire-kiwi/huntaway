@@ -18,6 +18,9 @@ struct Args {
     /// The host for requests that don't pick one (by cookie, header or path).
     #[arg(long, env = "BROKER_DEFAULT_HOST")]
     default_host: Option<String>,
+    /// A file to keep the names hosts took in, so a restart keeps them for their hosts (see the README).
+    #[arg(long, env = "BROKER_STATE")]
+    state: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -35,9 +38,10 @@ async fn main() -> Result<()> {
     if let Some(h) = default_host.as_deref().filter(|h| !huntaway_broker::proto::valid_name(h)) {
         bail!("bad default host {h:?}: use up to 48 lowercase letters, digits and hyphens");
     }
+    let state = args.state.filter(|p| !p.as_os_str().is_empty());
+    let app = huntaway_broker::router(huntaway_broker::Config { token, default_host, state, ..Default::default() })?;
     let listener = tokio::net::TcpListener::bind((args.host.as_str(), args.port)).await.with_context(|| format!("binding {}:{}", args.host, args.port))?;
     tracing::info!("listening on http://{}", listener.local_addr()?);
-    let app = huntaway_broker::router(huntaway_broker::Config { token, default_host, ..Default::default() });
     axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
     Ok(())
 }
