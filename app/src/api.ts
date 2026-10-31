@@ -959,20 +959,13 @@ export class ApiError extends Error {
   }
 }
 
-/** Called when the server turns down a request, with the token it was made with and the request's path (see unauthorizedHere). */
-let onUnauthorized: (token: string, path: string) => void = () => {};
-export function setUnauthorizedHandler(fn: (token: string, path: string) => void) {
-  onUnauthorized = fn;
-}
-
 /**
- * Whether a 401 for `path` means this board's token is wrong: a request to this hub, or to its own host
- * through it. A linked host answers 401 when the link's token no longer matches its own (its data dir
- * was made again, say), which is that host's trouble, not a reason to sign the user out of the board.
+ * Called when the server turns down a request, with the token it was made with. Only this board's token being wrong is
+ * a 401: the hub answers a linked host turning down the link's token (its own changed since it was linked) with a 502.
  */
-export function unauthorizedHere(path: string, localHostId: string | null): boolean {
-  const m = /^\/h\/([^/?#]+)/.exec(path);
-  return !m || (localHostId !== null && decodeURIComponent(m[1]) === localHostId);
+let onUnauthorized: (token: string) => void = () => {};
+export function setUnauthorizedHandler(fn: (token: string) => void) {
+  onUnauthorized = fn;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -986,7 +979,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
-    onUnauthorized(token, path);
+    onUnauthorized(token);
     throw new ApiError(401, "Unauthorized");
   }
   const data = await res.json().catch(() => null);
