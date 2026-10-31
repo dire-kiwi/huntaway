@@ -215,6 +215,7 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `--broker-name` / `IA_BROKER_NAME` | host name, as a slug | Name to reach this host by on the broker |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
+| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 83) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
@@ -259,6 +260,15 @@ it, API 65) and fetches it from the checkout's `origin`. When that commit is ahe
 one, the sidebar shows **N new commits · Update**. Update fast-forwards the checkout to the commit
 (it refuses if the checkout is dirty, or has diverged from the commit), then rebuilds and restarts
 as above. Settings → Server shows the commit the deployment runs and when it was last checked.
+
+With `--release-updates <OWNER/REPO>`, for a server installed from a release rather than a
+checkout, the server checks that repository's GitHub releases 30 seconds after it starts, every six
+hours, and on `POST /api/admin/release/check`. It picks the highest semver release (not drafts,
+and prereleases only with `release_prereleases` on in `/api/settings`) that has a
+`huntaway-server-<v>-<os>-<arch>.tar.gz` for this machine with a sha256 digest, and reports it,
+with any error, as `release` in `/api/admin/server`. Requests send the last ETag, so a check when
+nothing changed doesn't count against GitHub's limit of 60 unauthenticated requests an hour.
+`IA_RELEASE_API` points it at another API than `https://api.github.com` (for tests).
 
 ### Network access
 
