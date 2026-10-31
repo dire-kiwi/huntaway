@@ -6,13 +6,21 @@ import { createRequire } from "node:module";
 import { after, before, test } from "node:test";
 import { frameDoc } from "../../src/htmlFrame.ts";
 import { themedPlan } from "../../src/planTheme.ts";
+import { launchOptions } from "../../../scripts/ui-check.mjs";
 
 const { chromium } = createRequire(import.meta.url)("playwright-core");
 const css = fs.readFileSync(new URL("../../src/planTheme.css", import.meta.url), "utf8");
 
 let browser;
-before(async () => (browser = await chromium.launch({ executablePath: "/usr/bin/chromium" })));
+before(async () => (browser = await chromium.launch(launchOptions())));
 after(() => browser?.close());
+
+// Pages come from an http origin (answered here, without a server) rather than setContent's about:blank: under that,
+// Chromium on GitHub's runners aborts as a sandboxed frame navigates (a CHECK in GetCompatibleSandboxedSiteInstance).
+async function show(page, html) {
+  await page.route("http://localhost/plan", (route) => route.fulfill({ contentType: "text/html", body: html }));
+  await page.goto("http://localhost/plan");
+}
 
 test("<ia-html> is a page of its own: its scripts work as in a page, its styles stay in it, and its frame fits it", async () => {
   const plan = `<h1>Scripts</h1>
@@ -42,7 +50,7 @@ test("<ia-html> is a page of its own: its scripts work as in a page, its styles 
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-  await page.setContent(themedPlan(plan, css, ""));
+  await show(page, themedPlan(plan, css, ""));
   const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
   assert.ok(frame, "the component's frame");
   await frame.waitForFunction(() => document.getElementById("loaded")?.textContent && document.getElementById("ext-module")?.textContent, null, { timeout: 5000 });
@@ -77,7 +85,7 @@ test("an <ia-html> frame fits its content offscreen, absolutely positioned conte
 <ia-html><template><div style="height: 600px">tall</div></template></ia-html>
 <ia-html><template><div id="w" style="position: absolute; top: 0; left: 0; width: 300px; height: 180px">widget</div></template></ia-html>`;
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-  await page.setContent(themedPlan(plan, css, ""));
+  await show(page, themedPlan(plan, css, ""));
   const heights = () => page.evaluate(() => [...document.querySelectorAll("ia-html iframe")].map((f) => f.getBoundingClientRect().height).join());
   const expect = (want) => page.waitForFunction((want) => [...document.querySelectorAll("ia-html iframe")].map((f) => f.getBoundingClientRect().height).join() === want, want, { timeout: 3000 }).catch(async () => assert.equal(await heights(), want));
   await expect("600,180");
@@ -94,7 +102,7 @@ test("a reloaded plan goes back to where it was read, with a tall <ia-html> abov
   const paragraphs = Array.from({ length: 80 }, (_, i) => `<p id="b${i}">Paragraph ${i}</p>`).join("\n");
   const plan = (v) => themedPlan(`<h1>Version ${v}</h1><ia-html><template><div style="height: 600px">tall</div></template></ia-html>\n${paragraphs}`, css, "");
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-  await page.setContent(`<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>
+  await show(page, `<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>
 <script>addEventListener("message", (e) => typeof e.data?.iaScroll === "number" && (window.lastScroll = e.data.iaScroll));</script>`);
   const load = async (doc) => {
     await page.evaluate((doc) => new Promise((done) => {
@@ -120,14 +128,20 @@ test("a reloaded plan goes back to where it was read, with a tall <ia-html> abov
 });
 
 test("a reloaded plan goes back to its place even when its load takes longer than the hold after it", async () => {
-  // An image that takes 4s, so load comes well after the page is parsed.
-  const server = http.createServer((req, res) => setTimeout(() => res.writeHead(200, { "content-type": "image/svg+xml" }).end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'), 4000));
+  // An image that takes 4s, so load comes well after the page is parsed. The page is on the same server: from a page on
+  // another origin the image fails at once, and doesn't hold up load.
+  const frameHtml = `<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>`;
+  const server = http.createServer((req, res) =>
+    req.url === "/"
+      ? res.writeHead(200, { "content-type": "text/html" }).end(frameHtml)
+      : setTimeout(() => res.writeHead(200, { "content-type": "image/svg+xml" }).end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'), 4000),
+  );
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   try {
     const paragraphs = Array.from({ length: 120 }, (_, i) => `<p id="b${i}">Paragraph ${i}</p>`).join("\n");
     const doc = frameDoc(themedPlan(`<h1>Slow</h1>${paragraphs}<img src="http://127.0.0.1:${server.address().port}/slow.svg">`, css, ""), 2000, 0);
     const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-    await page.setContent(`<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>`);
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const started = Date.now();
     await page.evaluate((doc) => new Promise((done) => {
       const f = document.querySelector("iframe");
@@ -149,7 +163,7 @@ async function planPage(plan, form) {
   const page = await browser.newPage({ viewport: { width: 900, height: 1400 } });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.setContent(`<iframe sandbox="allow-scripts allow-forms" style="width: 880px; height: 1380px; border: 0"></iframe>
+  await show(page, `<iframe sandbox="allow-scripts allow-forms" style="width: 880px; height: 1380px; border: 0"></iframe>
 <script>window.forms = []; addEventListener("message", (e) => e.data?.iaForm && window.forms.push(e.data));</script>`);
   await page.evaluate((doc) => new Promise((done) => {
     const f = document.querySelector("iframe");
@@ -206,6 +220,8 @@ test("a plan's questions become form fields, and the frame reports each named fi
   await frame.locator("input[name=cache]").check();
   // Enter in a field of the plan's own form doesn't submit it (which would load its action in the frame).
   await frame.locator("input[name=owner]").press("Enter");
+  // Reports come by postMessage, so the checkbox's can land after the steps above (as in Playwright's headless shell).
+  await page.waitForFunction(() => window.forms.at(-1).iaForm.find((f) => f.name === "cache").touched);
   const now = await last();
   assert.equal(now.iaFormUser, true);
   assert.deepEqual(summary(now.iaForm), [
