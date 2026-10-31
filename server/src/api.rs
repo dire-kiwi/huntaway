@@ -2996,7 +2996,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-clone-{}", new_id()));
+            let dir = crate::testing::temp_dir();
             let clone = |b: Value| clone_project(State(s.clone()), Path(profile.id.clone()), Json(serde_json::from_value(b).unwrap()));
             let path = |name: &str| path_str(&dir.join(name));
             let message = |r: ApiResult<Json<Value>>| r.unwrap_err().1;
@@ -3074,7 +3074,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert!(p.use_worktrees && !p.is_git);
@@ -3092,7 +3092,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert_eq!(p.watch_pull_requests, "off");
@@ -3110,8 +3110,7 @@ pub(crate) mod tests {
     /// A git repository with a commit on master, and a project on it: (folder, project).
     async fn git_project(s: &Shared) -> (PathBuf, db::Project) {
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).status().unwrap().success());
         git(&["init", "-q", "-b", "master"]);
         git(&["commit", "-q", "--allow-empty", "-m", "first"]);
@@ -3207,7 +3206,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert!(!p.is_git && !p.has_commits && p.setup_task_id.is_none());
@@ -3302,7 +3301,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert_eq!(p.group_name, None);
@@ -3349,7 +3348,7 @@ pub(crate) mod tests {
             assert_eq!((done.status.as_str(), done.merging), ("done", false));
 
             // No project can take the key its tasks use.
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = |key: Option<&str>| CreateProject { name: "Shop".into(), repo_path: path_str(&dir), key: key.map(String::from), base_branch: None, use_worktrees: None };
             let err = create_project_inner(&s, &profile.id, b(Some("s"))).await.unwrap_err();
             assert!(format!("{err:?}").contains("scratch tasks"), "{err:?}");
@@ -3365,7 +3364,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir();
             let new = |name: &str| CreateProject { name: name.into(), repo_path: path_str(&dir.join(name)), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, new("x")).await.unwrap();
             let other = create_project_inner(&s, &profile.id, new("y")).await.unwrap();
@@ -3436,8 +3435,7 @@ pub(crate) mod tests {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
@@ -3523,8 +3521,7 @@ pub(crate) mod tests {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("WEB".into()), base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             let fanned = |id: &str| CreateTask { title: "Look".into(), fanout_id: Some(id.into()), ..Default::default() };
@@ -3555,8 +3552,7 @@ pub(crate) mod tests {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("WEB".into()), base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
@@ -3600,7 +3596,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert!(p.status_scripts.is_empty());
@@ -3773,7 +3769,7 @@ pub(crate) mod tests {
     fn a_folder_is_kept_for_a_path_in_it_through_a_symlink() {
         crate::testing::run(async || {
             let s = crate::testing::state();
-            let tmp = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let tmp = crate::testing::temp_dir();
             std::fs::create_dir_all(tmp.join("real/projects/x")).unwrap();
             std::os::unix::fs::symlink(tmp.join("real"), tmp.join("link")).unwrap();
             let dir = tmp.join("link/projects/x");

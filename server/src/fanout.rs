@@ -377,7 +377,7 @@ mod tests {
     /// and a commit of its own: the folder everything is in, and the tasks.
     async fn fanned_out(s: &Shared) -> (PathBuf, Vec<Task>) {
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let root = std::env::temp_dir().join(format!("ia-fanout-{}", crate::util::new_id()));
+        let root = crate::testing::temp_dir();
         let (repo, origin) = (root.join("repo"), root.join("origin.git"));
         std::fs::create_dir_all(&repo).unwrap();
         sh(&root, &["init", "-q", "--bare", "-b", "master", &path_str(&origin)]);

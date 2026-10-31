@@ -1,4 +1,6 @@
 //! Exercise title generation and refresh through the real binary, not the unit-test model stub.
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -18,8 +20,7 @@ fn check(dir: &Path, tasks: &[&str], mode: &str) -> Output {
 
 #[test]
 fn titles_use_the_tasks_runtime_and_login_for_generation_and_refresh() {
-    let dir = std::env::temp_dir().join(format!("ia175-titles-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = common::TempDir::new("ia175-titles");
     std::fs::write(dir.join("agent"), include_str!("fixtures/task-titles.py")).unwrap();
     std::fs::set_permissions(dir.join("agent"), std::fs::Permissions::from_mode(0o700)).unwrap();
     // Opening title-check without task ids creates a current, isolated schema.
@@ -73,5 +74,4 @@ fn titles_use_the_tasks_runtime_and_login_for_generation_and_refresh() {
         assert!(String::from_utf8_lossy(&out.stderr).contains(if mode == "empty" { "no title" } else { "test failure" }));
     }
     drop(c);
-    std::fs::remove_dir_all(dir).unwrap();
 }

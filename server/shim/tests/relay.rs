@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -15,10 +15,26 @@ fn wait_for(path: &Path) {
     }
 }
 
-fn run_dir() -> std::path::PathBuf {
+/// A run folder, removed when it's dropped (when the test ends, panics included).
+struct RunDir(PathBuf);
+
+impl std::ops::Deref for RunDir {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for RunDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn run_dir() -> RunDir {
     let dir = std::env::temp_dir().join(format!("ia-shim-test-{}-{:?}", std::process::id(), Instant::now()));
     fs::create_dir_all(&dir).unwrap();
-    dir
+    RunDir(dir)
 }
 
 #[test]
@@ -26,7 +42,7 @@ fn relays_input_until_it_is_closed() {
     let dir = run_dir();
     fs::write(dir.join("prompt"), "first\n").unwrap();
     fs::write(dir.join("input.jsonl"), "").unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_ia-shim")).arg(&dir).args(["--", "cat"]).status().unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_ia-shim")).arg(&*dir).args(["--", "cat"]).status().unwrap();
     assert!(status.success());
     wait_for(&dir.join("pid"));
 
@@ -43,16 +59,14 @@ fn relays_input_until_it_is_closed() {
     wait_for(&dir.join("exit"));
     assert_eq!(fs::read_to_string(dir.join("out.jsonl")).unwrap(), "first\nsecond\nthird\n");
     assert_eq!(fs::read_to_string(dir.join("exit")).unwrap(), r#"{"code":0,"signal":null}"#);
-    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn without_input_reads_the_prompt_file() {
     let dir = run_dir();
     fs::write(dir.join("prompt"), "only\n").unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_ia-shim")).arg(&dir).args(["--", "cat"]).status().unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_ia-shim")).arg(&*dir).args(["--", "cat"]).status().unwrap();
     assert!(status.success());
     wait_for(&dir.join("exit"));
     assert_eq!(fs::read_to_string(dir.join("out.jsonl")).unwrap(), "only\n");
-    fs::remove_dir_all(dir).unwrap();
 }

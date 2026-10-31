@@ -429,7 +429,7 @@ mod tests {
 
     /// An origin with one commit, cloned as the source checkout: (origin, checkout, commit).
     fn checkout() -> (PathBuf, PathBuf, String) {
-        let root = std::env::temp_dir().join(format!("ia-admin-{}", crate::util::new_id()));
+        let root = crate::testing::temp_dir();
         let origin = root.join("origin");
         std::fs::create_dir_all(&origin).unwrap();
         sh(&origin, &["init", "-q", "-b", "master"]);
