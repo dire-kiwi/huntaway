@@ -4,15 +4,21 @@
 // panel, and a file's lines from the main panel (Enter goes into it): space stages or unstages the
 // line under the cursor, `v` selects a range of lines and `a` the whole hunk. `?` lists the keys,
 // and the bar at the bottom shows (and does) the ones for where you are.
+//
+// Diffs are highlighted, unified or side by side (`|`), and lines in them can be commented on for the agent (`n`,
+// or a line's comment button): the comments wait in a review at the bottom, and in the thread's composer, until
+// they're sent (see lineComments.ts).
 import clsx from "clsx";
-import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
-import { api, hostSupports, type DiffResult, type GitCommit, type GitCommitShown, type GitFile, type GitStash, type GitStatus, type Task, type Turn, type TurnDiff } from "../api";
+import { ChevronDown, ChevronRight, Loader2, MessageSquare, X } from "lucide-react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
+import { api, hostSupports, runningAgentSteers, type DiffResult, type GitCommit, type GitCommitShown, type GitFile, type GitStash, type GitStatus, type Task, type Turn, type TurnDiff } from "../api";
 import { conflicted, fileRows, hasStaged, hasUnstaged, linesPatch, linesStageable, parseDiff, untracked, type FileDiff, type FileRow } from "../changes";
+import { clearReview, commentLines, dropDraft, editComment, lineRange, openDraft, removeComments, useReview, type CommentLines, type CommentSource, type Review } from "../lineComments";
 import { useHost } from "../store";
 import { hasTurns, turnLabel, turnStat, useTurns } from "../turns";
+import { CommentsContext, DiffLines, diffRows, type CommentsApi, type DiffRow, type Layout, type PickHow } from "./DiffLines";
 import { RewindDialog } from "./Rewind";
-import { rewound } from "./Thread";
+import { rewound, sendComments } from "./Thread";
 import { Button, ContextMenu, copyText, Input, isSubmitShortcut, Kbd, Modal, SUBMIT_KEYS, Textarea, type MenuItem } from "./ui";
 
 type Side = "status" | "files" | "commits" | "stash" | "turns";
@@ -22,6 +28,8 @@ type Pane = "unstaged" | "staged";
 /** How often the view checks for changes (an agent may be making them). */
 const POLL_MS = 4000;
 const TREE_KEY = "ia.changes.tree";
+/** Unified or split diffs, kept in this browser. */
+const LAYOUT_KEY = "ia.changes.layout";
 /** The keys the view may take, kept for when a change is done. */
 const KEYS = /^(.|Enter|Escape|Tab|Arrow\w+|Page\w+|Home|End)$/;
 /** An option that's just shown (keys that move around), not done from the bar. */
@@ -69,14 +77,8 @@ interface FileDiffs {
   error?: string;
 }
 
-/** A row of a file's diff in the main panel: one of its hunks' headers (line -1) or lines. */
-interface DiffRow {
-  hunk: number;
-  line: number;
-}
-
-const diffRows = (f: FileDiff | null): DiffRow[] =>
-  f && linesStageable(f) ? f.hunks.flatMap((h, hunk) => [{ hunk, line: -1 }, ...h.lines.map((_, line) => ({ hunk, line }))]) : [];
+/** The rows of a file's diff to stage lines from (none for one that can't be). */
+const stageRows = (f: FileDiff | null): DiffRow[] => (f && linesStageable(f) ? diffRows(f) : []);
 const isChange = (f: FileDiff, r: DiffRow | undefined) => !!r && r.line >= 0 && f.hunks[r.hunk].lines[r.line].kind !== " ";
 
 /** The changed line nearest `i` (looking in direction `dir` first), or -1. */
@@ -133,6 +135,44 @@ function GitView({ task }: { task: Task }) {
   const [sticky, setSticky] = useState(false);
   const [hunkMode, setHunkMode] = useState(false);
   const dragging = useRef(false);
+  const [layout, setLayout] = useState<Layout>(() => (localStorage.getItem(LAYOUT_KEY) === "split" ? "split" : "unified"));
+
+  // Comments for the agent: the task's review, the draft to focus, and the lines picked in a patch (see PatchView).
+  const review = useReview(h, id);
+  const [focusDraft, setFocusDraft] = useState<{ id: string } | null>(null);
+  const picked = useRef<{ owner: object; comment: () => void } | null>(null);
+  const [pickOwner, setPickOwner] = useState<object | null>(null);
+  const pickLines = useCallback((owner: object, comment: (() => void) | null) => {
+    if (comment) picked.current = { owner, comment };
+    else if (picked.current?.owner === owner) picked.current = null;
+    else return;
+    setPickOwner(comment ? owner : null);
+  }, []);
+  const comments = useMemo<CommentsApi>(
+    () => ({
+      hostId: h,
+      taskId: id,
+      review,
+      focus: focusDraft,
+      open: (lines) => {
+        if (!lines) return;
+        // What was typed after the key that opened it is the note's, not keys for the view.
+        queued.current = [];
+        setFocusDraft({ id: openDraft(h, id, lines) });
+      },
+      edit: (c) => {
+        const d = editComment(h, id, c);
+        if (d) setFocusDraft({ id: d });
+      },
+      done: () => {
+        setFocusDraft(null);
+        root.current?.focus({ preventScroll: true });
+      },
+      pickOwner,
+      pick: pickLines,
+    }),
+    [h, id, review, focusDraft, pickOwner, pickLines],
+  );
 
   useEffect(() => root.current?.focus({ preventScroll: true }), []);
   // Back to the view when a dialog closes (one opened from another, as a menu's can be, has nowhere to go back to).
@@ -273,7 +313,7 @@ function GitView({ task }: { task: Task }) {
   // The pane in use: the other when this one has nothing left.
   const activePane: Pane = hasPane(pane) || !hasPane(pane === "unstaged" ? "staged" : "unstaged") ? pane : pane === "unstaged" ? "staged" : "unstaged";
   const file = paneFile(activePane);
-  const drows = useMemo(() => diffRows(file), [file]);
+  const drows = useMemo(() => stageRows(file), [file]);
   const cur = file ? nearestChange(file, drows, cursor) : -1;
   const staging = inMain && side === "files" && single && cur >= 0;
   // Gone into a file whose diff hasn't come yet.
@@ -308,7 +348,8 @@ function GitView({ task }: { task: Task }) {
     let stale = false;
     api
       .diff(h, id)
-      .then((d) => !stale && setBranch(d))
+      // The same diff (most checks): the same object, so what's picked in it stays.
+      .then((d) => !stale && setBranch((p) => (JSON.stringify(p) === JSON.stringify(d) ? p : d)))
       .catch((e) => !stale && setBranch({ available: false, reason: errText(e) }));
     return () => {
       stale = true;
@@ -331,6 +372,12 @@ function GitView({ task }: { task: Task }) {
   }, [turnKey, h, id]);
   const [shown, setShown] = useState<{ sha: string; commit?: GitCommitShown; patch?: string; error?: string } | null>(null);
   const showSha = side === "commits" ? commit?.sha : side === "stash" ? stash?.sha : undefined;
+  const shownFiles = useMemo(() => parseDiff(shown?.patch ?? ""), [shown]);
+  const stashIndex = side === "stash" ? stash?.index : undefined;
+  const shownSource = useMemo<CommentSource | undefined>(
+    () => (!shown ? undefined : stashIndex !== undefined ? { key: `stash:${shown.sha}`, label: `stash@{${stashIndex}}` } : { key: `commit:${shown.sha}`, label: `commit ${short(shown.sha)}` }),
+    [shown, stashIndex],
+  );
   useEffect(() => {
     if (!showSha) return;
     let stale = false;
@@ -554,6 +601,81 @@ function GitView({ task }: { task: Task }) {
     setTree(t);
     localStorage.setItem(TREE_KEY, t ? "tree" : "flat");
   };
+  const toggleLayout = () => {
+    const next = layout === "split" ? "unified" : "split";
+    setLayout(next);
+    localStorage.setItem(LAYOUT_KEY, next);
+  };
+  const layoutOption: Option = { key: "|", label: layout === "split" ? "Unified" : "Split", run: toggleLayout };
+
+  // A comment on lines of a file's diff being staged: the range (or hunk) picked, or the cursor's line, or with
+  // `at` (a line's comment button), that line unless it's in what's picked.
+  const isUntracked = !!target?.file && untracked(target.file);
+  const stagingSources = useMemo<Record<Pane, CommentSource>>(() => ({ unstaged: isUntracked ? { key: "unstaged", label: "an untracked file" } : UNSTAGED, staged: STAGED }), [isUntracked]);
+  const stagingSource = (p: Pane) => stagingSources[p];
+  const commentStaging = (p: Pane = activePane, at?: number) => {
+    const f = paneFile(p);
+    if (!f) return;
+    const rs = stageRows(f);
+    let [from, to] = [cur, cur];
+    if (hunkMode && cur >= 0) {
+      from = rs.findIndex((r) => r.hunk === rs[cur].hunk);
+      to = rs.findLastIndex((r) => r.hunk === rs[cur].hunk);
+    } else if (anchor !== null && cur >= 0) [from, to] = [Math.min(anchor, cur), Math.max(anchor, cur)];
+    if (at !== undefined && !(inMain && p === activePane && cur >= 0 && at >= from && at <= to)) [from, to] = [at, at];
+    if (from < 0) return;
+    comments.open(commentLines(f, stagingSource(p), rs.slice(from, to + 1).filter((r) => r.line >= 0)));
+    setAnchor(null);
+    setHunkMode(false);
+  };
+  const commentKey = () => {
+    if (staging) return commentStaging();
+    if (picked.current) return picked.current.comment();
+    setFlash({ text: inMain ? "Pick lines by their numbers first (drag or shift-click for more), or use a line's comment button" : "Go into a diff (Enter) to pick lines to comment on" });
+  };
+  // A comment in the review: to its diff, and scrolled to.
+  const [jump, setJump] = useState<string | null>(null);
+  const jumpTo = (c: CommentLines, anchorId: string) => {
+    if (c.where === "unstaged" || c.where === "staged") {
+      setCollapsed((cs) => new Set([...cs].filter((k) => !c.path.startsWith(k))));
+      setSide("files");
+      setFileKey(c.path);
+    } else if (c.where === "branch") setSide("status");
+    else if (c.where.startsWith("commit:")) {
+      setSide("commits");
+      setCommitSha(c.where.slice("commit:".length));
+    } else if (c.where.startsWith("stash:")) {
+      setSide("stash");
+      setStashSha(c.where.slice("stash:".length));
+    } else if (c.where.startsWith("turn:")) {
+      setSide("turns");
+      setTurnN(Number(c.where.split(":")[2]));
+    }
+    setInMain(false);
+    setJump(anchorId);
+  };
+  useEffect(() => {
+    if (!jump) return;
+    const el = root.current?.querySelector(`[data-comment="${CSS.escape(jump)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center" });
+    setJump(null);
+  });
+  // Off the jump once the diffs it's in have come and it isn't there (outdated, or folded away).
+  useEffect(() => {
+    if (!jump) return;
+    const t = setTimeout(() => setJump(null), 3000);
+    return () => clearTimeout(t);
+  }, [jump]);
+  const discardReview = () =>
+    setDialog({
+      kind: "confirm",
+      title: "Discard the comments",
+      body: `Throw away ${review.comments.length + review.drafts.length === 1 ? "the comment for the agent, which hasn't" : "all the comments for the agent that haven't"} been sent?`,
+      yes: "Discard",
+      danger: true,
+      onYes: () => clearReview(h, id),
+    });
 
   // Moving in a list, or in the main panel.
   const mainScroll = useRef<HTMLDivElement>(null);
@@ -640,7 +762,9 @@ function GitView({ task }: { task: Task }) {
             { key: "v", label: anchor === null ? "Select range" : "End range", run: toggleRange },
             { key: "a", label: hunkMode ? "Select lines" : "Select hunk", run: () => setHunkMode(!hunkMode) },
             ...(hasPane(activePane === "unstaged" ? "staged" : "unstaged") ? [{ key: "tab", label: activePane === "unstaged" ? "Staged" : "Unstaged", run: () => switchPane() }] : []),
+            { key: "n", label: "Comment", run: commentKey },
             { key: "c", label: "Commit", run: startCommit },
+            layoutOption,
             { key: "esc", label: "Back", run: () => setInMain(false) },
             { key: "←/→", label: "Hunk", run: noop },
           ],
@@ -652,6 +776,8 @@ function GitView({ task }: { task: Task }) {
         {
           title: "Main",
           items: [
+            { key: "n", label: "Comment", run: commentKey },
+            layoutOption,
             { key: "j/k", label: "Scroll", run: noop },
             { key: "[/]", label: "File", run: noop },
             { key: "esc", label: "Back", run: () => setInMain(false) },
@@ -692,6 +818,7 @@ function GitView({ task }: { task: Task }) {
         { key: "y", label: "Copy the message", run: () => copy(turn?.text) },
       ],
     };
+    own[side].push(layoutOption);
     return [
       { title: SIDE_TITLES[side], items: own[side] },
       { title: "Anywhere", items: [{ key: "↑/↓", label: "Move", run: noop }, { key: "←/→", label: "Panel", run: noop }, ...nav] },
@@ -734,6 +861,8 @@ function GitView({ task }: { task: Task }) {
     }
     if (key === "?") return (setDialog({ kind: "help" }), true);
     if (key === "R") return (void refresh(), true);
+    if (key === "|") return (toggleLayout(), true);
+    if (key === "n") return (commentKey(), true);
     if (staging) {
       const k: Record<string, () => void> = {
         ArrowUp: () => moveCursor(-1, shift),
@@ -886,7 +1015,7 @@ function GitView({ task }: { task: Task }) {
       onMouseDownCapture={(e) => !(e.target as Element).closest("input, textarea, [data-modal], [role^=menu]") && root.current?.focus({ preventScroll: true })}
       className="flex h-full min-h-0 flex-col bg-bg font-mono text-[12px] leading-[18px] outline-none"
     >
-      {children}
+      <CommentsContext.Provider value={comments}>{children}</CommentsContext.Provider>
     </div>
   );
   if (!status)
@@ -1103,7 +1232,7 @@ function GitView({ task }: { task: Task }) {
               {diffs?.notUtf8 && <Note>{NOT_UTF8}: stage or discard it whole from the files panel.</Note>}
               {(["unstaged", "staged"] as Pane[])
                 .filter((p) => (p === "unstaged" ? hasUnstaged : hasStaged)(target!.file!))
-                .map((p) => {
+                .map((p, k) => {
                   const f = paneFile(p);
                   const on = p === activePane;
                   return (
@@ -1113,18 +1242,26 @@ function GitView({ task }: { task: Task }) {
                       active={inMain && on}
                       focused={focused}
                       className="flex-1"
-                      right={inMain && on && hunkMode ? <span className="text-accent">hunk</span> : inMain && on && anchor !== null ? <span className="text-accent">range</span> : null}
+                      right={
+                        <>
+                          {inMain && on && (hunkMode || anchor !== null) && <span className="mr-2 text-accent">{hunkMode ? "hunk" : "range"}</span>}
+                          {k === 0 && <LayoutToggle layout={layout} onToggle={toggleLayout} />}
+                        </>
+                      }
                     >
                       {!f ? (
                         // Shown as it is, never as lines to stage.
-                        (p === "unstaged" ? unstagedPreview : stagedPreview).length > 0 && <PatchView files={p === "unstaged" ? unstagedPreview : stagedPreview} empty="" />
+                        (p === "unstaged" ? unstagedPreview : stagedPreview).length > 0 && <PatchView files={p === "unstaged" ? unstagedPreview : stagedPreview} empty="" layout={layout} />
                       ) : linesStageable(f) ? (
-                        <StagingDiff
+                        <DiffLines
                           file={f}
-                          rows={on ? drows : diffRows(f)}
+                          layout={layout}
+                          source={stagingSource(p)}
                           cursor={inMain && on ? cur : -1}
                           chosen={inMain && on ? chosenRows : null}
+                          pick="changed"
                           onLine={(i, how) => pickLine(p, i, how)}
+                          onComment={(i) => commentStaging(p, i)}
                           hunkActions={p === "unstaged" ? ["stage", "discard"] : ["unstage"]}
                           onHunk={(hunk, what) => hunkAction(p, hunk, what)}
                         />
@@ -1137,10 +1274,17 @@ function GitView({ task }: { task: Task }) {
               {!hasUnstaged(target!.file!) && !hasStaged(target!.file!) && <EmptyMain text="No changes to show" />}
             </>
           ) : (
-            <Panel title={mainTitle(side, status, fileRow, commit, stash, turn, turnIdx === 0)} active={inMain} focused={focused} className="flex-1" scrollRef={mainScroll}>
+            <Panel
+              title={mainTitle(side, status, fileRow, commit, stash, turn, turnIdx === 0)}
+              active={inMain}
+              focused={focused}
+              className="flex-1"
+              scrollRef={mainScroll}
+              right={<LayoutToggle layout={layout} onToggle={toggleLayout} />}
+            >
               {side === "turns" ? (
                 turn ? (
-                  <TurnView turn={turn} shown={turnShown?.key === turnKey ? turnShown : null} />
+                  <TurnView turn={turn} shown={turnShown?.key === turnKey ? turnShown : null} layout={layout} />
                 ) : (
                   <EmptyMain text={turns.data?.available === false ? "" : "No turns with checkpoints yet: one is taken as each of the agent's turns ends"} />
                 )
@@ -1150,21 +1294,29 @@ function GitView({ task }: { task: Task }) {
                     <>
                       {diffs.error && <Note error>{diffs.error}</Note>}
                       {diffs.tooLarge && <Note>Some of the diffs are too big to show.</Note>}
-                      {unstagedFiles.length + unstagedPreview.length > 0 && <PatchView files={[...unstagedFiles, ...unstagedPreview]} head={<Section>Unstaged</Section>} empty="" />}
-                      {stagedFiles.length + stagedPreview.length > 0 && <PatchView files={[...stagedFiles, ...stagedPreview]} head={<Section>Staged</Section>} empty="" />}
+                      {unstagedFiles.length > 0 && <PatchView files={unstagedFiles} head={<Section>Unstaged</Section>} empty="" layout={layout} source={UNSTAGED} />}
+                      {unstagedPreview.length > 0 && <PatchView files={unstagedPreview} head={!unstagedFiles.length && <Section>Unstaged</Section>} empty="" layout={layout} />}
+                      {stagedFiles.length > 0 && <PatchView files={stagedFiles} head={<Section>Staged</Section>} empty="" layout={layout} source={STAGED} />}
+                      {stagedPreview.length > 0 && <PatchView files={stagedPreview} head={!stagedFiles.length && <Section>Staged</Section>} empty="" layout={layout} />}
                     </>
                   )
                 ) : (
                   <EmptyMain text={files.length ? "" : "No changes in the working tree"} />
                 )
               ) : side === "status" ? (
-                <BranchView diff={branch} />
+                <BranchView diff={branch} layout={layout} />
               ) : (side === "commits" ? commit : stash) ? (
                 shown && shown.sha === showSha ? (
                   shown.error ? (
                     <Note error>{shown.error}</Note>
                   ) : (
-                    <PatchView files={parseDiff(shown.patch ?? "")} head={shown.commit && <CommitHead c={shown.commit} />} empty="No changes" />
+                    <PatchView
+                      files={shownFiles}
+                      head={shown.commit && <CommitHead c={shown.commit} />}
+                      empty="No changes"
+                      layout={layout}
+                      source={shownSource}
+                    />
                   )
                 ) : null
               ) : (
@@ -1174,6 +1326,7 @@ function GitView({ task }: { task: Task }) {
           )}
         </div>
       </div>
+      <ReviewBar task={task} review={review} onJump={jumpTo} onDiscard={discardReview} onError={(text) => setFlash({ text, error: true })} />
       <OptionsBar options={opts[0].items} busy={busy} flash={flash} onDismiss={() => setFlash(null)} />
       {menu && <ContextMenu x={menu.x} y={menu.y} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
       {dialog && <DialogView dialog={dialog} options={opts} onClose={() => setDialog(null)} />}
@@ -1259,7 +1412,8 @@ function Panel({
         <span className={clsx("truncate bg-bg px-1", active ? "font-semibold text-emerald-300" : "text-muted")}>{title}</span>
         {right && <span className="pointer-events-auto shrink-0 bg-bg px-1 text-faint">{right}</span>}
       </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto pt-1.5 pb-0.5">
+      {/* A size container: comments under lines are as wide as it, however wide the lines are. */}
+      <div ref={scrollRef} className="@container min-h-0 flex-1 overflow-auto pt-1.5 pb-0.5">
         {children}
       </div>
     </section>
@@ -1386,90 +1540,6 @@ function FilesList({
   );
 }
 
-const LINE_TONE = { "+": "text-emerald-300 bg-emerald-500/[0.09]", "-": "text-red-300 bg-red-500/[0.09]", " ": "text-[#b4b4c4]" };
-
-/** A file's diff to stage lines from: a cursor, the chosen lines, and buttons on each hunk. */
-function StagingDiff({
-  file,
-  rows,
-  cursor,
-  chosen,
-  onLine,
-  hunkActions,
-  onHunk,
-}: {
-  file: FileDiff;
-  rows: DiffRow[];
-  cursor: number;
-  chosen: Set<number> | null;
-  onLine: (i: number, how: "down" | "shift" | "enter") => void;
-  hunkActions: ("stage" | "unstage" | "discard")[];
-  onHunk: (hunk: number, what: "stage" | "unstage" | "discard") => void;
-}) {
-  const ref = useScrollTo(cursor);
-  const width = String(Math.max(...file.hunks.map((h) => Math.max(h.oldStart + h.oldCount, h.newStart + h.newCount)))).length;
-  return (
-    <div ref={ref} className="w-max min-w-full">
-      {rows.map((r, i) => {
-        const h = file.hunks[r.hunk];
-        if (r.line < 0)
-          return (
-            <div key={i} data-i={i} className="group flex items-center gap-2 bg-accent/[0.06] px-1.5 text-accent/90">
-              <span className="whitespace-pre">
-                @@ -{h.oldStart},{h.oldCount} +{h.newStart},{h.newCount} @@<span className="text-faint">{h.heading}</span>
-              </span>
-              <span className="sticky right-1.5 ml-auto flex gap-1 opacity-0 group-hover:opacity-100">
-                {hunkActions.map((a) => (
-                  <button
-                    key={a}
-                    tabIndex={-1}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => onHunk(r.hunk, a)}
-                    className={clsx("rounded border px-1.5 text-[10.5px] leading-4 capitalize", a === "discard" ? "border-red-500/30 text-red-300 hover:bg-red-500/15" : "border-line-strong text-muted hover:bg-white/10 hover:text-fg")}
-                  >
-                    {a} hunk
-                  </button>
-                ))}
-              </span>
-            </div>
-          );
-        const l = h.lines[r.line];
-        const on = chosen?.has(i);
-        return (
-          <div
-            key={i}
-            data-i={i}
-            onMouseDown={(e) => {
-              if (e.button !== 0 || l.kind === " ") return;
-              e.preventDefault();
-              onLine(i, e.shiftKey ? "shift" : "down");
-            }}
-            onMouseEnter={() => l.kind !== " " && onLine(i, "enter")}
-            className={clsx(
-              "flex whitespace-pre",
-              on ? "bg-accent/30 text-fg" : LINE_TONE[l.kind],
-              l.kind !== " " && "cursor-pointer",
-              i === cursor && "outline outline-1 -outline-offset-1 outline-accent/70",
-            )}
-          >
-            <span className="shrink-0 pr-[1ch] text-right text-faint/70 select-none" style={{ width: `${width + 2}ch` }}>
-              {l.old ?? ""}
-            </span>
-            <span className="shrink-0 pr-[1ch] text-right text-faint/70 select-none" style={{ width: `${width + 1}ch` }}>
-              {l.new ?? ""}
-            </span>
-            <span className="w-[2ch] shrink-0 text-center select-none">{l.kind}</span>
-            <span className="pr-3 [tab-size:4]">
-              {l.text || " "}
-              {l.noEol && <span className="ml-2 text-faint select-none">⏎̸ no newline at end</span>}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 /** A diff with no lines to stage (a conflict's, a binary file's), as it is. */
 function RawDiff({ file }: { file: FileDiff }) {
   const lines = file.combined ? file.raw : file.header.slice(1);
@@ -1486,12 +1556,65 @@ function RawDiff({ file }: { file: FileDiff }) {
   );
 }
 
-/** Several files' diffs (a commit's, the branch's), each under a header that folds it away. */
-function PatchView({ files, head, empty }: { files: FileDiff[]; head?: ReactNode; empty: string }) {
+/** The working tree's diffs, for comments on their lines. */
+const UNSTAGED: CommentSource = { key: "unstaged", label: "unstaged changes" };
+const STAGED: CommentSource = { key: "staged", label: "staged changes" };
+
+/**
+ * Several files' diffs (a commit's, the branch's), each under a header that folds it away. With a `source`, lines
+ * are picked by their numbers (drag or shift-click for more) and commented on for the agent.
+ */
+function PatchView({ files, head, empty, layout, source }: { files: FileDiff[]; head?: ReactNode; empty: string; layout: Layout; source?: CommentSource }) {
   const [folded, setFolded] = useState<Record<string, boolean>>({});
   const big = (f: FileDiff) => f.adds + f.dels > 1500;
   const isFolded = (f: FileDiff, i: number) => folded[`${i}:${f.path}`] ?? big(f);
   const refs = useRef<(HTMLDivElement | null)[]>([]);
+  // The lines picked: in which file, and from which row to which (rows as DiffLines counts them).
+  const [sel, setSel] = useState<{ file: number; anchor: number; cursor: number } | null>(null);
+  const dragging = useRef(false);
+  const comments = useContext(CommentsContext);
+  const me = useRef({}).current;
+  // Comments need the view's (not there for a host from before it).
+  if (!comments) source = undefined;
+  // Files that change (a refresh) or a new patch: nothing picked.
+  useEffect(() => setSel(null), [files]);
+  const commentOn = (k: number, from: number, to: number) => {
+    const f = files[k];
+    if (!f || !source || !comments) return;
+    const rows = diffRows(f).slice(Math.min(from, to), Math.max(from, to) + 1);
+    comments.open(commentLines(f, source, rows.filter((r) => r.line >= 0)));
+    setSel(null);
+  };
+  // `n` comments on what's picked here, until another diff picks lines.
+  const { pick, pickOwner } = comments ?? {};
+  useEffect(() => {
+    if (!pick) return;
+    pick(me, sel ? () => commentOn(sel.file, sel.anchor, sel.cursor) : null);
+  });
+  useEffect(() => () => pick?.(me, null), [pick, me]);
+  useEffect(() => {
+    if (pickOwner && pickOwner !== me) setSel(null);
+  }, [pickOwner, me]);
+  useEffect(() => {
+    const up = () => void (dragging.current = false);
+    window.addEventListener("mouseup", up);
+    return () => window.removeEventListener("mouseup", up);
+  }, []);
+  const onLine = (k: number, i: number, how: PickHow) => {
+    if (how === "enter") {
+      if (dragging.current) setSel((s) => (s && s.file === k ? { ...s, cursor: i } : s));
+      return;
+    }
+    if (how === "shift") return setSel((s) => (s && s.file === k ? { ...s, cursor: i } : { file: k, anchor: i, cursor: i }));
+    dragging.current = true;
+    setSel({ file: k, anchor: i, cursor: i });
+  };
+  const chosen = useMemo(() => {
+    if (!sel) return null;
+    const set = new Set<number>();
+    for (let i = Math.min(sel.anchor, sel.cursor); i <= Math.max(sel.anchor, sel.cursor); i++) set.add(i);
+    return set;
+  }, [sel]);
   return (
     <div className="min-w-full">
       {head}
@@ -1527,26 +1650,21 @@ function PatchView({ files, head, empty }: { files: FileDiff[]; head?: ReactNode
               <span className="shrink-0 text-red-400">−{f.dels}</span>
             </div>
             {!fold && (
-              <div className="w-max min-w-full py-0.5">
+              <div className={clsx("py-0.5", layout === "split" ? "w-full" : "w-max min-w-full")}>
                 {f.binary ? (
                   <div className="px-1.5 text-muted">Binary file</div>
                 ) : f.combined || !f.hunks.length ? (
                   <RawDiff file={f} />
                 ) : (
-                  f.hunks.map((h, hi) => (
-                    <div key={hi}>
-                      <div className="bg-accent/[0.06] px-1.5 whitespace-pre text-accent/90">
-                        @@ -{h.oldStart},{h.oldCount} +{h.newStart},{h.newCount} @@<span className="text-faint">{h.heading}</span>
-                      </div>
-                      {h.lines.map((l, li) => (
-                        <div key={li} className={clsx("px-1.5 whitespace-pre [tab-size:4]", LINE_TONE[l.kind])}>
-                          {l.kind}
-                          {l.text}
-                          {l.noEol && <span className="ml-2 text-faint select-none">⏎̸ no newline at end</span>}
-                        </div>
-                      ))}
-                    </div>
-                  ))
+                  <DiffLines
+                    file={f}
+                    layout={layout}
+                    source={source}
+                    chosen={sel?.file === i ? chosen : null}
+                    pick={source ? "numbers" : null}
+                    onLine={(row, how) => onLine(i, row, how)}
+                    onComment={(row) => (sel?.file === i && chosen?.has(row) ? commentOn(i, sel.anchor, sel.cursor) : commentOn(i, row, row))}
+                  />
                 )}
               </div>
             )}
@@ -1577,14 +1695,19 @@ export function PatchBox({ patch, empty }: { patch: string; empty: string }) {
   const files = useMemo(() => parseDiff(patch), [patch]);
   return (
     <div className="max-h-[480px] overflow-auto rounded-md border border-line bg-bg py-1.5 font-mono text-[12px] leading-[18px]">
-      <PatchView files={files} empty={empty} />
+      <PatchView files={files} empty={empty} layout="unified" />
     </div>
   );
 }
 
 /** What one of the agent's turns changed: from the checkpoint before it to its own, without what git brought in. */
-function TurnView({ turn, shown }: { turn: Turn; shown: { diff?: TurnDiff; error?: string } | null }) {
+function TurnView({ turn, shown, layout }: { turn: Turn; shown: { diff?: TurnDiff; error?: string } | null; layout: Layout }) {
   const files = useMemo(() => parseDiff(shown?.diff?.patch ?? ""), [shown]);
+  const label = turnLabel(turn);
+  const source = useMemo<CommentSource>(
+    () => ({ key: `turn:${turn.before_n}:${turn.n}`, label: `what the agent changed in turn ${turn.turn}, "${label.length > 60 ? `${label.slice(0, 60)}…` : label}"` }),
+    [turn.before_n, turn.n, turn.turn, label],
+  );
   const excluded = shown?.diff?.excluded ?? turn.stats?.excluded ?? [];
   const head = (
     <div className="mb-2 px-1.5">
@@ -1623,17 +1746,21 @@ function TurnView({ turn, shown }: { turn: Turn; shown: { diff?: TurnDiff; error
         <Note error>{shown.error}</Note>
       </>
     );
-  return <PatchView files={files} head={head} empty="No changes in this turn" />;
+  return <PatchView files={files} head={head} empty="No changes in this turn" layout={layout} source={source} />;
 }
 
 /** The branch's changes against its base: its commits, and everything changed (uncommitted work too). */
-function BranchView({ diff }: { diff: DiffResult | null }) {
+function BranchView({ diff, layout }: { diff: DiffResult | null; layout: Layout }) {
   const files = useMemo(() => parseDiff(diff?.patch ?? ""), [diff]);
+  const base = diff?.base;
+  const source = useMemo<CommentSource>(() => ({ key: "branch", label: base ? `the branch's changes against ${base}, uncommitted ones too` : "the branch's changes" }), [base]);
   if (!diff) return null;
   if (!diff.available) return <Note error>Diff unavailable: {diff.reason}</Note>;
   return (
     <PatchView
       files={files}
+      layout={layout}
+      source={source}
       empty="No changes yet."
       head={
         <div className="mb-2 px-1.5">
@@ -1656,6 +1783,116 @@ function Note({ children, error }: { children: ReactNode; error?: boolean }) {
 
 function EmptyMain({ text }: { text: string }) {
   return text ? <div className="flex h-full items-center justify-center font-sans text-[13px] text-faint">{text}</div> : null;
+}
+
+/** Unified or side-by-side diffs (`|`). */
+function LayoutToggle({ layout, onToggle }: { layout: Layout; onToggle: () => void }) {
+  return (
+    <span className="flex gap-0.5" title="Unified or split diffs (|)">
+      {(["unified", "split"] as Layout[]).map((l) => (
+        <button
+          key={l}
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => l !== layout && onToggle()}
+          className={clsx("rounded px-1", l === layout ? "bg-white/10 text-fg" : "text-faint hover:text-muted")}
+        >
+          {l}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * The comments for the agent that haven't been sent: how many, a list of them (each one goes to its lines), and a
+ * button that sends them all as one message, as the thread's composer would (queued or steered while the agent works).
+ */
+function ReviewBar({
+  task,
+  review,
+  onJump,
+  onDiscard,
+  onError,
+}: {
+  task: Task;
+  review: Review;
+  onJump: (c: CommentLines, anchorId: string) => void;
+  onDiscard: () => void;
+  onError: (text: string) => void;
+}) {
+  const host = useHost(task.host_id);
+  const [open, setOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const { comments, drafts } = review;
+  if (!comments.length && !drafts.length) return null;
+  // Hosts before API 10 refuse messages while the agent is running.
+  const blocked = task.running && !hostSupports(host, 10);
+  const queue = task.running && (!runningAgentSteers(host, task) || !!task.queued_message);
+  const send = async () => {
+    setSending(true);
+    const end = await sendComments(task, comments);
+    setSending(false);
+    if ("error" in end) onError(`Couldn't send the comments: ${end.error}`);
+    else setOpen(false);
+  };
+  const unfinished = drafts.filter((d) => !d.of);
+  return (
+    <div className="shrink-0 border-t border-line font-sans text-[12px]" data-review>
+      {open && (
+        <div className="max-h-48 overflow-y-auto border-b border-line py-1">
+          {[...comments.map((c) => ({ c, anchor: c.id, draft: drafts.some((d) => d.of === c.id) })), ...unfinished.map((d) => ({ c: d, anchor: d.id, draft: true }))].map(
+            ({ c, anchor, draft }) => (
+              <div key={anchor} className="group flex items-baseline gap-2 px-3 py-0.5 hover:bg-white/[0.04]">
+                <button tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => onJump(c, anchor)} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
+                  <span className="shrink-0 font-mono text-[11.5px] text-muted">
+                    {c.path}, {lineRange(c)}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-faint">{c.source}</span>
+                  <span className={clsx("min-w-0 truncate", draft ? "text-amber-300" : "text-fg")}>{draft ? (c.note.trim() ? `${c.note} (being written)` : "(being written)") : c.note}</span>
+                </button>
+                <button
+                  tabIndex={-1}
+                  title="Delete the comment"
+                  onMouseDown={(e) => e.preventDefault()}
+                  // One being written may be where it can't be seen any more (its lines changed): it goes from here.
+                  onClick={() => (anchor === c.id && drafts.some((d) => d.id === c.id) ? dropDraft(task.host_id, task.id, c.id) : removeComments(task.host_id, task.id, [c.id]))}
+                  className="shrink-0 self-center rounded text-faint opacity-0 group-hover:opacity-100 hover:text-red-300"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ),
+          )}
+        </div>
+      )}
+      <div className="flex h-8 items-center gap-2 px-2">
+        <button tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-muted hover:text-fg">
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <MessageSquare size={12} className="text-accent" />
+          {comments.length ? `${comments.length} comment${comments.length === 1 ? "" : "s"} for the agent` : "No comments added yet"}
+          {unfinished.length > 0 && <span className="text-amber-300">· {unfinished.length} being written</span>}
+        </button>
+        <span className="truncate text-[11px] text-faint">also in the thread's composer, to send with a message</span>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <Button size="sm" onMouseDown={(e) => e.preventDefault()} onClick={onDiscard}>
+            Discard
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!comments.length || sending || blocked}
+            title={blocked ? "This host takes messages once the agent has finished" : queue ? "Queued: the agent gets them when it finishes" : "Sends them to the agent as one message"}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void send()}
+          >
+            {sending && <Loader2 size={12} className="animate-spin" />}
+            {queue ? "Queue for the agent" : "Send to the agent"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** The bar at the bottom: what can be done where you are (each one clickable), and what's going on. */
@@ -1877,6 +2114,15 @@ const HELP: { title: string; items: Option[] }[] = [
     ].map(([key, label]) => ({ key, label, run: noop })),
   },
   {
+    title: "Comments for the agent",
+    items: [
+      ["n", "Comment on the line under the cursor, or the lines picked (in a commit's or the branch's diff, pick lines by their numbers)"],
+      ["hover a line", "Its comment button"],
+      ["Enter / Shift+Enter", "In a comment: add it / a new line"],
+      ["|", "Unified or split diffs"],
+    ].map(([key, label]) => ({ key, label, run: noop })),
+  },
+  {
     title: "Lists",
     items: [
       ["↑/↓ j/k", "Move"],
@@ -1901,7 +2147,7 @@ function BranchOnly({ task }: { task: Task }) {
     <div className="flex h-full min-h-0 flex-col bg-bg font-mono text-[12px] leading-[18px]">
       <div className="shrink-0 border-b border-line px-3 py-1 text-[11.5px] text-faint">Update this host to stage, commit and browse commits here.</div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        <BranchView diff={diff} />
+        <BranchView diff={diff} layout="unified" />
       </div>
     </div>
   );
