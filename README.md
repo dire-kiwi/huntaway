@@ -265,6 +265,44 @@ ready-made link. The token lets anyone holding it run agents on your machine, an
 plain HTTP, so expose the server only on a trusted network (Tailscale, VPN) or behind a TLS
 reverse proxy.
 
+### Push notifications on a phone
+
+The board can push its notifications to a phone (or any browser) even while the board isn't open
+there, and tapping one opens the task (API 74). Browsers only allow this for a page on HTTPS (or
+localhost), so the phone needs the board at an HTTPS address it can reach. With
+[Tailscale](https://tailscale.com) on the machine and the phone:
+
+```sh
+tailscale serve --bg 7878     # https://<machine>.<tailnet>.ts.net → 127.0.0.1:7878
+```
+
+(or any TLS reverse proxy in front of port 7878, such as Caddy's `reverse_proxy`). Open
+`https://<machine>.<tailnet>.ts.net/?token=<huntaway token>` on the phone, then install it:
+
+- **Android** (Chrome): menu → *Install app* (or *Add to Home screen*).
+- **iPhone and iPad** (iOS 16.4 or later): Safari's Share → *Add to Home Screen*. iOS only pushes
+  to the board opened from the Home Screen, which keeps its own storage, so paste the token there
+  when it asks.
+
+Then, in the installed app, Settings → Notifications → *Push to this device* → **Turn on push for
+this device** (it asks for permission) and *Send a test*. Each device picks its own events (the
+same ones as the browser's notifications: needs attention, ready to review, ready for merge,
+done); the list there shows the other devices, with their last error, and removes them. Nothing is
+pushed for a move made from this board, and a device shows nothing while the board is open in
+front on it (the page has the task, and its own notifications if they're on). The
+section says why push isn't available where it isn't: a plain-HTTP page, an iPhone's browser
+rather than the Home Screen app, or a browser without push.
+
+The board keeps a VAPID key (in its settings table) that subscriptions are made for, and one row
+per device in `push_subscriptions` (`GET /push` gives the key and the devices; `POST
+/push/subscriptions` takes a `PushSubscription.toJSON()` with `name` and `events`, and updates the
+one with its endpoint; `PATCH` and `DELETE /push/subscriptions/{id}`; `POST
+/push/subscriptions/{id}/test`). It watches the task events of every host on it, so subscribe
+on the board you use (a hub, for several machines). `IA_PUSH_SUBJECT` sets the contact it gives
+push services (a `mailto:` or `https:` URL; the default is this project's page). The installed app
+is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, so it always loads
+the board's current UI.
+
 ### Desktop config
 
 `~/.config/huntaway/desktop.json` (all optional):
@@ -844,7 +882,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   has a **⋯** button whose menu moves the task to another column as dropping it there does
   (into *In progress* starts its agent), or completes it as Done, Not done or Won't fix. A task
   beside a board is at least 480px wide, so it's usable on a tablet. Wider windows and the
-  desktop app keep the desktop layout.
+  desktop app keep the desktop layout. To install the board on a phone and have it push
+  notifications, see *Push notifications on a phone*.
 - **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its

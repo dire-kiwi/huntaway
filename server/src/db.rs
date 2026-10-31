@@ -603,12 +603,30 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN setup_task_id TEXT;" };
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=61; COMMIT;"))?;
     }
+    if version < 62 {
+        // The devices that get this board's notifications by Web Push (see push.rs).
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS push_subscriptions (
+               id TEXT PRIMARY KEY,
+               endpoint TEXT NOT NULL UNIQUE,
+               p256dh TEXT NOT NULL,
+               auth TEXT NOT NULL,
+               name TEXT NOT NULL DEFAULT '',
+               events TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               last_sent_at TEXT,
+               last_error TEXT
+             );
+             PRAGMA user_version=62; COMMIT;",
+        )?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 61;
+pub const VERSION: i64 = 62;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1884,6 +1902,13 @@ pub fn list_profile_scratch(c: &Connection, profile_id: &str) -> Result<Vec<Task
         "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='scratch' ORDER BY last_activity_at DESC",
     )?;
     let rows = st.query_map([profile_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// Every task on this host (not review threads).
+pub fn list_all_tasks(c: &Connection) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE kind='task'")?;
+    let rows = st.query_map([], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 
@@ -3308,6 +3333,24 @@ mod tests {
         assert_eq!(get_task(&c, "t").unwrap().unwrap().fanout_id, None);
         let t = update_task(&c, "t", &[("fanout_id", json!("f1"))]).unwrap().unwrap();
         assert_eq!(t.fanout_id.as_deref(), Some("f1"));
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_61_gets_push_subscriptions() {
+        let path = std::env::temp_dir().join(format!("huntaway-v61-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch("DROP TABLE push_subscriptions; PRAGMA user_version=61;").unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('s','https://x/1','k','a','{}','1')", []).unwrap();
+        // One per endpoint.
+        assert!(c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('t','https://x/1','k','a','{}','1')", []).is_err());
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
