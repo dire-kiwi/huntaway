@@ -56,7 +56,7 @@ import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
-import { TOUCH_QUERY } from "../narrow";
+import { useTouch } from "../narrow";
 import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
 
 // ---------- markdown ----------
@@ -1256,6 +1256,9 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   const canQueue = hostSupports(host, 10);
   // A message goes to the running agent straight away, if its run takes them.
   const canSteer = runningAgentSteers(host, task);
+  // On a touch screen's keyboard Enter starts a new line, and the send button sends (as Ctrl/Cmd+Enter does).
+  const touch = useTouch();
+  const enter = touch ? "" : " (Enter)";
   const blocked = task.running && !canQueue;
   const attach = useAttachmentDraft(task.host_id, hostSupports(host, 18), saved?.files);
   const skills = useSkillMenu(task, text, setText);
@@ -1391,8 +1394,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 modeControl.cycle();
                 return;
               }
-              // On a touch screen's keyboard Enter starts a new line, and the send button sends (as Ctrl/Cmd+Enter does).
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!matchMedia(TOUCH_QUERY).matches || e.ctrlKey || e.metaKey)) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && (!touch || e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 send();
               }
@@ -1427,7 +1429,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 <button
                   onClick={send}
                   disabled={busy || attach.uploading}
-                  title={canSteer && !task.queued_message ? "Send to the agent now (Enter)" : "Queue (Enter)"}
+                  title={(canSteer && !task.queued_message ? "Send to the agent now" : "Queue") + enter}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
@@ -1448,7 +1450,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 <button
                   onClick={send}
                   disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !canStartEmpty)}
-                  title="Send (Enter)"
+                  title={`Send${enter}`}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
