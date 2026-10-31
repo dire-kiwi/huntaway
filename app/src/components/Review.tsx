@@ -266,7 +266,7 @@ export function ChangeSummaryView({ task }: { task: Task }) {
           No summary yet.{" "}
           {auto === false
             ? "This project doesn't summarise changes automatically (Settings → Review)."
-            : "Once the task's review passes, an agent summarises its changes here."}
+            : "An agent summarises the changes here once the task's review passes."}
         </div>
       ) : (
         <>

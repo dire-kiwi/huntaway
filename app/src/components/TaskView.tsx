@@ -226,7 +226,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const tabs: Tab[] = [...labels, ...(group || scratch || docsOnly ? ["thread"] : ["thread", "changes"])];
   const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch;
   if (reviews) tabs.push("review");
-  const summaries = reviews && hostSupports(host, 82);
+  // Once there's a summary, or a review that passed to summarise (API 82): the tabs fit a phone's width until then.
+  const summaries = reviews && hostSupports(host, 82) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
