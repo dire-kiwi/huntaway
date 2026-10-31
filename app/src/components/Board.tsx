@@ -44,6 +44,7 @@ import { AttachButton, DraftAttachments, useAttachmentDraft } from "./Attachment
 import { AsanaIcon, AsanaPicker, ExternalLinkIcon, LinkList, LINKS_API, usesAsana } from "./ExternalLinks";
 import { ReviewBadge } from "./Review";
 import { DependencyBadge } from "./Dependencies";
+import { useConfirmDone } from "./ConfirmDone";
 import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
@@ -1782,6 +1783,8 @@ function TaskBoard({
   const [dropErr, setDropErr] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; taskId: string; move?: boolean } | null>(null);
   const [picking, setPicking] = useState<Task | null>(null);
+  // Asks before a task whose work isn't merged goes into Done.
+  const { confirmDone, dialog: doneDialog } = useConfirmDone();
   const [query, setQuery] = useState(() => loadQuery(boardKey));
   const narrow = useNarrow();
   const [column, setColumn] = useState<Status | null>(() => localStorage.getItem(COLUMN_KEY) as Status | null);
@@ -2012,6 +2015,7 @@ function TaskBoard({
     const idx = sort !== "manual" ? -1 : before ? col.findIndex((t) => t.id === before) : last ? col.findIndex((t) => t.id === last.id) + 1 : -1;
     const { position, moves } = dropPosition(col, idx === -1 ? col.length : idx);
     if (task.status === status && task.position === position && !moves.length && !unarchive) return;
+    if (status === "done" && !(await confirmDone(task))) return;
     const host = hostOf(task);
     // The server (API 19) gives a task moved into Done the "done" resolution and clears it on the way out.
     const resolution = hostSupports(host, 19) ? (status === "done" ? (task.resolution ?? "done") : null) : task.resolution;
@@ -2040,6 +2044,7 @@ function TaskBoard({
   // Moves a task to the end of Done with that resolution (one already done keeps its place).
   const complete = async (task: Task, resolution: Resolution) => {
     if (task.status === "done" && task.resolution === resolution) return;
+    if (resolution === "done" && !(await confirmDone(task))) return;
     const done = columns.done.filter((t) => t.id !== task.id);
     const position = task.status === "done" ? task.position : done.length ? done[done.length - 1].position + 1 : 1;
     upsertTask({ ...task, status: "done", resolution, position, done_at: task.status === "done" ? task.done_at : new Date().toISOString() });
@@ -2413,6 +2418,7 @@ function TaskBoard({
         />
       )}
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
+      {doneDialog}
       {newIn && canAdd && (
         <NewTaskModal
           // A group's (or profile's) new task starts in the project last picked for one, if it's on the board.

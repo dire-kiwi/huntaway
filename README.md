@@ -572,7 +572,10 @@ skipped. Auto-compacting idle sessions is Claude-only.
   tool needs approval, a run fails, or you stop it → *Needs
   attention*; a run finishes cleanly → *In review*. You move cards to *Done* yourself, or to
   *Ready for merge*; a task whose pull request is merged on GitHub moves to *Done* by itself
-  (see *Pull requests*).
+  (see *Pull requests*). Moving a task to *Done* (with the *Done* resolution) whose work isn't
+  merged asks first (API 70): its branch has commits its base branch doesn't, or it has
+  uncommitted changes, and its pull request (if any) isn't merged on GitHub. Tasks with a
+  document, and *Won't fix* or *Not done*, don't ask.
 - **Archived** (API 53): a task that's been in *Done* for two days is archived. It leaves the
   kanban board's *Done* column, which links to it ("N archived"), for the list view's *Archived*
   section, the last one, which starts collapsed. It's still done (a task that depends on it
