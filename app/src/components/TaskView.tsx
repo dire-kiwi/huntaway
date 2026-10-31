@@ -2,13 +2,14 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, ApiError, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, ApiError, canRunAgents, dependencyQueued, limitQueued, outOfUsage, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
-import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
+import { AgentBadge, ConfigSelect, ConfigUsageNote, configDir } from "./ClaudeConfigs";
 import { harnessLabels, useConfigsOf, useFanout } from "./Fanout";
 import { effortOptions, inheritedModel, useAgentModels } from "../agents";
 import { useNarrow } from "../narrow";
+import { resetsPhrase, resetTime } from "../usageConfigs";
 import { useOpenTools } from "../terminalTools";
 import { openingTab } from "../openingTab";
 import { useSubagentView } from "../subagents";
@@ -774,6 +775,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         {task.attention_reason && (
           <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2.5 py-2 text-[12px] text-amber-200/90">{task.attention_reason}</div>
         )}
+        <UsageLimitNote task={task} onError={(e) => setErr("status", e)} />
         {task.remind_at && (
           <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
             <span className="min-w-0 flex-1">
@@ -1032,6 +1034,54 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   );
 }
 
+/**
+ * A task held until its config's usage limit resets, or one whose agent ran out of usage, which can wait for the reset
+ * (API 81). After the reset, sending a message carries on.
+ */
+function UsageLimitNote({ task, onError }: { task: Task; onError: (e: string | null) => void }) {
+  const { current } = useThreadConfig(task);
+  const [now, setNow] = useState(() => Date.now());
+  const [busy, setBusy] = useState(false);
+  const at = task.limit_reset_at;
+  useEffect(() => {
+    if (!at) return;
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(tick);
+  }, [at]);
+  if (!at) return null;
+  const name = current?.name ?? "Its config";
+  const when = `${resetsPhrase(at, now)} (${resetTime(at)})`;
+  if (limitQueued(task)) {
+    return (
+      <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted" data-usage-limit="waiting">
+        Waiting for {name}'s usage limit to reset: it {when}. Its agent carries on then, with any message you queue.
+      </div>
+    );
+  }
+  if (!outOfUsage(task, now)) return null;
+  const wait = async () => {
+    setBusy(true);
+    onError(null);
+    try {
+      await api.waitForLimit(task.host_id, task.id);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted" data-usage-limit="out">
+      <span className="min-w-0 flex-1">
+        {name} is out of usage; it {when}.
+      </span>
+      <Button size="sm" variant="ghost" className="-my-1 shrink-0" disabled={busy} onClick={wait} title="Wait in In progress, and carry on once the limit resets">
+        Carry on then
+      </Button>
+    </div>
+  );
+}
+
 /** The config a thread runs with (or will), and the ones it could pick. */
 function useThreadConfig(task: Task) {
   const project = useProject(task.project_id);
@@ -1068,6 +1118,7 @@ function ConfigRow({ task }: { task: Task }) {
           <AgentBadge config={current} />
         </span>
       )}
+      <ConfigUsageNote config={current} className="mt-0.5" />
       {err && <div className="text-[11.5px] text-red-400">{err}</div>}
     </Row>
   );

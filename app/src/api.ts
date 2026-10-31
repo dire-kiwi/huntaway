@@ -58,7 +58,16 @@ export const rejoinsMerge = (t: Task) => !!t.remerge && (t.status === "in_progre
 export const agentWaiting = (t: Task) => (t.running && t.agent_wait) || null;
 
 /** Queued in "In progress" until the tasks it depends on are merged. */
-export const dependencyQueued = (t: Task) => !!t.waiting && t.status === "in_progress" && !t.running;
+export const dependencyQueued = (t: Task) => !!t.waiting && t.status === "in_progress" && !t.running && !t.limit_reset_at;
+
+/** Queued in "In progress" until its config's usage limit resets (API 81), when its agent carries on. */
+export const limitQueued = (t: Task) => !!t.waiting && t.status === "in_progress" && !t.running && !!t.limit_reset_at;
+
+/** Its agent stopped because its config ran out of usage, which hasn't reset yet: it can wait for the reset (API 81). */
+export const outOfUsage = (t: Task, now = Date.now()) => !t.waiting && !t.running && !!t.limit_reset_at && new Date(t.limit_reset_at).getTime() > now;
+
+/** The API that tells when a config is out of usage and holds tasks until it resets. */
+export const LIMITS_API = 81;
 
 /** Whether a task counts as merged for the tasks that depend on it (server: db::is_merged). */
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
@@ -149,6 +158,10 @@ export interface Profile {
   asana_user?: string | null;
   /** Whether it uses Asana (API 60; missing is on): off, the board leaves Asana out and the host won't search it. The token is kept. */
   asana_enabled?: boolean;
+  /** A task whose config runs out of usage waits for the limit to reset and then carries on (API 81). */
+  limit_wait?: boolean;
+  /** A task that hasn't started yet starts on the next of its configs with room when its own is out of usage (API 81). */
+  limit_switch?: boolean;
   created_at: string;
 }
 
@@ -307,6 +320,8 @@ export interface Usage {
   updated_at: string | null;
   /** Why the last check failed; `limits` may still hold older numbers. */
   error: string | null;
+  /** Until when it's out of usage: a run on it was refused for its limit, which resets then (API 81). */
+  out_until?: string | null;
 }
 
 /** What removing merged worktrees did with a done task's worktree: removed, or kept and why. */
@@ -542,8 +557,10 @@ export interface Task {
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
   depends_on?: string[];
-  /** Queued in "In progress": its agent starts once every task in `depends_on` is merged (API 24). */
+  /** Queued in "In progress": its agent starts once every task in `depends_on` is merged (API 24), or once `limit_reset_at` has passed. */
   waiting?: boolean;
+  /** When the usage limit its agent last ran out of resets; cleared when it runs again (API 81). See `limitQueued`, `outOfUsage`. */
+  limit_reset_at?: string | null;
   /** Its running agent is waiting (the `wait` tool) rather than working; it stays in its column (API 36). Not `waiting`. */
   agent_wait?: AgentWait | null;
   /** Sent while the agent was running; goes out when the run ends or is stopped (API 10). */
@@ -1428,6 +1445,8 @@ export const api = {
       github_account?: string | null;
       clone_dir?: string | null;
       asana_enabled?: boolean;
+      limit_wait?: boolean;
+      limit_switch?: boolean;
     },
   ) =>
     on(h).post<Profile>("/profiles", b),
@@ -1604,6 +1623,8 @@ export const api = {
     on(h).get<{ name: string; size: number; mime: string; data: string }>(`/attachments/${enc(id)}/${encodeURIComponent(name)}`),
   /** Drops the queued message; returns the task as it was, so the text can be edited again. */
   unqueue: (h: string, id: string) => on(h).del<Task>(`/tasks/${enc(id)}/queue`),
+  /** A task whose agent ran out of usage waits for the limit to reset, and then its agent carries on (API 81). */
+  waitForLimit: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/wait-for-limit`),
   /** Review the task's work now (API 12). */
   review: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/review`),
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
