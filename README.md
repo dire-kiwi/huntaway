@@ -915,8 +915,10 @@ skipped. Auto-compacting idle sessions is Claude-only.
     instead, as GitHub retargets a pull request whose base branch is deleted: its agent is told
     to merge, and open its pull request, there (retargeting one it has first), its merged checks
     look there, and its *Changes* and reviews start from the later of its merge bases with that
-    and with the other's old branch, so a squashed parent's work isn't counted as its own before
-    it's rebased, nor after. *Remove merged worktrees* counts a stacked task merged into the
+    and with where it started, so a squashed parent's work isn't counted as its own before
+    it's rebased, nor after, even once the parent's branch is deleted. Where it started is kept
+    as `refs/huntaway/start/<task id>` in the repository (moved on to the parent's branch as the
+    task takes in more of it), and goes when the task does. *Remove merged worktrees* counts a stacked task merged into the
     project's base branch as merged too. Stacking doesn't make it wait for the other task: add a
     dependency for that. A task can't start from one that (by way of others, or a subproject it's
     in) starts from it.

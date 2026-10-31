@@ -501,6 +501,9 @@ async fn setup_locked(state: &Shared, task_id: &str, within: &[String]) -> Resul
                 // Not tracking the branch it starts from (git would for a remote-tracking one).
                 git_ok(&repo, &["worktree", "add", "--no-track", "-b", &branch, &wt_s, &start.rev]).await?;
                 from = start.from;
+                if task.start_from.is_some() {
+                    git_ok(&repo, &["update-ref", &start_ref(task_id), &format!("refs/heads/{branch}")]).await?;
+                }
             }
         }
         // Saved as soon as git has them, so a setup script that fails (or a restart meanwhile)
@@ -1246,11 +1249,25 @@ pub fn changes_dir(state: &Shared, task_id: &str) -> Result<(PathBuf, Task, Proj
     Ok((dir, task, project))
 }
 
+/// Where a task that started from elsewhere (see db::StartFrom) started, kept in its repository so
+/// its changes can be told from what it started on whatever happens to that (a branch deleted once
+/// merged, say): the commit its branch was made at, moved on to the branch it's stacked on as the
+/// task takes in more of that (see `changes_base`). It goes with the task.
+fn start_ref(task_id: &str) -> String {
+    format!("refs/huntaway/start/{task_id}")
+}
+
+/// Drop a deleted task's start ref (see `start_ref`) from `repo`, if it has one.
+pub async fn forget_start(repo: &Path, task_id: &str) {
+    let _ = git(repo, &["update-ref", "-d", &start_ref(task_id)]).await;
+}
+
 /// The base branch a task's changes are compared with (see db::task_base), and where its work
 /// starts (only known in the task's own worktree): its merge base with the base branch or, when it
-/// started from somewhere else that's later, that. That's a commit it started from that the base
-/// branch doesn't have, or the branch of the task it's stacked on once that's merged (until it's
-/// brought up to date with where that went, which squashed or rebased it, say).
+/// started from somewhere else that's later, that. That's where it started (see `start_ref`) or a
+/// commit it started from that the base branch doesn't have, or the branch of the task it's
+/// stacked on once that's merged, until it's brought up to date with where that went (which
+/// squashed or rebased it, say, or deleted its branch).
 pub async fn changes_base(state: &Shared, dir: &Path, task: &Task, project: &Project) -> (Option<String>, Option<String>) {
     let base = db::task_base(&state.db(), task, Some(project));
     if task.worktree_state != "ready" {
@@ -1269,6 +1286,23 @@ pub async fn changes_base(state: &Shared, dir: &Path, task: &Task, project: &Pro
         }
         Some(db::StartFrom::Commit { commit: c }) => from.push(c.clone()),
         _ => {}
+    }
+    if task.start_from.is_some() {
+        let kept = start_ref(&task.id);
+        // Moved on to the branch it's stacked on while that's there and the task has all of it, so
+        // what it took in of it later isn't counted as its own either.
+        if let (Some(at), Some(b)) = (commit(dir, &kept).await, task.base_branch.as_ref()) {
+            if let Some(tip) = commit(dir, &compare_ref(dir, b).await).await
+                && tip != at
+                && is_ancestor(dir, &at, &tip).await
+                && is_ancestor(dir, &tip, "HEAD").await
+            {
+                let _ = git(dir, &["update-ref", &kept, &tip, &at]).await;
+            }
+        }
+        if commit(dir, &kept).await.is_some() {
+            from.push(kept);
+        }
     }
     let mut start: Option<String> = None;
     for rev in from {
@@ -1891,6 +1925,51 @@ mod tests {
             sh(&repo, &["worktree", "remove", "--force", a.worktree_path.as_deref().unwrap()]);
             sh(&repo, &["branch", "-q", "-D", a.branch.as_deref().unwrap()]);
             assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_stacked_task_keeps_its_own_changes_when_the_branch_it_stacks_on_is_deleted() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, repo, _, p) = stacking_repo(&s).await;
+            let a = setup(&s, &create_task_inner(&s, &p.id, CreateTask { title: "First".into(), ..Default::default() }).unwrap().id).await.unwrap();
+            let a_wt = PathBuf::from(a.worktree_path.clone().unwrap());
+            commit_file(&a_wt, "parent-file");
+            let b = create_task_inner(&s, &p.id, CreateTask { title: "Second".into(), start_from: Some(json!("X-1")), ..Default::default() }).unwrap();
+            let b = setup(&s, &b.id).await.unwrap();
+            let b_wt = PathBuf::from(b.worktree_path.clone().unwrap());
+            // First gets more work, which Second takes in.
+            commit_file(&a_wt, "more-parent-file");
+            sh(&b_wt, &["merge", "-q", "--no-edit", a.branch.as_deref().unwrap()]);
+            commit_file(&b_wt, "child-file");
+            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+
+            // First is squashed into master, done, and its branch deleted (pushed and fetched too),
+            // before Second is brought up to date: its changes are still only its own.
+            sh(&repo, &["merge", "-q", "--squash", a.branch.as_deref().unwrap()]);
+            sh(&repo, &["commit", "-qm", "First"]);
+            sh(&repo, &["push", "-q", "origin", "master", &format!("{}:{}", a.branch.as_deref().unwrap(), a.branch.as_deref().unwrap())]);
+            sh(&repo, &["fetch", "-q", "origin"]);
+            db::update_task(&s.db(), &a.id, &[("status", json!("done"))]).unwrap();
+            sh(&repo, &["worktree", "remove", "--force", &path_str(&a_wt)]);
+            sh(&repo, &["branch", "-q", "-D", a.branch.as_deref().unwrap()]);
+            sh(&repo, &["push", "-q", "origin", "--delete", a.branch.as_deref().unwrap()]);
+            sh(&repo, &["fetch", "-q", "--prune", "origin"]);
+            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            // So does a review, which compares with the same commit.
+            let (_, start) = changes_base(&s, &b_wt, &b, &p).await;
+            assert_eq!(start, Some(rev(&b_wt, "HEAD~1")));
+
+            // Rebased onto master (First's commits dropped), it's compared with master.
+            sh(&b_wt, &["rebase", "-q", "--onto", "master", "HEAD~1"]);
+            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            assert_eq!(diff(&s, &b.id).await.unwrap()["merge_base"], json!(rev(&repo, "master")));
+
+            // Deleting the task drops what it kept.
+            crate::api::delete_task_inner(&s, &b, false).await.unwrap();
+            assert!(commit(&repo, &start_ref(&b.id)).await.is_none());
             std::fs::remove_dir_all(&root).ok();
         })
     }

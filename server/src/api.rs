@@ -1195,6 +1195,9 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         terminal::kill_all(s, &t.id).await;
         files.extend(crate::attachments::of_task(&s.db(), &t.id)?);
         // Remove worktrees but keep branches so no committed work is lost.
+        if t.start_from.is_some() {
+            worktree::forget_start(&repo, &t.id).await;
+        }
         if let Some(wt) = &t.worktree_path {
             crate::checkpoints::forget(s, &t.id, &repo).await;
             let _ = worktree::git(&repo, &["worktree", "remove", "--force", wt]).await;
@@ -2192,6 +2195,9 @@ pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) ->
         if let Err(e) = worktree::teardown(s, &t.id, true, delete_branch).await {
             tracing::warn!("teardown during delete failed: {e:#}");
         }
+    }
+    if let Some(project) = t.start_from.as_ref().and(t.project_id.as_deref()).map(|p| db::get_project(&s.db(), p)).transpose()?.flatten() {
+        worktree::forget_start(&expand_tilde(&project.repo_path), &t.id).await;
     }
     let runs = {
         let c = s.db();
