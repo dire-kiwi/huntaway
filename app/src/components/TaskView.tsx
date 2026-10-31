@@ -1340,7 +1340,6 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
     await api.deleteTask(task.host_id, task.id, deleteBranch).catch((e) => {
       if (!(e instanceof ApiError && e.status === 404)) throw e;
     });
-    onClose();
     if (mode !== "page") closeTask(true);
     else if (subproject) navigate({ name: "subproject", taskId: subproject.id }, true);
     else if (pid) navigate({ name: "board", projectId: pid }, true);
