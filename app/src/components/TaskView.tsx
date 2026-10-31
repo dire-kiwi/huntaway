@@ -15,7 +15,7 @@ import { useSubagentView } from "../subagents";
 import { AgentsPill } from "./AgentsPill";
 import { ContextPill } from "./Context";
 import { inGroupTaskGroup } from "../projectGroups";
-import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgress, useSubprojectProgress } from "./Board";
+import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgress, useSubprojectProgress } from "./TaskCard";
 import { documentInfo, DocumentView, LABEL_INFO, TaskTypeBadge } from "./Document";
 import { ReviewDot, reviewParts, ReviewSummary } from "./Review";
 import { Dependencies } from "./Dependencies";

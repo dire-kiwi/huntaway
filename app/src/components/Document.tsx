@@ -7,9 +7,9 @@ import { afterSend, answered, answersMessage, loadAnswers, readFields, resetFiel
 import { isWholePage, themedPlan } from "../planTheme";
 import planCss from "../planTheme.css?raw";
 import { useHost, useThreadMessages } from "../store";
-import type { Progress } from "./Board";
+import type { Progress } from "./TaskCard";
 import { Composer, Markdown } from "./Thread";
-import { Button, CARD_BADGE, copyText, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "./ui";
+import { Button, CARD_BADGE, copyText, download, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "./ui";
 
 /** What each label asks its task's agent for (API 71; types of task from API 42), in the order tasks show them. */
 export const LABEL_INFO: { id: DocumentType; label: string; icon: ReactNode; file: string; hint: string }[] = [
@@ -65,16 +65,6 @@ function lastReply(messages: Message[] | undefined): string | null {
     }
   }
   return null;
-}
-
-function download(name: string, text: string, type: string) {
-  // Saved as a file, never opened here: a page opened from a blob URL would run with the board's origin.
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** A short hash of a document's content (FNV-1a), to tell its revisions apart. */

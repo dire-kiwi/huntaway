@@ -4,7 +4,7 @@ import { isScratch, taskLabels, type Project, type Task } from "../api";
 import { openTask, usePanel } from "../router";
 import { keyPrefix, useStore } from "../store";
 import { RunningDot, StatusIcon, STATUS_COLOR } from "./ui";
-import type { OnMenu, Progress } from "./Board";
+import type { OnMenu, Progress } from "./TaskCard";
 
 /**
  * The board's tasks as a map of how they came about and what waits on what: a task its agent

@@ -9,7 +9,7 @@ import { Composer, Markdown } from "./Thread";
 import { PendingPrompts } from "./LiveView";
 import { ReviewBadge } from "./Review";
 import { Button, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "./ui";
-import type { OnMenu } from "./Board";
+import type { OnMenu } from "./TaskCard";
 
 /**
  * The board as a queue of what each task needs from the user, most pressing first: an answer, a

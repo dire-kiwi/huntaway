@@ -9,7 +9,7 @@ import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { toolMeta } from "./Thread";
 import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { CardState, StatusIcon } from "./ui";
-import type { OnMenu } from "./Board";
+import type { OnMenu } from "./TaskCard";
 
 /**
  * Every agent that's working, or was a moment ago, side by side: a tile for each, with the tail of
