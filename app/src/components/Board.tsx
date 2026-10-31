@@ -49,6 +49,7 @@ import { AsanaIcon, AsanaPicker, ExternalLinkIcon, LinkList, LINKS_API, usesAsan
 import { ReviewBadge } from "./Review";
 import { WorktreeSetup } from "./WorktreeSetup";
 import { DependencyBadge } from "./Dependencies";
+import { useConfirmDone } from "./ConfirmDone";
 import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
@@ -1632,8 +1633,8 @@ const ARCHIVED_KEY = "ia.board.archived";
 const WIDE_BOARD = 1180;
 // How the boards sort their tasks, on this client.
 const SORT_KEY = "ia.board.sort";
-// The column the narrow layout's board shows (one at a time), on this client.
-const COLUMN_KEY = "ia.board.column";
+// The column each board shows in the narrow layout (one at a time), on this client.
+const columnKey = (board: string) => `ia.board.column.${board}`;
 // Each board's search and filters, in this tab (so they last over a reload, and don't stay on forever).
 const queryKey = (board: string) => `ia.board.query.${board}`;
 
@@ -1841,9 +1842,11 @@ function TaskBoard({
   const [dropErr, setDropErr] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; taskId: string; move?: boolean } | null>(null);
   const [picking, setPicking] = useState<Task | null>(null);
+  // Asks before a task whose work isn't merged goes into Done.
+  const { confirmDone, dialog: doneDialog } = useConfirmDone();
   const [query, setQuery] = useState(() => loadQuery(boardKey));
   const narrow = useNarrow();
-  const [column, setColumn] = useState<Status | null>(() => localStorage.getItem(COLUMN_KEY) as Status | null);
+  const [column, setColumn] = useState<Status | null>(() => localStorage.getItem(columnKey(boardKey)) as Status | null);
   useEffect(() => {
     if (isFiltering(query)) sessionStorage.setItem(queryKey(boardKey), JSON.stringify(query));
     else sessionStorage.removeItem(queryKey(boardKey));
@@ -2007,7 +2010,7 @@ function TaskBoard({
   const scrollingTo = useRef<{ index: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const pickColumn = (s: Status) => {
     setColumn(s);
-    localStorage.setItem(COLUMN_KEY, s);
+    localStorage.setItem(columnKey(boardKey), s);
   };
   useLayoutEffect(() => {
     const el = columnsRef.current;
@@ -2071,6 +2074,7 @@ function TaskBoard({
     const idx = sort !== "manual" ? -1 : before ? col.findIndex((t) => t.id === before) : last ? col.findIndex((t) => t.id === last.id) + 1 : -1;
     const { position, moves } = dropPosition(col, idx === -1 ? col.length : idx);
     if (task.status === status && task.position === position && !moves.length && !unarchive) return;
+    if (status === "done" && !(await confirmDone(task))) return;
     const host = hostOf(task);
     // The server (API 19) gives a task moved into Done the "done" resolution and clears it on the way out.
     const resolution = hostSupports(host, 19) ? (status === "done" ? (task.resolution ?? "done") : null) : task.resolution;
@@ -2096,15 +2100,20 @@ function TaskBoard({
     }
   };
 
-  // Moves a task to the end of Done with that resolution (one already done keeps its place).
+  // Moves a task to the end of Done with that resolution (one already done keeps its place). An archived one comes back
+  // into Done, done from now, as dragging it there does.
   const complete = async (task: Task, resolution: Resolution) => {
-    if (task.status === "done" && task.resolution === resolution) return;
+    const unarchive = isArchived(task, Date.now());
+    const stays = task.status === "done" && !unarchive;
+    if (stays && task.resolution === resolution) return;
+    if (resolution === "done" && !(await confirmDone(task))) return;
     const done = columns.done.filter((t) => t.id !== task.id);
-    const position = task.status === "done" ? task.position : done.length ? done[done.length - 1].position + 1 : 1;
-    upsertTask({ ...task, status: "done", resolution, position, done_at: task.status === "done" ? task.done_at : new Date().toISOString() });
+    const position = stays ? task.position : done.length ? done[done.length - 1].position + 1 : 1;
+    const done_at = stays ? task.done_at : new Date().toISOString();
+    upsertTask({ ...task, status: "done", resolution, position, done_at });
     setDropErr(null);
     try {
-      await api.updateTask(task.host_id, task.id, { status: "done", resolution, position });
+      await api.updateTask(task.host_id, task.id, { status: "done", resolution, position, ...(unarchive && hostSupports(hostOf(task), 53) && { done_at }) });
     } catch (e) {
       upsertTask(task);
       setDropErr((e as Error).message);
@@ -2134,8 +2143,8 @@ function TaskBoard({
             <StatusIcon status={s.id} size={13} /> {s.label}
           </span>
         ),
-        checked: task.status === s.id,
-        onSelect: () => task.status !== s.id && moveTask(task, s.id, null),
+        checked: task.status === s.id && !isArchived(task, Date.now()),
+        onSelect: () => (task.status !== s.id || isArchived(task, Date.now())) && moveTask(task, s.id, null),
       }));
   const canAdd = !!project || !!scratch;
 
@@ -2458,7 +2467,8 @@ function TaskBoard({
                   ) : (
                     RESOLUTION_LABELS[r]
                   ),
-                  checked: menuTask.status === "done" && menuTask.resolution === r,
+                  // An archived task isn't in Done: picking its resolution brings it back.
+                  checked: menuTask.status === "done" && menuTask.resolution === r && !isArchived(menuTask, Date.now()),
                   divider: i === 0,
                   onSelect: () => complete(menuTask, r),
                 }))
@@ -2472,6 +2482,7 @@ function TaskBoard({
         />
       )}
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
+      {doneDialog}
       {newIn && canAdd && (
         <NewTaskModal
           // A group's (or profile's) new task starts in the project last picked for one, if it's on the board.
@@ -2524,6 +2535,7 @@ export function ProfileBoard({ profile }: { profile: string }) {
   const on = hosts.filter((h) => profiles.some((p) => p.host_id === h.id && p.name === profile));
   return (
     <TaskBoard
+      key={`profile:${profile}`}
       boardKey={`profile:${profile}`}
       projects={projects}
       profiles={ids}

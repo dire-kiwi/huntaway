@@ -801,6 +801,25 @@ pub async fn has_work_to_merge(state: &Shared, task: &Task) -> bool {
     }
 }
 
+/// Whether moving a task to Done would leave work of its unmerged (API 75), for the board to ask
+/// first: it has work to merge (see `has_work_to_merge`) and its pull request, if it has one,
+/// isn't merged on GitHub (squashed or rebased, its commits aren't in its base branch). Tasks with
+/// a document (kept by the board) have none. A pull request that can't be read in a few seconds
+/// counts as not merged.
+pub async fn unmerged(state: &Shared, task: &Task) -> bool {
+    if task.kind != "task" || task.task_type.is_some() || !has_work_to_merge(state, task).await {
+        return false;
+    }
+    let Some(url) = task.pr_url.clone() else { return true };
+    let pr = async {
+        let project = db::get_project(&state.db(), task.project_id.as_deref()?).ok().flatten()?;
+        // Not as another account when the task's isn't signed in.
+        let env = crate::runner::task_gh_env(state, task).await.ok()?;
+        gh_json(Path::new(&project.repo_path), &["pr", "view", &url, "--json", "state"], env.as_ref()).await
+    };
+    !matches!(tokio::time::timeout(Duration::from_secs(5), pr).await, Ok(Some(pr)) if pr["state"] == "MERGED")
+}
+
 /// Look up the pull request for a task's branch with `gh` once its agent's run ends, and keep
 /// its URL on the task. Skipped when the task already has one; quietly gives up when `gh`
 /// isn't installed or signed in, or the branch has no pull request yet.
@@ -1245,6 +1264,37 @@ mod tests {
             assert_eq!((&results[0]["removed"], &results[0]["detail"]), (&json!(true), &json!("merged into origin/master")));
             assert!(!wt.exists());
             std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_task_with_commits_its_base_lacks_is_unmerged() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let repo = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            std::fs::create_dir_all(&repo).unwrap();
+            sh(&repo, &["init", "-q", "-b", "master"]);
+            sh(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&repo), key: Some("X".into()), base_branch: Some("master".into()), use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "Do it".into(), ..Default::default() }).unwrap();
+            let t = setup(&s, &t.id).await.unwrap();
+            let (wt, branch) = (PathBuf::from(t.worktree_path.clone().unwrap()), t.branch.clone().unwrap());
+            // Nothing done yet.
+            assert!(!unmerged(&s, &t).await);
+            std::fs::write(wt.join("notes"), "1").unwrap();
+            assert!(unmerged(&s, &t).await);
+            sh(&wt, &["add", "notes"]);
+            sh(&wt, &["commit", "-qm", "work"]);
+            assert!(unmerged(&s, &t).await);
+            // A document is kept by the board, not merged.
+            let doc = db::update_task(&s.db(), &t.id, &[("task_type", json!("plan"))]).unwrap().unwrap();
+            assert!(!unmerged(&s, &doc).await);
+            let t = db::update_task(&s.db(), &t.id, &[("task_type", Value::Null)]).unwrap().unwrap();
+            sh(&repo, &["merge", "-q", "--no-ff", "-m", "merge", &branch]);
+            assert!(!unmerged(&s, &t).await);
+            std::fs::remove_dir_all(&repo).ok();
         })
     }
 

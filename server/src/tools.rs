@@ -203,7 +203,7 @@ pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, St
 fn rerunnable(s: &Shared, c: &McpCall) -> bool {
     let kind = match c.tool.as_str() {
         _ if RERUNNABLE.contains(&c.tool.as_str()) => return true,
-        "update_project" => "project",
+        "update_project" | "create_project" => "project",
         "delete_task" => "delete_task",
         "create_automation" | "update_automation" | "delete_automation" => "automation",
         _ => return false,
@@ -680,21 +680,18 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
             Ok(project_settings_json(s, &p, &board))
         }
         "create_project" => {
+            // A call retried after a restart carries on with the approval it asked for.
+            if let Some(saved) = ctx.call_id.as_deref().map(|c| permissions::asked(s, c)).transpose()?.flatten() {
+                return create_project(s, ctx, &saved).await;
+            }
             let boards = pick_boards(s, ctx, profile)?;
             let board = match profile {
                 Some(_) => boards.into_iter().next(),
                 None => boards.into_iter().find(|b| ctx.is_own(b)),
             };
             let board = board.ok_or_else(|| ToolError::NotFound(format!("profile {} on host {}", ctx.profile_name, s.host_name)))?;
-            let body = CreateProject {
-                name: str_arg("name").unwrap_or_default(),
-                repo_path: str_arg("repo_path").unwrap_or_default(),
-                key: None,
-                base_branch: None,
-                use_worktrees: None,
-            };
-            let p = api::create_project_inner(s, &board.id, body).await?;
-            Ok(project_json(s, &p, &board))
+            let input = project_creation(s, ctx, &board, str_arg("name"), &str_arg("repo_path").unwrap_or_default(), str_arg("reason")).await?;
+            create_project(s, ctx, &input).await
         }
         "list_automations" => {
             let p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?;
@@ -819,6 +816,74 @@ async fn update_project(s: &Shared, ctx: &Ctx, p: &db::Project, args: &Value, re
     apply_changes(s, p, &json!(apply)).await
 }
 
+/// What `create_project` asks the user to approve: adding the folder `repo_path` (created if it's
+/// missing) as a project named `name` on `board`. Its tasks' agents work in that folder, with the
+/// host's default permission mode, so the user sees where it is first.
+async fn project_creation(s: &Shared, ctx: &Ctx, board: &db::Profile, name: Option<String>, repo_path: &str, reason: Option<String>) -> ToolResult {
+    let given = crate::util::expand_tilde(repo_path.trim());
+    if !given.is_absolute() {
+        return Err(ToolError::Other("repo_path must be an absolute path, or start with ~/".into()));
+    }
+    // The folder as it would be added: symlinks resolved, as far as it exists.
+    let mut missing = Vec::new();
+    let mut existing = given.as_path();
+    while !existing.exists() {
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_owned());
+                existing = parent;
+            }
+            // `..` in the part that doesn't exist yet would hide where it ends up.
+            _ => return Err(ToolError::Other(format!("{} isn't a folder that exists or can be created", given.display()))),
+        }
+    }
+    let path = missing.iter().rev().fold(existing.canonicalize().map_err(|e| ToolError::Other(format!("{}: {e}", existing.display())))?, |p, c| p.join(c));
+    if missing.is_empty() && !path.is_dir() {
+        return Err(ToolError::Other(format!("{} is not a directory", path.display())));
+    }
+    let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let name = name.unwrap_or_else(|| path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Project".into()));
+    let key = api::new_project_key(s, &board.id, &name)?;
+    let repo_path = path.to_string_lossy().to_string();
+    let git = missing.is_empty() && crate::worktree::is_git_repo(&path).await;
+    let permission_mode = db::get_setting(&s.db(), "default_permission_mode")?.unwrap_or_else(|| "default".into());
+    Ok(json!({
+        "op": "create",
+        "project": {"id": "", "key": key, "name": name, "host": s.host_name},
+        "task": approval_task(s, ctx),
+        "board": board.name,
+        "repo_path": repo_path,
+        "exists": missing.is_empty(),
+        "git": git,
+        "permission_mode": permission_mode,
+        // As a change from nothing, for UIs from before creations were asked about.
+        "changes": [
+            {"field": "name", "from": null, "to": name, "needs_approval": false},
+            {"field": "repo_path", "from": null, "to": repo_path, "needs_approval": true},
+        ],
+        "apply": {"profile_id": board.id, "name": name, "repo_path": repo_path},
+        "reason": reason,
+    }))
+}
+
+/// Asks the user to approve the project `input` describes (see project_creation), or carries on
+/// waiting for the answer if this call asked before it was retried, then adds it if they approve.
+async fn create_project(s: &Shared, ctx: &Ctx, input: &Value) -> ToolResult {
+    let approved = ask_user(s, ctx, "create_project", input).await?;
+    let apply = &approved["apply"];
+    let profile_id = apply["profile_id"].as_str().unwrap_or_default();
+    let board = db::get_profile(&s.db(), profile_id)?.ok_or_else(|| ToolError::NotFound(format!("profile {profile_id}")))?;
+    let body = CreateProject {
+        name: apply["name"].as_str().unwrap_or_default().into(),
+        repo_path: apply["repo_path"].as_str().unwrap_or_default().into(),
+        key: None,
+        base_branch: None,
+        use_worktrees: None,
+    };
+    let p = api::create_project_inner(s, &board.id, body).await?;
+    Ok(project_json(s, &p, &board))
+}
+
 /// Makes `apply` (update_project's arguments that change something) to project `p`.
 async fn apply_changes(s: &Shared, p: &db::Project, apply: &Value) -> std::result::Result<db::Project, ToolError> {
     match apply.as_object() {
@@ -840,6 +905,9 @@ async fn resume_approval(s: &Shared, ctx: &Ctx, saved: &Value) -> ToolResult {
 
 /// What an approval asks for, for the agent, e.g. "changing setup_script" or "deleting KIW-2".
 fn approval_what(tool: &str, input: &Value) -> String {
+    if tool == "create_project" {
+        return format!("adding {} as a project", input["repo_path"].as_str().unwrap_or("the folder"));
+    }
     if tool == "delete_task" {
         return format!("deleting {}", input["delete"]["key"].as_str().unwrap_or("the task"));
     }
@@ -863,6 +931,7 @@ async fn ask_user(s: &Shared, ctx: &Ctx, tool: &str, input: &Value) -> std::resu
         "delete_task" => ("delete_task", "task", "ask the user to delete it on the board", "deleted"),
         "create_automation" => ("automation", "project", "ask the user to add it in the project's settings (Automations)", "created"),
         "update_automation" | "delete_automation" => ("automation", "project", "ask the user to do it in the project's settings (Automations)", "changed"),
+        "create_project" => ("project", "board", "ask the user to add it on the board", "added"),
         _ => ("project", "project", "ask the user to do it in the project's settings", "changed"),
     };
     let (Some(task), Some(call_id)) = (&ctx.task, &ctx.call_id) else {
@@ -2704,6 +2773,72 @@ mod tests {
             let v = call(&s, &me("c6"), "update_project", same).await.unwrap();
             assert_eq!((&v["status_scripts"], &v["reviewers"]), (&json!({}), &json!([])));
             assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn agents_add_projects_only_once_the_user_approves_the_folder() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            // Even a thread that may do anything without asking asks first.
+            let caller = task(&s, "kiwicd", "Caller");
+            s.update_task(&caller.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap();
+            let caller = db::get_task(&s.db(), &caller.id).unwrap().unwrap();
+            let me = |call_id: &str| Ctx { task: Some(caller.clone()), call_id: Some(call_id.into()), ..ctx(&p) };
+            let root = std::env::temp_dir().join(format!("ia-create-{}", crate::util::new_id()));
+            std::fs::create_dir_all(root.join("home")).unwrap();
+            let root = root.canonicalize().unwrap();
+            let home = root.join("home");
+            let projects = || db::list_projects(&s.db(), &p.id).unwrap().len();
+
+            // Denied: no project, and no folder made.
+            let new = root.join("new").join("site");
+            let args = json!({"repo_path": new, "name": "Site", "reason": "The user asked for one"});
+            let (c1, c2, c3) = (me("c1"), me("c2"), me("c3"));
+            let (res, asked) = tokio::join!(call(&s, &c1, "create_project", args.clone()), answer_approval(&s, false));
+            let err = res.unwrap_err();
+            assert!(err.contains(&format!("didn't approve adding {} as a project, so nothing was added", new.display())), "{err}");
+            assert_eq!((projects(), root.join("new").exists()), (1, false));
+            assert_eq!((&asked["kind"], &asked["tool_name"]), (&json!("project"), &json!("create_project")));
+            let input = &asked["input"];
+            assert_eq!((&input["op"], &input["repo_path"], &input["exists"], &input["git"]), (&json!("create"), &json!(new), &json!(false), &json!(false)));
+            assert_eq!((&input["project"]["name"], &input["project"]["key"], &input["board"]), (&json!("Site"), &json!("SIT"), &json!("personal")));
+            assert_eq!((&input["task"]["key"], &input["reason"], &input["permission_mode"]), (&json!("KIW-1"), &json!("The user asked for one"), &json!("default")));
+            assert_eq!(db::get_task(&s.db(), &caller.id).unwrap().unwrap().attention_reason.as_deref(), Some("Add a project?"));
+
+            // Approved: it's added where the user saw, with symlinks and `..` resolved first.
+            std::os::unix::fs::symlink(&home, root.join("link")).unwrap();
+            let (res, asked) = tokio::join!(call(&s, &c2, "create_project", json!({"repo_path": root.join("link").join("..").join("link")})), answer_approval(&s, true));
+            let v = res.unwrap();
+            assert_eq!((&asked["input"]["repo_path"], &asked["input"]["exists"], &asked["input"]["project"]["name"]), (&json!(home), &json!(true), &json!("home")));
+            assert_eq!((&v["repo_path"], &v["name"], &v["profile"]), (&json!(home), &json!("home"), &json!("personal")));
+            assert_eq!(projects(), 2);
+
+            // Paths that aren't plainly somewhere aren't asked about.
+            for bad in ["relative/path", "", "/nonexistent-ia/../x"] {
+                let err = call(&s, &c3, "create_project", json!({"repo_path": bad})).await.unwrap_err();
+                assert!(err.contains("absolute path") || err.contains("can be created"), "{bad}: {err}");
+            }
+            std::fs::write(root.join("file"), "").unwrap();
+            assert!(call(&s, &c3, "create_project", json!({"repo_path": root.join("file")})).await.unwrap_err().contains("is not a directory"));
+            assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());
+
+            // An agent on another host has no thread here to ask in.
+            let err = call(&s, &ctx(&p), "create_project", json!({"repo_path": root.join("remote")})).await.unwrap_err();
+            assert!(err.contains("needs the user's approval, which only an agent on the board's own host can ask for"), "{err}");
+            assert_eq!((projects(), root.join("remote").exists()), (2, false));
+
+            // Cut short by a restart while the user is asked, the retried call waits for the same answer.
+            let run = db::insert_run(&s.db(), &caller.id, "prompt").unwrap();
+            let later = root.join("later");
+            let mcp = || McpCall { task_fields: true, run_id: run.id.clone(), call_id: "m1".into(), tool: "create_project".into(), args: json!({"repo_path": later}) };
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(100), handle_mcp(&s, mcp())).await.is_err());
+            let (res, _) = tokio::join!(handle_mcp(&s, mcp()), answer_approval(&s, true));
+            assert_eq!(res.unwrap()["repo_path"], json!(later));
+            assert_eq!((projects(), later.is_dir()), (3, true));
+            std::fs::remove_dir_all(&root).unwrap();
         });
     }
 

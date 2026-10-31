@@ -124,6 +124,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
+        .route("/tasks/{id}/unmerged", get(task_unmerged))
         .route("/tasks/{id}/git", get(git_view::status))
         .route("/tasks/{id}/git/diff", get(git_view::diff))
         .route("/tasks/{id}/git/show", get(git_view::show))
@@ -615,12 +616,7 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
             check_key(s, profile_id, None, &k)?;
             k
         }
-        // A derived key steers clear of the group and scratch tasks' ones, and of the profile's projects' keys.
-        None => {
-            let base = Some(derive_key(&name)).filter(|k| !reserved(k)).unwrap_or_else(|| format!("{}P", derive_key(&name)));
-            let projects = db::list_projects(&s.db(), profile_id)?;
-            (1..).map(|n| if n == 1 { base.clone() } else { format!("{base}{n}") }).find(|k| key_owner(&projects, None, k).is_none()).unwrap_or(base)
-        }
+        None => new_project_key(s, profile_id, &name)?,
     };
     let id = new_id();
     let base = s.data_dir.join("projects").join(&id);
@@ -647,6 +643,14 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
     let p = db::update_project(&s.db(), &p.id, &[("repo_root", json!(repo_root))])?.unwrap_or(p);
     s.emit(json!({"type": "project", "project": p}));
     Ok(p)
+}
+
+/// The key a new project named `name` gets on profile `profile_id` if it isn't given one. A
+/// derived key steers clear of the group and scratch tasks' ones, and of the profile's projects' keys.
+pub fn new_project_key(s: &Shared, profile_id: &str, name: &str) -> anyhow::Result<String> {
+    let base = Some(derive_key(name)).filter(|k| !reserved(k)).unwrap_or_else(|| format!("{}P", derive_key(name)));
+    let projects = db::list_projects(&s.db(), profile_id)?;
+    Ok((1..).map(|n| if n == 1 { base.clone() } else { format!("{base}{n}") }).find(|k| key_owner(&projects, None, k).is_none()).unwrap_or(base))
 }
 
 #[derive(Deserialize)]
@@ -2040,6 +2044,12 @@ fn setup_instructions(p: &db::Project) -> String {
 
 async fn task_diff(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(worktree::diff(&s, &id).await?))
+}
+
+/// Whether moving the task to Done would leave work of its unmerged (see worktree::unmerged).
+async fn task_unmerged(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let t = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    Ok(Json(json!({"unmerged": worktree::unmerged(&s, &t).await})))
 }
 
 // ---------- terminal ----------
