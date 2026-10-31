@@ -141,7 +141,9 @@ class TaskKeys(unittest.TestCase):
                 return [{"id": "tes-2", "number": 2, "project_id": "pr"}, {"id": "a-s2", "number": 2, "project_id": None, "task_type": "scratch"},
                         {"id": "a-g2", "number": 2, "project_id": None, "group_name": "g"}, {"id": "a-s3", "number": 3, "project_id": None, "task_type": "scratch"}]
             if path == "/profiles/b/tasks":
-                return [{"id": "b-s3", "number": 3, "project_id": None, "task_type": "scratch"}]
+                # A scratch task in a group is keyed G- (runner::key_prefix), not S-.
+                return [{"id": "b-s3", "number": 3, "project_id": None, "task_type": "scratch"},
+                        {"id": "b-g4", "number": 4, "project_id": None, "task_type": "scratch", "group_name": "g"}]
             raise AssertionError(f"unexpected {method} {path}")
 
     def resolve(self, ref, **env):
@@ -168,6 +170,8 @@ class TaskKeys(unittest.TestCase):
         self.assertEqual(self.resolve("S-3", IA_TEST_PROFILE="b"), ("b-s3", ["/profiles/b/tasks"]))
         self.assertIn("more than one profile", self.resolve("S-3")[1])
         self.assertIn("no task G-3", self.resolve("G-3")[1])
+        self.assertEqual(self.resolve("G-4")[0], "b-g4")
+        self.assertIn("no task S-4", self.resolve("S-4")[1])
 
     def test_ids_are_left_alone(self):
         self.assertEqual(self.resolve("0b6f1c2e-uuid"), ("0b6f1c2e-uuid", []))
