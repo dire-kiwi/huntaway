@@ -6,13 +6,13 @@ import { createRequire } from "node:module";
 import { after, before, test } from "node:test";
 import { frameDoc } from "../../src/htmlFrame.ts";
 import { themedPlan } from "../../src/planTheme.ts";
-import { defaultChromium } from "../../../scripts/ui-check.mjs";
+import { launchOptions } from "../../../scripts/ui-check.mjs";
 
 const { chromium } = createRequire(import.meta.url)("playwright-core");
 const css = fs.readFileSync(new URL("../../src/planTheme.css", import.meta.url), "utf8");
 
 let browser;
-before(async () => (browser = await chromium.launch({ executablePath: defaultChromium() })));
+before(async () => (browser = await chromium.launch(launchOptions())));
 after(() => browser?.close());
 
 test("<ia-html> is a page of its own: its scripts work as in a page, its styles stay in it, and its frame fits it", async () => {
@@ -207,6 +207,8 @@ test("a plan's questions become form fields, and the frame reports each named fi
   await frame.locator("input[name=cache]").check();
   // Enter in a field of the plan's own form doesn't submit it (which would load its action in the frame).
   await frame.locator("input[name=owner]").press("Enter");
+  // Reports come by postMessage, so the checkbox's can land after the steps above (as in Playwright's headless shell).
+  await page.waitForFunction(() => window.forms.at(-1).iaForm.find((f) => f.name === "cache").touched);
   const now = await last();
   assert.equal(now.iaFormUser, true);
   assert.deepEqual(summary(now.iaForm), [

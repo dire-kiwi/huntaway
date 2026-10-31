@@ -94,10 +94,11 @@ jobs:
         working-directory: app
         run: npm ci --no-audit --no-fund
 
-      # The runners have no /usr/bin/chromium, so scripts/ui-check.mjs falls back to Playwright's own headless browser.
+      # The runners have no /usr/bin/chromium, so scripts/ui-check.mjs falls back to Playwright's own Chromium (not its
+      # headless shell, which has no notifications or push).
       - name: Chromium
         working-directory: app
-        run: npx playwright-core install --with-deps --only-shell chromium
+        run: npx playwright-core install --with-deps --no-shell chromium
 
       # Only the binaries the checks run, with no test binary beside them (see the server job's note on memory).
       - name: cargo build
