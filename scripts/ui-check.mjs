@@ -11,7 +11,8 @@
 //   --touch                 a touch screen, as a phone or tablet has (pointer: coarse; below 700 wide is the phone layout)
 //   --timeout <ms>          for each step, default 5000
 //   --allow-error <regex>   don't fail on page and console errors that match (repeatable)
-//   --chromium <path>       default /usr/bin/chromium
+//   --chromium <path>       default $CHROMIUM, else /usr/bin/chromium, else Playwright's own browser
+//                           (`npx playwright-core install --no-shell chromium` in app/, as CI does)
 //
 // Steps (a <target> is a CSS or Playwright selector if it starts with # . [ // or css= text= role= and so on,
 // or tag[...]; anything else is text, matched case-insensitively against what's shown, then against
@@ -79,16 +80,25 @@ const SELECTOR = new RegExp(`^(#|\\.|\\[|//|[a-z][\\w-]*=|(${TAGS})([#.[]|:[a-z]
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const escapeCss = (s) => s.replace(/["\\]/g, "\\$&");
 
+/** The browser to launch: $CHROMIUM, else /usr/bin/chromium, else undefined (Playwright's own, where it installs it). */
+export const defaultChromium = () => process.env.CHROMIUM || (fs.existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined);
+
+/**
+ * Launch options for `chromium` (a path, or undefined for Playwright's own). Playwright's own is its full Chromium, in the
+ * new headless mode as /usr/bin/chromium runs: its headless shell has no notifications or push.
+ */
+export const launchOptions = (chromium = defaultChromium()) => (chromium ? { executablePath: chromium } : { channel: "chromium" });
+
 /**
  * Open a browser on the server. `errors` collects page and console errors that weren't allowed.
  * Options: url, token, size ("1900x1000"), touch (a touch screen), timeout (ms), allowErrors (regexes), chromium (path),
  * log (function).
  */
-export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = "/usr/bin/chromium", log = console.log } = {}) {
+export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = defaultChromium(), log = console.log } = {}) {
   if (!url) throw new Error("no server URL: pass --env <file|data dir>, or --url and --token (variables set with `. <env file>` aren't exported)");
   const base = url.replace(/\/+$/, "");
   const [width, height] = parseSize(size);
-  const browser = await playwright().chromium.launch({ executablePath: chromium });
+  const browser = await playwright().chromium.launch(launchOptions(chromium));
   const context = await browser.newContext({ viewport: { width, height }, ...(touch && { hasTouch: true, isMobile: true }) });
   // Signed in before the app's first script runs, so any page can be opened directly. Init scripts run in
   // every frame, and plans render in a sandboxed frame where touching localStorage throws: only the app's own page.

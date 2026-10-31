@@ -3,6 +3,8 @@
 // `npm run build` (and `cargo build` in server/) first; `npm run test:ui` does the UI build.
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { open } from "../../../scripts/ui-check.mjs";
 
@@ -45,9 +47,12 @@ export async function demoProject(server) {
   return projects.find((p) => p.name === "Demo");
 }
 
+let failures = 0;
+
 /**
  * Run `fn` with a browser on the server (see `open` in scripts/ui-check.mjs), then close it. Page and console
- * errors that weren't allowed fail the check; if `fn` failed as well, they're added to its error.
+ * errors that weren't allowed fail the check; if `fn` failed as well, they're added to its error, and a screenshot
+ * of the page is saved to <tmp>/ui-check-<pid>-<n>-failed.png.
  */
 export async function withBrowser(server, opts, fn) {
   const ui = await open({ url: server.url, token: server.token, log: () => {}, ...opts });
@@ -55,6 +60,9 @@ export async function withBrowser(server, opts, fn) {
     await fn(ui);
   } catch (e) {
     if (ui.errors.length) e.message += `\npage or console errors:\n${ui.errors.join("\n")}`;
+    // As scripts/ui-check.mjs does for a failed step (CI keeps these).
+    const shot = join(tmpdir(), `ui-check-${process.pid}-${++failures}-failed.png`);
+    if (await ui.page.screenshot({ path: shot }).then(() => true, () => false)) e.message += `\nthe page at the time: ${shot} (${ui.page.url()})`;
     throw e;
   } finally {
     await ui.close();
