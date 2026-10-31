@@ -152,22 +152,30 @@ async fn upstream(repo: &Path, base: &str) -> Option<Upstream> {
 }
 
 /// Fetch `up` (unless it's in the repository itself).
-async fn fetch(repo: &Path, up: &Upstream) -> Result<()> {
+async fn fetch(repo: &Path, up: &Upstream, account: Option<&str>) -> Result<()> {
     if up.remote == "." {
         return Ok(());
     }
     let refspec = format!("+{}:{}", up.merge, up.tracking);
-    match tokio::time::timeout(Duration::from_secs(60), git_ok(repo, &["fetch", "--quiet", "--no-tags", &up.remote, &refspec])).await {
-        Ok(r) => r.map(|_| ()),
+    let run = async {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(repo).stdin(Stdio::null()).env("GIT_TERMINAL_PROMPT", "0").kill_on_drop(true);
+        crate::gh_mcp::authenticate_fetch(&mut cmd, repo, &up.remote, account).await?;
+        let out = cmd.args(["fetch", "--quiet", "--no-tags", &up.remote, &refspec]).output().await.context("failed to run git fetch")?;
+        if !out.status.success() { bail!("git fetch {} failed: {}", up.remote, String::from_utf8_lossy(&out.stderr).trim()) }
+        Ok(())
+    };
+    match tokio::time::timeout(Duration::from_secs(60), run).await {
+        Ok(r) => r,
         Err(_) => bail!("git fetch {} timed out", up.remote),
     }
 }
 
 /// Fetch base branch `base`'s upstream (see `upstream`), returning its name (e.g. `origin/master`),
 /// or None when it has none.
-async fn fetch_upstream(repo: &Path, base: &str) -> Result<Option<String>> {
+async fn fetch_upstream(repo: &Path, base: &str, account: Option<&str>) -> Result<Option<String>> {
     let Some(up) = upstream(repo, base).await else { return Ok(None) };
-    fetch(repo, &up).await?;
+    fetch(repo, &up, account).await?;
     Ok(Some(up.name().to_string()))
 }
 
@@ -200,11 +208,11 @@ struct Start {
 /// local branch is fast-forwarded when it can be. When the two have diverged it's the upstream,
 /// which is where the task's pull request goes; when the local branch is ahead (with commits
 /// that aren't pushed), it's the local branch. If the fetch fails, it goes by the last one.
-async fn start_point(repo: &Path, base: &str) -> Start {
+async fn start_point(repo: &Path, base: &str, account: Option<&str>) -> Start {
     let mut start = Start { rev: base.to_string(), from: base.to_string(), notes: Vec::new() };
     let Some(up) = upstream(repo, base).await else { return start };
     let name = up.name().to_string();
-    if let Err(e) = fetch(repo, &up).await {
+    if let Err(e) = fetch(repo, &up, account).await {
         start.notes.push(("warn", format!("Could not fetch {name}; branching from the copy fetched before"), Some(format!("{e:#}"))));
     }
     let Some(theirs) = commit(repo, &up.tracking).await else { return start };
@@ -412,7 +420,8 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
             if branch_exists {
                 git_ok(&repo, &["worktree", "add", &wt_s, &branch]).await?;
             } else {
-                let start = start_point(&repo, &base).await;
+                let account = crate::runner::task_github_account(state, &task)?;
+                let start = start_point(&repo, &base, account.as_deref()).await;
                 for (level, text, detail) in start.notes {
                     state.add_event(task_id, level, text, detail);
                 }
@@ -661,8 +670,9 @@ pub async fn remove_if_merged(state: &Shared, task_id: &str, fetch: bool) -> Res
             return Ok(Removal::Kept(format!("it has {n} uncommitted or untracked file{}", if n == 1 { "" } else { "s" })));
         }
         let head = git_ok(&wt, &["rev-parse", "--verify", "HEAD"]).await?.trim().to_string();
+        let account = crate::runner::task_github_account(state, &task)?;
         let env = crate::runner::task_gh_env(state, &task).await;
-        let Some(merged_into) = merged_into(&repo, &wt, &base, task.branch.as_deref(), &head, fetch, &env).await else {
+        let Some(merged_into) = merged_into(&repo, &wt, &base, task.branch.as_deref(), &head, fetch, account.as_deref(), &env).await else {
             return Ok(Removal::Kept(format!("its work isn't merged into {base}")));
         };
         // Started meanwhile (fetching takes a while)?
@@ -694,6 +704,7 @@ async fn merged_into(
     branch: Option<&str>,
     head: &str,
     fetch: bool,
+    account: Option<&str>,
     gh_env: &Result<Option<crate::gh_mcp::GhEnv>>,
 ) -> Option<String> {
     let contains = |rev: String| async move { git(repo, &["merge-base", "--is-ancestor", head, &rev]).await.is_ok_and(|o| o.ok) };
@@ -702,7 +713,7 @@ async fn merged_into(
     }
     if let Some(up) = upstream(repo, base).await {
         if fetch {
-            let _ = self::fetch(repo, &up).await;
+            let _ = self::fetch(repo, &up, account).await;
         }
         if contains(up.tracking.clone()).await {
             return Some(up.name().to_string());
@@ -731,8 +742,10 @@ pub async fn remove_merged(state: &Shared, project_id: &str) -> Result<Vec<Value
     let mut bases: Vec<String> = tasks.iter().filter_map(|t| t.base_branch.clone().or(project.base_branch.clone())).filter(|b| !b.is_empty()).collect();
     bases.sort();
     bases.dedup();
+    let profile = db::get_profile(&state.db(), &project.profile_id)?.context("profile not found")?;
+    let account = crate::runner::github_account(Some(&project), &profile);
     for base in bases {
-        if let Err(e) = fetch_upstream(&repo, &base).await {
+        if let Err(e) = fetch_upstream(&repo, &base, account.as_deref()).await {
             tracing::warn!(project = project_id, "couldn't fetch {base}'s upstream: {e:#}");
         }
     }
@@ -1405,6 +1418,37 @@ mod tests {
             assert_eq!(head, latest, "{log}");
             assert!(log.contains("Could not fetch origin/master; branching from the copy fetched before"), "{log}");
             std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn worktree_fetches_use_the_project_account_before_the_profile_account() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, task, _, _) = task_with_work(&s).await;
+            let gh = repo.join("fake-gh");
+            // No real login or network: make gh fail and identify the account it was asked for.
+            std::fs::write(&gh, "#!/bin/sh\necho \"$*\" >&2\nexit 1\n").unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::gh_mcp::TEST_GH_PROGRAM.set(Some(path_str(&gh)));
+            sh(&repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+            sh(&repo, &["update-ref", "refs/remotes/origin/master", "master"]);
+            sh(&repo, &["branch", "--set-upstream-to=origin/master", "master"]);
+            let pid = task.project_id.as_ref().unwrap();
+            s.db().execute("UPDATE profiles SET github_account='profile-login' WHERE id=?1", [&task.profile_id]).unwrap();
+            s.db().execute("UPDATE projects SET github_account='project-login' WHERE id=?1", [pid]).unwrap();
+            for (title, expected) in [("Project account", "project-login"), ("Profile account", "profile-login")] {
+                let t = create_task_inner(&s, pid, CreateTask { title: title.into(), ..Default::default() }).unwrap();
+                let t = setup(&s, &t.id).await.unwrap();
+                let log = db::list_messages(&s.db(), &t.id).unwrap();
+                let warning = log.iter().find(|m| m.kind == "event" && m.data["level"] == "warn").unwrap();
+                let detail = warning.data["detail"].as_str().unwrap();
+                assert!(detail.contains(&format!("--user={expected}")), "{detail}");
+                assert_eq!(rev(Path::new(t.worktree_path.as_ref().unwrap()), "HEAD"), rev(&repo, "master"));
+                s.db().execute("UPDATE projects SET github_account=NULL WHERE id=?1", [pid]).unwrap();
+            }
+            crate::gh_mcp::TEST_GH_PROGRAM.set(None);
+            std::fs::remove_dir_all(&repo).ok();
         })
     }
 
