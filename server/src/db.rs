@@ -622,13 +622,19 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         )?;
     }
     if version < 63 {
+        // Where a project's tasks' pull requests are previewed (see Project::pr_preview_url).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='pr_preview_url'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN pr_preview_url TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=63; COMMIT;"))?;
+    }
+    if version < 64 {
         // Runs are looked up by task (the latest one, every minute for idle sessions; whether one is
         // active) and prompts counted by task on every task read; both tables only grow.
         conn.execute_batch(
             "BEGIN;
              CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id, created_at);
              CREATE INDEX IF NOT EXISTS permission_requests_task ON permission_requests(task_id, status);
-             PRAGMA user_version=63; COMMIT;",
+             PRAGMA user_version=64; COMMIT;",
         )?;
     }
     Ok(conn)
@@ -636,7 +642,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 63;
+pub const VERSION: i64 = 64;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1155,6 +1161,10 @@ pub struct Project {
     /// pr_watch::watch_in_review.
     #[serde(default = "watch_off")]
     pub watch_pull_requests: String,
+    /// Where a task's pull request is previewed, with `{pr}` for its number: a task gets it as its
+    /// `preview_url` once it has a pull request (see `preview_for`).
+    #[serde(default)]
+    pub pr_preview_url: Option<String>,
     pub created_at: String,
 }
 
@@ -1193,8 +1203,17 @@ impl Project {
             archived_at: r.get("archived_at")?,
             github_account: r.get("github_account")?,
             watch_pull_requests: r.get("watch_pull_requests")?,
+            pr_preview_url: r.get("pr_preview_url")?,
             created_at: r.get("created_at")?,
         })
+    }
+
+    /// Where pull request `pr_url` is previewed (see `pr_preview_url`): None if the project
+    /// doesn't preview them or it isn't a pull request's URL.
+    pub fn preview_for(&self, pr_url: Option<&str>) -> Option<String> {
+        let template = self.pr_preview_url.as_deref()?;
+        let pr = crate::pr_watch::Target::parse(pr_url?, None).ok()?;
+        Some(template.replace("{pr}", &pr.number.to_string()))
     }
 }
 
@@ -2279,7 +2298,7 @@ const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
     "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
-    "archived_at", "github_account", "watch_pull_requests", "setup_task_id",
+    "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
 ];
 
 pub fn update_project(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Project>> {
@@ -3223,7 +3242,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_60_gets_setup_threads() {
-        let path = std::env::temp_dir().join(format!("huntaway-v60-{}.db", crate::util::new_id()));
+        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3505,6 +3524,36 @@ mod tests {
     }
 
     #[test]
+    fn a_database_at_version_62_gets_projects_pr_preview_url() {
+        // As master's build left it, with push_subscriptions (62) and no pr_preview_url yet.
+        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN pr_preview_url;
+                 PRAGMA user_version=62;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let mut p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!(p.pr_preview_url, None);
+        assert_eq!(p.preview_for(Some("https://github.com/o/r/pull/3")), None);
+        p.pr_preview_url = Some("https://pr{pr}.example.com/".into());
+        assert_eq!(p.preview_for(Some("https://github.com/o/r/pull/3/files")).as_deref(), Some("https://pr3.example.com/"));
+        assert_eq!(p.preview_for(Some("https://example.com/o/r/issues/3")), None);
+        assert_eq!(p.preview_for(None), None);
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn a_database_where_github_accounts_were_version_42_44_or_45_keeps_them() {
         // As PR previews of GitHub accounts left it: at 42, before archived projects and scratch
         // tasks took versions 42 and 43, at 44, before starred tasks took 44, and at 45, before
@@ -3564,7 +3613,7 @@ mod tests {
         let indexes: i64 = c
             .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('runs_task', 'permission_requests_task')", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(indexes, 2, "the indexes of version 63");
+        assert_eq!(indexes, 2, "the indexes of version 64");
         assert_eq!(get_project(&c, "pr").unwrap().unwrap().archived_at, None);
         let t = get_task(&c, "s").unwrap().unwrap();
         assert_eq!((t.number, t.work_dir.as_deref(), t.is_scratch()), (1, Some("/old"), true));

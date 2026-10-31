@@ -828,6 +828,11 @@ pub async fn update_project_inner(s: &Shared, id: &str, b: &Map<String, Value>) 
         }
     };
     s.emit(json!({"type": "project", "project": p}));
+    if p.pr_preview_url != before.pr_preview_url
+        && let Err(e) = follow_pr_previews(s, &before, &p)
+    {
+        tracing::error!(project = %p.id, "updating its tasks' preview URLs: {e:#}");
+    }
     // Its tasks waiting for their dependencies or a merge slot while it was archived can go now.
     if before.archived_at.is_some() && p.archived_at.is_none() {
         runner::start_next_merge(s, Some(&p.id));
@@ -844,6 +849,26 @@ pub async fn update_project_inner(s: &Shared, id: &str, b: &Map<String, Value>) 
         }
     }
     Ok(p)
+}
+
+/// Gives project `p`'s tasks their pull requests' previews from its new `pr_preview_url`, in
+/// place of those from the old one (`before`'s). A preview URL set otherwise stays, and done
+/// tasks without one get none: their previews are gone.
+fn follow_pr_previews(s: &Shared, before: &db::Project, p: &db::Project) -> anyhow::Result<()> {
+    let tasks = db::list_tasks_for_project(&s.db(), &p.id, "task")?;
+    for t in tasks {
+        let ours = match &t.preview_url {
+            Some(_) => t.preview_url == before.preview_for(t.pr_url.as_deref()),
+            None => t.status != "done",
+        };
+        let preview = p.preview_for(t.pr_url.as_deref());
+        if ours && preview != t.preview_url {
+            // Unless the task changed meanwhile.
+            let unchanged = |c: &rusqlite::Connection| Ok(db::get_task(c, &t.id)?.is_some_and(|now| now.preview_url == t.preview_url && now.pr_url == t.pr_url));
+            s.update_task_if(&t.id, &[("preview_url", json!(preview))], unchanged)?;
+        }
+    }
+    Ok(())
 }
 
 /// Archives `p`, unless one of its agents is running: their tasks would be off the board.
@@ -881,6 +906,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "github_account",
             "done_when_merged",
             "watch_pull_requests",
+            "pr_preview_url",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -906,6 +932,15 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             // null (or blank) uses the profile's.
             "github_account" => *v = check_github_account(v)?,
+            // null (or blank) previews none.
+            "pr_preview_url" => {
+                let url = v.as_str().map(str::trim).unwrap_or_default();
+                let ok = (url.starts_with("http://") || url.starts_with("https://")) && url.contains("{pr}");
+                if !(v.is_null() || v.is_string()) || !(url.is_empty() || ok) {
+                    return Err(ApiError::bad("pr_preview_url must be null or an http(s) URL with {pr} for the pull request's number"));
+                }
+                *v = if url.is_empty() { Value::Null } else { json!(url) };
+            }
             // null falls back to the host's default mode.
             "permission_mode" if !(v.is_null() || v.as_str().is_some_and(|m| PERMISSION_MODES.contains(&m))) => {
                 return Err(ApiError::bad(format!("permission_mode must be null or one of {PERMISSION_MODES:?}")));
@@ -3153,6 +3188,64 @@ pub(crate) mod tests {
             let e = start_setup_thread_inner(&s, &p.id, StartSetupThread::default()).await.unwrap_err();
             assert!(e.1.contains("ready for worktrees already"), "{}", e.1);
             std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn tasks_get_their_pull_requests_previews() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            let project = db::insert_project(&s.db(), project).unwrap();
+            let body = |v: Value| serde_json::from_value::<CreateTask>(v).unwrap();
+            let task = |title: &str| create_task_inner(&s, &project.id, body(json!({"title": title}))).unwrap().id;
+            let update = async |id: &str, v: Value| update_task_inner(&s, id, v.as_object().unwrap()).await.unwrap();
+            let set = async |v: Value| update_project_inner(&s, &project.id, json!({"pr_preview_url": v}).as_object().unwrap()).await;
+            let preview = |id: &str| db::get_task(&s.db(), id).unwrap().unwrap().preview_url;
+            let pr = |n: u32| json!(format!("https://github.com/o/web/pull/{n}"));
+
+            // Before the project has one, from the pull requests they already had.
+            let (open, own, done, none) = (task("Open"), task("Own"), task("Done"), task("No PR"));
+            update(&open, json!({"pr_url": pr(4)})).await;
+            update(&own, json!({"pr_url": pr(5), "preview_url": "https://staging.example.com/"})).await;
+            update(&done, json!({"pr_url": pr(6), "status": "done"})).await;
+            assert_eq!(preview(&open), None);
+            for bad in [json!("https://pr.example.com/"), json!("pr{pr}.example.com"), json!(3)] {
+                assert!(set(bad.clone()).await.is_err(), "{bad}");
+            }
+            assert_eq!(set(json!(" https://pr{pr}.example.com/b ")).await.unwrap().pr_preview_url.as_deref(), Some("https://pr{pr}.example.com/b"));
+            assert_eq!(preview(&open).as_deref(), Some("https://pr4.example.com/b"));
+            // One set otherwise stays, a done task's preview is gone, and without a PR there's none.
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            assert_eq!((preview(&done), preview(&none)), (None, None));
+
+            // Its new pull request's, from then on.
+            update(&none, json!({"pr_url": pr(7)})).await;
+            assert_eq!(preview(&none).as_deref(), Some("https://pr7.example.com/b"));
+            update(&none, json!({"pr_url": pr(8)})).await;
+            assert_eq!(preview(&none).as_deref(), Some("https://pr8.example.com/b"));
+            s.update_task(&task("Found"), &[("pr_url", pr(9))]).unwrap();
+            let found = db::list_tasks_for_project(&s.db(), &project.id, "task").unwrap().into_iter().find(|t| t.title == "Found").unwrap();
+            assert_eq!(found.preview_url.as_deref(), Some("https://pr9.example.com/b"));
+            update(&none, json!({"pr_url": ""})).await;
+            assert_eq!(preview(&none), None);
+            update(&own, json!({"pr_url": pr(10)})).await;
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            // One given with it wins.
+            update(&none, json!({"pr_url": pr(11), "preview_url": "https://mine.example.com/"})).await;
+            assert_eq!(preview(&none).as_deref(), Some("https://mine.example.com/"));
+
+            // Changing it moves those it made, and clearing it takes them off.
+            set(json!("https://{pr}.preview.example.com/")).await.unwrap();
+            assert_eq!(preview(&open).as_deref(), Some("https://4.preview.example.com/"));
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            assert_eq!(preview(&none).as_deref(), Some("https://mine.example.com/"));
+            assert_eq!(set(json!("")).await.unwrap().pr_preview_url, None);
+            assert_eq!((preview(&open), preview(&found.id)), (None, None));
+            assert_eq!(preview(&own).as_deref(), Some("https://staging.example.com/"));
+            update(&open, json!({"pr_url": pr(12)})).await;
+            assert_eq!(preview(&open), None);
         })
     }
 
