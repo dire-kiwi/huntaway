@@ -19,6 +19,7 @@ import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgres
 import { documentInfo, DocumentView, LABEL_INFO, TaskTypeBadge } from "./Document";
 import { ReviewDot, reviewParts, ReviewSummary } from "./Review";
 import { Dependencies } from "./Dependencies";
+import { useConfirmDone } from "./ConfirmDone";
 import { ReminderButton, saveMarks, StarButton, useCanMark } from "./Reminders";
 import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
@@ -263,6 +264,33 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // A subproject's task: its subproject's board, with this task still beside it.
   const toSubproject = () => subproject && navigate(mode === "page" ? href({ name: "subproject", taskId: subproject.id }) : subprojectTaskUrl(subproject.id, task.id));
 
+  // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
+  const run =
+    task.running || reviewing ? (
+      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
+        <Square size={11} fill="currentColor" /> Stop
+      </Button>
+    ) : dependencyQueued(task) ? (
+      <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
+        <Clock size={12} /> Queued
+      </span>
+    ) : (
+      !task.session_id &&
+      agents && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setMarkErr(null);
+            api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
+            setTab("thread");
+          }}
+        >
+          <Play size={12} fill="currentColor" /> Start
+        </Button>
+      )
+    );
+
   const controls = (
     <>
       {task.subproject && (
@@ -308,34 +336,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ))}
         </div>
       )}
+      {!narrow && run}
     </>
   );
-  // Stop or Start: kept out of a phone's scrolling row of tabs and controls, so it's never half off-screen.
-  const runAction =
-    task.running || reviewing ? (
-      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
-        <Square size={11} fill="currentColor" /> Stop
-      </Button>
-    ) : dependencyQueued(task) ? (
-      <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
-        <Clock size={12} /> Queued
-      </span>
-    ) : (
-      !task.session_id &&
-      agents && (
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => {
-            setMarkErr(null);
-            api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
-            setTab("thread");
-          }}
-        >
-          <Play size={12} fill="currentColor" /> Start
-        </Button>
-      )
-    );
 
   // A subproject's task goes back to the subproject's board.
   const back = () =>
@@ -397,17 +400,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           )}
           <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
             {wide && controls}
-            {wide && runAction}
+            {narrow && run}
             {mode !== "page" && <PanelButtons expanded={mode === "expanded"} />}
           </div>
         </div>
-        {/* A phone's row scrolls sideways, with the tabs first, fading out at the edge where there's more. */}
+        {/* A phone's row scrolls sideways, with the tabs first (and Start or Stop in the row above), fading out at the edge. */}
         {!wide && (
-          <div className="no-drag flex items-start gap-2 px-3 pb-2 narrow:items-center">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:pr-4 narrow:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] narrow:[scrollbar-width:none] narrow:*:shrink-0">
-              {controls}
-            </div>
-            {runAction && <div className="shrink-0">{runAction}</div>}
+          <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:pr-4 narrow:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] narrow:[scrollbar-width:none] narrow:*:shrink-0">
+            {controls}
           </div>
         )}
         {markErr && (
@@ -677,8 +677,10 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
       .catch((e) => setErr("desc", `Couldn't save the description: ${(e as Error).message}`));
   };
 
-  const setStatus = (status: Status) => {
+  const { confirmDone, dialog: doneDialog } = useConfirmDone();
+  const setStatus = async (status: Status) => {
     setErr("status", null);
+    if (status === "done" && !(await confirmDone(task))) return;
     api.updateTask(task.host_id, task.id, { status }).catch((e) => setErr("status", e.message));
   };
   const setResolution = (resolution: Resolution) => {
@@ -997,6 +999,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
 
       {teardown && <TeardownModal task={task} onClose={() => setTeardown(false)} />}
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
+      {doneDialog}
     </aside>
   );
 }

@@ -171,6 +171,7 @@ export function ProfileBoard({ profile }: { profile: string }) {
   const on = hosts.filter((h) => profiles.some((p) => p.host_id === h.id && p.name === profile));
   return (
     <TaskBoard
+      key={`profile:${profile}`}
       boardKey={`profile:${profile}`}
       projects={projects}
       profiles={ids}

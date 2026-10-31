@@ -1220,6 +1220,27 @@ export interface ProjectChange {
   reason?: string | null;
 }
 
+/** A project an agent asked to add, shown to the user to approve: the folder its agents would work in (API 76). */
+export interface ProjectCreation {
+  op: "create";
+  /** As it would be added (it has no id yet). */
+  project: { id: string; key: string; name: string; host?: string };
+  /** The thread that asked. */
+  task: { id: string; key?: string; title: string } | null;
+  /** The profile whose board it's added to. */
+  board: string;
+  /** The folder, with symlinks resolved. */
+  repo_path: string;
+  /** False when the folder is created. */
+  exists: boolean;
+  /** Whether it's a git repository. */
+  git: boolean;
+  /** The permission mode its tasks get: the host's default. */
+  permission_mode: string;
+  /** Why, in the agent's words. */
+  reason?: string | null;
+}
+
 /** A task an agent asked to delete, shown to the user to confirm (API 58). */
 export interface TaskDeletion {
   /** The deleted task's project, if it's in one. */
@@ -1248,6 +1269,13 @@ export interface ProjectApproval extends ApprovalRequest {
   kind: "project";
   tool_name: "update_project";
   input: ProjectChange;
+}
+
+/** A project an agent asked to add, waiting for approval like a project change (API 76). */
+export interface ProjectCreationApproval extends ApprovalRequest {
+  kind: "project";
+  tool_name: "create_project";
+  input: ProjectCreation;
 }
 
 /** A task deletion waiting for the user to confirm it, like a project change (API 58). */
@@ -1297,7 +1325,7 @@ export interface AutomationApproval extends ApprovalRequest {
 }
 
 /** What only the user decides for an agent, whatever its thread's permission mode. */
-export type Approval = ProjectApproval | DeletionApproval | AutomationApproval;
+export type Approval = ProjectApproval | ProjectCreationApproval | DeletionApproval | AutomationApproval;
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
@@ -1548,6 +1576,8 @@ export const api = {
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
+  /** Whether moving the task to Done would leave its work unmerged (API 75). */
+  unmerged: (h: string, id: string) => on(h).get<{ unmerged: boolean }>(`/tasks/${enc(id)}/unmerged`),
   /**
    * The Changes tab's git (API 62): the status, a file's unstaged or staged diff, and a commit's or stash's. A diff that
    * isn't UTF-8 comes as a `preview` with `not_utf8` and no `patch`, as lines patched from it would be written back wrong.

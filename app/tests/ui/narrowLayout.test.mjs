@@ -13,6 +13,7 @@ const PHONE = { size: "390x844", touch: true };
 const TODO = "Edit this task's title and description";
 const ATTENTION = "A task waiting on an answer";
 const REVIEW = "Finished work to look over";
+const ARCHIVED = "Shipped last week";
 
 /** Whether the element with `text` is on screen (not in a column scrolled off to the side, say). */
 const onScreen = (page, text) =>
@@ -64,6 +65,10 @@ test("on a phone the board shows one column at a time", async () => {
     // The column picked last is the one shown next time.
     await ui.run([`goto /p/${project.id}`, "wait role=tab[name=/^In progress/][selected=true]", "sleep 300"]);
     assert.ok(await onScreen(page, "Something being worked on"));
+
+    // HA-30: each board remembers its own: another board opens on what needs attention, and its pick doesn't move this one's.
+    await ui.run(["goto /profile/Default", "wait role=tab[name=/^Needs attention/][selected=true]", "click role=tab[name=/^Backlog/]"]);
+    await ui.run(["wait role=tab[name=/^Backlog/][selected=true]", `goto /p/${project.id}`, "wait role=tab[name=/^In progress/][selected=true]"]);
   });
 });
 
@@ -98,8 +103,38 @@ test("on a phone a task opens full screen with a back button", async () => {
     // On a touch screen Enter starts a new line, and the send button sends.
     await ui.run(["click Add extra instructions", "type first line", "press Enter", "type second line"]);
     assert.equal(await page.locator("textarea").inputValue(), "first line\nsecond line");
+    // HA-30: so the send button's title doesn't offer Enter.
+    assert.equal(await page.locator("button[title^='Send']").getAttribute("title"), "Send");
     await ui.run(["click role=button[name='Back']", "gone role=button[name='Back']", "wait role=tablist[name='Columns']"]);
     assert.equal(new URL(page.url()).searchParams.get("task"), null);
+  });
+});
+
+// HA-30: the header's row of tabs scrolls sideways on a phone, so Start is in the row above it, where it stays on screen.
+test("on a phone a task's Start button is on screen", async () => {
+  await withBrowser(server, PHONE, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^To do/]", "sleep 600", `click ${TODO}`, "wait role=button[name='Back']", "sleep 500"]);
+    const start = await page.getByRole("button", { name: "Start", exact: true }).boundingBox();
+    assert.ok(start && start.x >= 0 && start.x + start.width <= 390 && start.y < 48, `Start at ${JSON.stringify(start)}`);
+    const tabs = await page.getByRole("button", { name: "details", exact: true }).boundingBox();
+    assert.ok(tabs.x + tabs.width <= 390, `Details at ${JSON.stringify(tabs)}`);
+  });
+});
+
+// HA-30: a card's menu brings an archived task back into Done, as dragging it there does on a desktop.
+test("on a phone a card's menu brings an archived task back into Done", async () => {
+  await withBrowser(server, PHONE, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^Done/]", "click 1 archived", `wait ${ARCHIVED}`, `click [aria-label="Move ${ARCHIVED} to…"]`]);
+    // It isn't in Done (nothing's ticked), and picking Done brings it back.
+    const done = page.getByRole("menuitemradio", { name: /^\W*Done$/ });
+    assert.equal(await done.getAttribute("aria-checked"), "false");
+    await done.click();
+    await ui.run(["gone role=menu", "wait Tasks done for two days move here"]);
+    const task = (await server.api("GET", `/projects/${project.id}/tasks`)).find((t) => t.title === ARCHIVED);
+    assert.equal(task.status, "done");
+    assert.ok(Date.now() - Date.parse(task.done_at) < 60_000, `done at ${task.done_at}`);
   });
 });
 
@@ -127,6 +162,7 @@ test("the desktop layout is as it was", async () => {
     assert.equal(await page.locator(`[aria-label="Move ${TODO} to…"]`).isVisible(), false);
     await ui.run([`click ${ATTENTION}`, "wait role=button[name='Expand']"]);
     assert.equal(await page.getByRole("button", { name: "Back", exact: true }).count(), 0);
+    assert.equal(await page.locator("button[title^='Send']").getAttribute("title"), "Send (Enter)");
   });
 });
 
