@@ -37,7 +37,7 @@ pub fn is_question(tool: &str) -> bool {
 /// `tool_use_id` lets the UI tell which subagent (if any) made the call.
 pub async fn prompt(s: &Shared, task: &Task, call_id: &str, tool_name: &str, input: &Value, tool_use_id: Option<&str>) -> anyhow::Result<Value> {
     let question = is_question(tool_name);
-    // A plan, artifact or diagram task's agent writes its document in its own folder.
+    // A labelled task's agent writes its documents in its own folder.
     if !question && (task.auto_allow.iter().any(|t| t == tool_name) || crate::documents::writes_own_folder(s, task, tool_name, input)) {
         return Ok(allow(input));
     }

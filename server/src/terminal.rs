@@ -141,7 +141,7 @@ async fn list_sessions(s: &Shared) -> Vec<(String, u32)> {
 /// Where a task's terminal starts: its worktree once there is one, otherwise where its agent
 /// would run.
 pub fn working_dir(s: &Shared, task: &Task) -> Result<String> {
-    // A plan, artifact, diagram or scratch task's shell opens in its folder, where its agent works.
+    // A scratch task's shell (or one that makes only documents) opens in its folder, where its agent works.
     if let Some(d) = crate::documents::work_dir(s, task) {
         return Ok(path_str(&d));
     }

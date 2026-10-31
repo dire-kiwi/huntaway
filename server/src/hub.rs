@@ -576,6 +576,13 @@ pub async fn proxy(State(s): State<Shared>, Path((host_id, rest)): Path<(String,
         Ok(b) => b,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))).into_response(),
     };
+    // A task the user moves to another column doesn't push them a notification of it (see push.rs).
+    if method == "PATCH"
+        && let Some(id) = rest.strip_prefix("tasks/").filter(|id| !id.contains('/'))
+        && let Some(status) = serde_json::from_slice::<Value>(&bytes).ok().and_then(|b| b["status"].as_str().map(String::from))
+    {
+        s.push.note_move(&host_id, id, &status);
+    }
     let result = if host_id == s.host_id {
         local_request(&s, &method, &path, (!bytes.is_empty()).then(|| bytes.to_vec())).await
     } else {
@@ -800,7 +807,7 @@ pub struct CopyConfig {
 }
 
 /// Call any host's API (this one or a linked one).
-async fn host_request(s: &Shared, host_id: &str, method: &str, path: &str, body: Option<Value>) -> ApiResult<Value> {
+pub(crate) async fn host_request(s: &Shared, host_id: &str, method: &str, path: &str, body: Option<Value>) -> ApiResult<Value> {
     let (status, body) = if host_id == s.host_id {
         local_request(s, method, path, body.map(|b| b.to_string().into_bytes())).await?
     } else {

@@ -38,6 +38,7 @@ import {
   type Project,
   type PromptField,
   type Reviewer,
+  type WatchPullRequests,
 } from "../api";
 import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "../githubRepos";
 import { groupNames } from "../projectGroups";
@@ -403,7 +404,7 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     label: "Review",
     icon: <ScanSearch size={14} />,
     description: "Reviewer agents that check each task's changes before it's merged, and what happens once it is.",
-    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged"],
+    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged", "watch_pull_requests"],
   },
   {
     id: "prompts",
@@ -456,7 +457,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
     general: true,
     agents: true,
     worktrees: true,
-    review: project.auto_review !== undefined || project.done_when_merged !== undefined,
+    review: project.auto_review !== undefined || project.done_when_merged !== undefined || hostSupports(host, 72),
     prompts: hostSupports(host, 27),
     scripts: hostSupports(host, 37),
     tools: hostSupports(host, 21),
@@ -720,6 +721,23 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                   removes its worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
                 </div>
               </div>
+            )}
+
+            {current.id === "review" && hostSupports(host, 72) && (
+              <Field
+                label="Watch pull requests in review"
+                hint="While a task is in In review, the board reads its pull request every couple of minutes and sends its agent what's new, which starts its turn. Only comments and reviews from people who can push to the repository (its owner, members and collaborators) count, not those from bots or from the agents' own GitHub account (yours too, if you share it)."
+              >
+                <select
+                  value={form.watch_pull_requests ?? "off"}
+                  onChange={(e) => set("watch_pull_requests", e.target.value as WatchPullRequests)}
+                  className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+                >
+                  <option value="off">Off</option>
+                  <option value="failures">Failed checks and conflicts wake the agent</option>
+                  <option value="all">Failed checks, conflicts, comments and reviews wake the agent</option>
+                </select>
+              </Field>
             )}
 
             {current.id === "prompts" && <ProjectPrompts project={form} onChange={set} />}

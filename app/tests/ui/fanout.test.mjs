@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { startServer, withBrowser } from "./harness.mjs";
+import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let project;
@@ -12,11 +12,10 @@ let profile;
 before(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
-  mkdirSync(repo);
-  execFileSync("git", ["init", "-q", repo]);
+  gitRepo(repo);
   [profile] = await server.api("GET", "/profiles");
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
-  plain = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Plain", repo_path: `${server.dataDir}/plain`, key: "PL" });
+  plain = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Plain", repo_path: `${server.dataDir}/plain`, key: "PL", use_worktrees: false });
   // A git repository whose tasks don't get worktrees unless they ask.
   mkdirSync(`${server.dataDir}/cart`);
   execFileSync("git", ["init", "-q", `${server.dataDir}/cart`]);
@@ -172,13 +171,13 @@ test("a group's documents made from one prompt are linked", async () => {
       "click New task",
       "type Group docs @group /plan !opus !sonnet",
       "press Escape",
-      "wait Create 2 plans",
+      "wait Create 2 group tasks",
       "press Control+Enter",
       "gone Reads as",
     ]);
   });
   const plans = (await server.api("GET", `/profiles/${profile.id}/group-tasks`)).filter((t) => t.description === "Group docs");
-  assert.deepEqual(plans.map((t) => [t.task_type, t.model]).sort(), [
+  assert.deepEqual(plans.map((t) => [t.labels.join(), t.model]).sort(), [
     ["plan", "opus"],
     ["plan", "sonnet"],
   ]);

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
 
+// The app's modules import each other without extensions, as Vite allows (as in store.test.mjs).
+const hook = `export async function resolve(spec, ctx, next) {
+  if (spec.startsWith(".") && !/\\.[cm]?[jt]sx?$/.test(spec)) {
+    try { return await next(spec + ".ts", ctx); } catch {}
+  }
+  return next(spec, ctx);
+}`;
+register("data:text/javascript," + encodeURIComponent(hook));
 // The router listens to the window as it loads.
 globalThis.window = { addEventListener() {}, location: { pathname: "/", search: "", hash: "" }, history: { pushState() {}, replaceState() {} } };
 const { href, parse } = await import("../src/router.ts");

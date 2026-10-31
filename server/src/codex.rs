@@ -90,6 +90,9 @@ pub struct Spec {
     /// board runs a wait's command without asking. A run from an older build pre-approved them.
     #[serde(default)]
     pub review_waits: bool,
+    /// Revert the thread to before this turn first (a rewind's, see checkpoints::Rewind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revert_before_turn: Option<String>,
 }
 
 /// How a permission mode runs under Codex: (approval policy, approvals reviewer, sandbox).
@@ -381,6 +384,11 @@ pub async fn run_adapter(spec_path: &str) -> Result<()> {
         None => rpc.request("thread/start", params).await?,
     };
     let thread_id = started["thread"]["id"].as_str().context("no thread id")?.to_string();
+    if let (Some(turn), Some(_)) = (&spec.revert_before_turn, &spec.thread_id) {
+        rpc.request("thread/revert", json!({"threadId": thread_id, "beforeTurnId": turn}))
+            .await
+            .context("couldn't take the conversation back to before the turn a rewind went back to")?;
+    }
     // A Codex without permission profiles ignores ours: its turns are made read-only instead.
     let read_only = uses_profile(&spec) && started["activePermissionProfile"]["id"] != REVIEW_PROFILE;
     if read_only {
@@ -1175,7 +1183,13 @@ pub fn handle_line(state: &Shared, run: &Run, v: &Value) -> Result<()> {
                 subagent_status(state, run, thread, "running", None)?;
             }
         }
-        "turn/started" => state.emit(json!({"type": "delta_reset", "task_id": task_id})),
+        "turn/started" => {
+            // Where a rewind to before this turn takes the thread back to (see checkpoints::Rewind).
+            if let Some(turn) = p["turn"]["id"].as_str() {
+                state.db().execute("UPDATE runs SET agent_at=?1 WHERE id=?2", rusqlite::params![turn, run.id])?;
+            }
+            state.emit(json!({"type": "delta_reset", "task_id": task_id}));
+        }
         "item/agentMessage/delta" if own => {
             if let Some(t) = p["delta"].as_str() {
                 state.emit(json!({"type": "delta", "task_id": task_id, "text": t}));

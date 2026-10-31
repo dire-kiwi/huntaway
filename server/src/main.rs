@@ -7,6 +7,7 @@ mod codex;
 mod context;
 mod analytics;
 mod changes;
+mod checkpoints;
 mod api;
 mod asana;
 mod db;
@@ -25,6 +26,7 @@ mod prompts;
 mod questions;
 mod proto;
 mod pty;
+mod push;
 mod relay;
 mod relocate;
 mod review;
@@ -353,6 +355,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Agents kept running while we were down; catch up on their output.
     runner::load_active(&state)?;
     runner::auto_compact(&state);
+    pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
@@ -361,6 +364,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     relocate::start_recording(&state);
     admin::start_update_check(&state);
     hub::start(&state)?;
+    push::start(&state);
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
             for h in &args.hubs {

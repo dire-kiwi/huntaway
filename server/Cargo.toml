@@ -11,7 +11,7 @@ default-members = [".", "shim", "broker"]
 
 [dependencies]
 anyhow = "1.0.104"
-# HMAC-SHA256 for webhook signatures (already built for rustls).
+# HMAC-SHA256 for webhook signatures, and Web Push's encryption and signing (already built for rustls).
 aws-lc-rs = { version = "1.18.2", default-features = false }
 axum = { version = "0.8.9", features = ["ws", "macros"] }
 base64 = "0.23.1"

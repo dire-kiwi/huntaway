@@ -75,7 +75,7 @@ const KEEP_PAYLOADS: i64 = 5;
 /// Headers a delivery keeps (for templates and filters) leave these out.
 const SECRET_HEADERS: &[&str] = &["authorization", "proxy-authorization", "cookie", "x-hub-signature", "x-hub-signature-256"];
 const WEEKDAYS: &[&str] = &["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-const UNTRUSTED_TAG: &str = "untrusted-data";
+pub const UNTRUSTED_TAG: &str = "untrusted-data";
 
 // ---------- what an automation is ----------
 
@@ -137,9 +137,13 @@ pub enum Action {
         title: String,
         #[serde(default)]
         description: String,
-        /// One of db::TASK_TYPES, or none for a code task.
+        /// One of db::TASK_TYPES, or none for a code task. One of db::LABELS in an action stored
+        /// before API 71, which gives the task that label.
         #[serde(default)]
         task_type: Option<String>,
+        /// Some of db::LABELS.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        labels: Vec<String>,
         #[serde(default)]
         claude_config_id: Option<String>,
         #[serde(default)]
@@ -447,14 +451,17 @@ pub fn check_trigger(t: Trigger) -> ApiResult<Trigger> {
 pub fn check_action(c: &Connection, project: &db::Project, a: Action) -> ApiResult<Action> {
     let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     Ok(match a {
-        Action::CreateTask { title, description, task_type, claude_config_id, model, effort, status, start } => {
+        Action::CreateTask { title, description, task_type, labels, claude_config_id, model, effort, status, start } => {
             if title.trim().is_empty() {
                 return Err(bad("the task's title can't be blank"));
             }
             if title.chars().count() > 500 || description.chars().count() > MAX_TEXT_CHARS {
                 return Err(bad("the task's title or description is too long"));
             }
-            let task_type = blank(task_type);
+            let mut task_type = blank(task_type);
+            // A label as its type, as before API 71.
+            let labels: Vec<Value> = labels.into_iter().chain(task_type.take_if(|t| db::LABELS.contains(&t.as_str()))).map(Value::String).collect();
+            let labels = crate::documents::check_labels(&Value::Array(labels)).map_err(bad)?.into_iter().map(String::from).collect();
             if task_type.as_deref().is_some_and(|t| !db::TASK_TYPES.contains(&t)) {
                 return Err(bad(format!("task_type must be one of {:?}", db::TASK_TYPES)));
             }
@@ -466,7 +473,7 @@ pub fn check_action(c: &Connection, project: &db::Project, a: Action) -> ApiResu
                 return Err(bad("status must be todo or backlog (a task that's started moves to in_progress)"));
             }
             let claude_config_id = api::pick_config(c, &project.profile_id, Some(project), blank(claude_config_id).as_deref())?;
-            Action::CreateTask { title: title.trim().to_string(), description, task_type, claude_config_id, model: blank(model), effort, status, start }
+            Action::CreateTask { title: title.trim().to_string(), description, task_type, labels, claude_config_id, model: blank(model), effort, status, start }
         }
         Action::SendToTask { task_id, message } => {
             if message.trim().is_empty() {
@@ -744,7 +751,7 @@ fn render(template: &str, vars: &Vars, into: Out) -> (String, bool) {
 
 /// A value from outside can't close (or open) the tags it's wrapped in, or any other: every `<`
 /// and `>` in it is escaped.
-fn defang(v: &str) -> String {
+pub fn defang(v: &str) -> String {
     v.replace('<', "&lt;").replace('>', "&gt;")
 }
 
@@ -891,7 +898,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
     }
     let how = how(vars.source, event);
     match &a.action {
-        Action::CreateTask { title, description, task_type, claude_config_id, model, effort, status, start } => {
+        Action::CreateTask { title, description, task_type, labels, claude_config_id, model, effort, status, start } => {
             let (title, title_untrusted) = render(title, vars, Out::Title);
             let title = if title.is_empty() { format!("{} ({})", a.name, vars.now.with_timezone(&Local).format("%Y-%m-%d %H:%M")) } else { title };
             let (body, body_untrusted) = render(description, vars, Out::Text);
@@ -909,6 +916,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
                 description: text,
                 status: Some(status.clone()),
                 task_type: task_type.clone(),
+                labels: Some(json!(labels)),
                 claude_config_id: claude_config_id.clone(),
                 model: model.clone(),
                 effort: effort.clone(),
