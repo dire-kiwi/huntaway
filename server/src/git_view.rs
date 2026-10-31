@@ -4,6 +4,11 @@
 //! from a file's diff, applied to the index), discarding, committing, amending, stashing and
 //! resetting. Everything runs at the top of the folder `worktree::diff` shows: the task's worktree
 //! once it's ready, else its project's repository.
+//!
+//! A project's folder may be only part of a repository (a subfolder of a monorepo, or of a home
+//! folder kept as a dotfiles repository). Then the view is of that folder's files and the commits
+//! that touch them, staging and discarding is of its files only, and what would act on the whole
+//! repository (committing what's staged outside it, amending, stashing and resetting) is refused.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -91,19 +96,61 @@ async fn run_ok(dir: &Path, args: &[&str], input: Option<&str>) -> ApiResult<Str
 struct Repo {
     top: PathBuf,
     dir: PathBuf,
+    /// Where `dir` is from `top` (`web/`, with its slash) when it isn't the top: the view is of it only.
+    folder: Option<String>,
     task: Task,
     project: Project,
+}
+
+impl Repo {
+    /// Refuses what would act on the whole repository when the project's folder is only part of it.
+    fn whole_repo(&self, what: &str) -> ApiResult<()> {
+        match &self.folder {
+            Some(f) => Err(ApiError::conflict(format!(
+                "{what} would act on the whole repository at {}, and the project's folder is only its {f} folder: do it in a terminal there",
+                self.top.display()
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// Checks paths from the top of the repository: in it, and in the project's folder.
+    fn check_paths(&self, paths: &[String]) -> ApiResult<()> {
+        for p in paths {
+            check_path(p)?;
+            if let Some(f) = &self.folder
+                && !(p.starts_with(f.as_str()) || p == f.trim_end_matches('/'))
+            {
+                return Err(ApiError::bad(format!("{p} isn't in the project's folder ({f})")));
+            }
+        }
+        Ok(())
+    }
+
+    /// The paths, or (none given) every file in the view.
+    fn or_all(&self, paths: &[String]) -> Vec<String> {
+        match (&self.folder, paths.is_empty()) {
+            (Some(f), true) => vec![f.clone()],
+            _ => paths.to_vec(),
+        }
+    }
 }
 
 /// The task's working tree, if it's in one.
 async fn repo(s: &Shared, task_id: &str) -> ApiResult<Option<Repo>> {
     let (dir, task, project) = worktree::changes_dir(s, task_id).map_err(|e| ApiError(StatusCode::NOT_FOUND, format!("{e:#}")))?;
-    let o = run(&dir, &["rev-parse", "--show-toplevel"], None).await?;
-    Ok(o.ok.then(|| Repo { top: PathBuf::from(o.stdout.trim()), dir, task, project }))
+    let o = run(&dir, &["rev-parse", "--show-toplevel", "--show-prefix"], None).await?;
+    if !o.ok {
+        return Ok(None);
+    }
+    let mut lines = o.stdout.lines();
+    let top = PathBuf::from(lines.next().unwrap_or_default());
+    let folder = lines.next().filter(|p| !p.is_empty()).map(str::to_string);
+    Ok(Some(Repo { top, dir, folder, task, project }))
 }
 
-async fn top(s: &Shared, task_id: &str) -> ApiResult<PathBuf> {
-    repo(s, task_id).await?.map(|r| r.top).ok_or_else(|| ApiError::bad("not a git repository"))
+async fn top(s: &Shared, task_id: &str) -> ApiResult<Repo> {
+    repo(s, task_id).await?.ok_or_else(|| ApiError::bad("not a git repository"))
 }
 
 /// A path in the repository, from its top: not absolute and not leaving it.
@@ -202,13 +249,15 @@ fn parse_log(out: &str, on_branch: bool, unpushed: &HashSet<&str>) -> Vec<Value>
 const LOG_FORMAT: &str = "--format=%H%x1f%an%x1f%at%x1f%s";
 
 /// The commits on the branch since `merge_base`, then a few from before it; without one, the latest.
-async fn commits(dir: &Path, merge_base: Option<&str>, upstream: bool) -> Result<Vec<Value>> {
+async fn commits(dir: &Path, merge_base: Option<&str>, upstream: bool, folder: Option<&str>) -> Result<Vec<Value>> {
     let max = MAX_COMMITS.to_string();
     let unpushed = if upstream { run(dir, &["rev-list", "-n", &max, "@{upstream}..HEAD"], None).await?.stdout } else { String::new() };
     let unpushed: HashSet<&str> = unpushed.lines().collect();
     let log = |range: String, n: usize| async move {
         let n = n.to_string();
-        let o = run(dir, &["log", "--no-show-signature", LOG_FORMAT, "-n", &n, &range, "--"], None).await?;
+        let mut args = vec!["--literal-pathspecs", "log", "--no-show-signature", LOG_FORMAT, "-n", &n, &range, "--"];
+        args.extend(folder);
+        let o = run(dir, &args, None).await?;
         anyhow::Ok(if o.ok { o.stdout } else { String::new() })
     };
     Ok(match merge_base {
@@ -245,16 +294,21 @@ async fn repo_state(dir: &Path) -> Option<&'static str> {
 
 /// `GET /tasks/{id}/git`: the files with changes, the branch, its commits and the stashes.
 pub async fn status(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> ApiResult<Json<Value>> {
-    let Some(Repo { top, dir, task, project }) = repo(&s, &id).await? else {
+    let Some(Repo { top, dir, folder, task, project }) = repo(&s, &id).await? else {
         return Ok(Json(json!({"available": false, "reason": "not a git repository"})));
     };
-    let out = run_ok(&top, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], None).await?;
+    let mut args = vec!["--literal-pathspecs", "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--"];
+    args.extend(folder.as_deref());
+    let out = run_ok(&top, &args, None).await?;
     let st = parse_status(&out);
     let (base_branch, merge_base) = worktree::changes_base(&dir, &task, &project).await;
-    let commits = if st.head.is_some() { commits(&top, merge_base.as_deref(), st.upstream.is_some()).await? } else { vec![] };
+    let commits = if st.head.is_some() { commits(&top, merge_base.as_deref(), st.upstream.is_some(), folder.as_deref()).await? } else { vec![] };
+    // The repository's stashes aren't the folder's, and can't be used from here.
+    let stashes = if folder.is_some() { vec![] } else { stashes(&top).await? };
     Ok(Json(json!({
         "available": true,
         "dir": path_str(&top),
+        "folder": folder,
         "head": st.head,
         "branch": st.branch,
         "upstream": st.upstream,
@@ -266,7 +320,7 @@ pub async fn status(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> Ap
         "files": st.files,
         "truncated": st.truncated,
         "commits": commits,
-        "stashes": stashes(&top).await?,
+        "stashes": stashes,
     })))
 }
 
@@ -289,8 +343,9 @@ const DIFF_ARGS: [&str; 4] = ["--no-color", "--no-ext-diff", "--src-prefix=a/", 
 /// patch made from it would have U+FFFD where its other bytes were, and `git apply` would write those
 /// into the file wherever they're in added lines, so such a file is only staged or discarded whole.
 pub async fn diff(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q): Query<DiffQuery>) -> ApiResult<Json<Value>> {
-    check_path(&q.path)?;
-    let top = top(&s, &id).await?;
+    let repo = top(&s, &id).await?;
+    repo.check_paths(std::slice::from_ref(&q.path))?;
+    let top = repo.top;
     let mut args = vec!["--literal-pathspecs", "diff"];
     args.extend(DIFF_ARGS);
     let o = if q.untracked {
@@ -329,7 +384,7 @@ pub struct ShowQuery {
 /// first parent), or a stash's.
 pub async fn show(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q): Query<ShowQuery>) -> ApiResult<Json<Value>> {
     check_rev(&q.rev)?;
-    let top = top(&s, &id).await?;
+    let top = top(&s, &id).await?.top;
     if q.stash {
         let mut args = vec!["stash", "show", "-p", "--include-untracked"];
         args.extend(DIFF_ARGS);
@@ -384,8 +439,9 @@ fn with_paths<'a>(args: Vec<&'a str>, paths: &'a [String]) -> ApiResult<Vec<&'a 
 
 /// `POST /tasks/{id}/git/stage {paths}`: stages the files as they are (removed ones too), or everything.
 pub async fn stage(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b): Json<Paths>) -> ApiResult<Json<Value>> {
-    let top = top(&s, &id).await?;
-    run_ok(&top, &with_paths(vec!["add", "-A"], &b.paths)?, None).await?;
+    let repo = top(&s, &id).await?;
+    repo.check_paths(&b.paths)?;
+    run_ok(&repo.top, &with_paths(vec!["add", "-A"], &repo.or_all(&b.paths))?, None).await?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -395,13 +451,15 @@ async fn has_head(dir: &Path) -> Result<bool> {
 
 /// `POST /tasks/{id}/git/unstage {paths}`: puts the files (or everything) in the index back as they are in HEAD.
 pub async fn unstage(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b): Json<Paths>) -> ApiResult<Json<Value>> {
-    let top = top(&s, &id).await?;
-    if has_head(&top).await? {
-        run_ok(&top, &with_paths(vec!["reset", "-q", "HEAD"], &b.paths)?, None).await?;
+    let repo = top(&s, &id).await?;
+    repo.check_paths(&b.paths)?;
+    let (top, paths) = (&repo.top, repo.or_all(&b.paths));
+    if has_head(top).await? {
+        run_ok(top, &with_paths(vec!["reset", "-q", "HEAD"], &paths)?, None).await?;
     } else {
         // Before the first commit, there's nothing to go back to: they're taken out of the index.
         let all = [".".to_string()];
-        run_ok(&top, &with_paths(vec!["rm", "-r", "-q", "--cached", "--ignore-unmatch"], if b.paths.is_empty() { &all } else { &b.paths })?, None).await?;
+        run_ok(top, &with_paths(vec!["rm", "-r", "-q", "--cached", "--ignore-unmatch"], if paths.is_empty() { &all } else { &paths })?, None).await?;
     }
     Ok(Json(json!({"ok": true})))
 }
@@ -426,7 +484,9 @@ pub async fn discard(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json
     if b.paths.is_empty() {
         return Err(ApiError::bad("no files to discard"));
     }
-    let top = top(&s, &id).await?;
+    let repo = top(&s, &id).await?;
+    repo.check_paths(&b.paths)?;
+    let top = repo.top;
     let in_index = run_ok(&top, &with_paths(vec!["ls-files", "-z"], &b.paths)?, None).await?;
     let in_index = listed(&in_index, &b.paths);
     let in_head = if b.staged && has_head(&top).await? {
@@ -466,7 +526,13 @@ pub struct Apply {
 
 /// `POST /tasks/{id}/git/apply {patch, cached, reverse}`: applies a patch of chosen lines.
 pub async fn apply(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b): Json<Apply>) -> ApiResult<Json<Value>> {
-    let top = top(&s, &id).await?;
+    let repo = top(&s, &id).await?;
+    let top = &repo.top;
+    if repo.folder.is_some() {
+        // The files the patch is of, without applying it.
+        let files = run_ok(top, &["apply", "--numstat", "-z", "-"], Some(&b.patch)).await?;
+        repo.check_paths(&numstat_paths(&files))?;
+    }
     let mut args = vec!["apply", "--whitespace=nowarn"];
     if b.cached {
         args.push("--cached");
@@ -475,8 +541,23 @@ pub async fn apply(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b
         args.push("-R");
     }
     args.push("-");
-    run_ok(&top, &args, Some(&b.patch)).await?;
+    run_ok(top, &args, Some(&b.patch)).await?;
     Ok(Json(json!({"ok": true})))
+}
+
+/// The paths in `git apply --numstat -z`: `added\tdeleted\tpath`, or for a rename an empty path
+/// followed by where it's from and to.
+fn numstat_paths(out: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut records = out.split('\0');
+    while let Some(r) = records.next() {
+        match r.splitn(3, '\t').nth(2) {
+            Some("") => paths.extend(records.by_ref().take(2).map(str::to_string)),
+            Some(p) => paths.push(p.to_string()),
+            None => {}
+        }
+    }
+    paths
 }
 
 #[derive(Deserialize)]
@@ -493,7 +574,22 @@ pub struct Commit {
 
 /// `POST /tasks/{id}/git/commit {message, amend, reword}`: commits what's staged.
 pub async fn commit(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b): Json<Commit>) -> ApiResult<Json<Value>> {
-    let top = top(&s, &id).await?;
+    let repo = top(&s, &id).await?;
+    let top = &repo.top;
+    if b.amend || b.reword {
+        repo.whole_repo("Changing the last commit")?;
+    }
+    // What's staged outside the project's folder would go in the commit too.
+    if let Some(f) = &repo.folder {
+        let exclude = format!(":(exclude,top,literal){f}");
+        let outside = run_ok(top, &["diff", "--cached", "--name-only", "-z", "--", ":(top)", &exclude], None).await?;
+        if let Some(file) = outside.split('\0').find(|p| !p.is_empty()) {
+            return Err(ApiError::conflict(format!(
+                "{file} is staged too, and isn't in the project's folder ({f}): unstage what's outside it in a terminal at {}, or commit it there",
+                top.display()
+            )));
+        }
+    }
     let message = b.message.trim();
     if message.is_empty() && !(b.amend && !b.reword) {
         return Err(ApiError::bad("the commit needs a message"));
@@ -509,8 +605,8 @@ pub async fn commit(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(
     } else {
         args.extend(["-F", "-"]);
     }
-    run_ok(&top, &args, (!message.is_empty()).then_some(message)).await?;
-    let head = run_ok(&top, &["rev-parse", "HEAD"], None).await?;
+    run_ok(top, &args, (!message.is_empty()).then_some(message)).await?;
+    let head = run_ok(top, &["rev-parse", "HEAD"], None).await?;
     Ok(Json(json!({"ok": true, "head": head.trim()})))
 }
 
@@ -530,7 +626,9 @@ pub struct Stash {
 
 /// `POST /tasks/{id}/git/stash {action, …}`: stashes changes, or applies, pops or drops a stash.
 pub async fn stash(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b): Json<Stash>) -> ApiResult<Json<Value>> {
-    let top = top(&s, &id).await?;
+    let repo = top(&s, &id).await?;
+    repo.whole_repo("Stashing")?;
+    let top = repo.top;
     let message = b.message.trim();
     let out = if b.action == "push" {
         let mut args = vec!["stash", "push"];
@@ -573,7 +671,9 @@ pub async fn reset(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b
     if !matches!(b.mode.as_str(), "soft" | "mixed" | "hard") {
         return Err(ApiError::bad(format!("unknown reset mode: {}", b.mode)));
     }
-    let top = top(&s, &id).await?;
+    let repo = top(&s, &id).await?;
+    repo.whole_repo("Resetting")?;
+    let top = repo.top;
     let mode = format!("--{}", b.mode);
     run_ok(&top, &["reset", "-q", &mode, &format!("{}^{{commit}}", b.rev)], None).await?;
     Ok(Json(json!({"ok": true})))
@@ -781,6 +881,71 @@ mod tests {
             let _ = reset(at(&s).0, at(&s).1, Json(Reset { rev: work, mode: "soft".into() })).await.unwrap();
             assert_eq!(subjects(&s).await, ["branch work", "init"]);
             assert_eq!(sh(&wt, &["diff", "--cached", "--name-only"]), "c.txt\n");
+        })
+    }
+
+    // HA-42: a project folder inside a bigger repository (a home folder kept as a dotfiles
+    // repository) staged, stashed and reset that whole repository.
+    #[test]
+    fn a_folder_inside_a_bigger_repository_is_all_that_is_touched() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let home = std::env::temp_dir().join(format!("ia-gv-{}", crate::util::new_id()));
+            let proj = home.join("proj");
+            std::fs::create_dir_all(&proj).unwrap();
+            sh(&home, &["init", "-q", "-b", "master"]);
+            sh(&home, &["config", "user.name", "t"]);
+            sh(&home, &["config", "user.email", "t@t"]);
+            std::fs::write(home.join(".bashrc"), "rc\n").unwrap();
+            std::fs::write(proj.join("a.txt"), "a\n").unwrap();
+            sh(&home, &["add", "."]);
+            sh(&home, &["commit", "-qm", "dotfiles"]);
+            std::fs::write(home.join(".bashrc"), "rc\nmine\n").unwrap();
+            sh(&home, &["commit", "-qam", "outside only"]);
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&proj), key: Some("X".into()), base_branch: None, use_worktrees: Some(false) };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let id = create_task_inner(&s, &p.id, CreateTask { title: "Do it".into(), ..Default::default() }).unwrap().id;
+            let at = |s: &Shared| (State(s.clone()), UrlPath(id.clone()));
+            std::fs::write(home.join(".bashrc"), "rc\nmine\nmore\n").unwrap();
+            std::fs::write(proj.join("a.txt"), "a\nb\n").unwrap();
+
+            // Only the folder's files and commits.
+            let st = get_status(&s, &id).await;
+            assert_eq!(st["folder"], "proj/");
+            let files: Vec<_> = st["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap().to_string()).collect();
+            assert_eq!(files, ["proj/a.txt"]);
+            let subjects: Vec<_> = st["commits"].as_array().unwrap().iter().map(|c| c["subject"].as_str().unwrap().to_string()).collect();
+            assert_eq!(subjects, ["dotfiles"]);
+            // Staging everything stages the folder's; files outside it can't be named.
+            let _ = stage(at(&s).0, at(&s).1, paths(&[])).await.unwrap();
+            assert_eq!(sh(&home, &["diff", "--cached", "--name-only"]), "proj/a.txt\n");
+            assert_eq!(stage(at(&s).0, at(&s).1, paths(&[".bashrc"])).await.unwrap_err().0, StatusCode::BAD_REQUEST);
+            let discarded = discard(at(&s).0, at(&s).1, Json(Discard { paths: vec![".bashrc".into()], staged: true })).await;
+            assert_eq!(discarded.unwrap_err().0, StatusCode::BAD_REQUEST);
+            let rc = sh(&home, &["diff", "--", ".bashrc"]);
+            let err = apply(at(&s).0, at(&s).1, Json(Apply { patch: rc.clone(), cached: true, reverse: false })).await.unwrap_err();
+            assert_eq!(err.0, StatusCode::BAD_REQUEST, "{}", err.1);
+            let renamed = "diff --git a/proj/a.txt b/.profile\nsimilarity index 100%\nrename from proj/a.txt\nrename to .profile\n";
+            assert_eq!(apply(at(&s).0, at(&s).1, Json(Apply { patch: renamed.into(), cached: true, reverse: false })).await.unwrap_err().0, StatusCode::BAD_REQUEST);
+            // What would act on the whole repository is refused.
+            let head = sh(&home, &["rev-parse", "HEAD"]).trim().to_string();
+            let first = sh(&home, &["rev-parse", "HEAD~"]).trim().to_string();
+            assert_eq!(reset(at(&s).0, at(&s).1, Json(Reset { rev: first, mode: "hard".into() })).await.unwrap_err().0, StatusCode::CONFLICT);
+            let push = Stash { action: "push".into(), mode: None, message: String::new(), index: None, sha: None };
+            assert_eq!(stash(at(&s).0, at(&s).1, Json(push)).await.unwrap_err().0, StatusCode::CONFLICT);
+            let amend = Commit { message: String::new(), amend: true, reword: false };
+            assert_eq!(commit(at(&s).0, at(&s).1, Json(amend)).await.unwrap_err().0, StatusCode::CONFLICT);
+            // A commit would take what's staged outside the folder too.
+            sh(&home, &["add", ".bashrc"]);
+            let c = commit(at(&s).0, at(&s).1, Json(Commit { message: "a".into(), amend: false, reword: false })).await.unwrap_err();
+            assert!(c.0 == StatusCode::CONFLICT && c.1.contains(".bashrc"), "{}", c.1);
+            sh(&home, &["reset", "-q", "--", ".bashrc"]);
+            let _ = commit(at(&s).0, at(&s).1, Json(Commit { message: "a".into(), amend: false, reword: false })).await.unwrap();
+            assert_eq!(sh(&home, &["show", "--name-only", "--format=", "HEAD"]), "proj/a.txt\n");
+            assert_eq!(sh(&home, &["rev-parse", "HEAD~"]).trim(), head);
+            assert_eq!(std::fs::read_to_string(home.join(".bashrc")).unwrap(), "rc\nmine\nmore\n");
+            std::fs::remove_dir_all(&home).ok();
         })
     }
 
