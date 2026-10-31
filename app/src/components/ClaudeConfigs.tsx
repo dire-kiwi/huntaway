@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Copy, Loader2, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { AGENTS, agentInfo, agentOf, api, canRunAgents, hostSupports, type Agent, type ClaudeConfig } from "../api";
 import { useStore } from "../store";
 import { CopyLoginModal } from "./Hosts";
-import { Button, Field, Input, Modal, ModalFooter } from "./ui";
+import { Button, Field, Input, Modal, ModalFooter, useAsyncAction, useConfirm } from "./ui";
 
 /** Hosts that can run agents and keep Claude configs of their own (API 20). */
 const configHosts = (hosts: ReturnType<typeof useStore.getState>["hosts"]) => hosts.filter((h) => canRunAgents(h) && hostSupports(h, 20));
@@ -36,15 +36,16 @@ function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeC
       setErr((e as Error).message);
     }
   };
-  const remove = async () => {
+  const confirm = useConfirm();
+  const remove = () => {
     const used = usedBy.length ? ` It's taken off ${usedBy.join(", ")}; their threads that used it switch to the profile's default.` : "";
-    if (!confirm(`Delete the config "${config.name}"? The directory itself stays.${used}`)) return;
-    setErr(null);
-    try {
-      await api.deleteClaudeConfig(config.host_id, config.id);
-    } catch (e) {
-      setErr((e as Error).message);
-    }
+    confirm.ask({
+      title: `Delete config ${config.name}`,
+      body: `Delete the config "${config.name}"? The directory itself stays.${used}`,
+      action: "Delete config",
+      danger: true,
+      onConfirm: () => api.deleteClaudeConfig(config.host_id, config.id),
+    });
   };
   return (
     <div className="px-4 py-2.5">
@@ -72,11 +73,12 @@ function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeC
         <Button size="sm" variant="ghost" onClick={onEdit}>
           Edit
         </Button>
-        <Button size="sm" variant="ghost" onClick={remove}>
+        <Button size="sm" variant="ghost" title="Delete" onClick={remove}>
           <Trash2 size={13} />
         </Button>
       </div>
       {err && <div className="mt-1 text-xs text-red-400">{err}</div>}
+      {confirm.dialog}
     </div>
   );
 }
@@ -202,24 +204,20 @@ function ConfigForm({
   };
   const [name, setName] = useState(initial?.name ?? presetName ?? "");
   const [dir, setDir] = useState(initial?.config_dir ?? defaultDir(agent));
-  const [err, setErr] = useState<string | null>(null);
+  const { busy, error: err, run } = useAsyncAction();
   const setAgent = (a: Agent) => {
     // Follow the agent while the directory is still the default one.
     if (!initial && dir === defaultDir(agent)) setDir(defaultDir(a));
     setAgentState(a);
   };
   const info = agentInfo(agent);
-  const submit = async () => {
-    setErr(null);
-    try {
+  const submit = () =>
+    run(async () => {
       const body = { name: name.trim(), config_dir: dir.trim(), ...(agents ? { agent } : {}) };
       const c = initial ? await api.updateClaudeConfig(hostId, initial.id, body) : await api.createClaudeConfig(hostId, body);
       await useStore.getState().loadProfiles();
       onDone({ ...c, host_id: hostId });
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  };
+    });
   return (
     <div className="space-y-3">
       <Field label="Name">
@@ -257,8 +255,8 @@ function ConfigForm({
           <Button variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={!name.trim()} onClick={submit}>
-            {initial ? "Save" : "Add config"}
+          <Button variant="primary" disabled={!name.trim() || busy} onClick={submit}>
+            {busy && <Loader2 size={13} className="animate-spin" />} {initial ? "Save" : "Add config"}
           </Button>
         </div>
       </ModalFooter>

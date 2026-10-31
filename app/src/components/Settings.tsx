@@ -52,7 +52,7 @@ import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
-import { Button, Field, IconButton, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
+import { Button, ConfirmModal, Field, IconButton, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
 
 // ---------- directory picker ----------
 
@@ -774,25 +774,18 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
       )}
       {archiving && <ArchiveProjectModal project={project} onClose={() => setArchiving(false)} />}
       {confirm && (
-        <Modal title="Delete project" onClose={() => setConfirm(false)}>
-          <p className="mb-4 text-[13px] text-muted">
-            This deletes the project, its tasks and their threads, and removes their worktrees. Task branches stay in the repository.
-          </p>
-          <ModalFooter className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setConfirm(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              onClick={async () => {
-                await api.deleteProject(form.host_id, projectId);
-                navigate({ name: "home" }, true);
-              }}
-            >
-              Delete project
-            </Button>
-          </ModalFooter>
-        </Modal>
+        <ConfirmModal
+          title="Delete project"
+          body="This deletes the project, its tasks and their threads, and removes their worktrees. Task branches stay in the repository."
+          action="Delete project"
+          danger
+          width="max-w-lg"
+          onConfirm={async () => {
+            await api.deleteProject(form.host_id, projectId);
+            navigate({ name: "home" }, true);
+          }}
+          onClose={() => setConfirm(false)}
+        />
       )}
     </div>
   );

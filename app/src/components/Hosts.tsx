@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Copy, KeyRound, Plus, Server, Trash2 } from "lucide-react";
+import { Copy, KeyRound, Loader2, Plus, Server, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   agentInfo,
@@ -25,7 +25,7 @@ import { navigate } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../store";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "./ExternalLinks";
-import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle } from "./ui";
+import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle, useAsyncAction, useConfirm } from "./ui";
 
 const MODE_LABEL: Record<Host["mode"], string> = {
   local: "this host",
@@ -210,6 +210,19 @@ export function HostVersion({ host }: { host: Host }) {
 function HostRow({ host }: { host: Host }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(host.name);
+  const rename = useAsyncAction();
+  const confirm = useConfirm();
+  const startRename = () => {
+    // From its name now, which may have changed since this row was first shown.
+    setName(host.name);
+    rename.setError(null);
+    setRenaming(true);
+  };
+  const save = () => {
+    setRenaming(false);
+    const to = name.trim();
+    if (to && to !== host.name) void rename.run(() => api.renameHost(host.id, to));
+  };
   return (
     <div className="flex items-center gap-3 rounded-xl border border-line px-4 py-3">
       <Server size={15} className="shrink-0 text-muted" />
@@ -219,11 +232,11 @@ function HostRow({ host }: { host: Host }) {
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onBlur={() => {
-              setRenaming(false);
-              if (name.trim() && name !== host.name) api.renameHost(host.id, name.trim());
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              else if (e.key === "Escape") setRenaming(false);
             }}
-            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
             className="h-7 max-w-xs"
           />
         ) : (
@@ -239,27 +252,35 @@ function HostRow({ host }: { host: Host }) {
           {host.connected && host.agents === false ? " · board only (can't run agents)" : ""}
         </div>
         <HostVersion host={host} />
+        {rename.error && <div className="mt-1 text-xs text-red-400">Couldn't rename it: {rename.error}</div>}
       </div>
       <Button size="sm" onClick={() => navigate({ name: "host", hostId: host.id })}>
         Configure
       </Button>
       {!host.local && (
         <>
-          <Button size="sm" variant="ghost" onClick={() => setRenaming(true)}>
-            Rename
+          <Button size="sm" variant="ghost" disabled={rename.busy} onClick={startRename}>
+            {rename.busy && <Loader2 size={12} className="animate-spin" />} Rename
           </Button>
           <Button
             size="sm"
             variant="ghost"
             title="Remove from this board (its data stays on the host)"
-            onClick={() => {
-              if (confirm(`Remove ${host.name} from this board? Its projects and agents stay on that host.`)) api.removeHost(host.id);
-            }}
+            onClick={() =>
+              confirm.ask({
+                title: `Remove ${host.name}`,
+                body: `Remove ${host.name} from this board? Its projects and agents stay on that host.`,
+                action: "Remove from board",
+                danger: true,
+                onConfirm: () => api.removeHost(host.id),
+              })
+            }
           >
             <Trash2 size={13} />
           </Button>
         </>
       )}
+      {confirm.dialog}
     </div>
   );
 }
@@ -446,6 +467,7 @@ export function ProfilesPanel() {
   const names = useMemo(() => profileNames(profiles), [profiles]);
   const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? id.slice(0, 8);
   const online = hosts.filter(canRunAgents);
+  const confirm = useConfirm();
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
@@ -488,9 +510,16 @@ export function ProfilesPanel() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => {
-                      if (confirm(`Delete profile "${p.name}" on ${hostName(p.host_id)}, with all its projects and tasks there?`)) api.deleteProfile(p.host_id, p.id);
-                    }}
+                    title="Delete"
+                    onClick={() =>
+                      confirm.ask({
+                        title: `Delete profile ${p.name}`,
+                        body: `Delete profile "${p.name}" on ${hostName(p.host_id)}, with all its projects and tasks there?`,
+                        action: "Delete profile",
+                        danger: true,
+                        onConfirm: () => api.deleteProfile(p.host_id, p.id),
+                      })
+                    }
                   >
                     <Trash2 size={13} />
                   </Button>
@@ -516,6 +545,7 @@ export function ProfilesPanel() {
         </Modal>
       )}
       {copying && <CopyLoginModal from={copying} onClose={() => setCopying(null)} />}
+      {confirm.dialog}
     </section>
   );
 }
@@ -545,7 +575,7 @@ export function ProfileForm({
   const [asana, setAsana] = useState(usesAsana(initial));
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
-  const [err, setErr] = useState<string | null>(null);
+  const { busy, error: err, run } = useAsyncAction();
   const separate = hostSupports(hosts.find((h) => h.id === host), 20);
   const sharing = hostSupports(hosts.find((h) => h.id === host), 23);
   const accounts = hostSupports(hosts.find((h) => h.id === host), 50);
@@ -555,8 +585,8 @@ export function ProfileForm({
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
-  const submit = async () => {
-    try {
+  const submit = () =>
+    run(async () => {
       const configs = pick ? { claude_config_ids: configIds } : { claude_config_dir: dir };
       const body = {
         name: name.trim(),
@@ -573,10 +603,7 @@ export function ProfileForm({
         await useStore.getState().loadAll();
       }
       onDone();
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  };
+    });
   return (
     <div className="space-y-3">
       {!initial && hosts.length > 1 && (
@@ -652,8 +679,8 @@ export function ProfileForm({
               Cancel
             </Button>
           )}
-          <Button variant="primary" disabled={!name.trim()} onClick={submit}>
-            {initial ? "Save" : "Create profile"}
+          <Button variant="primary" disabled={!name.trim() || busy} onClick={submit}>
+            {busy && <Loader2 size={13} className="animate-spin" />} {initial ? "Save" : "Create profile"}
           </Button>
         </div>
       </ModalFooter>

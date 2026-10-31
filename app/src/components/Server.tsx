@@ -149,17 +149,37 @@ export function ServerPanel() {
   );
 }
 
-/** Rebuild and restart, or with `update` first fast-forward the checkout to the commit its `--update-from` deployment runs. */
-export function RestartModal({ status, update, onClose }: { status: ServerStatus; update?: boolean; onClose: () => void }) {
-  const live = useStore((s) => s.restart);
+/**
+ * Rebuild and restart, or with `update` first fast-forward the checkout to the commit its `--update-from` deployment runs.
+ * With a `hostId`, a linked host's server: it asks the same way, then closes once the restart has started, calling
+ * `onStarted`, and the host's page follows its progress.
+ */
+export function RestartModal({
+  status,
+  update,
+  hostId,
+  onStarted,
+  onClose,
+}: {
+  status: ServerStatus;
+  update?: boolean;
+  hostId?: string;
+  onStarted?: () => void;
+  onClose: () => void;
+}) {
+  const localHost = useStore((s) => s.localHostId);
+  const remote = !!hostId && hostId !== localHost;
+  // The websocket's restart events are the local host's.
+  const live = useStore((s) => (remote ? null : s.restart));
   const [rebuild, setRebuild] = useState(!!status.source_dir);
   const [err, setErr] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
   const [waiting, setWaiting] = useState(false);
   // The commit to update to, kept from when the modal opened.
   const [target] = useState(update && status.deployed_commits?.length ? (status.deployed?.commit ?? null) : null);
   const logRef = useRef<HTMLPreElement>(null);
   // Seed with the server's view in case the restart began elsewhere.
-  const job = live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null);
+  const job = remote ? null : (live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null));
   const inProgress = !!job && job.phase !== "failed";
 
   // Once the server goes down for the restart, wait for the new process, then reload for the new UI.
@@ -191,7 +211,20 @@ export function RestartModal({ status, update, onClose }: { status: ServerStatus
   }, [job?.log.length]);
 
   const start = async () => {
+    if (starting) return;
     setErr(null);
+    if (remote) {
+      setStarting(true);
+      try {
+        await api.restartServer(hostId, { rebuild });
+        onStarted?.();
+        onClose();
+      } catch (e) {
+        setErr((e as Error).message);
+        setStarting(false);
+      }
+      return;
+    }
     useStore.setState({ restart: { phase: "starting", error: null, log: [] } });
     try {
       const host = useStore.getState().localHostId!;
@@ -294,8 +327,8 @@ export function RestartModal({ status, update, onClose }: { status: ServerStatus
               </Button>
             )}
             {(!job || job.phase === "failed") && (
-              <Button variant="primary" onClick={start}>
-                <RotateCw size={13} /> {job ? "Try again" : target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart"}
+              <Button variant="primary" disabled={starting} onClick={start}>
+                {starting ? <Loader2 size={13} className="animate-spin" /> : <RotateCw size={13} />} {job ? "Try again" : target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart"}
               </Button>
             )}
           </div>

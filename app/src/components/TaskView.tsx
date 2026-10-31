@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, ApiError, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -25,7 +25,7 @@ import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Ago, Button, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut } from "./ui";
+import { ActivityTime, Ago, Button, ConfirmModal, cost, ErrorBox, errorText, IconButton, Input, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut, useDraft } from "./ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
@@ -392,7 +392,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               <TaskTypeBadge type="scratch" />
             </span>
           )}
-          <TitleEditor key={task.id} task={task} />
+          <TitleEditor key={task.id} task={task} onError={setMarkErr} />
           {canMark && (
             <span className="no-drag -ml-1 shrink-0">
               <StarButton task={task} onError={setMarkErr} />
@@ -570,7 +570,7 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
   );
 }
 
-function TitleEditor({ task }: { task: Task }) {
+function TitleEditor({ task, onError }: { task: Task; onError: (err: string | null) => void }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState(task.title);
   // Kept while it's being edited, so a title that changes meanwhile (re-titled from a message, say) doesn't
@@ -589,7 +589,10 @@ function TitleEditor({ task }: { task: Task }) {
             className="no-drag -ml-1 shrink-0 rounded p-0.5 text-faint hover:bg-raised hover:text-fg"
             title="Renamed by hand, so it keeps this title. Click to let the title follow your messages again."
             aria-label="Unpin title"
-            onClick={() => api.updateTask(task.host_id, task.id, { title_pinned: false })}
+            onClick={() => {
+              onError(null);
+              api.updateTask(task.host_id, task.id, { title_pinned: false }).catch((e) => onError(`Couldn't unpin the title: ${errorText(e)}`));
+            }}
           >
             <Pin size={12} />
           </button>
@@ -598,7 +601,15 @@ function TitleEditor({ task }: { task: Task }) {
     );
   const save = () => {
     setEditing(false);
-    if (v.trim() && v !== task.title) api.updateTask(task.host_id, task.id, { title: v.trim() });
+    const typed = v;
+    if (!typed.trim() || typed === task.title) return;
+    onError(null);
+    api.updateTask(task.host_id, task.id, { title: typed.trim() }).catch((e) => {
+      // Back to editing what was typed, to try again.
+      setV(typed);
+      setEditing(true);
+      onError(`Couldn't rename the task: ${errorText(e)}`);
+    });
   };
   return (
     <Input
@@ -654,7 +665,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   const [desc, setDesc] = useState(task.description);
   const [wtBusy, setWtBusy] = useState(false);
   // What went wrong with each part, until it's tried again.
-  const [errs, setErrs] = useState<Partial<Record<"worktree" | "status" | "preview" | "pr" | "desc", string>>>({});
+  const [errs, setErrs] = useState<Partial<Record<"worktree" | "status" | "preview" | "pr" | "desc" | "agent", string>>>({});
   const setErr = (part: keyof typeof errs, msg: string | null) => setErrs((e) => ({ ...e, [part]: msg ?? undefined }));
   const [teardown, setTeardown] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -966,7 +977,10 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
           <TextInput
             value={task.model}
             placeholder={inheritedModel(threadConfig, models, project?.model) || "default"}
-            onSave={(m) => api.updateTask(task.host_id, task.id, { model: m || null })}
+            onSave={(m) => {
+              setErr("agent", null);
+              api.updateTask(task.host_id, task.id, { model: m || null }).catch((e) => setErr("agent", `Couldn't change the model: ${errorText(e)}`));
+            }}
           />
         </Row>
         {hostSupports(host, 14) && (
@@ -974,7 +988,12 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             <select
               className="h-6 rounded border border-line bg-panel px-1 text-[12px] text-fg outline-none"
               value={task.effort ?? ""}
-              onChange={(e) => api.updateTask(task.host_id, task.id, { effort: (e.target.value || null) as Effort | null })}
+              onChange={(e) => {
+                setErr("agent", null);
+                api
+                  .updateTask(task.host_id, task.id, { effort: (e.target.value || null) as Effort | null })
+                  .catch((err) => setErr("agent", `Couldn't change the effort: ${errorText(err)}`));
+              }}
             >
               <option value="">{hostEffort ? `default (${hostEffort})` : "default"}</option>
               {[...new Set([...effortOptions(threadConfig, models, task.model ?? ""), ...(task.effort ? [task.effort] : [])])].map((e) => (
@@ -989,6 +1008,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         <Row label="Created">
           <Ago at={task.created_at} />
         </Row>
+        {errs.agent && <ErrorBox className="mt-2">{errs.agent}</ErrorBox>}
       </Section>
 
       <div className="px-4 py-4">
@@ -1261,15 +1281,25 @@ function SubprojectSection({ task }: { task: Task }) {
   );
 }
 
+/**
+ * A field saved when it loses focus. It follows the task's value only while it's neither focused nor changed, so a
+ * value the agent sets meanwhile doesn't overwrite what's being typed (and isn't written back over with the old one).
+ */
 function TextInput({ value, placeholder, onSave }: { value: string | null; placeholder: string; onSave: (v: string) => void }) {
-  const [v, setV] = useState(value ?? "");
-  useEffect(() => setV(value ?? ""), [value]);
+  const [focused, setFocused] = useState(false);
+  const { draft: v, setDraft: setV, dirty } = useDraft(value ?? "", focused);
   return (
     <Input
       value={v}
       placeholder={placeholder}
       onChange={(e) => setV(e.target.value)}
-      onBlur={() => v !== (value ?? "") && onSave(v.trim())}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        if (!dirty) return;
+        setV(v.trim());
+        onSave(v.trim());
+      }}
       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       className="h-7 text-[12px]"
     />
@@ -1279,56 +1309,38 @@ function TextInput({ value, placeholder, onSave }: { value: string | null; place
 function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
   const [force, setForce] = useState(false);
   const [deleteBranch, setDeleteBranch] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const go = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.teardownWorktree(task.host_id, task.id, { force, delete_branch: deleteBranch });
-      onClose();
-    } catch (e) {
-      setErr((e as Error).message);
-      setBusy(false);
-    }
-  };
   return (
-    <Modal title="Tear down worktree" onClose={onClose}>
-      <div className="space-y-4 text-[13px]">
-        <p className="text-muted">
-          Runs the project's teardown script, then removes the worktree directory. The branch <span className="font-mono text-fg">{task.branch}</span> is
-          kept unless you delete it, so the agent can pick up where it left off later.
-        </p>
-        <div className="space-y-3">
+    <ConfirmModal
+      title="Tear down worktree"
+      width="max-w-lg"
+      body={
+        <>
+          <p>
+            Runs the project's teardown script, then removes the worktree directory. The branch <span className="font-mono text-fg">{task.branch}</span> is
+            kept unless you delete it, so the agent can pick up where it left off later.
+          </p>
           <Toggle checked={force} onChange={setForce} label="Discard uncommitted changes" />
           <Toggle checked={deleteBranch} onChange={setDeleteBranch} label="Also delete the branch" />
-        </div>
-        <ModalFooter className="space-y-4">
-          {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button variant="danger" disabled={busy} onClick={go}>
-              {busy && <Loader2 size={13} className="animate-spin" />} Tear down
-            </Button>
-          </div>
-        </ModalFooter>
-      </div>
-    </Modal>
+        </>
+      }
+      action="Tear down"
+      danger
+      onConfirm={() => api.teardownWorktree(task.host_id, task.id, { force, delete_branch: deleteBranch })}
+      onClose={onClose}
+    />
   );
 }
 
 function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onClose: () => void }) {
   const [deleteBranch, setDeleteBranch] = useState(false);
-  const [busy, setBusy] = useState(false);
   const subproject = useSubproject(task);
   const children = useSubprojectProgress(task.id)?.total ?? 0;
   const go = async () => {
-    setBusy(true);
     const pid = task.project_id;
-    await api.deleteTask(task.host_id, task.id, deleteBranch).catch(() => {});
-    onClose();
+    // Gone already (deleted from another window, say) is as good as deleted.
+    await api.deleteTask(task.host_id, task.id, deleteBranch).catch((e) => {
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+    });
     if (mode !== "page") closeTask(true);
     else if (subproject) navigate({ name: "subproject", taskId: subproject.id }, true);
     else if (pid) navigate({ name: "board", projectId: pid }, true);
@@ -1339,34 +1351,34 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
     }
   };
   return (
-    <Modal title="Delete task" onClose={onClose}>
-      <div className="space-y-4 text-[13px]">
-        <p className="text-muted">
-          This stops any running agent, deletes the thread, and removes its worktree, discarding any uncommitted changes.
-          {task.subproject && children > 0 && (
-            <span className="text-amber-200/90">
-              {" "}
-              Its {children} task{children === 1 ? "" : "s"} {children === 1 ? "is" : "are"} deleted the same way.
-            </span>
+    <ConfirmModal
+      title="Delete task"
+      width="max-w-lg"
+      body={
+        <>
+          <p>
+            This stops any running agent, deletes the thread, and removes its worktree, discarding any uncommitted changes.
+            {task.subproject && children > 0 && (
+              <span className="text-amber-200/90">
+                {" "}
+                Its {children} task{children === 1 ? "" : "s"} {children === 1 ? "is" : "are"} deleted the same way.
+              </span>
+            )}
+          </p>
+          {task.branch && (
+            <Toggle
+              checked={deleteBranch}
+              onChange={setDeleteBranch}
+              label={task.subproject && children > 0 ? `Also delete branch ${task.branch} and its tasks' branches` : `Also delete branch ${task.branch}`}
+            />
           )}
-        </p>
-        {task.branch && (
-          <Toggle
-            checked={deleteBranch}
-            onChange={setDeleteBranch}
-            label={task.subproject && children > 0 ? `Also delete branch ${task.branch} and its tasks' branches` : `Also delete branch ${task.branch}`}
-          />
-        )}
-        <ModalFooter className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={go}>
-            Delete
-          </Button>
-        </ModalFooter>
-      </div>
-    </Modal>
+        </>
+      }
+      action="Delete"
+      danger
+      onConfirm={go}
+      onClose={onClose}
+    />
   );
 }
 
