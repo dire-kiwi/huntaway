@@ -4,6 +4,7 @@ import { approvalLoads, sortApprovals, withApproval, type HostApproval } from ".
 import { loadProjectOrder, moveProjects, saveProjectOrder, sortProjects } from "./projectOrder";
 import {
   api,
+  ApiError,
   canRunAgents,
   hostCompat,
   hostSupports,
@@ -370,9 +371,10 @@ export const useStore = create<State>((set, get) => ({
             groups ? api.groupTasks(h, profile.id) : [],
             archiving ? api.projects(h, profile.id, true) : [],
           ]);
-          const lists = await Promise.all(
-            ps.flatMap((p) => [api.projectTasks(h, p.id, "task"), ...(reviews ? [api.projectTasks(h, p.id, "review")] : [])]),
-          );
+          // A project deleted since it was listed has no tasks (and its project_deleted event follows).
+          const tasksOf = (id: string, kind: Task["kind"]) =>
+            api.projectTasks(h, id, kind).catch((e) => (e instanceof ApiError && e.status === 404 ? [] : Promise.reject(e)));
+          const lists = await Promise.all(ps.flatMap((p) => [tasksOf(p.id, "task"), ...(reviews ? [tasksOf(p.id, "review")] : [])]));
           return { projects: ps, archived: gone, tasks: [...projectless, ...lists.flat()] };
         }),
       );
