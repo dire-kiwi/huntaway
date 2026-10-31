@@ -217,28 +217,31 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
           </div>
         )}
       </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-        className="flex shrink-0 items-center gap-1 border-t border-line bg-panel-2 px-2 py-1.5"
-      >
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={task.running ? "Message the agent while it works…" : "Reply to the agent…"}
-          className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-fg outline-none placeholder:text-faint"
-        />
-        {err && (
-          <span className="max-w-[40%] truncate text-[11px] text-red-400" title={err}>
-            {err}
-          </span>
-        )}
-        <button type="submit" disabled={!text.trim()} className="rounded p-1 text-faint hover:bg-raised hover:text-fg disabled:opacity-30" title="Send (Enter)">
-          <Send size={12} />
-        </button>
-      </form>
+      {/* No reply box on a task in Backlog or Done with no agent running: a message there would start one. */}
+      {(task.running || (task.status !== "backlog" && task.status !== "done")) && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+          className="flex shrink-0 items-center gap-1 border-t border-line bg-panel-2 px-2 py-1.5"
+        >
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={task.running ? "Message the agent while it works…" : "Reply to the agent…"}
+            className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-fg outline-none placeholder:text-faint"
+          />
+          {err && (
+            <span className="max-w-[40%] truncate text-[11px] text-red-400" title={err}>
+              {err}
+            </span>
+          )}
+          <button type="submit" disabled={!text.trim()} className="rounded p-1 text-faint hover:bg-raised hover:text-fg disabled:opacity-30" title="Send (Enter)">
+            <Send size={12} />
+          </button>
+        </form>
+      )}
     </div>
   );
 }

@@ -24,7 +24,7 @@ import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Button, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, isSubmitShortcut } from "./ui";
+import { ActivityTime, Ago, Button, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut } from "./ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
@@ -308,33 +308,34 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ))}
         </div>
       )}
-      {task.running || reviewing ? (
-        <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"} className="narrow:-order-1">
-          <Square size={11} fill="currentColor" /> Stop
-        </Button>
-      ) : dependencyQueued(task) ? (
-        <span className="flex items-center gap-1 text-[12px] text-muted narrow:-order-1" title="Its agent starts once the tasks it depends on are merged">
-          <Clock size={12} /> Queued
-        </span>
-      ) : (
-        !task.session_id &&
-        agents && (
-          <Button
-            size="sm"
-            variant="primary"
-            className="narrow:-order-1"
-            onClick={() => {
-              setMarkErr(null);
-              api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
-              setTab("thread");
-            }}
-          >
-            <Play size={12} fill="currentColor" /> Start
-          </Button>
-        )
-      )}
     </>
   );
+  // Stop or Start: kept out of a phone's scrolling row of tabs and controls, so it's never half off-screen.
+  const runAction =
+    task.running || reviewing ? (
+      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
+        <Square size={11} fill="currentColor" /> Stop
+      </Button>
+    ) : dependencyQueued(task) ? (
+      <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
+        <Clock size={12} /> Queued
+      </span>
+    ) : (
+      !task.session_id &&
+      agents && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setMarkErr(null);
+            api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
+            setTab("thread");
+          }}
+        >
+          <Play size={12} fill="currentColor" /> Start
+        </Button>
+      )
+    );
 
   // A subproject's task goes back to the subproject's board.
   const back = () =>
@@ -396,13 +397,17 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           )}
           <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
             {wide && controls}
+            {wide && runAction}
             {mode !== "page" && <PanelButtons expanded={mode === "expanded"} />}
           </div>
         </div>
-        {/* A phone's row scrolls sideways, with the tabs first. */}
+        {/* A phone's row scrolls sideways, with the tabs first, fading out at the edge where there's more. */}
         {!wide && (
-          <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:[scrollbar-width:none] narrow:*:shrink-0">
-            {controls}
+          <div className="no-drag flex items-start gap-2 px-3 pb-2 narrow:items-center">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:pr-4 narrow:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] narrow:[scrollbar-width:none] narrow:*:shrink-0">
+              {controls}
+            </div>
+            {runAction && <div className="shrink-0">{runAction}</div>}
           </div>
         )}
         {markErr && (
@@ -434,6 +439,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             ))}
           {shown === "thread" ? (
             <Thread
+              key={`${task.host_id}:${task.id}`}
               task={task}
               cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
               empty={NOT_STARTED}
@@ -529,6 +535,7 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
       <div className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1">
           <Thread
+            key={`${thread.host_id}:${thread.id}`}
             task={thread}
             cwd={parent?.worktree_path ?? project?.repo_path}
             placeholder="Ask the reviewer about its findings…"
@@ -646,13 +653,11 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   const [editingDesc, setEditingDesc] = useState(false);
   const [desc, setDesc] = useState(task.description);
   const [wtBusy, setWtBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [statusErr, setStatusErr] = useState<string | null>(null);
-  const [previewErr, setPreviewErr] = useState<string | null>(null);
-  const [prErr, setPrErr] = useState<string | null>(null);
+  // What went wrong with each part, until it's tried again.
+  const [errs, setErrs] = useState<Partial<Record<"worktree" | "status" | "preview" | "pr" | "desc", string>>>({});
+  const setErr = (part: keyof typeof errs, msg: string | null) => setErrs((e) => ({ ...e, [part]: msg ?? undefined }));
   const [teardown, setTeardown] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [descErr, setDescErr] = useState<string | null>(null);
   // The description as it was when editing started: if it changes meanwhile, the edit stays, and says so.
   const [descBase, setDescBase] = useState(task.description);
   useEffect(() => {
@@ -661,32 +666,32 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   const editDesc = () => {
     setDesc(task.description);
     setDescBase(task.description);
-    setDescErr(null);
+    setErr("desc", null);
     setEditingDesc(true);
   };
   const saveDesc = () => {
-    setDescErr(null);
+    setErr("desc", null);
     api
       .updateTask(task.host_id, task.id, { description: desc })
       .then(() => setEditingDesc(false))
-      .catch((e) => setDescErr(`Couldn't save the description: ${(e as Error).message}`));
+      .catch((e) => setErr("desc", `Couldn't save the description: ${(e as Error).message}`));
   };
 
   const setStatus = (status: Status) => {
-    setStatusErr(null);
-    api.updateTask(task.host_id, task.id, { status }).catch((e) => setStatusErr(e.message));
+    setErr("status", null);
+    api.updateTask(task.host_id, task.id, { status }).catch((e) => setErr("status", e.message));
   };
   const setResolution = (resolution: Resolution) => {
-    setStatusErr(null);
-    api.updateTask(task.host_id, task.id, { resolution }).catch((e) => setStatusErr(e.message));
+    setErr("status", null);
+    api.updateTask(task.host_id, task.id, { resolution }).catch((e) => setErr("status", e.message));
   };
   const run = async (fn: () => Promise<unknown>) => {
     setWtBusy(true);
-    setErr(null);
+    setErr("worktree", null);
     try {
       await fn();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr("worktree", (e as Error).message);
     } finally {
       setWtBusy(false);
     }
@@ -754,12 +759,12 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               Reminder {new Date(task.remind_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
               {task.reminder && <span className="block text-fg">{task.reminder}</span>}
             </span>
-            <button className="shrink-0 text-faint hover:text-fg" onClick={() => saveMarks(task, { remind_at: null }).catch((e) => setStatusErr((e as Error).message))}>
+            <button className="shrink-0 text-faint hover:text-fg" onClick={() => saveMarks(task, { remind_at: null }).catch((e) => setErr("status", (e as Error).message))}>
               Clear
             </button>
           </div>
         )}
-        {statusErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{statusErr}</div>}
+        {errs.status && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.status}</div>}
       </Section>
 
       <Section
@@ -788,9 +793,9 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             {task.description !== descBase && (
               <div className="text-[11.5px] text-amber-200/90">It was changed while you were editing it: saving replaces that change.</div>
             )}
-            {descErr && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{descErr}</div>}
+            {errs.desc && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.desc}</div>}
             <div className="flex justify-end gap-2">
-              <Button size="sm" variant="ghost" onClick={() => (setDesc(task.description), setDescErr(null), setEditingDesc(false))}>
+              <Button size="sm" variant="ghost" onClick={() => (setDesc(task.description), setErr("desc", null), setEditingDesc(false))}>
                 Cancel
               </Button>
               <Button size="sm" variant="primary" onClick={saveDesc}>
@@ -847,11 +852,11 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             value={task.preview_url ?? null}
             placeholder="https://… (where to try this task)"
             onSave={(url) => {
-              setPreviewErr(null);
-              api.updateTask(task.host_id, task.id, { preview_url: url || null }).catch((e) => setPreviewErr(e.message));
+              setErr("preview", null);
+              api.updateTask(task.host_id, task.id, { preview_url: url || null }).catch((e) => setErr("preview", e.message));
             }}
           />
-          {previewErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{previewErr}</div>}
+          {errs.preview && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.preview}</div>}
         </Section>
       )}
 
@@ -861,11 +866,11 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             value={task.pr_url ?? null}
             placeholder="https://… (found with gh once the agent opens one)"
             onSave={(url) => {
-              setPrErr(null);
-              api.updateTask(task.host_id, task.id, { pr_url: url || null }).catch((e) => setPrErr(e.message));
+              setErr("pr", null);
+              api.updateTask(task.host_id, task.id, { pr_url: url || null }).catch((e) => setErr("pr", e.message));
             }}
           />
-          {prErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{prErr}</div>}
+          {errs.pr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.pr}</div>}
         </Section>
       )}
 
@@ -877,7 +882,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             <div className="space-y-2">
               <div className="text-[12.5px] text-muted">Runs directly in the project repository.</div>
               {project?.use_worktrees !== undefined && project.is_git !== false && (
-                <Toggle checked={false} onChange={(v) => api.updateTask(task.host_id, task.id, { use_worktree: v }).catch((e) => setErr(e.message))} label="Use a worktree" />
+                <Toggle checked={false} onChange={(v) => api.updateTask(task.host_id, task.id, { use_worktree: v }).catch((e) => setErr("worktree", e.message))} label="Use a worktree" />
               )}
             </div>
           ) : (
@@ -933,14 +938,14 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
                   </Button>
                 )}
                 {task.worktree_state === "none" && (
-                  <Button size="sm" variant="ghost" onClick={() => api.updateTask(task.host_id, task.id, { use_worktree: false }).catch((e) => setErr(e.message))}>
+                  <Button size="sm" variant="ghost" onClick={() => api.updateTask(task.host_id, task.id, { use_worktree: false }).catch((e) => setErr("worktree", e.message))}>
                     Don't use a worktree
                   </Button>
                 )}
               </div>
             </div>
           )}
-          {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          {errs.worktree && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.worktree}</div>}
         </Section>
       )}
 
@@ -979,7 +984,9 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
           </Row>
         )}
         {task.auto_allow.length > 0 && <Row label="Allowed">{task.auto_allow.join(", ")}</Row>}
-        <Row label="Created">{timeAgo(task.created_at)}</Row>
+        <Row label="Created">
+          <Ago at={task.created_at} />
+        </Row>
       </Section>
 
       <div className="px-4 py-4">
