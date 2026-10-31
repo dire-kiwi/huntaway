@@ -356,7 +356,7 @@ interface Draft {
   title: string;
   description: string;
   taskType: TaskType | "";
-  /** On a host before API 70, one at most: the type of task it makes. */
+  /** On a host before API 71, one at most: the type of task it makes. */
   labels: DocumentType[];
   config: string;
   model: string;
@@ -427,7 +427,7 @@ function draftOf(a: Automation | null): Draft {
   if (act.kind === "create_task") {
     d.title = act.title;
     d.description = act.description;
-    // One saved before API 70 has a label as its type.
+    // One saved before API 71 has a label as its type.
     d.taskType = act.task_type === "scratch" ? "scratch" : "";
     d.labels = taskLabels({ kind: "task", task_type: act.task_type, labels: act.labels });
     d.config = act.claude_config_id ?? "";
@@ -463,7 +463,7 @@ function inputOf(d: Draft, existing: Automation | null, labelling: boolean): Aut
           kind: "create_task",
           title: d.title,
           description: d.description,
-          // A host before API 70 takes a label as the type of task.
+          // A host before API 71 takes a label as the type of task.
           ...(labelling ? { task_type: d.taskType || null, labels: d.labels } : { task_type: d.taskType || d.labels[0] || null }),
           claude_config_id: d.config || null,
           model: d.model.trim() || null,
@@ -527,7 +527,7 @@ function AutomationEditor({
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
   const configs = useAvailableConfigs(hostId, project.profile_id, project);
   const labelling = hostSupports(useHost(hostId), LABELS_API);
-  // A host before API 70 makes a task of one label's type, rather than a scratch or code task with it.
+  // A host before API 71 makes a task of one label's type, rather than a scratch or code task with it.
   const toggleLabel = (l: DocumentType) =>
     setD((x) =>
       labelling

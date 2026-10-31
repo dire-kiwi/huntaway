@@ -556,6 +556,20 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=57; COMMIT;"))?;
     }
     if version < 58 {
+        // Checkpoints of tasks' worktrees, a conversation rollback waiting for a task's next run,
+        // and where each run's turn is (see checkpoints.rs). Columns added only if they aren't
+        // there, in case another migration takes this version first.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V58}"))?;
+        for (table, column) in [("tasks", "rewind TEXT"), ("runs", "turn_message_id INTEGER"), ("runs", "agent_at TEXT")] {
+            let name = column.split(' ').next().unwrap();
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, name], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=58; COMMIT;")?;
+    }
+    if version < 59 {
         // Plans, artifacts and diagrams are labels any task can have, with a document each
         // (see documents.rs), rather than types of task. A task that was one of those types gets
         // its type as its label, and keeps working in its own folder (as a `work_dir` in the data
@@ -573,7 +587,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              CREATE UNIQUE INDEX documents_task ON documents(task_id, label, version);
              UPDATE tasks SET labels=json_array(task_type), work_dir=COALESCE(work_dir, 'documents/' || id), task_type=NULL
                WHERE task_type IN ('plan','artifact','diagram');
-             PRAGMA user_version=58; COMMIT;"
+             PRAGMA user_version=59; COMMIT;"
         ))?;
     }
     Ok(conn)
@@ -581,7 +595,31 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 58;
+pub const VERSION: i64 = 59;
+
+/// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
+/// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
+const SCHEMA_V58: &str = r#"
+CREATE TABLE IF NOT EXISTS checkpoints (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  n INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  sha TEXT NOT NULL,
+  tree TEXT NOT NULL,
+  head TEXT,
+  before_n INTEGER,
+  run_id TEXT,
+  turn INTEGER,
+  message_id INTEGER,
+  status TEXT,
+  session TEXT,
+  agent_at TEXT,
+  stats TEXT,
+  stale INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, n)
+);
+"#;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -837,7 +875,7 @@ pub const STATUSES: &[&str] = &["todo", "in_progress", "needs_attention", "in_re
 pub const TASK_TYPES: &[&str] = &[SCRATCH];
 /// The labels a task can have, each a document its agent writes besides its other work (see
 /// Task::labels and documents.rs), in the order the task shows them. They were task types of their
-/// own before API 70, which still accepts them as a new task's `task_type`.
+/// own before API 71, which still accepts them as a new task's `task_type`.
 pub const LABELS: &[&str] = &["plan", "artifact", "diagram"];
 /// The task type of a scratch task.
 pub const SCRATCH: &str = "scratch";
@@ -1242,6 +1280,9 @@ pub struct Task {
     /// How full its agent's context window is, as of its latest reply (see context.rs).
     #[serde(default)]
     pub context: Option<Context>,
+    /// The conversation rollback its next run makes, after a rewind (see checkpoints::Rewind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewind: Option<crate::checkpoints::Rewind>,
     pub cost_usd: f64,
     pub last_activity_at: String,
     pub created_at: String,
@@ -1484,6 +1525,7 @@ impl Task {
             reminder: r.get("reminder")?,
             review: r.get::<_, Option<String>>("review")?.and_then(|v| serde_json::from_str(&v).ok()),
             context: r.get::<_, Option<String>>("context")?.and_then(|v| serde_json::from_str(&v).ok()),
+            rewind: r.get::<_, Option<String>>("rewind")?.and_then(|v| serde_json::from_str(&v).ok()),
             cost_usd: r.get("cost_usd")?,
             last_activity_at: r.get("last_activity_at")?,
             created_at: r.get("created_at")?,
@@ -2066,7 +2108,7 @@ pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -2608,6 +2650,15 @@ pub struct Run {
     pub saw_result: bool,
     /// What the agent has cost so far, as it last reported.
     pub cost_usd: f64,
+    /// Its last turn has ended, and no message has started another yet.
+    #[serde(default)]
+    pub between_turns: bool,
+    /// The user message its turn started with (see checkpoints.rs).
+    #[serde(default)]
+    pub turn_message_id: Option<i64>,
+    /// Where its conversation is (see checkpoints::Checkpoint::agent_at).
+    #[serde(default)]
+    pub agent_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
 }
@@ -2625,6 +2676,9 @@ impl Run {
             result_error: r.get("result_error")?,
             saw_result: r.get("saw_result")?,
             cost_usd: r.get("cost_usd")?,
+            between_turns: r.get("between_turns")?,
+            turn_message_id: r.get("turn_message_id")?,
+            agent_at: r.get("agent_at")?,
             created_at: r.get("created_at")?,
             ended_at: r.get("ended_at")?,
         })
@@ -2961,8 +3015,8 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_version_57_has_its_plan_artifact_and_diagram_tasks_labelled() {
-        let path = std::env::temp_dir().join(format!("huntaway-v57-{}.db", crate::util::new_id()));
+    fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled() {
+        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -2970,7 +3024,7 @@ mod tests {
                  ALTER TABLE documents DROP COLUMN label;
                  CREATE UNIQUE INDEX documents_task ON documents(task_id, version);
                  ALTER TABLE tasks DROP COLUMN labels;
-                 PRAGMA user_version=57;
+                 PRAGMA user_version=58;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
                  INSERT INTO tasks (id,profile_id,kind,task_type,work_dir,number,title,status,last_activity_at,created_at,updated_at)
                    VALUES ('plan','p','task','plan',NULL,1,'Plan','in_review','1','1','1'),
@@ -3129,7 +3183,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_56_gets_remerge() {
-        let path = std::env::temp_dir().join(format!("huntaway-v57-{}.db", crate::util::new_id()));
+        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(

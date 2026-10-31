@@ -427,9 +427,9 @@ export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
 import type { DocumentType } from "./labels";
 
 /** Hosts from this API version on take labels (before, the board made a task of a label's type instead). */
-export const LABELS_API = 70;
+export const LABELS_API = 71;
 
-/** What a task is, if not a code task: a scratch task (in no project, API 47, or in one, API 51). On hosts before API 70,
+/** What a task is, if not a code task: a scratch task (in no project, API 47, or in one, API 51). On hosts before API 71,
  *  also a plan, artifact or diagram task. */
 export type TaskType = "scratch";
 
@@ -451,7 +451,7 @@ export interface DocumentVersion {
 }
 
 export interface TaskDocument {
-  /** Which of its labels' documents it is (API 70). */
+  /** Which of its labels' documents it is (API 71). */
   label?: DocumentType;
   /** Where the agent writes it, on the task's host. */
   file: string | null;
@@ -476,15 +476,15 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task is, if not a code task: a scratch task (API 47). On hosts before API 70, also a plan, artifact or
+  /** What the task is, if not a code task: a scratch task (API 47). On hosts before API 71, also a plan, artifact or
    *  diagram task (API 42), whose agent writes a document the board keeps and shows: see `taskLabels`. */
   task_type?: TaskType | DocumentType | null;
-  /** The documents its agent writes besides its other work, each shown in a tab of the task (API 70). */
+  /** The documents its agent writes besides its other work, each shown in a tab of the task (API 71). */
   labels?: DocumentType[];
   /** When one of its documents last changed (API 42). */
   document_at?: string | null;
   /** Where a scratch task made from a scratch chat works: the chat's folder (API 47). For a task that makes only
-   *  documents, its own folder, relative to the host's data dir (API 70): see `ownWorkDir`. */
+   *  documents, its own folder, relative to the host's data dir (API 71): see `ownWorkDir`. */
   work_dir?: string | null;
   number: number;
   title: string;
@@ -550,6 +550,8 @@ export interface Task {
   review?: Review | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
+  /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
+  rewind?: PendingRewind | null;
   cost_usd: number;
   last_activity_at: string;
   created_at: string;
@@ -660,6 +662,82 @@ export interface GitStash {
   sha: string;
   subject: string;
   time: number;
+}
+
+/** A conversation rollback waiting for a task's next run (API 70): it goes on from before turn `turn`. */
+export interface PendingRewind {
+  turn: number;
+  message_id: number;
+  session: string;
+}
+
+/** What a turn changed, without the files git brought in by a merge, pull or rebase (API 70). */
+export interface TurnStats {
+  files: number;
+  additions: number;
+  deletions: number;
+  /** The files left out (the first 200), and how many. */
+  excluded: string[];
+  excluded_count: number;
+}
+
+/** One of the agent's turns with a checkpoint after it (API 70). */
+export interface Turn {
+  /** Its number among the task's turns. */
+  turn: number;
+  /** Its checkpoint, and the one it started from (null when there's none, as for a turn from before checkpoints). */
+  n: number;
+  before_n: number | null;
+  run_id: string | null;
+  /** The user message it started with, and its text. */
+  message_id: number | null;
+  text: string;
+  auto: boolean;
+  /** Set for a round of fixes a review sent back. */
+  review_round: number | null;
+  /** done, stopped or failed */
+  status: string | null;
+  /** A rewind has gone back to before it. */
+  stale: boolean;
+  /** When it ended. */
+  at: string;
+  /** HEAD after it, and before it. */
+  head: string | null;
+  before_head: string | null;
+  stats: TurnStats | null;
+  /** Both of its checkpoints are there to diff. */
+  diff: boolean;
+  /** Whether the task can be rewound to before it, and its agent's conversation with it (`fresh`: it starts over). */
+  rewind: { ok: true; conversation: { ok: true; fresh: boolean } | { ok: false; reason: string } } | { ok: false; reason: string };
+}
+
+export interface TurnsResult {
+  available: boolean;
+  reason?: string;
+  turns: Turn[];
+  head?: string | null;
+  rewind?: PendingRewind | null;
+  agent?: "claude" | "codex";
+}
+
+export interface TurnDiff {
+  patch: string;
+  too_large: boolean;
+  stats: TurnStats;
+  excluded: string[];
+}
+
+export interface RewindResult {
+  task: Task;
+  written: number;
+  removed: number;
+  /** Files left as they were: submodules, and ones marked skip-worktree or assume-unchanged. */
+  skipped: string[];
+  branch: { from: string; to: string } | null;
+  /** The ref the replaced files are kept in. */
+  kept: string;
+  /** The message rewound to, to edit and send again. */
+  message: { text: string | null; auto: boolean };
 }
 
 /** The Changes tab's view of a task's repository (API 62). */
@@ -976,9 +1054,9 @@ export type AutomationAction =
       kind: "create_task";
       title: string;
       description: string;
-      /** A label as its type, in an action saved before API 70. */
+      /** A label as its type, in an action saved before API 71. */
       task_type: TaskType | DocumentType | null;
-      /** API 70. */
+      /** API 71. */
       labels?: DocumentType[];
       claude_config_id: string | null;
       model: string | null;
@@ -1314,7 +1392,7 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
-      /** API 70. */
+      /** API 71. */
       labels?: DocumentType[];
       external_links?: ExternalLink[];
       fanout_id?: string;
@@ -1333,9 +1411,9 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
-      /** A plan, artifact or diagram task, on hosts before API 70. */
+      /** A plan, artifact or diagram task, on hosts before API 71. */
       task_type?: DocumentType;
-      /** API 70. */
+      /** API 71. */
       labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
@@ -1359,9 +1437,9 @@ export const api = {
       subproject?: boolean;
       claude_config_id?: string;
       depends_on?: string[];
-      /** A scratch task in the project needs API 51; a plan, artifact or diagram task is one on hosts before API 70. */
+      /** A scratch task in the project needs API 51; a plan, artifact or diagram task is one on hosts before API 71. */
       task_type?: TaskType | DocumentType;
-      /** API 70. */
+      /** API 71. */
       labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
@@ -1414,11 +1492,17 @@ export const api = {
   gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
     on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
   gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
+  /** The task's turns with checkpoints, and the changes between two checkpoints (API 70). */
+  turns: (h: string, id: string) => on(h).get<TurnsResult>(`/tasks/${enc(id)}/turns`),
+  turnDiff: (h: string, id: string, from: number, to: number) => on(h).get<TurnDiff>(`/tasks/${enc(id)}/turns/diff?from=${from}&to=${to}`),
+  /** Restores the files to before the turn `message_id` started, and optionally the branch and the agent's conversation. */
+  rewind: (h: string, id: string, b: { message_id: number; conversation: boolean; branch: boolean }) => on(h).post<RewindResult>(`/tasks/${enc(id)}/rewind`, b),
+  cancelRewind: (h: string, id: string) => on(h).del<Task>(`/tasks/${enc(id)}/rewind`),
   /** How full the agent's context is, with the latest breakdown (API 40). */
   context: (h: string, id: string) => on(h).get<{ context: ContextSummary | null; detail: ContextDetail | null }>(`/tasks/${enc(id)}/context`),
   /** The skills the task's agent can be asked to use, for the composer's `/` menu (API 54). */
   taskSkills: (h: string, id: string) => on(h).get<TaskSkills>(`/tasks/${enc(id)}/skills`),
-  /** A task's document for one of its labels (API 70; a host before then has the one its type makes, API 42): the
+  /** A task's document for one of its labels (API 71; a host before then has the one its type makes, API 42): the
    *  latest version, or `version`. */
   document: (h: string, id: string, label: DocumentType, version?: number) =>
     on(h).get<TaskDocument>(`/tasks/${enc(id)}/document?label=${label}${version ? `&version=${version}` : ""}`),

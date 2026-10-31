@@ -1114,7 +1114,7 @@ function CreatedTasksSection({ task }: { task: Task }) {
 }
 
 /** A task's labels, each a document its agent writes besides its other work, shown in a tab of the task: to add and
- *  take off (API 70), and where the agent writes them. */
+ *  take off (API 71), and where the agent writes them. */
 function LabelsSection({ task }: { task: Task }) {
   const host = useHost(task.host_id);
   const labels = taskLabels(task);

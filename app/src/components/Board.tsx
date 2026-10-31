@@ -741,7 +741,7 @@ export function NewTaskModal({
     const m = h.model ? (c?.models.find((x) => x.id === h.model)?.label ?? h.model) : inherits ? `default model (${inherits})` : "default model";
     return pickConfig && c ? `${m} · ${c.name}` : m;
   };
-  // Labels, each a document its agent writes besides its other work, shown in a tab of the task (API 70). A host from
+  // Labels, each a document its agent writes besides its other work, shown in a tab of the task (API 71). A host from
   // API 42 makes a task of one of them as its type instead (a plan, artifact or diagram task), which is a code task in
   // a project or a group task, and makes only the document.
   const labelling = hostSupports(host, LABELS_API);
@@ -761,7 +761,7 @@ export function NewTaskModal({
   const text = stripTokens(description, tokens);
 
   const labels = LABELS.filter((l) => allValues(tokens, "/").includes(l));
-  // On a host before API 70, the label it's made as (one at most).
+  // On a host before API 71, the label it's made as (one at most).
   const docType = labelTypes ? (labels[0] ?? null) : null;
   // A subproject's branch is what its tasks branch from, so it and they get worktrees.
   const asSubproject = taskType === "subproject";
@@ -808,7 +808,7 @@ export function NewTaskModal({
         : worktree && inProject?.is_git === false
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
-  // A host before API 70 makes a task of one label's type.
+  // A host before API 71 makes a task of one label's type.
   const labelBlock = labelTypes && labels.length > 1 ? `${host?.name ?? "This host"} makes a task of one of plan, artifact or diagram, not several: update it for labels.` : null;
   // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
   // out, with its token sent as text); which config a `!` names a model of, when a config of the same agent before it

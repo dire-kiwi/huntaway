@@ -11,7 +11,7 @@ import type { Progress } from "./Board";
 import { Composer, Markdown } from "./Thread";
 import { Button, CARD_BADGE, copyText, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "./ui";
 
-/** What each label asks its task's agent for (API 70; types of task from API 42), in the order tasks show them. */
+/** What each label asks its task's agent for (API 71; types of task from API 42), in the order tasks show them. */
 export const LABEL_INFO: { id: DocumentType; label: string; icon: ReactNode; file: string; hint: string }[] = [
   { id: "plan", label: "Plan", icon: <ClipboardList size={12} />, file: "plan.html", hint: "An HTML plan its agent writes and you iterate on together" },
   {

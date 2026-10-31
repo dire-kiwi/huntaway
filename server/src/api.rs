@@ -130,6 +130,9 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/git/commit", post(git_view::commit))
         .route("/tasks/{id}/git/stash", post(git_view::stash))
         .route("/tasks/{id}/git/reset", post(git_view::reset))
+        .route("/tasks/{id}/turns", get(crate::checkpoints::turns))
+        .route("/tasks/{id}/turns/diff", get(crate::checkpoints::diff))
+        .route("/tasks/{id}/rewind", post(crate::checkpoints::rewind).delete(crate::checkpoints::cancel_rewind))
         .route("/tasks/{id}/context", get(crate::context::get))
         .route("/tasks/{id}/skills", get(agent_tools::for_task))
         .route("/tasks/{id}/document", get(crate::documents::get))
@@ -958,6 +961,7 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         permissions::expire_for_task(s, &t.id);
         // Remove worktrees but keep branches so no committed work is lost.
         if let Some(wt) = &t.worktree_path {
+            crate::checkpoints::forget(s, &t.id, std::path::Path::new(&project.repo_path)).await;
             let _ = worktree::git(&PathBuf::from(&project.repo_path), &["worktree", "remove", "--force", wt]).await;
         }
     }
@@ -1017,7 +1021,7 @@ pub struct CreateTask {
     pub depends_on: Option<Vec<String>>,
     /// What the task is, if not a code task: one of db::TASK_TYPES. In a project, also
     /// `subproject` (db::SUBPROJECT), the same as `subproject: true`. One of db::LABELS (a task
-    /// type before API 70) gives the task that label.
+    /// type before API 71) gives the task that label.
     #[serde(default)]
     pub task_type: Option<String>,
     /// Some of db::LABELS, each a document its agent writes besides its other work (see
@@ -1085,7 +1089,7 @@ fn new_task_fanout(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
     }
 }
 
-/// Check a new task's requested type (blank for none). A label (a type before API 70) is
+/// Check a new task's requested type (blank for none). A label (a type before API 71) is
 /// none: see new_task_labels.
 fn check_task_type(task_type: Option<&str>) -> ApiResult<Option<&str>> {
     match task_type.map(str::trim).filter(|t| !t.is_empty()) {
@@ -1096,7 +1100,7 @@ fn check_task_type(task_type: Option<&str>) -> ApiResult<Option<&str>> {
 }
 
 /// The labels a new task asks for, as an update to make once it's created: its `labels`, and a
-/// `task_type` that's one of them, as it was before API 70.
+/// `task_type` that's one of them, as it was before API 71.
 fn new_task_labels(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
     let mut asked: Vec<Value> = match &b.labels {
         Some(Value::Array(a)) => a.clone(),
@@ -2695,7 +2699,7 @@ pub(crate) mod tests {
             assert_eq!(t2.number, 2);
             assert_eq!(crate::documents::work_dir(&s, &t2), Some(crate::documents::dir(&s, &t2.id)));
             assert_eq!(runner::work_dir(&s, &t2).unwrap(), crate::documents::dir(&s, &t2.id));
-            // It can have labels too, also given as a type as before API 70.
+            // It can have labels too, also given as a type as before API 71.
             let planned = create_scratch_task_inner(&s, &profile.id, CreateTask { task_type: Some("plan".into()), ..Default::default() }).unwrap();
             assert_eq!((planned.task_type.as_deref(), planned.labels.as_slice()), (Some("scratch"), ["plan".to_string()].as_slice()));
             for bad in [
@@ -2812,7 +2816,7 @@ pub(crate) mod tests {
             // A code task, in a worktree, with a plan and a diagram.
             let plan = create_task_inner(&s, &p.id, labelled(json!(["diagram", "plan"]))).unwrap();
             assert_eq!((plan.task_type.as_deref(), labels(&plan).as_str(), plan.use_worktree), (None, "plan,diagram", true));
-            // A type that's a label, as before API 70, is that label.
+            // A type that's a label, as before API 71, is that label.
             let old = create_task_inner(&s, &p.id, CreateTask { labels: Some(json!(["artifact"])), ..typed("plan") }).unwrap();
             assert_eq!((old.task_type.as_deref(), labels(&old).as_str(), old.use_worktree), (None, "plan,artifact", true));
             assert!(create_task_inner(&s, &p.id, typed("essay")).is_err());
