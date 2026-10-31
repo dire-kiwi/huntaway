@@ -1683,6 +1683,37 @@ mod tests {
     }
 
     #[test]
+    fn checkpoints_stay_while_the_worktree_does() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (t, wt, repo) = task_repo(&s, false).await;
+            turn(&s, &t.id, "one", || {
+                write(&wt, "a.txt", "a\n");
+                sh(&wt, &["add", "a.txt"]);
+                sh(&wt, &["commit", "-qm", "a"]);
+            })
+            .await;
+            let refs = || sh(&repo, &["for-each-ref", "--format=%(refname)", &ref_prefix(&t.id)]).lines().count();
+            let rows = || list(&s.db(), &t.id).unwrap().len();
+            assert_eq!((refs(), rows()), (2, 2));
+            // A teardown script that fails, or leaves changes, keeps the worktree: its checkpoints stay.
+            for script in ["exit 1", "echo left > left.txt"] {
+                let project = t.project_id.as_deref().unwrap();
+                s.db().execute("UPDATE projects SET teardown_script=?1 WHERE id=?2", params![script, project]).unwrap();
+                assert!(crate::worktree::teardown(&s, &t.id, false, false).await.is_err(), "{script}");
+                assert!(wt.is_dir());
+                assert_eq!((refs(), rows()), (2, 2), "{script}");
+                let _ = std::fs::remove_file(wt.join("left.txt"));
+            }
+            // A worktree folder deleted by hand: they go with it.
+            s.db().execute("UPDATE projects SET teardown_script='' WHERE id=?1", [t.project_id.as_deref().unwrap()]).unwrap();
+            std::fs::remove_dir_all(&wt).unwrap();
+            crate::worktree::teardown(&s, &t.id, false, false).await.unwrap();
+            assert_eq!((refs(), rows()), (0, 0));
+        })
+    }
+
+    #[test]
     fn the_oldest_checkpoints_go_past_the_cap() {
         crate::testing::run(async || {
             let s = crate::testing::state();
