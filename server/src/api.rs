@@ -121,6 +121,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/questions/{message_id}", post(answer_question))
         .route("/tasks/{id}/stop", post(stop_task))
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
+        .route("/tasks/{id}/wait-for-limit", post(crate::usage::wait_for_reset))
         .route("/tasks/{id}/review", post(review_task))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
@@ -246,6 +247,12 @@ struct CreateProfile {
     /// See `db::Profile::asana_enabled` (API 60).
     #[serde(default = "yes")]
     asana_enabled: bool,
+    /// See `db::Profile::limit_wait` (API 81).
+    #[serde(default)]
+    limit_wait: bool,
+    /// See `db::Profile::limit_switch` (API 81).
+    #[serde(default)]
+    limit_switch: bool,
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -261,6 +268,7 @@ async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -
     let clone_dir = check_clone_dir(&b.clone_dir)?;
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
+    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch))]);
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -307,6 +315,11 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     }
     if let Some(v) = b.get("asana_enabled") {
         fields.push(("asana_enabled", json!(v.as_bool().ok_or_else(|| ApiError::bad("asana_enabled must be true or false"))?)));
+    }
+    for key in ["limit_wait", "limit_switch"] {
+        if let Some(v) = b.get(key) {
+            fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
+        }
     }
     if let Some(v) = b.get("claude_config_ids") {
         let ids: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("claude_config_ids must be a list of config ids"))?;
