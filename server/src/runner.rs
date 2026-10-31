@@ -450,6 +450,7 @@ fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto
     if kind == "prompt" && task.kind == "task" {
         // The agent is changing the work under review; it's reviewed again when it finishes.
         crate::review::supersede(state, &task);
+        crate::summary::supersede(state, &task);
     }
     Ok(task)
 }
@@ -1806,8 +1807,10 @@ fn system_prompt(
         ("review", p) => {
             let key = p.map(|p| p.key.as_str()).unwrap_or("T");
             let (number, title) = parent.map(|t| (t.number, t.title.as_str())).unwrap_or((0, "?"));
+            let summary = crate::summary::is_summary(task);
+            let role = if summary { "You summarise the changes made" } else { "You are the code reviewer" };
             let mut s = format!(
-                "You are the code reviewer for task {key}-{number} (\"{title}\") on the Huntaway board, a kanban \
+                "{role} for task {key}-{number} (\"{title}\") on the Huntaway board, a kanban \
                  board where each task is worked by its own Claude agent."
             );
             if let Some(t) = parent.filter(|t| t.worktree_state == "ready") {
@@ -1817,11 +1820,15 @@ fn system_prompt(
                     t.branch.as_ref().map(|b| format!(" on branch `{b}`")).unwrap_or_default()
                 ));
             }
-            s.push_str(
+            s.push_str(if summary {
+                " Read only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the \
+                 board. Don't call `request_user_input` or `submit_review`. Your last message is the summary of the changes \
+                 the user reads before merging them."
+            } else {
                 " Review only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the \
                  board. Don't call `request_user_input`. When the review is complete, call `submit_review` exactly once \
-                 with your verdict, then end your turn with a short summary of the review.",
-            );
+                 with your verdict, then end your turn with a short summary of the review."
+            });
             s
         }
         ("task", p) if crate::documents::documents_only(task) => {
@@ -2279,7 +2286,9 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     crate::documents::turn_ended(state, task_id);
     state.emit(json!({"type": "delta_reset", "task_id": task_id}));
     let Ok(Some(task)) = db::get_task(&state.db(), task_id) else { return };
-    if run.kind == "review" {
+    if run.kind == "review" && crate::summary::is_summary(&task) {
+        crate::summary::finished(state, &task, run_id, &outcome, run.attention.as_deref());
+    } else if run.kind == "review" {
         crate::review::finished(state, &task, run_id, &outcome, run.attention.as_deref());
     }
     if run.kind == "compact" {

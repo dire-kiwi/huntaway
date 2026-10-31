@@ -753,7 +753,8 @@ fn project_or_own(s: &Shared, ctx: &Ctx, pid: Option<String>, profile: Option<&s
 /// The settings `update_project` changes without asking: how the project's agents are
 /// prompted and reviewed, and what it's called and where on the board it is.
 const AGENT_FIELDS: &[&str] = &[
-    "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "group_name",
+    "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "auto_summary",
+    "summarizer", "group_name",
 ];
 
 /// The settings it only changes once the user approves: they run commands on the host, decide
@@ -1259,6 +1260,8 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["watch_pull_requests"] = json!(p.watch_pull_requests);
     out["pr_preview_url"] = json!(p.pr_preview_url);
     out["reviewers"] = json!(p.reviewers);
+    out["auto_summary"] = json!(p.auto_summary);
+    out["summarizer"] = json!(p.summarizer);
     out["group_name"] = json!(p.group_name);
     out["archived"] = json!(p.archived_at.is_some());
     let own = [&p.start_prompt, &p.review_prompt, &p.merge_prompt];

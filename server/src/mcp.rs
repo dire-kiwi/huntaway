@@ -356,6 +356,18 @@ fn board_tools() -> Value {
             }, "required": ["repo_path"]}
         }
     ]);
+    // (Added here: the list above is as long as `json!` can take.)
+    if let Some(props) = tools.as_array_mut().unwrap().iter_mut().find(|t| t["name"] == "update_project").and_then(|t| t["inputSchema"]["properties"].as_object_mut()) {
+        props.insert(
+            "auto_summary".into(),
+            json!({"type": "boolean", "description": "Once a task's review passes, have an agent summarise its changes for the user to read before merging"}),
+        );
+        props.insert("summarizer".into(), json!({
+            "type": "object",
+            "description": "Who writes those summaries: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; {} is the task's config with the defaults.",
+            "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}},
+        }));
+    }
     tools.as_array_mut().unwrap().extend(automation_tools(&profile, project_one));
     tools
 }

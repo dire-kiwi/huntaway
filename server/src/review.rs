@@ -140,6 +140,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     let specs = if project.reviewers.is_empty() { vec![Reviewer::default()] } else { project.reviewers.clone() };
     let task_config = db::task_claude_config(&state.db(), &task)?;
     let mut threads = db::review_threads(&state.db(), &task.id)?;
+    threads.retain(|t| !crate::summary::is_summary(t));
     let key = format!("{}-{}", project.key, task.number);
     let mut parts: Vec<ReviewerRun> = Vec::new();
     for spec in &specs {
@@ -262,7 +263,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
 }
 
 /// How a reviewer reads on the board: its config, model and effort.
-fn label(config: Option<&ClaudeConfig>, model: Option<&str>, effort: Option<&str>) -> String {
+pub fn label(config: Option<&ClaudeConfig>, model: Option<&str>, effort: Option<&str>) -> String {
     let name = config.map(|c| c.name.clone()).unwrap_or_else(|| "Claude".into());
     [Some(name.as_str()), model, effort].into_iter().flatten().collect::<Vec<_>>().join(" · ")
 }
@@ -630,7 +631,10 @@ fn act(state: &Shared, parent: Task, review: Review) {
         }
     };
     match review.state.as_str() {
-        "passed" => state.add_event(&parent.id, "info", "Review passed", review.summary.clone()),
+        "passed" => {
+            state.add_event(&parent.id, "info", "Review passed", review.summary.clone());
+            crate::summary::on_review_passed(state, &parent.id);
+        }
         "issues" => {
             let rounds = parent.project_id.as_deref().and_then(|p| db::get_project(&state.db(), p).ok().flatten()).map(|p| p.review_rounds);
             send_issues(state, &parent, review, rounds.unwrap_or(0), save)

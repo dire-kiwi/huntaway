@@ -35,6 +35,7 @@ mod runs;
 mod ssh;
 mod state;
 mod status_script;
+mod summary;
 mod terminal;
 #[cfg(test)]
 mod testing;
