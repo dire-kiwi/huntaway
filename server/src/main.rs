@@ -26,6 +26,7 @@ mod prompts;
 mod questions;
 mod proto;
 mod pty;
+mod push;
 mod relay;
 mod relocate;
 mod review;
@@ -359,6 +360,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     relocate::start_recording(&state);
     admin::start_update_check(&state);
     hub::start(&state)?;
+    push::start(&state);
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
             for h in &args.hubs {
@@ -377,7 +379,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
             (Some(t), name) => {
                 let name = name.unwrap_or_else(|| huntaway_broker::proto::slug(&state.host_name));
-                broker::dial_out(&state, url.to_string(), t.to_string(), name);
+                broker::dial_out(&state, url.to_string(), t.to_string(), name, load_or_create_token(&data_dir, "broker_key")?);
             }
         }
     }

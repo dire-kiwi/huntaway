@@ -265,6 +265,44 @@ ready-made link. The token lets anyone holding it run agents on your machine, an
 plain HTTP, so expose the server only on a trusted network (Tailscale, VPN) or behind a TLS
 reverse proxy.
 
+### Push notifications on a phone
+
+The board can push its notifications to a phone (or any browser) even while the board isn't open
+there, and tapping one opens the task (API 74). Browsers only allow this for a page on HTTPS (or
+localhost), so the phone needs the board at an HTTPS address it can reach. With
+[Tailscale](https://tailscale.com) on the machine and the phone:
+
+```sh
+tailscale serve --bg 7878     # https://<machine>.<tailnet>.ts.net → 127.0.0.1:7878
+```
+
+(or any TLS reverse proxy in front of port 7878, such as Caddy's `reverse_proxy`). Open
+`https://<machine>.<tailnet>.ts.net/?token=<huntaway token>` on the phone, then install it:
+
+- **Android** (Chrome): menu → *Install app* (or *Add to Home screen*).
+- **iPhone and iPad** (iOS 16.4 or later): Safari's Share → *Add to Home Screen*. iOS only pushes
+  to the board opened from the Home Screen, which keeps its own storage, so paste the token there
+  when it asks.
+
+Then, in the installed app, Settings → Notifications → *Push to this device* → **Turn on push for
+this device** (it asks for permission) and *Send a test*. Each device picks its own events (the
+same ones as the browser's notifications: needs attention, ready to review, ready for merge,
+done); the list there shows the other devices, with their last error, and removes them. Nothing is
+pushed for a move made from this board, and a device shows nothing while the board is open in
+front on it (the page has the task, and its own notifications if they're on). The
+section says why push isn't available where it isn't: a plain-HTTP page, an iPhone's browser
+rather than the Home Screen app, or a browser without push.
+
+The board keeps a VAPID key (in its settings table) that subscriptions are made for, and one row
+per device in `push_subscriptions` (`GET /push` gives the key and the devices; `POST
+/push/subscriptions` takes a `PushSubscription.toJSON()` with `name` and `events`, and updates the
+one with its endpoint; `PATCH` and `DELETE /push/subscriptions/{id}`; `POST
+/push/subscriptions/{id}/test`). It watches the task events of every host on it, so subscribe
+on the board you use (a hub, for several machines). `IA_PUSH_SUBJECT` sets the contact it gives
+push services (a `mailto:` or `https:` URL; the default is this project's page). The installed app
+is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, so it always loads
+the board's current UI.
+
 ### Desktop config
 
 `~/.config/huntaway/desktop.json` (all optional):
@@ -349,6 +387,12 @@ Settings → Hosts offers two ways to link a host:
   is needed, which suits cloud VMs or machines behind NAT. The hub's requests are tunnelled
   back over that connection.
 
+Both ends of a link ping each other every 20 seconds, and drop a connection they've heard nothing
+from for a minute (one that died without closing, say after a laptop slept or a NAT mapping
+expired), so the host is shown offline and the link is made again. `GET /api/hosts` gives each
+connected host's `last_message_at`, and an offline one's `last_seen` is when it was last heard from.
+A host that dials in under the id of one that is already connected in is refused.
+
 The UI reaches each host via `/api/h/<host_id>/…` on the hub, and events from every host
 arrive on one websocket tagged with `host_id`. Agents' board tools act on their own host. A
 project or task that isn't found there is looked up on linked hosts, and `list_projects` covers
@@ -402,10 +446,9 @@ huntaway serve --broker https://broker.example.com --broker-token <broker token>
 
 Then open `https://broker.example.com/?token=<host token>` from anywhere: the broker serves that
 host's board, API and websockets. Its token (`huntaway token`) still guards the API, so the broker
-signs no one in; the broker's own token only says which hosts may connect, and `/api/open-token`
-(`--open-token`) isn't served through it. Each host is known on the broker by a name
-(`--broker-name`, by default its own name as lowercase letters, digits and hyphens), and a request
-reaches the host:
+signs no one in, and `/api/open-token` (`--open-token`) isn't served through it. Each host is known
+on the broker by a name (`--broker-name`, by default its own name as lowercase letters, digits and
+hyphens), and a request reaches the host:
 
 - at `/_broker/h/<name>/…`, for anything that takes a base URL: a hub links a host through the
   broker with `--hub https://broker.example.com/_broker/h/<hub's name>` (the host dials in to a hub
@@ -417,6 +460,15 @@ reaches the host:
 A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
 whose board links the others) on the broker, and its board shows every host it links. Running the
 broker is in `server/broker/README.md`.
+
+The broker's token lets a host connect under any name that's free, and the browsers and hubs that
+pick that name then send it their requests, host token included. So keep it as secret as a host
+token, and give it only to your own hosts. A name stays with the host that took it: each host keeps
+a secret key in its data dir (`broker_key`), and the broker refuses the name to any other host while
+that one is connected and for an hour after it goes. A second host with the same name (two machines
+with the same host name, say) is refused with a message saying so, and keeps trying until the name
+is free: give it its own `--broker-name`. The broker keeps names in memory only, so after it
+restarts, the first host to connect under a name has it.
 
 ### Codex agents
 
@@ -491,6 +543,15 @@ skipped. Auto-compacting idle sessions is Claude-only.
   ask rather than create a project that may already be there. The setting is per host, and is
   checked by name, so on a linked host it applies to agents from the profile of that name
   anywhere on the board.
+  This keeps profiles' work apart, but it isn't a security boundary. Each agent's board helper
+  calls the host's API with the host's own access token (`IA_TOKEN` in the run's MCP config),
+  and agents run as the same OS user as the server, so they can also read `<data-dir>/auth_token`
+  and the database. An agent that ignores its tools (one following injected instructions, say)
+  can reach every profile's board on the host (and on a hub, its linked hosts', whose tokens are in its data). Keep
+  logins whose work must stay apart on separate hosts or OS users. What the tools do ask the user
+  about (project changes and new projects, deletions, automations) is asked by the server, and
+  the API the UI uses to answer needs the same token, so it guards against a misled agent's tool
+  calls, not against code running as you.
 - **Usage:** the sidebar shows how much of each config's plan limits (session,
   weekly, per-model weekly) is left, for the configs the sidebar's profile and its projects use. It's off until
   *Show usage* is ticked on a config in Settings → Agent configs (API 52): the endpoint's rate
@@ -581,7 +642,10 @@ skipped. Auto-compacting idle sessions is Claude-only.
   tool needs approval, a run fails, or you stop it → *Needs
   attention*; a run finishes cleanly → *In review*. You move cards to *Done* yourself, or to
   *Ready for merge*; a task whose pull request is merged on GitHub moves to *Done* by itself
-  (see *Pull requests*).
+  (see *Pull requests*). Moving a task to *Done* (with the *Done* resolution) whose work isn't
+  merged asks first (API 75): its branch has commits its base branch doesn't, or it has
+  uncommitted changes, and its pull request (if any) isn't merged on GitHub. Tasks with a
+  document, and *Won't fix* or *Not done*, don't ask.
 - **Archived** (API 53): a task that's been in *Done* for two days is archived. It leaves the
   kanban board's *Done* column, which links to it ("N archived"), for the list view's *Archived*
   section, the last one, which starts collapsed. It's still done (a task that depends on it
@@ -772,6 +836,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   these. `GET /project-approvals` lists the ones waiting. From API 45 a new repository path is checked before asking
   (it must be the same repository, or with `move_repo` a free path to move the folder to), and
   approving `move_repo` moves the folder.
+  From API 76 `create_project` asks too, before anything is made: the dialog (*Add a project?*)
+  shows the folder with symlinks resolved (and whether it exists yet, or is a git repository),
+  the name and key it would get, the board, and the host's default permission mode, which its
+  tasks get. The path must be absolute (or start with `~/`). Its tasks' agents work in that
+  folder, so without this an agent could add your home folder as a project and start a task
+  there. It's asked as a project change (kind `project`, tool `create_project`, with `changes`
+  for older UIs), and a call retried after a restart waits for the same answer, like
+  `update_project`'s.
 - **Task deletions by agents** (API 58): `delete_task` deletes a task (and a subproject's tasks)
   as the task panel's *Delete* does, but only once the user confirms it. Like a project change, it
   asks in a dialog over the whole app and a card in the agent's thread, showing the task, the
@@ -805,6 +877,16 @@ skipped. Auto-compacting idle sessions is Claude-only.
   each done task's worktree as removed or kept, and why. The tasks and their branches are kept;
   if a task's agent runs again, its worktree is set up again in the same folder (named from its
   branch), so its conversation carries on.
+  A project that uses worktrees but whose folder can't have them yet (it isn't the top folder of
+  a git repository, or the repository has no commit to branch from) shows its **setup thread**
+  instead of its board (API 73). *Start setup thread* (`POST /projects/{id}/setup-thread`, with
+  an optional `message` for the agent) makes a task in the project, without a worktree, whose
+  agent looks at the folder, makes it a repository with a `.gitignore` and a first commit, and
+  offers to put it on GitHub, asking before anything hard to undo. The project keeps it as
+  `setup_task_id`, so asking again gives the same thread. The page looks at the folder every few
+  seconds, and the board comes back, with the thread's task on it, once the folder is ready.
+  *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
+  Projects list `has_commits` beside `is_git`.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that
@@ -834,7 +916,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   has a **⋯** button whose menu moves the task to another column as dropping it there does
   (into *In progress* starts its agent), or completes it as Done, Not done or Won't fix. A task
   beside a board is at least 480px wide, so it's usable on a tablet. Wider windows and the
-  desktop app keep the desktop layout.
+  desktop app keep the desktop layout. To install the board on a phone and have it push
+  notifications, see *Push notifications on a phone*.
 - **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its
@@ -1108,11 +1191,20 @@ query, a repository's homepage) doesn't count. One about a repository whose remo
 host fails.
 `git_push` takes a remote's name, all of whose push URLs (as git rewrites them) must be on the
 account's host; it uses the account's token over HTTPS, and pushes over SSH use the host's SSH
-keys (or the SSH alias the remote names). The host's own gh calls for a task (finding its pull
+keys (or the SSH alias the remote names). Worktree setup and merged-worktree cleanup also use
+the selected account for fetches from HTTPS remotes on its GitHub host, without changing git's
+saved configuration. SSH and local fetches keep git's usual authentication. If a fetch fails,
+setup logs the reason in the warning's details and branches from the locally available copy.
+The host's own gh calls for a task (finding its pull
 request, checking a merged one before removing its worktree) and the commands of the agent's
 `wait` calls use the same account, as do the reads of a wait's pull request. A wait's command doesn't get the token: `gh` on its `PATH` is a
 script that runs `huntaway gh-run`, which checks each call's targets as the tools do and runs gh
-with the token. An account that isn't signed in to gh fails the tool call
+with the token. The `gh` tool (and `gh` in a wait's command) refuses `gh auth` (`gh auth token`
+would put the token in the thread), `config get` of a host's settings (with `-h`/`--host`, or of
+`oauth_token`, which prints the token too), `gh extension` and changes to gh's aliases and settings
+(`alias set`, `alias import`, `alias delete`, `config set`, `config clear-cache`), whatever the
+thread's permission mode. gh's command has to come first (only `--help` and `--version` may come
+before it), and so does `alias`'s and `config`'s subcommand. An account that isn't signed in to gh fails the tool call
 (and a `wait` with a command, without running it) with a message saying so, and the host skips its
 own lookups. `GET /github-accounts` lists the accounts gh is signed in to on a host
 (API 50), and profiles and projects take `github_account` (a login, or `HOST/LOGIN` for a GitHub
@@ -1163,7 +1255,7 @@ shows a dot linking to it: yellow until the URL answers `200`, then green. The s
 is served from checks it every 2 seconds while the board is visible.
 
 A project whose pull requests get preview deployments can say where, under *Pull request
-previews* in its settings' Review tab (`pr_preview_url`, API 73), with `{pr}` for the pull
+previews* in its settings' Review tab (`pr_preview_url`, API 79), with `{pr}` for the pull
 request's number, e.g. `https://pr{pr}.example.com/`. A task then gets its pull request's preview
 as its preview URL whenever its pull request is set or found (see above), and saving the setting
 fills it in for the project's tasks that already have one (except done tasks, whose previews are

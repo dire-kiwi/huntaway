@@ -87,9 +87,10 @@ pub struct Report {
 
 /// `GET /profiles/{id}/disk-usage`: the profile's projects' disk usage on this host.
 pub async fn get(State(s): State<Shared>, UrlPath(profile_id): UrlPath<String>) -> ApiResult<Json<Report>> {
-    let plan = plan(&s.db(), &s.data_dir, &profile_id)?;
+    // Only the reading is done under the database lock: looking at the folders can take a while.
+    let rows = read(&s.db(), &profile_id)?;
     let data_dir = s.data_dir.clone();
-    let report = tokio::task::spawn_blocking(move || measure(plan, &data_dir)).await.map_err(anyhow::Error::from)?;
+    let report = tokio::task::spawn_blocking(move || measure(plan(rows, &data_dir), &data_dir)).await.map_err(anyhow::Error::from)?;
     Ok(Json(report))
 }
 
@@ -120,6 +121,19 @@ struct ProjectPlan {
     runs: Vec<PathBuf>,
 }
 
+/// What `plan` needs from the database.
+struct Rows {
+    /// The worktrees of all tasks on the host, and all projects' repositories.
+    owned: Vec<String>,
+    /// The profile's runs, with their tasks' projects.
+    runs: Vec<(String, Option<String>)>,
+    /// The profile's projects, in the order analytics lists them, with their tasks that have worktrees.
+    projects: Vec<(db::Project, Vec<TaskRow>)>,
+    profile_id: String,
+    /// The main database's file (blank in memory).
+    database: String,
+}
+
 struct Plan {
     projects: Vec<ProjectPlan>,
     scratch: Walk,
@@ -142,31 +156,22 @@ fn nested(root: &Path, others: &[&Path]) -> Vec<PathBuf> {
     v
 }
 
-/// Works out what to walk, from the database and the worktrees folders' listings.
-fn plan(c: &Connection, data_dir: &Path, profile_id: &str) -> anyhow::Result<Plan> {
+/// Reads what `plan` needs from the database.
+fn read(c: &Connection, profile_id: &str) -> anyhow::Result<Rows> {
     let mut st = c.prepare(
         "SELECT id, kind, number, title, status, worktree_path FROM tasks
          WHERE project_id=?1 AND worktree_path IS NOT NULL AND worktree_path<>'' ORDER BY number",
     )?;
     // Folders a task or project on this host has, whatever its profile: the worktrees folder is
     // a setting, so projects can share one (or point it at the folder their repos are in).
-    let owned: HashSet<PathBuf> = c
+    let owned = c
         .prepare("SELECT worktree_path FROM tasks WHERE worktree_path IS NOT NULL AND worktree_path<>'' UNION SELECT repo_path FROM projects")?
         .query_map([], |r| r.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .into_iter()
-        .map(|p| canonical(Path::new(&p)))
-        .collect();
-    // Each run's folder, by its task's project.
-    let mut runs: HashMap<Option<String>, Vec<PathBuf>> = HashMap::new();
-    let mut st_runs = c.prepare("SELECT r.id, t.project_id FROM runs r JOIN tasks t ON t.id=r.task_id WHERE t.profile_id=?1")?;
-    for row in st_runs.query_map([profile_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))? {
-        let (id, project) = row?;
-        let dir = data_dir.join("runs").join(id);
-        if dir.is_dir() {
-            runs.entry(project).or_default().push(dir);
-        }
-    }
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let runs = c
+        .prepare("SELECT r.id, t.project_id FROM runs r JOIN tasks t ON t.id=r.task_id WHERE t.profile_id=?1")?
+        .query_map([profile_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut list = db::list_projects(c, profile_id)?;
     // In the order analytics lists them, which the UI's colours follow.
     list.sort_by(|a, b| a.created_at.cmp(&b.created_at));
@@ -184,6 +189,25 @@ fn plan(c: &Connection, data_dir: &Path, profile_id: &str) -> anyhow::Result<Pla
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        projects.push((p, tasks));
+    }
+    let database: String = c.query_row("SELECT file FROM pragma_database_list WHERE name='main'", [], |r| r.get(0))?;
+    Ok(Rows { owned, runs, projects, profile_id: profile_id.to_string(), database })
+}
+
+/// Works out what to walk, from what's in the database and the worktrees folders' listings.
+fn plan(rows: Rows, data_dir: &Path) -> Plan {
+    let owned: HashSet<PathBuf> = rows.owned.iter().map(|p| canonical(Path::new(p))).collect();
+    // Each run's folder, by its task's project.
+    let mut runs: HashMap<Option<String>, Vec<PathBuf>> = HashMap::new();
+    for (id, project) in rows.runs {
+        let dir = data_dir.join("runs").join(id);
+        if dir.is_dir() {
+            runs.entry(project).or_default().push(dir);
+        }
+    }
+    let mut projects = Vec::new();
+    for (p, tasks) in rows.projects {
         let tasks: Vec<TaskRow> = tasks.into_iter().filter(|t| t.path.is_dir()).collect();
         let worktrees_root = PathBuf::from(&p.worktrees_root);
         let repo = PathBuf::from(&p.repo_path);
@@ -224,11 +248,11 @@ fn plan(c: &Connection, data_dir: &Path, profile_id: &str) -> anyhow::Result<Pla
             project: p,
         });
     }
-    let scratch = data_dir.join("profiles").join(profile_id).join("scratch");
+    let scratch = data_dir.join("profiles").join(&rows.profile_id).join("scratch");
     // The main database's file (none in memory), and its write-ahead log.
-    let file: String = c.query_row("SELECT file FROM pragma_database_list WHERE name='main'", [], |r| r.get(0))?;
+    let file = rows.database;
     let database = if file.is_empty() { vec![] } else { vec![PathBuf::from(&file), PathBuf::from(format!("{file}-wal"))] };
-    Ok(Plan { projects, scratch: Walk { root: scratch, skip: vec![] }, runs: runs.remove(&None).unwrap_or_default(), database })
+    Plan { projects, scratch: Walk { root: scratch, skip: vec![] }, runs: runs.remove(&None).unwrap_or_default(), database }
 }
 
 /// The path with symlinks resolved, or as given when it can't be.
@@ -518,7 +542,7 @@ mod tests {
                 write(&tmp.join("data/runs/r3/out.jsonl"), 5_000);
                 profile
             };
-            let plan = plan(&s.db(), &tmp.join("data"), &pid).unwrap();
+            let plan = plan(read(&s.db(), &pid).unwrap(), &tmp.join("data"));
             let r = measure(plan, &tmp.join("data"));
             assert_eq!(r.projects.len(), 1);
             let p = &r.projects[0];
@@ -592,7 +616,7 @@ mod tests {
                 .unwrap();
                 profile_a
             };
-            let r = measure(plan(&s.db(), &tmp.join("data"), &profile_a).unwrap(), &tmp.join("data"));
+            let r = measure(plan(read(&s.db(), &profile_a).unwrap(), &tmp.join("data")), &tmp.join("data"));
             let mut wts: Vec<_> = r.projects[0].worktrees.iter().map(|w| (w.task_id.clone(), path_str(Path::new(&w.path)))).collect();
             wts.sort();
             assert_eq!(wts, vec![(None, path_str(&shared.join("a-old"))), (Some("ta".into()), path_str(&shared.join("a-1")))]);

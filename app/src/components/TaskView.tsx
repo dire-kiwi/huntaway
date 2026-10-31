@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, ApiError, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -15,16 +15,17 @@ import { useSubagentView } from "../subagents";
 import { AgentsPill } from "./AgentsPill";
 import { ContextPill } from "./Context";
 import { inGroupTaskGroup } from "../projectGroups";
-import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgress, useSubprojectProgress } from "./Board";
+import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgress, useSubprojectProgress } from "./TaskCard";
 import { documentInfo, DocumentView, LABEL_INFO, TaskTypeBadge } from "./Document";
 import { ReviewDot, reviewParts, ReviewSummary } from "./Review";
 import { Dependencies } from "./Dependencies";
+import { useConfirmDone } from "./ConfirmDone";
 import { ReminderButton, saveMarks, StarButton, useCanMark } from "./Reminders";
 import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Button, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, isSubmitShortcut } from "./ui";
+import { ActivityTime, Ago, Button, ConfirmModal, cost, ErrorBox, errorText, IconButton, Input, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut, useDraft } from "./ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
@@ -263,6 +264,33 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // A subproject's task: its subproject's board, with this task still beside it.
   const toSubproject = () => subproject && navigate(mode === "page" ? href({ name: "subproject", taskId: subproject.id }) : subprojectTaskUrl(subproject.id, task.id));
 
+  // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
+  const run =
+    task.running || reviewing ? (
+      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
+        <Square size={11} fill="currentColor" /> Stop
+      </Button>
+    ) : dependencyQueued(task) ? (
+      <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
+        <Clock size={12} /> Queued
+      </span>
+    ) : (
+      !task.session_id &&
+      agents && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setMarkErr(null);
+            api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
+            setTab("thread");
+          }}
+        >
+          <Play size={12} fill="currentColor" /> Start
+        </Button>
+      )
+    );
+
   const controls = (
     <>
       {task.subproject && (
@@ -308,31 +336,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ))}
         </div>
       )}
-      {task.running || reviewing ? (
-        <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"} className="narrow:-order-1">
-          <Square size={11} fill="currentColor" /> Stop
-        </Button>
-      ) : dependencyQueued(task) ? (
-        <span className="flex items-center gap-1 text-[12px] text-muted narrow:-order-1" title="Its agent starts once the tasks it depends on are merged">
-          <Clock size={12} /> Queued
-        </span>
-      ) : (
-        !task.session_id &&
-        agents && (
-          <Button
-            size="sm"
-            variant="primary"
-            className="narrow:-order-1"
-            onClick={() => {
-              setMarkErr(null);
-              api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
-              setTab("thread");
-            }}
-          >
-            <Play size={12} fill="currentColor" /> Start
-          </Button>
-        )
-      )}
+      {!narrow && run}
     </>
   );
 
@@ -388,7 +392,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               <TaskTypeBadge type="scratch" />
             </span>
           )}
-          <TitleEditor key={task.id} task={task} />
+          <TitleEditor key={task.id} task={task} onError={setMarkErr} />
           {canMark && (
             <span className="no-drag -ml-1 shrink-0">
               <StarButton task={task} onError={setMarkErr} />
@@ -396,12 +400,13 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           )}
           <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
             {wide && controls}
+            {narrow && run}
             {mode !== "page" && <PanelButtons expanded={mode === "expanded"} />}
           </div>
         </div>
-        {/* A phone's row scrolls sideways, with the tabs first. */}
+        {/* A phone's row scrolls sideways, with the tabs first (and Start or Stop in the row above), fading out at the edge. */}
         {!wide && (
-          <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:[scrollbar-width:none] narrow:*:shrink-0">
+          <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:pr-4 narrow:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] narrow:[scrollbar-width:none] narrow:*:shrink-0">
             {controls}
           </div>
         )}
@@ -434,6 +439,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             ))}
           {shown === "thread" ? (
             <Thread
+              key={`${task.host_id}:${task.id}`}
               task={task}
               cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
               empty={NOT_STARTED}
@@ -529,6 +535,7 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
       <div className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1">
           <Thread
+            key={`${thread.host_id}:${thread.id}`}
             task={thread}
             cwd={parent?.worktree_path ?? project?.repo_path}
             placeholder="Ask the reviewer about its findings…"
@@ -563,7 +570,7 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
   );
 }
 
-function TitleEditor({ task }: { task: Task }) {
+function TitleEditor({ task, onError }: { task: Task; onError: (err: string | null) => void }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState(task.title);
   // Kept while it's being edited, so a title that changes meanwhile (re-titled from a message, say) doesn't
@@ -582,7 +589,10 @@ function TitleEditor({ task }: { task: Task }) {
             className="no-drag -ml-1 shrink-0 rounded p-0.5 text-faint hover:bg-raised hover:text-fg"
             title="Renamed by hand, so it keeps this title. Click to let the title follow your messages again."
             aria-label="Unpin title"
-            onClick={() => api.updateTask(task.host_id, task.id, { title_pinned: false })}
+            onClick={() => {
+              onError(null);
+              api.updateTask(task.host_id, task.id, { title_pinned: false }).catch((e) => onError(`Couldn't unpin the title: ${errorText(e)}`));
+            }}
           >
             <Pin size={12} />
           </button>
@@ -591,7 +601,15 @@ function TitleEditor({ task }: { task: Task }) {
     );
   const save = () => {
     setEditing(false);
-    if (v.trim() && v !== task.title) api.updateTask(task.host_id, task.id, { title: v.trim() });
+    const typed = v;
+    if (!typed.trim() || typed === task.title) return;
+    onError(null);
+    api.updateTask(task.host_id, task.id, { title: typed.trim() }).catch((e) => {
+      // Back to editing what was typed, to try again.
+      setV(typed);
+      setEditing(true);
+      onError(`Couldn't rename the task: ${errorText(e)}`);
+    });
   };
   return (
     <Input
@@ -646,13 +664,11 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   const [editingDesc, setEditingDesc] = useState(false);
   const [desc, setDesc] = useState(task.description);
   const [wtBusy, setWtBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [statusErr, setStatusErr] = useState<string | null>(null);
-  const [previewErr, setPreviewErr] = useState<string | null>(null);
-  const [prErr, setPrErr] = useState<string | null>(null);
+  // What went wrong with each part, until it's tried again.
+  const [errs, setErrs] = useState<Partial<Record<"worktree" | "status" | "preview" | "pr" | "desc" | "agent", string>>>({});
+  const setErr = (part: keyof typeof errs, msg: string | null) => setErrs((e) => ({ ...e, [part]: msg ?? undefined }));
   const [teardown, setTeardown] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [descErr, setDescErr] = useState<string | null>(null);
   // The description as it was when editing started: if it changes meanwhile, the edit stays, and says so.
   const [descBase, setDescBase] = useState(task.description);
   useEffect(() => {
@@ -661,32 +677,34 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   const editDesc = () => {
     setDesc(task.description);
     setDescBase(task.description);
-    setDescErr(null);
+    setErr("desc", null);
     setEditingDesc(true);
   };
   const saveDesc = () => {
-    setDescErr(null);
+    setErr("desc", null);
     api
       .updateTask(task.host_id, task.id, { description: desc })
       .then(() => setEditingDesc(false))
-      .catch((e) => setDescErr(`Couldn't save the description: ${(e as Error).message}`));
+      .catch((e) => setErr("desc", `Couldn't save the description: ${(e as Error).message}`));
   };
 
-  const setStatus = (status: Status) => {
-    setStatusErr(null);
-    api.updateTask(task.host_id, task.id, { status }).catch((e) => setStatusErr(e.message));
+  const { confirmDone, dialog: doneDialog } = useConfirmDone();
+  const setStatus = async (status: Status) => {
+    setErr("status", null);
+    if (status === "done" && !(await confirmDone(task))) return;
+    api.updateTask(task.host_id, task.id, { status }).catch((e) => setErr("status", e.message));
   };
   const setResolution = (resolution: Resolution) => {
-    setStatusErr(null);
-    api.updateTask(task.host_id, task.id, { resolution }).catch((e) => setStatusErr(e.message));
+    setErr("status", null);
+    api.updateTask(task.host_id, task.id, { resolution }).catch((e) => setErr("status", e.message));
   };
   const run = async (fn: () => Promise<unknown>) => {
     setWtBusy(true);
-    setErr(null);
+    setErr("worktree", null);
     try {
       await fn();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr("worktree", (e as Error).message);
     } finally {
       setWtBusy(false);
     }
@@ -754,12 +772,12 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               Reminder {new Date(task.remind_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
               {task.reminder && <span className="block text-fg">{task.reminder}</span>}
             </span>
-            <button className="shrink-0 text-faint hover:text-fg" onClick={() => saveMarks(task, { remind_at: null }).catch((e) => setStatusErr((e as Error).message))}>
+            <button className="shrink-0 text-faint hover:text-fg" onClick={() => saveMarks(task, { remind_at: null }).catch((e) => setErr("status", (e as Error).message))}>
               Clear
             </button>
           </div>
         )}
-        {statusErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{statusErr}</div>}
+        {errs.status && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.status}</div>}
       </Section>
 
       <Section
@@ -788,9 +806,9 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             {task.description !== descBase && (
               <div className="text-[11.5px] text-amber-200/90">It was changed while you were editing it: saving replaces that change.</div>
             )}
-            {descErr && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{descErr}</div>}
+            {errs.desc && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.desc}</div>}
             <div className="flex justify-end gap-2">
-              <Button size="sm" variant="ghost" onClick={() => (setDesc(task.description), setDescErr(null), setEditingDesc(false))}>
+              <Button size="sm" variant="ghost" onClick={() => (setDesc(task.description), setErr("desc", null), setEditingDesc(false))}>
                 Cancel
               </Button>
               <Button size="sm" variant="primary" onClick={saveDesc}>
@@ -847,11 +865,11 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             value={task.preview_url ?? null}
             placeholder="https://… (where to try this task)"
             onSave={(url) => {
-              setPreviewErr(null);
-              api.updateTask(task.host_id, task.id, { preview_url: url || null }).catch((e) => setPreviewErr(e.message));
+              setErr("preview", null);
+              api.updateTask(task.host_id, task.id, { preview_url: url || null }).catch((e) => setErr("preview", e.message));
             }}
           />
-          {previewErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{previewErr}</div>}
+          {errs.preview && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.preview}</div>}
         </Section>
       )}
 
@@ -861,11 +879,11 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             value={task.pr_url ?? null}
             placeholder="https://… (found with gh once the agent opens one)"
             onSave={(url) => {
-              setPrErr(null);
-              api.updateTask(task.host_id, task.id, { pr_url: url || null }).catch((e) => setPrErr(e.message));
+              setErr("pr", null);
+              api.updateTask(task.host_id, task.id, { pr_url: url || null }).catch((e) => setErr("pr", e.message));
             }}
           />
-          {prErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{prErr}</div>}
+          {errs.pr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.pr}</div>}
         </Section>
       )}
 
@@ -877,7 +895,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             <div className="space-y-2">
               <div className="text-[12.5px] text-muted">Runs directly in the project repository.</div>
               {project?.use_worktrees !== undefined && project.is_git !== false && (
-                <Toggle checked={false} onChange={(v) => api.updateTask(task.host_id, task.id, { use_worktree: v }).catch((e) => setErr(e.message))} label="Use a worktree" />
+                <Toggle checked={false} onChange={(v) => api.updateTask(task.host_id, task.id, { use_worktree: v }).catch((e) => setErr("worktree", e.message))} label="Use a worktree" />
               )}
             </div>
           ) : (
@@ -933,14 +951,14 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
                   </Button>
                 )}
                 {task.worktree_state === "none" && (
-                  <Button size="sm" variant="ghost" onClick={() => api.updateTask(task.host_id, task.id, { use_worktree: false }).catch((e) => setErr(e.message))}>
+                  <Button size="sm" variant="ghost" onClick={() => api.updateTask(task.host_id, task.id, { use_worktree: false }).catch((e) => setErr("worktree", e.message))}>
                     Don't use a worktree
                   </Button>
                 )}
               </div>
             </div>
           )}
-          {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          {errs.worktree && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.worktree}</div>}
         </Section>
       )}
 
@@ -959,7 +977,10 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
           <TextInput
             value={task.model}
             placeholder={inheritedModel(threadConfig, models, project?.model) || "default"}
-            onSave={(m) => api.updateTask(task.host_id, task.id, { model: m || null })}
+            onSave={(m) => {
+              setErr("agent", null);
+              api.updateTask(task.host_id, task.id, { model: m || null }).catch((e) => setErr("agent", `Couldn't change the model: ${errorText(e)}`));
+            }}
           />
         </Row>
         {hostSupports(host, 14) && (
@@ -967,7 +988,12 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             <select
               className="h-6 rounded border border-line bg-panel px-1 text-[12px] text-fg outline-none"
               value={task.effort ?? ""}
-              onChange={(e) => api.updateTask(task.host_id, task.id, { effort: (e.target.value || null) as Effort | null })}
+              onChange={(e) => {
+                setErr("agent", null);
+                api
+                  .updateTask(task.host_id, task.id, { effort: (e.target.value || null) as Effort | null })
+                  .catch((err) => setErr("agent", `Couldn't change the effort: ${errorText(err)}`));
+              }}
             >
               <option value="">{hostEffort ? `default (${hostEffort})` : "default"}</option>
               {[...new Set([...effortOptions(threadConfig, models, task.model ?? ""), ...(task.effort ? [task.effort] : [])])].map((e) => (
@@ -979,7 +1005,10 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
           </Row>
         )}
         {task.auto_allow.length > 0 && <Row label="Allowed">{task.auto_allow.join(", ")}</Row>}
-        <Row label="Created">{timeAgo(task.created_at)}</Row>
+        <Row label="Created">
+          <Ago at={task.created_at} />
+        </Row>
+        {errs.agent && <ErrorBox className="mt-2">{errs.agent}</ErrorBox>}
       </Section>
 
       <div className="px-4 py-4">
@@ -990,6 +1019,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
 
       {teardown && <TeardownModal task={task} onClose={() => setTeardown(false)} />}
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
+      {doneDialog}
     </aside>
   );
 }
@@ -1251,15 +1281,25 @@ function SubprojectSection({ task }: { task: Task }) {
   );
 }
 
+/**
+ * A field saved when it loses focus. It follows the task's value only while it's neither focused nor changed, so a
+ * value the agent sets meanwhile doesn't overwrite what's being typed (and isn't written back over with the old one).
+ */
 function TextInput({ value, placeholder, onSave }: { value: string | null; placeholder: string; onSave: (v: string) => void }) {
-  const [v, setV] = useState(value ?? "");
-  useEffect(() => setV(value ?? ""), [value]);
+  const [focused, setFocused] = useState(false);
+  const { draft: v, setDraft: setV, dirty } = useDraft(value ?? "", focused);
   return (
     <Input
       value={v}
       placeholder={placeholder}
       onChange={(e) => setV(e.target.value)}
-      onBlur={() => v !== (value ?? "") && onSave(v.trim())}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        if (!dirty) return;
+        setV(v.trim());
+        onSave(v.trim());
+      }}
       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       className="h-7 text-[12px]"
     />
@@ -1269,56 +1309,38 @@ function TextInput({ value, placeholder, onSave }: { value: string | null; place
 function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
   const [force, setForce] = useState(false);
   const [deleteBranch, setDeleteBranch] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const go = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.teardownWorktree(task.host_id, task.id, { force, delete_branch: deleteBranch });
-      onClose();
-    } catch (e) {
-      setErr((e as Error).message);
-      setBusy(false);
-    }
-  };
   return (
-    <Modal title="Tear down worktree" onClose={onClose}>
-      <div className="space-y-4 text-[13px]">
-        <p className="text-muted">
-          Runs the project's teardown script, then removes the worktree directory. The branch <span className="font-mono text-fg">{task.branch}</span> is
-          kept unless you delete it, so the agent can pick up where it left off later.
-        </p>
-        <div className="space-y-3">
+    <ConfirmModal
+      title="Tear down worktree"
+      width="max-w-lg"
+      body={
+        <>
+          <p>
+            Runs the project's teardown script, then removes the worktree directory. The branch <span className="font-mono text-fg">{task.branch}</span> is
+            kept unless you delete it, so the agent can pick up where it left off later.
+          </p>
           <Toggle checked={force} onChange={setForce} label="Discard uncommitted changes" />
           <Toggle checked={deleteBranch} onChange={setDeleteBranch} label="Also delete the branch" />
-        </div>
-        <ModalFooter className="space-y-4">
-          {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button variant="danger" disabled={busy} onClick={go}>
-              {busy && <Loader2 size={13} className="animate-spin" />} Tear down
-            </Button>
-          </div>
-        </ModalFooter>
-      </div>
-    </Modal>
+        </>
+      }
+      action="Tear down"
+      danger
+      onConfirm={() => api.teardownWorktree(task.host_id, task.id, { force, delete_branch: deleteBranch })}
+      onClose={onClose}
+    />
   );
 }
 
 function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onClose: () => void }) {
   const [deleteBranch, setDeleteBranch] = useState(false);
-  const [busy, setBusy] = useState(false);
   const subproject = useSubproject(task);
   const children = useSubprojectProgress(task.id)?.total ?? 0;
   const go = async () => {
-    setBusy(true);
     const pid = task.project_id;
-    await api.deleteTask(task.host_id, task.id, deleteBranch).catch(() => {});
-    onClose();
+    // Gone already (deleted from another window, say) is as good as deleted.
+    await api.deleteTask(task.host_id, task.id, deleteBranch).catch((e) => {
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+    });
     if (mode !== "page") closeTask(true);
     else if (subproject) navigate({ name: "subproject", taskId: subproject.id }, true);
     else if (pid) navigate({ name: "board", projectId: pid }, true);
@@ -1329,34 +1351,34 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
     }
   };
   return (
-    <Modal title="Delete task" onClose={onClose}>
-      <div className="space-y-4 text-[13px]">
-        <p className="text-muted">
-          This stops any running agent, deletes the thread, and removes its worktree, discarding any uncommitted changes.
-          {task.subproject && children > 0 && (
-            <span className="text-amber-200/90">
-              {" "}
-              Its {children} task{children === 1 ? "" : "s"} {children === 1 ? "is" : "are"} deleted the same way.
-            </span>
+    <ConfirmModal
+      title="Delete task"
+      width="max-w-lg"
+      body={
+        <>
+          <p>
+            This stops any running agent, deletes the thread, and removes its worktree, discarding any uncommitted changes.
+            {task.subproject && children > 0 && (
+              <span className="text-amber-200/90">
+                {" "}
+                Its {children} task{children === 1 ? "" : "s"} {children === 1 ? "is" : "are"} deleted the same way.
+              </span>
+            )}
+          </p>
+          {task.branch && (
+            <Toggle
+              checked={deleteBranch}
+              onChange={setDeleteBranch}
+              label={task.subproject && children > 0 ? `Also delete branch ${task.branch} and its tasks' branches` : `Also delete branch ${task.branch}`}
+            />
           )}
-        </p>
-        {task.branch && (
-          <Toggle
-            checked={deleteBranch}
-            onChange={setDeleteBranch}
-            label={task.subproject && children > 0 ? `Also delete branch ${task.branch} and its tasks' branches` : `Also delete branch ${task.branch}`}
-          />
-        )}
-        <ModalFooter className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={go}>
-            Delete
-          </Button>
-        </ModalFooter>
-      </div>
-    </Modal>
+        </>
+      }
+      action="Delete"
+      danger
+      onConfirm={go}
+      onClose={onClose}
+    />
   );
 }
 

@@ -1,14 +1,38 @@
 //! Relaying websockets (terminals) from the UI to a host: straight through for a host we
 //! reach over HTTP, or as `WsOpen`/`WsMsg`/`WsClose` messages over a host's tunnel.
 
-use anyhow::Result;
+use std::time::Duration;
+
+use anyhow::{Result, bail};
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket};
 use base64::Engine;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as TMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Request as ClientRequest;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame as TCloseFrame;
+
+/// How often each end of a link (and a relayed websocket) pings the other, so a connection that
+/// died without closing (a NAT mapping that expired, a laptop that slept) is noticed. As the broker does.
+pub const PING: Duration = if cfg!(test) { Duration::from_millis(300) } else { Duration::from_secs(20) };
+
+/// A link we've heard nothing from (not even a pong) for this long is gone.
+pub const SILENCE: Duration = if cfg!(test) { Duration::from_secs(3) } else { Duration::from_secs(60) };
+
+/// How long opening a websocket may take.
+const CONNECT_TIMEOUT: Duration = if cfg!(test) { Duration::from_secs(5) } else { Duration::from_secs(30) };
+
+pub type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Open a websocket, giving up after `CONNECT_TIMEOUT` (a host that doesn't answer would otherwise hold
+/// it for as long as the system's TCP timeout).
+pub async fn open(req: ClientRequest) -> Result<WsStream> {
+    match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(req)).await {
+        Ok(r) => Ok(r?.0),
+        Err(_) => bail!("no answer in {}s", CONNECT_TIMEOUT.as_secs()),
+    }
+}
 
 /// One websocket message, whichever library carried it.
 #[derive(Debug)]
@@ -46,13 +70,25 @@ impl Frame {
 pub async fn connect(url: &str, token: &str) -> Result<Pipe> {
     let mut req = url.into_client_request()?;
     req.headers_mut().insert("Authorization", format!("Bearer {token}").parse()?);
-    let (ws, _) = tokio_tungstenite::connect_async(req).await?;
-    let (mut sink, mut stream) = ws.split();
+    let (mut sink, mut stream) = open(req).await?.split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Frame>();
     let (in_tx, in_rx) = mpsc::unbounded_channel::<Frame>();
     tokio::spawn(async move {
+        let mut ping = tokio::time::interval(PING);
+        let quiet = tokio::time::sleep(SILENCE);
+        tokio::pin!(quiet);
         loop {
             tokio::select! {
+                _ = ping.tick() => {
+                    if sink.send(TMessage::Ping(Default::default())).await.is_err() {
+                        let _ = in_tx.send(Frame::Close(None));
+                        break;
+                    }
+                }
+                _ = &mut quiet => {
+                    let _ = in_tx.send(Frame::Close(Some((1011, "host went quiet".into()))));
+                    break;
+                }
                 f = out_rx.recv() => {
                     let msg = match f {
                         Some(Frame::Text(t)) => TMessage::Text(t.into()),
@@ -66,6 +102,7 @@ pub async fn connect(url: &str, token: &str) -> Result<Pipe> {
                     }
                 }
                 m = stream.next() => {
+                    quiet.as_mut().reset(tokio::time::Instant::now() + SILENCE);
                     let f = match m {
                         Some(Ok(TMessage::Text(t))) => Frame::Text(t.to_string()),
                         Some(Ok(TMessage::Binary(b))) => Frame::Binary(b.to_vec()),

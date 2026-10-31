@@ -598,17 +598,41 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=60; COMMIT;"))?;
     }
     if version < 61 {
+        // The thread that helps get a project's folder ready for worktrees (see Project::setup_task_id).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='setup_task_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN setup_task_id TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=61; COMMIT;"))?;
+    }
+    if version < 62 {
+        // The devices that get this board's notifications by Web Push (see push.rs).
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS push_subscriptions (
+               id TEXT PRIMARY KEY,
+               endpoint TEXT NOT NULL UNIQUE,
+               p256dh TEXT NOT NULL,
+               auth TEXT NOT NULL,
+               name TEXT NOT NULL DEFAULT '',
+               events TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               last_sent_at TEXT,
+               last_error TEXT
+             );
+             PRAGMA user_version=62; COMMIT;",
+        )?;
+    }
+    if version < 63 {
         // Where a project's tasks' pull requests are previewed (see Project::pr_preview_url).
         let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='pr_preview_url'", [], |r| r.get(0))?;
         let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN pr_preview_url TEXT;" };
-        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=61; COMMIT;"))?;
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=63; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 61;
+pub const VERSION: i64 = 63;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1082,6 +1106,14 @@ pub struct Project {
     /// Whether the repo is a git repository (looked up when the project is loaded).
     #[serde(default)]
     pub is_git: bool,
+    /// Whether it has a commit checked out, which a worktree needs to branch from (looked up
+    /// when the project is loaded; false when it isn't a git repository).
+    #[serde(default)]
+    pub has_commits: bool,
+    /// The task whose thread helps the user get the folder ready for worktrees (a git
+    /// repository with a commit), which the board shows in its place until it is (API 73).
+    #[serde(default)]
+    pub setup_task_id: Option<String>,
     /// Falls back to the host's default mode when unset.
     pub permission_mode: Option<String>,
     pub model: Option<String>,
@@ -1145,6 +1177,8 @@ impl Project {
             status_scripts: json_or_default(r.get("status_scripts")?),
             use_worktrees: r.get("use_worktrees")?,
             is_git: crate::util::is_git_root(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            has_commits: crate::util::has_commits(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            setup_task_id: r.get("setup_task_id")?,
             permission_mode: r.get("permission_mode")?,
             model: r.get("model")?,
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
@@ -1795,6 +1829,13 @@ pub fn list_tasks_for_project(c: &Connection, project_id: &str, kind: &str) -> R
     Ok(rows)
 }
 
+/// All of a project's threads, whatever their kind.
+pub fn project_threads(c: &Connection, project_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE project_id=?1 ORDER BY created_at")?;
+    let rows = st.query_map([project_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 /// A profile's group tasks (see Task::group_name), including any whose group is gone.
 pub fn list_group_tasks(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' ORDER BY position")?;
@@ -1887,6 +1928,13 @@ pub fn list_profile_scratch(c: &Connection, profile_id: &str) -> Result<Vec<Task
         "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='scratch' ORDER BY last_activity_at DESC",
     )?;
     let rows = st.query_map([profile_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// Every task on this host (not review threads).
+pub fn list_all_tasks(c: &Connection) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE kind='task'")?;
+    let rows = st.query_map([], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 
@@ -2133,7 +2181,23 @@ pub fn end_position(c: &Connection, project_id: Option<&str>, status: &str, kind
     )?)
 }
 
+/// Adds a thread. In a savepoint, so one that fails doesn't use up its project's next key number
+/// (and it works within a transaction as well).
 pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
+    c.execute_batch("SAVEPOINT insert_task")?;
+    match insert_task_now(c, t) {
+        Ok(task) => {
+            c.execute_batch("RELEASE insert_task")?;
+            Ok(task)
+        }
+        Err(e) => {
+            let _ = c.execute_batch("ROLLBACK TO insert_task; RELEASE insert_task");
+            Err(e)
+        }
+    }
+}
+
+fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
     let id = new_id();
     let ts = now();
     let mut number = 0i64;
@@ -2224,7 +2288,7 @@ const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
     "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
-    "archived_at", "github_account", "watch_pull_requests", "pr_preview_url",
+    "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
 ];
 
 pub fn update_project(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Project>> {
@@ -2691,6 +2755,17 @@ pub fn upsert_link(c: &Connection, id: &str, name: &str, mode: &str, url: Option
     Ok(get_link(c, id)?.unwrap())
 }
 
+/// Note a host that dialled in, keeping how a link we already have to it is made: a host we dial
+/// (or reach over SSH) that also dials us is still dialled after a restart.
+pub fn note_inbound_link(c: &Connection, id: &str, name: &str) -> Result<()> {
+    c.execute(
+        "INSERT INTO links (id,name,mode,last_seen,created_at) VALUES (?1,?2,'inbound',?3,?3)
+         ON CONFLICT(id) DO UPDATE SET name=?2, last_seen=?3",
+        params![id, name, now()],
+    )?;
+    Ok(())
+}
+
 // ---------- runs ----------
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2826,6 +2901,24 @@ mod tests {
         assert_eq!(c.query_row("PRAGMA synchronous", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
         drop(c);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // HA-37: a failed insert used up its project's next key number.
+    #[test]
+    fn a_task_that_cant_be_added_doesnt_use_up_a_number() {
+        let c = open(std::path::Path::new(":memory:")).unwrap();
+        let p = insert_profile(&c, "me", &[], None).unwrap();
+        let np = NewProject { id: "pr", profile_id: &p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+        insert_project(&c, np).unwrap();
+        let t = |profile_id| NewTask { profile_id, project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        assert!(insert_task(&c, t("nobody")).is_err());
+        assert_eq!(insert_task(&c, t(&p.id)).unwrap().number, 1);
+        // Within a transaction too.
+        let tx = c.unchecked_transaction().unwrap();
+        assert!(insert_task(&tx, t("nobody")).is_err());
+        assert_eq!(insert_task(&tx, t(&p.id)).unwrap().number, 2);
+        tx.commit().unwrap();
+        assert_eq!(insert_task(&c, t(&p.id)).unwrap().number, 3);
     }
 
     #[test]
@@ -3138,6 +3231,32 @@ mod tests {
     }
 
     #[test]
+    fn a_database_from_version_60_gets_setup_threads() {
+        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN setup_task_id;
+                 PRAGMA user_version=60;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','Web','WEB','/nowhere','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        // Master's version 60 stays (HA-15's watch_pull_requests), and projects from before have no setup thread yet.
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!((p.watch_pull_requests.as_str(), p.setup_task_id), ("off", None));
+        assert_eq!(update_project(&c, "pr", &[("setup_task_id", json!("t"))]).unwrap().unwrap().setup_task_id.as_deref(), Some("t"));
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn a_database_from_version_48_has_its_done_tasks_done_since_they_last_changed() {
         let path = std::env::temp_dir().join(format!("huntaway-v48-{}.db", crate::util::new_id()));
         {
@@ -3292,6 +3411,24 @@ mod tests {
     }
 
     #[test]
+    fn a_database_from_version_61_gets_push_subscriptions() {
+        let path = std::env::temp_dir().join(format!("huntaway-v61-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch("DROP TABLE push_subscriptions; PRAGMA user_version=61;").unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('s','https://x/1','k','a','{}','1')", []).unwrap();
+        // One per endpoint.
+        assert!(c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('t','https://x/1','k','a','{}','1')", []).is_err());
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn a_database_from_version_53_gets_pull_request_watches() {
         let path = std::env::temp_dir().join(format!("huntaway-v53-{}.db", crate::util::new_id()));
         {
@@ -3377,14 +3514,14 @@ mod tests {
     }
 
     #[test]
-    fn a_database_at_version_60_gets_projects_pr_preview_url() {
-        // As master's build left it, with watch_pull_requests (60) and no pr_preview_url yet.
-        let path = std::env::temp_dir().join(format!("huntaway-v60-{}.db", crate::util::new_id()));
+    fn a_database_at_version_62_gets_projects_pr_preview_url() {
+        // As master's build left it, with push_subscriptions (62) and no pr_preview_url yet.
+        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(
                 "ALTER TABLE projects DROP COLUMN pr_preview_url;
-                 PRAGMA user_version=60;
+                 PRAGMA user_version=62;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
                  INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
                    VALUES ('pr','p','P','P','/x','/s','/w','1');",

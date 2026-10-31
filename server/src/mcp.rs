@@ -341,9 +341,13 @@ fn board_tools() -> Value {
         },
         {
             "name": "create_project",
-            "description": "Add a project (a local repository directory) to your profile's board (or, with profile, to that profile's). A missing directory is created. Only when the user asks for a new project: first check list_projects, since the project may already be on another profile's board, and if it might be on a board you can't use, ask the user instead.",
+            "description": "Add a project (a local repository directory) to your profile's board (or, with profile, to that profile's). A missing directory is created. Only when the user asks for a new project: first check list_projects, since the project may already be on another profile's board, and if it might be on a board you can't use, ask the user instead. \
+                It asks the user to approve the folder first (say why in reason): the call waits for their answer, and if they don't approve it nothing is added.",
             "inputSchema": {"type": "object", "properties": {
-                "name": {"type": "string"}, "repo_path": {"type": "string"}, "profile": profile
+                "name": {"type": "string"},
+                "repo_path": {"type": "string", "description": "The folder, as an absolute path or starting with ~/"},
+                "profile": profile,
+                "reason": {"type": "string", "description": "Why you're adding it, shown to the user when they're asked to approve it"}
             }, "required": ["repo_path"]}
         }
     ]);
