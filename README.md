@@ -441,7 +441,23 @@ Away from home, without Tailscale or a VPN, a host can be reached through a **br
 (`huntaway-broker`, in `server/broker`): a small public relay that keeps nothing but the list of
 hosts connected to it. The host dials out to it and keeps one websocket open, and the broker
 passes each request it gets down that websocket. The host answers it from its own server, as if
-the client were on the LAN, so no inbound port is needed:
+the client were on the LAN, so no inbound port is needed.
+
+The broker stays in the traffic path for the whole session: `browser or hub ↔ broker ↔ host`.
+It relays HTTP requests and responses (including uploads), board events and terminal websockets;
+it doesn't just introduce the two ends or hand them off to a direct connection. Access through
+its URL depends on the broker staying available and uses its bandwidth. Connecting to the host's
+LAN or Tailscale/VPN URL bypasses the broker, even when that host also has `--broker` enabled.
+Agents still run on the host; their own calls to model providers and git remotes aren't routed
+through the broker.
+
+A **hub** combines linked hosts into one board and forwards requests to them; the **broker** makes
+a host reachable at a public URL. If you open a hub's board through a broker, the path to a linked
+host is `browser ↔ broker ↔ hub ↔ linked host`. The hub uses the link configured in Settings → Hosts
+for that last hop. A link made with a broker URL (**Add host** or `--hub`) also keeps that broker in
+the traffic path; a direct link bypasses it.
+
+To expose a host through a broker:
 
 ```sh
 huntaway serve --broker https://broker.example.com --broker-token <broker token>   # or IA_BROKER, IA_BROKER_TOKEN

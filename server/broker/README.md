@@ -1,9 +1,15 @@
 # huntaway-broker
 
 A public relay for Huntaway hosts that can't be reached directly (at home, behind NAT, without Tailscale or a VPN).
-Hosts dial out to it and keep a websocket open; browsers and hubs reach them through it. How hosts connect and how
-a request picks a host is in the main README, *Reaching a host from anywhere*; the wire protocol is in
-`src/proto.rs`.
+Hosts dial out to it and keep a websocket open; browsers and hubs reach them through it. The broker relays all HTTP
+requests and responses and websocket traffic sent to its host URLs for as long as they're in use, including uploads,
+board events and terminals. It doesn't hand clients off to a direct connection, so plan for the bandwidth and
+availability of an ongoing relay. Clients using a host's LAN or Tailscale/VPN URL bypass it; enabling `--broker`
+doesn't route the host's other network traffic through it.
+
+A hub combines linked hosts into one board; the broker provides public access to a host, which may itself be that
+hub. How hosts connect and how a request picks a host is in the main README,
+[Reaching a host from anywhere](../../README.md#reaching-a-host-from-anywhere); the wire protocol is in `src/proto.rs`.
 
 ## Running it
 
