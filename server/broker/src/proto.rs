@@ -34,15 +34,25 @@ pub const WINDOW: usize = 256 << 10;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Ctl {
-    /// Host → broker, first: which host this is.
-    Hello { name: String, host_id: String, version: String, protocol: u32 },
+    /// Host → broker, first: which host this is. `key` is a secret the host keeps: the broker
+    /// keeps `name` for the first host to take it (its `host_id` and `key`), and refuses it to
+    /// others. Hosts from before keys don't send one, and are known by `host_id` alone.
+    Hello {
+        name: String,
+        host_id: String,
+        version: String,
+        protocol: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     /// Broker → host: it's reachable as `name` now.
     Welcome { name: String },
     /// Broker → host, every 20 seconds, so the connection is seen to be alive (websocket pings
     /// don't get through every proxy). The host answers `Pong`.
     Ping,
     Pong,
-    /// Broker → host: not taken (a bad name, another protocol). The broker hangs up after it.
+    /// Broker → host: not taken (a bad name, a name kept for another host, another protocol). The
+    /// broker hangs up after it.
     Refused { error: String },
     /// Broker → host: a client's request. `path` includes the query string.
     Req {

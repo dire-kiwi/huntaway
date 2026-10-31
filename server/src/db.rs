@@ -2736,6 +2736,17 @@ pub fn upsert_link(c: &Connection, id: &str, name: &str, mode: &str, url: Option
     Ok(get_link(c, id)?.unwrap())
 }
 
+/// Note a host that dialled in, keeping how a link we already have to it is made: a host we dial
+/// (or reach over SSH) that also dials us is still dialled after a restart.
+pub fn note_inbound_link(c: &Connection, id: &str, name: &str) -> Result<()> {
+    c.execute(
+        "INSERT INTO links (id,name,mode,last_seen,created_at) VALUES (?1,?2,'inbound',?3,?3)
+         ON CONFLICT(id) DO UPDATE SET name=?2, last_seen=?3",
+        params![id, name, now()],
+    )?;
+    Ok(())
+}
+
 // ---------- runs ----------
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
