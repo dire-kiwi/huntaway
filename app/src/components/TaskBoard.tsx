@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Archive, ChevronLeft, ChevronRight, GanttChart, Inbox, Kanban, List, MonitorPlay, Network, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type MouseEvent, type ReactNode, type UIEvent, type WheelEvent } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   api,
   canRunAgents,
@@ -114,7 +115,6 @@ export function TaskBoard({
   const project = choices[0] as Project | undefined;
   const hosts = useStore((s) => s.hosts);
   const hostOf = (t: Task) => hosts.find((h) => h.id === t.host_id);
-  const all = useStore((s) => s.tasks);
   const upsertTask = useStore((s) => s.upsertTask);
   const [newIn, setNewIn] = useState<Status | null>(null);
   const [view, setView] = useState<BoardView>(() => {
@@ -180,15 +180,28 @@ export function TaskBoard({
   // Project ids are only unique on their host.
   const byId = useMemo(() => new Map(projects.map((p) => [`${p.host_id}:${p.id}`, p])), [projects]);
 
+  // The board's tasks, picked in the store: an event about a task on another board leaves this one be.
+  // Worked out again only when the tasks change, and the same list while it has the same tasks.
+  const pickTasks = useMemo(() => {
+    let from: Record<string, Task> | undefined;
+    let picked: Task[] = [];
+    return (s: { tasks: Record<string, Task> }) => {
+      if (s.tasks === from) return picked;
+      from = s.tasks;
+      const list = Object.values(from);
+      picked = [
+        ...list.filter((t) => t.project_id && byId.has(`${t.host_id}:${t.project_id}`) && t.kind === "task" && (t.parent_id ?? null) === parentId),
+        ...(group && hostId && !subproject ? groupTasks(list, hostId, group) : []),
+        ...(profiles ? list.filter((t) => !t.project_id && t.kind === "task" && profiles.has(`${t.host_id}:${t.profile_id}`)) : []),
+      ];
+      return picked;
+    };
+  }, [byId, parentId, group, hostId, subproject, profiles]);
+  const tasks = useStore(useShallow(pickTasks));
+
   // Done tasks are archived as they pass two days in Done, while the board is open too.
   const now = useClock(60_000);
   const { columns, archived } = useMemo(() => {
-    const list = Object.values(all);
-    const tasks = [
-      ...list.filter((t) => t.project_id && byId.has(`${t.host_id}:${t.project_id}`) && t.kind === "task" && (t.parent_id ?? null) === parentId),
-      ...(group && hostId && !subproject ? groupTasks(list, hostId, group) : []),
-      ...(profiles ? list.filter((t) => !t.project_id && t.kind === "task" && profiles.has(`${t.host_id}:${t.profile_id}`)) : []),
-    ];
     const by: Record<Status, Task[]> = { todo: [], in_progress: [], needs_attention: [], in_review: [], ready_for_merge: [], done: [], backlog: [] };
     const archived: Task[] = [];
     for (const t of tasks) (isArchived(t, now) ? archived : by[t.status])?.push(t);
@@ -197,7 +210,7 @@ export function TaskBoard({
     const doneAt = (t: Task) => t.done_at ?? t.updated_at;
     archived.sort((a, b) => doneAt(b).localeCompare(doneAt(a)));
     return { columns: by, archived };
-  }, [all, byId, parentId, group, hostId, subproject, profiles, now]);
+  }, [tasks, now]);
   const projectOf = (t: Task) => byId.get(`${t.host_id}:${t.project_id ?? ""}`);
 
   // What the search, filters and sort leave of `columns` and `archived`, to show. Dropping a task
@@ -343,7 +356,7 @@ export function TaskBoard({
     e.preventDefault();
     const target = dropTarget;
     setDropTarget(null);
-    const task = all[e.dataTransfer.getData("text/task-id")];
+    const task = useStore.getState().tasks[e.dataTransfer.getData("text/task-id")];
     if (task) moveTask(task, status, target?.before ?? null);
   };
   const drops: Drops = { onDragOver, onDrop, onLeave: () => setDropTarget(null) };
@@ -367,6 +380,7 @@ export function TaskBoard({
     const resolution = hostSupports(host, 19) ? (status === "done" ? (task.resolution ?? "done") : null) : task.resolution;
     // As the server sets it (API 53). Hosts from before go by the time the task last changed, which this move changes too.
     const done_at = status !== "done" ? null : unarchive || task.status !== "done" ? new Date().toISOString() : task.done_at;
+    const all = useStore.getState().tasks;
     const moved = moves.map((m) => ({ before: all[m.id], position: m.position }));
     upsertTask({ ...task, status, position, resolution, done_at });
     for (const m of moved) upsertTask({ ...m.before, position: m.position });
@@ -419,7 +433,7 @@ export function TaskBoard({
     [hosts],
   );
 
-  const menuTask = menu && all[menu.taskId];
+  const menuTask = useStore((s) => (menu ? s.tasks[menu.taskId] : null));
   /** The columns to move a task to from its menu: all but Done where Done's resolutions follow them. */
   const moveItems = (task: Task): MenuItem[] =>
     statuses

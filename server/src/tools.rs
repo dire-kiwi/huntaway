@@ -786,7 +786,7 @@ async fn update_project(s: &Shared, ctx: &Ctx, p: &db::Project, args: &Value, re
     // What would change, found by making the change and rolling it back, so it's judged on what
     // the project would be, however each setting is stored. Checked before asking, so the user
     // only sees changes that can be made.
-    let fields = api::project_fields(s, p, &body)?;
+    let fields = api::project_fields(s, p, &body).await?;
     let after = db::preview_project_update(&s.db(), &p.id, &fields)?.ok_or_else(|| ToolError::NotFound(format!("project {}", p.id)))?;
     let (before, after) = (json!(p), json!(after));
     let mut changed: Vec<&str> = fields.iter().map(|(k, _)| *k).filter(|k| before[*k] != after[*k]).collect();

@@ -50,6 +50,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type RewindResult, type Task, type Turn } from "../api";
 import { useHost, useProject, useStore, useThreadMessages } from "../store";
+import { useDelta } from "../deltas";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
@@ -1001,11 +1002,22 @@ function useStableGroupKeys(items: Item[], taskId: string): Item[] {
   }, [items, taskId]);
 }
 
-/** The agent's reply as it streams in (not yet saved as a message). `onGrow` keeps the thread scrolled to it. */
+/**
+ * The agent's reply as it streams in (not yet saved as a message), as plain text: drawing it as markdown
+ * again for each token would take longer the longer it got. The saved message is markdown. A paragraph
+ * each, so a token changes (and lays out again) only the last one. `onGrow` keeps the thread scrolled to it.
+ */
 function StreamingText({ taskId, onGrow }: { taskId: string; onGrow: () => void }) {
-  const delta = useStore((s) => s.deltas[taskId]);
+  const delta = useDelta(taskId);
   useLayoutEffect(onGrow, [delta, onGrow]);
-  return delta ? <Markdown text={delta} /> : null;
+  if (!delta) return null;
+  return (
+    <div className="prose-chat break-words whitespace-pre-wrap">
+      {delta.split(/\n{2,}/).map((p, i) => (
+        <p key={i}>{p}</p>
+      ))}
+    </div>
+  );
 }
 
 // Memoized: the thread redraws for changes to its task (e.g. its context use), which leave the items as they were.

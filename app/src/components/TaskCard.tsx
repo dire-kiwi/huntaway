@@ -1,10 +1,9 @@
 import clsx from "clsx";
 import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Kanban, Layers } from "lucide-react";
-import { memo, useMemo, type KeyboardEvent, type MouseEvent } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { memo, type KeyboardEvent, type MouseEvent } from "react";
 import { agentWaiting, isScratch, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../api";
 import { inGroupTaskGroup } from "../projectGroups";
-import { navigate, openTask, usePanel } from "../router";
+import { navigate, openTask, usePanelOpen } from "../router";
 import { isGroupTask, keyPrefix, useStore } from "../store";
 import { ExternalLinkIcon } from "./ExternalLinks";
 import { ReviewBadge } from "./Review";
@@ -22,34 +21,65 @@ export type Progress = { done: number; total: number };
 // A subproject's scratch tasks aren't part of its work.
 const subprojectWork = (t: Task) => t.kind === "task" && !!t.parent_id && !isScratch(t);
 
+type StoreState = ReturnType<typeof useStore.getState>;
+
+/**
+ * A store selector of progress by id, worked out again only when the tasks or projects change, which
+ * keeps each progress object that's the same as before (and the record, when they all are): a task
+ * event doesn't redraw the memoized cards whose progress it leaves be, or what shows none of it.
+ */
+function progressSelector(compute: (tasks: Record<string, Task>, projects: Project[]) => Record<string, Progress>) {
+  let tasks: Record<string, Task> | undefined;
+  let projects: Project[] | undefined;
+  let last: Record<string, Progress> = {};
+  return (s: StoreState) => {
+    if (s.tasks === tasks && s.projects === projects) return last;
+    tasks = s.tasks;
+    projects = s.projects;
+    const next = compute(tasks, projects);
+    let same = Object.keys(next).length === Object.keys(last).length;
+    for (const [id, p] of Object.entries(next)) {
+      const before = last[id];
+      if (before && before.done === p.done && before.total === p.total) next[id] = before;
+      else same = false;
+    }
+    if (!same) last = next;
+    return last;
+  };
+}
+
+const subprojectProgress = progressSelector((all) => {
+  const by: Record<string, Progress> = {};
+  for (const t of Object.values(all)) {
+    if (!subprojectWork(t)) continue;
+    const p = (by[t.parent_id!] ??= { done: 0, total: 0 });
+    p.total++;
+    if (t.status === "done") p.done++;
+  }
+  return by;
+});
+
+const createdProgress = progressSelector((all, projects) => {
+  const by: Record<string, Progress> = {};
+  for (const t of Object.values(all)) {
+    if (t.kind !== "task" || !t.created_by) continue;
+    const creator = all[t.created_by];
+    if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : taskLabels(creator).includes("plan"))) continue;
+    const p = (by[t.created_by] ??= { done: 0, total: 0 });
+    p.total++;
+    if (t.status === "done") p.done++;
+  }
+  return by;
+});
+
 /** Progress of every subproject on the board, by subproject id. */
 export function useProgress(): Record<string, Progress> {
-  const all = useStore((s) => s.tasks);
-  return useMemo(() => {
-    const by: Record<string, Progress> = {};
-    for (const t of Object.values(all)) {
-      if (!subprojectWork(t)) continue;
-      const p = (by[t.parent_id!] ??= { done: 0, total: 0 });
-      p.total++;
-      if (t.status === "done") p.done++;
-    }
-    return by;
-  }, [all]);
+  return useStore(subprojectProgress);
 }
 
 /** One subproject's progress (none without tasks). Unlike useProgress, it only re-renders when that changes. */
 export function useSubprojectProgress(id: string): Progress | undefined {
-  return useStore(
-    useShallow((s) => {
-      const p = { done: 0, total: 0 };
-      for (const t of Object.values(s.tasks)) {
-        if (t.parent_id !== id || !subprojectWork(t)) continue;
-        p.total++;
-        if (t.status === "done") p.done++;
-      }
-      return p.total ? p : undefined;
-    }),
-  );
+  return useStore((s) => subprojectProgress(s)[id]);
 }
 
 /**
@@ -57,20 +87,7 @@ export function useSubprojectProgress(id: string): Progress | undefined {
  * the group task's id; and for a plan in a project, of the tasks its agent broke it into.
  */
 export function useCreatedProgress(): Record<string, Progress> {
-  const all = useStore((s) => s.tasks);
-  const projects = useStore((s) => s.projects);
-  return useMemo(() => {
-    const by: Record<string, Progress> = {};
-    for (const t of Object.values(all)) {
-      if (t.kind !== "task" || !t.created_by) continue;
-      const creator = all[t.created_by];
-      if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : taskLabels(creator).includes("plan"))) continue;
-      const p = (by[t.created_by] ??= { done: 0, total: 0 });
-      p.total++;
-      if (t.status === "done") p.done++;
-    }
-    return by;
-  }, [all, projects]);
+  return useStore(createdProgress);
 }
 
 export function GroupTaskBadge({ progress, compact }: { progress?: Progress; compact?: boolean }) {
@@ -251,7 +268,7 @@ export const TaskCard = memo(function TaskCard({
   draggable?: boolean;
   onMenu?: OnMenu;
 }) {
-  const open = usePanel()?.taskId === task.id;
+  const open = usePanelOpen(task.id);
   return (
     <div
       draggable={draggable}
@@ -308,7 +325,7 @@ export const TaskCard = memo(function TaskCard({
 });
 
 export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }: { task: Task; project?: Project; progress?: Progress; onMenu?: OnMenu }) {
-  const open = usePanel()?.taskId === task.id;
+  const open = usePanelOpen(task.id);
   return (
     <div
       draggable

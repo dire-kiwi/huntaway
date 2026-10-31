@@ -5,7 +5,8 @@
 //
 // It opens the task's project board, opens the task (give it a long thread), then feeds the page websocket
 // events as agents would send them (through page.routeWebSocket, so nothing is written on the server):
-// streamed tokens, task changes and new messages, with the task open and closed. For each it prints the
+// streamed tokens (and a long markdown reply), task changes and new messages, with the task open and closed, and opening
+// other tasks in turn, and events about a task on another board. For each it prints the
 // script, layout and total main-thread time (Chrome's Performance metrics) and the JS heap. With --cpu
 // it also prints the functions that took the most time (build the UI with `npx vite build --minify false`
 // first for readable names).
@@ -94,19 +95,23 @@ const togglePanel = (id) =>
     history.pushState(null, "", id ? `${location.pathname}?task=${id}` : location.pathname);
     dispatchEvent(new PopStateEvent("popstate"));
   }, id);
-const deltas = async (n) => {
+const deltas = async (n, word = (i) => `word${i} `, ms = 20) => {
   for (let i = 0; i < n; i++) {
-    send({ type: "delta", task_id: task.id, text: `word${i} ` });
-    await sleep(20);
+    send({ type: "delta", task_id: task.id, text: word(i) });
+    await sleep(ms);
   }
   send({ type: "delta_reset", task_id: task.id });
 };
-const taskEvents = async (n) => {
+// A long reply with markdown in it: a paragraph break, a list item or a code span now and then.
+const markdownWord = (i) => (i % 40 === 39 ? "\n\n" : i % 15 === 14 ? "\n- **item** " : i % 7 === 6 ? `\`code${i}\` ` : `word${i} `);
+const taskEvents = async (n, of = task) => {
   for (let i = 0; i < n; i++) {
-    send({ type: "task", task: { ...task, last_activity_at: new Date().toISOString() } });
+    send({ type: "task", task: { ...of, last_activity_at: new Date().toISOString() } });
     await sleep(50);
   }
 };
+// A task in a project that isn't on the board (the server doesn't have it: the event is made up here).
+const elsewhere = { ...task, id: "ui-profile-elsewhere", number: 99999, project_id: "ui-profile-elsewhere", parent_id: null };
 
 if (o.changes) {
   await measure("load the board", async () => {
@@ -154,6 +159,7 @@ await measure("open the task", async () => {
   await page.locator(".prose-chat, :text('No agent has worked on this yet')").first().waitFor();
 });
 await measure("300 streamed tokens, task open", () => deltas(300));
+await measure("a 1000-token markdown reply, task open", () => deltas(1000, markdownWord, 10));
 await measure("100 task events, task open", () => taskEvents(100));
 await measure("50 new messages, task open", async () => {
   for (let i = 0; i < 50; i++) {
@@ -166,6 +172,15 @@ await measure("50 new messages, task open", async () => {
 await togglePanel(null);
 await measure("300 streamed tokens, task closed", () => deltas(300));
 await measure("100 task events, board only", () => taskEvents(100));
+await measure("100 events about a task on another board", () => taskEvents(100, elsewhere));
+await measure("open 20 other tasks in turn", async () => {
+  const ids = (await page.$$eval("[data-task]", (els) => els.map((e) => e.dataset.task))).filter((id) => id !== task.id).slice(0, 20);
+  for (const id of ids) {
+    await togglePanel(id);
+    await sleep(150);
+  }
+  await togglePanel(null);
+});
 await measure("10 s idle on the board", () => sleep(10000));
 await ui.close();
 
