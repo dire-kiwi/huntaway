@@ -627,7 +627,9 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
 }
 
 /// Take `name` for `host`, unless it's kept for another. A host that connects again (its old
-/// connection not yet seen to drop) takes its name back, and the old connection is closed.
+/// connection not yet seen to drop) takes its name back, and the old connection is closed. With a
+/// state file, a name that can't be saved isn't taken: a host welcomed without it on disk could
+/// lose its name to another when the broker restarts.
 fn take_name(b: &Broker, name: &str, owner: Owner, host: &Arc<Host>) -> Result<(), String> {
     let mut names = b.names.lock().unwrap();
     let hold = b.cfg.hold;
@@ -641,7 +643,14 @@ fn take_name(b: &Broker, name: &str, owner: Owner, host: &Arc<Host>) -> Result<(
         return Err(format!("the name {name} is taken: {why}. Give this host another name (--broker-name)"));
     }
     let old = names.insert(name.into(), Name { owner, host: Some(host.clone()), left: Instant::now() });
-    b.save_or_warn(&names);
+    if let Err(e) = b.save(&names) {
+        tracing::warn!("host {name}: refused, as the name couldn't be saved: {e:#}");
+        match old {
+            Some(old) => names.insert(name.into(), old),
+            None => names.remove(name),
+        };
+        return Err(format!("the broker couldn't save the name {name} for this host (see its log), so it can't take it now. It will try again"));
+    }
     if let Some(old) = old.and_then(|n| n.host) {
         let _ = old.tx.send(Message::Close(Some(CloseFrame { code: 4000, reason: "replaced by a newer connection".into() })));
     }
@@ -1235,6 +1244,30 @@ mod tests {
             let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
             assert_eq!(saved["names"]["old"]["host_id"], "other-id");
             assert_eq!(saved["names"]["keyless"]["key_sha256"], hex(hash("keyless-key")));
+            let _ = std::fs::remove_dir_all(state.parent().unwrap());
+        })
+    }
+
+    #[test]
+    fn a_name_that_cant_be_saved_isnt_taken() {
+        run(async {
+            let state = state_file("unsaved");
+            let b = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
+            let _desktop = named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap();
+            // The file can't be written from now on (as on a full disk): its temporary file's name is taken by a directory.
+            let tmp = state.with_file_name(".state.json.tmp");
+            std::fs::create_dir(&tmp).unwrap();
+            let error = named_host(&b, "laptop", "laptop-id", Some("laptop-key")).await.unwrap_err();
+            assert!(error.contains("couldn't save the name laptop"), "{error}");
+            assert!(who(&b, "laptop").await.contains("isn't connected"));
+            // A host connecting again is refused too, and its connection carries on.
+            named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap_err();
+            assert_eq!(who(&b, "desktop").await, "desktop-id");
+            // After a restart, desktop is still kept for its host, and laptop was never taken.
+            std::fs::remove_dir(&tmp).unwrap();
+            let b2 = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
+            named_host(&b2, "desktop", "other-id", Some("other-key")).await.unwrap_err();
+            let _laptop = named_host(&b2, "laptop", "other-id", Some("other-key")).await.unwrap();
             let _ = std::fs::remove_dir_all(state.parent().unwrap());
         })
     }

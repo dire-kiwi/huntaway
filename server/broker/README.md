@@ -45,7 +45,9 @@ host asking for it is refused while that one is connected, and for an hour after
 broker writes the names taken to that file (each name's host id and a SHA-256 of its key, so the file doesn't give
 away what to connect with) whenever a host connects or goes, and reads it when it starts. A host that was connected
 when the broker stopped has its name kept for an hour from when the broker starts again, and one that had gone keeps
-what was left of its hour. A file that can't be read or written stops the broker from starting; none yet is fine.
+what was left of its hour. A file that can't be read or written stops the broker from starting; none yet is fine. If it can't be written later
+(a full disk, say), a host taking or coming back to a name is refused until it can, rather than given a name the file
+doesn't keep for it; hosts already connected stay connected.
 Without `--state`, names are kept in memory only: after a restart, the first host to connect under a name has it.
 To let a name go before its hour is up, stop the broker, take the name out of the file and start it again.
 
