@@ -4,7 +4,7 @@ import { taskKey, useProject, useStore } from "../store";
 import { Button, Modal, ModalFooter, prLabel } from "./ui";
 
 /** Hosts from this API version say whether a task's work is merged (`api.unmerged`). */
-export const UNMERGED_API = 70;
+export const UNMERGED_API = 75;
 
 /**
  * Asks before a task whose work isn't merged moves into Done (with the Done resolution): `confirmDone(task)` resolves

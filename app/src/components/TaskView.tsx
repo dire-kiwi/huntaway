@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentType, hostStatuses, isScratch, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -16,7 +16,7 @@ import { AgentsPill } from "./AgentsPill";
 import { ContextPill } from "./Context";
 import { inGroupTaskGroup } from "../projectGroups";
 import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgress, useSubprojectProgress } from "./Board";
-import { documentInfo, DocumentView, TaskTypeBadge } from "./Document";
+import { documentInfo, DocumentView, LABEL_INFO, TaskTypeBadge } from "./Document";
 import { ReviewDot, reviewParts, ReviewSummary } from "./Review";
 import { Dependencies } from "./Dependencies";
 import { useConfirmDone } from "./ConfirmDone";
@@ -47,6 +47,8 @@ const NO_REVIEW = <div className="rounded-xl border border-dashed border-line p-
  * `tool:<id>` for a terminal tool, or for a plan, artifact or diagram task its type, for its document.
  */
 type Tab = string;
+
+const isLabel = (t: Tab): t is DocumentType => LABELS.includes(t as DocumentType);
 const toolTab = (id: string) => `tool:${id}`;
 /** A terminal or a terminal tool: shown expanded, without the details column. */
 const isTerminalTab = (t: Tab) => t === "terminal" || t.startsWith("tool:");
@@ -211,20 +213,23 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       </div>
     );
   if (task.kind === "review") return <ReviewThreadView thread={task} mode={mode} />;
-  // A group or scratch task works in no repository, so it has no changes of its own; nor does a
-  // plan, artifact or diagram, which has its document instead.
+  // A group or scratch task works in no repository, so it has no changes of its own; nor does one
+  // that makes only its documents. Each of a task's labels has a tab for its document, first.
   const group = isGroupTask(task) ? task.group_name! : undefined;
   const scratch = isScratch(task);
   // One in no project is on its profile's board (a scratch task can be in a project since API 51).
   const profileScratch = scratch && !task.project_id;
-  const docType = documentType(task);
-  const tabs: Tab[] = docType ? [docType, "thread"] : group || scratch ? ["thread"] : ["thread", "changes"];
-  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docType && !scratch;
+  const labels = taskLabels(task);
+  const docsOnly = documentsOnly(task);
+  const tabs: Tab[] = [...labels, ...(group || scratch || docsOnly ? ["thread"] : ["thread", "changes"])];
+  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch;
   if (reviews) tabs.push("review");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
   // Until the effect above drops it, a details tab while wide shows the thread beside the column.
-  const shown = (wide && tab === "details") || (tab === "review" && !reviews) ? "thread" : tab;
+  // A label taken off shows the thread instead.
+  const shown = (wide && tab === "details") || (tab === "review" && !reviews) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
+  const docShown = labels.find((l) => l === shown);
   const key = `${keyPrefix(task, project)}-${task.number}`;
   // Stopping the task also stops its review (API 33), so it can be stopped while only that runs.
   const reviewing = task.review?.state === "running" && hostSupports(host, 33);
@@ -379,9 +384,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             </>
           )}
           <span className="shrink-0 font-mono text-[12px] text-faint">{key}</span>
-          {task.task_type && (
+          {scratch && (
             <span className="shrink-0 text-[11.5px]">
-              <TaskTypeBadge type={task.task_type} />
+              <TaskTypeBadge type="scratch" />
             </span>
           )}
           <TitleEditor key={task.id} task={task} />
@@ -431,11 +436,11 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           {shown === "thread" ? (
             <Thread
               task={task}
-              cwd={task.worktree_path ?? task.work_dir ?? project?.repo_path}
+              cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
               empty={NOT_STARTED}
             />
-          ) : shown === docType ? (
-            <DocumentView key={task.id} task={task} onShowThread={() => setTab("thread")} />
+          ) : docShown ? (
+            <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={() => setTab("thread")} />
           ) : tab === "changes" ? (
             <Suspense fallback={null}>
               <ChangesView task={task} />
@@ -451,7 +456,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ) : null}
         </main>
         {/* A document, and the changes' panels, get the room. */}
-        {wide && !isTerminalTab(tab) && shown !== docType && shown !== "changes" && (
+        {wide && !isTerminalTab(tab) && !docShown && shown !== "changes" && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>
@@ -630,7 +635,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
   // A group task has no repository, so nothing to review, merge or depend on. A plan, artifact or
   // diagram has no branch to merge either.
   const groupTask = isGroupTask(task);
-  const docType = documentType(task);
+  const docsOnly = documentsOnly(task);
   // A scratch task has no repository either.
   const scratch = isScratch(task);
   const hostCount = useStore((s) => s.hosts.length);
@@ -812,9 +817,9 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
 
       {task.fanout_id && <FanoutSection task={task} />}
 
-      {(groupTask || docType === "plan") && <CreatedTasksSection task={task} />}
+      {(groupTask || taskLabels(task).includes("plan")) && <CreatedTasksSection task={task} />}
 
-      {docType && <DocumentSection task={task} />}
+      {task.kind === "task" && (hostSupports(host, LABELS_API) || taskLabels(task).length > 0) && <LabelsSection task={task} />}
 
       {scratch && (
         <Section title="Scratch">
@@ -853,7 +858,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         </Section>
       )}
 
-      {hostSupports(host, 26) && task.kind === "task" && !groupTask && !docType && !scratch && (
+      {hostSupports(host, 26) && task.kind === "task" && !groupTask && !docsOnly && !scratch && (
         <Section title="Pull request" right={task.pr_url && <PrIcon url={task.pr_url} label className="text-[11.5px] text-faint" />}>
           <TextInput
             value={task.pr_url ?? null}
@@ -867,9 +872,9 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         </Section>
       )}
 
-      {hostSupports(host, 17) && task.kind === "task" && !groupTask && !docType && !scratch && <SubprojectSection task={task} />}
+      {hostSupports(host, 17) && task.kind === "task" && !groupTask && !docsOnly && !scratch && <SubprojectSection task={task} />}
 
-      {!groupTask && !docType && !scratch && (
+      {!groupTask && !docsOnly && !scratch && (
         <Section title="Worktree">
           {!task.use_worktree && task.worktree_state === "none" ? (
             <div className="space-y-2">
@@ -1112,33 +1117,81 @@ function CreatedTasksSection({ task }: { task: Task }) {
   );
 }
 
-/** Where a plan, artifact or diagram task's agent writes its document. */
-function DocumentSection({ task }: { task: Task }) {
-  const info = documentInfo(documentType(task)!);
-  const [file, setFile] = useState<string | null>(null);
+/** A task's labels, each a document its agent writes besides its other work, shown in a tab of the task: to add and
+ *  take off (API 71), and where the agent writes them. */
+function LabelsSection({ task }: { task: Task }) {
+  const host = useHost(task.host_id);
+  const labels = taskLabels(task);
+  // On an older host they're the task's type, which stays.
+  const editable = hostSupports(host, LABELS_API);
+  const docsOnly = documentsOnly(task);
+  const [err, setErr] = useState<string | null>(null);
+  const [files, setFiles] = useState<Partial<Record<DocumentType, string>>>({});
+  const shown = labels.join(",");
   useEffect(() => {
-    api
-      .document(task.host_id, task.id)
-      .then((d) => setFile(d.file))
-      .catch(() => {});
-  }, [task.host_id, task.id]);
+    let live = true;
+    for (const l of shown ? (shown.split(",") as DocumentType[]) : [])
+      api
+        .document(task.host_id, task.id, l)
+        .then((d) => live && d.file && setFiles((f) => ({ ...f, [l]: d.file! })))
+        .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [task.host_id, task.id, shown]);
+  const toggle = (l: DocumentType) => {
+    setErr(null);
+    const next = labels.includes(l) ? labels.filter((x) => x !== l) : LABELS.filter((x) => x === l || labels.includes(x));
+    api.updateTask(task.host_id, task.id, { labels: next }).catch((e) => setErr(`Couldn't change the labels: ${(e as Error).message}`));
+  };
+  const where = isGroupTask(task) ? "group's repositories" : "project's repository";
   return (
-    <Section title={info.label}>
-      <div className="space-y-1">
-        <div className="text-[12.5px] text-muted">
-          Its agent writes {info.file} in the task's own folder, reading the {isGroupTask(task) ? "group's repositories" : "project's repository"}. The board keeps a
-          version from each turn.
-        </div>
-        {file && (
-          <Row label="File">
-            <span className="group flex items-start gap-1 font-mono text-[11px]">
-              <span className="break-all">{file}</span>
-              <button className="shrink-0 text-faint hover:text-fg" onClick={() => navigator.clipboard?.writeText(file)} title="Copy path">
-                <Copy size={11} />
+    <Section title="Labels">
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-1">
+          {(editable ? LABEL_INFO : LABEL_INFO.filter((i) => labels.includes(i.id))).map((i) => {
+            const on = labels.includes(i.id);
+            return (
+              <button
+                key={i.id}
+                disabled={!editable}
+                onClick={() => toggle(i.id)}
+                aria-pressed={on}
+                title={editable ? `${on ? "Take off" : "Add"} the ${i.label.toLowerCase()} label: ${i.hint}` : i.hint}
+                className={clsx(
+                  "flex h-6 items-center gap-1 rounded-md border px-2 text-[12px]",
+                  on ? "border-accent/50 bg-accent/10 text-accent" : "border-line text-muted hover:border-line-strong hover:text-fg",
+                  !editable && "cursor-default",
+                )}
+              >
+                {i.icon} {i.label}
               </button>
-            </span>
-          </Row>
+            );
+          })}
+        </div>
+        <div className="text-[12.5px] text-muted">
+          {docsOnly
+            ? `Rather than changing code, its agent writes ${labels.length ? "a document for each label" : "a document for each label it's given"} in the task's own folder, reading the ${where}.`
+            : labels.length
+              ? "Besides its other work, its agent writes a document for each label in the task's own folder, shown in a tab here."
+              : "A label has its agent write a document besides its other work: a plan to agree on first, an artifact or a diagram, each shown in a tab here."}{" "}
+          {labels.length > 0 && "The board keeps a version from each turn."}
+          {editable && task.running && " A label changed while its agent works reaches it the next time it starts."}
+        </div>
+        {labels.map(
+          (l) =>
+            files[l] && (
+              <Row key={l} label={documentInfo(l).label}>
+                <span className="group flex items-start gap-1 font-mono text-[11px]">
+                  <span className="break-all">{files[l]}</span>
+                  <button className="shrink-0 text-faint hover:text-fg" onClick={() => navigator.clipboard?.writeText(files[l]!)} title="Copy path">
+                    <Copy size={11} />
+                  </button>
+                </span>
+              </Row>
+            ),
         )}
+        {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
       </div>
     </Section>
   );

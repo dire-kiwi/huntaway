@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useMemo } from "react";
-import type { Project, Task } from "../api";
+import { isScratch, taskLabels, type Project, type Task } from "../api";
 import { openTask, usePanel } from "../router";
 import { keyPrefix, useStore } from "../store";
 import { RunningDot, StatusIcon, STATUS_COLOR } from "./ui";
@@ -193,7 +193,12 @@ function Node({ task, ghost, project, progress, onMenu, style }: { task: Task; g
           {keyPrefix(task, project)}-{task.number}
         </span>
         {task.subproject && <span className="text-accent">subproject</span>}
-        {task.task_type && <span className="text-accent">{task.task_type}</span>}
+        {isScratch(task) && <span className="text-accent">scratch</span>}
+        {taskLabels(task).map((l) => (
+          <span key={l} className="text-accent">
+            {l}
+          </span>
+        ))}
         {!!progress?.total && (
           <span className="tabular-nums">
             {progress.done}/{progress.total}

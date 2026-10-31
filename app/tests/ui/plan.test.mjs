@@ -66,6 +66,8 @@ test("a plan's questions are answered in it, the answers last until they're sent
     const { page } = ui;
     await ui.run([`goto /p/${project.id}?task=${plan.id}`, "wait css=iframe", "wait 2 of 3 questions answered"]);
     const answer = async () => {
+      // The task's panel slides in as it opens: a click before it's still could miss.
+      await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
       const frame = page.frames().find((f) => f !== page.mainFrame() && f.parentFrame() === page.mainFrame());
       await frame.locator("ia-question[name=notes]").scrollIntoViewIfNeeded();
       return frame;

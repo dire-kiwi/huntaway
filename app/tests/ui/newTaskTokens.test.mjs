@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { startServer, withBrowser } from "./harness.mjs";
+import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let project;
@@ -11,14 +10,13 @@ let shopfront;
 before(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
-  mkdirSync(repo);
-  execFileSync("git", ["init", "-q", repo]);
+  gitRepo(repo);
   const [profile] = await server.api("GET", "/profiles");
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
   dep = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Checkout rework" });
   // SHOP-1 is the start of SHOP-10 and SHOP-11, and SHOP of SHOPF.
   for (let i = 2; i <= 11; i++) await server.api("POST", `/projects/${project.id}/tasks`, { title: `Chore ${i}` });
-  shopfront = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shopfront", repo_path: `${server.dataDir}/shopfront`, key: "SHOPF" });
+  shopfront = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shopfront", repo_path: `${server.dataDir}/shopfront`, key: "SHOPF", use_worktrees: false });
   // A project keyed like `@none`.
   await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Nonesuch", repo_path: `${server.dataDir}/nonesuch`, key: "NONE" });
 });
@@ -40,7 +38,7 @@ test("tokens set a new task's options, and are taken out of its description", as
       "wait role=option[name=/plan/]",
       "press Tab",
       `assert ${value} === '/plan '`,
-      "wait New plan in Shop",
+      "wait New task in Shop",
       "type Price rules !son",
       "press Enter",
       "type ^hi",
@@ -64,13 +62,14 @@ test("tokens set a new task's options, and are taken out of its description", as
       ["@XYZ", true],
       ["#SHOP-1", false],
     ]);
-    assert.match(await page.locator("[aria-label='Reads as']").innerText(), /Plan\s+Shop\s+Sonnet\s+high effort\s+after SHOP-1/);
+    assert.match(await page.locator("[aria-label='Reads as']").innerText(), /Task\s+Plan\s+Shop\s+Sonnet\s+high effort\s+after SHOP-1/);
     // A chip's × takes its token out.
     await ui.run(["click [title='Remove the model']", "gone Sonnet", `assert ${value} === '/plan Price rules ^high @XYZ #SHOP-1'`, "press Control+Enter", "gone Reads as"]);
   });
   const task = await created("Price rules @XYZ");
   assert.ok(task);
-  assert.deepEqual([task.task_type, task.model, task.effort, task.depends_on], ["plan", null, "high", [dep.id]]);
+  // A plan is a label (HA-27): a code task with one.
+  assert.deepEqual([task.task_type, task.labels, task.model, task.effort, task.depends_on], [null, ["plan"], null, "high", [dep.id]]);
 });
 
 // IA-220: on a profile's board, `@` and a project's key put the task in that project. The draft keeps the tokens.
@@ -133,7 +132,7 @@ test("a draft of only tokens is kept", async () => {
       "press Escape",
       "gone Reads as",
       "click New task",
-      "wait New plan in Shop",
+      "wait New task in Shop",
       `assert ${value} === '/plan !sonnet '`,
     ]);
   });
@@ -158,7 +157,7 @@ test("with Add another, the next task's draft follows the task created somewhere
       "press Escape",
       "gone Reads as",
       "click New task",
-      "wait New plan in Shopfront",
+      "wait New task in Shopfront",
       `assert ${value} === '@SHOPF /plan Second task not yet submitted'`,
     ]);
   });
@@ -197,7 +196,7 @@ test("a draft saved where Add another creates a task comes back rather than bein
 });
 
 // IA-220 review: the project the dialog starts in is the board's as it is now, so a repository that became git's after
-// the board loaded (which the dialog's refresh finds) gets worktrees and offers subprojects.
+// the board loaded gets worktrees and offers subprojects. Until it has a commit, the board is its setup thread (HA-20).
 test("a repository that becomes git's after the board loads gets worktrees and subprojects", async () => {
   const [profile] = await server.api("GET", "/profiles");
   const dir = `${server.dataDir}/later`;
@@ -205,9 +204,9 @@ test("a repository that becomes git's after the board loads gets worktrees and s
   const later = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Later", repo_path: dir, key: "LATER", use_worktrees: true });
   assert.equal(later.is_git, false);
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${later.id}`, "wait New task"]);
-    execFileSync("git", ["init", "-q", dir]);
-    // A subproject is offered once the dialog's refresh is in.
+    await ui.run([`goto /p/${later.id}`, "wait Start setup thread"]);
+    gitRepo(dir);
+    // A subproject is offered once the board is back.
     await ui.run(["click New task", "type /subproject", "press Space", "wait New subproject in Later", "type Fresh task", "press Control+Enter", "gone Reads as"]);
     await ui.run(["click New task", "wait Own git worktree", "type Plain task", "press Control+Enter", "gone Reads as"]);
   });

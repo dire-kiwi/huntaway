@@ -5,6 +5,10 @@ import { useShallow } from "zustand/react/shallow";
 import {
   api,
   EFFORTS,
+  hostSupports,
+  LABELS,
+  LABELS_API,
+  taskLabels,
   FILTER_OPS,
   MODEL_ALIASES,
   WEEKDAYS,
@@ -14,6 +18,7 @@ import {
   type AutomationRun,
   type AutomationRunStatus,
   type AutomationTrigger,
+  type DocumentType,
   type FilterOp,
   type Project,
   type TaskType,
@@ -351,6 +356,8 @@ interface Draft {
   title: string;
   description: string;
   taskType: TaskType | "";
+  /** On a host before API 71, one at most: the type of task it makes. */
+  labels: DocumentType[];
   config: string;
   model: string;
   effort: string;
@@ -386,6 +393,7 @@ function draftOf(a: Automation | null): Draft {
     title: "",
     description: "",
     taskType: "",
+    labels: [],
     config: "",
     model: "",
     effort: "",
@@ -419,7 +427,9 @@ function draftOf(a: Automation | null): Draft {
   if (act.kind === "create_task") {
     d.title = act.title;
     d.description = act.description;
-    d.taskType = act.task_type ?? "";
+    // One saved before API 71 has a label as its type.
+    d.taskType = act.task_type === "scratch" ? "scratch" : "";
+    d.labels = taskLabels({ kind: "task", task_type: act.task_type, labels: act.labels });
     d.config = act.claude_config_id ?? "";
     d.model = act.model ?? "";
     d.effort = act.effort ?? "";
@@ -432,7 +442,7 @@ function draftOf(a: Automation | null): Draft {
   return d;
 }
 
-function inputOf(d: Draft, existing: Automation | null): AutomationInput {
+function inputOf(d: Draft, existing: Automation | null, labelling: boolean): AutomationInput {
   const trigger: AutomationInput["trigger"] =
     d.when === "interval"
       ? { kind: "interval", every_minutes: Math.round(d.every * UNIT_MINUTES[d.unit]) }
@@ -453,7 +463,8 @@ function inputOf(d: Draft, existing: Automation | null): AutomationInput {
           kind: "create_task",
           title: d.title,
           description: d.description,
-          task_type: d.taskType || null,
+          // A host before API 71 takes a label as the type of task.
+          ...(labelling ? { task_type: d.taskType || null, labels: d.labels } : { task_type: d.taskType || d.labels[0] || null }),
           claude_config_id: d.config || null,
           model: d.model.trim() || null,
           effort: d.effort || null,
@@ -515,6 +526,14 @@ function AutomationEditor({
   const [err, setErr] = useState<string | null>(null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
   const configs = useAvailableConfigs(hostId, project.profile_id, project);
+  const labelling = hostSupports(useHost(hostId), LABELS_API);
+  // A host before API 71 makes a task of one label's type, rather than a scratch or code task with it.
+  const toggleLabel = (l: DocumentType) =>
+    setD((x) =>
+      labelling
+        ? { ...x, labels: x.labels.includes(l) ? x.labels.filter((y) => y !== l) : LABELS.filter((y) => y === l || x.labels.includes(y)) }
+        : { ...x, labels: x.labels.includes(l) ? [] : [l], taskType: "" },
+    );
   const tasks = useStore(
     useShallow((s) =>
       Object.values(s.tasks)
@@ -530,7 +549,7 @@ function AutomationEditor({
     if (d.does === "send_to_task" && !d.message.trim()) return setErr("Write the message.");
     setBusy(true);
     try {
-      const b = inputOf(d, saved);
+      const b = inputOf(d, saved, labelling);
       const a = saved ? await api.updateAutomation(hostId, saved.id, b) : await api.createAutomation(hostId, project.id, b);
       onSaved();
       // A new webhook stays open, to show its URL, and the secret it was given until it closes.
@@ -662,11 +681,12 @@ function AutomationEditor({
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Type">
-                  <select className={selectClass} value={d.taskType} onChange={(e) => set("taskType", e.target.value as TaskType | "")}>
+                  <select
+                    className={selectClass}
+                    value={d.taskType}
+                    onChange={(e) => setD((x) => ({ ...x, taskType: e.target.value as TaskType | "", labels: labelling ? x.labels : [] }))}
+                  >
                     <option value="">Code task</option>
-                    <option value="plan">Plan</option>
-                    <option value="artifact">Artifact</option>
-                    <option value="diagram">Diagram</option>
                     <option value="scratch">Scratch task</option>
                   </select>
                 </Field>
@@ -703,6 +723,31 @@ function AutomationEditor({
                   </select>
                 </Field>
               </div>
+              <Field
+                label="Labels"
+                hint={
+                  labelling
+                    ? "Documents its agent writes besides its other work, each shown in a tab of the task: a plan it writes first, for you to agree on, an artifact (an HTML page) or a Mermaid diagram."
+                    : "This host makes a task of one of these, whose agent writes only that document."
+                }
+              >
+                <div className="flex flex-wrap gap-1">
+                  {LABELS.map((l) => (
+                    <button
+                      key={l}
+                      type="button"
+                      aria-pressed={d.labels.includes(l)}
+                      onClick={() => toggleLabel(l)}
+                      className={clsx(
+                        "h-7 rounded-md border px-2.5 text-[12.5px] capitalize",
+                        d.labels.includes(l) ? "border-accent/50 bg-accent/10 text-accent" : "border-line text-muted hover:text-fg",
+                      )}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
               <div className="flex flex-wrap items-center gap-4">
                 <Toggle checked={d.start} onChange={(v) => set("start", v)} label="Start its agent" />
                 {!d.start && (

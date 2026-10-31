@@ -562,6 +562,9 @@ pub async fn teardown(state: &Shared, task_id: &str, force: bool, delete_branch:
         }
     }
     let _ = git(&repo, &["worktree", "prune"]).await;
+    // Its checkpoints are of files that are gone now (or were already), and the next run takes a
+    // new baseline. Not before: a teardown that keeps the worktree keeps them too.
+    crate::checkpoints::forget(state, task_id, &repo).await;
     let mut fields = vec![
         ("worktree_state", json!("none")),
         ("worktree_path", Value::Null),
@@ -768,7 +771,7 @@ pub async fn has_work_to_merge(state: &Shared, task: &Task) -> bool {
     }
 }
 
-/// Whether moving a task to Done would leave work of its unmerged (API 70), for the board to ask
+/// Whether moving a task to Done would leave work of its unmerged (API 75), for the board to ask
 /// first: it has work to merge (see `has_work_to_merge`) and its pull request, if it has one,
 /// isn't merged on GitHub (squashed or rebased, its commits aren't in its base branch). Tasks with
 /// a document (kept by the board) have none. A pull request that can't be read in a few seconds

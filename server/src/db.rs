@@ -555,12 +555,102 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN remerge INTEGER NOT NULL DEFAULT 0;" };
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=57; COMMIT;"))?;
     }
+    if version < 58 {
+        // Checkpoints of tasks' worktrees, a conversation rollback waiting for a task's next run,
+        // and where each run's turn is (see checkpoints.rs). Columns added only if they aren't
+        // there, in case another migration takes this version first.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V58}"))?;
+        for (table, column) in [("tasks", "rewind TEXT"), ("runs", "turn_message_id INTEGER"), ("runs", "agent_at TEXT")] {
+            let name = column.split(' ').next().unwrap();
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, name], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=58; COMMIT;")?;
+    }
+    if version < 59 {
+        // Plans, artifacts and diagrams are labels any task can have, with a document each
+        // (see documents.rs), rather than types of task. A task that was one of those types gets
+        // its type as its label, and keeps working in its own folder (as a `work_dir` in the data
+        // dir), where its agent's conversation is.
+        let has = |table: &str, column: &str| {
+            conn.query_row(&format!("SELECT COUNT(*) > 0 FROM pragma_table_info('{table}') WHERE name='{column}'"), [], |r| r.get::<_, bool>(0))
+        };
+        let tasks = if has("tasks", "labels")? { "" } else { "ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]';" };
+        let documents = if has("documents", "label")? { "" } else { "ALTER TABLE documents ADD COLUMN label TEXT NOT NULL DEFAULT 'plan';" };
+        conn.execute_batch(&format!(
+            "BEGIN; {tasks} {documents}
+             UPDATE documents SET label=(SELECT t.task_type FROM tasks t WHERE t.id=documents.task_id)
+               WHERE (SELECT t.task_type FROM tasks t WHERE t.id=documents.task_id) IN ('plan','artifact','diagram');
+             DROP INDEX IF EXISTS documents_task;
+             CREATE UNIQUE INDEX documents_task ON documents(task_id, label, version);
+             UPDATE tasks SET labels=json_array(task_type), work_dir=COALESCE(work_dir, 'documents/' || id), task_type=NULL
+               WHERE task_type IN ('plan','artifact','diagram');
+             PRAGMA user_version=59; COMMIT;"
+        ))?;
+    }
+    if version < 60 {
+        // Whether a project's tasks' pull requests are watched while they're in review (see
+        // Project::watch_pull_requests), off until it's turned on.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='watch_pull_requests'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN watch_pull_requests TEXT NOT NULL DEFAULT 'off';" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=60; COMMIT;"))?;
+    }
+    if version < 61 {
+        // The thread that helps get a project's folder ready for worktrees (see Project::setup_task_id).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='setup_task_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN setup_task_id TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=61; COMMIT;"))?;
+    }
+    if version < 62 {
+        // The devices that get this board's notifications by Web Push (see push.rs).
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS push_subscriptions (
+               id TEXT PRIMARY KEY,
+               endpoint TEXT NOT NULL UNIQUE,
+               p256dh TEXT NOT NULL,
+               auth TEXT NOT NULL,
+               name TEXT NOT NULL DEFAULT '',
+               events TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               last_sent_at TEXT,
+               last_error TEXT
+             );
+             PRAGMA user_version=62; COMMIT;",
+        )?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 57;
+pub const VERSION: i64 = 62;
+
+/// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
+/// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
+const SCHEMA_V58: &str = r#"
+CREATE TABLE IF NOT EXISTS checkpoints (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  n INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  sha TEXT NOT NULL,
+  tree TEXT NOT NULL,
+  head TEXT,
+  before_n INTEGER,
+  run_id TEXT,
+  turn INTEGER,
+  message_id INTEGER,
+  status TEXT,
+  session TEXT,
+  agent_at TEXT,
+  stats TEXT,
+  stale INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, n)
+);
+"#;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
 /// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
@@ -812,9 +902,12 @@ pub fn set_setting(c: &Connection, key: &str, value: Option<&str>) -> Result<()>
 }
 
 pub const STATUSES: &[&str] = &["todo", "in_progress", "needs_attention", "in_review", "ready_for_merge", "done", "backlog"];
-/// What a task can make besides code (see Task::task_type and documents.rs), or `scratch`
-/// for a scratch task (see Task::is_scratch).
-pub const TASK_TYPES: &[&str] = &["plan", "artifact", "diagram", SCRATCH];
+/// What a task can be besides a code task: `scratch`, for a scratch task (see Task::is_scratch).
+pub const TASK_TYPES: &[&str] = &[SCRATCH];
+/// The labels a task can have, each a document its agent writes besides its other work (see
+/// Task::labels and documents.rs), in the order the task shows them. They were task types of their
+/// own before API 71, which still accepts them as a new task's `task_type`.
+pub const LABELS: &[&str] = &["plan", "artifact", "diagram"];
 /// The task type of a scratch task.
 pub const SCRATCH: &str = "scratch";
 /// What a new task's type can also be, to make it a subproject (API 51). It's kept as
@@ -1007,6 +1100,14 @@ pub struct Project {
     /// Whether the repo is a git repository (looked up when the project is loaded).
     #[serde(default)]
     pub is_git: bool,
+    /// Whether it has a commit checked out, which a worktree needs to branch from (looked up
+    /// when the project is loaded; false when it isn't a git repository).
+    #[serde(default)]
+    pub has_commits: bool,
+    /// The task whose thread helps the user get the folder ready for worktrees (a git
+    /// repository with a commit), which the board shows in its place until it is (API 73).
+    #[serde(default)]
+    pub setup_task_id: Option<String>,
     /// Falls back to the host's default mode when unset.
     pub permission_mode: Option<String>,
     pub model: Option<String>,
@@ -1039,6 +1140,11 @@ pub struct Project {
     /// Overrides the profile's GitHub account when set (see Profile::github_account).
     #[serde(default)]
     pub github_account: Option<String>,
+    /// Which news about the pull request of a task in "In review" wakes its agent: off,
+    /// failures (failed checks and conflicts) or all (comments and reviews too). See
+    /// pr_watch::watch_in_review.
+    #[serde(default = "watch_off")]
+    pub watch_pull_requests: String,
     pub created_at: String,
 }
 
@@ -1061,6 +1167,8 @@ impl Project {
             status_scripts: json_or_default(r.get("status_scripts")?),
             use_worktrees: r.get("use_worktrees")?,
             is_git: crate::util::is_git_root(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            has_commits: crate::util::has_commits(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            setup_task_id: r.get("setup_task_id")?,
             permission_mode: r.get("permission_mode")?,
             model: r.get("model")?,
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
@@ -1074,9 +1182,14 @@ impl Project {
             group_name: r.get("group_name")?,
             archived_at: r.get("archived_at")?,
             github_account: r.get("github_account")?,
+            watch_pull_requests: r.get("watch_pull_requests")?,
             created_at: r.get("created_at")?,
         })
     }
+}
+
+fn watch_off() -> String {
+    "off".into()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1100,16 +1213,20 @@ pub struct Task {
     /// The task whose agent created this one (with the `create_task` tool), if any.
     #[serde(default)]
     pub created_by: Option<String>,
-    /// What a task makes, if not code: one of TASK_TYPES. Its agent writes a document (an HTML
-    /// plan or artifact, or a Mermaid diagram) that the board keeps and shows (see documents.rs),
-    /// or for a scratch task, nothing in particular (see is_scratch).
+    /// What a task is, if not a code task: one of TASK_TYPES (a scratch task, see is_scratch).
     #[serde(default)]
     pub task_type: Option<String>,
-    /// Where a scratch task made from a scratch chat works: the chat's folder, where its
-    /// conversation is. Other tasks with a type work in their own folder (see documents::dir).
+    /// Some of LABELS: the documents its agent writes (an HTML plan or artifact, or a Mermaid
+    /// diagram) besides its other work, which the board keeps and shows (see documents.rs).
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Where the task's agent works, if not where its kind and project say: for a scratch task
+    /// made from a scratch chat, the chat's folder, where its conversation is; for a task made as a
+    /// plan, artifact or diagram before they were labels, its own folder (relative, in the data
+    /// dir; see documents::work_dir). Other scratch tasks work in their own folder too.
     #[serde(default)]
     pub work_dir: Option<String>,
-    /// When its document last changed, so clients know to fetch it again.
+    /// When one of its documents last changed, so clients know to fetch them again.
     #[serde(default)]
     pub document_at: Option<String>,
     pub number: i64,
@@ -1214,6 +1331,9 @@ pub struct Task {
     /// How full its agent's context window is, as of its latest reply (see context.rs).
     #[serde(default)]
     pub context: Option<Context>,
+    /// The conversation rollback its next run makes, after a rewind (see checkpoints::Rewind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewind: Option<crate::checkpoints::Rewind>,
     pub cost_usd: f64,
     pub last_activity_at: String,
     pub created_at: String,
@@ -1412,6 +1532,7 @@ impl Task {
             group_name: r.get("group_name")?,
             created_by: r.get("created_by")?,
             task_type: r.get("task_type")?,
+            labels: json_list(r.get("labels")?),
             document_at: r.get("document_at")?,
             work_dir: r.get("work_dir")?,
             number: r.get("number")?,
@@ -1455,6 +1576,7 @@ impl Task {
             reminder: r.get("reminder")?,
             review: r.get::<_, Option<String>>("review")?.and_then(|v| serde_json::from_str(&v).ok()),
             context: r.get::<_, Option<String>>("context")?.and_then(|v| serde_json::from_str(&v).ok()),
+            rewind: r.get::<_, Option<String>>("rewind")?.and_then(|v| serde_json::from_str(&v).ok()),
             cost_usd: r.get("cost_usd")?,
             last_activity_at: r.get("last_activity_at")?,
             created_at: r.get("created_at")?,
@@ -1783,6 +1905,13 @@ pub fn list_profile_scratch(c: &Connection, profile_id: &str) -> Result<Vec<Task
     Ok(rows)
 }
 
+/// Every task on this host (not review threads).
+pub fn list_all_tasks(c: &Connection) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE kind='task'")?;
+    let rows = st.query_map([], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 pub fn list_tasks_for_profile(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare(
         "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' ORDER BY project_id, position",
@@ -1911,6 +2040,28 @@ pub fn unmet_dependencies(c: &Connection, task: &Task) -> Result<Vec<Task>> {
 
 /// Tasks queued for their dependencies, in a project (or every project for None), but not in an
 /// archived project, whose agents don't start: they keep waiting, queued message and all.
+/// The tasks in "In review" with a pull request, in projects that watch them (see
+/// pr_watch::watch_in_review) and aren't archived, with their project's `watch_pull_requests`.
+pub fn tasks_to_watch(c: &Connection) -> Result<Vec<(Task, String)>> {
+    let mut st = c.prepare(
+        "SELECT t.*, p.watch_pull_requests AS watch_mode FROM tasks t JOIN projects p ON p.id = t.project_id
+         WHERE t.kind='task' AND t.status='in_review' AND COALESCE(t.pr_url, '') != ''
+           AND p.watch_pull_requests != 'off' AND p.archived_at IS NULL",
+    )?;
+    let rows = st.query_map([], |r| Ok((Task::from_row(r)?, r.get("watch_mode")?)))?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// Whether the user (not the board or another agent) sent `task_id`'s agent a message after `since`.
+pub fn user_wrote_since(c: &Connection, task_id: &str, since: &str) -> Result<bool> {
+    Ok(c.query_row(
+        "SELECT EXISTS (SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND created_at > ?2
+           AND json_extract(data, '$.auto') IS NULL AND json_extract(data, '$.from_agent') IS NULL)",
+        [task_id, since],
+        |r| r.get(0),
+    )?)
+}
+
 pub fn waiting_tasks(c: &Connection, project_id: Option<&str>) -> Result<Vec<Task>> {
     let mut st = c.prepare(
         "SELECT * FROM tasks WHERE waiting=1 AND kind='task' AND (?1 IS NULL OR project_id=?1)
@@ -2037,7 +2188,7 @@ pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "parent_id", "subproject", "created_by", "task_type", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -2095,7 +2246,7 @@ const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
     "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
-    "archived_at", "github_account",
+    "archived_at", "github_account", "watch_pull_requests", "setup_task_id",
 ];
 
 pub fn update_project(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Project>> {
@@ -2579,6 +2730,15 @@ pub struct Run {
     pub saw_result: bool,
     /// What the agent has cost so far, as it last reported.
     pub cost_usd: f64,
+    /// Its last turn has ended, and no message has started another yet.
+    #[serde(default)]
+    pub between_turns: bool,
+    /// The user message its turn started with (see checkpoints.rs).
+    #[serde(default)]
+    pub turn_message_id: Option<i64>,
+    /// Where its conversation is (see checkpoints::Checkpoint::agent_at).
+    #[serde(default)]
+    pub agent_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
 }
@@ -2596,6 +2756,9 @@ impl Run {
             result_error: r.get("result_error")?,
             saw_result: r.get("saw_result")?,
             cost_usd: r.get("cost_usd")?,
+            between_turns: r.get("between_turns")?,
+            turn_message_id: r.get("turn_message_id")?,
+            agent_at: r.get("agent_at")?,
             created_at: r.get("created_at")?,
             ended_at: r.get("ended_at")?,
         })
@@ -2932,6 +3095,53 @@ mod tests {
     }
 
     #[test]
+    fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled() {
+        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "DROP INDEX documents_task;
+                 ALTER TABLE documents DROP COLUMN label;
+                 CREATE UNIQUE INDEX documents_task ON documents(task_id, version);
+                 ALTER TABLE tasks DROP COLUMN labels;
+                 PRAGMA user_version=58;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,task_type,work_dir,number,title,status,last_activity_at,created_at,updated_at)
+                   VALUES ('plan','p','task','plan',NULL,1,'Plan','in_review','1','1','1'),
+                          ('art','p','task','artifact',NULL,2,'Page','todo','1','1','1'),
+                          ('chat','p','task','scratch','/chat',1,'Chat','done','1','1','1'),
+                          ('code','p','task',NULL,NULL,3,'Code','todo','1','1','1');
+                 INSERT INTO documents (task_id,version,content,open,created_at,updated_at)
+                   VALUES ('plan',1,'<h1>1</h1>',0,'1','1'), ('plan',2,'<h1>2</h1>',0,'1','1'), ('art',1,'<p>',0,'1','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let task = |id: &str| get_task(&c, id).unwrap().unwrap();
+        let (plan, art, chat, code) = (task("plan"), task("art"), task("chat"), task("code"));
+        assert_eq!((plan.task_type, plan.labels, plan.work_dir.as_deref()), (None, vec!["plan".to_string()], Some("documents/plan")));
+        assert_eq!((art.task_type, art.labels, art.work_dir.as_deref()), (None, vec!["artifact".to_string()], Some("documents/art")));
+        assert_eq!((chat.task_type.as_deref(), chat.labels.len(), chat.work_dir.as_deref()), (Some(SCRATCH), 0, Some("/chat")));
+        assert_eq!((code.task_type, code.labels.len(), code.work_dir), (None, 0, None));
+        let docs: Vec<(String, String, i64)> = c
+            .prepare("SELECT task_id, label, version FROM documents ORDER BY task_id, version")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let doc = |t: &str, l: &str, v| (t.to_string(), l.to_string(), v);
+        assert_eq!(docs, vec![doc("art", "artifact", 1), doc("plan", "plan", 1), doc("plan", "plan", 2)]);
+        // Another label's version 1 can sit beside the plan's.
+        c.execute("INSERT INTO documents (task_id,label,version,content,created_at,updated_at) VALUES ('plan','diagram',1,'x','1','1')", []).unwrap();
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn a_database_from_version_54_gets_automations() {
         let path = std::env::temp_dir().join(format!("huntaway-v54-{}.db", crate::util::new_id()));
         {
@@ -2943,6 +3153,32 @@ mod tests {
         for table in ["automations", "automation_runs"] {
             assert!(c.query_row("SELECT COUNT(*) FROM pragma_table_info(?1)", [table], |r| r.get::<_, i64>(0)).unwrap() > 0, "{table}");
         }
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_60_gets_setup_threads() {
+        let path = std::env::temp_dir().join(format!("huntaway-v60-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN setup_task_id;
+                 PRAGMA user_version=60;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','Web','WEB','/nowhere','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        // Master's version 60 stays (HA-15's watch_pull_requests), and projects from before have no setup thread yet.
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!((p.watch_pull_requests.as_str(), p.setup_task_id), ("off", None));
+        assert_eq!(update_project(&c, "pr", &[("setup_task_id", json!("t"))]).unwrap().unwrap().setup_task_id.as_deref(), Some("t"));
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3053,7 +3289,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_56_gets_remerge() {
-        let path = std::env::temp_dir().join(format!("huntaway-v56-{}.db", crate::util::new_id()));
+        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3097,6 +3333,24 @@ mod tests {
         assert_eq!(get_task(&c, "t").unwrap().unwrap().fanout_id, None);
         let t = update_task(&c, "t", &[("fanout_id", json!("f1"))]).unwrap().unwrap();
         assert_eq!(t.fanout_id.as_deref(), Some("f1"));
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_61_gets_push_subscriptions() {
+        let path = std::env::temp_dir().join(format!("huntaway-v61-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch("DROP TABLE push_subscriptions; PRAGMA user_version=61;").unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('s','https://x/1','k','a','{}','1')", []).unwrap();
+        // One per endpoint.
+        assert!(c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('t','https://x/1','k','a','{}','1')", []).is_err());
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3160,6 +3414,31 @@ mod tests {
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             std::fs::remove_file(format!("{}{suffix}", path.display())).ok();
+        }
+    }
+
+    #[test]
+    fn a_database_at_version_59_gets_projects_watch_pull_requests() {
+        // As master's build left it, with labels (59) and no watch_pull_requests yet.
+        let path = std::env::temp_dir().join(format!("huntaway-v59-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN watch_pull_requests;
+                 PRAGMA user_version=59;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!((p.watch_pull_requests.as_str(), p.done_when_merged), ("off", true));
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
     }
 
