@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { BellRing, ChevronRight, CircleAlert, Eye, GitMerge, MessagesSquare, Play, PlayCircle, Square } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, canRunAgents, dependencyQueued, type Project, type Task } from "../api";
+import { api, canRunAgents, dependencyQueued, readyToCheck, type Project, type Task } from "../api";
 import { openTask, usePanelOpen } from "../router";
 import { keyPrefix, useHost, useStore } from "../store";
 import { isDue } from "../reminders";
@@ -9,7 +9,7 @@ import { Composer, Markdown } from "./Thread";
 import { PendingPrompts } from "./LiveView";
 import { ReviewBadge } from "./Review";
 import { Button, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "./ui";
-import type { OnMenu } from "./Board";
+import type { OnMenu } from "./TaskCard";
 
 /**
  * The board as a queue of what each task needs from the user, most pressing first: an answer, a
@@ -23,7 +23,7 @@ const BUCKETS: { id: BucketId; title: string; icon: ReactNode; hint: string }[] 
   { id: "answer", title: "Waiting for your answer", icon: <CircleAlert size={14} className="text-st-attention" />, hint: "The agent asked something or hit a prompt" },
   { id: "review", title: "Ready for your review", icon: <Eye size={14} className="text-st-review" />, hint: "The agent finished; look over its work and merge it, or send it back" },
   { id: "due", title: "Reminders", icon: <BellRing size={14} className="text-amber-300" />, hint: "Reminders that have come round" },
-  { id: "stalled", title: "Stopped before finishing", icon: <Square size={13} className="text-faint" />, hint: "In progress, but its agent isn't running" },
+  { id: "stalled", title: "Stopped before finishing", icon: <Square size={13} className="text-faint" />, hint: "In progress, but its agent isn't running; or in review, and its review didn't finish" },
   { id: "start", title: "Not started", icon: <PlayCircle size={14} className="text-st-todo" />, hint: "In To do" },
   { id: "working", title: "Agents at work", icon: <StatusIcon status="in_progress" size={14} />, hint: "Nothing to do until they finish" },
 ];
@@ -34,10 +34,13 @@ const CLOSED_KEY = "ia.triage.closed";
 
 function bucketOf(t: Task, now: number): BucketId | null {
   if (t.status === "needs_attention") return "answer";
-  if (t.status === "in_review" && !t.running) return "review";
+  // As the sidebar counts them: not while a reviewer is at it, nor after a review that failed or was stopped.
+  if (readyToCheck(t)) return "review";
   if (isDue(t, now) && t.status !== "done") return "due";
-  if (t.running || t.status === "ready_for_merge" || dependencyQueued(t)) return t.status === "done" || t.status === "backlog" ? null : "working";
+  if (t.running || t.review?.state === "running" || t.status === "ready_for_merge" || dependencyQueued(t))
+    return t.status === "done" || t.status === "backlog" ? null : "working";
   if (t.status === "in_progress") return t.session_id ? "stalled" : "start";
+  if (t.status === "in_review") return "stalled";
   if (t.status === "todo") return "start";
   return null;
 }
