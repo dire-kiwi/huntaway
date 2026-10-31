@@ -76,7 +76,7 @@ function iaHtml(fit: string) {
       const template = host.querySelector(":scope > template");
       if (!(template instanceof HTMLTemplateElement)) continue;
       const frame = document.createElement("iframe");
-      frame.sandbox.add("allow-scripts", "allow-popups", "allow-popups-to-escape-sandbox", "allow-forms", "allow-modals");
+      frame.sandbox.add("allow-scripts", "allow-popups", "allow-popups-to-escape-sandbox", "allow-forms");
       frame.title = host.getAttribute("title") ?? "";
       frame.srcdoc = head + template.innerHTML;
       template.replaceWith(frame);

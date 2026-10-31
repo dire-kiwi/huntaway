@@ -4,6 +4,7 @@ import { approvalLoads, sortApprovals, withApproval, type HostApproval } from ".
 import { loadProjectOrder, moveProjects, saveProjectOrder, sortProjects } from "./projectOrder";
 import {
   api,
+  ApiError,
   canRunAgents,
   hostCompat,
   hostSupports,
@@ -20,6 +21,7 @@ import {
   type Usage,
 } from "./api";
 import { forgetThreadModels } from "./threadModel";
+import { addDelta, clearDelta } from "./deltas";
 
 /**
  * The board spans every connected host and every profile on them. Each host has its own
@@ -52,8 +54,6 @@ interface State {
   restart: { phase: string; error: string | null; log: string[] } | null;
   /** Agent defaults per host (used to show what threads inherit). */
   hostSettings: Record<string, HostSettings>;
-  /** Live streamed assistant text per thread (not yet persisted). */
-  deltas: Record<string, string>;
   /** Claude usage for every config (or profile, on older hosts) on every host, by `usageKey`. */
   usage: Record<string, Usage>;
   /** Project changes agents are waiting for the user to approve, on every host, oldest first. */
@@ -292,7 +292,6 @@ export const useStore = create<State>((set, get) => ({
   tasks: {},
   messages: {},
   threads: {},
-  deltas: {},
   restart: null,
   hostSettings: {},
   usage: {},
@@ -370,9 +369,10 @@ export const useStore = create<State>((set, get) => ({
             groups ? api.groupTasks(h, profile.id) : [],
             archiving ? api.projects(h, profile.id, true) : [],
           ]);
-          const lists = await Promise.all(
-            ps.flatMap((p) => [api.projectTasks(h, p.id, "task"), ...(reviews ? [api.projectTasks(h, p.id, "review")] : [])]),
-          );
+          // A project deleted since it was listed has no tasks (and its project_deleted event follows).
+          const tasksOf = (id: string, kind: Task["kind"]) =>
+            api.projectTasks(h, id, kind).catch((e) => (e instanceof ApiError && e.status === 404 ? [] : Promise.reject(e)));
+          const lists = await Promise.all(ps.flatMap((p) => [tasksOf(p.id, "task"), ...(reviews ? [tasksOf(p.id, "review")] : [])]));
           return { projects: ps, archived: gone, tasks: [...projectless, ...lists.flat()] };
         }),
       );
@@ -806,13 +806,7 @@ export function handleEvent(ev: any) {
       if (otherHost(ev.task_id)) break;
       const m: Message = ev.message;
       // A persisted assistant text block supersedes the streamed preview (whether the thread is loaded or not).
-      if (m.kind === "claude" && m.data?.type === "assistant" && !m.data.parent_tool_use_id && ev.task_id in s.deltas) {
-        useStore.setState((st) => {
-          const deltas = { ...st.deltas };
-          delete deltas[ev.task_id];
-          return { deltas };
-        });
-      }
+      if (m.kind === "claude" && m.data?.type === "assistant" && !m.data.parent_tool_use_id) clearDelta(ev.task_id);
       // For loads of the thread under way, whose responses may be older.
       loadEvents.get(ev.task_id)?.events.push(m);
       const list = s.messages[ev.task_id];
@@ -824,15 +818,11 @@ export function handleEvent(ev: any) {
     }
     case "delta":
       if (otherHost(ev.task_id)) break;
-      useStore.setState((st) => ({ deltas: { ...st.deltas, [ev.task_id]: (st.deltas[ev.task_id] ?? "") + ev.text } }));
+      addDelta(ev.task_id, ev.text);
       break;
     case "delta_reset":
       if (otherHost(ev.task_id)) break;
-      useStore.setState((st) => {
-        const deltas = { ...st.deltas };
-        delete deltas[ev.task_id];
-        return { deltas };
-      });
+      clearDelta(ev.task_id);
       break;
     case "resync":
       if (ev.host_id) {

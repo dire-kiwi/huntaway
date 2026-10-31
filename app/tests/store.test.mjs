@@ -11,6 +11,7 @@ const hook = `export async function resolve(spec, ctx, next) {
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
 const { handleEvent, retainThread, useStore } = await import("../src/store.ts");
+const { flushDeltas, useDeltas, watchDelta } = await import("../src/deltas.ts");
 const { api } = await import("../src/api.ts");
 // Some tests stub it out.
 const { refreshHost } = useStore.getState();
@@ -170,8 +171,8 @@ test("events change only their own host's tasks and projects", () => {
     archived: [],
     tasks: { same: t },
     messages: { same: [] },
-    deltas: {},
   });
+  const unwatch = watchDelta("same");
   // Each collision is logged, once.
   const warned = [];
   const warn = console.warn;
@@ -184,7 +185,9 @@ test("events change only their own host's tasks and projects", () => {
   const s = useStore.getState();
   assert.equal(s.tasks.same.title, "local's");
   assert.deepEqual(s.projects.map((p) => p.id), ["proj"]);
-  assert.deepEqual(s.deltas, {});
+  flushDeltas();
+  assert.deepEqual(useDeltas.getState().deltas, {});
+  unwatch();
   assert.deepEqual(s.messages.same, []);
   console.warn = warn;
   assert.deepEqual(warned, ["Task same is on hosts local and remote: only local's is shown, and remote's is left out."]);
