@@ -917,6 +917,32 @@ mod tests {
         });
     }
 
+    // HA-42: a shallow clone's history starts where it was cut off, so once the rest was fetched
+    // its moved folder had none of the commits the board had seen it start from.
+    #[test]
+    fn tells_a_moved_shallow_clone_once_its_history_is_fetched() {
+        testing::run(async || {
+            let s = testing::state();
+            let upstream = temp("upstream");
+            repo(&upstream);
+            for n in 1..=3 {
+                sh(&upstream, &["commit", "-q", "--allow-empty", "-m", &format!("commit {n}")]);
+            }
+            let old = temp("shallow");
+            let url = format!("file://{}", path_str(&upstream));
+            sh(&upstream, &["clone", "-q", "--depth", "1", &url, &path_str(&old)]);
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let b = CreateProject { name: "s".into(), repo_path: path_str(&old), key: Some("X".into()), base_branch: Some("master".into()), use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let new = old.with_file_name("unshallowed");
+            std::fs::rename(&old, &new).unwrap();
+            sh(&new, &["fetch", "-q", "--unshallow"]);
+            assert_ne!(fingerprint(&new).await, p.repo_root.clone().unwrap());
+            let p = update(&s, &p, json!({"repo_path": path_str(&new)})).await.unwrap();
+            assert_eq!(p.repo_path, path_str(&new));
+        });
+    }
+
     /// A repository seen before its first commit is told by its history once it has one; until
     /// the board has seen that, it can't tell.
     #[test]

@@ -1140,6 +1140,28 @@ mod tests {
         (repo, t, wt, branch)
     }
 
+    // HA-42: untracked files were listed without -z, so a name git quotes (not ASCII) or one starting
+    // with `-` dropped out of the branch's diff.
+    #[test]
+    fn the_diff_has_every_untracked_file_whatever_its_name() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, t, wt, _) = task_with_work(&s).await;
+            for name in ["café.txt", "-n.txt", "plain.txt"] {
+                std::fs::write(wt.join(name), format!("in {name}\n")).unwrap();
+            }
+            let d = diff(&s, &t.id).await.unwrap();
+            let mut untracked: Vec<&str> = d["untracked"].as_array().unwrap().iter().map(|f| f.as_str().unwrap()).collect();
+            untracked.sort();
+            assert_eq!(untracked, ["-n.txt", "café.txt", "plain.txt"]);
+            let patch = d["patch"].as_str().unwrap();
+            for name in ["café.txt", "-n.txt", "plain.txt"] {
+                assert!(patch.contains(&format!("+in {name}\n")), "{name}: {patch}");
+            }
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
     fn kept(why: &str) -> Removal {
         Removal::Kept(why.to_string())
     }

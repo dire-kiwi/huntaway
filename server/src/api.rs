@@ -2803,6 +2803,101 @@ pub(crate) mod tests {
         })
     }
 
+    /// A git repository with a commit on master, and a project on it: (folder, project).
+    async fn git_project(s: &Shared) -> (PathBuf, db::Project) {
+        let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).status().unwrap().success());
+        git(&["init", "-q", "-b", "master"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+        let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("X".into()), base_branch: None, use_worktrees: None };
+        (dir.clone(), create_project_inner(s, &profile.id, b).await.unwrap())
+    }
+
+    // HA-42: a relative worktrees_root put worktrees in the main checkout, and base branches weren't checked.
+    #[test]
+    fn worktree_settings_are_checked() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let set = async |v: Value| update_project_inner(&s, &p.id, v.as_object().unwrap()).await;
+            for bad in [
+                json!({"worktrees_root": "worktrees"}),
+                json!({"worktrees_root": "./w"}),
+                json!({"worktrees_root": path_str(&dir)}),
+                json!({"worktrees_root": format!("{}/", path_str(&dir))}),
+                json!({"worktrees_root": format!("{}/../{}", path_str(&dir), dir.file_name().unwrap().to_string_lossy())}),
+                json!({"base_branch": "a..b"}),
+                json!({"base_branch": "-x"}),
+                json!({"base_branch": "@{-1}"}),
+                json!({"base_branch": "with space"}),
+                json!({"base_branch": "main.lock"}),
+                json!({"base_branch": 3}),
+            ] {
+                let err = set(bad.clone()).await.unwrap_err();
+                assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+            }
+            let p2 = db::get_project(&s.db(), &p.id).unwrap().unwrap();
+            assert_eq!((p2.worktrees_root.as_str(), p2.base_branch.as_deref()), (p.worktrees_root.as_str(), Some("master")));
+            let inside = dir.join(".worktrees");
+            let p2 = set(json!({"worktrees_root": path_str(&inside), "base_branch": " feature/x "})).await.unwrap();
+            assert_eq!((p2.worktrees_root, p2.base_branch.as_deref()), (path_str(&inside), Some("feature/x")));
+            assert_eq!(set(json!({"base_branch": ""})).await.unwrap().base_branch, None);
+
+            // A task's too, which its agent may set.
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let task = async |v: Value| update_task_inner(&s, &t.id, v.as_object().unwrap()).await;
+            for bad in ["a..b", "-x", "HEAD:x", "x~1"] {
+                assert_eq!(task(json!({"base_branch": bad})).await.unwrap_err().0, StatusCode::BAD_REQUEST, "{bad}");
+            }
+            assert_eq!(task(json!({"base_branch": "release/1.2"})).await.unwrap().base_branch.as_deref(), Some("release/1.2"));
+            assert_eq!(task(json!({"base_branch": " "})).await.unwrap().base_branch, None);
+            let b = CreateProject { name: "y".into(), repo_path: path_str(&dir), key: Some("Y".into()), base_branch: Some("no..pe".into()), use_worktrees: None };
+            assert_eq!(create_project_inner(&s, &p.profile_id, b).await.unwrap_err().0, StatusCode::BAD_REQUEST);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    // HA-42: setting up or tearing down a worktree checked only the task's own agent, not its reviewers'.
+    #[test]
+    fn a_worktree_isnt_torn_down_or_set_up_under_a_reviewer() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let r = NewTask { profile_id: &t.profile_id, project_id: t.project_id.as_deref(), kind: "review", title: "Review", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let r = db::insert_task(&s.db(), r).unwrap();
+            db::update_task(&s.db(), &r.id, &[("parent_id", json!(t.id)), ("running", json!(true))]).unwrap();
+            let teardown = async || teardown_worktree(State(s.clone()), Path(t.id.clone()), None).await;
+            assert_eq!(teardown().await.unwrap_err().0, StatusCode::CONFLICT);
+            assert_eq!(setup_worktree(State(s.clone()), Path(t.id.clone())).await.unwrap_err().0, StatusCode::CONFLICT);
+            assert!(std::path::Path::new(t.worktree_path.as_deref().unwrap()).exists());
+            db::update_task(&s.db(), &r.id, &[("running", json!(false))]).unwrap();
+            assert_eq!(teardown().await.unwrap().0["worktree_state"], "none");
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    // HA-42: moved to Ready for merge where agents couldn't run, a task never joined the merge queue.
+    #[test]
+    fn ready_for_merge_queues_the_merge_even_before_agents_can_run() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let wt = PathBuf::from(t.worktree_path.as_deref().unwrap());
+            assert!(std::process::Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]).status().unwrap().success());
+            assert!(!crate::runs::can_run_agents(&s));
+            let t = update_task_inner(&s, &t.id, json!({"status": "ready_for_merge"}).as_object().unwrap()).await.unwrap();
+            assert_eq!((t.status.as_str(), t.merging), ("ready_for_merge", true));
+            assert_eq!(db::queued_merges(&s.db(), Some(&p.id), None).unwrap().len(), 1);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
     #[test]
     fn a_folder_not_ready_for_worktrees_gets_one_setup_thread() {
         crate::testing::run(async || {
