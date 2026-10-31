@@ -38,7 +38,7 @@ test("tokens set a new task's options, and are taken out of its description", as
       "wait role=option[name=/plan/]",
       "press Tab",
       `assert ${value} === '/plan '`,
-      "wait New plan in Shop",
+      "wait New task in Shop",
       "type Price rules !son",
       "press Enter",
       "type ^hi",
@@ -62,13 +62,14 @@ test("tokens set a new task's options, and are taken out of its description", as
       ["@XYZ", true],
       ["#SHOP-1", false],
     ]);
-    assert.match(await page.locator("[aria-label='Reads as']").innerText(), /Plan\s+Shop\s+Sonnet\s+high effort\s+after SHOP-1/);
+    assert.match(await page.locator("[aria-label='Reads as']").innerText(), /Task\s+Plan\s+Shop\s+Sonnet\s+high effort\s+after SHOP-1/);
     // A chip's × takes its token out.
     await ui.run(["click [title='Remove the model']", "gone Sonnet", `assert ${value} === '/plan Price rules ^high @XYZ #SHOP-1'`, "press Control+Enter", "gone Reads as"]);
   });
   const task = await created("Price rules @XYZ");
   assert.ok(task);
-  assert.deepEqual([task.task_type, task.model, task.effort, task.depends_on], ["plan", null, "high", [dep.id]]);
+  // A plan is a label (HA-27): a code task with one.
+  assert.deepEqual([task.task_type, task.labels, task.model, task.effort, task.depends_on], [null, ["plan"], null, "high", [dep.id]]);
 });
 
 // IA-220: on a profile's board, `@` and a project's key put the task in that project. The draft keeps the tokens.
@@ -131,7 +132,7 @@ test("a draft of only tokens is kept", async () => {
       "press Escape",
       "gone Reads as",
       "click New task",
-      "wait New plan in Shop",
+      "wait New task in Shop",
       `assert ${value} === '/plan !sonnet '`,
     ]);
   });
@@ -156,7 +157,7 @@ test("with Add another, the next task's draft follows the task created somewhere
       "press Escape",
       "gone Reads as",
       "click New task",
-      "wait New plan in Shopfront",
+      "wait New task in Shopfront",
       `assert ${value} === '@SHOPF /plan Second task not yet submitted'`,
     ]);
   });

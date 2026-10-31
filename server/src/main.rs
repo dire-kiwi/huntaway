@@ -7,6 +7,7 @@ mod codex;
 mod context;
 mod analytics;
 mod changes;
+mod checkpoints;
 mod api;
 mod asana;
 mod db;
@@ -349,6 +350,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Agents kept running while we were down; catch up on their output.
     runner::load_active(&state)?;
     runner::auto_compact(&state);
+    pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
     runs::start_pruner(&state);

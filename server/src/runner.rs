@@ -126,6 +126,7 @@ fn steered(state: &Shared, run: &Run, id: &str) -> Result<()> {
     };
     // It answers a question the agent asked. Taken in after a turn ended, it starts a new one;
     // after a stop ended the turn, the run is then no longer stopped (see `stop`).
+    let new_turn: bool = state.db().query_row("SELECT between_turns FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
     state.db().execute(
         "UPDATE runs SET attention=NULL, between_turns=0, stop_requested = CASE WHEN stop_requested=2 THEN 0 ELSE stop_requested END WHERE id=?1",
         [&run.id],
@@ -134,7 +135,10 @@ fn steered(state: &Shared, run: &Run, id: &str) -> Result<()> {
     if steer.from_agent {
         msg["from_agent"] = json!(true);
     }
-    state.add_message(task_id, "user", msg)?;
+    let message = state.add_message(task_id, "user", msg)?;
+    if new_turn {
+        state.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![message.id, run.id])?;
+    }
     if let Some(t) = task {
         state.emit_task(&t);
     }
@@ -217,7 +221,7 @@ fn has_queued(state: &Shared, runs: &std::collections::HashMap<String, RunHandle
 /// run's start takes it (see `start_run`), so it isn't lost if the server stops in between.
 /// Returns whether a new run started.
 fn send_queued(state: &Shared, task_id: &str) -> bool {
-    match send_message(state, task_id, None, false, "prompt") {
+    match send_message(state, task_id, None, false, "prompt", None) {
         Ok(_) => true,
         Err(e) => {
             // Unless another run has taken it, or is going to.
@@ -229,6 +233,15 @@ fn send_queued(state: &Shared, task_id: &str) -> bool {
         }
     }
 }
+
+/// Other tasks wait to merge while this one does, so a merge that turns out to need changes
+/// steps out of the queue to make them (see Task::remerge).
+const STEP_OUT: &str = "Tasks queued to merge after this one wait while you merge it. Bringing the branch up to date, resolving \
+    simple conflicts, waiting for checks and re-running flaky ones are part of merging. But if the merge needs changes to this task's \
+    work (checks that fail because of it, review comments to address, conflicts that need more than a simple resolution), step out of \
+    the merge queue first so the next task can merge meanwhile: call `update_task` to set this task's status to `in_progress`, with \
+    `remerge` true. Then make the changes, check them, commit and push, and end your turn without merging: the board puts the task \
+    back at the end of the merge queue and asks you to merge again when its turn comes.";
 
 /// Ask the agent on a task that was moved to "Ready for merge" to merge its work. The task
 /// stays in that column while it does; the agent moves it to "Done" once merged.
@@ -254,7 +267,7 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
     };
     let mut text = format!(
         "The user moved this task to \"Ready for merge\". {what}.\n\n{}\n\nIf you can't merge, call `request_user_input` \
-         explaining why. Once it is merged, call `update_task` to set this task's status to `done`.",
+         explaining why. Once it is merged, call `update_task` to set this task's status to `done`.\n\n{STEP_OUT}",
         crate::prompts::merge(project.as_ref())
     );
     if task.subproject {
@@ -334,6 +347,12 @@ pub fn send_as(state: &Shared, task_id: &str, text: &str, auto: bool) -> ApiResu
     send_run(state, task_id, text, auto, false, "prompt")
 }
 
+/// Send a review's issues back to the task's agent to fix: round `round` of fixes, which the
+/// message is marked with (`review_round`, see checkpoints.rs).
+pub fn send_fixes(state: &Shared, task_id: &str, text: &str, round: u32) -> ApiResult<Task> {
+    send_message(state, task_id, Some(db::Queued::new(text, false)), true, "prompt", Some(round))
+}
+
 /// Like `send`, for a message another thread's agent sent (MCP `send_to_task`). It's marked so
 /// prompt analytics don't count it as the user's.
 pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<Task> {
@@ -346,7 +365,7 @@ pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Tas
 }
 
 fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: bool, kind: &str) -> ApiResult<Task> {
-    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind)?;
+    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
     // The user's prompt may have moved the task on, so its title follows (see title::refresh).
     if kind == "prompt" && !auto && !from_agent && crate::title::worth_asking(text) && !is_compact(text) {
         crate::title::refresh(state, task_id);
@@ -357,7 +376,7 @@ fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: b
 /// Send `message` on a thread. A message the user (or another agent) sent goes with the one
 /// queued there, if any. Without one, it sends just that, and nothing if another run has (see
 /// `send_queued`).
-fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto: bool, kind: &str) -> ApiResult<Task> {
+fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto: bool, kind: &str, review_round: Option<u32>) -> ApiResult<Task> {
     let only_queued = message.is_none();
     let message = message.unwrap_or_else(db::Queued::empty);
     let task = db::get_task(&state.db(), task_id)?.ok_or_else(|| ApiError::not_found("task"))?;
@@ -403,6 +422,9 @@ fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto
             let mut msg = json!({"text": text});
             if auto {
                 msg["auto"] = json!(true);
+            }
+            if let Some(round) = review_round {
+                msg["review_round"] = json!(round);
             }
             if from_agent {
                 msg["from_agent"] = json!(true);
@@ -494,7 +516,7 @@ fn start_waiting(state: &Shared, t: &Task) {
     let queued = db::get_task(&state.db(), &t.id).map(|t| t.and_then(|t| t.queued_message).is_some_and(|q| !q.trim().is_empty()));
     let sent = match queued {
         // It stays queued until the run's start takes it.
-        Ok(true) => send_message(state, &t.id, None, false, "prompt"),
+        Ok(true) => send_message(state, &t.id, None, false, "prompt", None),
         Ok(false) if t.session_id.is_none() => send_as(state, &t.id, "", true),
         Ok(false) => send_as(state, &t.id, "The tasks this one was waiting for are merged (or no longer needed), so carry on with it.", true),
         Err(e) => Err(e.into()),
@@ -636,6 +658,10 @@ fn start_run(
     };
     for m in &recorded {
         state.emit_message(m);
+    }
+    // The message its first turn starts with (see checkpoints.rs).
+    if let Some(m) = recorded.iter().find(|m| m.kind == "user") {
+        let _ = state.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![m.id, run.id]);
     }
     #[cfg(test)]
     crate::testing::reached("run:started");
@@ -868,9 +894,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     // (`work_dir` says the same for a thread whose run is going.)
     let doc_dir = crate::documents::work_dir(state, &task);
     let cwd: String = match (task.kind.as_str(), &project) {
-        // A plan, artifact or diagram is written in the task's own folder, reading the project.
-        // A scratch task works there too, reading its project if it's in one. One in a
-        // subproject reads the subproject's worktree as well.
+        // A scratch task works in its own folder, reading its project if it's in one, as does a
+        // task that makes only documents (see documents::documents_only). One in a subproject
+        // reads the subproject's worktree as well.
         (_, p) if doc_dir.is_some() => {
             add_dirs.extend(p.as_ref().map(|p| p.repo_path.clone()));
             if let Some(sp) = parent.as_ref().filter(|t| task.kind == "task" && t.subproject && t.worktree_state == "ready") {
@@ -900,6 +926,19 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     add_dirs.extend(group.iter().map(|p| p.repo_path.clone()));
     tokio::fs::create_dir_all(crate::util::expand_tilde(&cwd)).await.ok();
+    // A checkpoint of the worktree before the agent changes it (see checkpoints.rs), taken after
+    // any rewind asked for meanwhile, whose conversation rollback this run makes.
+    crate::checkpoints::before_run(state, &task, run).await;
+    task = db::get_task(&state.db(), task_id)?.ok_or_else(|| anyhow!("task not found"))?;
+    let rewind = crate::checkpoints::pending_rewind(&task).cloned();
+    // A labelled task's agent writes its documents in the task's own folder, wherever it works.
+    let documents: Vec<(&str, String)> = crate::documents::paths(state, &task).into_iter().map(|(l, p)| (l, path_str(&p))).collect();
+    let own_dir = crate::documents::dir(state, &task.id);
+    let own_dir = (!documents.is_empty() && doc_dir.as_ref() != Some(&own_dir)).then(|| path_str(&own_dir));
+    if let Some(d) = &own_dir {
+        tokio::fs::create_dir_all(d).await.ok();
+        add_dirs.push(d.clone());
+    }
     // Setting up a subproject task's worktree may have set up the subproject's too.
     let parent = match (&task.parent_id, task.kind.as_str()) {
         (Some(id), "task") => db::get_task(&state.db(), id)?,
@@ -914,7 +953,6 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         _ => None,
     };
 
-    let document = crate::documents::path(state, &task).map(|p| path_str(&p));
     let prompt = if task.session_id.is_none() && task.kind == "task" && run.kind != "compact" {
         start_prompt(&task, project.as_ref(), text)
     } else {
@@ -960,7 +998,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             None => Default::default(),
         };
         let gh_tools = uses_gh_server(&tools);
-        let mut instructions = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, document.as_deref(), github.as_ref(), gh_tools);
+        let mut instructions = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
         if permission_mode == "plan" {
             instructions.push_str(
                 " You are in plan mode: investigate and propose a plan, but don't change any files. The user will \
@@ -1002,6 +1040,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         }
         let mut writable_roots: Vec<String> = git_dir.into_iter().collect();
         writable_roots.extend(cache_dirs());
+        writable_roots.extend(own_dir.clone());
         let spec = crate::codex::Spec {
             cwd: cwd.clone(),
             thread_id: task.session_id.clone(),
@@ -1020,6 +1059,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             approved_mcp_servers: tools.mcp_servers.keys().filter(|n| tools.allowed.contains(&crate::agent_tools::tool_prefix(n))).cloned().collect(),
             disabled_mcp_tools,
             review_waits: approvals_reviewer == "auto_review",
+            revert_before_turn: rewind.as_ref().and_then(|r| r.before_turn.clone()),
         };
         let launch = Launch {
             run_id: run.id.clone(),
@@ -1035,7 +1075,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             codex: Some(spec),
         };
         tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting codex");
-        return started(state, run, launch).await;
+        started(state, run, launch).await?;
+        rewound(state, task_id, rewind);
+        return Ok(());
     }
 
     let mut args: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
@@ -1053,7 +1095,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
-    let mut prompt_extra = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, document.as_deref(), github.as_ref(), gh_tools);
+    let mut prompt_extra = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
     if gh_tools {
         prompt_extra.push_str(&gh_note(github_account.as_deref()));
     }
@@ -1093,6 +1135,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
     if let Some(sid) = &task.session_id {
         push("--resume", sid);
+        if let Some(at) = rewind.as_ref().and_then(|r| r.resume_at.as_deref()) {
+            push("--resume-session-at", at);
+        }
     }
     if let Some(m) = &model {
         push("--model", m);
@@ -1128,7 +1173,21 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         codex: None,
     };
     tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting claude");
-    started(state, run, launch).await
+    started(state, run, launch).await?;
+    rewound(state, task_id, rewind);
+    Ok(())
+}
+
+/// A run started with the conversation rollback a rewind asked for (see checkpoints.rs): it's done
+/// with. One for another session than the run's is dropped too.
+fn rewound(state: &Shared, task_id: &str, rewind: Option<crate::checkpoints::Rewind>) {
+    let cleared = state.update_task_if(task_id, &[("rewind", Value::Null)], |c| Ok(db::get_task(c, task_id)?.is_some_and(|t| t.rewind.is_some())));
+    if let Err(e) = cleared {
+        tracing::warn!(task = task_id, "clearing the conversation rollback: {e:#}");
+    }
+    if let Some(r) = rewind {
+        state.add_event(task_id, "info", format!("The conversation goes on from before turn {}", r.turn), None);
+    }
 }
 
 /// The board tools a Claude run gets without asking (`--allowedTools`). In auto mode that's all
@@ -1507,15 +1566,15 @@ fn profiles_note(profiles: &[db::Profile], own: &db::Profile) -> String {
     s
 }
 
-/// `group`: for a group task, its group's projects. `document`: for a plan, artifact or diagram
-/// task, the file it writes (see documents.rs). `github`: where a task with its own branch opens
+/// `group`: for a group task, its group's projects. `documents`: the files its labels ask it to
+/// write, by label (see documents.rs). `github`: where a task with its own branch opens
 /// its pull request, if its repository is on GitHub.
 fn system_prompt(
     task: &Task,
     project: Option<&Project>,
     parent: Option<&Task>,
     group: &[Project],
-    document: Option<&str>,
+    documents: &[(&str, String)],
     github: Option<&worktree::Github>,
     gh_tools: bool,
 ) -> String {
@@ -1529,7 +1588,7 @@ fn system_prompt(
          comments or reviews, the branch conflicts with its base, or it's merged or closed, and says what happened. For \
          a deploy, give it a `command` that exits once it's done."
     );
-    match (task.kind.as_str(), project) {
+    let mut s = match (task.kind.as_str(), project) {
         ("task", p) if task.is_scratch() => {
             // One from a scratch chat works in the chat's folder, which may be shared.
             let dir = match &task.work_dir {
@@ -1601,14 +1660,14 @@ fn system_prompt(
             );
             s
         }
-        ("task", p) if task.task_type.is_some() => {
+        ("task", p) if crate::documents::documents_only(task) => {
             let key = key_prefix(task, p);
             let mut s = format!(
                 "You are an agent working on task {key}-{} (\"{}\", id {}) on the Huntaway board, a kanban board where each \
                  task is worked by its own Claude agent.",
                 task.number, task.title, task.id
             );
-            s.push_str(&crate::documents::system_prompt(task, document.unwrap_or("?"), p, group));
+            s.push_str(&crate::documents::system_prompt(task, documents, p, group));
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
                  with your question (and its `options`, when the choices are known) and then end your turn — the task is \
@@ -1727,7 +1786,12 @@ fn system_prompt(
             ));
             s
         }
+    };
+    // What its labels ask for (a task that makes only documents was told already).
+    if !crate::documents::documents_only(task) {
+        s.push_str(&crate::documents::labels_prompt(documents));
     }
+    s
 }
 
 const SUBAGENT_EVENTS: [&str; 4] = ["task_started", "task_progress", "task_updated", "task_notification"];
@@ -1911,6 +1975,10 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
                 return Ok(());
             }
             let tool_result = v["type"] == "user" && v["message"]["content"].as_array().is_some_and(|c| c.iter().any(|b| b["type"] == "tool_result"));
+            // The conversation's latest message, where a rewind can resume it (see checkpoints::Rewind).
+            if let Some(uuid) = v["uuid"].as_str().filter(|_| v["parent_tool_use_id"].is_null()) {
+                state.db().execute("UPDATE runs SET agent_at=?1 WHERE id=?2", rusqlite::params![uuid, run.id])?;
+            }
             state.add_message(task_id, "claude", v)?;
             // A tool call may have changed the task's document: the task shows it as it's written.
             if tool_result {
@@ -1974,6 +2042,8 @@ pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut resul
         }
     }
     state.db().execute("UPDATE runs SET saw_result=1, between_turns=1, result_error=?1 WHERE id=?2", rusqlite::params![error, run.id])?;
+    let status = if stopping == 1 { "stopped" } else if error.is_some() { "failed" } else { "done" };
+    crate::checkpoints::after_turn(state, &run.id, status);
     // A turn that ended isn't waiting any more, even if the agent gave up on the call.
     crate::wait::ended(state, &run.task_id, &run.id);
     crate::documents::turn_ended(state, &run.task_id);
@@ -1998,6 +2068,12 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     let task_id = run.task_id.as_str();
     let queued = {
         let mut runs = state.runs.lock().unwrap();
+        // A turn the agent never ended (stopped, failed or killed) gets its checkpoint here, while
+        // the run still holds the thread: before a rewind or the next run (a queued message) can
+        // ask for theirs.
+        if run.status == "running" && !run.between_turns && run.kind != "compact" {
+            crate::checkpoints::after_turn(state, run_id, if matches!(outcome, Outcome::Failed(_)) { "failed" } else { "stopped" });
+        }
         if runs.get(task_id).is_some_and(|h| h.run_id == run_id) {
             runs.remove(task_id);
         }
@@ -2058,6 +2134,8 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         // The agent marked its own task done (e.g. after merging it).
         (Outcome::Ok, None) if task.status == "done" => (None, None),
         (Outcome::Ok, None) if task.merging => (Some("needs_attention"), Some("The agent finished without marking the task merged".into())),
+        // It stepped out of the merge queue to make changes, and now rejoins it.
+        (Outcome::Ok, None) if task.remerge => (Some("ready_for_merge"), None),
         (Outcome::Ok, None) => (Some("in_review"), None),
     };
     // The queued message carries on the conversation, so the task stays where it is.
@@ -2068,6 +2146,12 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     if is_task {
         if let Some(s) = status {
             fields.push(("status", json!(s)));
+        }
+        if status == Some("ready_for_merge") {
+            // At the back of the queue, as the tasks behind it moved up while it was away.
+            let end = db::end_position(&state.db(), task.project_id.as_deref(), "ready_for_merge", "task").unwrap_or(task.position);
+            fields.extend([("merging", json!(true)), ("remerge", json!(false)), ("position", json!(end))]);
+            state.add_event(task_id, "info", "Back in the merge queue", None);
         }
     }
     let updated = match end_run(state, task_id, run_id, &fields) {
@@ -2312,6 +2396,71 @@ mod tests {
 
     fn result(subtype: &str, total_cost: f64) -> Value {
         json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "total_cost_usd": total_cost, "num_turns": 1})
+    }
+
+    #[test]
+    fn a_merge_that_needs_changes_lets_the_queue_go_and_rejoins_it() {
+        crate::testing::run(async || {
+            let (state, a, run) = running(false);
+            let a = state.update_task(&a.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap().unwrap();
+            let nt = db::NewTask { profile_id: &a.profile_id, project_id: None, kind: "task", title: "b", description: "", status: "ready_for_merge", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let b = db::insert_task(&state.db(), nt).unwrap();
+            let b = state.update_task(&b.id, &[("merging", json!(true)), ("position", json!(a.position + 1.0))]).unwrap().unwrap();
+            let slot = |state: &Shared| db::active_merge(&state.db(), None, None).unwrap().map(|t| t.id);
+            let queue = |state: &Shared| db::queued_merges(&state.db(), None, None).unwrap().into_iter().map(|t| t.id).collect::<Vec<_>>();
+            assert_eq!((slot(&state), queue(&state)), (Some(a.id.clone()), vec![b.id.clone()]));
+            let update = async |state: &Shared, id: &str, body: Value| crate::api::update_task_inner(state, id, body.as_object().unwrap()).await;
+
+            // Only a merging task steps out, into In progress.
+            assert!(update(&state, &a.id, json!({"status": "in_review", "remerge": true})).await.is_err());
+            assert!(update(&state, &a.id, json!({"status": "in_progress", "remerge": "yes"})).await.is_err());
+            let t = update(&state, &a.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.remerge, t.running), ("in_progress", false, true, true));
+            assert!(update(&state, &b.id, json!({"status": "in_progress", "remerge": true})).await.is_err());
+            // B can merge while A makes its changes.
+            assert_eq!((slot(&state), queue(&state)), (None, vec![b.id.clone()]));
+            // Waiting on the user keeps its place to come back to.
+            let t = update(&state, &a.id, json!({"status": "needs_attention"})).await.unwrap();
+            assert!(t.remerge);
+            assert_eq!(slot(&state), None);
+            update(&state, &a.id, json!({"status": "in_progress"})).await.unwrap();
+
+            // Done, it rejoins the end of the queue, rather than going to In review.
+            finish(&state, &run.id, Outcome::Ok);
+            let t = reload(&state, &a.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge, t.running), ("ready_for_merge", true, false, false));
+            assert!(t.position > b.position);
+            assert_eq!((slot(&state), queue(&state)), (None, vec![b.id.clone(), a.id.clone()]));
+
+            // Moved to another column meanwhile, it's out of the queue for good.
+            let (state, c, run) = running(false);
+            state.update_task(&c.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            update(&state, &c.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            let t = update(&state, &c.id, json!({"status": "todo"})).await.unwrap();
+            assert_eq!((t.merging, t.remerge), (false, false));
+            update(&state, &c.id, json!({"status": "in_progress"})).await.unwrap();
+            finish(&state, &run.id, Outcome::Ok);
+            assert_eq!(reload(&state, &c.id).status, "in_review");
+
+            // A run that fails leaves it for the user, still to rejoin once its agent is done.
+            let (state, d, run) = running(false);
+            state.update_task(&d.id, &[("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            update(&state, &d.id, json!({"status": "in_progress", "remerge": true})).await.unwrap();
+            finish(&state, &run.id, Outcome::Failed("boom".into()));
+            let t = reload(&state, &d.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge), ("needs_attention", false, true));
+            // Moved on by the board rather than the user (a review starting puts it in In review),
+            // it drops its place all the same: work after that goes to review, not to the queue.
+            state.update_task(&d.id, &[("status", json!("in_review")), ("attention_reason", Value::Null)]).unwrap();
+            assert!(!reload(&state, &d.id).remerge);
+            update(&state, &d.id, json!({"status": "in_progress"})).await.unwrap();
+            let next = db::insert_run(&state.db(), &d.id, "prompt").unwrap();
+            state.runs.lock().unwrap().insert(d.id.clone(), RunHandle { run_id: next.id.clone(), cancel: None });
+            state.update_task(&d.id, &[("running", json!(true))]).unwrap();
+            finish(&state, &next.id, Outcome::Ok);
+            let t = reload(&state, &d.id);
+            assert_eq!((t.status.as_str(), t.merging, t.remerge), ("in_review", false, false));
+        })
     }
 
     #[test]
@@ -2812,7 +2961,7 @@ mod tests {
         let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Plan it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let task = db::insert_group_task(&c, t, "Shop").unwrap();
         let group = db::group_projects(&c, &p.id, "Shop").unwrap();
-        let text = system_prompt(&task, None, None, &group, None, None, true);
+        let text = system_prompt(&task, None, None, &group, &[], None, true);
         assert!(text.contains("task G-1 (\"Plan it\"") && text.contains("Web (key WEB, id pr, repository /src/web)"), "{text}");
         assert!(start_prompt(&task, None, "").starts_with("# G-1: Plan it\n"));
     }
@@ -2828,20 +2977,20 @@ mod tests {
         (task.worktree_path, task.branch) = (Some("/w/1-fix-it".into()), Some("ia/web-1-fix-it".into()));
         // Pushed to a mirror: gh is told which repository, as it would pick the fetch remote's.
         let gh = worktree::Github { remote: "origin".into(), repo: "o/web-mirror".into() };
-        let text = system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), false);
         assert!(text.contains("Do not merge or switch branches unless asked."), "{text}");
         assert!(text.contains("on GitHub (o/web-mirror)") && text.contains("`git push -u origin ia/web-1-fix-it`"), "{text}");
         assert!(text.contains("into `main` in o/web-mirror (`gh pr create --repo o/web-mirror --head ia/web-1-fix-it --base main`"), "{text}");
         // With the gh server, which turns away gh in Bash, through its tools.
-        let text = system_prompt(&task, Some(&project), None, &[], None, Some(&gh), true);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), true);
         assert!(text.contains("in o/web-mirror (the gh tools' pr_create with repo `o/web-mirror`, head `ia/web-1-fix-it` and base `main`)"), "{text}");
         assert!(!text.contains("gh pr create"), "{text}");
 
         // Without GitHub (or a branch of its own), it leaves pushing to the user.
-        let text = system_prompt(&task, Some(&project), None, &[], None, None, false);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], None, false);
         assert!(text.contains("Do not push, merge, or switch branches unless asked.") && !text.contains("open a pull request"), "{text}");
         task.branch = None;
-        assert!(!system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false).contains("open a pull request"));
+        assert!(!system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), false).contains("open a pull request"));
         // Every agent is told it can wait on one, though.
         assert!(text.contains("For CI or reviews on a pull request, give it the `pull_request`"), "{text}");
     }
@@ -2880,7 +3029,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_task_is_told_where_to_write_its_plan() {
+    fn a_plan_task_from_before_labels_is_told_to_make_only_its_plan() {
         let c = db::open(std::path::Path::new(":memory:")).unwrap();
         let p = db::insert_profile(&c, "p", &[], None).unwrap();
         let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
@@ -2888,14 +3037,43 @@ mod tests {
         project.start_prompt = Some("Write a failing test first.".into());
         let t = db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title: "Plan search", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let task = db::insert_task(&c, t).unwrap();
-        let task = db::update_task(&c, &task.id, &[("task_type", serde_json::json!("plan"))]).unwrap().unwrap();
-        let text = system_prompt(&task, Some(&project), None, &[], Some("/data/documents/t/plan.html"), None, true);
-        assert!(text.contains("task WEB-1 (\"Plan search\"") && text.contains("Write it to /data/documents/t/plan.html"), "{text}");
+        // As the migration to labels leaves it.
+        let fields = [("labels", serde_json::json!(["plan"])), ("work_dir", serde_json::json!(format!("documents/{}", task.id)))];
+        let task = db::update_task(&c, &task.id, &fields).unwrap().unwrap();
+        let docs = [("plan", "/data/documents/t/plan.html".to_string())];
+        let text = system_prompt(&task, Some(&project), None, &[], &docs, None, true);
+        assert!(text.contains("task WEB-1 (\"Plan search\"") && text.contains("a plan (HTML) to /data/documents/t/plan.html"), "{text}");
+        assert!(text.contains("Rather than changing code") && text.contains("break it into tasks"), "{text}");
         assert!(text.contains("repository /src/web, which you can read") && !text.contains("worktree"), "{text}");
+        assert!(!text.contains("label plan") && !text.contains("carry it out in this task"), "{text}");
         // It's told about the plan theme's components.
         assert!(text.contains("<ia-steps>") && text.contains("<ia-html><template>"), "{text}");
         // The project's start instructions are for its code tasks.
         assert!(start_prompt(&task, Some(&project), "").contains(crate::prompts::DEFAULT_START));
+    }
+
+    #[test]
+    fn a_labelled_task_is_told_to_write_its_documents_besides_its_work() {
+        let c = db::open(std::path::Path::new(":memory:")).unwrap();
+        let p = db::insert_profile(&c, "p", &[], None).unwrap();
+        let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: true };
+        let mut project = db::insert_project(&c, np).unwrap();
+        project.start_prompt = Some("Write a failing test first.".into());
+        let t = db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title: "Search", description: "", status: "todo", use_worktree: true, model: None, effort: None, claude_config_id: None };
+        let mut task = db::insert_task(&c, t).unwrap();
+        (task.branch, task.worktree_path) = (Some("ia/web-1-search".into()), Some("/w/1".into()));
+        let plain = system_prompt(&task, Some(&project), None, &[], &[], None, true);
+        assert!(!plain.contains("label") && !plain.contains("<ia-steps>"), "{plain}");
+        task.labels = vec!["plan".into(), "diagram".into()];
+        let docs = [("plan", "/d/plan.html".to_string()), ("diagram", "/d/diagram.mmd".to_string())];
+        let text = system_prompt(&task, Some(&project), None, &[], &docs, None, true);
+        // A code task still, in its worktree.
+        assert!(text.starts_with(&plain) && text.contains("dedicated git worktree at /w/1"), "{text}");
+        assert!(text.contains("the labels plan, diagram") && text.contains("a plan (HTML) to /d/plan.html and a Mermaid diagram to /d/diagram.mmd"), "{text}");
+        assert!(text.contains("don't commit them") && text.contains("The plan comes first") && text.contains("carry it out in this task"), "{text}");
+        assert!(text.contains("<ia-steps>") && text.contains("Mermaid source") && !text.contains("Rather than changing code"), "{text}");
+        // And it starts with the project's instructions.
+        assert!(start_prompt(&task, Some(&project), "").contains("Write a failing test first."));
     }
 
     #[test]
@@ -2904,12 +3082,12 @@ mod tests {
         let p = db::insert_profile(&c, "p", &[], None).unwrap();
         let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Ask", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let mut task = db::insert_scratch_task(&c, t).unwrap();
-        let text = system_prompt(&task, None, None, &[], None, None, true);
+        let text = system_prompt(&task, None, None, &[], &[], None, true);
         assert!(text.contains("scratch task S-1 (\"Ask\"") && text.contains("isn't in a project or a repository"), "{text}");
         assert!(text.contains("the task's own folder") && text.contains("write freely") && !text.contains("worktree"), "{text}");
         // One from a scratch chat isn't told its (maybe shared) folder is free to write in.
         task.work_dir = Some("/data/profiles/p/scratch".into());
-        let text = system_prompt(&task, None, None, &[], None, None, true);
+        let text = system_prompt(&task, None, None, &[], &[], None, true);
         assert!(text.contains("a scratch folder") && !text.contains("write freely"), "{text}");
         assert!(start_prompt(&task, None, "").starts_with("# S-1: Ask"));
     }
@@ -2925,11 +3103,11 @@ mod tests {
         (sp.subproject, sp.branch, sp.worktree_path, sp.worktree_state) = (true, Some("ia/web-1-search".into()), Some("/w/1".into()), "ready".into());
         let task = db::insert_task(&c, t("Ask")).unwrap();
         let task = db::update_task(&c, &task.id, &[("task_type", serde_json::json!("scratch"))]).unwrap().unwrap();
-        let text = system_prompt(&task, Some(&project), None, &[], None, None, true);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], None, true);
         assert!(text.contains("scratch task WEB-2 (\"Ask\"") && text.contains("in the project Web") && text.contains("repository /src/web, which you can read"), "{text}");
         assert!(text.contains("Don't change the repository") && !text.contains("subproject") && !text.contains("isn't in a project"), "{text}");
         // In a subproject, it's told about the subproject's branch and worktree.
-        let text = system_prompt(&task, Some(&project), Some(&sp), &[], None, None, true);
+        let text = system_prompt(&task, Some(&project), Some(&sp), &[], &[], None, true);
         assert!(text.contains("part of the subproject WEB-1 (\"Search\"), whose branch `ia/web-1-search`") && text.contains("worktree at /w/1, which you can read"), "{text}");
         assert!(start_prompt(&task, Some(&project), "").starts_with("# WEB-2: Ask"));
     }
