@@ -256,7 +256,9 @@ async fn run(state: &Shared, rebuild: bool) -> Result<()> {
     if rebuild {
         let src = state.meta.source_dir.clone().context("source checkout not found")?;
         set_phase(state, "building_ui", None);
-        step(state, &src.join("app"), "npm", &["install", "--no-audit", "--no-fund"]).await?;
+        // --no-save, so the build never rewrites the tracked package-lock.json: a hub's
+        // Update refuses a checkout with uncommitted changes, so that would stop the next one.
+        step(state, &src.join("app"), "npm", &["install", "--no-save", "--no-audit", "--no-fund"]).await?;
         step(state, &src.join("app"), "npm", &["run", "build"]).await?;
         set_phase(state, "building_server", None);
         step(state, &src.join("server"), "cargo", &["build", "--release"]).await?;

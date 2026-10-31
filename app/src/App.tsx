@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
-import { fetchOpenToken, getToken, setUnauthorizedHandler, unauthorizedHere } from "./api";
+import { fetchOpenToken, getToken, setUnauthorizedHandler } from "./api";
 import { Analytics } from "./components/Analytics";
 import { ProjectApprovals } from "./components/Approvals";
 import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/Board";
@@ -17,6 +17,8 @@ import { boardTaskUrl, groupTaskUrl, hasPanel, navigate, profileTaskUrl, subproj
 import { connectEvents, isGroupTask, profileNames, useProfileName, useStore } from "./store";
 import { startToolKeepalive } from "./terminalTools";
 
+const CompareView = lazy(() => import("./components/Compare"));
+
 export function App() {
   const authed = useStore((s) => s.authed);
   const profiles = useStore((s) => s.profiles);
@@ -29,10 +31,8 @@ export function App() {
 
   useEffect(() => {
     // A token turned down that has been replaced since, or that a PR preview has replaced (rebuilt, it hands out a new
-    // one), loads the board again with the new one; otherwise it's asked for. A linked host turning it down is that
-    // host's trouble (its own token changed since it was linked), not this board's.
-    setUnauthorizedHandler(async (token, path) => {
-      if (!unauthorizedHere(path, useStore.getState().localHostId)) return;
+    // one), loads the board again with the new one; otherwise it's asked for.
+    setUnauthorizedHandler(async (token) => {
       if (getToken() !== token || (await fetchOpenToken())) window.location.reload();
       else useStore.getState().setAuthed(false);
     });
@@ -119,6 +119,11 @@ export function App() {
         </div>
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
+      {panel?.compare && hasPanel(route) && (
+        <Suspense fallback={null}>
+          <CompareView taskId={panel.taskId} />
+        </Suspense>
+      )}
       <ProjectApprovals />
       <UnhandledErrors />
     </div>

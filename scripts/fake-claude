@@ -13,6 +13,8 @@ Set these in the server's environment (before test-server.sh, which keeps them f
   IA_FAKE_CLAUDE_RESULT  the result's subtype (default success; anything else is an error)
   IA_FAKE_CLAUDE_EXIT    exit status (default 0)
   IA_FAKE_CLAUDE_TITLE   the title that title generation prints (default "Fake title")
+  IA_FAKE_CLAUDE_LIMIT   seconds until the usage limit resets (default 7200) for a prompt containing
+                         "out-of-usage", which is refused for the usage limit as Claude Code does
 """
 import json
 import os
@@ -67,6 +69,19 @@ session = opt("--resume") or str(uuid.uuid4())
 model = opt("--model") or "fake"
 emit({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": os.getcwd(), "tools": []})
 time.sleep(float(os.environ.get("IA_FAKE_CLAUDE_SLEEP", "0")))
+if "out-of-usage" in prompt:
+    # What Claude Code prints when the plan's 5-hour limit refuses a turn.
+    resets = int(time.time() + float(os.environ.get("IA_FAKE_CLAUDE_LIMIT", "7200")))
+    info = {"status": "rejected", "resetsAt": resets, "rateLimitType": "five_hour", "overageStatus": "rejected", "isUsingOverage": False}
+    windows = {"five_hour": {"utilization": 1, "resetsAt": resets, "status": "rejected"}, "seven_day": {"utilization": 0.62, "resetsAt": resets + 86400, "status": "allowed"}}
+    emit({"type": "rate_limit_event", "rate_limit_info": {**info, "unifiedWindows": windows}, "session_id": session})
+    text = "You've hit your 5-hour limit · resets " + time.strftime("%-I:%M%p", time.localtime(resets)).lower()
+    emit({"type": "assistant", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None, "error": "rate_limit",
+          "api_error_status": 429, "api_error": "usage_limit_reached", "api_error_params": {"rate_limit_info": info},
+          "message": {"id": str(uuid.uuid4()), "role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": text}]}})
+    emit({"type": "result", "subtype": "success", "is_error": True, "api_error_status": 429, "api_error": "usage_limit_reached",
+          "result": text, "session_id": session, "duration_ms": 1, "num_turns": 1, "total_cost_usd": 0})
+    sys.exit(0)
 text = os.environ.get("IA_FAKE_CLAUDE_TEXT") or "Fake reply to: " + prompt.strip()[:200]
 emit({
     "type": "assistant",
