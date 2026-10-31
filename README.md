@@ -248,7 +248,7 @@ alive across service restarts.
 
 When the source checkout has commits the running server doesn't (for example, a task branch
 merged to `master`), the sidebar shows **N new commits · Restart**. The same action is under
-Settings → Server. It runs `npm install`, `npm run build` and `cargo build --release` in the
+Settings → Server. It runs `npm install --no-save`, `npm run build` and `cargo build --release` in the
 checkout, streaming the log, then re-execs the new binary with the same arguments, so the PID
 stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
