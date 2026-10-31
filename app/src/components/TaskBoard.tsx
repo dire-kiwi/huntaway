@@ -23,6 +23,8 @@ import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKinds,
 import { FilterBar, FilterMenu, SearchBox, SortMenu, type FilterOption } from "./BoardControls";
 import { isGroupTask, keyPrefix, useStore } from "../store";
 import { useConfirmDone } from "./ConfirmDone";
+import { COMPARE_API } from "./Fanout";
+import { openCompare } from "../router";
 import { ReminderModal, reminderItems, starItem } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
 import { TimelineView } from "./TimelineView";
@@ -436,6 +438,10 @@ export function TaskBoard({
   );
 
   const menuTask = useStore((s) => (menu ? s.tasks[menu.taskId] : null));
+  // The tasks made from the same prompt as it, it among them, to compare (see Compare.tsx).
+  const menuSiblings = useStore((s) =>
+    menuTask?.fanout_id ? Object.values(s.tasks).filter((t) => t.host_id === menuTask.host_id && t.fanout_id === menuTask.fanout_id).length : 0,
+  );
   /** The columns to move a task to from its menu: all but Done where Done's resolutions follow them. */
   const moveItems = (task: Task): MenuItem[] =>
     statuses
@@ -766,6 +772,9 @@ export function TaskBoard({
               : []),
             ...(hostSupports(hostOf(menuTask), REMINDERS_API)
               ? [starItem(menuTask, setDropErr, true), ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr)]
+              : []),
+            ...(menuSiblings > 1 && hostSupports(hostOf(menuTask), COMPARE_API)
+              ? [{ label: `Compare all ${menuSiblings} from its prompt`, divider: true, onSelect: () => openCompare(menuTask.id) }]
               : []),
           ]}
           // A right-click on another task may already have opened its menu in place of this one.

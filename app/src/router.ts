@@ -100,10 +100,14 @@ export function useRoute(): Route {
   return parse(useSyncExternalStore(onNavigate, () => window.location.pathname));
 }
 
-/** A task open beside the page in a side panel (`?task=<id>`), or expanded into a dialog over it (`&expanded`). */
+/**
+ * A task open beside the page in a side panel (`?task=<id>`), or expanded into a dialog over it (`&expanded`), and the
+ * tasks made from the same prompt as it compared over the page (`&compare`).
+ */
 export interface Panel {
   taskId: string;
   expanded: boolean;
+  compare?: boolean;
 }
 
 /** Pages a task can open beside. Elsewhere a task opens on its project's (or subproject's) board. */
@@ -111,13 +115,13 @@ export const hasPanel = (r: Route) => r.name === "board" || r.name === "group" |
 
 function panelUrl(path: string, panel: Panel | null) {
   if (!panel) return path;
-  return `${path}?task=${encodeURIComponent(panel.taskId)}${panel.expanded ? "&expanded" : ""}`;
+  return `${path}?task=${encodeURIComponent(panel.taskId)}${panel.expanded ? "&expanded" : ""}${panel.compare ? "&compare" : ""}`;
 }
 
 function parsePanel(search: string): Panel | null {
   const q = new URLSearchParams(search);
   const taskId = q.get("task");
-  return taskId ? { taskId, expanded: q.has("expanded") } : null;
+  return taskId ? { taskId, expanded: q.has("expanded"), compare: q.has("compare") } : null;
 }
 
 export function usePanel(): Panel | null {
@@ -145,6 +149,18 @@ export function openTask(taskId: string, opts: { expanded?: boolean; replace?: b
 export function setPanelExpanded(expanded: boolean) {
   const panel = parsePanel(window.location.search);
   if (panel) navigate(panelUrl(window.location.pathname, { ...panel, expanded }), true);
+}
+
+/** Compares the tasks made from the same prompt as `taskId` (see Compare.tsx), over the page with the task open beside it. */
+export function openCompare(taskId: string) {
+  const path = window.location.pathname;
+  if (!hasPanel(parse(path))) return navigate({ name: "task", taskId });
+  navigate(panelUrl(path, { taskId, expanded: parsePanel(window.location.search)?.expanded ?? false, compare: true }));
+}
+
+export function closeCompare() {
+  const panel = parsePanel(window.location.search);
+  if (panel) navigate(panelUrl(window.location.pathname, { ...panel, compare: false }));
 }
 
 export function closeTask(replace = false) {

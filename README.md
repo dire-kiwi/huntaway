@@ -531,7 +531,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   default model, and `!<model>.<config>` a model that more than one config has (`!opus.work`).
   Code tasks made this way each get their own worktree and branch. They share a `fanout_id`, so
   their cards show which model each ran with, and each one's Details list the others with their
-  state and cost, to compare them.
+  state and cost.
+  **Compare** them (API 81) from a card's model badge or right-click menu (*Compare all N from its
+  prompt*), or *Compare all N* in a task's Details. It opens over the board: each one's model,
+  status, cost, agent time (all of its runs together), review (the verdict and each reviewer's
+  issues) and diff against its base branch, with a table of the files any of them changed (click
+  one's +/− to go to its diff). *Side by side* puts them in columns; *One at a time* shows one with
+  its summary beside it, switched with its tabs, ← → (or `[` `]`) and 1–9, in unified or split
+  diffs. A phone shows them one at a time. A task whose worktree is gone shows the commits on its
+  branch. **Pick this one** keeps that task as it is and completes the others as *Not done*: their
+  agents (and reviewers) are stopped and their worktrees removed. Its dialog lists what each has
+  uncommitted, and asks whether to discard that (unticked, those worktrees are kept with the
+  changes in), to delete their branches (and the pushed copies; unmerged commits on them are lost)
+  and to close their pull requests (with gh, as the task's GitHub account). A worktree whose HEAD
+  has commits on no branch (a detached HEAD's) is always kept, as they'd be lost with it. A branch
+  is deleted after its pushed copy, so it's kept while its worktree is, while a pull request kept
+  open has it, or when its pushed copy can't be deleted. Anything that couldn't be done is listed
+  after, and picking again cleans up what was kept the first time. `GET /tasks/{id}/fanout` gives each one's agent time, uncommitted
+  files and branch, and `POST /tasks/{id}/fanout/pick` (`delete_branches`, `close_prs`,
+  `discard_uncommitted`) picks it.
 - **Agents across profiles** (API 23): each profile has its own board, and agents' board tools
   see their own profile's. A profile can let other profiles' agents use its board too: edit it
   under Settings → Profiles and tick them under *Agents from other profiles* (or *Every

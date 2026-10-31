@@ -14,6 +14,7 @@ mod db;
 mod demo;
 mod disk;
 mod documents;
+mod fanout;
 mod gh_mcp;
 mod git_view;
 mod github;

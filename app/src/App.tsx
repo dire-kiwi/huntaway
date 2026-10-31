@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
 import { fetchOpenToken, getToken, setUnauthorizedHandler, unauthorizedHere } from "./api";
 import { Analytics } from "./components/Analytics";
@@ -16,6 +16,8 @@ import { startPush } from "./push";
 import { boardTaskUrl, groupTaskUrl, hasPanel, navigate, profileTaskUrl, subprojectTaskUrl, usePanel, useRoute } from "./router";
 import { connectEvents, isGroupTask, profileNames, useProfileName, useStore } from "./store";
 import { startToolKeepalive } from "./terminalTools";
+
+const CompareView = lazy(() => import("./components/Compare"));
 
 export function App() {
   const authed = useStore((s) => s.authed);
@@ -119,6 +121,11 @@ export function App() {
         </div>
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
+      {panel?.compare && hasPanel(route) && (
+        <Suspense fallback={null}>
+          <CompareView taskId={panel.taskId} />
+        </Suspense>
+      )}
       <ProjectApprovals />
       <UnhandledErrors />
     </div>
