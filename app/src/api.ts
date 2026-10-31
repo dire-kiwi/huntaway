@@ -1479,7 +1479,7 @@ export const api = {
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
   systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>
-    on(h).get<{ text: string; runtime: Agent }>(
+    on(h).get<{ text: string; runtime: Agent; permission_mode: PermissionMode }>(
       `/projects/${enc(id)}/system-prompt?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))}`,
     ),
   /** The project's own skills and MCP servers, and the ones from elsewhere it turns off (API 21). */

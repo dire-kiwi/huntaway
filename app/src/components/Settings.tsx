@@ -972,10 +972,12 @@ function SystemPromptPreview({ project }: { project: Project }) {
   const [labels, setLabels] = useState<DocumentType[]>([]);
   const [worktree, setWorktree] = useState<boolean | null>(null);
   const [runtime, setRuntime] = useState<Agent | null>(null);
-  const [plan, setPlan] = useState(project.permission_mode === "plan");
-  const [preview, setPreview] = useState<{ text: string; runtime: Agent } | null>(null);
+  // Unset until it's switched, the thread's mode is the one it inherits (the project's, else the host's).
+  const [plan, setPlan] = useState<boolean | null>(null);
+  const [preview, setPreview] = useState<{ text: string; runtime: Agent; permission_mode: PermissionMode } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const worktrees = worktree ?? (project.use_worktrees && project.is_git !== false);
+  const hostMode = useStore((s) => s.hostSettings[project.host_id]?.default_permission_mode);
   useEffect(() => {
     let live = true;
     const q: SystemPromptOptions = {
@@ -983,7 +985,7 @@ function SystemPromptPreview({ project }: { project: Project }) {
       labels: labels.join(","),
       worktree: type === "task" ? worktrees : undefined,
       runtime: runtime ?? undefined,
-      permission_mode: plan ? "plan" : "default",
+      permission_mode: plan === null ? undefined : plan ? "plan" : "default",
     };
     api.systemPromptPreview(project.host_id, project.id, q).then(
       (p) => {
@@ -996,8 +998,8 @@ function SystemPromptPreview({ project }: { project: Project }) {
     return () => {
       live = false;
     };
-    // Again when the project changes, as its settings go into it.
-  }, [project, type, labels, worktrees, runtime, plan]);
+    // Again when the project or the host's default mode changes, as they go into it.
+  }, [project, hostMode, type, labels, worktrees, runtime, plan]);
   const shownRuntime = runtime ?? preview?.runtime ?? "claude";
   return (
     <div className="space-y-2.5 border-t border-line pt-5">
@@ -1041,7 +1043,7 @@ function SystemPromptPreview({ project }: { project: Project }) {
           })}
         </div>
         {type === "task" && <Toggle checked={worktrees} onChange={setWorktree} label="Own worktree" />}
-        {shownRuntime === "codex" && <Toggle checked={plan} onChange={setPlan} label="Plan mode" />}
+        {shownRuntime === "codex" && <Toggle checked={plan ?? preview?.permission_mode === "plan"} onChange={setPlan} label="Plan mode" />}
       </div>
       {err ? (
         <div className="text-xs text-red-400">Couldn't load the system prompt: {err}</div>

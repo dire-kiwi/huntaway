@@ -2152,11 +2152,11 @@ async fn teardown_worktree(State(s): State<Shared>, Path(id): Path<String>, body
 }
 
 /// `GET /projects/{id}/system-prompt` (API 80): what the agent of a new thread in the project is told on top of its
-/// agent's own system prompt, for the options given (see runner::preview): `{text, runtime}`.
+/// agent's own system prompt, for the options given (see runner::preview): `{text, runtime, permission_mode}`.
 async fn system_prompt_preview(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<runner::PreviewOptions>) -> ApiResult<Json<Value>> {
     let project = db::get_project(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("project"))?;
-    let (text, codex) = runner::preview(&s, &project, &q).await?;
-    Ok(Json(json!({"text": text, "runtime": if codex { "codex" } else { "claude" }})))
+    let (text, codex, mode) = runner::preview(&s, &project, &q).await?;
+    Ok(Json(json!({"text": text, "runtime": if codex { "codex" } else { "claude" }, "permission_mode": mode})))
 }
 
 /// Remove the worktrees of the project's done tasks that are merged and have nothing

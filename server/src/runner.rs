@@ -1336,8 +1336,9 @@ pub struct PreviewOptions {
 
 /// What the agent of a new thread in `project` would be told on top of its agent's own system prompt (see
 /// `instructions`), for the project's settings to show: a task numbered as the project's next, with the options given
-/// and the project's settings as they are now. Its title and id are placeholders. Also says whether it's on Codex.
-pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> ApiResult<(String, bool)> {
+/// and the project's settings as they are now. Its title and id are placeholders. Also gives whether it's on Codex, and its
+/// permission mode (the one given, or else the one it inherits).
+pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> ApiResult<(String, bool, String)> {
     let kind = o.r#type.as_deref().unwrap_or("task");
     if !["task", "subproject", "scratch"].contains(&kind) {
         return Err(ApiError::bad(format!("unknown type {kind:?}: it's task, subproject or scratch")));
@@ -1397,7 +1398,7 @@ pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> A
     let account = github_account(Some(project), &profile);
     let base = system_prompt(&task, Some(project), None, &[], &documents, github.as_ref(), gh_tools);
     let to = Told { codex, plan: permission_mode == "plan", gh_tools, github_account: account.as_deref(), profiles: &profiles, profile: &profile };
-    Ok((instructions(base, &task, &to), codex))
+    Ok((instructions(base, &task, &to), codex, permission_mode))
 }
 
 /// What a Claude run with our gh server is told about GitHub. gh in Bash is turned away (see
@@ -3099,31 +3100,37 @@ mod tests {
             let preview = async |q: Value| preview(&state, &project, &serde_json::from_value(q).unwrap()).await;
 
             // A task as the project's new ones are, numbered as its next.
-            let (text, codex) = preview(json!({})).await.unwrap();
-            assert!(!codex);
+            let (text, codex, mode) = preview(json!({})).await.unwrap();
+            assert!(!codex && mode == "default");
             assert!(text.starts_with("You are an agent working on task WEB-1 (\"Task title\") on the Huntaway board."), "{text}");
             assert!(text.contains("worktree at /w/1-task-title on branch `ia/web-1-task-title` (branched from `main`)"), "{text}");
             assert!(text.contains("on GitHub (o/web)") && text.contains("pr_create with repo `o/web`, head `ia/web-1-task-title` and base `main`"), "{text}");
             let profiles = db::list_profiles(&state.db()).unwrap();
             assert!(text.contains(&gh_note(None)) && text.ends_with(&profiles_note(&profiles, &profiles[0])), "{text}");
             // Making it doesn't make a task, or take the number.
-            let (again, _) = preview(json!({})).await.unwrap();
+            let (again, ..) = preview(json!({})).await.unwrap();
             assert_eq!(again, text);
             assert!(db::list_tasks_for_project(&state.db(), "pr", "task").unwrap().is_empty());
 
             // The options a new thread is made with.
-            let (text, _) = preview(json!({"labels": "plan,diagram"})).await.unwrap();
+            let (text, ..) = preview(json!({"labels": "plan,diagram"})).await.unwrap();
             assert!(text.contains("This task has the labels plan, diagram on the board") && text.contains("<task id>/plan.html"), "{text}");
-            let (text, _) = preview(json!({"worktree": false})).await.unwrap();
+            let (text, ..) = preview(json!({"worktree": false})).await.unwrap();
             assert!(!text.contains("worktree") && !text.contains("open a pull request"), "{text}");
-            let (text, _) = preview(json!({"type": "scratch"})).await.unwrap();
+            let (text, ..) = preview(json!({"type": "scratch"})).await.unwrap();
             assert!(text.contains("This scratch task is in the project Web") && !text.contains("worktree at"), "{text}");
-            let (text, _) = preview(json!({"type": "subproject", "worktree": false})).await.unwrap();
+            let (text, ..) = preview(json!({"type": "subproject", "worktree": false})).await.unwrap();
             assert!(text.contains("This task is a subproject") && text.contains("worktree at /w/1-task-title"), "{text}");
-            let (text, codex) = preview(json!({"runtime": "codex", "permission_mode": "plan"})).await.unwrap();
-            assert!(codex && text.contains("You are in plan mode") && text.contains("`gh.pr_view`") && !text.contains(&gh_note(None)), "{text}");
-            let (text, _) = preview(json!({"permission_mode": "plan"})).await.unwrap();
+            let (text, codex, mode) = preview(json!({"runtime": "codex", "permission_mode": "plan"})).await.unwrap();
+            assert!(codex && mode == "plan" && text.contains("You are in plan mode") && text.contains("`gh.pr_view`") && !text.contains(&gh_note(None)), "{text}");
+            let (text, ..) = preview(json!({"permission_mode": "plan"})).await.unwrap();
             assert!(!text.contains("You are in plan mode"), "Claude Code tells Claude itself: {text}");
+            // A thread inherits the host's mode, when the project has none.
+            db::set_setting(&state.db(), "default_permission_mode", Some("plan")).unwrap();
+            let (text, _, mode) = preview(json!({"runtime": "codex"})).await.unwrap();
+            assert!(mode == "plan" && text.contains("You are in plan mode"), "{text}");
+            let (text, _, mode) = preview(json!({"runtime": "codex", "permission_mode": "default"})).await.unwrap();
+            assert!(mode == "default" && !text.contains("You are in plan mode"), "{text}");
 
             for bad in [json!({"type": "review"}), json!({"labels": "nope"}), json!({"runtime": "gpt"}), json!({"permission_mode": "yolo"})] {
                 assert_eq!(preview(bad).await.unwrap_err().0, axum::http::StatusCode::BAD_REQUEST);
