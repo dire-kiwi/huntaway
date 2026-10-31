@@ -1,9 +1,9 @@
 import clsx from "clsx";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { UsageLimit } from "../api";
 import { usageKey, useStore } from "../store";
-import { usageConfigs } from "../usageConfigs";
+import { resetsIn, resetsPhrase, resetTime, usageAlert, usageConfigs, WARN_AT, type UsageAlert } from "../usageConfigs";
 import { timeAgo } from "./ui";
 
 const OPEN_KEY = "ia.usageOpen";
@@ -16,38 +16,39 @@ function shortLabel(l: UsageLimit) {
   return l.label.split(" · ").pop() ?? l.label;
 }
 
-/** "21m", "3h 5m", or a weekday and time further out. */
-function resetsIn(iso: string, now: number) {
-  const ms = new Date(iso).getTime() - now;
-  if (Number.isNaN(ms)) return "";
-  if (ms <= 0) return "now";
-  const min = Math.ceil(ms / 60000);
-  if (min < 60) return `${min}m`;
-  if (min < 24 * 60) return `${Math.floor(min / 60)}h${min % 60 ? ` ${min % 60}m` : ""}`;
-  return new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric" });
-}
-
 function LimitRow({ limit, now }: { limit: UsageLimit; now: number }) {
   const used = Math.min(100, Math.max(0, limit.percent));
   const left = Math.round(100 - used);
   const reset = limit.resets_at ? resetsIn(limit.resets_at, now) : "";
-  const when = limit.resets_at ? new Date(limit.resets_at).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
+  const when = limit.resets_at ? ` · ${resetsPhrase(limit.resets_at, now)} (${resetTime(limit.resets_at)})` : "";
+  const level = used >= 100 ? "out" : used >= WARN_AT ? "warn" : null;
   return (
     <div
       className="flex items-center gap-1.5 text-[10.5px]"
-      title={`${limit.label}: ${Math.round(used)}% used, ${left}% left${when ? ` · resets ${when}` : ""}`}
+      data-level={level ?? undefined}
+      title={`${limit.label}: ${Math.round(used)}% used, ${left}% left${when}${level === "warn" ? `\nOver ${WARN_AT}%: pick another config for new work if you have one` : ""}`}
     >
       <span className="w-10 shrink-0 truncate text-faint">{shortLabel(limit)}</span>
       {/* Filled by what's left, like a fuel gauge. */}
       <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
         <span
-          className={clsx("block h-full rounded-full", left <= 10 ? "bg-red-400" : left <= 30 ? "bg-st-attention" : "bg-accent")}
+          className={clsx("block h-full rounded-full", left <= 10 ? "bg-red-400" : level ? "bg-st-attention" : "bg-accent")}
           style={{ width: `${100 - used}%` }}
         />
       </span>
-      <span className={clsx("w-7 shrink-0 text-right tabular-nums", left <= 10 ? "text-red-300" : "text-muted")}>{left}%</span>
+      <span className={clsx("w-7 shrink-0 text-right tabular-nums", left <= 10 ? "text-red-300" : level ? "text-st-attention" : "text-muted")}>{left}%</span>
       <span className="w-11 shrink-0 truncate text-right text-faint tabular-nums">{reset}</span>
     </div>
+  );
+}
+
+/** A config running low (`WARN_AT`% of a limit used) or out of usage, by its name in the sidebar. */
+export function UsageAlertIcon({ alert, size = 11 }: { alert: UsageAlert | null; size?: number }) {
+  if (!alert) return null;
+  return (
+    <span title={alert.until ? `${alert.text} (${resetTime(alert.until)})` : alert.text} className={clsx("inline-flex shrink-0", alert.level === "out" ? "text-red-400" : "text-st-attention")}>
+      <TriangleAlert size={size} aria-label={alert.level === "out" ? "Out of usage" : "Running low"} />
+    </span>
   );
 }
 
@@ -125,6 +126,7 @@ export function UsagePanel({ profile }: { profile: string | undefined }) {
                 title={u.updated_at ? `Updated ${timeAgo(u.updated_at)}${u.error ? `\n${u.error}` : ""}` : (u.error ?? undefined)}
               >
                 <span className="truncate text-fg">{name}</span>
+                <UsageAlertIcon alert={usageAlert(u, now)} />
                 {multiHost && <span className="truncate text-[10px] text-faint">· {hosts.find((h) => h.id === host_id)?.name}</span>}
                 {u.plan && <span className="ml-auto shrink-0 text-[10px] text-faint capitalize">{u.plan}</span>}
               </div>

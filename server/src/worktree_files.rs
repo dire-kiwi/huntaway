@@ -1,4 +1,4 @@
-//! The repository's ignored files a project brings into each new task worktree (API 81), before
+//! The repository's ignored files a project brings into each new task worktree (API 82), before
 //! its setup script runs, so the script and the agent can rely on them: `.env` files, local
 //! config, credentials, big caches.
 //!

@@ -108,10 +108,12 @@ async function startDevServer(server) {
   });
   let log = "";
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`vite didn't start:\n${log}`)), 30000);
+    // Killed if it doesn't start, or the test's process would wait for it forever.
+    const timer = setTimeout(() => (vite.kill(), reject(new Error(`vite didn't start:\n${log}`))), 30000);
     const read = (d) => {
       log += d;
-      if (log.includes(`127.0.0.1:${port}`)) clearTimeout(timer), resolve();
+      // With $CI set (as on GitHub's runners) Vite's colours are on, and it prints the port in bold.
+      if (log.replace(/\x1b\[[0-9;]*m/g, "").includes(`127.0.0.1:${port}`)) clearTimeout(timer), resolve();
     };
     vite.stdout.on("data", read);
     vite.stderr.on("data", read);

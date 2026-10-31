@@ -65,7 +65,6 @@ impl Ctx {
     }
 }
 
-
 /// Sent with `initialize`; Claude Code adds it to the agent's system prompt.
 const INSTRUCTIONS: &str = "Tools for the Huntaway board, a kanban board where each task is worked by its own Claude agent. \
 The board has a profile for each Claude login (e.g. work, personal), each with its own projects and tasks. Besides your own \

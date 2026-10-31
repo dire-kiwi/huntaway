@@ -2,7 +2,7 @@
 # published, and attaches them to that release. The release's tag is the version (v1.2.3 → 1.2.3), so it must be
 # semver with an optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing
 # release's tag again and replaces its files. A pull request that changes the packaging builds it too, as an
-# artifact of the run, without a release.
+# artifact of the run, without a release. Only the attach job, which pull requests don't run, can write to the repository.
 name: Release
 
 on:
@@ -21,7 +21,7 @@ on:
       - app/electron/**
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -100,18 +100,7 @@ jobs:
           cp -R app/dist "app/release/$name/ui"
           tar -C app/release -czf "app/release/$name.tar.gz" "$name"
 
-      - name: Attach to the release
-        if: env.TAG
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          shopt -s nullglob
-          files=(app/release/*.{AppImage,pacman,dmg,zip,tar.gz})
-          ls -l "${files[@]}"
-          gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
-
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: ${{ !env.TAG }}
         with:
           name: huntaway-${{ matrix.os }}-${{ matrix.arch }}
           path: |
@@ -120,4 +109,30 @@ jobs:
             app/release/*.dmg
             app/release/*.zip
             app/release/*.tar.gz
-          retention-days: 7
+          if-no-files-found: error
+          retention-days: ${{ env.TAG && 1 || 7 }}
+
+  # The builds' files, attached to the release (those that built, if one failed). On its own so that only this job,
+  # which runs nothing from the repository, has write access.
+  attach:
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: huntaway-*
+          path: release
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(release/*.{AppImage,pacman,dmg,zip,tar.gz})
+          ls -l "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"

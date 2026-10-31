@@ -563,7 +563,35 @@ skipped. Auto-compacting idle sessions is Claude-only.
   Anthropic's usage endpoint every few minutes (for Codex configs it asks `codex app-server`),
   and agent runs update it live. The login is never refreshed by the board. An expired login
   shows its last numbers until the config's next agent run renews it. Hosts before API 52
-  don't show usage.
+  don't show usage. Each limit shows when it resets (a countdown, or a day and time further
+  out). A limit at 80% or more is marked in amber, and one that's used up in red, in the
+  sidebar and where a config is picked (the new task dialog's config picker, a task's
+  *Config* row), so you can pick another config before starting work.
+- **Running out of usage** (API 81): when a run is refused for its config's usage limit
+  (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
+  `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
+  limit resets and notes the reset on the task. Usage at 100% alone doesn't count, since a
+  plan with extra usage carries on past it. Until API 81 such a run just failed, and its task
+  needed attention with "Run failed: You've hit your 5-hour limit · resets …". Now the task
+  needs attention with that message and offers *Carry on then*: it waits in *In progress*
+  (with an hourglass and the countdown on its card), and when the limit resets its agent is
+  told to carry on, with any message queued meanwhile. Two settings on each profile (Settings
+  → Profiles, *When a config runs out of usage*, both off by default) do more by themselves:
+  - *Wait for the limit to reset, then carry on*: a task whose agent runs out waits like that
+    without asking, and a task started (or messaged) on a config that's out waits for its reset
+    instead of being refused.
+  - *Start new tasks on the next config with room*: a task whose agent hasn't started yet, on a
+    config that's out, starts on the next of its project's (or profile's) configs for the same
+    agent (Claude Code or Codex) that isn't out. A task that has started stays on its config,
+    which holds its conversation.
+  A waiting task keeps waiting, whatever these settings say: a message sent to it (or *Start*)
+  joins its queue. Moved to another config before its agent has started, it stops waiting for
+  the old config's reset and starts on the new one (or waits for that one's, if it's out too).
+  Whether a config is out is kept in memory by the host the config is on, from its own runs,
+  so a restart forgets it until a run is refused again; a waiting task keeps its reset time
+  in the database and carries on after a restart. Codex doesn't say which limit refused it,
+  so the host takes the latest reset of the limits Codex last reported as used up, and a
+  Codex task with none known just fails as before.
 - **Context** (API 40): a thread's *Context* pill shows how full its agent's context window is,
   following each reply as it works. Clicking it opens the breakdown Claude Code's `/context`
   shows (system prompt, tools, MCP servers, memory files, skills, messages, free space and the
@@ -835,7 +863,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   agent configs, which only the user changes; agents can't delete projects. Its name, key, base
   branch, model, prompts, reviews and group change straight away. A change to its permission
   mode, a script (setup, teardown or status), its repository path or its worktree settings
-  (the files copied or folders linked into worktrees too, from API 81) first asks the user: a dialog over the whole app (and a card in the agent's thread) shows each
+  (the files copied or folders linked into worktrees too, from API 82) first asks the user: a
+  dialog over the whole app (and a card in the agent's thread) shows each
   setting's old and new value and the agent's reason, and the call waits for the answer. Nothing
   changes unless they approve, whatever the thread's permission mode, and an approval is never
   "always". What counts as a change is what the project would be after it (the update is made
@@ -871,7 +900,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   fast-forwarded when it can be, and is used as it is when it's ahead (with unpushed commits)
   or has no upstream. The task's log says which it started from.
   A new worktree has none of the repository's git-ignored files (`.env`, local config, caches),
-  so a project can bring them in from its repository folder, before the setup script runs (API 81,
+  so a project can bring them in from its repository folder, before the setup script runs (API 82,
   the *Worktrees* settings, `copy_files` and `link_folders`):
   - **Files to copy** are .gitignore-style patterns, one per line (`.env` matches at any depth,
     `/.env` only at the top, `config/*.local.json`, `!` leaves one out), as is a

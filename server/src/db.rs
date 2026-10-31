@@ -638,6 +638,19 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         )?;
     }
     if version < 65 {
+        // When the usage limit a task's agent ran out of resets (see Task::limit_reset_at), and what
+        // a profile's tasks do when their config runs out (see Profile::limit_wait). Added only if
+        // they aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for (table, column, kind) in [("tasks", "limit_reset_at", "TEXT"), ("profiles", "limit_wait", "INTEGER NOT NULL DEFAULT 0"), ("profiles", "limit_switch", "INTEGER NOT NULL DEFAULT 0")] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=65; COMMIT;")?;
+    }
+    if version < 66 {
         // Ignored files copied, and folders linked, into each new task worktree (see worktree_files.rs).
         let mut add = String::new();
         for col in ["copy_files", "link_folders"] {
@@ -646,14 +659,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                 add.push_str(&format!("ALTER TABLE projects ADD COLUMN {col} TEXT NOT NULL DEFAULT '';"));
             }
         }
-        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=65; COMMIT;"))?;
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=66; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 65;
+pub const VERSION: i64 = 66;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1038,6 +1051,15 @@ pub struct Profile {
     /// board leaves Asana out. Its token is kept, for when it's turned on again.
     #[serde(default = "yes")]
     pub asana_enabled: bool,
+    /// When a run stops because its config's usage limit ran out, its task waits in "In progress"
+    /// for the limit to reset and then carries on, and tasks started on a config that's out wait
+    /// for it too (API 81, see usage.rs). Off, the task needs attention, offering to do that.
+    #[serde(default)]
+    pub limit_wait: bool,
+    /// Tasks whose agent hasn't started yet start on the next of their configs that isn't out of
+    /// usage, when theirs is (API 81).
+    #[serde(default)]
+    pub limit_switch: bool,
     pub created_at: String,
 }
 
@@ -1062,6 +1084,8 @@ impl Profile {
             asana_token: r.get("asana_token")?,
             asana_user: r.get("asana_user")?,
             asana_enabled: r.get("asana_enabled")?,
+            limit_wait: r.get("limit_wait")?,
+            limit_switch: r.get("limit_switch")?,
             created_at: r.get("created_at")?,
         })
     }
@@ -1325,6 +1349,11 @@ pub struct Task {
     /// weren't merged yet, and starts once they are (see runner::start_unblocked).
     #[serde(default)]
     pub waiting: bool,
+    /// When the usage limit its agent last ran out of resets (UTC, RFC 3339), set as the run
+    /// stops and cleared when the next starts. With `waiting`, the agent carries on then (see
+    /// usage.rs); without, the task needs attention and offers to.
+    #[serde(default)]
+    pub limit_reset_at: Option<String>,
     /// Its agent is waiting (in the `wait` tool) rather than working, while its run goes on
     /// and the task stays in its column. Not to be confused with `waiting` (see wait.rs).
     #[serde(default)]
@@ -1606,6 +1635,7 @@ impl Task {
             attention_reason: r.get("attention_reason")?,
             depends_on: json_list(r.get("depends_on")?),
             waiting: r.get("waiting")?,
+            limit_reset_at: r.get("limit_reset_at")?,
             agent_wait: r.get::<_, Option<String>>("agent_wait")?.and_then(|v| serde_json::from_str(&v).ok()),
             queued_message: r.get("queued_message")?,
             queued_user_text: r.get("queued_user_text")?,
@@ -2260,7 +2290,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -2334,7 +2364,7 @@ pub fn preview_project_update(c: &Connection, id: &str, fields: &[(&str, Value)]
     update_project(&tx, id, fields)
 }
 
-const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled"];
+const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch"];
 
 pub fn update_profile(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Profile>> {
     update_generic(c, "profiles", PROFILE_COLUMNS, id, fields)?;
@@ -3575,14 +3605,14 @@ mod tests {
     }
 
     #[test]
-    fn a_database_at_version_64_gets_projects_copy_files_and_link_folders() {
-        let path = std::env::temp_dir().join(format!("huntaway-v64-{}.db", crate::util::new_id()));
+    fn a_database_at_version_65_gets_projects_copy_files_and_link_folders() {
+        let path = std::env::temp_dir().join(format!("huntaway-v65-{}.db", crate::util::new_id()));
         {
             let c = open(&path).unwrap();
             c.execute_batch(
                 "ALTER TABLE projects DROP COLUMN copy_files;
                  ALTER TABLE projects DROP COLUMN link_folders;
-                 PRAGMA user_version=64;
+                 PRAGMA user_version=65;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
                  INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
                    VALUES ('pr','p','P','P','/x','/s','/w','1');",

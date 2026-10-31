@@ -663,7 +663,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                     <Input className="font-mono text-[12px]" value={form.worktrees_root} onChange={(e) => set("worktrees_root", e.target.value)} />
                   </Field>
                 </div>
-                {hostSupports(host, 81) && (
+                {hostSupports(host, 82) && (
                   <div className="grid grid-cols-2 gap-3">
                     <Field
                       label="Files to copy"
