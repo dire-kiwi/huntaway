@@ -154,10 +154,10 @@ impl Account {
         }
     }
 
-    /// Fails if git would push to any of `urls` (a remote's, see `push_urls`) as another account:
+    /// Fails if git would use any of `urls` (see `push_urls`) as another account:
     /// on another host, or over HTTP(S) with credentials in the URL, which git uses instead of
-    /// asking the credential helper for the account's (see `push_config`).
-    fn check_push_urls(&self, urls: &[String]) -> Result<()> {
+    /// asking the credential helper for the account's (see `git_config`).
+    fn check_git_urls(&self, urls: &[String]) -> Result<()> {
         // URLs, not a gh command: each is checked.
         let urls: Vec<&str> = urls.iter().map(String::as_str).collect();
         self.check_targets_with(&urls, None, None)?;
@@ -165,20 +165,20 @@ impl Account {
             let lower = url.trim().to_ascii_lowercase();
             if let Some(rest) = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://")) {
                 if rest.split(['/', '?', '#']).next().is_some_and(|authority| authority.contains('@')) {
-                    bail!("the push URL has a login in it, which git would push as instead of the GitHub account {self}: remove it from the remote's URL");
+                    bail!("the remote URL has a login in it, which git would use instead of the GitHub account {self}: remove it from the remote's URL");
                 }
             }
         }
         Ok(())
     }
 
-    /// git's `-c` options that give the account's token (in `IA_GH_PUSH_TOKEN`) for pushes to its
-    /// host over HTTPS, in place of other credential helpers for that host (such as gh's own,
-    /// which would use gh's active account). Pushes over SSH (to its host, see `exec`) still use
+    /// git's `-c` options that give the account's token (in `IA_GH_GIT_TOKEN`) for HTTPS on its
+    /// host, in place of other credential helpers for that host (such as gh's own, which would
+    /// use gh's active account). Fetches and pushes over SSH still use
     /// the host's SSH keys.
-    fn push_config(&self) -> Vec<String> {
+    fn git_config(&self) -> Vec<String> {
         let key = format!("credential.https://{}.helper", self.host);
-        let helper = r#"!f() { test "$1" = get && echo username=x-access-token && echo "password=$IA_GH_PUSH_TOKEN"; }; f"#;
+        let helper = r#"!f() { test "$1" = get && echo username=x-access-token && echo "password=$IA_GH_GIT_TOKEN"; }; f"#;
         vec!["-c".into(), format!("{key}="), "-c".into(), format!("{key}={helper}")]
     }
 }
@@ -419,8 +419,15 @@ fn positional_host(arg: &str) -> Option<String> {
         .then(|| host.split(':').next().unwrap_or(host).to_ascii_lowercase())
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_GH_PROGRAM: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// The gh to run: `IA_GH_BIN` (for `gh-run`, which is `gh` on its commands' PATH), or else `gh`.
 pub(crate) fn gh_program() -> String {
+    #[cfg(test)]
+    if let Some(program) = TEST_GH_PROGRAM.with_borrow(Clone::clone) { return program }
     std::env::var("IA_GH_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "gh".into())
 }
 
@@ -450,7 +457,7 @@ async fn push_urls(dir: Option<&std::path::Path>, remote: &str) -> Option<Vec<St
 
 /// git's `-c` options that empty every `http.extraHeader` (generic, and scoped to a URL or path)
 /// configured where `dir` pushes from, so no `Authorization` header pushes as another account
-/// instead of the credential helper's (see `Account::push_config`). An empty value clears the
+/// instead of the credential helper's (see `Account::git_config`). An empty value clears the
 /// headers set before it for its own key only, so each key that's set is cleared.
 async fn extra_header_resets(dir: Option<&std::path::Path>) -> Vec<String> {
     let mut cmd = tokio::process::Command::new("git");
@@ -545,6 +552,7 @@ impl GhEnv {
 pub async fn gh_run(args: Vec<String>) -> Result<i32> {
     let account = Account::from_env().with_context(|| format!("{ACCOUNT_ENV} isn't set"))?;
     let repo = std::env::var("GH_REPO").ok().filter(|r| !r.is_empty());
+    refuse(&args)?;
     account.check_targets(&args, repo.as_deref())?;
     let env = account.env(&account.token().await?)?;
     let mut cmd = tokio::process::Command::new(gh_program());
@@ -561,6 +569,23 @@ pub async fn gh_run(args: Vec<String>) -> Result<i32> {
 pub async fn account_env(account: Option<&str>) -> Result<Option<GhEnv>> {
     let Some(a) = account.and_then(Account::parse) else { return Ok(None) };
     Ok(Some(a.env(&a.token().await?)?))
+}
+
+/// Give a host-side fetch the selected account's credentials for HTTPS on its host. Resolve
+/// insteadOf rewrites first; SSH, local repositories and other hosts keep git's usual auth.
+/// No repository or global config is written, and a missing login never falls back to another.
+pub async fn authenticate_fetch(cmd: &mut tokio::process::Command, repo: &std::path::Path, remote: &str, account: Option<&str>) -> Result<()> {
+    let Some(account) = account.and_then(Account::parse) else { return Ok(()) };
+    let out = crate::worktree::git(repo, &["remote", "get-url", "--", remote]).await?;
+    if !out.ok { bail!("couldn't read the fetch URL for {remote}: {}", out.stderr.trim()) }
+    let url = out.stdout.trim();
+    if !url.to_ascii_lowercase().starts_with("https://") || url_host(url).as_deref() != Some(account.host.as_str()) {
+        return Ok(());
+    }
+    account.check_git_urls(&[url.to_string()])?;
+    let token = account.token().await?;
+    cmd.args(extra_header_resets(Some(repo)).await).args(account.git_config()).env("IA_GH_GIT_TOKEN", token);
+    Ok(())
 }
 
 /// The accounts gh is signed in to on this host, for picking one: `{accounts: [{account, host,
@@ -918,6 +943,7 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
             if args.is_empty() {
                 bail!("args is empty");
             }
+            refuse(&args)?;
         }
         "git_push" => {
             args.push("push".into());
@@ -936,6 +962,31 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
         _ => bail!("unknown tool {tool}"),
     }
     Ok(Command { program: "gh", args, ok_codes, repo: s("repo").map(String::from) })
+}
+
+/// Fails for gh commands no agent gets, whatever its permission mode (the gh tool's approval
+/// doesn't apply in auto or bypass): `gh auth` (`gh auth token` would put the account's token in
+/// the thread, as would `config get` of a host's `oauth_token`), and those that change what later
+/// gh commands run (extensions, aliases, settings).
+/// gh's command comes first: a flag before it could take the next argument as its value, so
+/// only `--help` and `--version` may.
+fn refuse<S: AsRef<str>>(args: &[S]) -> Result<()> {
+    let args: Vec<&str> = args.iter().map(AsRef::as_ref).skip_while(|a| ["--help", "-h", "--version"].contains(a)).collect();
+    let refused = match args[..] {
+        [first, ..] if first.starts_with('-') => bail!("put gh's command first, e.g. [\"release\", \"list\", {first:?}]"),
+        ["auth", ..] => "gh auth",
+        ["extension" | "extensions" | "ext", ..] => "gh extension",
+        // Their subcommands come first too, for the same reason.
+        ["alias" | "config", second, ..] if second.starts_with('-') => bail!("put the subcommand straight after {:?}", args[0]),
+        ["alias", "set" | "import" | "delete", ..] => "changing gh's aliases",
+        ["config", "set" | "clear-cache", ..] => "changing gh's settings",
+        // A host's settings are its login, token and all (`config get -h HOST oauth_token` prints it).
+        ["config", ref rest @ ..] if rest.iter().any(|a| a.contains("oauth_token") || a.starts_with("-h") || a.starts_with("--host")) => {
+            "reading a host's gh settings"
+        }
+        _ => return Ok(()),
+    };
+    bail!("{refused} isn't available to agents; ask the user to run it")
 }
 
 /// A PR's number and `[HOST/]OWNER/REPO`, from its URL.
@@ -1015,9 +1066,9 @@ async fn exec(c: &Command, a: &Value) -> Result<(String, bool)> {
             let Some(urls) = push_urls(work_dir(a).as_deref(), remote).await else {
                 bail!("there's no remote named {remote}: with a GitHub account set, git_push takes a remote's name (add one with git remote add)");
             };
-            account.check_push_urls(&urls)?;
+            account.check_git_urls(&urls)?;
             let token = account.token().await?;
-            cmd.args(extra_header_resets(work_dir(a).as_deref()).await).args(account.push_config()).env("IA_GH_PUSH_TOKEN", &token);
+            cmd.args(extra_header_resets(work_dir(a).as_deref()).await).args(account.git_config()).env("IA_GH_GIT_TOKEN", &token);
         } else {
             account.check_targets(&c.args, c.repo.as_deref())?;
             let env = account.env(&account.token().await?)?;
@@ -1172,6 +1223,32 @@ mod tests {
         assert!(command("api", &json!({"endpoint": "x", "fields": {"a": [1]}})).is_err());
         assert!(command("run_view", &json!({"run_id": "1; rm"})).is_err());
         assert!(command("gh", &json!({"args": []})).is_err());
+        // Nor what would show the account's token, or change what later gh commands run.
+        for refused in [
+            &["auth", "token"][..],
+            &["auth", "status", "--show-token"],
+            &["--help", "auth", "token"],
+            &["extension", "install", "o/gh-x"],
+            &["ext", "install", "o/gh-x"],
+            &["alias", "set", "co", "!sh -c x"],
+            &["config", "set", "editor", "x"],
+            &["-R", "o/r", "auth", "token"],
+            &["config", "get", "-h", "github.com", "oauth_token"],
+            &["config", "get", "oauth_token", "--host=github.com"],
+            &["config", "get", "-hgithub.com", "user"],
+            &["config", "get", "oauth_token"],
+            &["config", "--host=github.com", "get", "oauth_token"],
+            &["config", "-hgithub.com", "get", "oauth_token"],
+            &["config", "--host", "github.com", "get", "oauth_token"],
+            &["config", "--help", "get", "-h", "github.com", "user"],
+            &["alias", "--help", "set", "co", "!sh"],
+        ] {
+            let err = command("gh", &json!({"args": refused})).unwrap_err().to_string();
+            assert!(err.contains("isn't available to agents") || err.contains("put gh's command first") || err.contains("put the subcommand"), "{refused:?}: {err}");
+        }
+        for allowed in [&["release", "list"][..], &["--version"], &["alias", "list"], &["config", "get", "editor"], &["issue", "create", "--title", "auth"]] {
+            assert!(command("gh", &json!({"args": allowed})).is_ok(), "{allowed:?}");
+        }
         let push = command("git_push", &json!({"repo": "ignored"})).unwrap();
         assert_eq!((push.program, push.args), ("git", vec!["push".to_string(), "-u".into(), "origin".into(), "HEAD".into()]));
     }
@@ -1528,7 +1605,7 @@ FLAGS
             git(&["remote", "add", "ssh-user", "ssh://git@github.com/o/r.git"]);
             let me = Account::parse("me").unwrap();
             let checked = async |remote: &str| match push_urls(Some(&dir), remote).await {
-                Some(urls) => me.check_push_urls(&urls).map_err(|e| e.to_string()),
+                Some(urls) => me.check_git_urls(&urls).map_err(|e| e.to_string()),
                 None => Err("no remote".into()),
             };
             assert_eq!(checked("origin").await, Ok(()));
@@ -1601,6 +1678,55 @@ FLAGS
     }
 
     #[test]
+    fn fetches_use_only_the_selected_accounts_https_credentials() {
+        crate::testing::run(async || {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = std::env::temp_dir().join(format!("ia-gh-fetch-{}", crate::util::new_id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let gh = dir.join("gh");
+            std::fs::write(&gh, "#!/bin/sh\n[ \"$*\" = 'auth token --hostname=ghe.example.com --user=chosen' ] || exit 1\nprintf test-token\n").unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            TEST_GH_PROGRAM.set(Some(crate::util::path_str(&gh)));
+            let git = |args: &[&str]| {
+                assert!(std::process::Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+            };
+            git(&["init", "-q"]);
+            git(&["remote", "add", "origin", "https://alias/o/r.git"]);
+            git(&["config", "url.https://ghe.example.com/.insteadOf", "https://alias/"]);
+            git(&["config", "credential.helper", "!f() { echo username=wrong; echo password=wrong; }; f"]);
+            git(&["config", "http.extraHeader", "Authorization: wrong"]);
+            let mut cmd = tokio::process::Command::new("git");
+            cmd.current_dir(&dir);
+            authenticate_fetch(&mut cmd, &dir, "origin", Some("ghe.example.com/chosen")).await.unwrap();
+            assert!(cmd.as_std().get_args().any(|a| a == "http.extraheader="));
+            cmd.args(["credential", "fill"]).stdin(Stdio::piped()).stdout(Stdio::piped());
+            let mut child = cmd.spawn().unwrap();
+            child.stdin.take().unwrap().write_all(b"protocol=https\nhost=ghe.example.com\n\n").await.unwrap();
+            let out = child.wait_with_output().await.unwrap();
+            assert!(out.status.success());
+            let credentials = String::from_utf8(out.stdout).unwrap();
+            assert!(credentials.contains("username=x-access-token\npassword=test-token"), "{credentials}");
+            // No account selected leaves git's own authentication alone.
+            let mut cmd = tokio::process::Command::new("git");
+            authenticate_fetch(&mut cmd, &dir, "origin", None).await.unwrap();
+            assert_eq!(cmd.as_std().get_args().count(), 0);
+            // A missing login is an error, never the active account or the configured helper.
+            let mut cmd = tokio::process::Command::new("git");
+            assert!(authenticate_fetch(&mut cmd, &dir, "origin", Some("ghe.example.com/missing")).await.is_err());
+            // SSH, local remotes and unrelated HTTPS hosts don't need gh at all.
+            for url in ["git@github-work:o/r.git", "/tmp/local.git", "https://elsewhere.example/o/r.git"] {
+                git(&["remote", "set-url", "origin", url]);
+                let mut cmd = tokio::process::Command::new("git");
+                authenticate_fetch(&mut cmd, &dir, "origin", Some("ghe.example.com/missing")).await.unwrap();
+                assert_eq!(cmd.as_std().get_args().count(), 0);
+                assert_eq!(cmd.as_std().get_envs().count(), 0);
+            }
+            TEST_GH_PROGRAM.set(None);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
     fn pushes_with_the_accounts_token_over_https() {
         crate::testing::run(async || {
             // What credentials git would use: only ours for the account's host, whatever helper
@@ -1609,14 +1735,14 @@ FLAGS
             std::fs::create_dir_all(&home).unwrap();
             let fill = async |host: &str, extra: &[String]| {
                 let mut c = tokio::process::Command::new("git");
-                c.env("HOME", &home).env("XDG_CONFIG_HOME", &home).env("GIT_CONFIG_NOSYSTEM", "1").env("IA_GH_PUSH_TOKEN", "tok123");
+                c.env("HOME", &home).env("XDG_CONFIG_HOME", &home).env("GIT_CONFIG_NOSYSTEM", "1").env("IA_GH_GIT_TOKEN", "tok123");
                 c.args(["-c", "credential.helper=!f() { echo username=theirs; echo password=other; }; f"]).args(extra);
                 c.args(["credential", "fill"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
                 let mut child = c.spawn().unwrap();
                 child.stdin.take().unwrap().write_all(format!("protocol=https\nhost={host}\n\n").as_bytes()).await.unwrap();
                 String::from_utf8(child.wait_with_output().await.unwrap().stdout).unwrap()
             };
-            let config = Account::parse("octocat").unwrap().push_config();
+            let config = Account::parse("octocat").unwrap().git_config();
             let ours = fill("github.com", &config).await;
             assert!(ours.contains("username=x-access-token\n") && ours.contains("password=tok123\n"), "{ours}");
             assert!(fill("gitlab.com", &config).await.contains("password=other\n"));
