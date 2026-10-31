@@ -212,8 +212,37 @@ const refreshes = new Map<string, { started: number; applied: number }>();
 /** Profile list loads, numbered as they start, and the latest one in the store: an older one that ends later is dropped. */
 const profileLoads = { started: 0, applied: 0 };
 
-/** The loadAll under way, and the one queued to start after it (see loadAll). */
-const allLoads: { running: Promise<void> | null; queued: Promise<void> | null } = { running: null, queued: null };
+/** The loadAll under way, the one queued to start after it (see loadAll), and the hosts lists numbered like profileLoads. */
+const allLoads: { running: Promise<void> | null; queued: Promise<void> | null; started: number; applied: number } = {
+  running: null,
+  queued: null,
+  started: 0,
+  applied: 0,
+};
+/** How long a queued loadAll waits for the one under way at most. */
+const LOAD_ALL_WAIT_MS = 2000;
+
+type SetState = (partial: Partial<State>) => void;
+
+function startLoadAll(set: SetState, get: () => State) {
+  const gen = ++allLoads.started;
+  const run = (async () => {
+    const hosts = await api.hosts();
+    // A newer load read them later (and loads the rest with them).
+    if (allLoads.applied > gen) return;
+    allLoads.applied = gen;
+    const localHostId = hosts.find((h) => h.local)?.id ?? null;
+    set({ hosts, localHostId, authed: true });
+    // A board-only hub isn't among the usable hosts, but its settings pick the scratch host.
+    await Promise.all([get().loadProfiles(), localHostId && get().loadHostSettings(localHostId)]);
+  })();
+  allLoads.running = run;
+  const done = () => {
+    if (allLoads.running === run) allLoads.running = null;
+  };
+  run.then(done, done);
+  return run;
+}
 
 /** Collisions already logged: host ids and the task id. */
 const collisions = new Set<string>();
@@ -272,30 +301,17 @@ export const useStore = create<State>((set, get) => ({
   setAuthed: (v) => set({ authed: v }),
 
   loadAll: () => {
-    // A burst of calls (a reconnect, then hosts_changed or a resync) makes one more load after the one under way, which
-    // they share: it starts after them, so it reads what they were for.
+    // A burst of calls (a reconnect, then hosts_changed for each link coming back) shares one more load after the one
+    // under way, which starts after them and so reads what they were for; but not more than a moment after them, so
+    // a slow host doesn't hold back the others' changes. Loads that overlap then apply in order.
     if (allLoads.queued) return allLoads.queued;
-    if (allLoads.running) {
-      const queued = allLoads.running.catch(() => {}).then(() => {
-        allLoads.queued = null;
-        return get().loadAll();
-      });
-      allLoads.queued = queued;
-      return queued;
-    }
-    const run = (async () => {
-      const hosts = await api.hosts();
-      const localHostId = hosts.find((h) => h.local)?.id ?? null;
-      set({ hosts, localHostId, authed: true });
-      // A board-only hub isn't among the usable hosts, but its settings pick the scratch host.
-      await Promise.all([get().loadProfiles(), localHostId && get().loadHostSettings(localHostId)]);
-    })();
-    allLoads.running = run;
-    const done = () => {
-      if (allLoads.running === run) allLoads.running = null;
-    };
-    run.then(done, done);
-    return run;
+    if (!allLoads.running) return startLoadAll(set, get);
+    const queued = Promise.race([allLoads.running.catch(() => {}), new Promise((r) => setTimeout(r, LOAD_ALL_WAIT_MS))]).then(() => {
+      allLoads.queued = null;
+      return startLoadAll(set, get);
+    });
+    allLoads.queued = queued;
+    return queued;
   },
 
   loadProfiles: async () => {

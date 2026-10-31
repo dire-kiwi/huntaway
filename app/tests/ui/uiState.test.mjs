@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
-let server, project;
+let server, project, hostId;
 before(async () => {
   server = startServer();
   project = await demoProject(server);
+  hostId = (await server.api("GET", "/hosts")).find((h) => h.local).id;
 });
 after(() => server?.stop());
 
-/** Lets the test send events to the page, as the host would (the page's own still come through). */
+/**
+ * Lets the test send events to the page, as the host would (the page's own still come through). A host's resync refreshes
+ * its tasks at once (the hub's own reloads everything, after any reload under way).
+ */
 async function events(page) {
   let socket;
   await page.routeWebSocket(/\/api\/ws/, (ws) => {
@@ -48,7 +52,7 @@ test("a refresh keeps the task events that came while it loaded", async () => {
     const send = await events(page);
     await ui.run([`goto /p/${project.id}`, "wait Refresh: before", "wait Refresh: deleted"]);
     const lists = await hold(page, new RegExp(`/projects/${project.id}/tasks\\?kind=task$`));
-    send({ type: "resync" });
+    send({ type: "resync", host_id: hostId });
     await until(page, () => lists.seen() > 0, "the refresh to ask for the tasks");
     // While it loads: the task changes, and the other is deleted.
     send({ type: "task", task: { ...renamed, title: "Refresh: after" } });
@@ -78,9 +82,9 @@ test("a refresh that ends after a newer one doesn't undo it", async () => {
       await new Promise((r) => answers.push(r));
       await route.fulfill({ response: res, json: list });
     });
-    send({ type: "resync" });
+    send({ type: "resync", host_id: hostId });
     await until(page, () => answers.length === 1, "the first refresh");
-    send({ type: "resync" });
+    send({ type: "resync", host_id: hostId });
     await until(page, () => answers.length === 2, "the second refresh");
     answers[1]();
     await ui.run(["wait Order: new"]);
@@ -119,10 +123,10 @@ for (const order of ["in order", "out of order"]) {
         await new Promise((r) => answers.push(r));
         await route.fulfill({ response: res, json: list });
       });
-      send({ type: "resync" });
+      send({ type: "resync", host_id: hostId });
       await until(page, () => answers.length === 1, "the first refresh");
       second = true;
-      send({ type: "resync" });
+      send({ type: "resync", host_id: hostId });
       await until(page, () => answers.length === 2, "the second refresh");
       const first = order === "in order" ? [0, 1] : [1, 0];
       answers[first[0]]();

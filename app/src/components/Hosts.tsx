@@ -109,24 +109,51 @@ const COMPAT_BADGE: Record<Exclude<Compat, "ok">, { label: string; hint: string 
   board_outdated: { label: "Board too old", hint: "This host needs a newer board. Update the host serving this page." },
 };
 
+/**
+ * The commit an Update sends a host: the hub's checkout as it is (which can be ahead of the server running it), or
+ * without a checkout the commit it runs.
+ */
+function useUpdateCommit(local: Host | undefined) {
+  const [checkout, setCheckout] = useState<string | null>(null);
+  useEffect(() => {
+    if (!local) return;
+    let alive = true;
+    api
+      .serverStatus(local.id)
+      .then((s) => alive && setCheckout(s.source_dir ? (s.source_commit ?? null) : null))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [local?.id, local?.commit]);
+  return checkout ?? local?.commit ?? null;
+}
+
 /** Version line plus an Update action for linked hosts running other code than this board. */
 export function HostVersion({ host }: { host: Host }) {
   const local = useStore((s) => s.hosts.find((h) => h.local));
+  const target = useUpdateCommit(local);
   const [phase, setPhase] = useState<string | null>(null);
+  // The host's boot id before the update: it's over when that changes, as the restart's state goes with the old server.
+  const [boot, setBoot] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const compat = hostCompat(host);
   const short = (c?: string | null) => (c ? c.slice(0, 7) : null);
   const behind = !!host.commit && !!local?.commit && host.commit !== local.commit;
+  const differs = !!host.commit && !!target && host.commit !== target;
   // API 3+ hosts can update from their own origin, so any hub that knows its commit can update them.
-  const canUpdate = !host.local && host.connected && !!local?.commit && hostSupports(host, 3) && (behind || compat !== "ok");
+  const canUpdate = !host.local && host.connected && !!target && hostSupports(host, 3) && (differs || compat !== "ok");
 
-  // While the host rebuilds, show its progress; done when it reconnects on the new commit.
+  // While the host rebuilds, show its progress; done when it comes back (a new boot) or reconnects on the new commit.
   useEffect(() => {
     if (!phase) return;
     const id = setInterval(async () => {
       try {
         const st = await api.serverStatus(host.id);
-        if (st.restart?.phase === "failed") {
+        if (boot && st.boot_id !== boot) {
+          setPhase(null);
+          setBoot(null);
+        } else if (st.restart?.phase === "failed") {
           setErr(st.restart.error ?? "update failed");
           setPhase(null);
         } else if (st.restart) setPhase(st.restart.phase);
@@ -135,15 +162,16 @@ export function HostVersion({ host }: { host: Host }) {
       }
     }, 1500);
     return () => clearInterval(id);
-  }, [phase, host.id]);
+  }, [phase, boot, host.id]);
   useEffect(() => {
-    if (phase && local?.commit && host.commit === local.commit) setPhase(null);
-  }, [host.commit, local?.commit, phase]);
+    if (phase && target && host.commit === target) setPhase(null);
+  }, [host.commit, target, phase]);
 
   const update = async () => {
     setErr(null);
     setPhase("starting");
     try {
+      setBoot(await api.serverStatus(host.id).then((st) => st.boot_id, () => null));
       const r = await api.updateHost(host.id);
       if (r.up_to_date) setPhase(null);
     } catch (e) {
@@ -167,7 +195,7 @@ export function HostVersion({ host }: { host: Host }) {
       {behind && compat === "ok" && <span className="text-muted">differs from this board ({short(local?.commit)})</span>}
       {canUpdate && !phase && (
         <button className="text-accent hover:underline" onClick={update} title="Send this board's code to the host, which rebuilds and restarts. Agents keep running.">
-          Update to {short(local?.commit)}
+          Update to {short(target)}
         </button>
       )}
       {!host.local && host.connected && !hostSupports(host, 3) && (behind || compat !== "ok") && (
