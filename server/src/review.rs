@@ -109,14 +109,16 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     let dir = PathBuf::from(dir);
     let head = rev_parse(&dir, "HEAD").await.ok_or_else(|| ApiError::bad("couldn't read the worktree's HEAD commit"))?;
     // What the branch is compared with: it may have started from the base branch's upstream.
-    let base = match task.base_branch.clone().or(project.base_branch.clone()).filter(|b| !b.is_empty()) {
+    let base = db::task_base(&state.db(), &task, Some(&project));
+    let base = match base {
         Some(b) => Some(worktree::compare_ref(&dir, &b).await),
         None => None,
     };
-    // Started from a commit its base branch doesn't have: its work is what's after that commit.
-    let base = match (&task.start_from, base) {
-        (Some(db::StartFrom::Commit { .. }), Some(b)) => worktree::changes_base(&dir, &task, &project).await.1.or(Some(b)),
-        (_, b) => b,
+    // Started from somewhere else (a commit its base branch doesn't have, a task stacked on that's
+    // merged since): its work is what's after where the Changes tab has it start.
+    let base = match &task.start_from {
+        Some(_) => worktree::changes_base(state, &dir, &task, &project).await.1.or(base),
+        None => base,
     };
     let mut elsewhere = false;
     if let Some(b) = &base {

@@ -260,8 +260,8 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
         };
         (project, open)
     };
-    let mut base = task.base_branch.clone().or_else(|| project.as_ref().and_then(|p| p.base_branch.clone()));
-    let stacked = stacked_merge(state, task, project.as_ref(), &mut base)?;
+    let base = db::task_base(&state.db(), task, project.as_ref());
+    let stacked = stacked_merge(state, task, project.as_ref(), base.as_deref())?;
     let into = base.map(|b| format!("`{b}`")).unwrap_or_else(|| "the base branch".into());
     let what = match &task.branch {
         Some(br) => format!("Merge branch `{br}` into {into}"),
@@ -288,9 +288,9 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
 
 /// What a merge request says of a task stacked on another task's or a pull request's branch (see
 /// db::StartFrom), and where it merges: into that branch while the other is open, as stacked pull
-/// requests do, and once the task it's stacked on is merged, into where that went instead (`base`
-/// is moved there), as GitHub retargets a pull request whose base branch is deleted.
-fn stacked_merge(state: &Shared, task: &Task, project: Option<&Project>, base: &mut Option<String>) -> ApiResult<String> {
+/// requests do, and once the task it's stacked on is merged, into where that went instead (`base`,
+/// see db::task_base), as GitHub retargets a pull request whose base branch is deleted.
+fn stacked_merge(state: &Shared, task: &Task, project: Option<&Project>, base: Option<&str>) -> ApiResult<String> {
     let (Some(b), Some(_)) = (task.base_branch.clone(), &task.branch) else { return Ok(String::new()) };
     let key = key_prefix(task, project);
     Ok(match &task.start_from {
@@ -298,9 +298,7 @@ fn stacked_merge(state: &Shared, task: &Task, project: Option<&Project>, base: &
             let Some(other) = db::get_task(&state.db(), task_id)?.filter(|o| o.branch.as_deref() == Some(b.as_str())) else { return Ok(String::new()) };
             let them = format!("{key}-{}", other.number);
             if db::is_merged(&other) {
-                let to = other.base_branch.clone().or_else(|| project.and_then(|p| p.base_branch.clone())).filter(|t| !t.is_empty());
-                let shown = to.as_deref().map(|t| format!("`{t}`")).unwrap_or_else(|| "its base branch".into());
-                *base = to;
+                let shown = base.map(|t| format!("`{t}`")).unwrap_or_else(|| "its base branch".into());
                 format!(
                     " This task is stacked on {them}, which is merged already, so merge it into {shown} instead of {them}'s branch `{b}`: \
                      if its pull request still targets `{b}`, change its base to {shown} first, and bring the branch up to date with \
@@ -321,6 +319,19 @@ fn stacked_merge(state: &Shared, task: &Task, project: Option<&Project>, base: &
         ),
         _ => String::new(),
     })
+}
+
+/// The task as its agent is told of it: one stacked on a task that's merged by now (see
+/// db::task_base) is told it merges, and opens its pull request, where that one went.
+fn as_told(state: &Shared, task: &Task, project: Option<&Project>) -> Task {
+    let mut t = task.clone();
+    if matches!(t.start_from, Some(db::StartFrom::Task { .. })) && t.branch.is_some() {
+        let base = db::task_base(&state.db(), task, project);
+        if base != t.base_branch {
+            (t.base_branch, t.start_from) = (base, None);
+        }
+    }
+    t
 }
 
 /// Held while picking a project's next merge, so two merges can't take its slot at once.
@@ -983,10 +994,11 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         (Some(id), "task") => db::get_task(&state.db(), id)?,
         _ => parent,
     };
+    let told = as_told(state, &task, project.as_ref());
     // A task with its own branch in a repository on GitHub opens a pull request for it.
     let github = match (&project, &task.branch) {
         (Some(p), Some(_)) if task.kind == "task" => {
-            let base = task.base_branch.as_deref().or(p.base_branch.as_deref()).filter(|b| !b.is_empty());
+            let base = told.base_branch.as_deref().or(p.base_branch.as_deref()).filter(|b| !b.is_empty());
             worktree::github(std::path::Path::new(&p.repo_path), base).await
         }
         _ => None,
@@ -1037,7 +1049,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             None => Default::default(),
         };
         let gh_tools = uses_gh_server(&tools);
-        let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+        let base = system_prompt(&told, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
         let profiles = db::list_profiles(&state.db())?;
         let to = Told { codex: true, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
         let mut instructions = instructions(base, &task, &to);
@@ -1118,7 +1130,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
-    let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+    let base = system_prompt(&told, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
     let profiles = db::list_profiles(&state.db())?;
     let to = Told { codex: false, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
     push("--append-system-prompt", &instructions(base, &task, &to));
@@ -3234,18 +3246,22 @@ mod tests {
         assert!(text.contains("head `ia/web-2-second` and base `ia/web-1-first`"), "{text}");
 
         // While First is open, Second merges into its branch.
-        let mut base = second.base_branch.clone();
-        let said = stacked_merge(&s, &second, Some(&project), &mut base).unwrap();
+        let base = db::task_base(&s.db(), &second, Some(&project));
         assert_eq!(base.as_deref(), Some("ia/web-1-first"));
+        let said = stacked_merge(&s, &second, Some(&project), base.as_deref()).unwrap();
         assert!(said.contains("stacked on WEB-1 (\"First\", in review), which isn't merged yet"), "{said}");
-        // Once it's merged, where First went.
+        // Once it's merged, where First went, and its agent is told its pull request goes there.
         s.update_task(&first.id, &[("status", json!("done"))]).unwrap();
-        let said = stacked_merge(&s, &second, Some(&project), &mut base).unwrap();
+        let base = db::task_base(&s.db(), &second, Some(&project));
         assert_eq!(base.as_deref(), Some("main"));
+        let said = stacked_merge(&s, &second, Some(&project), base.as_deref()).unwrap();
         assert!(said.contains("if its pull request still targets `ia/web-1-first`, change its base to `main` first"), "{said}");
+        let told = as_told(&s, &second, Some(&project));
+        let text = system_prompt(&told, Some(&project), None, &[], &[], Some(&gh), true);
+        assert!(text.contains("head `ia/web-2-second` and base `main`") && !text.contains("stacked on"), "{text}");
         // A task that isn't stacked is told nothing more.
-        let mut base = first.base_branch.clone();
-        assert_eq!(stacked_merge(&s, &first, Some(&project), &mut base).unwrap(), "");
+        let base = db::task_base(&s.db(), &first, Some(&project));
+        assert_eq!(stacked_merge(&s, &first, Some(&project), base.as_deref()).unwrap(), "");
         assert_eq!(base.as_deref(), Some("main"));
     }
 

@@ -147,10 +147,16 @@ impl Upstream {
 
 /// The branch base branch `base` follows: its upstream or, for one without (pushed without `-u`,
 /// say, or only on the remote), the branch of the same name on `origin` (or the only remote),
-/// if that was fetched before or there's no local branch. None for a tag, a commit or `HEAD`.
+/// if that was fetched before or there's no local branch. A remote's branch named with it
+/// (`upstream/feature`, with no local branch of that name) is that branch on that remote, fetched
+/// or not. None for a tag, a commit or `HEAD`.
 async fn upstream(repo: &Path, base: &str) -> Option<Upstream> {
     let local = format!("refs/heads/{base}");
     let has_local = commit(repo, &local).await.is_some();
+    if !has_local && let Some((remote, name)) = remote_branch(repo, base).await {
+        let merge = format!("refs/heads/{name}");
+        return Some(Upstream { tracking: format!("refs/remotes/{base}"), remote, merge });
+    }
     if has_local {
         let config = |key: &str| {
             let key = format!("branch.{base}.{key}");
@@ -172,6 +178,13 @@ async fn upstream(repo: &Path, base: &str) -> Option<Upstream> {
         return None;
     }
     Some(Upstream { remote: remote.to_string(), merge: local, tracking })
+}
+
+/// The remote and branch `name` stands for when it's a remote's name, a slash and a branch.
+async fn remote_branch(repo: &Path, name: &str) -> Option<(String, String)> {
+    let (remote, rest) = name.split_once('/').filter(|(r, rest)| !r.is_empty() && !rest.is_empty())?;
+    let remotes = git_ok(repo, &["remote"]).await.ok()?;
+    remotes.lines().any(|l| l.trim() == remote).then(|| (remote.to_string(), rest.to_string()))
 }
 
 /// Fetch `up` (unless it's in the repository itself).
@@ -383,6 +396,16 @@ async fn locked<T>(task_id: &str, f: impl AsyncFnOnce() -> T) -> T {
 
 /// Create the worktree for a task (idempotent) and run the project's setup script.
 pub async fn setup(state: &Shared, task_id: &str) -> Result<Task> {
+    setup_within(state, task_id, &[]).await
+}
+
+/// `setup`, for a task whose worktree the setups of `within` (outermost first) need first: a
+/// subproject's for its tasks, a task's for one stacked on it. One of those can't need its own
+/// (it would wait for its own setup lock), which `check_start_from` should have prevented.
+async fn setup_within(state: &Shared, task_id: &str, within: &[String]) -> Result<Task> {
+    if within.iter().any(|t| t == task_id) {
+        bail!("its worktree can't be set up: the tasks it starts from (or the subproject it's in) start from it");
+    }
     // Not from the repository folder the project is moving from, and the folder stays put until
     // the worktree is stored.
     let project_id = db::get_task(&state.db(), task_id)?.and_then(|t| t.project_id);
@@ -390,11 +413,12 @@ pub async fn setup(state: &Shared, task_id: &str) -> Result<Task> {
         Some(pid) => Some(crate::relocate::hold(state, pid).await),
         None => None,
     };
-    locked(task_id, async || setup_locked(state, task_id).await).await
+    let within: Vec<String> = within.iter().cloned().chain([task_id.to_string()]).collect();
+    locked(task_id, async || setup_locked(state, task_id, &within).await).await
 }
 
 /// `setup` while holding the task's setup lock: whatever another setup did before is seen here.
-async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
+async fn setup_locked(state: &Shared, task_id: &str, within: &[String]) -> Result<Task> {
     let (task, project) = load(state, task_id)?;
     if task.worktree_state == "ready" {
         if let Some(p) = &task.worktree_path {
@@ -416,7 +440,7 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
             Some(b) => Some(b),
             None => {
                 state.add_event(task_id, "info", "Setting up the subproject's worktree first…", None);
-                let sp = Box::pin(setup(state, &sp.id)).await.context("setting up the subproject's worktree")?;
+                let sp = Box::pin(setup_within(state, &sp.id, within)).await.context("setting up the subproject's worktree")?;
                 sp.branch
             }
         },
@@ -428,9 +452,12 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
     let _ = git(&repo, &["worktree", "prune"]).await;
     let branch_exists = git(&repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).await?.ok;
     state.update_task(task_id, &[("worktree_state", json!("setting_up")), ("worktree_error", Value::Null)])?;
-    // What it was asked to start from counts until its branch exists: that's where it started.
+    // What it was asked to start from counts until its branch exists: that's where it started. Its
+    // base branch is saved with the branch (see below), but one made before that was (a setup cut
+    // short) is worked out again.
+    let fresh = !branch_exists && !wt.exists();
     let picked = match &task.start_from {
-        Some(sf) if !branch_exists && !wt.exists() => match pick_start(state, &task, &project, &repo, sf).await {
+        Some(sf) if fresh || (task.branch.is_none() && task.base_branch.is_none()) => match pick_start(state, &task, &project, &repo, sf, within).await {
             Ok(p) => p,
             Err(e) => return Err(setup_failed(state, task_id, e)),
         },
@@ -476,6 +503,10 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
                 from = start.from;
             }
         }
+        // Saved as soon as git has them, so a setup script that fails (or a restart meanwhile)
+        // doesn't lose where the branch started: setting up again keeps it, and so does the API,
+        // which only lets what it starts from change before there's a branch.
+        state.update_task(task_id, &[("worktree_path", json!(path_str(&wt))), ("branch", json!(branch)), ("base_branch", json!(base))])?;
         state.add_event(task_id, "info", format!("Worktree ready at {} on branch {branch} (from {from})", wt.display()), None);
 
         if !project.setup_script.trim().is_empty() {
@@ -531,18 +562,21 @@ struct Picked {
 /// its task start from where it was merged. So does a merged pull request; one from a fork (or
 /// closed) starts from its head commit, fetched by its SHA, with the pull request's base as the
 /// task's. None when it comes to the project's base branch after all.
-async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path, sf: &db::StartFrom) -> Result<Option<Picked>> {
+async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path, sf: &db::StartFrom, within: &[String]) -> Result<Option<Picked>> {
     let picked = |base: String, note: String| Some(Picked { base: Some(base), commit: None, notes: vec![("info", note)] });
     match sf {
         db::StartFrom::Branch { branch } => {
-            // A remote's branch (`origin/feature`) is the branch of that name, fetched as a base branch is.
-            let remotes = git_ok(repo, &["remote"]).await.unwrap_or_default();
-            let remote_branch = branch.split_once('/').filter(|(r, rest)| !rest.is_empty() && remotes.lines().any(|l| l.trim() == *r));
-            let base = match remote_branch {
-                Some((_, rest)) if commit(repo, &format!("refs/heads/{branch}")).await.is_none() && commit(repo, &format!("refs/remotes/{branch}")).await.is_some() => rest,
-                _ => branch.as_str(),
+            // A remote's branch (`origin/feature`) is the branch of that name when that's the remote
+            // the name alone follows (where its pull request goes), and otherwise stays that
+            // remote's (`upstream/feature`), which `upstream` fetches and compares with as it is.
+            let base = match remote_branch(repo, branch).await {
+                Some((remote, name)) if commit(repo, &format!("refs/heads/{branch}")).await.is_none() => match upstream(repo, &name).await {
+                    Some(up) if up.remote == remote && up.merge == format!("refs/heads/{name}") => name,
+                    _ => branch.clone(),
+                },
+                _ => branch.clone(),
             };
-            Ok(picked(base.to_string(), format!("Starting from branch {base}")))
+            Ok(picked(base.clone(), format!("Starting from branch {base}")))
         }
         db::StartFrom::Task { task_id } => {
             let other = db::get_task(&state.db(), task_id)?.ok_or_else(|| anyhow!("the task this one starts from was deleted"))?;
@@ -556,7 +590,7 @@ async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path,
                 Some(b) => b,
                 None if other.use_worktree => {
                     state.add_event(&task.id, "info", format!("Setting up {key}'s worktree first, to start from its branch…"), None);
-                    let other = Box::pin(setup(state, &other.id)).await.with_context(|| format!("setting up {key}'s worktree"))?;
+                    let other = Box::pin(setup_within(state, &other.id, within)).await.with_context(|| format!("setting up {key}'s worktree"))?;
                     other.branch.ok_or_else(|| anyhow!("{key} has no branch to start from"))?
                 }
                 None => bail!("{key} has no branch to start from: it doesn't use a worktree"),
@@ -837,7 +871,7 @@ pub async fn remove_if_merged(state: &Shared, task_id: &str, fetch: bool) -> Res
             return kept("the subproject still has open tasks");
         }
         let repo = PathBuf::from(&project.repo_path);
-        let Some(base) = task.base_branch.clone().or(project.base_branch.clone()).filter(|b| !b.is_empty()) else {
+        let Some(base) = db::task_base(&state.db(), &task, Some(&project)) else {
             return kept("it has no base branch to be merged into");
         };
         let status = uncommitted(&wt).await?;
@@ -922,7 +956,7 @@ pub async fn remove_merged(state: &Shared, project_id: &str) -> Result<Vec<Value
     let mut tasks: Vec<Task> = tasks.into_iter().filter(|t| t.status == "done" && t.worktree_state == "ready").collect();
     tasks.sort_by_key(|t| t.number);
     let repo = PathBuf::from(&project.repo_path);
-    let mut bases: Vec<String> = tasks.iter().filter_map(|t| t.base_branch.clone().or(project.base_branch.clone())).filter(|b| !b.is_empty()).collect();
+    let mut bases: Vec<String> = tasks.iter().filter_map(|t| db::task_base(&state.db(), t, Some(&project))).collect();
     bases.sort();
     bases.dedup();
     let profile = db::get_profile(&state.db(), &project.profile_id)?.context("profile not found")?;
@@ -962,7 +996,7 @@ pub async fn has_work_to_merge(state: &Shared, task: &Task) -> bool {
     if task.subproject && !db::subproject_tasks(&state.db(), &task.id).map(|t| t.iter().all(Task::is_scratch)).unwrap_or(false) {
         return true;
     }
-    let base = task.base_branch.clone().or(project.base_branch.clone()).filter(|b| !b.is_empty());
+    let base = db::task_base(&state.db(), task, Some(&project));
     let dirty = |dir: PathBuf| async move { git(&dir, &["status", "--porcelain"]).await.map_or(true, |o| !o.ok || !o.stdout.trim().is_empty()) };
     let Some(branch) = task.branch.clone() else {
         // No worktree: the agent worked in the repository's own checkout, on its base branch
@@ -1030,8 +1064,8 @@ pub fn find_pr(state: &Shared, task: &Task) {
             (Some(wt), "ready") => PathBuf::from(wt),
             _ => PathBuf::from(&project.repo_path),
         };
-        let base = task.base_branch.as_deref().or(project.base_branch.as_deref()).filter(|b| !b.is_empty());
-        let args = pr_view_args(Path::new(&project.repo_path), base, &branch).await;
+        let base = db::task_base(&state.db(), &task, Some(&project));
+        let args = pr_view_args(Path::new(&project.repo_path), base.as_deref(), &branch).await;
         // Not as another account when the task's isn't signed in.
         let env = match crate::runner::task_gh_env(&state, &task).await {
             Ok(env) => env,
@@ -1212,27 +1246,39 @@ pub fn changes_dir(state: &Shared, task_id: &str) -> Result<(PathBuf, Task, Proj
     Ok((dir, task, project))
 }
 
-/// The base branch a task's changes are compared with, and where its branch left it (only known in
-/// the task's own worktree).
-pub async fn changes_base(dir: &Path, task: &Task, project: &Project) -> (Option<String>, Option<String>) {
-    let base = task.base_branch.clone().or(project.base_branch.clone()).filter(|b| !b.is_empty());
-    let merge_base = match &base {
-        Some(b) if task.worktree_state == "ready" => {
-            // The task may have started from the base branch's upstream.
-            let b = compare_ref(dir, b).await;
-            let mb = git(dir, &["merge-base", &b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string());
-            // Started from a commit the base branch doesn't have (yet): its work is what's after it.
-            match (&task.start_from, mb) {
-                (Some(db::StartFrom::Commit { commit: c }), Some(mb)) => match commit(dir, c).await {
-                    Some(c) if c != mb && is_ancestor(dir, &mb, &c).await && is_ancestor(dir, &c, "HEAD").await => Some(c),
-                    _ => Some(mb),
-                },
-                (_, mb) => mb,
+/// The base branch a task's changes are compared with (see db::task_base), and where its work
+/// starts (only known in the task's own worktree): its merge base with the base branch or, when it
+/// started from somewhere else that's later, that. That's a commit it started from that the base
+/// branch doesn't have, or the branch of the task it's stacked on once that's merged (until it's
+/// brought up to date with where that went, which squashed or rebased it, say).
+pub async fn changes_base(state: &Shared, dir: &Path, task: &Task, project: &Project) -> (Option<String>, Option<String>) {
+    let base = db::task_base(&state.db(), task, Some(project));
+    if task.worktree_state != "ready" {
+        return (base, None);
+    }
+    let mut from = Vec::new();
+    // The task may have started from the base branch's upstream.
+    if let Some(b) = &base {
+        from.push(compare_ref(dir, b).await);
+    }
+    match &task.start_from {
+        Some(db::StartFrom::Task { .. }) => {
+            if let Some(b) = task.base_branch.as_ref().filter(|b| Some(*b) != base.as_ref()) {
+                from.push(compare_ref(dir, b).await);
             }
         }
-        _ => None,
-    };
-    (base, merge_base)
+        Some(db::StartFrom::Commit { commit: c }) => from.push(c.clone()),
+        _ => {}
+    }
+    let mut start: Option<String> = None;
+    for rev in from {
+        let Some(mb) = git(dir, &["merge-base", &rev, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string()) else { continue };
+        start = match start {
+            Some(s) if !is_ancestor(dir, &s, &mb).await => Some(s),
+            _ => Some(mb),
+        };
+    }
+    (base, start)
 }
 
 /// Diff of the task's work against the merge-base with its base branch,
@@ -1242,7 +1288,7 @@ pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
     if !is_git_repo(&dir).await {
         return Ok(json!({"available": false, "reason": "not a git repository"}));
     }
-    let (base, merge_base) = changes_base(&dir, &task, &project).await;
+    let (base, merge_base) = changes_base(state, &dir, &task, &project).await;
     let from = merge_base.clone().unwrap_or_else(|| "HEAD".into());
     // Mark untracked files as intent-to-add would mutate the index; instead diff them separately.
     let tracked = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from]).await?.stdout;
@@ -1775,6 +1821,113 @@ mod tests {
     }
 
     #[test]
+    fn a_stacked_task_keeps_its_base_when_its_setup_script_fails() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, _, _, p) = stacking_repo(&s).await;
+            let a = setup(&s, &create_task_inner(&s, &p.id, CreateTask { title: "First".into(), ..Default::default() }).unwrap().id).await.unwrap();
+            let b = create_task_inner(&s, &p.id, CreateTask { title: "Second".into(), start_from: Some(json!("X-1")), ..Default::default() }).unwrap();
+            db::update_project(&s.db(), &p.id, &[("setup_script", json!("exit 1"))]).unwrap();
+            assert!(setup(&s, &b.id).await.is_err());
+            let failed = db::get_task(&s.db(), &b.id).unwrap().unwrap();
+            assert_eq!((failed.worktree_state.as_str(), failed.base_branch.as_deref()), ("error", a.branch.as_deref()));
+            // Its branch is made, so what it starts from can't change now.
+            let patch = crate::api::update_task_inner(&s, &b.id, json!({"start_from": "master"}).as_object().unwrap()).await;
+            assert_eq!(patch.unwrap_err().0, axum::http::StatusCode::CONFLICT);
+            // Set up again once the script is fixed, it's still stacked on First.
+            db::update_project(&s.db(), &p.id, &[("setup_script", json!(""))]).unwrap();
+            let b = setup(&s, &b.id).await.unwrap();
+            assert_eq!(b.base_branch, a.branch);
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_subproject_cant_start_from_its_own_task() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, _, _, p) = stacking_repo(&s).await;
+            let sp = create_task_inner(&s, &p.id, CreateTask { title: "Sub".into(), subproject: Some(true), ..Default::default() }).unwrap();
+            let child = create_task_inner(&s, &p.id, CreateTask { title: "Part".into(), parent_id: Some(sp.id.clone()), ..Default::default() }).unwrap();
+            let other = create_task_inner(&s, &p.id, CreateTask { title: "Other".into(), start_from: Some(json!(format!("task:{}", child.id))), ..Default::default() });
+            let other = other.unwrap();
+            let patch = async |t: &str, body: Value| crate::api::update_task_inner(&s, t, body.as_object().unwrap()).await;
+            for from in [child.id.clone(), other.id.clone()] {
+                let err = patch(&sp.id, json!({"start_from": format!("task:{from}")})).await.unwrap_err();
+                assert!(err.1.contains("needs this task's worktree first"), "{}", err.1);
+            }
+            // Had it got there some other way, setting up says so rather than waiting on itself.
+            db::update_task(&s.db(), &sp.id, &[("start_from", json!(db::StartFrom::Task { task_id: other.id.clone() }))]).unwrap();
+            let err = format!("{:#}", setup(&s, &sp.id).await.unwrap_err());
+            assert!(err.contains("start from it"), "{err}");
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_stacked_task_merges_where_the_task_it_stacks_on_went() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, repo, _, p) = stacking_repo(&s).await;
+            let a = setup(&s, &create_task_inner(&s, &p.id, CreateTask { title: "First".into(), ..Default::default() }).unwrap().id).await.unwrap();
+            commit_file(Path::new(a.worktree_path.as_deref().unwrap()), "parent-file");
+            let b = create_task_inner(&s, &p.id, CreateTask { title: "Second".into(), start_from: Some(json!("X-1")), ..Default::default() }).unwrap();
+            let b = setup(&s, &b.id).await.unwrap();
+            let b_wt = PathBuf::from(b.worktree_path.clone().unwrap());
+            commit_file(&b_wt, "child-file");
+
+            // First is squashed into master and done: Second now merges into master, and its changes
+            // are still only its own, before and after it's rebased onto master.
+            sh(&repo, &["merge", "-q", "--squash", a.branch.as_deref().unwrap()]);
+            sh(&repo, &["commit", "-qm", "First"]);
+            db::update_task(&s.db(), &a.id, &[("status", json!("done"))]).unwrap();
+            assert_eq!(db::task_base(&s.db(), &b, Some(&p)).as_deref(), Some("master"));
+            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            assert_eq!(diff(&s, &b.id).await.unwrap()["base"], "master");
+            sh(&b_wt, &["rebase", "-q", "--onto", "master", a.branch.as_deref().unwrap()]);
+            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            assert_eq!(diff(&s, &b.id).await.unwrap()["merge_base"], json!(rev(&repo, "master")));
+            // And with First's branch gone too.
+            sh(&repo, &["worktree", "remove", "--force", a.worktree_path.as_deref().unwrap()]);
+            sh(&repo, &["branch", "-q", "-D", a.branch.as_deref().unwrap()]);
+            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_remotes_branch_is_that_remotes() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, repo, other, p) = stacking_repo(&s).await;
+            // Another remote with a feature branch of its own, and origin's, neither fetched.
+            let fork = root.join("fork");
+            sh(&root, &["clone", "-q", "--bare", &path_str(&root.join("origin")), &path_str(&fork)]);
+            sh(&repo, &["remote", "add", "upstream", &path_str(&fork)]);
+            sh(&other, &["checkout", "-q", "-b", "feature"]);
+            let theirs = commit_file(&other, "fork-file");
+            sh(&other, &["push", "-q", &path_str(&fork), "feature"]);
+            sh(&other, &["reset", "-q", "--hard", "origin/master"]);
+            let ours = commit_file(&other, "origin-file");
+            sh(&other, &["push", "-q", "origin", "feature"]);
+            let new = |title: &str, from: &str| create_task_inner(&s, &p.id, CreateTask { title: title.into(), start_from: Some(json!(from)), ..Default::default() }).unwrap();
+
+            let t = setup(&s, &new("Fork's", "upstream/feature").id).await.unwrap();
+            let wt = PathBuf::from(t.worktree_path.clone().unwrap());
+            assert_eq!((rev(&wt, "HEAD"), t.base_branch.as_deref()), (theirs.clone(), Some("upstream/feature")));
+            commit_file(&wt, "mine");
+            assert_eq!(changed_files(&s, &t.id).await, ["mine"]);
+            let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert!(has_work_to_merge(&s, &t).await);
+
+            // Origin's, never fetched: fetched, and its pull request goes to feature there.
+            let t = setup(&s, &new("Origin's", "origin/feature").id).await.unwrap();
+            assert_eq!((rev(Path::new(t.worktree_path.as_deref().unwrap()), "HEAD"), t.base_branch.as_deref()), (ours, Some("feature")));
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
     fn a_task_can_start_from_a_commit_or_a_remote_branch() {
         crate::testing::run(async || {
             let s = crate::testing::state();
@@ -1919,7 +2072,7 @@ mod tests {
             let patch = async |t: &str, body: Value| crate::api::update_task_inner(&s, t, body.as_object().unwrap()).await;
             let b = new(json!(format!("task:{}", a.id))).unwrap();
             let err = patch(&a.id, json!({"start_from": format!("X-{}", b.number)})).await.unwrap_err();
-            assert!(err.1.contains("starts from this task"), "{}", err.1);
+            assert!(err.1.contains("needs this task's worktree first"), "{}", err.1);
             assert!(patch(&a.id, json!({"start_from": "X-1"})).await.unwrap_err().1.contains("can't start from itself"));
 
             // start_from and base_branch take each other's place.

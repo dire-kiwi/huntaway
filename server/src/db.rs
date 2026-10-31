@@ -2112,6 +2112,24 @@ pub fn is_merged(t: &Task) -> bool {
     t.status == "done" && t.resolution.as_deref().is_none_or(|r| r == "done")
 }
 
+/// The branch `task` merges into and is compared with: its base branch, else its project's. One
+/// stacked on another task (see StartFrom) that's merged by now goes where that one went instead,
+/// as GitHub retargets a pull request whose base branch is deleted.
+pub fn task_base(c: &Connection, task: &Task, project: Option<&Project>) -> Option<String> {
+    let own = |t: &Task| t.base_branch.clone().or_else(|| project.and_then(|p| p.base_branch.clone())).filter(|b| !b.is_empty());
+    let mut t = task.clone();
+    // Each step is to a task it starts from, which can't lead back (see api::check_start_from); a
+    // few are as deep as stacks go.
+    for _ in 0..16 {
+        let Some(StartFrom::Task { task_id }) = &t.start_from else { break };
+        match get_task(c, task_id).ok().flatten() {
+            Some(other) if is_merged(&other) && other.branch.is_some() && other.branch == t.base_branch => t = other,
+            _ => break,
+        }
+    }
+    own(&t)
+}
+
 /// The tasks `task` depends on that aren't merged yet, in the order it lists them. Deleted
 /// ones don't count.
 pub fn unmet_dependencies(c: &Connection, task: &Task) -> Result<Vec<Task>> {

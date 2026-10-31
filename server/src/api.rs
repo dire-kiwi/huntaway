@@ -501,18 +501,30 @@ pub fn check_start_from(c: &rusqlite::Connection, project: &db::Project, task_id
             if t.is_scratch() || crate::documents::documents_only(&t) || !(t.use_worktree || t.branch.is_some()) {
                 return Err(bad(format!("\"{}\" has no branch of its own to start from", t.title)));
             }
-            // Nor from a task that (by way of others) starts from this one.
-            let mut next = t.start_from.clone();
-            let mut seen = vec![t.id.clone()];
-            while let Some(StartFrom::Task { task_id: id }) = next {
-                if Some(id.as_str()) == task_id {
-                    return Err(bad(format!("\"{}\" starts from this task", t.title)));
+            // Nor from a task whose worktree (by way of others) needs this one's first: one that
+            // starts from it, or is in it as a subproject (each sets the other up first, see
+            // worktree::setup).
+            if let Some(task_id) = task_id {
+                let mut stack = vec![t.clone()];
+                let mut seen = vec![t.id.clone()];
+                while let Some(next) = stack.pop() {
+                    let needs = [
+                        match &next.start_from {
+                            Some(StartFrom::Task { task_id: id }) => Some(id.clone()),
+                            _ => None,
+                        },
+                        next.parent_id.clone(),
+                    ];
+                    for id in needs.into_iter().flatten() {
+                        if id == task_id {
+                            return Err(bad(format!("\"{}\" needs this task's worktree first (it starts from it, or is in it)", t.title)));
+                        }
+                        if !seen.contains(&id) {
+                            seen.push(id.clone());
+                            stack.extend(db::get_task(c, &id)?);
+                        }
+                    }
                 }
-                if seen.contains(&id) {
-                    break;
-                }
-                next = db::get_task(c, &id)?.and_then(|t| t.start_from);
-                seen.push(id);
             }
         }
         _ => {}
@@ -1926,7 +1938,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     }
     // A setup that failed before making the branch (a branch or pull request that isn't there, say) left nothing to
     // tear down, so what it starts from can be put right, and it's set up again from scratch.
-    let unmade = |t: &db::Task| t.worktree_state == "none" || (t.worktree_state == "error" && t.branch.is_none());
+    // (The branch, its base and the worktree's folder are saved as soon as git makes them.)
+    let unmade = |t: &db::Task| {
+        t.worktree_state == "none" || (t.worktree_state == "error" && t.branch.is_none() && t.worktree_path.as_deref().is_none_or(|p| !std::path::Path::new(p).exists()))
+    };
     if fields.iter().any(|(k, _)| ["use_worktree", "base_branch", "start_from"].contains(k)) && current.worktree_state == "error" && unmade(&current) {
         fields.extend([("worktree_state", json!("none")), ("worktree_error", Value::Null)]);
     }
