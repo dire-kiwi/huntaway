@@ -188,6 +188,11 @@ node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New
 - Write async tests as `#[test] fn …() { testing::run(async || { … }) }` (`server/src/testing.rs`)
   rather than `#[tokio::test]`, so a hang fails after 30 seconds instead of running forever.
   `testing::state()` gives an `AppState` on an in-memory database.
+- Give a test a folder with `testing::temp_dir()`, which is removed when the test ends (panics
+  included), not `std::env::temp_dir()`: tests that left their folders there filled `/tmp`.
+  `testing::state()`'s data dir goes with the state. `IA_KEEP_TEST_DIRS=1` keeps failing tests'
+  folders. `scripts/check-tmp-leftovers.sh cargo test` runs the tests in a `TMPDIR` of their own and
+  fails if they leave anything in it; CI's `cargo test` runs that way.
 - `AppState::db()` isn't reentrant: drop a guard before calling `db()` again (that includes two
   calls in one statement). Tests and debug builds panic on a second lock on the same thread;
   release builds would hang.

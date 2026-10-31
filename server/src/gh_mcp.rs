@@ -1572,7 +1572,7 @@ FLAGS
 
     #[test]
     fn a_waits_shell_gets_gh_through_gh_run_and_no_token() {
-        let shim_dir = std::env::temp_dir().join(format!("ia-gh-shim-{}", crate::util::new_id()));
+        let shim_dir = crate::testing::temp_dir().join("shim");
         let env = Account::parse("ghe.example.com/me").unwrap().env("tok").unwrap();
         let vars = match env.shell_env(std::path::Path::new("/opt/it's/huntaway"), &shim_dir) {
             Ok(vars) => vars,
@@ -1595,8 +1595,7 @@ FLAGS
     #[test]
     fn pushes_are_checked_at_every_url_git_would_push_to() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-gh-push-urls-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let git = |args: &[&str]| {
                 let ok = std::process::Command::new("git").args(args).current_dir(&dir).env("GIT_CONFIG_NOSYSTEM", "1").status().unwrap().success();
                 assert!(ok, "git {args:?}");
@@ -1657,8 +1656,7 @@ FLAGS
                     let _ = conn.write_all(reply.as_bytes()).await;
                 }
             });
-            let dir = std::env::temp_dir().join(format!("ia-gh-headers-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let url = format!("http://127.0.0.1:{port}/o/r.git");
             let other = "Authorization: Basic b3RoZXI6b3RoZXItdG9rZW4="; // other:other-token
             let git = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(&dir).status().unwrap();
@@ -1690,8 +1688,7 @@ FLAGS
     fn fetches_use_only_the_selected_accounts_https_credentials() {
         crate::testing::run(async || {
             use std::os::unix::fs::PermissionsExt;
-            let dir = std::env::temp_dir().join(format!("ia-gh-fetch-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let gh = dir.join("gh");
             std::fs::write(&gh, "#!/bin/sh\n[ \"$*\" = 'auth token --hostname=ghe.example.com --user=chosen' ] || exit 1\nprintf test-token\n").unwrap();
             std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1740,8 +1737,7 @@ FLAGS
         crate::testing::run(async || {
             // What credentials git would use: only ours for the account's host, whatever helper
             // the user has (here a global one, as `gh auth setup-git` adds), and theirs elsewhere.
-            let home = std::env::temp_dir().join(format!("ia-gh-push-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&home).unwrap();
+            let home = crate::testing::temp_dir();
             let fill = async |host: &str, extra: &[String]| {
                 let mut c = tokio::process::Command::new("git");
                 c.env("HOME", &home).env("XDG_CONFIG_HOME", &home).env("GIT_CONFIG_NOSYSTEM", "1").env("IA_GH_GIT_TOKEN", "tok123");

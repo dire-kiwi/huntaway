@@ -365,7 +365,7 @@ pub(crate) mod tests {
     /// fails once it's cloned (as gh does when it can't fetch a fork's parent), and `o/slow` takes
     /// a second once it's cloned. Anything else fails.
     pub(crate) fn fake_github() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ia-github-{}", crate::util::new_id()));
+        let dir = crate::testing::temp_dir();
         let git = |args: &[&str]| {
             let ok = std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).status().unwrap().success();
             assert!(ok, "git {args:?}");
@@ -499,7 +499,7 @@ esac
 
     #[test]
     fn names_a_folder_the_same_before_and_after_it_is_made() {
-        let dir = std::env::temp_dir().join(format!("ia-folder-{}", crate::util::new_id()));
+        let dir = crate::testing::temp_dir();
         std::fs::create_dir_all(dir.join("real")).unwrap();
         std::os::unix::fs::symlink(dir.join("real"), dir.join("alias")).unwrap();
         let dir = dir.canonicalize().unwrap();
@@ -520,7 +520,7 @@ esac
     #[test]
     fn finds_clones_of_a_repository_by_their_remotes() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-clone-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             let repo = dir.join("r");
             std::fs::create_dir_all(repo.join("sub")).unwrap();
             assert!(!is_clone_of(&repo, "github.com", "o/r").await, "not a repository");

@@ -2289,8 +2289,7 @@ mod tests {
 
     #[test]
     fn caches_are_writable_before_their_first_use() {
-        let home = std::env::temp_dir().join(format!("ia-home-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&home).unwrap();
+        let home = crate::testing::temp_dir();
         // A bare home directory: no `~/.cargo` (a system Cargo) or `~/.local/share` yet.
         let found = cache_dirs_in(&home, |_| None);
         assert_eq!(found, [".cache", ".npm", ".cargo/registry", ".cargo/git", ".local/share/pnpm"].map(|d| path_str(&home.join(d))));
@@ -2311,7 +2310,7 @@ mod tests {
     #[test]
     fn many_long_ignored_directories_dont_block_the_launch() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-ignored-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             // More than check-ignore's input and output pipes hold together (64 KiB each): 200
             // paths of ~730 bytes.
             let long = "x".repeat(240);
@@ -2355,7 +2354,7 @@ mod tests {
     #[test]
     fn a_reviewer_may_write_the_directories_git_ignores_whole() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-ignored-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             for d in ["target/debug", "app/node_modules/x", "build", ".claude", "src"] {
                 std::fs::create_dir_all(dir.join(d)).unwrap();
             }
@@ -2371,7 +2370,7 @@ mod tests {
             found.sort();
             // Not `build`, which holds a tracked file, nor the agents' settings.
             assert_eq!(found, vec![path_str(&dir.join("app/node_modules")), path_str(&dir.join("target"))]);
-            assert_eq!(ignored_dirs(&path_str(&std::env::temp_dir().join("ia-no-such-dir"))).await, Vec::<String>::new());
+            assert_eq!(ignored_dirs(&path_str(&crate::testing::temp_dir().join("no-such-dir"))).await, Vec::<String>::new());
             std::fs::remove_dir_all(&dir).unwrap();
         })
     }
@@ -2405,8 +2404,9 @@ mod tests {
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
         let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] };
-        let dir = std::env::temp_dir().join(format!("ia-runner-{}", crate::util::new_id()));
-        let state: Shared = crate::state::AppState::new(c, dir, id, meta);
+        let dir = crate::testing::TempDir::new();
+        let state: Shared = crate::state::AppState::new(c, dir.to_path_buf(), id, meta);
+        let _ = state.test_dir.set(dir);
         runs::TEST_CAN_RUN.set(true);
 
         // B's agent is running; it gets a dependency on A and a message is queued meanwhile.
@@ -3083,8 +3083,7 @@ mod tests {
     fn previews_what_a_new_thread_in_a_project_is_told() {
         crate::testing::run(async || {
             let state = crate::testing::state();
-            let repo = std::env::temp_dir().join(format!("ia-preview-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
             git(&["init", "-q", "-b", "main"]);
             git(&["remote", "add", "origin", "git@github.com:o/web.git"]);
@@ -3398,8 +3397,7 @@ mod tests {
     fn a_reviewer_that_exits_late_doesnt_end_the_next_round() {
         crate::testing::run(async || {
             let (s, thread, run) = running(false);
-            let dir = std::env::temp_dir().join(format!("ia-review-round-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).status().unwrap().success());
             git(&["init", "-q"]);
             git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]);

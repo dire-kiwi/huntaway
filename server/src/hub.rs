@@ -1087,8 +1087,7 @@ mod tests {
                     .route("/api/permissions/{id}", axum::routing::post(|| async { Json(json!({})) }))
             };
             link_http(&s, "old", old(), 0).await;
-            let ui = std::env::temp_dir().join(format!("ia-ui-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&ui).unwrap();
+            let ui = crate::testing::temp_dir();
             std::fs::write(ui.join("index.html"), "<!doctype html>").unwrap();
             let files = tower_http::services::ServeDir::new(&ui).fallback(tower_http::services::ServeFile::new(ui.join("index.html")));
             link_http(&s, "old-ui", old().fallback_service(files), 0).await;

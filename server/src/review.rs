@@ -760,8 +760,7 @@ mod tests {
             let s = crate::testing::state();
             let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
             let task = db::insert_task(&s.db(), new_task(&p.id, "task")).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-review-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             let n = std::cell::Cell::new(0);
             // A tool call, and its result unless `result` is None (declined or cut short).
@@ -936,8 +935,7 @@ mod tests {
         let np = db::NewProject { id: "pr", profile_id: &p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: true };
         db::insert_project(&s.db(), np).unwrap();
         let task = db::insert_task(&s.db(), NewTask { project_id: Some("pr"), ..new_task(&p.id, "task") }).unwrap();
-        let dir = std::env::temp_dir().join(format!("ia-review-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         commit(&dir, &["init", "-q"]);
         commit(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]);
         let fields = [("worktree_path", json!(crate::util::path_str(&dir))), ("worktree_state", json!("ready")), ("branch", json!("ia/x"))];
