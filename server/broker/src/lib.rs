@@ -1181,12 +1181,33 @@ mod tests {
         })
     }
 
-    /// A state file in a new directory of its own.
-    fn state_file(test: &str) -> PathBuf {
+    /// A state file in a new directory of its own, which is removed when it's dropped (when the test ends, panics included).
+    fn state_file(test: &str) -> StateFile {
         let dir = std::env::temp_dir().join(format!("huntaway-broker-{test}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir.join("state.json")
+        StateFile(dir.join("state.json"))
+    }
+
+    struct StateFile(PathBuf);
+
+    impl std::ops::Deref for StateFile {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for StateFile {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for StateFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0.parent().unwrap());
+        }
     }
 
     #[test]
@@ -1213,7 +1234,6 @@ mod tests {
             let _laptop = named_host(&b2, "laptop", "laptop-id", Some("laptop-key")).await.unwrap();
             assert_eq!(who(&b2, "laptop").await, "laptop-id");
             drop(desktop);
-            let _ = std::fs::remove_dir_all(state.parent().unwrap());
         })
     }
 
@@ -1244,7 +1264,6 @@ mod tests {
             let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
             assert_eq!(saved["names"]["old"]["host_id"], "other-id");
             assert_eq!(saved["names"]["keyless"]["key_sha256"], hex(hash("keyless-key")));
-            let _ = std::fs::remove_dir_all(state.parent().unwrap());
         })
     }
 
@@ -1268,7 +1287,6 @@ mod tests {
             let b2 = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
             named_host(&b2, "desktop", "other-id", Some("other-key")).await.unwrap_err();
             let _laptop = named_host(&b2, "laptop", "other-id", Some("other-key")).await.unwrap();
-            let _ = std::fs::remove_dir_all(state.parent().unwrap());
         })
     }
 
@@ -1287,6 +1305,5 @@ mod tests {
         std::fs::remove_file(&state).unwrap();
         let _ = router(Config { token: TOKEN.into(), state: Some(state.clone()), ..Default::default() }).unwrap();
         assert!(std::fs::read_to_string(&state).unwrap().contains("\"names\""));
-        let _ = std::fs::remove_dir_all(state.parent().unwrap());
     }
 }

@@ -3622,7 +3622,7 @@ mod tests {
 
     #[test]
     fn a_database_at_version_65_gets_projects_copy_files_and_link_folders() {
-        let path = std::env::temp_dir().join(format!("huntaway-v65-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
