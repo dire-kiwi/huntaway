@@ -264,6 +264,33 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // A subproject's task: its subproject's board, with this task still beside it.
   const toSubproject = () => subproject && navigate(mode === "page" ? href({ name: "subproject", taskId: subproject.id }) : subprojectTaskUrl(subproject.id, task.id));
 
+  // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
+  const run =
+    task.running || reviewing ? (
+      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
+        <Square size={11} fill="currentColor" /> Stop
+      </Button>
+    ) : dependencyQueued(task) ? (
+      <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
+        <Clock size={12} /> Queued
+      </span>
+    ) : (
+      !task.session_id &&
+      agents && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setMarkErr(null);
+            api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
+            setTab("thread");
+          }}
+        >
+          <Play size={12} fill="currentColor" /> Start
+        </Button>
+      )
+    );
+
   const controls = (
     <>
       {task.subproject && (
@@ -309,31 +336,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ))}
         </div>
       )}
-      {task.running || reviewing ? (
-        <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"} className="narrow:-order-1">
-          <Square size={11} fill="currentColor" /> Stop
-        </Button>
-      ) : dependencyQueued(task) ? (
-        <span className="flex items-center gap-1 text-[12px] text-muted narrow:-order-1" title="Its agent starts once the tasks it depends on are merged">
-          <Clock size={12} /> Queued
-        </span>
-      ) : (
-        !task.session_id &&
-        agents && (
-          <Button
-            size="sm"
-            variant="primary"
-            className="narrow:-order-1"
-            onClick={() => {
-              setMarkErr(null);
-              api.send(task.host_id, task.id, "").catch((e) => setMarkErr(`Couldn't start the agent: ${(e as Error).message}`));
-              setTab("thread");
-            }}
-          >
-            <Play size={12} fill="currentColor" /> Start
-          </Button>
-        )
-      )}
+      {!narrow && run}
     </>
   );
 
@@ -397,10 +400,11 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           )}
           <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
             {wide && controls}
+            {narrow && run}
             {mode !== "page" && <PanelButtons expanded={mode === "expanded"} />}
           </div>
         </div>
-        {/* A phone's row scrolls sideways, with the tabs first. */}
+        {/* A phone's row scrolls sideways, with the tabs first (and Start or Stop in the row above). */}
         {!wide && (
           <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:[scrollbar-width:none] narrow:*:shrink-0">
             {controls}
