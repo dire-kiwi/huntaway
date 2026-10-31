@@ -36,25 +36,30 @@ impl Ctx {
         loop {
             let attempt = async {
                 let res = self.http.post(format!("{}/api/internal/mcp", self.url)).bearer_auth(&self.token).json(&body).send().await?;
-                if !res.status().is_success() {
-                    return Err(anyhow!("server returned {}", res.status()));
+                let status = res.status();
+                if !status.is_success() {
+                    // A 4xx (other than a timeout or rate limit) is the server's answer, not it being down:
+                    // a stale token, say, would otherwise be retried for half an hour.
+                    let permanent = status.is_client_error() && status.as_u16() != 408 && status.as_u16() != 429;
+                    return Ok(Err((permanent, anyhow!("server returned {status}"))));
                 }
-                Ok::<Value, anyhow::Error>(res.json().await?)
+                Ok::<Result<Value, (bool, anyhow::Error)>, anyhow::Error>(Ok(res.json().await?))
             };
-            match attempt.await {
+            match attempt.await.unwrap_or_else(|e| Err((false, e))) {
                 Ok(v) => {
                     return match v.get("error").and_then(|e| e.as_str()) {
                         Some(e) => Err(anyhow!("{e}")),
                         None => Ok(v["result"].clone()),
                     };
                 }
+                Err((true, e)) => return Err(e.context("huntaway server refused the call")),
                 // The server is restarting; retry with the same call id so nothing runs twice.
-                Err(e) if failing_since.get_or_insert_with(Instant::now).elapsed() < Duration::from_secs(1800) => {
+                Err((false, e)) if failing_since.get_or_insert_with(Instant::now).elapsed() < Duration::from_secs(1800) => {
                     tracing::debug!("call to server failed, retrying: {e:#}");
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(Duration::from_secs(5));
                 }
-                Err(e) => return Err(e.context("huntaway server unreachable")),
+                Err((false, e)) => return Err(e.context("huntaway server unreachable")),
             }
         }
     }
@@ -147,6 +152,8 @@ fn board_tools() -> Value {
         "description": "Remind the user of the task later: it's listed under Reminders in the board's sidebar, and shows as due from this time on. A delay from now (30m, 2h, 1d 12h, 1w), a time like 2026-05-01T09:00:00Z, or a date and time in the host's time zone (2026-05-01 09:00; a date alone means 9:00). Replaces any reminder it has; an empty string clears it."
     });
     let reminder = json!({"type": "string", "description": "What the reminder is for, shown with it (with remind_at, or to change the note of the reminder the task has)"});
+    let copy_files = json!({"type": "string", "description": "Needs approval. Git-ignored files copied into each new worktree from the repository folder before the setup script, as .gitignore-style patterns, one per line (.env, /config/local.json, !*.bak), like a .worktreeinclude file (which is read too). Only files git ignores are copied, and none the worktree already has."});
+    let link_folders = json!({"type": "string", "description": "Needs approval. Git-ignored folders of the repository (paths relative to it, one per line, e.g. models/cache) symlinked into each new worktree instead of copied, so changes in them change the original"});
     let project_ref = "Project id, key or name (<profile>:<key> for another profile's board), or 'all'";
     let project_one = "Project id, key or name (<profile>:<key> for another profile's board); defaults to the current project";
     let mut tools = json!([
@@ -330,6 +337,8 @@ fn board_tools() -> Value {
                 "permission_mode": {"type": "string", "enum": permission_modes, "description": "Needs approval. What the project's agents may do without asking the user, over the host's default"},
                 "setup_script": {"type": "string", "description": "Needs approval. Runs in a task's new worktree"},
                 "teardown_script": {"type": "string", "description": "Needs approval. Runs in a task's worktree before it's removed"},
+                "copy_files": copy_files,
+                "link_folders": link_folders,
                 "status_script": {"type": "string", "description": "Needs approval. Runs whenever one of the project's tasks changes status"},
                 "status_scripts": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Needs approval. A script per status (the keys), run when a task moves into it; replaces them all, and a blank script is none"},
                 "repo_path": {"type": "string", "description": "Needs approval. The project's repository folder, e.g. after the folder was moved or renamed: it must be the same repository (or, with move_repo, a path that doesn't exist yet). Task worktrees are reconnected to it."},

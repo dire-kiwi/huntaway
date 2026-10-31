@@ -22,14 +22,18 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { useShallow } from "zustand/react/shallow";
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../agents";
 import {
+  AGENTS,
   agentOf,
   api,
   getToken,
+  LABELS,
   hostStatuses,
   hostSupports,
   PERMISSION_MODES,
   setToken,
+  type Agent,
   type ClaudeConfig,
+  type DocumentType,
   type Status,
   type PermissionMode,
   type DirListing,
@@ -38,6 +42,7 @@ import {
   type Project,
   type PromptField,
   type Reviewer,
+  type SystemPromptOptions,
   type WatchPullRequests,
 } from "../api";
 import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "../githubRepos";
@@ -396,8 +401,8 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "worktrees",
     label: "Worktrees",
     icon: <GitBranch size={14} />,
-    description: "Where tasks do their work, and the scripts that set up and tear down each task's worktree.",
-    fields: ["base_branch", "use_worktrees", "worktrees_root", "setup_script", "teardown_script"],
+    description: "Where tasks do their work, the files each task's worktree gets from the repository, and the scripts that set up and tear it down.",
+    fields: ["base_branch", "use_worktrees", "worktrees_root", "copy_files", "link_folders", "setup_script", "teardown_script"],
   },
   {
     id: "review",
@@ -658,11 +663,45 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                     <Input className="font-mono text-[12px]" value={form.worktrees_root} onChange={(e) => set("worktrees_root", e.target.value)} />
                   </Field>
                 </div>
+                {hostSupports(host, 82) && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field
+                      label="Files to copy"
+                      hint={
+                        <>
+                          Git-ignored files copied from the repository folder into each new worktree, before the setup script. One .gitignore-style pattern
+                          per line: <code>.env</code> at any depth, <code>/.env</code> only at the top. A <code>.worktreeinclude</code> in the repository is
+                          read too. Files the worktree has already are left alone.
+                        </>
+                      }
+                    >
+                      <Textarea
+                        rows={4}
+                        className="font-mono text-[12px]"
+                        placeholder={".env\n/config/*.local.json"}
+                        value={form.copy_files ?? ""}
+                        onChange={(e) => set("copy_files", e.target.value)}
+                      />
+                    </Field>
+                    <Field
+                      label="Folders to link"
+                      hint="Git-ignored folders of the repository linked into each new worktree instead of copied, one path per line. Changes made through a link change the original; removing the worktree only removes the link."
+                    >
+                      <Textarea
+                        rows={4}
+                        className="font-mono text-[12px]"
+                        placeholder={"node_modules\nmodels/cache"}
+                        value={form.link_folders ?? ""}
+                        onChange={(e) => set("link_folders", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                )}
                 <Field
                   label="Setup script"
                   hint={
                     <>
-                      Runs with bash in each new worktree, e.g. installing dependencies or copying <code>.env</code>. Available variables: $IA_REPO_PATH,
+                      Runs with bash in each new worktree, e.g. installing dependencies. Available variables: $IA_REPO_PATH,
                       $IA_WORKTREE_PATH, $IA_BRANCH, $IA_TASK_ID, $IA_TASK_NUMBER, $IA_PROJECT_KEY.
                     </>
                   }
@@ -670,7 +709,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                   <Textarea
                     rows={5}
                     className="font-mono text-[12px]"
-                    placeholder={'cp "$IA_REPO_PATH/.env" .env\nnpm install'}
+                    placeholder="npm install"
                     value={form.setup_script}
                     onChange={(e) => set("setup_script", e.target.value)}
                   />
@@ -751,6 +790,8 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
             )}
 
             {current.id === "prompts" && <ProjectPrompts project={form} onChange={set} />}
+
+            {current.id === "prompts" && hostSupports(host, 80) && <SystemPromptPreview project={project} />}
 
             {current.id === "scripts" && <ProjectStatusScripts project={form} perColumn={hostSupports(host, 38)} statuses={hostStatuses(host)} onChange={set} />}
 
@@ -954,6 +995,103 @@ function ProjectPrompts({ project, onChange }: { project: Project; onChange: (fi
             </div>
           );
         })}
+    </div>
+  );
+}
+
+/** What the agent of a new thread in the project is told on top of its agent's own system prompt, for the options a
+ *  thread is made with. Read-only: it's the board's, from the project's saved settings. */
+function SystemPromptPreview({ project }: { project: Project }) {
+  const [type, setType] = useState<NonNullable<SystemPromptOptions["type"]>>("task");
+  const [labels, setLabels] = useState<DocumentType[]>([]);
+  const [worktree, setWorktree] = useState<boolean | null>(null);
+  const [runtime, setRuntime] = useState<Agent | null>(null);
+  // Unset until it's switched, the thread's mode is the one it inherits (the project's, else the host's).
+  const [plan, setPlan] = useState<boolean | null>(null);
+  const [preview, setPreview] = useState<{ text: string; runtime: Agent; permission_mode: PermissionMode } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const worktrees = worktree ?? (project.use_worktrees && project.is_git !== false);
+  const hostMode = useStore((s) => s.hostSettings[project.host_id]?.default_permission_mode);
+  useEffect(() => {
+    let live = true;
+    const q: SystemPromptOptions = {
+      type,
+      labels: labels.join(","),
+      worktree: type === "task" ? worktrees : undefined,
+      runtime: runtime ?? undefined,
+      permission_mode: plan === null ? undefined : plan ? "plan" : "default",
+    };
+    api.systemPromptPreview(project.host_id, project.id, q).then(
+      (p) => {
+        if (!live) return;
+        setPreview(p);
+        setErr(null);
+      },
+      (e) => live && setErr((e as Error).message),
+    );
+    return () => {
+      live = false;
+    };
+    // Again when the project or the host's default mode changes, as they go into it.
+  }, [project, hostMode, type, labels, worktrees, runtime, plan]);
+  const shownRuntime = runtime ?? preview?.runtime ?? "claude";
+  return (
+    <div className="space-y-2.5 border-t border-line pt-5">
+      <div className="space-y-1">
+        <span className="block text-xs font-medium text-muted">System prompt</span>
+        <span className="block text-xs text-faint">
+          What the board adds to the agent's own system prompt for a new thread in this project, with the options picked here and the project's
+          saved settings. It's for the project's next task number, with a placeholder title and id. It isn't editable.
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <select className={pickerClass} title="Type" aria-label="Type" value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+          <option value="task">Task</option>
+          <option value="subproject">Subproject</option>
+          <option value="scratch">Scratch task</option>
+        </select>
+        <select className={pickerClass} title="Agent" aria-label="Agent" value={shownRuntime} onChange={(e) => setRuntime(e.target.value as Agent)}>
+          {AGENTS.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <div className="flex items-center gap-1" role="group" aria-label="Labels">
+          {LABELS.map((l) => {
+            const on = labels.includes(l);
+            return (
+              <button
+                key={l}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setLabels(on ? labels.filter((x) => x !== l) : LABELS.filter((x) => x === l || labels.includes(x)))}
+                className={clsx(
+                  "rounded-md border px-2 py-0.5 text-[12px]",
+                  on ? "border-accent/50 bg-accent/15 text-accent" : "border-line text-muted hover:text-fg",
+                )}
+              >
+                {l}
+              </button>
+            );
+          })}
+        </div>
+        {type === "task" && <Toggle checked={worktrees} onChange={setWorktree} label="Own worktree" />}
+        {shownRuntime === "codex" && <Toggle checked={plan ?? preview?.permission_mode === "plan"} onChange={setPlan} label="Plan mode" />}
+      </div>
+      {err ? (
+        <div className="text-xs text-red-400">Couldn't load the system prompt: {err}</div>
+      ) : (
+        <pre
+          aria-label="System prompt"
+          className={clsx(
+            "max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-panel px-2.5 py-2 font-sans text-[12.5px] text-fg",
+            !preview && "text-faint",
+          )}
+        >
+          {preview?.text ?? "Loading…"}
+        </pre>
+      )}
     </div>
   );
 }

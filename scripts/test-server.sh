@@ -7,7 +7,7 @@
 #   scripts/test-server.sh stop [<data-dir>]
 #
 # Options (anything else goes to `huntaway serve`):
-#   --seed         add a "test" profile on $IA_TEST_CLAUDE_CONFIG (default ~/.claude-personal)
+#   --seed         (needs jq and curl) add a "test" profile on $IA_TEST_CLAUDE_CONFIG (default ~/.claude-personal)
 #                  with default model $IA_TEST_MODEL (default haiku), and a project on a fresh
 #                  git repo in <data-dir>/repo
 #   --fake-claude  run agents with scripts/fake-claude (prints a reply and a result, no model);
@@ -65,8 +65,10 @@ launch() {
   local bin serve
   # shellcheck disable=SC1091
   . "$dir/launch"
-  # Nothing from an agent's or the live daemon's environment (hubs, tokens) carries over.
+  # Nothing from an agent's or the live daemon's environment (hubs, brokers, tokens, profiles, the
+  # checkout to rebuild from) carries over: every variable `huntaway serve` reads, save the binaries.
   env -u IA_HUB -u IA_HUB_TOKEN -u IA_TOKEN -u IA_OPEN_TOKEN -u IA_DEMO -u IA_UI_DIR \
+    -u IA_BROKER -u IA_BROKER_TOKEN -u IA_BROKER_NAME -u IA_PROFILES -u IA_SOURCE_DIR -u IA_UPDATE_FROM -u IA_NAME -u IA_HOST -u IA_PORT -u IA_DATA_DIR \
     setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!
@@ -152,6 +154,11 @@ start() {
     done
   fi
   [[ -n $bin && -x $bin ]] || { echo "no huntaway build in $root/server/target; run cargo build there first" >&2; exit 1; }
+  if [[ -n $do_seed ]]; then
+    for tool in jq curl; do
+      command -v "$tool" > /dev/null || { echo "--seed needs $tool, which isn't on PATH" >&2; exit 1; }
+    done
+  fi
 
   local dir
   dir="$(mktemp -d -t ia-test-XXXXXX)"

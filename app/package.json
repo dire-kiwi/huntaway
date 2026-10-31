@@ -5,6 +5,9 @@
   "description": "Huntaway desktop + web UI",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
   "main": "electron/main.cjs",
   "desktopName": "huntaway-app.desktop",
   "scripts": {
@@ -12,7 +15,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:ui": "npm run build && node --experimental-strip-types --test --test-concurrency=1 tests/ui/*.test.mjs",
+    "test:ui": "npm run build && node --experimental-strip-types --test --test-concurrency=1 --test-timeout=120000 tests/ui/*.test.mjs",
     "electron": "electron .",
     "electron:dev": "IA_DEV_URL=http://localhost:5173 electron .",
     "dist": "npm run build && (cd ../server && cargo build --release --locked) && electron-builder --publish never"

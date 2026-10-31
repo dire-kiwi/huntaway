@@ -4,6 +4,7 @@
 //! state is the `runs` table plus the run's files.
 
 use anyhow::{Context, Result, anyhow};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
@@ -406,6 +407,12 @@ fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto
             return wait_for_dependencies(state, &task, &unmet, (!only_queued).then_some(message));
         }
     }
+    // A config that's out of usage would refuse the run (see usage.rs).
+    if !compact && kind == "prompt" && task.kind == "task" && !task.merging && runs::can_run_agents(state) && !state.is_running(task_id) {
+        if let Some(t) = crate::usage::before_run(state, &task, (!only_queued).then(|| message.clone()))? {
+            return Ok(t);
+        }
+    }
     // A message left queued on a thread that isn't running (e.g. one sent while it waited for
     // its dependencies, before it was moved out of "In progress") goes with this one, unless
     // this one compacts the conversation first.
@@ -476,6 +483,37 @@ pub fn wait_for_dependencies(state: &Shared, task: &Task, unmet: &[Task], messag
     Ok(stopped.unwrap_or(updated))
 }
 
+/// Queue a task whose config (`config_name`) is out of usage until `until`: like
+/// `wait_for_dependencies`, it waits in "In progress", keeping `message` as its queued message,
+/// and its agent carries on once the limit resets (see usage::resume_loop).
+pub fn wait_for_limit(state: &Shared, task: &Task, config_name: &str, until: &str, message: Option<db::Queued>) -> ApiResult<Task> {
+    if let Some(message) = message.as_ref().filter(|m| !m.text.trim().is_empty()) {
+        db::queue(&state.db(), &task.id, db::Queued { text: message.text.trim().to_string(), ..message.clone() })?;
+    }
+    let fields = [("waiting", json!(true)), ("limit_reset_at", json!(until)), ("status", json!("in_progress")), ("attention_reason", Value::Null)];
+    let updated = state.update_task_if(&task.id, &fields, |c| Ok(!db::has_active_run(c, &task.id)?))?;
+    let Some(updated) = updated else { return Err(ApiError::conflict("an agent is already running on this thread")) };
+    if !(task.waiting && task.limit_reset_at.as_deref() == Some(until)) {
+        state.add_event(&task.id, "info", format!("Waiting for {config_name}'s usage limit to reset"), Some(format!("It resets at {until}")));
+    }
+    let stopped = state.update_task_if(&task.id, &[("running", json!(false))], |c| Ok(updated.running && !db::has_active_run(c, &task.id)?))?;
+    Ok(stopped.unwrap_or(updated))
+}
+
+/// A task waiting for its config's usage limit to reset was moved to another config before its
+/// agent started: it no longer waits for that reset, and starts on the new config, unless that
+/// one holds it too (see usage::before_run) or what it depends on isn't merged yet.
+pub fn config_changed(state: &Shared, task_id: &str) {
+    let Ok(Some(t)) = db::get_task(&state.db(), task_id) else { return };
+    if !(t.waiting && t.limit_reset_at.is_some()) || state.is_running(task_id) {
+        return;
+    }
+    // Still waiting, for start_unblocked to start it (or leave it for its dependencies).
+    let _ = state.update_task(task_id, &[("limit_reset_at", Value::Null)]);
+    state.add_event(task_id, "info", "Its config changed, so it no longer waits for the old one's usage limit", None);
+    start_unblocked(state, t.project_id.as_deref());
+}
+
 pub fn task_key_prefix(state: &Shared, task: &Task) -> String {
     let project = task.project_id.as_deref().and_then(|pid| db::get_project(&state.db(), pid).ok().flatten());
     key_prefix(task, project.as_ref()).to_string()
@@ -497,7 +535,11 @@ pub fn start_unblocked(state: &Shared, project_id: Option<&str>) {
             tracing::error!("checking queued tasks: {e:#}");
             Vec::new()
         });
-        waiting.into_iter().filter(|t| db::unmet_dependencies(&c, t).is_ok_and(|u| u.is_empty())).collect()
+        waiting
+            .into_iter()
+            .filter(|t| t.limit_reset_at.as_deref().is_none_or(crate::usage::reset_due))
+            .filter(|t| db::unmet_dependencies(&c, t).is_ok_and(|u| u.is_empty()))
+            .collect()
     };
     for t in ready {
         start_waiting(state, &t);
@@ -510,21 +552,30 @@ fn start_waiting(state: &Shared, t: &Task) {
     if state.is_running(&t.id) {
         return;
     }
-    let _ = state.update_task(&t.id, &[("waiting", json!(false))]);
-    state.add_event(&t.id, "info", "Nothing it depends on is left to merge, so its agent is starting", None);
+    let _ = state.update_task(&t.id, &[("waiting", json!(false)), ("limit_reset_at", Value::Null)]);
+    let limit = t.limit_reset_at.is_some();
+    let why = if limit {
+        "Its usage limit has reset, so its agent is carrying on"
+    } else if t.depends_on.is_empty() {
+        "Its agent is starting"
+    } else {
+        "Nothing it depends on is left to merge, so its agent is starting"
+    };
+    state.add_event(&t.id, "info", why, None);
     // Bound first: the db lock can't be held while sending.
     let queued = db::get_task(&state.db(), &t.id).map(|t| t.and_then(|t| t.queued_message).is_some_and(|q| !q.trim().is_empty()));
     let sent = match queued {
         // It stays queued until the run's start takes it.
         Ok(true) => send_message(state, &t.id, None, false, "prompt", None),
         Ok(false) if t.session_id.is_none() => send_as(state, &t.id, "", true),
+        Ok(false) if limit => send_as(state, &t.id, "The usage limit you ran into has reset, so carry on where you left off.", true),
         Ok(false) => send_as(state, &t.id, "The tasks this one was waiting for are merged (or no longer needed), so carry on with it.", true),
         Err(e) => Err(e.into()),
     };
     let Err(e) = sent else { return };
     // (send refuses an archived project's thread before it changes anything.)
     if check_not_archived(state, t).is_err() {
-        let _ = state.update_task(&t.id, &[("waiting", json!(true))]);
+        let _ = state.update_task(&t.id, &[("waiting", json!(true)), ("limit_reset_at", json!(t.limit_reset_at))]);
         state.add_event(&t.id, "info", "Its project was archived, so it waits until the project is unarchived", None);
         return;
     }
@@ -673,6 +724,7 @@ fn start_run(
     if !compact {
         fields.push(("attention_reason", Value::Null));
         fields.push(("waiting", json!(false)));
+        fields.push(("limit_reset_at", Value::Null));
         if task.kind == "task" {
             fields.push(("status", json!(task.working_status())));
         }
@@ -998,27 +1050,11 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             None => Default::default(),
         };
         let gh_tools = uses_gh_server(&tools);
-        let mut instructions = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
-        if permission_mode == "plan" {
-            instructions.push_str(
-                " You are in plan mode: investigate and propose a plan, but don't change any files. The user will \
-                 switch modes once they approve it.",
-            );
-        }
+        let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+        let profiles = db::list_profiles(&state.db())?;
+        let to = Told { codex: true, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
+        let mut instructions = instructions(base, &task, &to);
         let own_gh = tools.mcp_servers.contains_key(crate::gh_mcp::SERVER_NAME);
-        if gh_tools {
-            // Codex's sandbox may keep `gh` in the shell off the network, and its GitHub app (the
-            // codex_apps server's github tools) may not reach the user's repositories. Codex has
-            // no hook to turn gh in the shell away, so it's only told.
-            instructions.push_str(&format!(
-                " For GitHub, use the `{0}` MCP server's tools (e.g. `{0}.pr_view`, `{0}.pr_diff`), which run gh with \
-                 the user's login{1}: don't run `gh` in your shell, which may not reach GitHub{2}, and the codex_apps \
-                 GitHub tools may not have access to this repository.",
-                crate::gh_mcp::SERVER_NAME,
-                github_account.as_ref().map(|a| format!(" as the GitHub account {a}")).unwrap_or_default(),
-                if github_account.is_some() { " or would act as another account" } else { "" },
-            ));
-        }
         // Reviewers read and report (see the Claude arguments below).
         let mut disabled_mcp_tools = std::collections::HashMap::new();
         if task.kind == "review" && !own_gh {
@@ -1095,14 +1131,10 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
-    let mut prompt_extra = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
-    if gh_tools {
-        prompt_extra.push_str(&gh_note(github_account.as_deref()));
-    }
-    if task.kind != "review" {
-        prompt_extra.push_str(&profiles_note(&db::list_profiles(&state.db())?, &profile));
-    }
-    push("--append-system-prompt", &prompt_extra);
+    let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+    let profiles = db::list_profiles(&state.db())?;
+    let to = Told { codex: false, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
+    push("--append-system-prompt", &instructions(base, &task, &to));
     push("--permission-mode", &permission_mode);
     if permission_mode != "bypassPermissions" {
         push("--permission-prompt-tool", &format!("mcp__{MCP_SERVER_NAME}__permission_prompt"));
@@ -1286,6 +1318,138 @@ pub fn task_github_account(state: &Shared, task: &Task) -> Result<Option<String>
     };
     let profile = db::get_profile(&c, &task.profile_id)?.context("profile not found")?;
     Ok(github_account(project.as_ref(), &profile))
+}
+
+/// What else decides what a run is told (see `instructions`).
+struct Told<'a> {
+    /// It runs on Codex rather than Claude Code.
+    codex: bool,
+    /// In plan mode, which Codex is told of (Claude Code tells Claude itself).
+    plan: bool,
+    /// It has our gh server (see uses_gh_server).
+    gh_tools: bool,
+    github_account: Option<&'a str>,
+    /// The host's profiles, and the run's own.
+    profiles: &'a [Profile],
+    profile: &'a Profile,
+}
+
+/// What a run is told on top of its agent's own system prompt: Claude Code's `--append-system-prompt`, or Codex's
+/// developer instructions (to which `launch` adds a reviewer's sandbox). `base`: what system_prompt says.
+fn instructions(mut s: String, task: &Task, to: &Told) -> String {
+    if to.codex && to.plan {
+        s.push_str(
+            " You are in plan mode: investigate and propose a plan, but don't change any files. The user will \
+             switch modes once they approve it.",
+        );
+    }
+    if to.gh_tools && to.codex {
+        // Codex's sandbox may keep `gh` in the shell off the network, and its GitHub app (the
+        // codex_apps server's github tools) may not reach the user's repositories. Codex has
+        // no hook to turn gh in the shell away, so it's only told.
+        s.push_str(&format!(
+            " For GitHub, use the `{0}` MCP server's tools (e.g. `{0}.pr_view`, `{0}.pr_diff`), which run gh with \
+             the user's login{1}: don't run `gh` in your shell, which may not reach GitHub{2}, and the codex_apps \
+             GitHub tools may not have access to this repository.",
+            crate::gh_mcp::SERVER_NAME,
+            to.github_account.map(|a| format!(" as the GitHub account {a}")).unwrap_or_default(),
+            if to.github_account.is_some() { " or would act as another account" } else { "" },
+        ));
+    } else if to.gh_tools {
+        s.push_str(&gh_note(to.github_account));
+    }
+    // Which profiles' boards it can't use, so it asks rather than make a project that may be there.
+    if task.kind != "review" {
+        s.push_str(&profiles_note(to.profiles, to.profile));
+    }
+    s
+}
+
+/// The options of a new thread that change what it's told (see `preview`).
+#[derive(Deserialize, Default)]
+pub struct PreviewOptions {
+    /// `task` (the default), `subproject` or `scratch`.
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// Some of db::LABELS, comma-separated.
+    #[serde(default)]
+    pub labels: Option<String>,
+    /// For a task: whether it has its own worktree (by default, as the project's new tasks do).
+    #[serde(default)]
+    pub worktree: Option<bool>,
+    /// `claude` or `codex` (by default, what a new task in the project runs on).
+    #[serde(default)]
+    pub runtime: Option<String>,
+    /// Its permission mode (by default, the project's).
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+}
+
+/// What the agent of a new thread in `project` would be told on top of its agent's own system prompt (see
+/// `instructions`), for the project's settings to show: a task numbered as the project's next, with the options given
+/// and the project's settings as they are now. Its title and id are placeholders. Also gives whether it's on Codex, and its
+/// permission mode (the one given, or else the one it inherits).
+pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> ApiResult<(String, bool, String)> {
+    let kind = o.r#type.as_deref().unwrap_or("task");
+    if !["task", "subproject", "scratch"].contains(&kind) {
+        return Err(ApiError::bad(format!("unknown type {kind:?}: it's task, subproject or scratch")));
+    }
+    let given: Vec<&str> = o.labels.as_deref().unwrap_or("").split(',').filter(|l| !l.trim().is_empty()).collect();
+    let labels = crate::documents::check_labels(&json!(given)).map_err(ApiError::bad)?;
+    if o.permission_mode.as_deref().is_some_and(|m| !db::PERMISSION_MODES.contains(&m)) {
+        return Err(ApiError::bad(format!("permission_mode must be one of {:?}", db::PERMISSION_MODES)));
+    }
+    let (number, profile, profiles) = {
+        let c = state.db();
+        let number: i64 = c.query_row("SELECT next_number FROM projects WHERE id=?1", [&project.id], |r| r.get(0))?;
+        (number, db::get_profile(&c, &project.profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?, db::list_profiles(&c)?)
+    };
+    let use_worktree = match kind {
+        "subproject" => true,
+        "scratch" => false,
+        _ => o.worktree.unwrap_or(project.use_worktrees),
+    } && project.is_git;
+    let mut task: Task = serde_json::from_value(json!({
+        "id": "<task id>", "profile_id": profile.id, "project_id": project.id, "kind": "task", "subproject": kind == "subproject",
+        "task_type": (kind == "scratch").then_some(db::SCRATCH), "labels": labels, "number": number, "title": "Task title",
+        "description": "", "status": "in_progress", "position": 0.0, "use_worktree": use_worktree, "worktree_state": "none",
+        "running": false, "merging": false, "auto_allow": [], "cost_usd": 0.0,
+        "last_activity_at": "", "created_at": "", "updated_at": "", "permission_mode": o.permission_mode,
+    }))
+    .map_err(anyhow::Error::from)?;
+    // Where `worktree::setup` would put it.
+    if use_worktree {
+        let name = worktree::folder_name(project, &task);
+        let repo = crate::util::expand_tilde(&project.repo_path);
+        let base = match project.base_branch.as_deref().filter(|b| !b.is_empty()) {
+            Some(b) => b.to_string(),
+            None => worktree::current_branch(&repo).await.unwrap_or_else(|| "HEAD".into()),
+        };
+        task.worktree_path = Some(path_str(&std::path::PathBuf::from(&project.worktrees_root).join(&name)));
+        task.branch = Some(format!("ia/{}-{name}", project.key.to_lowercase()));
+        task.base_branch = Some(base);
+    }
+    let github = match &task.branch {
+        Some(_) => worktree::github(&crate::util::expand_tilde(&project.repo_path), task.base_branch.as_deref()).await,
+        None => None,
+    };
+    let documents: Vec<(&str, String)> = crate::documents::paths(state, &task).into_iter().map(|(l, p)| (l, path_str(&p))).collect();
+    let tools = crate::agent_tools::for_preview(state, &project.id)?;
+    let (permission_mode, codex) = {
+        let c = state.db();
+        let codex = match o.runtime.as_deref() {
+            Some("codex") => true,
+            Some("claude") => false,
+            Some(r) => return Err(ApiError::bad(format!("unknown runtime {r:?}: it's claude or codex"))),
+            None => db::task_is_codex(&c, &task)?,
+        };
+        (task.effective_permission_mode(&c, Some(project))?, codex)
+    };
+    let gh_tools = uses_gh_server(&tools);
+    let account = github_account(Some(project), &profile);
+    let base = system_prompt(&task, Some(project), None, &[], &documents, github.as_ref(), gh_tools);
+    let to = Told { codex, plan: permission_mode == "plan", gh_tools, github_account: account.as_deref(), profiles: &profiles, profile: &profile };
+    Ok((instructions(base, &task, &to), codex, permission_mode))
 }
 
 /// What a Claude run with our gh server is told about GitHub. gh in Bash is turned away (see
@@ -1894,6 +2058,11 @@ pub fn on_exit(state: &Shared, run_id: &str, code: Option<i32>, signal: Option<i
     finish(state, run_id, outcome);
 }
 
+fn task_config(state: &Shared, task_id: &str) -> Result<Option<db::ClaudeConfig>> {
+    let c = state.db();
+    Ok(db::get_task(&c, task_id)?.map(|t| db::task_claude_config(&c, &t)).transpose()?.flatten())
+}
+
 fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
     let task_id = run.task_id.as_str();
     let v: Value = match serde_json::from_str(line) {
@@ -1935,11 +2104,7 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
             crate::wait::subagent_finished(state, run, &message.data)?;
         }
         "rate_limit_event" => {
-            let config = {
-                let c = state.db();
-                db::get_task(&c, task_id)?.map(|t| db::task_claude_config(&c, &t)).transpose()?.flatten()
-            };
-            if let Some(config) = config {
+            if let Some(config) = task_config(state, task_id)? {
                 crate::usage::on_rate_limit_event(state, &config.id, &v);
             }
         }
@@ -1958,6 +2123,12 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
             }
         }
         "assistant" | "user" => {
+            // Claude Code's message for a turn refused for the usage limit says when it resets.
+            if v["api_error"] == "usage_limit_reached" && v["api_error_params"]["rate_limit_info"].is_object() {
+                if let Some(config) = task_config(state, task_id)? {
+                    crate::usage::on_rate_limit_event(state, &config.id, &json!({"rate_limit_info": v["api_error_params"]["rate_limit_info"]}));
+                }
+            }
             if v["type"] == "user" && v["isReplay"] == true {
                 if let Some(id) = v["uuid"].as_str() {
                     steered(state, run, id)?;
@@ -1987,6 +2158,12 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
         }
         "control_response" => crate::context::on_control_response(state, task_id, &v)?,
         "result" => {
+            // The turn was refused: its config is out of usage (see usage.rs).
+            if v["api_error"] == "usage_limit_reached" {
+                if let Some(config) = task_config(state, task_id)? {
+                    crate::usage::ran_out(state, task_id, &config.id);
+                }
+            }
             crate::context::on_result(state, task_id, &v)?;
             // Before the turn's end closes its input (see `turn_ended`).
             crate::context::request(state, run);
@@ -2121,10 +2298,27 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         return;
     }
     let is_task = task.kind == "task";
+    // It stopped because its config is out of usage, which resets then (see usage::ran_out).
+    let limit = match &outcome {
+        Outcome::Failed(_) => task.limit_reset_at.clone().filter(|t| !crate::usage::reset_due(t)),
+        _ => None,
+    };
+    // Its profile has it wait for the reset rather than need attention.
+    let wait = limit.is_some() && is_task && !task.merging && db::get_profile(&state.db(), &task.profile_id).ok().flatten().is_some_and(|p| p.limit_wait);
     let (status, reason): (Option<&str>, Option<String>) = match (&outcome, run.attention) {
         (Outcome::Cancelled, _) => {
             state.add_event(task_id, "warn", "Run stopped", None);
             (Some("needs_attention"), Some("Stopped by user".into()))
+        }
+        (Outcome::Failed(e), _) if limit.is_some() => {
+            let config = task_config(state, task_id).ok().flatten().map(|c| c.name).unwrap_or_else(|| "Its config".into());
+            state.add_event(task_id, "warn", format!("{config} is out of usage"), Some(e.clone()));
+            if wait {
+                state.add_event(task_id, "info", format!("Waiting for {config}'s usage limit to reset"), limit.as_ref().map(|t| format!("It resets at {t}")));
+                (Some("in_progress"), None)
+            } else {
+                (Some("needs_attention"), Some(e.lines().next().unwrap_or("Out of usage").to_string()))
+            }
         }
         (Outcome::Failed(e), _) => {
             state.add_event(task_id, "error", "Run failed", Some(e.clone()));
@@ -2138,11 +2332,15 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         (Outcome::Ok, None) if task.remerge => (Some("ready_for_merge"), None),
         (Outcome::Ok, None) => (Some("in_review"), None),
     };
-    // The queued message carries on the conversation, so the task stays where it is.
-    if queued && send_queued(state, task_id) {
+    // The queued message carries on the conversation, so the task stays where it is. Out of
+    // usage, it would only be refused too: it stays queued for when the limit resets.
+    if queued && limit.is_none() && send_queued(state, task_id) {
         return;
     }
     let mut fields = vec![("running", json!(false)), ("attention_reason", json!(reason))];
+    if wait {
+        fields.push(("waiting", json!(true)));
+    }
     if is_task {
         if let Some(s) = status {
             fields.push(("status", json!(s)));
@@ -2967,6 +3165,66 @@ mod tests {
     }
 
     #[test]
+    fn previews_what_a_new_thread_in_a_project_is_told() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let repo = std::env::temp_dir().join(format!("ia-preview-{}", crate::util::new_id()));
+            std::fs::create_dir_all(&repo).unwrap();
+            let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
+            git(&["init", "-q", "-b", "main"]);
+            git(&["remote", "add", "origin", "git@github.com:o/web.git"]);
+            let project = {
+                let c = state.db();
+                let p = db::insert_profile(&c, "me", &[], None).unwrap();
+                let repo_path = path_str(&repo);
+                let np = db::NewProject {
+                    id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: &repo_path, scratch_path: "/s", worktrees_root: "/w", base_branch: Some("main"), use_worktrees: true,
+                };
+                db::insert_project(&c, np).unwrap()
+            };
+            let preview = async |q: Value| preview(&state, &project, &serde_json::from_value(q).unwrap()).await;
+
+            // A task as the project's new ones are, numbered as its next.
+            let (text, codex, mode) = preview(json!({})).await.unwrap();
+            assert!(!codex && mode == "default");
+            assert!(text.starts_with("You are an agent working on task WEB-1 (\"Task title\") on the Huntaway board."), "{text}");
+            assert!(text.contains("worktree at /w/1-task-title on branch `ia/web-1-task-title` (branched from `main`)"), "{text}");
+            assert!(text.contains("on GitHub (o/web)") && text.contains("pr_create with repo `o/web`, head `ia/web-1-task-title` and base `main`"), "{text}");
+            let profiles = db::list_profiles(&state.db()).unwrap();
+            assert!(text.contains(&gh_note(None)) && text.ends_with(&profiles_note(&profiles, &profiles[0])), "{text}");
+            // Making it doesn't make a task, or take the number.
+            let (again, ..) = preview(json!({})).await.unwrap();
+            assert_eq!(again, text);
+            assert!(db::list_tasks_for_project(&state.db(), "pr", "task").unwrap().is_empty());
+
+            // The options a new thread is made with.
+            let (text, ..) = preview(json!({"labels": "plan,diagram"})).await.unwrap();
+            assert!(text.contains("This task has the labels plan, diagram on the board") && text.contains("<task id>/plan.html"), "{text}");
+            let (text, ..) = preview(json!({"worktree": false})).await.unwrap();
+            assert!(!text.contains("worktree") && !text.contains("open a pull request"), "{text}");
+            let (text, ..) = preview(json!({"type": "scratch"})).await.unwrap();
+            assert!(text.contains("This scratch task is in the project Web") && !text.contains("worktree at"), "{text}");
+            let (text, ..) = preview(json!({"type": "subproject", "worktree": false})).await.unwrap();
+            assert!(text.contains("This task is a subproject") && text.contains("worktree at /w/1-task-title"), "{text}");
+            let (text, codex, mode) = preview(json!({"runtime": "codex", "permission_mode": "plan"})).await.unwrap();
+            assert!(codex && mode == "plan" && text.contains("You are in plan mode") && text.contains("`gh.pr_view`") && !text.contains(&gh_note(None)), "{text}");
+            let (text, ..) = preview(json!({"permission_mode": "plan"})).await.unwrap();
+            assert!(!text.contains("You are in plan mode"), "Claude Code tells Claude itself: {text}");
+            // A thread inherits the host's mode, when the project has none.
+            db::set_setting(&state.db(), "default_permission_mode", Some("plan")).unwrap();
+            let (text, _, mode) = preview(json!({"runtime": "codex"})).await.unwrap();
+            assert!(mode == "plan" && text.contains("You are in plan mode"), "{text}");
+            let (text, _, mode) = preview(json!({"runtime": "codex", "permission_mode": "default"})).await.unwrap();
+            assert!(mode == "default" && !text.contains("You are in plan mode"), "{text}");
+
+            for bad in [json!({"type": "review"}), json!({"labels": "nope"}), json!({"runtime": "gpt"}), json!({"permission_mode": "yolo"})] {
+                assert_eq!(preview(bad).await.unwrap_err().0, axum::http::StatusCode::BAD_REQUEST);
+            }
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
+    #[test]
     fn a_task_on_github_is_told_to_open_a_pull_request() {
         let c = db::open(std::path::Path::new(":memory:")).unwrap();
         let p = db::insert_profile(&c, "p", &[], None).unwrap();
@@ -3549,6 +3807,251 @@ mod tests {
                 assert!(!state.is_running(&task.id) && !t.running);
                 assert_eq!(t.attention_reason.as_deref().map(|r| r.starts_with(if stopped { "Stopped" } else { "Run failed" })), Some(true));
             }
+        })
+    }
+
+    /// A profile with a config (and a second if `two`), set to `limit_wait`/`limit_switch`, and a task on the first.
+    fn out_of_usage_setup(state: &Shared, agent: &str, wait: bool, switch: bool, two: bool) -> (Task, Vec<db::ClaudeConfig>) {
+        let c = state.db();
+        let mut configs = vec![db::insert_claude_config(&c, "Max", "/tmp/ia-max", agent).unwrap()];
+        if two {
+            configs.push(db::insert_claude_config(&c, "Spare", "/tmp/ia-spare", agent).unwrap());
+        }
+        let ids: Vec<String> = configs.iter().map(|c| c.id.clone()).collect();
+        let p = db::insert_profile(&c, "p", &ids, None).unwrap();
+        db::update_profile(&c, &p.id, &[("limit_wait", json!(wait)), ("limit_switch", json!(switch))]).unwrap();
+        let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: Some(&configs[0].id) };
+        (db::insert_task(&c, t).unwrap(), configs)
+    }
+
+    /// What Claude Code prints when a turn is refused for the usage limit (from a real run).
+    fn refused_lines(resets: i64) -> Vec<Value> {
+        let info = json!({"status": "rejected", "resetsAt": resets, "rateLimitType": "five_hour", "overageStatus": "rejected", "isUsingOverage": false});
+        let mut event = json!({"type": "rate_limit_event", "rate_limit_info": info.clone()});
+        event["rate_limit_info"]["unifiedWindows"] = json!({"five_hour": {"utilization": 1, "resetsAt": resets, "status": "rejected"}, "seven_day": {"utilization": 0.87, "resetsAt": resets + 86400, "status": "allowed_warning"}});
+        let text = "You've hit your 5-hour limit · resets 6:30pm (Pacific/Auckland)";
+        vec![
+            event,
+            json!({"type": "assistant", "message": {"model": "<synthetic>", "role": "assistant", "content": [{"type": "text", "text": text}]}, "parent_tool_use_id": null,
+                "error": "rate_limit", "api_error_status": 429, "api_error": "usage_limit_reached", "api_error_params": {"rate_limit_info": info}}),
+            json!({"type": "result", "subtype": "success", "is_error": true, "api_error_status": 429, "api_error": "usage_limit_reached", "result": text, "session_id": "s1", "num_turns": 2, "total_cost_usd": 0.1}),
+        ]
+    }
+
+    /// A run of `task` that's refused for its usage limit, which resets at `resets`, and ends.
+    fn run_out(state: &Shared, task: &Task, resets: i64) {
+        let run = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+        state.runs.lock().unwrap().insert(task.id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
+        state.update_task(&task.id, &[("running", json!(true)), ("status", json!("in_progress"))]).unwrap();
+        for line in refused_lines(resets) {
+            handle_line(state, &run, &line.to_string()).unwrap();
+        }
+        on_exit(state, &run.id, Some(0), None, None, "");
+    }
+
+    fn reset_in(hours: i64) -> (i64, String) {
+        let t = chrono::Utc::now().timestamp() + hours * 3600;
+        (t, chrono::DateTime::from_timestamp(t, 0).unwrap().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+    }
+
+    #[test]
+    fn a_run_out_of_usage_waits_for_the_reset_and_carries_on() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, false, false);
+            let (resets, at) = reset_in(2);
+            run_out(&state, &task, resets);
+            let get = || db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            let t = get();
+            assert_eq!((t.status.as_str(), t.waiting, t.running, t.attention_reason), ("in_progress", true, false, None));
+            assert_eq!(t.limit_reset_at.as_deref(), Some(at.as_str()));
+            assert_eq!(crate::usage::out_until(&state, &configs[0].id).as_deref(), Some(at.as_str()));
+
+            // Not before the reset.
+            crate::runs::TEST_CAN_RUN.set(true);
+            start_unblocked(&state, None);
+            assert!(get().waiting && !state.is_running(&task.id));
+
+            // Once it's reset, the agent carries on.
+            let past = chrono::DateTime::from_timestamp(resets - 3 * 3600, 0).unwrap().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            state.update_task(&task.id, &[("limit_reset_at", json!(past))]).unwrap();
+            state.usage.lock().unwrap().get_mut(&configs[0].id).unwrap().out_until = Some(past);
+            start_unblocked(&state, None);
+            crate::runs::TEST_CAN_RUN.set(false);
+            let t = get();
+            assert!(state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at, t.status.as_str()), (false, None, "in_progress"));
+            let last = db::list_messages(&state.db(), &task.id).unwrap().into_iter().filter(|m| m.kind == "user").last().unwrap();
+            assert!(last.data["text"].as_str().unwrap().contains("has reset"), "{}", last.data);
+            stop(&state, &task.id);
+        })
+    }
+
+    #[test]
+    fn a_run_out_of_usage_offers_to_wait_and_keeps_its_queued_message() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let (task, _) = out_of_usage_setup(&state, "claude", false, false, false);
+            let (resets, at) = reset_in(2);
+            db::queue(&state.db(), &task.id, db::Queued::new("And then this", false)).unwrap();
+            run_out(&state, &task, resets);
+            let get = || db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            let t = get();
+            assert_eq!((t.status.as_str(), t.waiting, t.running), ("needs_attention", false, false));
+            assert_eq!(t.attention_reason.as_deref(), Some("You've hit your 5-hour limit · resets 6:30pm (Pacific/Auckland)"));
+            assert_eq!(t.limit_reset_at.as_deref(), Some(at.as_str()));
+            // It would only be refused too, so it isn't sent.
+            assert_eq!(t.queued_message.as_deref(), Some("And then this"));
+            assert!(!state.is_running(&task.id));
+
+            // Asked to, it waits for the reset.
+            let axum::Json(v) = crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap();
+            assert_eq!((&v["status"], &v["waiting"], &v["limit_reset_at"]), (&json!("in_progress"), &json!(true), &json!(at)));
+
+            // A run that fails for something else leaves nothing to wait for.
+            let (other, _) = {
+                let c = state.db();
+                let p = db::insert_profile(&c, "q", &[], None).unwrap();
+                let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+                (db::insert_task(&c, t).unwrap(), p)
+            };
+            let run = db::insert_run(&state.db(), &other.id, "prompt").unwrap();
+            on_exit(&state, &run.id, Some(1), None, None, "boom");
+            let o = db::get_task(&state.db(), &other.id).unwrap().unwrap();
+            assert_eq!((o.status.as_str(), o.limit_reset_at), ("needs_attention", None));
+            assert!(crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(other.id.clone())).await.is_err());
+        })
+    }
+
+    #[test]
+    fn a_task_started_on_a_config_out_of_usage_waits_or_moves_to_one_with_room() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let (resets, at) = reset_in(1);
+            let refused = json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets}});
+
+            // Waiting: it's queued, message and all, until the reset.
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, false, true);
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &refused);
+            crate::runs::TEST_CAN_RUN.set(true);
+            let t = send(&state, &task.id, "Go").unwrap();
+            assert_eq!((t.status.as_str(), t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), ("in_progress", true, Some(at.as_str()), Some("Go")));
+            assert!(!state.is_running(&task.id));
+            // Another message joins the queue rather than starting it.
+            let t = send(&state, &task.id, "And this").unwrap();
+            assert!(t.waiting && !state.is_running(&task.id));
+
+            // Switching: a task that hasn't started moves to the next config with room.
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, true, true);
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &refused);
+            send(&state, &task.id, "Go").unwrap();
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert_eq!(t.claude_config_id.as_deref(), Some(configs[1].id.as_str()));
+            assert!(state.is_running(&task.id) && !t.waiting);
+            stop(&state, &task.id);
+
+            // With every config out, it waits.
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, true, true);
+            for c in &configs {
+                crate::usage::on_rate_limit_event(&state, &c.id, &refused);
+            }
+            let t = send(&state, &task.id, "Go").unwrap();
+            assert_eq!((t.claude_config_id.as_deref(), t.waiting), (Some(configs[0].id.as_str()), true));
+
+            // Neither set: it runs (and is refused as before).
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", false, false, true);
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &refused);
+            send(&state, &task.id, "Go").unwrap();
+            assert!(state.is_running(&task.id));
+            stop(&state, &task.id);
+            crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_codex_turn_out_of_usage_waits_for_its_limits_reset() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "codex", true, false, false);
+            let (resets, at) = reset_in(3);
+            let run = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+            state.runs.lock().unwrap().insert(task.id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
+            state.update_task(&task.id, &[("running", json!(true)), ("status", json!("in_progress"))]).unwrap();
+            let line = |method: &str, params: Value| handle_line(&state, &run, &json!({"method": method, "params": params}).to_string()).unwrap();
+            line("thread/started", json!({"thread": {"id": "main"}}));
+            line("account/rateLimits/updated", json!({"rateLimits": {"primary": {"usedPercent": 100, "resetsAt": resets}, "secondary": {"usedPercent": 40, "resetsAt": resets + 86400}}}));
+            let error = json!({"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"});
+            line("turn/completed", json!({"threadId": "main", "turn": {"id": "t1", "status": "failed", "error": error, "items": []}}));
+            on_exit(&state, &run.id, Some(0), None, None, "");
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.waiting, t.limit_reset_at.as_deref()), ("in_progress", true, Some(at.as_str())));
+            assert_eq!(crate::usage::out_until(&state, &configs[0].id).as_deref(), Some(at.as_str()));
+        })
+    }
+
+    #[test]
+    fn a_message_to_a_task_waiting_for_its_reset_is_queued() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let get = |state: &Shared, id: &str| db::get_task(&state.db(), id).unwrap().unwrap();
+            // Asked to wait, with neither setting on.
+            let state = crate::testing::state();
+            let (task, _) = out_of_usage_setup(&state, "claude", false, false, false);
+            let (resets, at) = reset_in(2);
+            run_out(&state, &task, resets);
+            crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap();
+            let t = send(&state, &task.id, "x").unwrap();
+            assert!(!state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("x")));
+            // An empty send (Start) doesn't start it either.
+            send_message(&state, &task.id, Some(db::Queued::new("", false)), false, "prompt", None).unwrap();
+            assert!(!state.is_running(&task.id) && get(&state, &task.id).waiting);
+
+            // Waiting by itself, after a restart forgot that the config is out.
+            let state = crate::testing::state();
+            let (task, _) = out_of_usage_setup(&state, "claude", true, false, false);
+            run_out(&state, &task, resets);
+            state.usage.lock().unwrap().clear();
+            let t = send(&state, &task.id, "y").unwrap();
+            assert!(!state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("y")));
+            crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_task_waiting_for_a_reset_moved_to_another_config_starts_there() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let (resets, _) = reset_in(2);
+            let refused = json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets}});
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, false, true);
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &refused);
+            assert!(send(&state, &task.id, "Go").unwrap().waiting);
+            let b = serde_json::Map::from_iter([("claude_config_id".to_string(), json!(configs[1].id))]);
+            crate::api::update_task_inner(&state, &task.id, &b).await.unwrap();
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert!(state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at, t.claude_config_id.as_deref(), t.queued_message), (false, None, Some(configs[1].id.as_str()), None));
+            stop(&state, &task.id);
+
+            // Moved to another config that's out too: it waits for that one's reset.
+            let (later, at) = reset_in(3);
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, false, true);
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &refused);
+            crate::usage::on_rate_limit_event(&state, &configs[1].id, &json!({"rate_limit_info": {"status": "rejected", "resetsAt": later}}));
+            send(&state, &task.id, "Go").unwrap();
+            let b = serde_json::Map::from_iter([("claude_config_id".to_string(), json!(configs[1].id))]);
+            crate::api::update_task_inner(&state, &task.id, &b).await.unwrap();
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert!(!state.is_running(&task.id));
+            assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("Go")));
+            crate::runs::TEST_CAN_RUN.set(false);
         })
     }
 }

@@ -41,42 +41,6 @@ die() {
   exit 1
 }
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --dir) DIR="${2:?--dir needs a directory}"; shift 2 ;;
-    --dir=*) DIR="${1#*=}"; shift ;;
-    --branch) BRANCH="${2:?--branch needs a branch}"; shift 2 ;;
-    --branch=*) BRANCH="${1#*=}"; shift ;;
-    --repo) REPO="${2:?--repo needs a URL}"; shift 2 ;;
-    --repo=*) REPO="${1#*=}"; shift ;;
-    --update-from) UPDATE_FROM="${2:?--update-from needs a URL}"; shift 2 ;;
-    --update-from=*) UPDATE_FROM="${1#*=}"; shift ;;
-    --no-update-from) UPDATE_FROM=""; shift ;;
-    --no-shortcut) SHORTCUT=0; shift ;;
-    --shortcut-only) BUILD=0; shift ;;
-    --open) OPEN=1; shift ;;
-    -h | --help) usage; exit 0 ;;
-    *) usage >&2; die "unknown option: $1" ;;
-  esac
-done
-
-OS="$(uname -s)"
-case "$OS" in
-  Linux | Darwin) ;;
-  *) die "this installer supports Linux and macOS, not $OS" ;;
-esac
-case "$DIR" in
-  /*) ;;
-  *) DIR="$PWD/$DIR" ;;
-esac
-UPDATE_FROM="${UPDATE_FROM%/}"
-
-# Where rustup and Homebrew put their tools, in case this shell's PATH doesn't have them yet.
-for d in "$HOME/.cargo/bin" /opt/homebrew/bin /usr/local/bin; do
-  case ":$PATH:" in *":$d:"*) ;; *) [ -d "$d" ] && PATH="$PATH:$d" ;; esac
-done
-export PATH
-
 # ---------- dependencies ----------
 
 pkg_hint() {
@@ -115,9 +79,9 @@ check_deps() {
   fi
   if command -v rustc >/dev/null 2>&1; then
     v="$(rustc --version | awk '{print $2}')"
-    # The server is edition 2024 (Rust 1.85+).
-    [ "$(printf '%s\n' "$v" | awk -F. '{print ($1 > 1 || $2 >= 85) ? "ok" : "old"}')" = ok ] ||
-      missing+=("Rust 1.85 or newer (this is $v; rustup update)")
+    # The server is edition 2024 (Rust 1.85+), and its locked dependencies need 1.89 (Cargo.toml's rust-version).
+    [ "$(printf '%s\n' "$v" | awk -F. '{print ($1 > 1 || $2 >= 89) ? "ok" : "old"}')" = ok ] ||
+      missing+=("Rust 1.89 or newer (this is $v; rustup update)")
   fi
   if [ ${#missing[@]} -gt 0 ]; then
     printf '\033[1;31merror:\033[0m missing build tools:\n' >&2
@@ -153,9 +117,10 @@ fetch_source() {
 build() {
   say "Building the UI"
   # npm install once there's a node_modules, as Rebuild & restart does: npm ci would delete the Electron a running app is using.
+  # --no-save keeps it from rewriting package-lock.json, which would stop a hub's Update ("uncommitted changes").
   local npm_install=ci
-  [ -d "$DIR/app/node_modules" ] && npm_install=install
-  (cd "$DIR/app" && npm "$npm_install" --no-audit --no-fund && npm run build)
+  [ -d "$DIR/app/node_modules" ] && npm_install="install --no-save"
+  (cd "$DIR/app" && npm $npm_install --no-audit --no-fund && npm run build)
   say "Building the server (the first build takes a few minutes)"
   (cd "$DIR/server" && cargo build --release --locked)
 }
@@ -282,37 +247,79 @@ EOF
 
 # ---------- main ----------
 
-LAUNCH=()
-if [ "$BUILD" = 1 ]; then
-  check_deps
-  fetch_source
-  build
-else
-  [ -x "$DIR/server/target/release/huntaway" ] || die "no build in $DIR; run this without --shortcut-only first"
-fi
-ensure_electron
+# All in a function that runs on the last line, so that a download cut short under `curl | bash` runs nothing.
+main() {
+  local d port
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir) DIR="${2:?--dir needs a directory}"; shift 2 ;;
+      --dir=*) DIR="${1#*=}"; shift ;;
+      --branch) BRANCH="${2:?--branch needs a branch}"; shift 2 ;;
+      --branch=*) BRANCH="${1#*=}"; shift ;;
+      --repo) REPO="${2:?--repo needs a URL}"; shift 2 ;;
+      --repo=*) REPO="${1#*=}"; shift ;;
+      --update-from) UPDATE_FROM="${2:?--update-from needs a URL}"; shift 2 ;;
+      --update-from=*) UPDATE_FROM="${1#*=}"; shift ;;
+      --no-update-from) UPDATE_FROM=""; shift ;;
+      --no-shortcut) SHORTCUT=0; shift ;;
+      --shortcut-only) BUILD=0; shift ;;
+      --open) OPEN=1; shift ;;
+      -h | --help) usage; exit 0 ;;
+      *) usage >&2; die "unknown option: $1" ;;
+    esac
+  done
 
-if [ "$SHORTCUT" = 1 ]; then
-  if [ "$OS" = Darwin ]; then shortcut_mac; else shortcut_linux; fi
-fi
+  OS="$(uname -s)"
+  case "$OS" in
+    Linux | Darwin) ;;
+    *) die "this installer supports Linux and macOS, not $OS" ;;
+  esac
+  case "$DIR" in
+    /*) ;;
+    *) DIR="$PWD/$DIR" ;;
+  esac
+  UPDATE_FROM="${UPDATE_FROM%/}"
 
-if [ "$BUILD" = 1 ]; then
-  port="$(node -e '
-    const fs = require("fs"), path = require("path"), os = require("os");
-    const base = process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support") : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-    for (const d of ["huntaway", "issue-agent"]) try { console.log(JSON.parse(fs.readFileSync(path.join(base, d, "desktop.json"), "utf8")).port || 7878); process.exit(0) } catch {}
-    console.log(process.env.IA_PORT || 7878)')"
-  if command -v curl >/dev/null 2>&1 && curl -fsS -m 2 "http://127.0.0.1:$port/api/health" >/dev/null 2>&1; then
-    warn "a Huntaway server is already running on port $port. The app uses it rather than starting its own, so it updates only if that server runs from a checkout (and follows a deployment only if it was started with --update-from)."
-  fi
-  say "Huntaway is installed in $DIR"
-  if [ -n "$UPDATE_FROM" ]; then
-    echo "It follows $UPDATE_FROM: when that runs a newer commit, the sidebar shows \"N new commits · Update\"."
+  # Where rustup and Homebrew put their tools, in case this shell's PATH doesn't have them yet.
+  for d in "$HOME/.cargo/bin" /opt/homebrew/bin /usr/local/bin; do
+    case ":$PATH:" in *":$d:"*) ;; *) [ -d "$d" ] && PATH="$PATH:$d" ;; esac
+  done
+  export PATH
+
+  LAUNCH=()
+  if [ "$BUILD" = 1 ]; then
+    check_deps
+    fetch_source
+    build
   else
-    echo "To update it, git pull in $DIR and use Rebuild & restart (Settings → Server), or run this script again."
+    [ -x "$DIR/server/target/release/huntaway" ] || die "no build in $DIR; run this without --shortcut-only first"
   fi
-fi
+  ensure_electron
 
-if [ "$OPEN" = 1 ] && [ ${#LAUNCH[@]} -gt 0 ]; then
-  if [ "$OS" = Darwin ]; then "${LAUNCH[@]}"; else nohup "${LAUNCH[@]}" >/dev/null 2>&1 & fi
-fi
+  if [ "$SHORTCUT" = 1 ]; then
+    if [ "$OS" = Darwin ]; then shortcut_mac; else shortcut_linux; fi
+  fi
+
+  if [ "$BUILD" = 1 ]; then
+    port="$(node -e '
+      const fs = require("fs"), path = require("path"), os = require("os");
+      const base = process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support") : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+      for (const d of ["huntaway", "issue-agent"]) try { console.log(JSON.parse(fs.readFileSync(path.join(base, d, "desktop.json"), "utf8")).port || 7878); process.exit(0) } catch {}
+      console.log(process.env.IA_PORT || 7878)')"
+    if command -v curl >/dev/null 2>&1 && curl -fsS -m 2 "http://127.0.0.1:$port/api/health" >/dev/null 2>&1; then
+      warn "a Huntaway server is already running on port $port. The app uses it rather than starting its own, so it updates only if that server runs from a checkout (and follows a deployment only if it was started with --update-from)."
+    fi
+    say "Huntaway is installed in $DIR"
+    if [ -n "$UPDATE_FROM" ]; then
+      echo "It follows $UPDATE_FROM: when that runs a newer commit, the sidebar shows \"N new commits · Update\"."
+    else
+      echo "To update it, git pull in $DIR and use Rebuild & restart (Settings → Server), or run this script again."
+    fi
+  fi
+
+  if [ "$OPEN" = 1 ] && [ ${#LAUNCH[@]} -gt 0 ]; then
+    if [ "$OS" = Darwin ]; then "${LAUNCH[@]}"; else nohup "${LAUNCH[@]}" >/dev/null 2>&1 & fi
+  fi
+}
+
+main "$@"

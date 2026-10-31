@@ -114,7 +114,7 @@ fn tmux_command(s: &Shared) -> Command {
     cmd.arg("-L").arg(socket(s));
     // Shells inherit the tmux server's environment: keep our secrets out of it, and let it
     // work when this server itself runs inside tmux.
-    for var in ["TMUX", "TMUX_PANE", "IA_TOKEN", "IA_HUB_TOKEN"] {
+    for var in ["TMUX", "TMUX_PANE", "IA_TOKEN", "IA_HUB_TOKEN", "IA_BROKER_TOKEN"] {
         cmd.env_remove(var);
     }
     cmd.env("TERM", "xterm-256color").env("COLORTERM", "truecolor").env("TERM_PROGRAM", "huntaway");

@@ -1,3 +1,6 @@
+// The tool list in mcp.rs is one json! value, deeper than the default limit lets the macro expand.
+#![recursion_limit = "256"]
+
 mod admin;
 mod agent_tools;
 mod attachments;
@@ -44,7 +47,9 @@ mod usage;
 mod wait;
 mod util;
 mod worktree;
+mod worktree_files;
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -204,12 +209,15 @@ fn load_or_create_token(data_dir: &std::path::Path, file: &str) -> Result<String
         }
     }
     let token = util::new_token();
-    std::fs::write(&path, &token)?;
+    // Made private from the start, rather than with the umask's mode and tightened after.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
+    opts.open(&path)?.write_all(token.as_bytes())?;
     Ok(token)
 }
 
@@ -351,6 +359,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Agents kept running while we were down; catch up on their output.
     runner::load_active(&state)?;
     runner::auto_compact(&state);
+    usage::resume_loop(&state);
     pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
