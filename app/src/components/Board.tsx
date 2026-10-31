@@ -52,7 +52,7 @@ import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
 import { LiveView } from "./LiveView";
-import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, MenuButton, Modal, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide, type MenuItem } from "./ui";
+import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, MenuButton, Modal, ModalFooter, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide, type MenuItem } from "./ui";
 import { useNarrow, useTouch } from "../narrow";
 
 /** How many of a subproject's tasks are done. */
@@ -1064,7 +1064,7 @@ export function NewTaskModal({
   // The highlighting behind the editor, sized to its text area (without a scrollbar) and scrolled with it.
   const mirror = useRef<HTMLDivElement>(null);
   const marker = useRef<HTMLSpanElement>(null);
-  const [listAt, setListAt] = useState<{ top: number; left: number } | null>(null);
+  const list = useRef<HTMLDivElement>(null);
   const [scrolled, setScrolled] = useState(0);
   useLayoutEffect(() => {
     const ta = input.current;
@@ -1084,10 +1084,39 @@ export function NewTaskModal({
     const ta = input.current;
     const m = mirror.current;
     if (m && ta) m.scrollTop = ta.scrollTop;
-    const k = marker.current;
-    const next = listOpen && k && m && ta ? { top: k.offsetTop + k.offsetHeight - m.scrollTop + 2, left: Math.max(0, Math.min(k.offsetLeft, ta.clientWidth - 288)) } : null;
-    setListAt((cur) => (cur?.top === next?.top && cur?.left === next?.left ? cur : next));
   }, [listOpen, completing?.start, description, scrolled]);
+  // The completion list is fixed to the window (the dialog's body scrolls, and would clip it): under the caret, or over
+  // it when there's more room there, no taller than that room, and moved with the caret as the dialog scrolls.
+  useLayoutEffect(() => {
+    if (!listOpen) return;
+    const place = (rendered = false) => {
+      const k = marker.current;
+      const ta = input.current;
+      const l = list.current;
+      if (!k || !ta || !l) return;
+      const at = k.getBoundingClientRect();
+      const box = ta.getBoundingClientRect();
+      const below = window.innerHeight - at.bottom - 10;
+      const above = at.top - 10;
+      const up = l.scrollHeight > below && above > below;
+      l.style.maxHeight = `${Math.max(80, up ? above : below)}px`;
+      l.style.top = `${up ? Math.max(8, at.top - 2 - l.offsetHeight) : at.bottom + 2}px`;
+      l.style.left = `${Math.max(box.left, Math.min(at.left, box.left + ta.clientWidth - l.offsetWidth))}px`;
+      if (!rendered) return;
+      // Keeps the highlighted option in view when the list scrolls (not while the wheel scrolls it).
+      const lit = l.querySelector<HTMLElement>("[aria-selected=true]");
+      if (lit && lit.offsetTop < l.scrollTop) l.scrollTop = lit.offsetTop;
+      else if (lit && lit.offsetTop + lit.offsetHeight > l.scrollTop + l.clientHeight) l.scrollTop = lit.offsetTop + lit.offsetHeight - l.clientHeight;
+    };
+    place(true);
+    const move = () => place();
+    window.addEventListener("scroll", move, true);
+    window.addEventListener("resize", move);
+    return () => {
+      window.removeEventListener("scroll", move, true);
+      window.removeEventListener("resize", move);
+    };
+  });
   const highlighted: ReactNode[] = [];
   {
     let at = 0;
@@ -1227,12 +1256,12 @@ export function NewTaskModal({
             onPaste={attach.onPaste}
             className={clsx(EDITOR_TEXT, "relative block w-full resize-y bg-transparent text-transparent caret-fg outline-none selection:bg-accent/30 placeholder:text-faint")}
           />
-          {listOpen && listAt && (
+          {listOpen && (
             <div
+              ref={list}
               role="listbox"
               aria-label={TOKEN_HELP.find((h) => h.prefix === completing!.prefix)!.what}
-              className="absolute z-10 w-72 rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
-              style={{ top: listAt.top, left: listAt.left }}
+              className="fixed z-10 w-72 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
               // Keeps the editor focused, so picking doesn't close the list first.
               onMouseDown={(e) => e.preventDefault()}
             >
@@ -1406,34 +1435,36 @@ export function NewTaskModal({
             {whenLoaded && " It's created once they're in."}
           </div>
         )}
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
-          <span className="mr-auto flex min-w-0 items-center gap-3">
-            <Toggle checked={addAnother} onChange={changeAddAnother} label="Add another" />
-            {created && (
-              <span className="truncate text-xs text-muted" title={created.title}>
-                Created {created.key}
-              </span>
-            )}
-          </span>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
-            {many
-              ? start && deps && dependsOn.length
-                ? `Create & queue ${runs.length}`
-                : start
-                  ? `Create & start ${runs.length}`
-                  : `Create ${runs.length} ${noun}s`
-              : start && deps && dependsOn.length
-                ? "Create & queue"
-                : start
-                  ? "Create & start"
-                  : `Create ${noun}`}
-            <span className="translate-y-px text-[11px] font-normal text-white/60 touch:hidden">{SUBMIT_KEYS}</span>
-          </Button>
-        </div>
+        <ModalFooter className="space-y-3">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
+            <span className="mr-auto flex min-w-0 items-center gap-3">
+              <Toggle checked={addAnother} onChange={changeAddAnother} label="Add another" />
+              {created && (
+                <span className="truncate text-xs text-muted" title={created.title}>
+                  Created {created.key}
+                </span>
+              )}
+            </span>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || attach.uploading || !hasContent || !!submitBlock}>
+              {many
+                ? start && deps && dependsOn.length
+                  ? `Create & queue ${runs.length}`
+                  : start
+                    ? `Create & start ${runs.length}`
+                    : `Create ${runs.length} ${noun}s`
+                : start && deps && dependsOn.length
+                  ? "Create & queue"
+                  : start
+                    ? "Create & start"
+                    : `Create ${noun}`}
+              <span className="translate-y-px text-[11px] font-normal text-white/60 touch:hidden">{SUBMIT_KEYS}</span>
+            </Button>
+          </div>
+        </ModalFooter>
       </form>
       {pickingLink && (
         <AsanaPicker

@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { api, hostSupports, type Task } from "../api";
 import { fromLocalInput, isDue, nextDue, REMINDERS_API, reminderLabel, reminderPresets, toLocalInput } from "../reminders";
 import { useStore } from "../store";
-import { Button, ContextMenu, IconButton, Input, Modal, Wide, type MenuItem } from "./ui";
+import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, Wide, type MenuItem } from "./ui";
 
 /** Whether the task's host can star it and set reminders on it. */
 export function useCanMark(task: Task | undefined) {
@@ -127,15 +127,17 @@ export function ReminderModal({ task, onClose }: { task: Task; onClose: () => vo
       <form onSubmit={save} className="space-y-3">
         <Input autoFocus type="datetime-local" aria-label="Remind me at" value={at} onChange={(e) => setAt(e.target.value)} />
         <Input value={note} placeholder="What for (optional)" aria-label="What for" maxLength={500} onChange={(e) => setNote(e.target.value)} />
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy || !when}>
-            Set reminder
-          </Button>
-        </div>
+        <ModalFooter className="space-y-3">
+          {err && <div className="text-xs text-red-400">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || !when}>
+              Set reminder
+            </Button>
+          </div>
+        </ModalFooter>
       </form>
     </Modal>
   );
