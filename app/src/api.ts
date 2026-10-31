@@ -380,6 +380,17 @@ export type WatchPullRequests = "off" | "failures" | "all";
 
 export type PromptField = "start_prompt" | "review_prompt" | "merge_prompt";
 
+/** The options of a new thread that change what its agent is told (see api.systemPromptPreview). Unset ones are as a new
+ *  task in the project has them. */
+export interface SystemPromptOptions {
+  type?: "task" | "subproject" | "scratch";
+  /** Some of LABELS, comma-separated. */
+  labels?: string;
+  worktree?: boolean;
+  runtime?: Agent;
+  permission_mode?: PermissionMode;
+}
+
 /** One of a project's reviewers (API 29). Null fields use the task's config and the default model and effort. */
 export interface Reviewer {
   claude_config_id: string | null;
@@ -1466,6 +1477,11 @@ export const api = {
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
+  /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
+  systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>
+    on(h).get<{ text: string; runtime: Agent }>(
+      `/projects/${enc(id)}/system-prompt?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))}`,
+    ),
   /** The project's own skills and MCP servers, and the ones from elsewhere it turns off (API 21). */
   agentTools: (h: string, projectId: string) => on(h).get<AgentTools>(`/projects/${enc(projectId)}/agent-tools`),
   updateAgentTools: (h: string, projectId: string, b: { disabled_skills?: string[]; disabled_mcp_servers?: string[] }) =>

@@ -826,7 +826,11 @@ skipped. Auto-compacting idle sessions is Claude-only.
   merge. The board keeps the parts it relies on around them (which branch, how to report a
   verdict, setting the task to done). A prompt left as the default (or cleared) follows the
   default, which `GET /default-prompts` returns. Agents can read and change them with
-  `get_project` and `update_project` (API 27).
+  `get_project` and `update_project` (API 27). Below them, a read-only preview shows what the
+  board adds to the agent's own system prompt for a new thread in the project, with the options a
+  thread is made with (task, subproject or scratch task, labels, its own worktree, Claude Code or
+  Codex, and Codex's plan mode) and the project's saved settings (`GET
+  /projects/{id}/system-prompt`, API 80).
 - **Project changes by agents** (API 44): `update_project` changes any project setting but its
   agent configs, which only the user changes; agents can't delete projects. Its name, key, base
   branch, model, prompts, reviews and group change straight away. A change to its permission
