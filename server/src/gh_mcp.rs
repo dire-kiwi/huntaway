@@ -545,6 +545,7 @@ impl GhEnv {
 pub async fn gh_run(args: Vec<String>) -> Result<i32> {
     let account = Account::from_env().with_context(|| format!("{ACCOUNT_ENV} isn't set"))?;
     let repo = std::env::var("GH_REPO").ok().filter(|r| !r.is_empty());
+    refuse(&args)?;
     account.check_targets(&args, repo.as_deref())?;
     let env = account.env(&account.token().await?)?;
     let mut cmd = tokio::process::Command::new(gh_program());
@@ -918,6 +919,7 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
             if args.is_empty() {
                 bail!("args is empty");
             }
+            refuse(&args)?;
         }
         "git_push" => {
             args.push("push".into());
@@ -936,6 +938,31 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
         _ => bail!("unknown tool {tool}"),
     }
     Ok(Command { program: "gh", args, ok_codes, repo: s("repo").map(String::from) })
+}
+
+/// Fails for gh commands no agent gets, whatever its permission mode (the gh tool's approval
+/// doesn't apply in auto or bypass): `gh auth` (`gh auth token` would put the account's token in
+/// the thread, as would `config get` of a host's `oauth_token`), and those that change what later
+/// gh commands run (extensions, aliases, settings).
+/// gh's command comes first: a flag before it could take the next argument as its value, so
+/// only `--help` and `--version` may.
+fn refuse<S: AsRef<str>>(args: &[S]) -> Result<()> {
+    let args: Vec<&str> = args.iter().map(AsRef::as_ref).skip_while(|a| ["--help", "-h", "--version"].contains(a)).collect();
+    let refused = match args[..] {
+        [first, ..] if first.starts_with('-') => bail!("put gh's command first, e.g. [\"release\", \"list\", {first:?}]"),
+        ["auth", ..] => "gh auth",
+        ["extension" | "extensions" | "ext", ..] => "gh extension",
+        // Their subcommands come first too, for the same reason.
+        ["alias" | "config", second, ..] if second.starts_with('-') => bail!("put the subcommand straight after {:?}", args[0]),
+        ["alias", "set" | "import" | "delete", ..] => "changing gh's aliases",
+        ["config", "set" | "clear-cache", ..] => "changing gh's settings",
+        // A host's settings are its login, token and all (`config get -h HOST oauth_token` prints it).
+        ["config", ref rest @ ..] if rest.iter().any(|a| a.contains("oauth_token") || a.starts_with("-h") || a.starts_with("--host")) => {
+            "reading a host's gh settings"
+        }
+        _ => return Ok(()),
+    };
+    bail!("{refused} isn't available to agents; ask the user to run it")
 }
 
 /// A PR's number and `[HOST/]OWNER/REPO`, from its URL.
@@ -1172,6 +1199,32 @@ mod tests {
         assert!(command("api", &json!({"endpoint": "x", "fields": {"a": [1]}})).is_err());
         assert!(command("run_view", &json!({"run_id": "1; rm"})).is_err());
         assert!(command("gh", &json!({"args": []})).is_err());
+        // Nor what would show the account's token, or change what later gh commands run.
+        for refused in [
+            &["auth", "token"][..],
+            &["auth", "status", "--show-token"],
+            &["--help", "auth", "token"],
+            &["extension", "install", "o/gh-x"],
+            &["ext", "install", "o/gh-x"],
+            &["alias", "set", "co", "!sh -c x"],
+            &["config", "set", "editor", "x"],
+            &["-R", "o/r", "auth", "token"],
+            &["config", "get", "-h", "github.com", "oauth_token"],
+            &["config", "get", "oauth_token", "--host=github.com"],
+            &["config", "get", "-hgithub.com", "user"],
+            &["config", "get", "oauth_token"],
+            &["config", "--host=github.com", "get", "oauth_token"],
+            &["config", "-hgithub.com", "get", "oauth_token"],
+            &["config", "--host", "github.com", "get", "oauth_token"],
+            &["config", "--help", "get", "-h", "github.com", "user"],
+            &["alias", "--help", "set", "co", "!sh"],
+        ] {
+            let err = command("gh", &json!({"args": refused})).unwrap_err().to_string();
+            assert!(err.contains("isn't available to agents") || err.contains("put gh's command first") || err.contains("put the subcommand"), "{refused:?}: {err}");
+        }
+        for allowed in [&["release", "list"][..], &["--version"], &["alias", "list"], &["config", "get", "editor"], &["issue", "create", "--title", "auth"]] {
+            assert!(command("gh", &json!({"args": allowed})).is_ok(), "{allowed:?}");
+        }
         let push = command("git_push", &json!({"repo": "ignored"})).unwrap();
         assert_eq!((push.program, push.args), ("git", vec!["push".to_string(), "-u".into(), "origin".into(), "HEAD".into()]));
     }
