@@ -450,6 +450,8 @@ its URL depends on the broker staying available and uses its bandwidth. Connecti
 LAN or Tailscale/VPN URL bypasses the broker, even when that host also has `--broker` enabled.
 Agents still run on the host; their own calls to model providers and git remotes aren't routed
 through the broker.
+An alternative design could use the broker only for discovery and connection setup, as T3 Connect
+does, with traffic carried by a separate tunnel; see [broker routing alternatives](server/broker/README.md#could-the-broker-only-establish-connections).
 
 A **hub** combines linked hosts into one board and forwards requests to them; the **broker** makes
 a host reachable at a public URL. If you open a hub's board through a broker, the path to a linked

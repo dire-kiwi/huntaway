@@ -11,6 +11,27 @@ A hub combines linked hosts into one board; the broker provides public access to
 hub. How hosts connect and how a request picks a host is in the main README,
 [Reaching a host from anywhere](../../README.md#reaching-a-host-from-anywhere); the wire protocol is in `src/proto.rs`.
 
+## Could the broker only establish connections?
+
+Yes, with a different transport design. A broker could discover a host's reachable endpoint and authorize access,
+then let the client connect to that endpoint for normal HTTP and websocket traffic. Introducing two ends doesn't
+by itself make a host behind NAT reachable, so that endpoint still needs a public HTTPS address, a VPN or a tunnel.
+
+[T3 Connect](https://github.com/pingdotgg/t3code/blob/main/docs/internals/t3-connect.md) uses this split: its relay
+Worker manages links, bootstrap credentials and tunnel allocations, while normal session traffic follows
+`client ↔ Cloudflare Tunnel ↔ cloudflared on the host ↔ host server`. The Worker is outside that traffic path,
+but Cloudflare still carries the traffic for the session. Its automation webhook forwarding is an exception.
+
+Huntaway could adopt that model by adding tunnel provisioning and lifecycle management, endpoint discovery and a
+client connection flow that authenticates with the chosen host endpoint. That would move session bandwidth and
+availability requirements from `huntaway-broker` to the tunnel service. It isn't a mode of the current broker;
+today the host's outbound websocket to it carries both setup and application traffic.
+
+For a direct connection through NAT without a tunnel service in the traffic path, another option would be
+[WebRTC data channels with ICE/STUN](https://webrtc.org/getting-started/peer-connections). That would need a new
+application transport and a TURN or existing relay fallback when a direct path can't be established. A signalling
+broker alone wouldn't guarantee connectivity on every network.
+
 ## Running it
 
 ```sh
