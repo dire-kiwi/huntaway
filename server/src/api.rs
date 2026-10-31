@@ -248,11 +248,8 @@ struct CreateProfile {
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
-    let name = b.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::bad("name is required"));
-    }
     let c = s.db();
+    let name = &check_profile_name(&c, None, &json!(b.name))?;
     let ids = match (b.claude_config_ids, b.claude_config_dir) {
         (Some(ids), _) => check_config_ids(&c, ids)?,
         (None, Some(dir)) => vec![db::config_for_dir(&c, name, &dir)?],
@@ -282,14 +279,18 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     };
     let c = s.db();
     let current = db::get_profile(&c, &id)?.ok_or_else(|| ApiError::not_found("profile"))?;
-    let mut fields = pick(&b, &["name", "default_model"]);
+    let mut fields = pick(&b, &["default_model"]);
+    if let Some(v) = b.get("name") {
+        fields.push(("name", json!(check_profile_name(&c, Some(&id), v)?)));
+    }
     if let Some((token, user)) = asana {
         fields.push(("asana_token", token));
         fields.push(("asana_user", user));
     }
     if let Some(v) = b.get("agent_access") {
-        let name = b.get("name").and_then(Value::as_str).unwrap_or(&current.name);
-        fields.push(("agent_access", json!(check_agent_access(name, v)?)));
+        let name = fields.iter().find(|(k, _)| *k == "name").and_then(|(_, v)| v.as_str()).unwrap_or(&current.name);
+        let access = check_agent_access(name, v)?;
+        fields.push(("agent_access", json!(access)));
     }
     if let Some(v) = b.get("github_account") {
         fields.push(("github_account", check_github_account(v)?));
@@ -422,6 +423,19 @@ async fn check_base_branch(v: &Value) -> ApiResult<Value> {
 }
 
 /// Profile names whose agents may use a profile's board, tidied (`*` for every profile).
+/// A profile's name, trimmed: required, and not another profile's in any case, as other profiles
+/// grant access by name (see `check_agent_access`). `own` is the profile it's for, if it exists.
+fn check_profile_name(c: &rusqlite::Connection, own: Option<&str>, v: &Value) -> ApiResult<String> {
+    let name = v.as_str().map(str::trim).unwrap_or_default();
+    if name.is_empty() {
+        return Err(ApiError::bad("name is required"));
+    }
+    if let Some(p) = db::list_profiles(c)?.into_iter().find(|p| Some(p.id.as_str()) != own && p.name.eq_ignore_ascii_case(name)) {
+        return Err(ApiError::conflict(format!("there's a profile named {} already", p.name)));
+    }
+    Ok(name.to_string())
+}
+
 fn check_agent_access(own_name: &str, v: &Value) -> ApiResult<Vec<String>> {
     let names: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("agent_access must be a list of profile names"))?;
     let mut names: Vec<String> = names.into_iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty() && n != own_name).collect();
@@ -502,7 +516,7 @@ async fn create_claude_config(State(s): State<Shared>, Json(b): Json<CreateClaud
 async fn update_claude_config(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     let mut fields = pick(&b, &["name", "config_dir", "agent"]);
     for (k, v) in fields.iter_mut() {
-        let t = v.as_str().unwrap_or("").trim().to_string();
+        let t = v.as_str().ok_or_else(|| ApiError::bad(format!("{k} must be a string")))?.trim().to_string();
         if *k == "name" && t.is_empty() {
             return Err(ApiError::bad("name is required"));
         }
@@ -529,6 +543,9 @@ async fn update_claude_config(State(s): State<Shared>, Path(id): Path<String>, J
 }
 
 async fn delete_claude_config(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    if db::get_claude_config(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("Claude config"));
+    }
     let running: i64 = s.db().query_row("SELECT COUNT(*) FROM tasks WHERE claude_config_id=?1 AND running=1", [&id], |r| r.get(0))?;
     if running > 0 {
         return Err(ApiError::conflict("agents are running with this config; stop them first"));
@@ -539,16 +556,35 @@ async fn delete_claude_config(State(s): State<Shared>, Path(id): Path<String>) -
     Ok(Json(json!({"ok": true})))
 }
 
+/// Deletes a profile with its projects (see delete_project_inner), its threads in no project, and
+/// its folder in the data dir.
 async fn delete_profile(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let running: Vec<String> = {
+    if db::get_profile(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("profile"));
+    }
+    // Archived ones too.
+    let projects = db::list_projects(&s.db(), &id)?;
+    for p in projects {
+        delete_project_inner(&s, &p.id).await?;
+    }
+    // Its scratch and group tasks, and their review threads.
+    let rest: Vec<String> = {
         let c = s.db();
-        let mut st = c.prepare("SELECT id FROM tasks WHERE profile_id=?1")?;
+        let mut st = c.prepare("SELECT id FROM tasks WHERE profile_id=?1 ORDER BY kind='review' DESC, created_at")?;
         st.query_map([&id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
     };
-    for t in running {
-        runner::abort(&s, &t);
+    for t in rest {
+        // A review thread goes with its task, so it may be gone already.
+        let Some(t) = db::get_task(&s.db(), &t)? else { continue };
+        delete_one(&s, &t, false).await?;
     }
     s.db().execute("DELETE FROM profiles WHERE id=?1", [&id])?;
+    let dir = s.data_dir.join("profiles").join(&id);
+    if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            tracing::warn!("removing {} after deleting its profile: {e}", dir.display());
+        }
+    }
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!({"ok": true})))
 }
@@ -989,28 +1025,77 @@ async fn delete_project(State(s): State<Shared>, Path(id): Path<String>) -> ApiR
     Ok(Json(json!({"ok": true})))
 }
 
-/// Deletes a project with its tasks and their threads and worktrees (not their branches).
+/// Deletes a project with its tasks and their threads and worktrees (not their branches), and
+/// its folder in the data dir.
 pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
     let project = db::get_project(&s.db(), id)?.ok_or_else(|| ApiError::not_found("project"))?;
-    let tasks: Vec<db::Task> = {
-        let c = s.db();
-        let mut all = db::list_tasks_for_project(&c, id, "task")?;
-        all.extend(db::list_tasks_for_project(&c, id, "review")?);
-        all
-    };
+    // All its threads: tasks, review threads and any other kind.
+    let tasks = db::project_threads(&s.db(), id)?;
     // Settled before the threads go, so the dialog asking about them (or this project) goes too.
     permissions::expire_for_project(s, id);
+    let repo = PathBuf::from(&project.repo_path);
+    let mut files = std::collections::HashSet::new();
     for t in &tasks {
         runner::abort(s, &t.id);
         permissions::expire_for_task(s, &t.id);
+        terminal::kill_all(s, &t.id).await;
+        files.extend(crate::attachments::of_task(&s.db(), &t.id)?);
         // Remove worktrees but keep branches so no committed work is lost.
         if let Some(wt) = &t.worktree_path {
-            crate::checkpoints::forget(s, &t.id, std::path::Path::new(&project.repo_path)).await;
-            let _ = worktree::git(&PathBuf::from(&project.repo_path), &["worktree", "remove", "--force", wt]).await;
+            crate::checkpoints::forget(s, &t.id, &repo).await;
+            let _ = worktree::git(&repo, &["worktree", "remove", "--force", wt]).await;
         }
     }
+    if tasks.iter().any(|t| t.worktree_path.is_some()) {
+        let _ = worktree::git(&repo, &["worktree", "prune"]).await;
+    }
+    let runs: Vec<String> = {
+        let c = s.db();
+        let mut st = c.prepare("SELECT r.id FROM runs r JOIN tasks t ON t.id=r.task_id WHERE t.project_id=?1")?;
+        st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
     s.db().execute("DELETE FROM projects WHERE id=?1", [id])?;
+    crate::runs::remove_finished(s, &runs);
+    for t in &tasks {
+        // Any agent asking to delete one is told it's gone (see tools::delete_task).
+        permissions::expire_deletions_of(s, &t.id);
+        crate::documents::remove(s, &t.id);
+    }
+    // Unless another task refers to them too.
+    if let Err(e) = crate::attachments::remove_unreferenced(s, &files) {
+        tracing::warn!("removing attachments while deleting project {id} failed: {e:#}");
+    }
+    remove_project_dir(s, id)?;
     s.emit(json!({"type": "project_deleted", "id": id}));
+    Ok(())
+}
+
+/// Removes a deleted project's folder in the data dir (its scratch and worktrees folders, unless
+/// they were moved, and its skills), unless what's left on the host is in it: a repository, a
+/// worktree, or a folder another project was pointed at.
+fn remove_project_dir(s: &Shared, id: &str) -> ApiResult<()> {
+    let dir = s.data_dir.join("projects").join(id);
+    let Ok(meta) = std::fs::symlink_metadata(&dir) else { return Ok(()) };
+    if !meta.is_dir() {
+        return Ok(());
+    }
+    let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let root = canonical(&dir);
+    let used: Vec<String> = {
+        let c = s.db();
+        let mut st = c.prepare(
+            "SELECT repo_path FROM projects UNION SELECT scratch_path FROM projects UNION SELECT worktrees_root FROM projects
+             UNION SELECT worktree_path FROM tasks WHERE worktree_path IS NOT NULL UNION SELECT work_dir FROM tasks WHERE work_dir IS NOT NULL",
+        )?;
+        st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    if let Some(p) = used.iter().map(PathBuf::from).find(|p| p.is_absolute() && canonical(p).starts_with(&root)) {
+        tracing::warn!("keeping {} after deleting its project: {} is in it", dir.display(), p.display());
+        return Ok(());
+    }
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        tracing::warn!("removing {} after deleting its project: {e}", dir.display());
+    }
     Ok(())
 }
 
@@ -1023,7 +1108,11 @@ struct TaskListQuery {
 
 async fn list_project_tasks(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<TaskListQuery>) -> ApiResult<Json<Value>> {
     let kind = q.kind.unwrap_or_else(|| "task".into());
-    Ok(Json(json!(db::list_tasks_for_project(&s.db(), &id, &kind)?)))
+    let c = s.db();
+    if db::get_project(&c, &id)?.is_none() {
+        return Err(ApiError::not_found("project"));
+    }
+    Ok(Json(json!(db::list_tasks_for_project(&c, &id, &kind)?)))
 }
 
 async fn list_profile_tasks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -1640,7 +1729,37 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         let end = db::end_position(&s.db(), current.project_id.as_deref(), "ready_for_merge", "task")?;
         fields.push(("position", json!(end)));
     }
-    let t = s.update_task(id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
+    // What was checked against the task as it was read is checked again under the lock the change
+    // is made with, so that two requests at once can't both pass (and, say, both start a merge).
+    let worktree_settings = fields.iter().any(|(k, _)| *k == "use_worktree" || *k == "base_branch");
+    let config = fields.iter().any(|(k, _)| *k == "claude_config_id");
+    let unsubproject = current.subproject && fields.iter().any(|(k, v)| *k == "subproject" && *v == json!(false));
+    let mut refused = None;
+    let still = |c: &rusqlite::Connection| -> anyhow::Result<bool> {
+        let Some(now) = db::get_task(c, id)? else { return Ok(true) };
+        let running = now.running || db::has_active_run(c, id)?;
+        refused = if to_merge && now.status != current.status {
+            Some(ApiError::conflict(format!("the task was moved to {} meanwhile", now.status)))
+        } else if merge && running {
+            Some(ApiError::conflict("the agent is still running; wait for it to finish before moving the task to Ready for merge"))
+        } else if worktree_settings && now.worktree_state != "none" {
+            Some(ApiError::conflict("tear down the worktree before changing worktree settings"))
+        } else if config && (now.session_id.is_some() || running) {
+            Some(ApiError::conflict("the agent has already started with its Claude config"))
+        } else if remerge && !(now.merging && running) {
+            Some(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"))
+        } else if unsubproject && !db::subproject_tasks(c, id)?.is_empty() {
+            Some(ApiError::conflict("the subproject still has tasks; delete them first"))
+        } else {
+            None
+        };
+        Ok(refused.is_none())
+    };
+    let updated = s.update_task_if(id, &fields, still)?;
+    if let Some(e) = refused {
+        return Err(e);
+    }
+    let t = updated.ok_or_else(|| ApiError::not_found("task"))?;
     if remerge {
         s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
     }
@@ -2073,14 +2192,20 @@ async fn terminal_status(State(s): State<Shared>, Path(id): Path<String>, Query(
 }
 
 async fn kill_terminal(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+    if db::get_task(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("task"));
+    }
     // A tool that was removed from the settings can still be ended.
     terminal::kill(&s, &id, q.tool.as_deref().filter(|t| !t.is_empty())).await;
     Ok(Json(json!({"ok": true})))
 }
 
 /// The board still has this tool open: keep its session (see `terminal::start_reaper`).
-async fn terminal_keepalive(Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+async fn terminal_keepalive(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
     let tool = q.tool.filter(|t| !t.is_empty()).ok_or_else(|| ApiError::bad("tool is required"))?;
+    if db::get_task(&s.db(), &id)?.is_none() {
+        return Err(ApiError::not_found("task"));
+    }
     terminal::keepalive(&id, &tool);
     Ok(Json(json!({"ok": true})))
 }
@@ -3282,6 +3407,135 @@ pub(crate) mod tests {
             // The agent exits after its task (and with it the run's row) is gone.
             runner::on_exit(&s, &run.id, None, Some(15), None, "");
             assert!(!s.is_running(&task.id));
+        })
+    }
+
+    // HA-37: deleting a profile left its worktrees registered in their repositories, and its
+    // folders, runs and documents behind.
+    #[test]
+    fn deleting_a_profile_cleans_up_after_its_projects_and_threads() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let app = router(s.clone());
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let wt = t.worktree_path.clone().unwrap();
+            let worktrees = || String::from_utf8(std::process::Command::new("git").arg("-C").arg(&dir).args(["worktree", "list"]).output().unwrap().stdout).unwrap();
+            assert!(worktrees().contains(&wt));
+            // A finished run, and a scratch task's documents.
+            let run = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+            s.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
+            let run_dir = crate::runs::run_dir(&s, &run.id);
+            std::fs::create_dir_all(&run_dir).unwrap();
+            std::fs::write(run_dir.join("exit"), "0").unwrap();
+            let scratch = create_scratch_task_inner(&s, &p.profile_id, CreateTask::default()).unwrap();
+            let docs = crate::documents::dir(&s, &scratch.id);
+            std::fs::create_dir_all(&docs).unwrap();
+            std::fs::write(docs.join("notes.md"), "x").unwrap();
+            std::fs::create_dir_all(s.profile_scratch_dir(&p.profile_id)).unwrap();
+            let project_dir = s.data_dir.join("projects").join(&p.id);
+            assert!(project_dir.is_dir());
+
+            assert_eq!(call(&app, "DELETE", &format!("/api/profiles/{}", p.profile_id)).await, (200, json!({"ok": true})));
+            assert!(!worktrees().contains(&wt), "{}", worktrees());
+            assert!(!std::path::Path::new(&wt).exists());
+            assert!(!project_dir.exists() && !run_dir.exists() && !docs.exists());
+            assert!(!s.data_dir.join("profiles").join(&p.profile_id).exists());
+            assert!(db::get_task(&s.db(), &scratch.id).unwrap().is_none());
+            // The branch is kept.
+            assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(["rev-parse", "--verify", "-q", t.branch.as_deref().unwrap()]).status().unwrap().success());
+            assert_eq!(call(&app, "DELETE", &format!("/api/profiles/{}", p.profile_id)).await.0, 404);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn deleting_a_project_keeps_its_folder_if_another_uses_it() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, a) = git_project(&s).await;
+            let (dir_b, b) = git_project(&s).await;
+            let shared = s.data_dir.join("projects").join(&a.id).join("shared");
+            update_project_inner(&s, &b.id, json!({"worktrees_root": path_str(&shared)}).as_object().unwrap()).await.unwrap();
+            delete_project_inner(&s, &a.id).await.unwrap();
+            assert!(s.data_dir.join("projects").join(&a.id).is_dir());
+            delete_project_inner(&s, &b.id).await.unwrap();
+            assert!(!s.data_dir.join("projects").join(&b.id).exists());
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::remove_dir_all(&dir_b).ok();
+        })
+    }
+
+    #[test]
+    fn unknown_ids_get_a_404() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let app = router(s.clone());
+            for (method, path) in [
+                ("DELETE", "/api/profiles/nope"),
+                ("DELETE", "/api/claude-configs/nope"),
+                ("DELETE", "/api/tasks/nope/terminal"),
+                ("POST", "/api/tasks/nope/terminal/keepalive?tool=x"),
+                ("GET", "/api/projects/nope/tasks"),
+            ] {
+                assert_eq!(call(&app, method, path).await.0, 404, "{method} {path}");
+            }
+        })
+    }
+
+    // HA-37: a blank name made a profile's clone folder ~, and one renamed to another's took its grants.
+    #[test]
+    fn profile_names_are_required_and_unique() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let create = async |name: Value| create_profile(State(s.clone()), Json(serde_json::from_value(json!({"name": name})).unwrap())).await;
+            let personal = create(json!(" personal ")).await.unwrap().0;
+            assert_eq!(personal["name"], "personal");
+            let work = create(json!("work")).await.unwrap().0;
+            assert_eq!(create(json!("Personal")).await.unwrap_err().0, StatusCode::CONFLICT);
+            assert_eq!(create(json!(" ")).await.unwrap_err().0, StatusCode::BAD_REQUEST);
+            let rename = async |id: &Value, name: Value| update_profile(State(s.clone()), Path(id.as_str().unwrap().into()), Json(json!({"name": name}).as_object().unwrap().clone())).await;
+            for (bad, status) in [(json!(""), StatusCode::BAD_REQUEST), (json!(" "), StatusCode::BAD_REQUEST), (json!(3), StatusCode::BAD_REQUEST), (Value::Null, StatusCode::BAD_REQUEST), (json!(" PERSONAL"), StatusCode::CONFLICT)] {
+                assert_eq!(rename(&work["id"], bad.clone()).await.unwrap_err().0, status, "{bad}");
+            }
+            assert_eq!(db::get_profile(&s.db(), work["id"].as_str().unwrap()).unwrap().unwrap().name, "work");
+            // Its own name in another case is fine.
+            assert_eq!(rename(&personal["id"], json!("Personal")).await.unwrap().0["name"], "Personal");
+            assert_eq!(rename(&work["id"], json!(" office ")).await.unwrap().0["name"], "office");
+        })
+    }
+
+    #[test]
+    fn claude_config_fields_must_be_strings() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let cfg = db::insert_claude_config(&s.db(), "c", "/claude/c", "claude").unwrap();
+            for bad in [json!({"config_dir": 3}), json!({"config_dir": null}), json!({"name": false}), json!({"agent": 1})] {
+                let res = update_claude_config(State(s.clone()), Path(cfg.id.clone()), Json(bad.as_object().unwrap().clone())).await;
+                assert_eq!(res.unwrap_err().0, StatusCode::BAD_REQUEST, "{bad}");
+            }
+            assert_eq!(db::get_claude_config(&s.db(), &cfg.id).unwrap().unwrap().config_dir, "/claude/c");
+            let res = update_claude_config(State(s.clone()), Path(cfg.id.clone()), Json(json!({"config_dir": ""}).as_object().unwrap().clone())).await;
+            assert_eq!(res.unwrap().0["config_dir"], "");
+        })
+    }
+
+    // HA-37: two moves to Ready for merge at once both started a merge.
+    #[test]
+    fn two_moves_to_ready_for_merge_at_once_queue_one_merge() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "x".into(), ..Default::default() }).unwrap();
+            let t = worktree::setup(&s, &t.id).await.unwrap();
+            let wt = PathBuf::from(t.worktree_path.as_deref().unwrap());
+            assert!(std::process::Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]).status().unwrap().success());
+            let body = json!({"status": "ready_for_merge"});
+            let (a, b) = tokio::join!(update_task_inner(&s, &t.id, body.as_object().unwrap()), update_task_inner(&s, &t.id, body.as_object().unwrap()));
+            let codes: Vec<Option<StatusCode>> = [&a, &b].iter().map(|r| r.as_ref().err().map(|e| e.0)).collect();
+            assert!(codes.contains(&None) && codes.contains(&Some(StatusCode::CONFLICT)), "{codes:?}");
+            std::fs::remove_dir_all(&dir).ok();
         })
     }
 }

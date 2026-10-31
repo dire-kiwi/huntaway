@@ -1810,6 +1810,13 @@ pub fn list_tasks_for_project(c: &Connection, project_id: &str, kind: &str) -> R
     Ok(rows)
 }
 
+/// All of a project's threads, whatever their kind.
+pub fn project_threads(c: &Connection, project_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE project_id=?1 ORDER BY created_at")?;
+    let rows = st.query_map([project_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 /// A profile's group tasks (see Task::group_name), including any whose group is gone.
 pub fn list_group_tasks(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' ORDER BY position")?;
@@ -2155,7 +2162,23 @@ pub fn end_position(c: &Connection, project_id: Option<&str>, status: &str, kind
     )?)
 }
 
+/// Adds a thread. In a savepoint, so one that fails doesn't use up its project's next key number
+/// (and it works within a transaction as well).
 pub fn insert_task(c: &Connection, t: NewTask) -> Result<Task> {
+    c.execute_batch("SAVEPOINT insert_task")?;
+    match insert_task_now(c, t) {
+        Ok(task) => {
+            c.execute_batch("RELEASE insert_task")?;
+            Ok(task)
+        }
+        Err(e) => {
+            let _ = c.execute_batch("ROLLBACK TO insert_task; RELEASE insert_task");
+            Err(e)
+        }
+    }
+}
+
+fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
     let id = new_id();
     let ts = now();
     let mut number = 0i64;
@@ -2859,6 +2882,24 @@ mod tests {
         assert_eq!(c.query_row("PRAGMA synchronous", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
         drop(c);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // HA-37: a failed insert used up its project's next key number.
+    #[test]
+    fn a_task_that_cant_be_added_doesnt_use_up_a_number() {
+        let c = open(std::path::Path::new(":memory:")).unwrap();
+        let p = insert_profile(&c, "me", &[], None).unwrap();
+        let np = NewProject { id: "pr", profile_id: &p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+        insert_project(&c, np).unwrap();
+        let t = |profile_id| NewTask { profile_id, project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        assert!(insert_task(&c, t("nobody")).is_err());
+        assert_eq!(insert_task(&c, t(&p.id)).unwrap().number, 1);
+        // Within a transaction too.
+        let tx = c.unchecked_transaction().unwrap();
+        assert!(insert_task(&tx, t("nobody")).is_err());
+        assert_eq!(insert_task(&tx, t(&p.id)).unwrap().number, 2);
+        tx.commit().unwrap();
+        assert_eq!(insert_task(&c, t(&p.id)).unwrap().number, 3);
     }
 
     #[test]
