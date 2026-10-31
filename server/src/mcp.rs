@@ -36,29 +36,35 @@ impl Ctx {
         loop {
             let attempt = async {
                 let res = self.http.post(format!("{}/api/internal/mcp", self.url)).bearer_auth(&self.token).json(&body).send().await?;
-                if !res.status().is_success() {
-                    return Err(anyhow!("server returned {}", res.status()));
+                let status = res.status();
+                if !status.is_success() {
+                    // A 4xx (other than a timeout or rate limit) is the server's answer, not it being down:
+                    // a stale token, say, would otherwise be retried for half an hour.
+                    let permanent = status.is_client_error() && status.as_u16() != 408 && status.as_u16() != 429;
+                    return Ok(Err((permanent, anyhow!("server returned {status}"))));
                 }
-                Ok::<Value, anyhow::Error>(res.json().await?)
+                Ok::<Result<Value, (bool, anyhow::Error)>, anyhow::Error>(Ok(res.json().await?))
             };
-            match attempt.await {
+            match attempt.await.unwrap_or_else(|e| Err((false, e))) {
                 Ok(v) => {
                     return match v.get("error").and_then(|e| e.as_str()) {
                         Some(e) => Err(anyhow!("{e}")),
                         None => Ok(v["result"].clone()),
                     };
                 }
+                Err((true, e)) => return Err(e.context("huntaway server refused the call")),
                 // The server is restarting; retry with the same call id so nothing runs twice.
-                Err(e) if failing_since.get_or_insert_with(Instant::now).elapsed() < Duration::from_secs(1800) => {
+                Err((false, e)) if failing_since.get_or_insert_with(Instant::now).elapsed() < Duration::from_secs(1800) => {
                     tracing::debug!("call to server failed, retrying: {e:#}");
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(Duration::from_secs(5));
                 }
-                Err(e) => return Err(e.context("huntaway server unreachable")),
+                Err((false, e)) => return Err(e.context("huntaway server unreachable")),
             }
         }
     }
 }
+
 
 /// Sent with `initialize`; Claude Code adds it to the agent's system prompt.
 const INSTRUCTIONS: &str = "Tools for the Huntaway board, a kanban board where each task is worked by its own Claude agent. \

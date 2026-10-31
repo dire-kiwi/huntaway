@@ -241,9 +241,12 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
     const onDown = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) close();
     };
-    // Not its own scrolling: a long menu scrolls on a short screen.
+    // Not its own scrolling: a long menu scrolls on a short screen. Nor a thread following its
+    // agent's output (data-autoscroll), which scrolls on every token while a menu is open elsewhere.
     const onScroll = (e: Event) => {
-      if (!ref.current?.contains(e.target as Node)) close();
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || (target instanceof Element && target.hasAttribute("data-autoscroll"))) return;
+      close();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" || e.key === "Tab") {

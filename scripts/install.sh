@@ -115,9 +115,9 @@ check_deps() {
   fi
   if command -v rustc >/dev/null 2>&1; then
     v="$(rustc --version | awk '{print $2}')"
-    # The server is edition 2024 (Rust 1.85+).
-    [ "$(printf '%s\n' "$v" | awk -F. '{print ($1 > 1 || $2 >= 85) ? "ok" : "old"}')" = ok ] ||
-      missing+=("Rust 1.85 or newer (this is $v; rustup update)")
+    # The server is edition 2024 (Rust 1.85+), and its locked dependencies need 1.89 (Cargo.toml's rust-version).
+    [ "$(printf '%s\n' "$v" | awk -F. '{print ($1 > 1 || $2 >= 89) ? "ok" : "old"}')" = ok ] ||
+      missing+=("Rust 1.89 or newer (this is $v; rustup update)")
   fi
   if [ ${#missing[@]} -gt 0 ]; then
     printf '\033[1;31merror:\033[0m missing build tools:\n' >&2

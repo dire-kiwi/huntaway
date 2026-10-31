@@ -122,6 +122,15 @@ function findServerBinary() {
   return candidates.find((p) => fs.existsSync(p));
 }
 
+/** Whether `url` is one for a browser (http, https or mailto), rather than a file or another app's scheme. */
+function isWebUrl(url) {
+  try {
+    return ["http:", "https:", "mailto:"].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 async function healthy(base) {
   try {
     const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000) });
@@ -211,13 +220,30 @@ async function createWindow() {
       app.quit();
     }
   });
+  // Links open in the browser, web links only: a plan or artifact is a page an agent wrote, and its
+  // scripts can open popups, so file:, custom schemes and the like stay out of the OS handlers.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isWebUrl(url)) shell.openExternal(url);
     return { action: "deny" };
+  });
+  let boardOrigin = null;
+  // A file dropped outside a drop zone, or a link dragged in, would otherwise replace the board with it.
+  win.webContents.on("will-navigate", (e, url) => {
+    let origin = null;
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      /* not a URL the window should go to either */
+    }
+    if (boardOrigin && origin !== boardOrigin) {
+      e.preventDefault();
+      if (isWebUrl(url)) shell.openExternal(url);
+    }
   });
   try {
     const { base, token } = await resolveTarget();
     const ui = process.env.IA_DEV_URL || base;
+    boardOrigin = new URL(ui).origin;
     await win.loadURL(`${ui}/${token ? `?token=${encodeURIComponent(token)}` : ""}`);
   } catch (e) {
     await win.loadURL(errorPage(e.message || e));

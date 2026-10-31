@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
-import { setUnauthorizedHandler } from "./api";
+import { setUnauthorizedHandler, unauthorizedHere } from "./api";
 import { Analytics } from "./components/Analytics";
 import { ProjectApprovals } from "./components/Approvals";
 import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/Board";
@@ -26,7 +26,10 @@ export function App() {
   const drawer = useDrawer();
 
   useEffect(() => {
-    setUnauthorizedHandler(() => useStore.getState().setAuthed(false));
+    setUnauthorizedHandler((path) => {
+      const { localHostId, setAuthed } = useStore.getState();
+      if (unauthorizedHere(path, localHostId)) setAuthed(false);
+    });
     connectEvents();
     startToolKeepalive();
     startNotifications();

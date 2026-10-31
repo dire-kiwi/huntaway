@@ -667,9 +667,17 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
       .catch((e) => setDescErr(`Couldn't save the description: ${(e as Error).message}`));
   };
 
-  const setStatus = (status: Status) => {
+  const setStatus = async (status: Status) => {
     setStatusErr(null);
-    api.updateTask(task.host_id, task.id, { status }).catch((e) => setStatusErr(e.message));
+    try {
+      await api.updateTask(task.host_id, task.id, { status });
+      // Into "In progress" from the list, as from a drop on the board: a fresh task's agent starts (where one can run).
+      if (status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host)) {
+        await api.send(task.host_id, task.id, "");
+      }
+    } catch (e) {
+      setStatusErr((e as Error).message);
+    }
   };
   const setResolution = (resolution: Resolution) => {
     setStatusErr(null);
@@ -1259,12 +1267,21 @@ function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
 function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onClose: () => void }) {
   const [deleteBranch, setDeleteBranch] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const subproject = useSubproject(task);
   const children = useSubprojectProgress(task.id)?.total ?? 0;
   const go = async () => {
     setBusy(true);
+    setErr(null);
     const pid = task.project_id;
-    await api.deleteTask(task.host_id, task.id, deleteBranch).catch(() => {});
+    try {
+      await api.deleteTask(task.host_id, task.id, deleteBranch);
+    } catch (e) {
+      // The task is still there (its host is offline, or it's merging): the dialog says so and stays.
+      setErr((e as Error).message);
+      setBusy(false);
+      return;
+    }
     onClose();
     if (mode !== "page") closeTask(true);
     else if (subproject) navigate({ name: "subproject", taskId: subproject.id }, true);
@@ -1294,13 +1311,16 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
             label={task.subproject && children > 0 ? `Also delete branch ${task.branch} and its tasks' branches` : `Also delete branch ${task.branch}`}
           />
         )}
-        <ModalFooter className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={go}>
-            Delete
-          </Button>
+        <ModalFooter className="space-y-4">
+          {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="danger" disabled={busy} onClick={go}>
+              {busy && <Loader2 size={13} className="animate-spin" />} Delete
+            </Button>
+          </div>
         </ModalFooter>
       </div>
     </Modal>

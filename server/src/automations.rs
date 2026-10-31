@@ -44,7 +44,7 @@ use serde_json::{Map, Value, json};
 use crate::api::{self, CreateTask};
 use crate::db;
 use crate::state::{ApiError, ApiResult, Shared};
-use crate::util::{new_id, new_token};
+use crate::util::{new_id, new_token, same_secret};
 
 /// The shortest and longest intervals a schedule can have.
 pub const MIN_INTERVAL_MINUTES: u32 = 5;
@@ -825,11 +825,6 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
         return None;
     }
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
-}
-
-/// Compares secrets without giving away, by how long it takes, how much of one matched.
-fn same_secret(a: &str, b: &str) -> bool {
-    aws_lc_rs::constant_time::verify_slices_are_equal(a.as_bytes(), b.as_bytes()).is_ok()
 }
 
 /// Deliveries taken in the last minute, by automation.

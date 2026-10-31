@@ -5,6 +5,9 @@
   "description": "Huntaway desktop + web UI",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
   "main": "electron/main.cjs",
   "desktopName": "huntaway-app.desktop",
   "scripts": {

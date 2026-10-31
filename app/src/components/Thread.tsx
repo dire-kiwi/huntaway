@@ -879,6 +879,7 @@ export const Thread = memo(function Thread({
         {viewed && <SubagentBar sub={viewed} />}
         <div
           ref={scroller}
+          data-autoscroll=""
           onScroll={(e) => {
             const el = e.currentTarget;
             pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;

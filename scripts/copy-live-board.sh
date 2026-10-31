@@ -49,6 +49,11 @@ UPDATE profiles SET claude_config_dir='/nonexistent/claude';
 UPDATE permission_requests SET status='denied' WHERE status='pending';
 DELETE FROM mcp_calls;
 DELETE FROM links;
+-- Nor do its automations run, or its tasks' pull requests get polled with the user's gh login.
+UPDATE automations SET enabled=0, secret=NULL;
+UPDATE projects SET done_when_merged=0;
+DELETE FROM pr_watches;
+DELETE FROM pr_states;
 SQL
 # Nor the profiles' Asana tokens (in databases from API 57 on).
 if [[ -n $(sqlite3 "$dir/huntaway.db" "SELECT 1 FROM pragma_table_info('profiles') WHERE name='asana_token'") ]]; then

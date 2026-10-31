@@ -990,6 +990,10 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
                 if github_account.is_some() { " or would act as another account" } else { "" },
             ));
         }
+        // Which profiles' boards it can't use, so it asks rather than make a project that may be there (as Claude is told below).
+        if task.kind != "review" {
+            instructions.push_str(&profiles_note(&db::list_profiles(&state.db())?, &profile));
+        }
         // Reviewers read and report (see the Claude arguments below).
         let mut disabled_mcp_tools = std::collections::HashMap::new();
         if task.kind == "review" && !own_gh {

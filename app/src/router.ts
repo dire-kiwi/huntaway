@@ -13,11 +13,20 @@ export type Route =
   | { name: "analytics" }
   | { name: "host"; hostId: string };
 
+/** A path segment, decoded; one with a malformed escape (a truncated or mangled link) is taken as it is. */
+function decode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 export function parse(path: string): Route {
   const parts = path.split("/").filter(Boolean);
   switch (parts[0]) {
     case "profile":
-      if (parts[1]) return { name: "profile", profile: decodeURIComponent(parts[1]) };
+      if (parts[1]) return { name: "profile", profile: decode(parts[1]) };
       break;
     case "settings":
       return { name: "settings" };
@@ -31,11 +40,11 @@ export function parse(path: string): Route {
       if (parts[1]) return { name: "task", taskId: parts[1] };
       break;
     case "g":
-      if (parts[1] && parts[2]) return { name: "group", hostId: decodeURIComponent(parts[1]), group: decodeURIComponent(parts[2]) };
+      if (parts[1] && parts[2]) return { name: "group", hostId: decode(parts[1]), group: decode(parts[2]) };
       break;
     case "p":
       if (!parts[1]) break;
-      if (parts[2] === "settings") return { name: "projectSettings", projectId: parts[1], ...(parts[3] && { tab: decodeURIComponent(parts[3]) }) };
+      if (parts[2] === "settings") return { name: "projectSettings", projectId: parts[1], ...(parts[3] && { tab: decode(parts[3]) }) };
       return { name: "board", projectId: parts[1] };
   }
   return { name: "home" };
