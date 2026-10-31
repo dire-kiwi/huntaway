@@ -48,7 +48,7 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type RewindResult, type Task, type Turn } from "../api";
+import { api, dependencyQueued, limitQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type RewindResult, type Task, type Turn } from "../api";
 import { useHost, useProject, useStore, useThreadMessages } from "../store";
 import { useDelta } from "../deltas";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
@@ -1512,6 +1512,8 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                     ? "Queued: sends when the agent finishes, or press Stop to send it now"
                     : dependencyQueued(task)
                       ? "Queued: sends when the agent starts, once the tasks it depends on are merged"
+                      : limitQueued(task)
+                        ? "Queued: sends when the agent carries on, once its usage limit resets"
                       : "Queued: sends with the next message"}
                 </div>
               </div>
@@ -1559,7 +1561,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                       ? "Message the agent: it reads it after its current step…"
                       : "Queue a message for when the agent finishes…"
                   : "Agent is working…"
-                : dependencyQueued(task)
+                : dependencyQueued(task) || limitQueued(task)
                   ? "Queue a message for when its agent starts…"
                   : (placeholder ?? (canStartEmpty ? "Add extra instructions, or press Enter to start" : "Reply to the agent…"))
             }

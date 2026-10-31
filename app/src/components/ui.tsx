@@ -359,8 +359,11 @@ export type MenuItem = { label: ReactNode; checked?: boolean; divider?: boolean;
 export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: number; title?: ReactNode; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
+  // What it was opened on: the topmost element at (x, y) other than the menu, which is placed there first.
+  const anchor = useRef<Element | undefined>(undefined);
   useLayoutEffect(() => {
     const el = ref.current!;
+    anchor.current = document.elementsFromPoint(x, y).find((e) => !el.contains(e));
     const r = el.getBoundingClientRect();
     setPos({ left: Math.max(4, Math.min(x, window.innerWidth - r.width - 4)), top: Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) });
     (el.querySelector<HTMLElement>("[aria-checked=true]") ?? el.querySelector<HTMLElement>("[role^=menuitem]"))?.focus();
@@ -372,11 +375,13 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
     const onDown = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) close();
     };
-    // Not its own scrolling: a long menu scrolls on a short screen. Nor a thread following its
-    // agent's output (data-autoscroll), which scrolls on every token while a menu is open elsewhere.
+    // Not its own scrolling: a long menu scrolls on a short screen. Nor a thread following its agent's output
+    // (data-autoscroll), which scrolls on every token while a menu is open elsewhere; a menu on something in the
+    // thread closes, as that moves away from under it.
     const onScroll = (e: Event) => {
       const target = e.target as Node;
-      if (ref.current?.contains(target) || (target instanceof Element && target.hasAttribute("data-autoscroll"))) return;
+      if (ref.current?.contains(target)) return;
+      if (target instanceof Element && target.hasAttribute("data-autoscroll") && !(anchor.current && target.contains(anchor.current))) return;
       close();
     };
     const onKey = (e: KeyboardEvent) => {

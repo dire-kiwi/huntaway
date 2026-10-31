@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Kanban, Layers } from "lucide-react";
+import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Hourglass, Kanban, Layers } from "lucide-react";
 import { memo, type KeyboardEvent, type MouseEvent } from "react";
-import { agentWaiting, isScratch, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../api";
+import { agentWaiting, isScratch, limitQueued, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../api";
 import { inGroupTaskGroup } from "../projectGroups";
 import { navigate, openTask, usePanelOpen } from "../router";
 import { isGroupTask, keyPrefix, useStore } from "../store";
@@ -13,6 +13,7 @@ import { TaskMarks } from "./Reminders";
 import { TaskTypeBadge } from "./Document";
 import { ActivityTime, BranchIcon, CARD_BADGE, CardState, ChecksMark, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "./ui";
 import { useNarrow, useTouch } from "../narrow";
+import { resetsIn, resetTime } from "../usageConfigs";
 
 
 /** How many of a subproject's tasks are done. */
@@ -200,6 +201,11 @@ function TaskBadges({ task, project, progress, compact }: { task: Task; project?
       {rejoinsMerge(task) && (
         <span className={badge} title="Stepped out of the merge queue to make changes: rejoins it when its agent is done">
           <GitMerge size={11} /> {words("rejoins merge queue")}
+        </span>
+      )}
+      {limitQueued(task) && (
+        <span className={badge} title={`Waiting for its config's usage limit to reset (${resetTime(task.limit_reset_at!)}); its agent carries on then`}>
+          <Hourglass size={11} /> {words("usage resets")} {resetsIn(task.limit_reset_at!, Date.now())}
         </span>
       )}
       <DependencyBadge task={task} project={project} compact={compact} />

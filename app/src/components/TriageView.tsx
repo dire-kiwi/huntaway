@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { BellRing, ChevronRight, CircleAlert, Eye, GitMerge, MessagesSquare, Play, PlayCircle, Square } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, canRunAgents, dependencyQueued, readyToCheck, type Project, type Task } from "../api";
+import { api, canRunAgents, dependencyQueued, limitQueued, readyToCheck, type Project, type Task } from "../api";
 import { openTask, usePanelOpen } from "../router";
 import { keyPrefix, useHost, useStore } from "../store";
 import { isDue } from "../reminders";
@@ -37,7 +37,7 @@ function bucketOf(t: Task, now: number): BucketId | null {
   // As the sidebar counts them: not while a reviewer is at it, nor after a review that failed or was stopped.
   if (readyToCheck(t)) return "review";
   if (isDue(t, now) && t.status !== "done") return "due";
-  if (t.running || t.review?.state === "running" || t.status === "ready_for_merge" || dependencyQueued(t))
+  if (t.running || t.review?.state === "running" || t.status === "ready_for_merge" || dependencyQueued(t) || limitQueued(t))
     return t.status === "done" || t.status === "backlog" ? null : "working";
   if (t.status === "in_progress") return t.session_id ? "stalled" : "start";
   if (t.status === "in_review") return "stalled";

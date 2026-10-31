@@ -24,4 +24,5 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dev-dependencies]
-tokio-tungstenite = "0.30.0"
+# The version axum uses, as in ../Cargo.toml, so the workspace has one tungstenite stack.
+tokio-tungstenite = "0.29.0"
