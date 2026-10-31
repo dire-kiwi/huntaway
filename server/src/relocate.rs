@@ -97,6 +97,10 @@ pub async fn change(s: &Shared, project: &Project, new: &Path, move_folder: bool
         let worktrees: Vec<PathBuf> = tasks.iter().filter_map(|t| t.worktree_path.as_deref()).map(|wt| mapping.map(Path::new(wt)).unwrap_or_else(|| wt.into())).collect();
         let common = common_dir(&new).await.unwrap_or_else(|| new.join(".git"));
         relink(&common, &mapping, &worktrees);
+        // The folders linked into them lead into the old folder.
+        for wt in &worktrees {
+            crate::worktree_files::relink(wt, &project.link_folders, |p| mapping.map(p));
+        }
         relink_submodules(&new, &common, &mapping).await;
     }
     let inside = |p: &str| mapping.map(Path::new(p)).map(|to| path_str(&to)).filter(|to| to != p);

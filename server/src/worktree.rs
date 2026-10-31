@@ -1,4 +1,4 @@
-//! Git worktree lifecycle for tasks: setup (worktree add + setup script),
+//! Git worktree lifecycle for tasks: setup (worktree add, ignored files, setup script),
 //! teardown (teardown script + worktree remove), and diffs for review.
 
 use std::collections::HashMap;
@@ -462,6 +462,16 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
         }
         state.add_event(task_id, "info", format!("Worktree ready at {} on branch {branch} (from {from})", wt.display()), None);
 
+        // Before the setup script, which can rely on them. Nothing already there is overwritten,
+        // so a setup that didn't finish can do it again.
+        match crate::worktree_files::bring_in(&project, &wt).await {
+            Ok(report) => {
+                if let Some((level, text, detail)) = report.event() {
+                    state.add_event(task_id, level, text, Some(detail));
+                }
+            }
+            Err(e) => state.add_event(task_id, "warn", "Couldn't copy or link the project's files into the worktree", Some(format!("{e:#}"))),
+        }
         if !project.setup_script.trim().is_empty() {
             state.add_event(task_id, "info", "Running setup script…", None);
             let log = run_script(&project.setup_script, &wt, &script_env(&project, &task, &wt, &branch), Some(SCRIPT_LIMIT)).await?;

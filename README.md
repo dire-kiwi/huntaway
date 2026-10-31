@@ -834,8 +834,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
 - **Project changes by agents** (API 44): `update_project` changes any project setting but its
   agent configs, which only the user changes; agents can't delete projects. Its name, key, base
   branch, model, prompts, reviews and group change straight away. A change to its permission
-  mode, a script (setup, teardown or status), its repository path or its worktree settings first
-  asks the user: a dialog over the whole app (and a card in the agent's thread) shows each
+  mode, a script (setup, teardown or status), its repository path or its worktree settings
+  (the files copied or folders linked into worktrees too, from API 81) first asks the user: a dialog over the whole app (and a card in the agent's thread) shows each
   setting's old and new value and the agent's reason, and the call waits for the answer. Nothing
   changes unless they approve, whatever the thread's permission mode, and an approval is never
   "always". What counts as a change is what the project would be after it (the update is made
@@ -869,7 +869,32 @@ skipped. Auto-compacting idle sessions is Claude-only.
   branch starts from it whenever the local base branch is behind, even if that can't be
   fast-forwarded (it's checked out with changes in the way) or has diverged. The local branch is
   fast-forwarded when it can be, and is used as it is when it's ahead (with unpushed commits)
-  or has no upstream. The task's log says which it started from. The setup script then runs there with `IA_REPO_PATH`,
+  or has no upstream. The task's log says which it started from.
+  A new worktree has none of the repository's git-ignored files (`.env`, local config, caches),
+  so a project can bring them in from its repository folder, before the setup script runs (API 81,
+  the *Worktrees* settings, `copy_files` and `link_folders`):
+  - **Files to copy** are .gitignore-style patterns, one per line (`.env` matches at any depth,
+    `/.env` only at the top, `config/*.local.json`, `!` leaves one out), as is a
+    `.worktreeinclude` file at the top of the repository folder, which is read as well (the file
+    Claude Code and Orca use). Each untracked file they match is copied if git ignores it, both
+    in the repository folder and on the task's branch, so a copy never shows as a change or gets
+    committed. Tracked files aren't copied, and a file the worktree already has is never
+    overwritten. Copies are copy-on-write where the filesystem can (Btrfs, XFS, APFS).
+  - **Folders to link** are paths of folders relative to the repository, one per line, each
+    symlinked into the worktree instead of copied (a model cache, say). Each must be ignored by git
+    and have nothing tracked in it. Git doesn't count a symlink as a folder, so a `node_modules/`
+    pattern doesn't ignore the link: when nothing else does, `/<path>` is added to the
+    repository's `.git/info/exclude` (shared by its worktrees, under a comment saying why), so the
+    link doesn't show as untracked, doesn't get committed, and doesn't keep the worktree from
+    being removed. Changes made through a link change the original; removing the worktree
+    (teardown, forced or not, or **Remove merged worktrees**) removes the link only. Moving the
+    project's folder (`move_repo`) points the links at its new place.
+
+  Nothing is read from outside the repository (`..`, absolute paths and symlinks that lead out of
+  it are refused) or written through a symlink in the worktree. The task's log lists what was
+  copied and linked, what was already there, and what was left out and why. Agents' `update_project`
+  can change both lists only once the user approves, as with the scripts, since they can put
+  secrets in reach of every task's agent. The setup script then runs there with `IA_REPO_PATH`,
   `IA_WORKTREE_PATH`, `IA_BRANCH`, `IA_TASK_ID`, `IA_TASK_NUMBER` and `IA_PROJECT_KEY` set.
   Teardown runs the teardown script and removes the worktree. It refuses while there are
   uncommitted changes unless you choose to discard them, and keeps the branch unless asked.
