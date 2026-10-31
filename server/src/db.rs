@@ -590,12 +590,19 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=59; COMMIT;"
         ))?;
     }
+    if version < 60 {
+        // Whether a project's tasks' pull requests are watched while they're in review (see
+        // Project::watch_pull_requests), off until it's turned on.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='watch_pull_requests'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN watch_pull_requests TEXT NOT NULL DEFAULT 'off';" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=60; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 59;
+pub const VERSION: i64 = 60;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1101,6 +1108,11 @@ pub struct Project {
     /// Overrides the profile's GitHub account when set (see Profile::github_account).
     #[serde(default)]
     pub github_account: Option<String>,
+    /// Which news about the pull request of a task in "In review" wakes its agent: off,
+    /// failures (failed checks and conflicts) or all (comments and reviews too). See
+    /// pr_watch::watch_in_review.
+    #[serde(default = "watch_off")]
+    pub watch_pull_requests: String,
     pub created_at: String,
 }
 
@@ -1136,9 +1148,14 @@ impl Project {
             group_name: r.get("group_name")?,
             archived_at: r.get("archived_at")?,
             github_account: r.get("github_account")?,
+            watch_pull_requests: r.get("watch_pull_requests")?,
             created_at: r.get("created_at")?,
         })
     }
+}
+
+fn watch_off() -> String {
+    "off".into()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1982,6 +1999,28 @@ pub fn unmet_dependencies(c: &Connection, task: &Task) -> Result<Vec<Task>> {
 
 /// Tasks queued for their dependencies, in a project (or every project for None), but not in an
 /// archived project, whose agents don't start: they keep waiting, queued message and all.
+/// The tasks in "In review" with a pull request, in projects that watch them (see
+/// pr_watch::watch_in_review) and aren't archived, with their project's `watch_pull_requests`.
+pub fn tasks_to_watch(c: &Connection) -> Result<Vec<(Task, String)>> {
+    let mut st = c.prepare(
+        "SELECT t.*, p.watch_pull_requests AS watch_mode FROM tasks t JOIN projects p ON p.id = t.project_id
+         WHERE t.kind='task' AND t.status='in_review' AND COALESCE(t.pr_url, '') != ''
+           AND p.watch_pull_requests != 'off' AND p.archived_at IS NULL",
+    )?;
+    let rows = st.query_map([], |r| Ok((Task::from_row(r)?, r.get("watch_mode")?)))?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// Whether the user (not the board or another agent) sent `task_id`'s agent a message after `since`.
+pub fn user_wrote_since(c: &Connection, task_id: &str, since: &str) -> Result<bool> {
+    Ok(c.query_row(
+        "SELECT EXISTS (SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND created_at > ?2
+           AND json_extract(data, '$.auto') IS NULL AND json_extract(data, '$.from_agent') IS NULL)",
+        [task_id, since],
+        |r| r.get(0),
+    )?)
+}
+
 pub fn waiting_tasks(c: &Connection, project_id: Option<&str>) -> Result<Vec<Task>> {
     let mut st = c.prepare(
         "SELECT * FROM tasks WHERE waiting=1 AND kind='task' AND (?1 IS NULL OR project_id=?1)
@@ -2166,7 +2205,7 @@ const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
     "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
-    "archived_at", "github_account",
+    "archived_at", "github_account", "watch_pull_requests",
 ];
 
 pub fn update_project(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Project>> {
@@ -3290,6 +3329,31 @@ mod tests {
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             std::fs::remove_file(format!("{}{suffix}", path.display())).ok();
+        }
+    }
+
+    #[test]
+    fn a_database_at_version_59_gets_projects_watch_pull_requests() {
+        // As master's build left it, with labels (59) and no watch_pull_requests yet.
+        let path = std::env::temp_dir().join(format!("huntaway-v59-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN watch_pull_requests;
+                 PRAGMA user_version=59;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!((p.watch_pull_requests.as_str(), p.done_when_merged), ("off", true));
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
     }
 

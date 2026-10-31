@@ -358,8 +358,13 @@ export interface Project {
   archived_at?: string | null;
   /** Overrides the profile's GitHub account; null uses the profile's (API 50). */
   github_account?: string | null;
+  /** Which news about an In review task's pull request wakes its agent (API 72). */
+  watch_pull_requests?: WatchPullRequests;
   created_at: string;
 }
+
+/** off; failures: failed checks and conflicts; all: comments and reviews too. */
+export type WatchPullRequests = "off" | "failures" | "all";
 
 export type PromptField = "start_prompt" | "review_prompt" | "merge_prompt";
 

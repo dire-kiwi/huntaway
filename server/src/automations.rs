@@ -75,7 +75,7 @@ const KEEP_PAYLOADS: i64 = 5;
 /// Headers a delivery keeps (for templates and filters) leave these out.
 const SECRET_HEADERS: &[&str] = &["authorization", "proxy-authorization", "cookie", "x-hub-signature", "x-hub-signature-256"];
 const WEEKDAYS: &[&str] = &["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-const UNTRUSTED_TAG: &str = "untrusted-data";
+pub const UNTRUSTED_TAG: &str = "untrusted-data";
 
 // ---------- what an automation is ----------
 
@@ -751,7 +751,7 @@ fn render(template: &str, vars: &Vars, into: Out) -> (String, bool) {
 
 /// A value from outside can't close (or open) the tags it's wrapped in, or any other: every `<`
 /// and `>` in it is escaped.
-fn defang(v: &str) -> String {
+pub fn defang(v: &str) -> String {
     v.replace('<', "&lt;").replace('>', "&gt;")
 }
 
