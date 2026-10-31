@@ -1,24 +1,30 @@
-/** The plan theme's colours, from the board's own (index.css) so a plan follows it. */
+/** The plan theme's colours, from the board's own (the --ia-* variables in index.css, set for its light and dark themes) so a plan follows it. */
 const COLORS: [string, string][] = [
-  ["--bg", "--color-bg"],
-  ["--panel", "--color-panel"],
-  ["--panel-2", "--color-panel-2"],
-  ["--raised", "--color-raised"],
-  ["--line", "--color-line"],
-  ["--line-strong", "--color-line-strong"],
-  ["--fg", "--color-fg"],
-  ["--muted", "--color-muted"],
-  ["--faint", "--color-faint"],
-  ["--accent", "--color-accent"],
-  ["--ok", "--color-st-done"],
-  ["--warn", "--color-st-attention"],
-  ["--info", "--color-st-progress"],
+  ["--bg", "--ia-bg"],
+  ["--panel", "--ia-panel"],
+  ["--panel-2", "--ia-panel-2"],
+  ["--raised", "--ia-raised"],
+  ["--line", "--ia-line"],
+  ["--line-strong", "--ia-line-strong"],
+  ["--fg", "--ia-fg"],
+  ["--heading", "--ia-fg"],
+  ["--muted", "--ia-muted"],
+  ["--faint", "--ia-faint"],
+  ["--accent", "--ia-accent"],
+  ["--code", "--ia-code"],
+  ["--tint", "--ia-tint-strong"],
+  ["--ok", "--ia-st-done"],
+  ["--warn", "--ia-st-attention"],
+  ["--danger", "--ia-danger"],
+  ["--info", "--ia-st-progress"],
 ];
 
 function boardColors(): string {
   const style = getComputedStyle(document.documentElement);
   const vars = COLORS.map(([to, from]) => [to, style.getPropertyValue(from).trim()]).filter(([, v]) => v);
-  return `:root{${vars.map(([k, v]) => `${k}:${v}`).join(";")}}`;
+  // The colour scheme too, so the frame's own scrollbars and form controls are light on a light board.
+  const scheme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  return `:root{color-scheme:${scheme};${vars.map(([k, v]) => `${k}:${v}`).join(";")}}`;
 }
 
 /**
@@ -59,14 +65,14 @@ function fitFrame() {
  * can't use anything from outside).
  */
 function iaHtml(fit: string) {
-  const vars = ["--bg", "--panel", "--panel-2", "--raised", "--line", "--line-strong", "--fg", "--heading", "--muted", "--faint", "--accent", "--ok", "--warn", "--danger", "--info", "--font-sans", "--font-mono"];
+  const vars = ["--bg", "--panel", "--panel-2", "--raised", "--line", "--line-strong", "--fg", "--heading", "--muted", "--faint", "--accent", "--code", "--tint", "--ok", "--warn", "--danger", "--info", "--font-sans", "--font-mono"];
   const style = getComputedStyle(document.documentElement);
-  const theme = vars.map((v) => `${v}:${style.getPropertyValue(v).trim()}`).join(";");
+  const theme = [`color-scheme:${style.getPropertyValue("color-scheme").trim() || "dark"}`, ...vars.map((v) => `${v}:${style.getPropertyValue(v).trim()}`)].join(";");
   // Written out so that the plan's own <script> holding this isn't closed by it.
   const end = String.fromCharCode(60) + "/script>";
   const sizer = `<script>${fit}${end}`;
   // The body contains what's positioned absolutely, and the margins of what's in it, so its extent is the content's.
-  const head = `<!doctype html><meta charset="utf-8"><style>:root{color-scheme:dark;${theme}}html,body{margin:0;background:transparent}body{position:relative;display:flow-root;color:var(--fg);font:15px/1.65 var(--font-sans)}</style>${sizer}\n`;
+  const head = `<!doctype html><meta charset="utf-8"><style>:root{${theme}}html,body{margin:0;background:transparent}body{position:relative;display:flow-root;color:var(--fg);font:15px/1.65 var(--font-sans)}</style>${sizer}\n`;
   addEventListener("message", (e) => {
     if (typeof e.data?.iaHtmlHeight !== "number") return;
     for (const f of document.querySelectorAll<HTMLIFrameElement>("ia-html > iframe")) if (f.contentWindow === e.source) f.style.height = `${e.data.iaHtmlHeight}px`;

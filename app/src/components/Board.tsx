@@ -52,7 +52,7 @@ import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
 import { LiveView } from "./LiveView";
-import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, MenuButton, Modal, ModalFooter, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide, type MenuItem } from "./ui";
+import { ActivityTime, BranchIcon, Button, CARD_BADGE, CardState, ContextMenu, cost, IconButton, Input, MenuButton, Modal, ModalFooter, PrIcon, PreviewDot, ProgressCount, RESOLUTION_LABELS, ResolutionBadge, RunningDot, RunState, segment, SEGMENTED, showsPreview, StatusIcon, STATUS_COLOR, SUBMIT_KEYS, Toggle, useClock, WaitReason, Wide, type MenuItem } from "./ui";
 import { useNarrow, useTouch } from "../narrow";
 
 /** How many of a subproject's tasks are done. */
@@ -206,7 +206,7 @@ function MoveButton({ task, onMenu, className }: { task: Task; onMenu?: OnMenu; 
       title="Move to…"
       aria-label={`Move ${task.title} to…`}
       aria-haspopup="menu"
-      className={clsx("flex shrink-0 items-center justify-center rounded-md text-faint hover:bg-white/5 hover:text-fg", className)}
+      className={clsx("flex shrink-0 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-fg", className)}
       onClick={(e) => {
         e.stopPropagation();
         onMenu(e, task, true);
@@ -258,14 +258,19 @@ export const TaskCard = memo(function TaskCard({
       onContextMenu={menuHandler(task, onMenu)}
       data-task={task.id}
       className={clsx(
-        "group @container relative cursor-pointer overflow-hidden rounded-lg border bg-panel-2 p-3 transition-colors outline-none hover:border-line-strong hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent",
-        task.status === "needs_attention" ? "border-st-attention/35" : task.review?.state === "running" ? "border-st-review/40" : "border-line",
-        open && "bg-raised ring-1 ring-accent/60",
+        "group @container relative cursor-pointer overflow-hidden rounded-xl border bg-panel-2 p-3 shadow-card transition-[border-color,box-shadow] outline-none hover:border-line-strong hover:shadow-lift focus-visible:ring-1 focus-visible:ring-accent",
+        // A stripe down the left edge for a task that needs you, and one in review.
+        task.status === "needs_attention"
+          ? "border-st-attention/40 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-st-attention"
+          : task.review?.state === "running"
+            ? "border-st-review/40 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-st-review"
+            : "border-line",
+        open && "border-accent/60 ring-1 ring-accent/60",
       )}
     >
       {/* One line that never wraps: the key and the state stay whole, and badges that don't fit are cut off. */}
-      <div className="mb-1 flex items-center gap-2 text-[11px] text-faint">
-        <span className="shrink-0 font-mono">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] text-faint">
+        <span className="shrink-0 font-mono tracking-tight text-muted">
           {keyPrefix(task, project)}-{task.number}
         </span>
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
@@ -290,9 +295,9 @@ export const TaskCard = memo(function TaskCard({
         <CardState task={task} />
         <MoveButton task={task} onMenu={onMenu} className="-my-2.5 -mr-2 h-8 w-8" />
       </div>
-      <div className={clsx("text-[13px] leading-snug", task.status === "done" && task.resolution === "wont_fix" ? "text-muted" : "text-fg")}>{task.title}</div>
+      <div className={clsx("text-[13px] leading-snug font-medium", task.status === "done" && task.resolution === "wont_fix" ? "text-muted" : "text-fg")}>{task.title}</div>
       {task.attention_reason && task.status === "needs_attention" && (
-        <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2 py-1.5 text-[12px] leading-snug text-amber-200/90">
+        <div className="mt-2 rounded-lg bg-st-attention/10 px-2 py-1.5 text-[12px] leading-snug text-warning">
           <div className="line-clamp-3">{task.attention_reason}</div>
         </div>
       )}
@@ -491,7 +496,7 @@ function ReadsChip({ icon, label, title, onRemove, removeTitle = "Remove", dashe
       {icon && <span className="shrink-0 text-accent">{icon}</span>}
       <span className="truncate">{label}</span>
       {onRemove && (
-        <button type="button" className="-mr-0.5 shrink-0 rounded p-0.5 text-faint hover:bg-white/5 hover:text-fg" title={removeTitle} aria-label={removeTitle} onClick={onRemove}>
+        <button type="button" className="-mr-0.5 shrink-0 rounded p-0.5 text-faint hover:bg-hover hover:text-fg" title={removeTitle} aria-label={removeTitle} onClick={onRemove}>
           <X size={11} />
         </button>
       )}
@@ -1136,7 +1141,7 @@ export function NewTaskModal({
           key={t.start}
           className={clsx(
             settled && "rounded-[3px]",
-            known?.value !== undefined ? "bg-accent/20 text-[#c8c8ff] ring-1 ring-accent/30" : settled && "bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/30",
+            known?.value !== undefined ? "bg-accent/20 text-accent ring-1 ring-accent/30" : settled && "bg-warning/10 text-warning ring-1 ring-warning/30",
           )}
         >
           {description.slice(t.start, t.end)}
@@ -1261,7 +1266,7 @@ export function NewTaskModal({
               ref={list}
               role="listbox"
               aria-label={TOKEN_HELP.find((h) => h.prefix === completing!.prefix)!.what}
-              className="fixed z-10 w-72 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-black/50"
+              className="fixed z-10 w-72 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl shadow-shade"
               // Keeps the editor focused, so picking doesn't close the list first.
               onMouseDown={(e) => e.preventDefault()}
             >
@@ -1378,7 +1383,7 @@ export function NewTaskModal({
                 type="button"
                 onClick={() => setPickingLink(true)}
                 title="Link the Asana task this is for"
-                className="flex h-7 items-center justify-center gap-1.5 rounded-md px-2 text-[12px] text-faint hover:bg-white/5 hover:text-fg"
+                className="flex h-7 items-center justify-center gap-1.5 rounded-md px-2 text-[12px] text-faint hover:bg-hover hover:text-fg"
               >
                 <AsanaIcon size={13} /> Link Asana task
               </button>
@@ -1422,7 +1427,7 @@ export function NewTaskModal({
           </div>
         )}
         {fanout && (
-          <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>
+          <div className={clsx("text-[12px]", fanoutBlock ? "text-warning" : "text-muted")}>
             {fanoutBlock ??
               (many
                 ? `Makes ${runs.length} ${noun}s from this prompt, one with each model${worktree ? ", each in its own worktree" : ""}${pending ? `, with ${pending.made.join(", ")}` : ", so you can compare what they do"}. Their cards say which is which.`
@@ -1430,13 +1435,13 @@ export function NewTaskModal({
           </div>
         )}
         {modelsBlock && (
-          <div className={clsx("text-[12px]", modelsLoading ? "text-muted" : "text-amber-300")}>
+          <div className={clsx("text-[12px]", modelsLoading ? "text-muted" : "text-warning")}>
             {modelsBlock}
             {whenLoaded && " It's created once they're in."}
           </div>
         )}
         <ModalFooter className="space-y-3">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="-mx-4 flex items-center justify-end gap-2 border-t border-line px-4 pt-4">
             <span className="mr-auto flex min-w-0 items-center gap-3">
               <Toggle checked={addAnother} onChange={changeAddAnother} label="Add another" />
@@ -1500,8 +1505,8 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
       onContextMenu={menuHandler(task, onMenu)}
       data-task={task.id}
       className={clsx(
-        "flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset narrow:flex-wrap narrow:gap-x-2 narrow:px-3",
-        open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : "bg-panel/60",
+        "flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset narrow:flex-wrap narrow:gap-x-2 narrow:px-3",
+        open && "bg-active shadow-[inset_2px_0_0_var(--color-accent)]",
       )}
     >
       <span className="pt-0.5">
@@ -1511,9 +1516,9 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {keyPrefix(task, project)}-{task.number}
       </span>
       <div className="min-w-0 flex-1 narrow:order-last narrow:basis-full narrow:pl-[22px]">
-        <div className="truncate text-[13px] text-fg narrow:line-clamp-2 narrow:whitespace-normal">{task.title}</div>
+        <div className="truncate text-[13px] font-medium text-fg narrow:line-clamp-2 narrow:whitespace-normal">{task.title}</div>
         {task.attention_reason && task.status === "needs_attention" && (
-          <div className="mt-0.5 line-clamp-2 text-[12px] text-amber-200/80">{task.attention_reason}</div>
+          <div className="mt-0.5 line-clamp-2 text-[12px] text-warning">{task.attention_reason}</div>
         )}
         {agentWaiting(task) && <WaitReason wait={agentWaiting(task)!} className="mt-0.5 truncate text-[12px] text-muted" />}
       </div>
@@ -1640,9 +1645,9 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
             <span className="font-mono text-[12px] text-faint">
               {project.key}-{subproject.number}
             </span>
-            <h1 className="min-w-0 truncate text-[13.5px] font-medium">{subproject.title}</h1>
+            <h1 className="min-w-0 truncate text-[14px] font-semibold tracking-tight">{subproject.title}</h1>
             {subproject.branch && (
-              <span className="hidden min-w-0 items-center gap-1 text-[11.5px] text-faint md:flex" title="Its tasks branch from and merge into this branch">
+              <span className="hidden min-w-0 items-center gap-1 text-[11.5px] text-faint lg:flex" title="Its tasks branch from and merge into this branch">
                 <GitBranch size={11} className="shrink-0" />
                 <span className="truncate font-mono">{subproject.branch}</span>
               </span>
@@ -1660,7 +1665,7 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
             <MenuButton />
             <FolderGit2 size={16} className="shrink-0 text-muted narrow:hidden" />
             <div className="flex min-w-0 items-baseline gap-2">
-              <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{project.name}</h1>
+              <h1 className="shrink-0 text-[15px] font-semibold tracking-tight narrow:min-w-0 narrow:truncate">{project.name}</h1>
               <span className="truncate font-mono text-[11.5px] text-faint narrow:hidden">
                 {hostCount > 1 && <span className="mr-1.5 font-sans text-muted">{host?.name} ·</span>}
                 {project.repo_path}
@@ -1705,7 +1710,7 @@ export function GroupBoard({ hostId, group }: { hostId: string; group: string })
           <MenuButton />
           <Folder size={16} className="shrink-0 text-muted narrow:hidden" />
           <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{group}</h1>
+            <h1 className="shrink-0 text-[15px] font-semibold tracking-tight narrow:min-w-0 narrow:truncate">{group}</h1>
             <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
               {hostCount > 1 && <span className="mr-1.5 text-muted">{host?.name} ·</span>}
               {projects.map((p, i) => (
@@ -2095,7 +2100,7 @@ function TaskBoard({
   // Every view's name on a roomy board, the current one's on a wide one, and only icons on a narrow one.
   const labelled = (id: BoardView) => roomy || (wide && view === id);
   const viewToggle = (
-    <div className="mr-1 flex items-center rounded-md border border-line p-0.5">
+    <div className={clsx("mr-1", SEGMENTED)}>
       {VIEWS.map(({ id, label, icon: Icon, title }) => (
         <button
           key={id}
@@ -2103,11 +2108,7 @@ function TaskBoard({
           aria-label={`${label} view`}
           aria-pressed={view === id}
           onClick={() => changeView(id)}
-          className={clsx(
-            "inline-flex h-6 items-center gap-1 rounded text-xs font-medium transition-colors narrow:h-8",
-            labelled(id) ? "px-2" : "px-1.5",
-            view === id ? "bg-raised text-fg" : "text-muted hover:text-fg",
-          )}
+          className={clsx(segment(view === id), "h-6 gap-1 text-xs narrow:h-8", labelled(id) ? "px-2" : "px-1.5")}
         >
           <Icon size={13} /> {labelled(id) && <span className="narrow:hidden">{label}</span>}
         </button>
@@ -2160,7 +2161,7 @@ function TaskBoard({
         <FilterBar query={query} onChange={setQuery} tools={!wide && queryControls} shown={shownCount} total={total} statuses={statusOptions} projects={projectOptions} />
       )}
       {dropErr && (
-        <div className="flex items-center gap-2 border-b border-line bg-red-500/10 px-5 py-2 text-[12.5px] text-red-300 narrow:px-3">
+        <div className="flex items-center gap-2 border-b border-line bg-danger/10 px-5 py-2 text-[12.5px] text-danger narrow:px-3">
           <span className="min-w-0 flex-1">{dropErr}</span>
           <IconButton className="h-6 w-6" title="Dismiss" onClick={() => setDropErr(null)}>
             <X size={14} />
@@ -2223,7 +2224,7 @@ function TaskBoard({
                     ) : (
                       <div
                         className={clsx(
-                          "overflow-hidden rounded-lg border transition-colors",
+                          "overflow-hidden rounded-xl border bg-panel-2 shadow-card transition-colors",
                           dropTarget?.status === s.id ? "border-accent/40" : "border-line",
                         )}
                       >
@@ -2256,7 +2257,7 @@ function TaskBoard({
                       {archived.length ? "No matching tasks" : "Tasks done for two days move here"}
                     </div>
                   ) : (
-                    <div className="overflow-hidden rounded-lg border border-line">
+                    <div className="overflow-hidden rounded-xl border border-line bg-panel-2 shadow-card">
                       {shownArchived.map((t, i) => (
                         <div key={t.id} className={clsx(i > 0 && "border-t border-line")}>
                           <TaskRow task={t} project={projectOf(t)} progress={progressOf(t)} onMenu={onMenu} />
@@ -2279,7 +2280,7 @@ function TaskBoard({
                 onClick={() => pickColumn(s.id)}
                 className={clsx(
                   "flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] transition-colors",
-                  s.id === shownColumn ? "border-accent/50 bg-accent/10 text-fg" : "border-line text-muted",
+                  s.id === shownColumn ? "border-accent/50 bg-accent/10 font-medium text-fg" : "border-line bg-panel text-muted",
                 )}
               >
                 <StatusIcon status={s.id} size={13} />
@@ -2330,14 +2331,14 @@ function TaskBoard({
                   }}
                   onDrop={(e) => onDrop(e, s.id)}
                   className={clsx(
-                    "flex h-full w-10 min-w-10 shrink-0 flex-col rounded-xl border bg-panel/50 transition-colors",
-                    dropTarget?.status === s.id ? "border-accent/40 bg-accent/[0.03]" : "border-line/70",
+                    "flex h-full w-10 min-w-10 shrink-0 flex-col rounded-2xl bg-lane ring-1 ring-inset transition-[background-color,box-shadow]",
+                    dropTarget?.status === s.id ? "bg-accent/[0.06] ring-accent/40" : "ring-line/60",
                   )}
                 >
                   <button
                     title={`Show the backlog (${shown[s.id].length})`}
                     onClick={toggleBacklog}
-                    className="flex h-full w-full flex-col items-center gap-2 rounded-xl pt-3 text-muted transition-colors hover:bg-raised/40 hover:text-fg"
+                    className="flex h-full w-full flex-col items-center gap-2 rounded-2xl pt-3 text-muted transition-colors hover:bg-hover hover:text-fg"
                   >
                     <ChevronRight size={14} className="text-faint" />
                     <StatusIcon status={s.id} />
@@ -2354,14 +2355,14 @@ function TaskBoard({
                   }}
                   onDrop={(e) => onDrop(e, s.id)}
                   className={clsx(
-                    "flex h-full w-[240px] min-w-[240px] flex-1 flex-col rounded-xl border bg-panel/50 transition-colors",
-                    dropTarget?.status === s.id ? "border-accent/40 bg-accent/[0.03]" : "border-line/70",
+                    "flex h-full w-[240px] min-w-[240px] flex-1 flex-col rounded-2xl bg-lane ring-1 ring-inset transition-[background-color,box-shadow]",
+                    dropTarget?.status === s.id ? "bg-accent/[0.06] ring-accent/40" : "ring-line/60",
                   )}
                 >
-                  <div className="flex items-center gap-2 px-3 pt-3 pb-[7px]">
+                  <div className="flex items-center gap-2 px-3 pt-3 pb-2">
                     <StatusIcon status={s.id} />
-                    <span className="text-[12.5px] font-medium">{s.label}</span>
-                    <span className="text-[12px] text-faint">{shown[s.id].length}</span>
+                    <span className="text-[12.5px] font-semibold tracking-tight">{s.label}</span>
+                    <span className="rounded-md bg-tint-strong px-1.5 text-[11px] leading-[18px] font-medium text-muted tabular-nums">{shown[s.id].length}</span>
                     <div className="ml-auto flex items-center gap-0.5">
                       {canAdd && CAN_ADD.has(s.id) && (
                         <IconButton className="h-6 w-6" title={`New task in ${s.label}`} onClick={() => setNewIn(s.id)}>
@@ -2475,7 +2476,7 @@ export function ProfileBoard({ profile }: { profile: string }) {
           <MenuButton />
           <ProfileAvatar name={profile} />
           <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{profile}</h1>
+            <h1 className="shrink-0 text-[15px] font-semibold tracking-tight narrow:min-w-0 narrow:truncate">{profile}</h1>
             <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
               {hosts.length > 1 && <span className="mr-1.5 text-muted">{on.map((h) => h.name).join(", ")} ·</span>}
               {projects.length ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : "No projects yet"}
@@ -2497,8 +2498,8 @@ export function ProfileAvatar({ name, className, muted }: { name: string; classN
   return (
     <span
       className={clsx(
-        "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded text-[10px] font-bold uppercase",
-        muted ? "bg-white/[0.06] text-muted" : "bg-accent/20 text-accent",
+        "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold uppercase",
+        muted ? "bg-tint-strong text-muted" : "bg-accent/15 text-accent",
         className,
       )}
     >

@@ -1,9 +1,21 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#0b0b0e" />
+    <meta name="theme-color" content="#131316" />
+    <!-- The saved appearance (see theme.ts) goes on before the styles load, so a light board doesn't flash dark. -->
+    <script>
+      (function () {
+        var t = null;
+        try {
+          t = localStorage.getItem("ia.theme");
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        document.documentElement.dataset.theme = t;
+        if (t === "light") document.querySelector('meta[name="theme-color"]').content = "#f5f5f7";
+      })();
+    </script>
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <title>Huntaway</title>
   </head>

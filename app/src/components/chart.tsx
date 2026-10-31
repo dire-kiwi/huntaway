@@ -14,7 +14,7 @@ export function useTip() {
   const flip = tip ? tip.x > window.innerWidth - 300 : false;
   const node = tip && (
     <div
-      className="pointer-events-none fixed z-50 max-w-xs rounded-md border border-line-strong bg-raised px-2.5 py-1.5 text-[12px] shadow-xl shadow-black/40"
+      className="pointer-events-none fixed z-50 max-w-xs rounded-md border border-line-strong bg-raised px-2.5 py-1.5 text-[12px] shadow-xl shadow-shade"
       style={{
         left: flip ? tip.x - 12 : tip.x + 14,
         top: tip.y + 14,

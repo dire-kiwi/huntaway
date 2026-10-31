@@ -96,7 +96,7 @@ export function AttachButton({ draft, label, className }: { draft: AttachmentDra
         onClick={() => input.current?.click()}
         title="Attach files (or paste or drop them)"
         className={clsx(
-          "flex h-7 items-center justify-center gap-1.5 rounded-md text-faint hover:bg-white/5 hover:text-fg",
+          "flex h-7 items-center justify-center gap-1.5 rounded-md text-faint hover:bg-hover hover:text-fg",
           label ? "px-2 text-[12px]" : "w-7",
           className,
         )}
@@ -140,7 +140,7 @@ export function DraftAttachments({ draft, hostId, className }: { draft: Attachme
           ))}
         </div>
       )}
-      {draft.err && <div className="mt-1 text-xs text-red-400">{draft.err}</div>}
+      {draft.err && <div className="mt-1 text-xs text-danger">{draft.err}</div>}
     </div>
   );
 }
@@ -224,7 +224,7 @@ function Lightbox({ url, name, onClose }: { url: string; name: string; onClose: 
   }, [onClose]);
   return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-2 bg-black/80 p-6"
+      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-2 bg-scrim p-6"
       onMouseDown={(e) => (e.stopPropagation(), onClose())}
     >
       <img src={url} alt={name} className="max-h-[90vh] max-w-[90vw] rounded-md object-contain shadow-2xl" />

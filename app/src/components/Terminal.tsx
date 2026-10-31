@@ -6,6 +6,7 @@ import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { Loader2, RotateCcw, Square, SquareTerminal, TerminalSquare, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, terminalWsUrl, type Task, type TerminalStatus, type TerminalTool } from "../api";
+import { onThemeChange, resolvedTheme, type ResolvedTheme } from "../theme";
 import { Button, copyText } from "./ui";
 
 /**
@@ -19,28 +20,54 @@ import { Button, copyText } from "./ui";
  * processed it, and the server pauses while too much is unacknowledged.
  */
 
-const THEME: ITheme = {
-  background: "#0b0b0e",
-  foreground: "#e6e6ec",
-  cursor: "#c4c4f8",
-  cursorAccent: "#0b0b0e",
-  selectionBackground: "#7c7cf866",
-  black: "#1c1c25",
-  red: "#f87171",
-  green: "#4ade80",
-  yellow: "#facc15",
-  blue: "#60a5fa",
-  magenta: "#c084fc",
-  cyan: "#22d3ee",
-  white: "#d4d4dc",
-  brightBlack: "#6b6b7b",
-  brightRed: "#fca5a5",
-  brightGreen: "#86efac",
-  brightYellow: "#fde68a",
-  brightBlue: "#93c5fd",
-  brightMagenta: "#d8b4fe",
-  brightCyan: "#67e8f9",
-  brightWhite: "#f4f4f8",
+/** The terminal's colours in each of the board's themes (see theme.ts): the dark one on the board's code background. */
+const THEMES: Record<ResolvedTheme, ITheme> = {
+  dark: {
+    background: "#0f0f12",
+    foreground: "#ededf0",
+    cursor: "#c4c4f8",
+    cursorAccent: "#0f0f12",
+    selectionBackground: "#8b8cf966",
+    black: "#27272c",
+    red: "#f87171",
+    green: "#4ade80",
+    yellow: "#facc15",
+    blue: "#60a5fa",
+    magenta: "#c084fc",
+    cyan: "#22d3ee",
+    white: "#d4d4dc",
+    brightBlack: "#6f6f7b",
+    brightRed: "#fca5a5",
+    brightGreen: "#86efac",
+    brightYellow: "#fde68a",
+    brightBlue: "#93c5fd",
+    brightMagenta: "#d8b4fe",
+    brightCyan: "#67e8f9",
+    brightWhite: "#f4f4f8",
+  },
+  light: {
+    background: "#ffffff",
+    foreground: "#1a1a20",
+    cursor: "#4f46e5",
+    cursorAccent: "#ffffff",
+    selectionBackground: "#5553d844",
+    black: "#1a1a20",
+    red: "#c62828",
+    green: "#1b7f3b",
+    yellow: "#a16207",
+    blue: "#1d4ed8",
+    magenta: "#7e22ce",
+    cyan: "#0e7490",
+    white: "#c9c9d3",
+    brightBlack: "#62626e",
+    brightRed: "#dc2626",
+    brightGreen: "#15803d",
+    brightYellow: "#b45309",
+    brightBlue: "#2563eb",
+    brightMagenta: "#9333ea",
+    brightCyan: "#0891b2",
+    brightWhite: "#f5f5f7",
+  },
 };
 
 const FONT_FAMILY = '"JetBrains Mono Variable", "Symbols Nerd Font Mono", monospace';
@@ -121,8 +148,9 @@ export function TerminalPane({ task, active, tool, onClose }: { task: Task; acti
           rightClickSelectsWord: true,
           // tmux keeps the history.
           scrollback: 1000,
-          theme: THEME,
+          theme: THEMES[resolvedTheme()],
         });
+        cleanups.push(onThemeChange(() => (term.options.theme = THEMES[resolvedTheme()])));
         const fit = new FitAddon();
         term.loadAddon(fit);
         term.loadAddon(new WebLinksAddon());

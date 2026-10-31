@@ -80,11 +80,11 @@ export function App() {
       {narrow ? (
         // A drawer over the page, which stays mounted closed so its menus and dialogs, and its scroll, stay as they were.
         <>
-          {drawer.open && <div className="absolute inset-0 z-40 bg-black/60" onClick={() => drawer.setOpen(false)} />}
+          {drawer.open && <div className="absolute inset-0 z-40 bg-scrim" onClick={() => drawer.setOpen(false)} />}
           <div
             inert={!drawer.open}
             className={clsx(
-              "absolute inset-y-0 left-0 z-40 w-[min(85%,300px)] shadow-2xl shadow-black/50 transition-[translate,visibility] duration-200",
+              "absolute inset-y-0 left-0 z-40 w-[min(85%,300px)] shadow-2xl shadow-shade transition-[translate,visibility] duration-200",
               !drawer.open && "invisible -translate-x-full",
             )}
           >

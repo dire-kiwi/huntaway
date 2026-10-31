@@ -231,7 +231,7 @@ export function Analytics() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
         <MenuButton />
-        <h1 className="text-[14px] font-semibold">Analytics</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight">Analytics</h1>
         <div className="no-drag flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5">
           {(["report", "calendar", "disk"] as const).map((t) => (
             <button
@@ -349,9 +349,9 @@ export function Analytics() {
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto max-w-6xl space-y-6 p-6">
-              {error && <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-[12.5px] text-red-300">{error}</div>}
+              {error && <div className="rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
               {data?.errors.map((e) => (
-                <div key={e} className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12.5px] text-amber-200">
+                <div key={e} className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
                   {e}
                 </div>
               ))}
@@ -459,7 +459,7 @@ function DailyChart({ view }: { view: View }) {
     <div className="rounded-lg border border-line bg-panel/60 p-4">
       <div className="relative h-52 pl-9">
         {ticks.map((h) => (
-          <div key={h} className="absolute right-0 left-9 border-t border-white/[0.06]" style={{ bottom: `${(h * HOUR * 100) / top}%` }}>
+          <div key={h} className="absolute right-0 left-9 border-t border-line" style={{ bottom: `${(h * HOUR * 100) / top}%` }}>
             <span className="absolute -top-2 -left-9 w-7 text-right text-[10.5px] text-faint tabular-nums">{h}h</span>
           </div>
         ))}
@@ -470,7 +470,7 @@ function DailyChart({ view }: { view: View }) {
             return (
               <div
                 key={d}
-                className="group flex h-full min-w-0 flex-1 cursor-default flex-col-reverse gap-[2px] rounded-sm hover:bg-white/[0.03]"
+                className="group flex h-full min-w-0 flex-1 cursor-default flex-col-reverse gap-[2px] rounded-sm hover:bg-tint"
                 {...bind(() => (
                   <>
                     <div className="mb-1 font-medium">{new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}</div>
@@ -798,7 +798,7 @@ function HourLines({ hours, startH, span }: { hours: number[]; startH: number; s
   return (
     <>
       {hours.map((h) => (
-        <div key={h} className="pointer-events-none absolute -top-1 -bottom-1 border-l border-white/[0.05]" style={{ left: `${((h - startH) * 100) / span}%` }} />
+        <div key={h} className="pointer-events-none absolute -top-1 -bottom-1 border-l border-line" style={{ left: `${((h - startH) * 100) / span}%` }} />
       ))}
     </>
   );
@@ -883,7 +883,7 @@ function MonthGrid({ view, anchor, selected, onSelect }: { view: View; anchor: n
                 {info && info.total > 0 && (
                   <>
                     {/* How full the day was, against the busiest day shown. */}
-                    <span className="flex h-1 w-full gap-[2px] overflow-hidden rounded-full bg-white/[0.05]" style={{ width: `${(info.total * 100) / max}%` }}>
+                    <span className="flex h-1 w-full gap-[2px] overflow-hidden rounded-full bg-hover" style={{ width: `${(info.total * 100) / max}%` }}>
                       {top.map(([pid, ms]) => (
                         <span key={pid} className="h-full" style={{ flex: ms, background: a.projects[pid]?.color ?? NEUTRAL }} />
                       ))}
@@ -971,9 +971,9 @@ function WeekGrid({ view, from, selected, onSelect }: { view: View; from: number
           {days.map((d) => {
             const k = dayKey(d);
             return (
-              <div key={d} className={clsx("relative border-l border-line", selected === d && "bg-white/[0.015]")} onClick={() => onSelect(d)}>
+              <div key={d} className={clsx("relative border-l border-line", selected === d && "bg-tint")} onClick={() => onSelect(d)}>
                 {Array.from({ length: 24 }, (_, h) => (
-                  <div key={h} className="absolute right-0 left-0 border-t border-white/[0.04]" style={{ top: h * HOUR_PX }} />
+                  <div key={h} className="absolute right-0 left-0 border-t border-line" style={{ top: h * HOUR_PX }} />
                 ))}
                 {blocks
                   .filter((b) => dayKey(b.start) === k)

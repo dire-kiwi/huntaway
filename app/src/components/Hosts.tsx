@@ -86,7 +86,7 @@ function ScratchHostRow() {
     }
   };
   return (
-    <div className="mt-3 rounded-xl border border-line px-4 py-3">
+    <div className="mt-3 rounded-xl border border-line bg-panel px-4 py-3">
       <Field label="Scratch task host" hint="This board can't run agents, so new scratch tasks (which are in no project) run on this host.">
         <select value={picked} onChange={(e) => save(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
           <option value="">Automatic (first available host)</option>
@@ -98,7 +98,7 @@ function ScratchHostRow() {
           {picked && !hosts.some((h) => h.id === picked) && <option value={picked}>Unavailable host</option>}
         </select>
       </Field>
-      {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
+      {err && <div className="mt-2 text-xs text-danger">{err}</div>}
     </div>
   );
 }
@@ -160,7 +160,7 @@ export function HostVersion({ host }: { host: Host }) {
         </span>
       )}
       {compat !== "ok" && host.connected && (
-        <span className="rounded bg-st-attention/15 px-1.5 py-px text-amber-300" title={COMPAT_BADGE[compat].hint}>
+        <span className="rounded bg-st-attention/15 px-1.5 py-px text-warning" title={COMPAT_BADGE[compat].hint}>
           {COMPAT_BADGE[compat].label}
         </span>
       )}
@@ -174,7 +174,7 @@ export function HostVersion({ host }: { host: Host }) {
         <span>update it by hand once (git pull in its checkout, then Rebuild &amp; restart on its page)</span>
       )}
       {phase && <span className="text-st-progress">{phase.replace("_", " ")}…</span>}
-      {err && <span className="text-red-400">{err}</span>}
+      {err && <span className="text-danger">{err}</span>}
     </div>
   );
 }
@@ -183,7 +183,7 @@ function HostRow({ host }: { host: Host }) {
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(host.name);
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-line px-4 py-3">
+    <div className="flex items-center gap-3 rounded-xl border border-line bg-panel px-4 py-3">
       <Server size={15} className="shrink-0 text-muted" />
       <div className="min-w-0 flex-1">
         {renaming ? (
@@ -201,7 +201,7 @@ function HostRow({ host }: { host: Host }) {
         ) : (
           <div className="flex items-center gap-2 text-[13px] font-medium">
             {host.name}
-            <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-emerald-400" : "bg-red-400")} title={host.connected ? "Connected" : "Offline"} />
+            <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-success" : "bg-danger")} title={host.connected ? "Connected" : "Offline"} />
           </div>
         )}
         <div className="truncate text-[11.5px] text-faint">
@@ -309,7 +309,7 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
         <CopyLine value={line} />
       </Field>
       <ModalFooter className="space-y-4">
-        {err && <div className="rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{err}</div>}
+        {err && <div className="rounded bg-danger/10 p-2 text-[12px] whitespace-pre-wrap text-danger">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -352,7 +352,7 @@ function AddUrlHost({ onClose }: { onClose: () => void }) {
         <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono text-[12px]" />
       </Field>
       <ModalFooter className="space-y-4">
-        {err && <div className="text-xs text-red-400">{err}</div>}
+        {err && <div className="text-xs text-danger">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -435,7 +435,7 @@ export function ProfilesPanel() {
           const rows = profiles.filter((p) => p.name === name);
           const missing = online.filter((h) => !rows.some((p) => p.host_id === h.id));
           return (
-            <div key={name} className="rounded-xl border border-line">
+            <div key={name} className="rounded-xl border border-line bg-panel">
               <div className="border-b border-line px-4 py-2.5 text-[13px] font-medium">{name}</div>
               {rows.map((p) => (
                 <div key={`${p.host_id}:${p.id}`} className="flex items-center gap-3 px-4 py-2.5">
@@ -617,7 +617,7 @@ export function ProfileForm({
         </Field>
       )}
       <ModalFooter className="space-y-3">
-        {err && <div className="text-xs text-red-400">{err}</div>}
+        {err && <div className="text-xs text-danger">{err}</div>}
         <div className="flex justify-end gap-2">
           {onCancel && (
             <Button variant="ghost" onClick={onCancel}>
@@ -801,8 +801,8 @@ export function CopyLoginModal({ from, onClose }: { from: ClaudeConfig | Profile
           )
         )}
         <ModalFooter className="space-y-4">
-          {err && <div className="rounded bg-red-500/10 p-2 text-red-300">{err}</div>}
-          {done && <div className="rounded bg-emerald-500/10 p-2 text-emerald-300">Copied {done.join(", ")}.</div>}
+          {err && <div className="rounded bg-danger/10 p-2 text-danger">{err}</div>}
+          {done && <div className="rounded bg-success/10 p-2 text-success">Copied {done.join(", ")}.</div>}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               {done ? "Close" : "Cancel"}
@@ -844,9 +844,9 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
       setErr((e as Error).message);
     }
   };
-  if (!settings) return err ? <div className="text-xs text-red-400">{err}</div> : null;
+  if (!settings) return err ? <div className="text-xs text-danger">{err}</div> : null;
   return (
-    <div className="rounded-xl border border-line px-4 py-3">
+    <div className="rounded-xl border border-line bg-panel px-4 py-3">
       {showName && <div className="mb-2 text-[12.5px] font-medium">{host.name}</div>}
       <div className={clsx("grid gap-3", hostSupports(host, 2) ? "grid-cols-3" : "grid-cols-2")}>
         <Field label="Model">
@@ -907,7 +907,7 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           </Field>
         )}
       </div>
-      {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
+      {err && <div className="mt-2 text-xs text-danger">{err}</div>}
     </div>
   );
 }
@@ -944,7 +944,7 @@ export function TerminalToolsRow({ host }: { host: Host }) {
   };
   if (!loaded) return null;
   return (
-    <div className="space-y-2 rounded-xl border border-line px-4 py-3">
+    <div className="space-y-2 rounded-xl border border-line bg-panel px-4 py-3">
       {rows.length === 0 && <div className="text-[12.5px] text-faint">No tools yet.</div>}
       {rows.map((t, i) => (
         <div key={t.id || `new-${i}`} className="flex items-center gap-2">
@@ -980,7 +980,7 @@ export function TerminalToolsRow({ host }: { host: Host }) {
           </>
         )}
       </div>
-      {err && <div className="text-xs text-red-400">{err}</div>}
+      {err && <div className="text-xs text-danger">{err}</div>}
     </div>
   );
 }

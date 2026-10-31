@@ -6,22 +6,24 @@
  */
 :root {
   color-scheme: dark;
-  --bg: #0b0b0e;
-  --panel: #111116;
-  --panel-2: #16161d;
-  --raised: #1c1c25;
-  --line: #24242e;
-  --line-strong: #33333f;
-  --fg: #e6e6ec;
-  --heading: #f4f4f8;
-  --muted: #9a9aab;
-  --faint: #6b6b7b;
-  --accent: #7c7cf8;
+  --bg: #131316;
+  --panel: #18181b;
+  --panel-2: #1d1d21;
+  --raised: #27272c;
+  --line: #2a2a30;
+  --line-strong: #3b3b43;
+  --fg: #ededf0;
+  --heading: #ededf0;
+  --muted: #9c9ca7;
+  --faint: #6f6f7b;
+  --accent: #8b8cf9;
+  --code: #0f0f12;
+  --tint: rgb(255 255 255 / 0.12);
   --ok: #34d399;
   --warn: #f59e0b;
   --danger: #f87171;
   --info: #60a5fa;
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 
@@ -32,7 +34,7 @@
 }
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2c2c38 transparent;
+  scrollbar-color: var(--line-strong) transparent;
 }
 ::selection {
   background: color-mix(in srgb, var(--accent) 40%, transparent);
@@ -119,8 +121,8 @@ samp {
 :not(pre) > code {
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgb(255 255 255 / 0.06);
-  color: #e9e3ff;
+  background: var(--tint);
+  color: var(--heading);
 }
 kbd {
   padding: 1px 5px;
@@ -133,8 +135,8 @@ pre {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #0e0e13;
-  color: #dcdce6;
+  background: var(--code);
+  color: var(--fg);
   font-size: 13px;
   line-height: 1.55;
 }

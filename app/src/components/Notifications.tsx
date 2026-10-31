@@ -13,7 +13,7 @@ import {
   type NotifySettings,
 } from "../notifications";
 import { chime, notifyPermission, showNotification, unlockSound } from "../notifier";
-import { Button, Toggle } from "./ui";
+import { Button, segment, SEGMENTED, Toggle } from "./ui";
 
 /** Settings → Notifications: how this browser tells the user that a task needs them. */
 export function NotificationsPanel() {
@@ -59,13 +59,13 @@ export function NotificationsPanel() {
   return (
     <section>
       <h2 className="mb-3 text-[13px] font-semibold">Notifications</h2>
-      <div className="space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted">
+      <div className="space-y-4 rounded-xl border border-line bg-panel p-4 text-[12.5px] text-muted">
         <p>
           Tell me when a task needs me, from this browser, while the board is open in it. One of its tabs or windows notifies, and none do for the
           task open in a focused window. These settings are kept in this browser.
         </p>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex w-fit items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5" role="radiogroup" aria-label="Notify with">
+          <div className={clsx(SEGMENTED, "w-fit")} role="radiogroup" aria-label="Notify with">
             {NOTIFY_MODES.map((m) => (
               <button
                 key={m.id}
@@ -73,7 +73,7 @@ export function NotificationsPanel() {
                 role="radio"
                 aria-checked={settings.mode === m.id}
                 onClick={() => pick(m.id)}
-                className={clsx("rounded-md px-2.5 py-1 text-[12px]", settings.mode === m.id ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                className={clsx(segment(settings.mode === m.id), "h-7 px-3 text-[12px]")}
               >
                 {m.label}
               </button>
@@ -86,7 +86,7 @@ export function NotificationsPanel() {
           )}
         </div>
         {showsNotifications(settings.mode) && (
-          <div className={clsx("flex items-center gap-3 rounded-lg px-3 py-2", unavailable ? "bg-amber-400/10 text-amber-200" : "bg-white/5")}>
+          <div className={clsx("flex items-center gap-3 rounded-lg px-3 py-2", unavailable ? "bg-warning/10 text-warning" : "bg-hover")}>
             <div className="min-w-0 flex-1">
               <PermissionNote permission={permission} />
             </div>

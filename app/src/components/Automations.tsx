@@ -42,9 +42,9 @@ const OP_LABELS: Record<FilterOp, string> = {
 const SIMPLE_FILTERS = ["event", "action", "labels"] as const;
 
 const STATUS_STYLE: Record<AutomationRunStatus, string> = {
-  ok: "text-emerald-400",
-  failed: "text-red-400",
-  rejected: "text-red-400",
+  ok: "text-success",
+  failed: "text-danger",
+  rejected: "text-danger",
   running: "text-st-progress",
   pending: "text-st-progress",
   coalesced: "text-muted",
@@ -168,7 +168,7 @@ export function ProjectAutomations({ project }: { project: Project }) {
         </div>
       )}
       {list && !list.length && <div className="text-[12px] text-faint">No automations yet.</div>}
-      {err && <div className="text-xs text-red-400">{err}</div>}
+      {err && <div className="text-xs text-danger">{err}</div>}
       {editing && (
         <AutomationEditor
           project={project}
@@ -301,7 +301,7 @@ function RunHistory({ hostId, automation }: { hostId: string; automation: Automa
       if (h === hostId && id === automation.id) load();
     });
   }, [load, hostId, automation.id]);
-  if (err) return <div className="mt-2 text-xs text-red-400">{err}</div>;
+  if (err) return <div className="mt-2 text-xs text-danger">{err}</div>;
   if (!runs) return null;
   if (!runs.length) return <div className="mt-2 pl-4 text-[11.5px] text-faint">Nothing yet.</div>;
   return (
@@ -747,7 +747,7 @@ function AutomationEditor({
           )}
         </div>
         <ModalFooter className="space-y-2">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
             <Button variant="ghost" onClick={onClose}>
@@ -845,7 +845,7 @@ function WebhookFields({
         ) : (
           <div className="text-[12px] text-faint">Shown here once it's saved.</div>
         )}
-        {rotateErr && <div className="text-xs text-red-400">{rotateErr}</div>}
+        {rotateErr && <div className="text-xs text-danger">{rotateErr}</div>}
       </Field>
       <Field label="This host's public address" hint="For every webhook on this host. Where a tunnel or the connection broker reaches it from outside.">
         <div className="flex items-center gap-2">
@@ -873,7 +873,7 @@ function WebhookFields({
             </Button>
           )}
         </div>
-        {addressErr && <div className="text-xs text-red-400">{addressErr}</div>}
+        {addressErr && <div className="text-xs text-danger">{addressErr}</div>}
       </Field>
       <Field
         label="Secret"
@@ -1027,7 +1027,7 @@ function TestDelivery({ hostId, automation, onClose }: { hostId: string; automat
           </div>
         )}
         <ModalFooter className="space-y-3">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to send</span>
             <Button variant="ghost" onClick={onClose}>

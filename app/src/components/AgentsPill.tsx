@@ -53,7 +53,7 @@ export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal
         onClick={() => setOpen(!open)}
         title="Subagents in this thread"
         className={clsx(
-          "flex h-7 items-center gap-1.5 rounded-lg border px-2 text-[12px] hover:bg-white/5",
+          "flex h-7 items-center gap-1.5 rounded-lg border px-2 text-[12px] hover:bg-hover",
           running ? "border-st-progress/40 text-fg" : "border-line text-muted",
         )}
       >
@@ -76,7 +76,7 @@ export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal
                 onReveal?.();
                 show(task.id, s.id);
               }}
-              className={clsx("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-white/5", viewing === s.id && "bg-white/5")}
+              className={clsx("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover", viewing === s.id && "bg-hover")}
             >
               <Bot size={13} className="shrink-0 text-muted" />
               <span className="min-w-0 flex-1">

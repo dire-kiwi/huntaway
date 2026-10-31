@@ -853,7 +853,7 @@ function GitView({ task }: { task: Task }) {
   if (!status)
     return shell(
       <div className="flex h-full items-center justify-center font-sans text-[13px] text-faint">
-        {loadErr ? <span className="text-red-400">Couldn't read the repository: {loadErr}</span> : <Loader2 size={16} className="animate-spin" />}
+        {loadErr ? <span className="text-danger">Couldn't read the repository: {loadErr}</span> : <Loader2 size={16} className="animate-spin" />}
       </div>,
     );
   if (!status.available) return shell(<div className="p-5 font-sans text-[13px] text-muted">Changes unavailable: {status.reason}</div>);
@@ -881,8 +881,8 @@ function GitView({ task }: { task: Task }) {
     <>
       {(task.running || status.state || loadErr) && (
         <div className="shrink-0 border-b border-line px-3 py-1 text-[11.5px]">
-          {loadErr && <div className="text-red-400">Couldn't refresh: {loadErr}</div>}
-          {status.state && <div className="text-amber-300">The repository is {status.state}: finish or abort that in the terminal.</div>}
+          {loadErr && <div className="text-danger">Couldn't refresh: {loadErr}</div>}
+          {status.state && <div className="text-warning">The repository is {status.state}: finish or abort that in the terminal.</div>}
           {task.running && <div className="text-faint">The agent is working in this folder: changes made here may clash with its own.</div>}
         </div>
       )}
@@ -893,7 +893,7 @@ function GitView({ task }: { task: Task }) {
             1,
             <div className="px-1.5" title={status.dir}>
               <div className="truncate">
-                <span className="text-emerald-400">{repoName}</span>
+                <span className="text-success">{repoName}</span>
                 <span className="text-faint"> → </span>
                 <span className="text-fg">{status.branch ?? (status.head ? `(detached ${short(status.head)})` : "(no commits)")}</span>
               </div>
@@ -937,7 +937,7 @@ function GitView({ task }: { task: Task }) {
               }}
               empty={status.truncated ? "" : "No changes"}
             />,
-            { grow: grow("files", "flex-[3]", "flex-[2]"), right: status.truncated ? <span className="text-amber-300">first {files.length}</span> : files.length ? <span>{files.length}</span> : null },
+            { grow: grow("files", "flex-[3]", "flex-[2]"), right: status.truncated ? <span className="text-warning">first {files.length}</span> : files.length ? <span>{files.length}</span> : null },
           )}
           {sidePanel(
             "commits",
@@ -967,7 +967,7 @@ function GitView({ task }: { task: Task }) {
               }}
               render={(c, i) => (
                 <div className={clsx("flex gap-2 px-1.5", status.merge_base && !c.on_branch && i > 0 && commits[i - 1].on_branch && "border-t border-line")} title={`${c.subject}\n${c.author}, ${new Date(c.time * 1000).toLocaleString()}`}>
-                  <span className={clsx("shrink-0", c.unpushed ? "text-red-400" : status.merge_base && !c.on_branch ? "text-emerald-500" : "text-amber-300")}>{short(c.sha)}</span>
+                  <span className={clsx("shrink-0", c.unpushed ? "text-danger" : status.merge_base && !c.on_branch ? "text-success" : "text-warning")}>{short(c.sha)}</span>
                   <span className={clsx("min-w-0 flex-1 truncate", status.merge_base && !c.on_branch ? "text-faint" : "text-fg")}>{c.subject}</span>
                   <span className="shrink-0 text-faint">{ago(c.time)}</span>
                 </div>
@@ -1149,10 +1149,10 @@ function Panel({
   return (
     <section
       onMouseDown={onMouseDown}
-      className={clsx("relative flex min-h-[38px] min-w-0 flex-col rounded border", active ? (focused ? "border-emerald-400/80" : "border-emerald-400/45") : "border-line-strong", className)}
+      className={clsx("relative flex min-h-[38px] min-w-0 flex-col rounded border", active ? (focused ? "border-success/80" : "border-success/45") : "border-line-strong", className)}
     >
       <div className="pointer-events-none absolute -top-[9px] right-2 left-2 flex items-center justify-between gap-2 text-[11px] leading-4">
-        <span className={clsx("truncate bg-bg px-1", active ? "font-semibold text-emerald-300" : "text-muted")}>{title}</span>
+        <span className={clsx("truncate bg-bg px-1", active ? "font-semibold text-success" : "text-muted")}>{title}</span>
         {right && <span className="pointer-events-auto shrink-0 bg-bg px-1 text-faint">{right}</span>}
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto pt-1.5 pb-0.5">
@@ -1204,7 +1204,7 @@ function List<T>({
             e.preventDefault();
             onMenu(t, e.clientX, e.clientY);
           }}
-          className={clsx("cursor-default whitespace-nowrap", i === selected && (active ? "bg-accent/25" : "bg-white/[0.06]"))}
+          className={clsx("cursor-default whitespace-nowrap", i === selected && (active ? "bg-accent/25" : "bg-hover"))}
         >
           {render(t, i)}
         </div>
@@ -1241,7 +1241,7 @@ function FilesList({
       {rows.map((r, i) => {
         const staged = r.files.filter(hasStaged).length;
         const unstaged = r.files.filter(hasUnstaged).length;
-        const tone = r.files.some(conflicted) ? "text-amber-400" : !unstaged ? "text-emerald-400" : staged ? "text-amber-200" : "text-red-300";
+        const tone = r.files.some(conflicted) ? "text-warning" : !unstaged ? "text-success" : staged ? "text-warning" : "text-danger";
         return (
           <div
             key={r.key}
@@ -1253,7 +1253,7 @@ function FilesList({
               onMenu(r, e.clientX, e.clientY);
             }}
             title={r.file?.orig_path ? `${r.file.orig_path} → ${r.file.path}` : r.key}
-            className={clsx("flex cursor-default items-center whitespace-pre pr-1.5", i === selected && (active ? "bg-accent/25" : "bg-white/[0.06]"))}
+            className={clsx("flex cursor-default items-center whitespace-pre pr-1.5", i === selected && (active ? "bg-accent/25" : "bg-hover"))}
             style={{ paddingLeft: 6 + r.depth * 14 }}
           >
             {r.file ? (
@@ -1262,10 +1262,10 @@ function FilesList({
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => onToggle(r)}
                 title={unstaged ? "Stage" : "Unstage"}
-                className="mr-1.5 shrink-0 rounded hover:bg-white/10"
+                className="mr-1.5 shrink-0 rounded hover:bg-tint-strong"
               >
-                <span className={untracked(r.file) || conflicted(r.file) ? "text-red-400" : "text-emerald-400"}>{r.file.x}</span>
-                <span className="text-red-400">{r.file.y}</span>
+                <span className={untracked(r.file) || conflicted(r.file) ? "text-danger" : "text-success"}>{r.file.x}</span>
+                <span className="text-danger">{r.file.y}</span>
               </button>
             ) : (
               <span className="mr-1.5 w-[2ch] shrink-0 text-center text-faint">{collapsed.has(r.key) ? "▶" : "▼"}</span>
@@ -1282,7 +1282,7 @@ function FilesList({
   );
 }
 
-const LINE_TONE = { "+": "text-emerald-300 bg-emerald-500/[0.09]", "-": "text-red-300 bg-red-500/[0.09]", " ": "text-[#b4b4c4]" };
+const LINE_TONE = { "+": "text-success bg-success/[0.09]", "-": "text-danger bg-danger/[0.09]", " ": "text-fg-2" };
 
 /** A file's diff to stage lines from: a cursor, the chosen lines, and buttons on each hunk. */
 function StagingDiff({
@@ -1321,7 +1321,7 @@ function StagingDiff({
                     tabIndex={-1}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => onHunk(r.hunk, a)}
-                    className={clsx("rounded border px-1.5 text-[10.5px] leading-4 capitalize", a === "discard" ? "border-red-500/30 text-red-300 hover:bg-red-500/15" : "border-line-strong text-muted hover:bg-white/10 hover:text-fg")}
+                    className={clsx("rounded border px-1.5 text-[10.5px] leading-4 capitalize", a === "discard" ? "border-danger/30 text-danger hover:bg-danger/15" : "border-line-strong text-muted hover:bg-tint-strong hover:text-fg")}
                   >
                     {a} hunk
                   </button>
@@ -1372,9 +1372,9 @@ function RawDiff({ file }: { file: FileDiff }) {
   return (
     <div className="w-max min-w-full px-1.5 whitespace-pre">
       {file.binary && <div className="text-muted">Binary file: stage or discard it whole from the files panel.</div>}
-      {file.combined && <div className="mb-1 text-amber-300">A conflict: resolve it in the file, then stage it from the files panel.</div>}
+      {file.combined && <div className="mb-1 text-warning">A conflict: resolve it in the file, then stage it from the files panel.</div>}
       {lines.map((l, i) => (
-        <div key={i} className={clsx(/^(\+\+|\+ | \+)/.test(l) ? "text-emerald-300" : /^(--|- | -)/.test(l) ? "text-red-300" : /^@@/.test(l) ? "text-accent" : "text-[#b4b4c4]")}>
+        <div key={i} className={clsx(/^(\+\+|\+ | \+)/.test(l) ? "text-success" : /^(--|- | -)/.test(l) ? "text-danger" : /^@@/.test(l) ? "text-accent" : "text-fg-2")}>
           {l || " "}
         </div>
       ))}
@@ -1395,14 +1395,14 @@ function PatchView({ files, head, empty }: { files: FileDiff[]; head?: ReactNode
       {files.length > 1 && (
         <div className="mb-2 px-1.5">
           <div className="text-faint">
-            {files.length} files changed, <span className="text-emerald-400">+{files.reduce((a, f) => a + f.adds, 0)}</span>{" "}
-            <span className="text-red-400">−{files.reduce((a, f) => a + f.dels, 0)}</span>
+            {files.length} files changed, <span className="text-success">+{files.reduce((a, f) => a + f.adds, 0)}</span>{" "}
+            <span className="text-danger">−{files.reduce((a, f) => a + f.dels, 0)}</span>
           </div>
           {files.map((f, i) => (
-            <div key={i} className="flex cursor-pointer gap-2 hover:bg-white/5" onClick={() => refs.current[i]?.scrollIntoView({ block: "start" })}>
+            <div key={i} className="flex cursor-pointer gap-2 hover:bg-hover" onClick={() => refs.current[i]?.scrollIntoView({ block: "start" })}>
               <span className="min-w-0 flex-1 truncate text-muted">{fileLabel(f)}</span>
-              <span className="shrink-0 text-emerald-400">+{f.adds}</span>
-              <span className="w-[6ch] shrink-0 text-red-400">−{f.dels}</span>
+              <span className="shrink-0 text-success">+{f.adds}</span>
+              <span className="w-[6ch] shrink-0 text-danger">−{f.dels}</span>
             </div>
           ))}
         </div>
@@ -1419,8 +1419,8 @@ function PatchView({ files, head, empty }: { files: FileDiff[]; head?: ReactNode
             >
               <span className="text-faint">{fold ? "▶" : "▼"}</span>
               <span className="min-w-0 flex-1 truncate text-fg">{fileLabel(f)}</span>
-              <span className="shrink-0 text-emerald-400">+{f.adds}</span>
-              <span className="shrink-0 text-red-400">−{f.dels}</span>
+              <span className="shrink-0 text-success">+{f.adds}</span>
+              <span className="shrink-0 text-danger">−{f.dels}</span>
             </div>
             {!fold && (
               <div className="w-max min-w-full py-0.5">
@@ -1459,7 +1459,7 @@ const fileLabel = (f: FileDiff) =>
 function CommitHead({ c }: { c: GitCommitShown }) {
   return (
     <div className="mb-2 px-1.5">
-      <div className="text-amber-300">commit {c.sha}</div>
+      <div className="text-warning">commit {c.sha}</div>
       <div className="text-muted">
         {c.author} &lt;{c.email}&gt; · {new Date(c.time * 1000).toLocaleString()}
       </div>
@@ -1481,7 +1481,7 @@ function BranchView({ diff }: { diff: DiffResult | null }) {
         <div className="mb-2 px-1.5">
           {diff.merge_base && <div className="text-faint">From {diff.merge_base.slice(0, 8)} on {diff.base}, with uncommitted changes</div>}
           {diff.commits?.trim() && <div className="mt-1 whitespace-pre-wrap text-muted">{diff.commits.trim()}</div>}
-          {diff.patch?.includes("\n… [truncated") && <div className="mt-1 text-amber-300">The diff is too big to show all of it.</div>}
+          {diff.patch?.includes("\n… [truncated") && <div className="mt-1 text-warning">The diff is too big to show all of it.</div>}
         </div>
       }
     />
@@ -1493,7 +1493,7 @@ function Section({ children }: { children: ReactNode }) {
 }
 
 function Note({ children, error }: { children: ReactNode; error?: boolean }) {
-  return <div className={clsx("px-1.5 text-[12px]", error ? "text-red-400" : "text-muted")}>{children}</div>;
+  return <div className={clsx("px-1.5 text-[12px]", error ? "text-danger" : "text-muted")}>{children}</div>;
 }
 
 function EmptyMain({ text }: { text: string }) {
@@ -1524,7 +1524,7 @@ function OptionsBar({ options, busy, flash, onDismiss }: { options: Option[]; bu
           onMouseDown={(e) => e.preventDefault()}
           onClick={onDismiss}
           title="Dismiss"
-          className={clsx("max-w-[55%] shrink-0 truncate text-left", flash.error ? "text-red-400" : "text-emerald-400")}
+          className={clsx("max-w-[55%] shrink-0 truncate text-left", flash.error ? "text-danger" : "text-success")}
         >
           {flash.text}
         </button>
@@ -1621,7 +1621,7 @@ function MessageDialog({ dialog, onClose }: { dialog: Extract<Dialog, { kind: "m
         />
         <Textarea value={body} placeholder="Description (optional)" rows={6} onChange={(e) => setBody(e.target.value)} className="font-mono text-[12.5px]" />
       </div>
-      {err && <div className="mt-2 max-h-40 overflow-auto font-mono text-[11.5px] whitespace-pre-wrap text-red-400">{err}</div>}
+      {err && <div className="mt-2 max-h-40 overflow-auto font-mono text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
       <div className="mt-4 flex items-center justify-end gap-2">
         <span className="mr-auto text-[11.5px] text-faint">
           Enter in the summary or {SUBMIT_KEYS} to {dialog.yes.toLowerCase()}
@@ -1667,10 +1667,10 @@ function MenuDialog({ title, items, onClose }: { title: string; items: MenuEntry
             tabIndex={-1}
             onMouseEnter={() => setAt(i)}
             onClick={() => choose(m)}
-            className={clsx("flex w-full items-baseline gap-3 rounded-md px-2.5 py-1.5 text-left", i === at && "bg-white/[0.07]")}
+            className={clsx("flex w-full items-baseline gap-3 rounded-md px-2.5 py-1.5 text-left", i === at && "bg-hover")}
           >
             <Kbd>{m.key}</Kbd>
-            <span className={clsx("text-[13px]", m.danger ? "text-red-300" : "text-fg")}>{m.label}</span>
+            <span className={clsx("text-[13px]", m.danger ? "text-danger" : "text-fg")}>{m.label}</span>
             {m.hint && <span className="ml-auto text-[11.5px] text-faint">{m.hint}</span>}
           </button>
         ))}

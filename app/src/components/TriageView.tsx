@@ -22,7 +22,7 @@ type BucketId = "answer" | "review" | "due" | "stalled" | "start" | "working";
 const BUCKETS: { id: BucketId; title: string; icon: ReactNode; hint: string }[] = [
   { id: "answer", title: "Waiting for your answer", icon: <CircleAlert size={14} className="text-st-attention" />, hint: "The agent asked something or hit a prompt" },
   { id: "review", title: "Ready for your review", icon: <Eye size={14} className="text-st-review" />, hint: "The agent finished; look over its work and merge it, or send it back" },
-  { id: "due", title: "Reminders", icon: <BellRing size={14} className="text-amber-300" />, hint: "Reminders that have come round" },
+  { id: "due", title: "Reminders", icon: <BellRing size={14} className="text-warning" />, hint: "Reminders that have come round" },
   { id: "stalled", title: "Stopped before finishing", icon: <Square size={13} className="text-faint" />, hint: "In progress, but its agent isn't running" },
   { id: "start", title: "Not started", icon: <PlayCircle size={14} className="text-st-todo" />, hint: "In To do" },
   { id: "working", title: "Agents at work", icon: <StatusIcon status="in_progress" size={14} />, hint: "Nothing to do until they finish" },
@@ -109,7 +109,7 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
         data-triage={task.id}
         onClick={() => openTask(task.id)}
         onContextMenu={onMenu && ((e) => onMenu(e, task))}
-        className={clsx("flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-[12.5px] hover:bg-white/[0.03]", (picked || open) && "bg-accent/[0.07]")}
+        className={clsx("flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-[12.5px] hover:bg-tint", (picked || open) && "bg-accent/[0.07]")}
       >
         <StatusIcon status={task.status} size={13} />
         <span className="w-16 shrink-0 font-mono text-[11px] text-faint">{key}</span>
@@ -132,7 +132,7 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
             </button>
           )
         )}
-        {err && <span className="text-[11.5px] text-red-400">{err}</span>}
+        {err && <span className="text-[11.5px] text-danger">{err}</span>}
       </div>
     );
 
@@ -154,9 +154,9 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
       </div>
       <div onClick={onPick} className="cursor-pointer px-3 pb-2.5 pl-[34px]">
         {bucket === "answer" && task.attention_reason && (
-          <div className="mb-1.5 rounded-md bg-st-attention/[0.08] px-2 py-1.5 text-[12.5px] leading-snug text-amber-200/90">{task.attention_reason}</div>
+          <div className="mb-1.5 rounded-md bg-st-attention/[0.08] px-2 py-1.5 text-[12.5px] leading-snug text-warning">{task.attention_reason}</div>
         )}
-        {bucket === "due" && task.reminder && <div className="mb-1.5 text-[12.5px] text-amber-200/90">{task.reminder}</div>}
+        {bucket === "due" && task.reminder && <div className="mb-1.5 text-[12.5px] text-warning">{task.reminder}</div>}
         {last === undefined ? (
           <div className="text-[12px] text-faint">…</div>
         ) : last ? (
@@ -179,7 +179,7 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
                 <GitMerge size={13} /> Ready for merge
               </Button>
             )}
-            {err && <span className="text-[12px] text-red-400">{err}</span>}
+            {err && <span className="text-[12px] text-danger">{err}</span>}
           </div>
           {task.status === "needs_attention" && (
             <div className="px-3 pb-2 pl-[34px]">

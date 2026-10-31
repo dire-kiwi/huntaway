@@ -63,7 +63,7 @@ function Block({ text, tone }: { text: string; tone: "from" | "to" }) {
     <pre
       className={clsx(
         "max-h-48 overflow-auto rounded-md border p-2 font-mono text-[12px] leading-[1.45] whitespace-pre-wrap break-words",
-        tone === "from" ? "border-line bg-[#0c0c10] text-faint" : "border-st-attention/30 bg-[#0c0c10] text-[#c9c9d6]",
+        tone === "from" ? "border-line bg-code text-faint" : "border-st-attention/30 bg-code text-fg-2",
       )}
     >
       {text || <span className="text-faint">(empty)</span>}
@@ -76,7 +76,7 @@ export function ProjectChangeDetail({ change }: { change: ProjectChange }) {
   const { reason } = change;
   return (
     <div className="space-y-3 text-[13px]">
-      {reason && <div className="rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-2 text-muted">{reason}</div>}
+      {reason && <div className="rounded-md border-l-2 border-line-strong bg-tint px-3 py-2 text-muted">{reason}</div>}
       <ul className="space-y-3">
         {(change.changes ?? []).map((c) => {
           const from = valueText(c.field, c.from);
@@ -161,18 +161,18 @@ export function TaskDeletionDetail({ deletion }: { deletion: TaskDeletion }) {
   );
   return (
     <div className="space-y-3 text-[13px]">
-      {reason && <div className="rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-2 text-muted">{reason}</div>}
-      <div className="rounded-md border border-red-500/30 bg-[#0c0c10] px-3 py-2">{row(d)}</div>
+      {reason && <div className="rounded-md border-l-2 border-line-strong bg-tint px-3 py-2 text-muted">{reason}</div>}
+      <div className="rounded-md border border-danger/30 bg-code px-3 py-2">{row(d)}</div>
       <p className="text-muted">
         This stops any running agent, deletes the thread, and removes its worktree, discarding any uncommitted changes.
-        {d.running && <span className="text-amber-200/90"> Its agent is running now.</span>}
+        {d.running && <span className="text-warning"> Its agent is running now.</span>}
       </p>
       {others.length > 0 && (
         <div>
-          <div className="mb-1 text-amber-200/90">
+          <div className="mb-1 text-warning">
             It's a subproject: its {others.length} task{others.length === 1 ? " is" : "s are"} deleted the same way.
           </div>
-          <ul className="max-h-40 space-y-1 overflow-auto rounded-md border border-line bg-[#0c0c10] px-3 py-2">
+          <ul className="max-h-40 space-y-1 overflow-auto rounded-md border border-line bg-code px-3 py-2">
             {others.map((t) => (
               <li key={t.id}>{row(t)}</li>
             ))}
@@ -230,7 +230,7 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
                 ))}
               </ul>
             ) : (
-              <span className="text-amber-200/90">None: every delivery runs it</span>
+              <span className="text-warning">None: every delivery runs it</span>
             )}
           </Row>
           {t.coalesce_seconds > 0 && (
@@ -247,7 +247,7 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
             {a.signed ? (
               "Deliveries must be signed with its secret"
             ) : (
-              <span className="text-amber-200/90">Not checked: anyone with its URL can run it</span>
+              <span className="text-warning">Not checked: anyone with its URL can run it</span>
             )}
           </Row>
         </>
@@ -272,7 +272,7 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
               .join(" · ")}
           </Row>
           <Row label="Agent">
-            {act.start ? <span className="text-amber-200/90">Starts straight away, with the project's permission mode</span> : "Not started: the task waits on the board"}
+            {act.start ? <span className="text-warning">Starts straight away, with the project's permission mode</span> : "Not started: the task waits on the board"}
           </Row>
         </>
       ) : (
@@ -303,7 +303,7 @@ export function AutomationChangeDetail({ change }: { change: AutomationChange })
   const { reason, automation: a, before, op } = change;
   return (
     <div className="space-y-3 text-[13px]">
-      {reason && <div className="rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-2 text-muted">{reason}</div>}
+      {reason && <div className="rounded-md border-l-2 border-line-strong bg-tint px-3 py-2 text-muted">{reason}</div>}
       {op === "update" && before && (
         <ul className="space-y-1">
           {(change.changes ?? []).map((k) => (
@@ -321,7 +321,7 @@ export function AutomationChangeDetail({ change }: { change: AutomationChange })
           ))}
         </ul>
       )}
-      <div className={clsx("rounded-md border bg-[#0c0c10] px-3 py-2", op === "delete" ? "border-red-500/30" : "border-st-attention/30")}>
+      <div className={clsx("rounded-md border bg-code px-3 py-2", op === "delete" ? "border-danger/30" : "border-st-attention/30")}>
         {op === "update" && <div className="mb-2 text-[12px] text-muted">As it would be:</div>}
         <AutomationSummary a={a} tz={change.time_zone} />
       </div>
@@ -387,7 +387,7 @@ function DecideButtons({ hostId, approval, onLater }: { hostId: string; approval
           Decide later
         </Button>
       )}
-      {err && <span className="text-xs text-red-400">{err}</span>}
+      {err && <span className="text-xs text-danger">{err}</span>}
     </div>
   );
 }
@@ -415,7 +415,7 @@ export function ProjectApprovals() {
       title={
         <span className="flex items-center gap-2">
           {isDeletion(a) ? (
-            <Trash2 size={15} className="text-red-400" />
+            <Trash2 size={15} className="text-danger" />
           ) : a.kind === "automation" ? (
             <Zap size={15} className="text-st-attention" />
           ) : (
@@ -462,7 +462,7 @@ function Answer({ status, deletion }: { status: Approval["status"]; deletion?: b
     <span
       className={clsx(
         "ml-auto rounded px-1.5 py-0.5 text-[11px]",
-        status === "allowed" ? "bg-emerald-500/10 text-emerald-300" : status === "denied" ? "bg-red-500/10 text-red-300" : "bg-white/5 text-faint",
+        status === "allowed" ? "bg-success/10 text-success" : status === "denied" ? "bg-danger/10 text-danger" : "bg-hover text-faint",
       )}
     >
       {status === "allowed" ? (deletion ? "confirmed" : "approved") : status === "denied" && deletion ? "kept" : status}
@@ -477,9 +477,9 @@ export function TaskDeletionCard({ data, hostId }: { data: DeletionApproval; hos
   const d = data.input.delete;
   const others = data.input.tasks_with_it?.length ?? 0;
   return (
-    <div className={clsx("rounded-lg border p-3", pending ? "border-red-500/40 bg-red-500/[0.05]" : "border-line bg-panel/60")}>
+    <div className={clsx("rounded-lg border p-3", pending ? "border-danger/40 bg-danger/[0.05]" : "border-line bg-panel/60")}>
       <div className="mb-2 flex items-center gap-2 text-[13px]">
-        <Trash2 size={15} className={pending ? "text-red-400" : "text-faint"} />
+        <Trash2 size={15} className={pending ? "text-danger" : "text-faint"} />
         <span className={clsx("min-w-0 truncate", pending ? "text-fg" : "text-muted")}>
           Delete the task <span className="font-medium">{taskName(d)}</span>
           {others > 0 && ` and its ${others} task${others === 1 ? "" : "s"}`}
@@ -545,12 +545,12 @@ export function AutomationChangeCard({ data, hostId }: { data: AutomationApprova
     <div
       className={clsx(
         "rounded-lg border p-3",
-        !pending ? "border-line bg-panel/60" : deletion ? "border-red-500/40 bg-red-500/[0.05]" : "border-st-attention/50 bg-st-attention/[0.06]",
+        !pending ? "border-line bg-panel/60" : deletion ? "border-danger/40 bg-danger/[0.05]" : "border-st-attention/50 bg-st-attention/[0.06]",
       )}
     >
       <div className="mb-2 flex items-center gap-2 text-[13px]">
         {deletion ? (
-          <Trash2 size={15} className={pending ? "text-red-400" : "text-faint"} />
+          <Trash2 size={15} className={pending ? "text-danger" : "text-faint"} />
         ) : (
           <Zap size={15} className={pending ? "text-st-attention" : "text-faint"} />
         )}

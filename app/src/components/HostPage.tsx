@@ -29,8 +29,8 @@ export function HostPage({ hostId }: { hostId: string }) {
         </button>
         <span className="text-faint">/</span>
         <Server size={14} className="text-muted" />
-        <h1 className="text-[14px] font-semibold">{host.name}</h1>
-        <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-emerald-400" : "bg-red-400")} />
+        <h1 className="text-[15px] font-semibold tracking-tight">{host.name}</h1>
+        <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-success" : "bg-danger")} />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl space-y-8 p-6">
@@ -75,7 +75,7 @@ export function HostPage({ hostId }: { hostId: string }) {
           {!host.local && (
             <section>
               <h2 className="mb-3 text-[13px] font-semibold">Remove</h2>
-              <div className="flex items-center gap-3 rounded-xl border border-line px-4 py-3 text-[12.5px] text-muted">
+              <div className="flex items-center gap-3 rounded-xl border border-line bg-panel px-4 py-3 text-[12.5px] text-muted">
                 <span className="flex-1">Take this host off the board. Its projects, threads and agents stay on the host.</span>
                 <Button
                   size="sm"
@@ -111,7 +111,7 @@ function HostProfiles({ hostId, canCopy }: { hostId: string; canCopy: boolean })
           <Plus size={13} /> Add profile
         </Button>
       </div>
-      <div className="divide-y divide-line rounded-xl border border-line">
+      <div className="divide-y divide-line rounded-xl border border-line bg-panel">
         {profiles.map((p) => (
           <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
             <div className="w-28 shrink-0 truncate text-[12.5px]">{p.name}</div>
@@ -223,7 +223,7 @@ function RemoteServer({ hostId }: { hostId: string }) {
           </Button>
         </div>
       </div>
-      <div className="space-y-2 rounded-xl border border-line p-4 text-[12.5px] text-muted">
+      <div className="space-y-2 rounded-xl border border-line bg-panel p-4 text-[12.5px] text-muted">
         {status ? (
           <>
             <div>
@@ -254,13 +254,13 @@ function RemoteServer({ hostId }: { hostId: string }) {
             {down ? "Restarting, waiting for it to come back…" : (PHASES[job?.phase ?? "starting"] ?? job?.phase)}
           </div>
         )}
-        {job?.phase === "failed" && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{job.error}</div>}
+        {job?.phase === "failed" && <div className="rounded bg-danger/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-danger">{job.error}</div>}
         {(busy || job?.phase === "failed") && job?.log && (
-          <pre ref={logRef} className="h-48 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11px] whitespace-pre-wrap text-[#b9b9c8]">
+          <pre ref={logRef} className="h-48 overflow-auto rounded-md border border-line bg-code p-2 font-mono text-[11px] whitespace-pre-wrap text-fg-2">
             {job.log}
           </pre>
         )}
-        {err && <div className="text-red-400">{err}</div>}
+        {err && <div className="text-danger">{err}</div>}
       </div>
     </section>
   );

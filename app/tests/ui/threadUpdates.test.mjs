@@ -44,7 +44,7 @@ test("new and updated messages show in the thread, and a closed thread isn't fet
     assert.equal(await page.locator(".animate-spin.text-st-progress").count(), 2, "both calls are running");
     result("c1", "first output");
     result("c2", "no such dir", { is_error: true });
-    await page.locator(".lucide-x.text-red-400").waitFor();
+    await page.locator(".lucide-x.text-danger").waitFor();
     assert.equal(await page.locator(".animate-spin.text-st-progress").count(), 0, "both calls have finished");
     await ui.run(["click ls second", "wait no such dir", "click ls first", "wait first output"]);
 
@@ -65,7 +65,7 @@ test("new and updated messages show in the thread, and a closed thread isn't fet
     // What came before is still there, and still open.
     await ui.run(["wait first output", "wait Subagent's first finding"]);
     result("A1", "Report: it's in config.rs");
-    await page.locator(".lucide-check.text-emerald-400").first().waitFor();
+    await page.locator(".lucide-check.text-success").first().waitFor();
     assistant([{ type: "text", text: "All done." }]);
     await ui.run(["wait All done"]);
 

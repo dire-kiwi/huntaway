@@ -5,6 +5,7 @@ import { api, hostSupports, type DocumentType, type Message, type Task, type Tas
 import { frameDoc } from "../htmlFrame";
 import { afterSend, answered, answersMessage, loadAnswers, readFields, resetFields, saveAnswers, withTouched, type PlanAnswers, type PlanField } from "../planAnswers";
 import { isWholePage, themedPlan } from "../planTheme";
+import { resolvedTheme, useResolvedTheme, type ResolvedTheme } from "../theme";
 import planCss from "../planTheme.css?raw";
 import { useHost, useThreadMessages } from "../store";
 import type { Progress } from "./Board";
@@ -305,7 +306,7 @@ export function DocumentView({ task, onShowThread }: { task: Task; onShowThread:
           </div>
         )}
       </div>
-      {err && <div className="shrink-0 bg-red-500/10 px-3 py-1.5 text-[12px] text-red-300">{err}</div>}
+      {err && <div className="shrink-0 bg-danger/10 px-3 py-1.5 text-[12px] text-danger">{err}</div>}
       <div className="relative min-h-0 flex-1">
         {doc === null && !err ? (
           <div className="flex h-full items-center justify-center text-muted">
@@ -450,12 +451,22 @@ function HtmlFrame({
 
 type Mermaid = (typeof import("mermaid"))["default"];
 let mermaidLoaded: Promise<Mermaid> | null = null;
-// Mermaid is large; it loads with the first diagram.
+let mermaidTheme: ResolvedTheme | null = null;
+// Mermaid is large; it loads with the first diagram. It's set up for the board's theme, and again when that changes.
 const loadMermaid = () =>
-  (mermaidLoaded ??= import("mermaid").then((m) => {
-    m.default.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" });
-    return m.default;
-  }));
+  (mermaidLoaded ??= import("mermaid").then((m) => m.default)).then((mermaid) => {
+    const theme = resolvedTheme();
+    if (mermaidTheme !== theme) {
+      mermaidTheme = theme;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: theme === "light" ? "default" : "dark",
+        securityLevel: "strict",
+        fontFamily: "Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif",
+      });
+    }
+    return mermaid;
+  });
 let renders = 0;
 
 const ZOOMS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
@@ -476,6 +487,8 @@ function MermaidView({ source, inset, onSvg, onFix }: { source: string; inset: n
   const box = useRef<HTMLDivElement>(null);
   const width = svg ? svgWidth(svg) : null;
   const src = useMemo(() => svg && `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, [svg]);
+  // Drawn again in the other theme's colours when the board's theme changes.
+  const theme = useResolvedTheme();
   useEffect(() => {
     let live = true;
     loadMermaid()
@@ -498,7 +511,7 @@ function MermaidView({ source, inset, onSvg, onFix }: { source: string; inset: n
     return () => {
       live = false;
     };
-  }, [source, onSvg]);
+  }, [source, onSvg, theme]);
   const step = (dir: 1 | -1) => {
     const now = zoom ?? (width && box.current ? Math.min(1, box.current.clientWidth / width) : 1);
     const next = dir > 0 ? ZOOMS.find((z) => z > now + 0.01) : [...ZOOMS].reverse().find((z) => z < now - 0.01);
@@ -507,7 +520,7 @@ function MermaidView({ source, inset, onSvg, onFix }: { source: string; inset: n
   return (
     <div className="flex h-full flex-col">
       {error && (
-        <div className="flex shrink-0 items-start gap-3 bg-red-500/10 px-3 py-2 text-[12px] text-red-300">
+        <div className="flex shrink-0 items-start gap-3 bg-danger/10 px-3 py-2 text-[12px] text-danger">
           <pre className="min-w-0 flex-1 font-mono text-[11.5px] whitespace-pre-wrap">{error}</pre>
           {onFix && (
             <Button size="sm" onClick={() => onFix(error)} title="Send the error to the agent">

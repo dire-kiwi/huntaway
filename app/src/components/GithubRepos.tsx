@@ -151,8 +151,8 @@ export function GithubRepoPicker({
               onClick={() => onChange(r)}
               title={repo?.description ?? r.full_name}
               className={clsx(
-                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-white/[0.04]",
-                i === active && "bg-white/[0.07]",
+                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-tint",
+                i === active && "bg-hover",
                 picked && "bg-accent/10",
               )}
             >
@@ -188,7 +188,7 @@ export function GithubRepoPicker({
             <Loader2 size={12} className="animate-spin" /> {list ? "Searching its organizations…" : "Asking gh for the repositories…"}
           </div>
         )}
-        {listError && <div className="p-3 text-[12px] text-red-400">gh couldn't list the repositories: {listError}</div>}
+        {listError && <div className="p-3 text-[12px] text-danger">gh couldn't list the repositories: {listError}</div>}
       </div>
       {status && <div className="text-[11.5px] text-faint">{status}</div>}
     </div>

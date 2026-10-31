@@ -49,6 +49,7 @@ import { ModelPicker } from "./Board";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
+import { AppearancePanel } from "./Appearance";
 import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
 import { Button, Field, IconButton, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
@@ -173,7 +174,7 @@ export function DirPicker({ hostId, value, onChange }: { hostId: string; value: 
       />
       <div ref={listRef} className="h-56 overflow-y-auto rounded-md border border-line bg-bg/60">
         {listing?.parent && !prefix && (
-          <button type="button" onClick={() => pick(listing.parent!)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-muted hover:bg-white/[0.04]">
+          <button type="button" onClick={() => pick(listing.parent!)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-muted hover:bg-tint">
             <ArrowUp size={13} /> ..
           </button>
         )}
@@ -183,13 +184,13 @@ export function DirPicker({ hostId, value, onChange }: { hostId: string; value: 
             key={e.path}
             data-active={i === active}
             onClick={() => pick(e)}
-            className={clsx("flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-white/[0.04]", i === active && "bg-white/[0.07]")}
+            className={clsx("flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-tint", i === active && "bg-hover")}
           >
             {e.is_git ? <FolderGit2 size={13} className="text-accent" /> : <Folder size={13} className="text-faint" />}
             <span className={e.is_git ? "text-fg" : "text-muted"}>{e.name}</span>
           </button>
         ))}
-        {current?.err && <div className="p-3 text-[12px] text-red-400">{current.err}</div>}
+        {current?.err && <div className="p-3 text-[12px] text-danger">{current.err}</div>}
         {value && !dir && <div className="p-3 text-[12px] text-faint">Enter an absolute path, or start with ~/</div>}
       </div>
       {status && <div className="text-[11.5px] text-faint">{status}</div>}
@@ -349,7 +350,7 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
           </Field>
         </div>
         <ModalFooter className="space-y-4">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               Cancel
@@ -511,7 +512,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
           {project?.name}
         </button>
         <span className="text-faint">/</span>
-        <h1 className="text-[14px] font-semibold">Settings</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight">Settings</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* The tabs and the open one are together in the middle, the tabs staying put as it scrolls. */}
@@ -532,8 +533,8 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                 aria-controls="project-tab-panel"
                 onClick={() => navigate({ name: "projectSettings", projectId, tab: t.id }, true)}
                 className={clsx(
-                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px]",
-                  t === current ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
+                  "focus-ring flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors",
+                  t === current ? "bg-active text-fg" : "text-muted hover:bg-hover hover:text-fg",
                 )}
               >
                 <span className={t === current ? "text-accent" : "text-faint"}>{t.icon}</span>
@@ -594,7 +595,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                 <Field label="Scratch folder">
                   <Input className="font-mono text-[12px]" value={form.scratch_path} readOnly />
                 </Field>
-                <div className="space-y-3 rounded-xl border border-red-500/30 p-4">
+                <div className="space-y-3 rounded-xl border border-danger/30 p-4">
                   <h3 className="text-[13px] font-semibold">Danger zone</h3>
                   {hostSupports(host, 46) && (
                     <div className="flex items-center gap-3">
@@ -745,11 +746,11 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
               </Button>
             )}
             {err ? (
-              <span className="min-w-0 text-xs text-red-400">{err}</span>
+              <span className="min-w-0 text-xs text-danger">{err}</span>
             ) : unsaved.length > 0 ? (
               <span className="min-w-0 truncate text-[12px] text-faint">Unsaved changes in {unsaved.map((t) => t.label).join(", ")}</span>
             ) : (
-              saved && <span className="text-[12px] text-emerald-400">Saved</span>
+              saved && <span className="text-[12px] text-success">Saved</span>
             )}
           </div>
         </footer>
@@ -814,12 +815,12 @@ function RemoveMergedWorktrees({ project }: { project: Project }) {
         Removes the worktrees of done tasks whose work is merged and that have no uncommitted or untracked files (ignored files, such as build output,
         go with them). The tasks and branches are kept, and a task's worktree is set up again if its agent runs again.
       </div>
-      {err && <div className="text-xs text-red-400">{err}</div>}
+      {err && <div className="text-xs text-danger">{err}</div>}
       {results && results.length > 0 && (
         <ul className="space-y-0.5 text-[12px]">
           {results.map((r) => (
             <li key={r.task_id} className="flex gap-2">
-              <span className={clsx("shrink-0 font-mono", r.removed ? "text-emerald-400" : "text-faint")}>
+              <span className={clsx("shrink-0 font-mono", r.removed ? "text-success" : "text-faint")}>
                 {project.key}-{r.number}
               </span>
               <span className="min-w-0 truncate">{r.title}</span>
@@ -906,7 +907,7 @@ function ProjectPrompts({ project, onChange }: { project: Project; onChange: (fi
   }, [project.host_id]);
   return (
     <div className="space-y-5">
-      {err && <div className="text-xs text-red-400">Couldn't load the default prompts: {err}</div>}
+      {err && <div className="text-xs text-danger">Couldn't load the default prompts: {err}</div>}
       {defaults &&
         PROMPTS.map(({ field, label, hint }) => {
           const own = project[field];
@@ -943,7 +944,7 @@ function ProjectConfigs({ project, onChange }: { project: Project; onChange: (id
   const label = useStore((s) => (profile ? profileConfigLabel(s, profile) : ""));
   const own = project.claude_config_ids != null;
   return (
-    <div className="space-y-3 rounded-xl border border-line p-4">
+    <div className="space-y-3 rounded-xl border border-line bg-panel p-4">
       <div className="space-y-1.5">
         <Toggle
           checked={own}
@@ -1097,7 +1098,7 @@ export function ArchiveProjectModal({ project, onClose }: { project: Project; on
         kept. To bring it back, unarchive it in Settings → Archived projects.
       </p>
       <ModalFooter>
-        {err && <div className="mb-3 text-xs text-red-400">{err}</div>}
+        {err && <div className="mb-3 text-xs text-danger">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -1154,7 +1155,7 @@ function ArchivedProjectsPanel() {
   return (
     <section>
       <h2 className="mb-3 text-[13px] font-semibold">Archived projects</h2>
-      <div className="rounded-xl border border-line">
+      <div className="rounded-xl border border-line bg-panel">
         {list === null ? (
           <div className="px-4 py-3 text-[12.5px] text-faint">Loading…</div>
         ) : !list.length ? (
@@ -1183,7 +1184,7 @@ function ArchivedProjectsPanel() {
           ))
         )}
       </div>
-      {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
+      {err && <div className="mt-2 text-xs text-danger">{err}</div>}
     </section>
   );
 }
@@ -1202,7 +1203,7 @@ export function Settings() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
         <MenuButton />
-        <h1 className="text-[14px] font-semibold">Settings</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight">Settings</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl space-y-8 p-6 narrow:p-4">
@@ -1214,6 +1215,8 @@ export function Settings() {
 
           <GlobalAgentToolsPanel />
 
+          <AppearancePanel />
+
           <NotificationsPanel />
 
           <ArchivedProjectsPanel />
@@ -1222,7 +1225,7 @@ export function Settings() {
 
           <section>
             <h2 className="mb-3 text-[13px] font-semibold">Network access</h2>
-            <div className="space-y-3 rounded-xl border border-line p-4 text-[12.5px] text-muted">
+            <div className="space-y-3 rounded-xl border border-line bg-panel p-4 text-[12.5px] text-muted">
               <p>
                 The server listens on all interfaces by default (<code>--host</code> / <code>IA_HOST</code> to change). Open this URL from another
                 machine. The token in it grants full control, including running agents, so only share it over a trusted network such as a VPN or

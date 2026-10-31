@@ -15,7 +15,7 @@
 // A release build (`npm run dist`, attached to each GitHub release by .github/workflows/release.yml) carries the
 // server, ia-shim and the UI in its resources. It has no checkout, so it's updated by installing a newer release.
 
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -171,9 +171,9 @@ async function resolveTarget() {
 }
 
 function errorPage(message) {
-  const html = `<body style="background:#0b0b0e;color:#e6e6ec;font:14px system-ui;padding:40px">
+  const html = `<body style="background:#131316;color:#ededf0;font:14px system-ui;padding:40px">
     <h2>Huntaway couldn't start</h2><pre style="white-space:pre-wrap;color:#f87171">${String(message).replace(/</g, "&lt;")}</pre>
-    <p style="color:#9a9aab">Config: ${CONFIG_PATH}</p></body>`;
+    <p style="color:#9c9ca7">Config: ${CONFIG_PATH}</p></body>`;
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
 
@@ -196,7 +196,7 @@ async function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: "#0b0b0e",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#131316" : "#f5f5f7",
     autoHideMenuBar: true,
     title: "Huntaway",
     webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },

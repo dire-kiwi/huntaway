@@ -24,7 +24,7 @@ import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Button, cost, IconButton, Input, Modal, ModalFooter, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, isSubmitShortcut } from "./ui";
+import { ActivityTime, Button, cost, IconButton, Input, isSubmitShortcut, Modal, ModalFooter, PreviewDot, PrIcon, RESOLUTION_LABELS, RunningDot, segment, SEGMENTED, showsPreview, StatusIcon, SUBMIT_KEYS, Textarea, timeAgo, Toggle, waitTitle } from "./ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
@@ -114,7 +114,7 @@ export function TaskPanel({ panel }: { panel: Panel }) {
   }, [panel.expanded, narrow]);
   return (
     <>
-      {panel.expanded && !narrow && <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]" onMouseDown={() => closeTask()} />}
+      {panel.expanded && !narrow && <div className="fixed inset-0 z-40 bg-scrim backdrop-blur-[2px]" onMouseDown={() => closeTask()} />}
       {/* The same element either way, so expanding keeps the thread, terminals and edits as they are. */}
       <div
         ref={ref}
@@ -123,9 +123,9 @@ export function TaskPanel({ panel }: { panel: Panel }) {
           narrow
             ? "animate-slide-in-right absolute inset-0 z-30"
             : panel.expanded
-              ? "fixed inset-3 z-40 mx-auto max-w-[1400px] overflow-hidden rounded-xl border border-line shadow-2xl shadow-black/50 md:inset-x-10 md:inset-y-8"
+              ? "animate-fade-in fixed inset-3 z-40 mx-auto max-w-[1400px] overflow-hidden rounded-2xl border border-line shadow-float md:inset-x-10 md:inset-y-8"
               : // At least 480 wide where half would be less (a tablet, a small window), leaving a strip of the board.
-                "animate-slide-in-right absolute top-12 right-0 bottom-0 z-30 w-1/2 min-w-[min(100%-3rem,480px)] border-l border-line shadow-2xl shadow-black/50",
+                "animate-slide-in-right absolute top-12 right-0 bottom-0 z-30 w-1/2 min-w-[min(100%-3rem,480px)] border-l border-line shadow-2xl shadow-shade",
         )}
       >
         <TaskView taskId={panel.taskId} mode={panel.expanded ? "expanded" : "panel"} />
@@ -273,31 +273,24 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
       <AgentsPill task={task} onReveal={() => setTab("thread")} />
       <ContextPill task={task} />
-      <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
+      <div className={clsx(SEGMENTED, "narrow:order-first")}>
         {tabs.map((t) => (
-          <button
-            key={t}
-            onClick={() => selectTab(t)}
-            className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5", shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
-          >
+          <button key={t} onClick={() => selectTab(t)} className={clsx(segment(shown === t), "h-6 px-2.5 text-[12px] capitalize narrow:h-8")}>
             {t === "review" && <ReviewDot task={task} />}
             {t}
           </button>
         ))}
       </div>
       {hostSupports(host, 7) && tools.length > 0 && (
-        <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5" title="Terminal tools (Settings → host)">
+        <div className={SEGMENTED} title="Terminal tools (Settings → host)">
           {tools.map((t) => (
             <button
               key={t.id}
               onClick={() => showTool(t)}
               title={openIds.includes(t.id) ? `${t.command} (open)` : `Open ${t.command} in a terminal`}
-              className={clsx(
-                "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-[12px]",
-                tab === toolTab(t.id) ? "bg-raised text-fg" : "text-muted hover:text-fg",
-              )}
+              className={clsx(segment(tab === toolTab(t.id)), "h-6 px-2.5 font-mono text-[12px] narrow:h-8")}
             >
-              {openIds.includes(t.id) && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
+              {openIds.includes(t.id) && <span className="h-1.5 w-1.5 rounded-full bg-success" />}
               {t.name}
             </button>
           ))}
@@ -401,7 +394,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           </div>
         )}
         {markErr && (
-          <div className="no-drag flex items-start gap-1 px-3 pb-2 text-[11.5px] text-red-400">
+          <div className="no-drag flex items-start gap-1 px-3 pb-2 text-[11.5px] text-danger">
             <span className="min-w-0 flex-1">{markErr}</span>
             <IconButton className="h-5 w-5" title="Dismiss" onClick={() => setMarkErr(null)}>
               <X size={12} />
@@ -451,7 +444,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         </main>
         {/* A document, and the changes' panels, get the room. */}
         {wide && !isTerminalTab(tab) && shown !== docType && shown !== "changes" && (
-          <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
+          <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-sidebar/40" />
         )}
       </div>
     </div>
@@ -514,7 +507,7 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
         </div>
       </header>
       {stopErr && (
-        <div className="flex shrink-0 items-start gap-1 border-b border-line px-3 py-2 text-[11.5px] text-red-400">
+        <div className="flex shrink-0 items-start gap-1 border-b border-line px-3 py-2 text-[11.5px] text-danger">
           <span className="min-w-0 flex-1">{stopErr}</span>
           <IconButton className="h-5 w-5" title="Dismiss" onClick={() => setStopErr(null)}>
             <X size={12} />
@@ -696,8 +689,8 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               key={s.id}
               onClick={() => setStatus(s.id)}
               className={clsx(
-                "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px]",
-                task.status === s.id ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.03] hover:text-fg",
+                "focus-ring flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] transition-colors",
+                task.status === s.id ? "bg-active text-fg" : "text-muted hover:bg-hover hover:text-fg",
               )}
             >
               <StatusIcon status={s.id} size={13} /> {s.label}
@@ -725,26 +718,26 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
           </div>
         )}
         {mergeQueued(task) && (
-          <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
+          <div className="mt-2 rounded-md bg-tint px-2.5 py-2 text-[12px] text-muted">
             Queued to merge. Another task in this project is merging; this one starts when it's done.
           </div>
         )}
         {rejoinsMerge(task) && (
-          <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
+          <div className="mt-2 rounded-md bg-tint px-2.5 py-2 text-[12px] text-muted">
             Stepped out of the merge queue to make changes, so the tasks behind it could merge. It rejoins the end of the queue when its
             agent is done, unless you move it to another column first.
           </div>
         )}
         {dependencyQueued(task) && (
-          <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
+          <div className="mt-2 rounded-md bg-tint px-2.5 py-2 text-[12px] text-muted">
             Queued. Its agent starts once the tasks it depends on are merged.
           </div>
         )}
         {task.attention_reason && (
-          <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2.5 py-2 text-[12px] text-amber-200/90">{task.attention_reason}</div>
+          <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2.5 py-2 text-[12px] text-warning">{task.attention_reason}</div>
         )}
         {task.remind_at && (
-          <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
+          <div className="mt-2 flex items-start gap-2 rounded-md bg-tint px-2.5 py-2 text-[12px] text-muted">
             <span className="min-w-0 flex-1">
               Reminder {new Date(task.remind_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
               {task.reminder && <span className="block text-fg">{task.reminder}</span>}
@@ -754,7 +747,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             </button>
           </div>
         )}
-        {statusErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{statusErr}</div>}
+        {statusErr && <div className="mt-2 rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{statusErr}</div>}
       </Section>
 
       <Section
@@ -781,9 +774,9 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               autoFocus
             />
             {task.description !== descBase && (
-              <div className="text-[11.5px] text-amber-200/90">It was changed while you were editing it: saving replaces that change.</div>
+              <div className="text-[11.5px] text-warning">It was changed while you were editing it: saving replaces that change.</div>
             )}
-            {descErr && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{descErr}</div>}
+            {descErr && <div className="rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{descErr}</div>}
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="ghost" onClick={() => (setDesc(task.description), setDescErr(null), setEditingDesc(false))}>
                 Cancel
@@ -846,7 +839,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               api.updateTask(task.host_id, task.id, { preview_url: url || null }).catch((e) => setPreviewErr(e.message));
             }}
           />
-          {previewErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{previewErr}</div>}
+          {previewErr && <div className="mt-2 rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{previewErr}</div>}
         </Section>
       )}
 
@@ -860,7 +853,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               api.updateTask(task.host_id, task.id, { pr_url: url || null }).catch((e) => setPrErr(e.message));
             }}
           />
-          {prErr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{prErr}</div>}
+          {prErr && <div className="mt-2 rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{prErr}</div>}
         </Section>
       )}
 
@@ -880,8 +873,8 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               <Row label="State">
                 <span
                   className={clsx(
-                    task.worktree_state === "ready" && "text-emerald-300",
-                    task.worktree_state === "error" && "text-red-300",
+                    task.worktree_state === "ready" && "text-success",
+                    task.worktree_state === "error" && "text-danger",
                     (task.worktree_state === "setting_up" || task.worktree_state === "tearing_down") && "text-st-progress",
                   )}
                 >
@@ -915,7 +908,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
                   </span>
                 </Row>
               )}
-              {task.worktree_error && <div className="rounded bg-red-500/10 p-2 font-mono text-[11px] whitespace-pre-wrap text-red-300">{task.worktree_error}</div>}
+              {task.worktree_error && <div className="rounded bg-danger/10 p-2 font-mono text-[11px] whitespace-pre-wrap text-danger">{task.worktree_error}</div>}
               <div className="flex flex-wrap gap-2 pt-2">
                 {task.worktree_state !== "ready" && (
                   <Button size="sm" disabled={wtBusy || task.running} onClick={() => run(() => api.setupWorktree(task.host_id, task.id))}>
@@ -935,7 +928,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
               </div>
             </div>
           )}
-          {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          {err && <div className="mt-2 rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
         </Section>
       )}
 
@@ -1025,7 +1018,7 @@ function ConfigRow({ task }: { task: Task }) {
           <AgentBadge config={current} />
         </span>
       )}
-      {err && <div className="text-[11.5px] text-red-400">{err}</div>}
+      {err && <div className="text-[11.5px] text-danger">{err}</div>}
     </Row>
   );
 }
@@ -1193,7 +1186,7 @@ function SubprojectSection({ task }: { task: Task }) {
           </Button>
         </div>
       )}
-      {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+      {err && <div className="mt-2 rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
     </Section>
   );
 }
@@ -1241,7 +1234,7 @@ function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
           <Toggle checked={deleteBranch} onChange={setDeleteBranch} label="Also delete the branch" />
         </div>
         <ModalFooter className="space-y-4">
-          {err && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          {err && <div className="rounded bg-danger/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               Cancel
@@ -1281,7 +1274,7 @@ function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onCl
         <p className="text-muted">
           This stops any running agent, deletes the thread, and removes its worktree, discarding any uncommitted changes.
           {task.subproject && children > 0 && (
-            <span className="text-amber-200/90">
+            <span className="text-warning">
               {" "}
               Its {children} task{children === 1 ? "" : "s"} {children === 1 ? "is" : "are"} deleted the same way.
             </span>

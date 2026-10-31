@@ -82,7 +82,7 @@ function Outcome({ tone, children }: { tone: "good" | "bad" | "plain"; children:
     <span
       className={clsx(
         "ml-auto shrink-0 rounded px-1.5 py-0.5 text-[11px]",
-        tone === "good" ? "bg-emerald-500/10 text-emerald-300" : tone === "bad" ? "bg-red-500/10 text-red-300" : "bg-white/5 text-faint",
+        tone === "good" ? "bg-success/10 text-success" : tone === "bad" ? "bg-danger/10 text-danger" : "bg-hover text-faint",
       )}
     >
       {children}
@@ -269,14 +269,14 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
         </div>
       )}
       {!pending && answered.text && (
-        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">{answered.text}</div>
+        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-tint px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">{answered.text}</div>
       )}
       {pending && (
         <div className="mt-2 text-[11.5px] text-faint">
           {options.length > 0 ? "Pick an answer (keys 1–9), or reply below in your own words." : "Reply below to answer it."}
         </div>
       )}
-      {err && <div className="mt-1.5 text-xs text-red-400">{err}</div>}
+      {err && <div className="mt-1.5 text-xs text-danger">{err}</div>}
     </Frame>
   );
 });
@@ -359,7 +359,7 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
           ))}
       </div>
       {late && (
-        <div className="mb-2 rounded-md bg-white/[0.03] px-2.5 py-1.5 text-[12px] text-muted">
+        <div className="mb-2 rounded-md bg-tint px-2.5 py-1.5 text-[12px] text-muted">
           The agent's run ended before these were answered. Your answers go to it as your message.
         </div>
       )}
@@ -379,7 +379,7 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
               className={clsx("rounded-md", questions.length > 1 && "border-l-2 py-0.5 pl-2.5", active ? "border-l-accent" : "border-l-line")}
             >
               <div className="mb-1 flex items-baseline gap-2">
-                {q.header && <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-px text-[11px] text-muted">{q.header}</span>}
+                {q.header && <span className="shrink-0 rounded bg-hover px-1.5 py-px text-[11px] text-muted">{q.header}</span>}
                 <span className={clsx("text-[13.5px] font-semibold", open ? "text-fg" : "text-muted")}>{q.question}</span>
                 {q.multiSelect && open && <span className="shrink-0 text-[11px] text-faint">pick any</span>}
               </div>
@@ -398,7 +398,7 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
                 ))}
               </div>
               {preview && (
-                <pre className="mt-1.5 max-h-60 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[12px] leading-[1.45] text-[#c9c9d6]">
+                <pre className="mt-1.5 max-h-60 overflow-auto rounded-md border border-line bg-code p-2 font-mono text-[12px] leading-[1.45] text-fg-2">
                   {preview}
                 </pre>
               )}
@@ -416,7 +416,7 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
                 </div>
               )}
               {!open && given && given.some((a) => !q.options.some((o) => o.label === a)) && (
-                <div className="mt-1.5 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">
+                <div className="mt-1.5 rounded-md border-l-2 border-line-strong bg-tint px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">
                   {given.filter((a) => !q.options.some((o) => o.label === a)).join(", ")}
                 </div>
               )}
@@ -436,7 +436,7 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
             </Button>
           )}
           <span className="text-[11.5px] text-faint">{questions[current]?.options.length ? "Keys 1–9 pick an answer." : ""}</span>
-          {err && <span className="text-xs text-red-400">{err}</span>}
+          {err && <span className="text-xs text-danger">{err}</span>}
         </div>
       )}
     </Frame>
@@ -517,7 +517,7 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, mov
           ))}
       </div>
       {late && (
-        <div className="mb-2 rounded-md bg-white/[0.03] px-2.5 py-1.5 text-[12px] text-muted">
+        <div className="mb-2 rounded-md bg-tint px-2.5 py-1.5 text-[12px] text-muted">
           The agent's run ended before the plan was answered. Your answer goes to it as your message.
         </div>
       )}
@@ -538,7 +538,7 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, mov
         </button>
       )}
       {!open && data.feedback && (
-        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">{data.feedback}</div>
+        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-tint px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">{data.feedback}</div>
       )}
       {open && feedback === null && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -567,7 +567,7 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, mov
           <Button size="sm" disabled={busy} onClick={() => setFeedback("")}>
             Keep planning
           </Button>
-          {err && <span className="text-xs text-red-400">{err}</span>}
+          {err && <span className="text-xs text-danger">{err}</span>}
         </div>
       )}
       {open && feedback !== null && (
@@ -598,7 +598,7 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, mov
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => setFeedback(null)}>
               Cancel
             </Button>
-            {err && <span className="text-xs text-red-400">{err}</span>}
+            {err && <span className="text-xs text-danger">{err}</span>}
           </div>
         </div>
       )}

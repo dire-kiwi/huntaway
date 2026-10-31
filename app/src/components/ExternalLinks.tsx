@@ -62,7 +62,7 @@ export function LinkList({ links, onRemove, chips }: { links: ExternalLink[]; on
             onClick={() => onRemove(l)}
             title="Unlink"
             aria-label={`Unlink ${l.title}`}
-            className={clsx("flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:bg-white/5 hover:text-fg", !chips && "opacity-0 group-hover:opacity-100 focus:opacity-100")}
+            className={clsx("flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:bg-hover hover:text-fg", !chips && "opacity-0 group-hover:opacity-100 focus:opacity-100")}
           >
             <X size={11} />
           </button>
@@ -96,7 +96,7 @@ export function LinkedTasks({ task, canLink = true }: { task: Task; canLink?: bo
           <Link2 size={12} /> Link Asana task…
         </Button>
       )}
-      {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+      {err && <div className="rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
       {picking && (
         <AsanaPicker
           hostId={task.host_id}
@@ -185,7 +185,7 @@ export function ConnectAsana({ hostId, profile, expired, onConnected }: { hostId
         . It's kept {hostName ? `on ${hostName}` : "on this host"}, and used to find the tasks you link.
       </p>
       <Input type="password" autoFocus value={token} placeholder="Asana personal access token" onChange={(e) => setToken(e.target.value)} spellCheck={false} />
-      {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+      {err && <div className="rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
       <div className="flex justify-end">
         <Button type="submit" variant="primary" disabled={!token.trim() || busy}>
           {busy && <Loader2 size={12} className="animate-spin" />} Connect
@@ -279,7 +279,7 @@ function AsanaSearch({
         {loading && <Loader2 size={13} className="absolute top-2.5 right-2.5 animate-spin text-faint" />}
       </div>
       {err ? (
-        <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>
+        <div className="rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>
       ) : tasks && tasks.length === 0 && current ? (
         <div className="py-6 text-center text-[12.5px] text-faint">{q.trim() ? "No Asana tasks found." : "No recent Asana tasks."}</div>
       ) : (
@@ -358,7 +358,7 @@ export function AsanaAccount({ hostId, profile }: { hostId: string; profile: Pro
       >
         <X size={13} />
       </IconButton>
-      {err && <span className="text-red-400">{err}</span>}
+      {err && <span className="text-danger">{err}</span>}
     </div>
   );
 }

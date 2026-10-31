@@ -97,7 +97,7 @@ export function ServerPanel() {
           </Button>
         </div>
       </div>
-      <div className="space-y-1.5 rounded-xl border border-line p-4 text-[12.5px] text-muted">
+      <div className="space-y-1.5 rounded-xl border border-line bg-panel p-4 text-[12.5px] text-muted">
         {status ? (
           <>
             <div>
@@ -136,7 +136,7 @@ export function ServerPanel() {
                   </>
                 )}
                 {deployed ? ` (checked ${timeAgo(deployed.checked_at)})` : ", not checked yet"}
-                {deployed?.error && <div className="mt-1 font-mono text-[11.5px] text-red-300">{deployed.error}</div>}
+                {deployed?.error && <div className="mt-1 font-mono text-[11.5px] text-danger">{deployed.error}</div>}
               </div>
             )}
           </>
@@ -268,15 +268,15 @@ export function RestartModal({ status, update, onClose }: { status: ServerStatus
 
         {job && (
           <div className="space-y-3">
-            <div className={clsx("flex items-center gap-2", job.phase === "failed" ? "text-red-400" : "text-fg")}>
+            <div className={clsx("flex items-center gap-2", job.phase === "failed" ? "text-danger" : "text-fg")}>
               {job.phase === "failed" ? <CircleAlert size={15} /> : <Loader2 size={15} className="animate-spin text-accent" />}
               {waiting && job.phase === "restarting" ? "Restarting, waiting for the server to come back…" : PHASES[job.phase] ?? job.phase}
             </div>
-            {job.error && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{job.error}</div>}
+            {job.error && <div className="rounded bg-danger/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-danger">{job.error}</div>}
             {job.log.length > 0 && (
               <pre
                 ref={logRef}
-                className="h-72 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap text-[#b9b9c8]"
+                className="h-72 overflow-auto rounded-md border border-line bg-code p-2 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap text-fg-2"
               >
                 {job.log.join("\n")}
               </pre>
@@ -286,7 +286,7 @@ export function RestartModal({ status, update, onClose }: { status: ServerStatus
         )}
 
         <ModalFooter className="space-y-4">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex justify-end gap-2">
             {!inProgress && (
               <Button variant="ghost" onClick={onClose}>
@@ -307,7 +307,7 @@ export function RestartModal({ status, update, onClose }: { status: ServerStatus
 
 function Warning({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex gap-2 rounded-md bg-st-attention/[0.08] px-3 py-2 text-[12.5px] text-amber-200/90">
+    <div className="flex gap-2 rounded-md bg-st-attention/[0.08] px-3 py-2 text-[12.5px] text-warning">
       <CircleAlert size={14} className="mt-0.5 shrink-0" />
       <div>{children}</div>
     </div>

@@ -16,7 +16,7 @@ export const configDir = (c: ClaudeConfig) => c.config_dir || agentInfo(agentOf(
 /** Marks a config that runs Codex rather than Claude Code. */
 export function AgentBadge({ config }: { config: ClaudeConfig }) {
   if (agentOf(config) !== "codex") return null;
-  return <span className="shrink-0 rounded bg-white/5 px-1 py-px text-[10.5px] text-muted">Codex</span>;
+  return <span className="shrink-0 rounded bg-hover px-1 py-px text-[10.5px] text-muted">Codex</span>;
 }
 
 /** Profiles on the config's host that use it. */
@@ -76,7 +76,7 @@ function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeC
           <Trash2 size={13} />
         </Button>
       </div>
-      {err && <div className="mt-1 text-xs text-red-400">{err}</div>}
+      {err && <div className="mt-1 text-xs text-danger">{err}</div>}
     </div>
   );
 }
@@ -110,7 +110,7 @@ export function ClaudeConfigsPanel() {
           const rows = configs.filter((c) => c.name === name);
           const missing = online.filter((h) => !rows.some((c) => c.host_id === h.id));
           return (
-            <div key={name} className="rounded-xl border border-line">
+            <div key={name} className="rounded-xl border border-line bg-panel">
               <div className="border-b border-line px-4 py-2.5 text-[13px] font-medium">{name}</div>
               {rows.map((c) => (
                 <ConfigRow
@@ -135,7 +135,7 @@ export function ClaudeConfigsPanel() {
             </div>
           );
         })}
-        {names.length === 0 && <div className="rounded-xl border border-line px-4 py-3 text-[12.5px] text-faint">No agent configs yet.</div>}
+        {names.length === 0 && <div className="rounded-xl border border-line bg-panel px-4 py-3 text-[12.5px] text-faint">No agent configs yet.</div>}
       </div>
       {editing && <ConfigModal {...editing} onClose={() => setEditing(null)} />}
       {copying && <CopyLoginModal from={copying} onClose={() => setCopying(null)} />}
@@ -157,7 +157,7 @@ export function HostClaudeConfigs({ hostId, canCopy }: { hostId: string; canCopy
           <Plus size={13} /> Add config
         </Button>
       </div>
-      <div className="divide-y divide-line rounded-xl border border-line">
+      <div className="divide-y divide-line rounded-xl border border-line bg-panel">
         {configs.map((c) => (
           <ConfigRow key={c.id} config={c} label={c.name} canCopy={canCopy} onEdit={() => setEditing({ host: hostId, config: c })} onCopy={() => setCopying(c)} />
         ))}
@@ -252,7 +252,7 @@ function ConfigForm({
       </Field>
       {initial && <div className="text-[12px] text-faint">Changing the directory moves agents to it, but threads already started keep their conversation in the old one.</div>}
       <ModalFooter className="space-y-3">
-        {err && <div className="text-xs text-red-400">{err}</div>}
+        {err && <div className="text-xs text-danger">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onCancel}>
             Cancel

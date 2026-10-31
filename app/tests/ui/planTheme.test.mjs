@@ -62,9 +62,9 @@ test("<ia-html> is a page of its own: its scripts work as in a page, its styles 
   await page.frameLocator("ia-html iframe").locator("#pick").click();
   assert.equal(await text("mode"), "dark");
   // Its styles stay in it, the theme's are there, and the frame is as tall as what's in it.
-  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("outside")).color), "rgb(230, 230, 236)");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("outside")).color), "rgb(237, 237, 240)");
   assert.equal(await frame.evaluate(() => getComputedStyle(document.getElementById("json")).color), "rgb(255, 0, 0)");
-  assert.equal(await frame.evaluate(() => getComputedStyle(document.body).color), "rgb(230, 230, 236)");
+  assert.equal(await frame.evaluate(() => getComputedStyle(document.body).color), "rgb(237, 237, 240)");
   const inner = await frame.evaluate(() => Math.ceil(document.documentElement.getBoundingClientRect().height));
   await page.waitForFunction((h) => document.querySelector("ia-html iframe").getBoundingClientRect().height === h, inner, { timeout: 5000 });
   assert.ok(inner > 200, `content height ${inner}`);

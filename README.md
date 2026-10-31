@@ -795,6 +795,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   each done task's worktree as removed or kept, and why. The tasks and their branches are kept;
   if a task's agent runs again, its worktree is set up again in the same folder (named from its
   branch), so its conversation carries on.
+- **Appearance**: Settings → Appearance picks a light or dark board, or *System* (the default),
+  which follows the device's setting as it changes. The choice is kept in this browser. Plans,
+  diagrams and terminals follow it too; the colours are the `--ia-*` variables in `app/src/index.css`.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that

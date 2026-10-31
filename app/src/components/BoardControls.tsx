@@ -5,8 +5,8 @@ import type { Status } from "../api";
 import { EMPTY_QUERY, filterCount, isFiltering, SORTS, TASK_FLAGS, TASK_KINDS, toggled, type BoardQuery, type SortKey, type TaskKind } from "../boardQuery";
 import { ContextMenu, StatusIcon } from "./ui";
 
-const BUTTON = "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors narrow:h-8";
-const BUTTON_STATE = (active: boolean) => (active ? "border-accent/50 bg-accent/10 text-fg" : "border-line text-muted hover:text-fg");
+const BUTTON = "focus-ring inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors narrow:h-8";
+const BUTTON_STATE = (active: boolean) => (active ? "border-accent/50 bg-accent/10 text-fg" : "border-transparent text-muted hover:bg-hover hover:text-fg");
 
 /** Whether a key press is meant for the page rather than a field being typed in, or a dialog or menu. */
 const forPage = (e: KeyboardEvent) =>
@@ -41,8 +41,8 @@ export function SearchBox({ value, onChange }: { value: string; onChange: (v: st
         aria-label="Search tasks"
         title="Search the board's tasks by key, title, description, branch or project (/)"
         className={clsx(
-          "h-7 w-36 rounded-md border bg-panel pr-6 pl-7 text-[12.5px] text-fg placeholder:text-faint outline-none transition-[width] focus:w-56 focus:border-accent/60 lg:w-48 narrow:h-8 narrow:w-full narrow:focus:w-full",
-          value ? "border-accent/50 lg:w-56" : "border-line",
+          "h-7 w-36 rounded-lg border bg-input pr-6 pl-7 text-[12.5px] text-fg placeholder:text-faint outline-none transition-[width,border-color,box-shadow] focus:w-56 focus:border-accent focus:ring-2 focus:ring-accent/20 lg:w-48 narrow:h-8 narrow:w-full narrow:focus:w-full",
+          value ? "border-accent/50 lg:w-56" : "border-line-strong/70",
         )}
       />
       {value && (
@@ -110,7 +110,7 @@ export function FilterMenu({
       role="menuitemcheckbox"
       aria-checked={checked}
       onClick={onSelect}
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12.5px] text-fg outline-none hover:bg-white/5 focus:bg-white/5"
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12.5px] text-fg outline-none hover:bg-hover focus:bg-hover"
     >
       <span className={clsx("flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border", checked ? "border-accent bg-accent/80 text-bg" : "border-line-strong")}>
         {checked && <Check size={11} strokeWidth={3} />}
@@ -134,7 +134,7 @@ export function FilterMenu({
         <div
           data-modal
           role="menu"
-          className={clsx(align === "right" ? "right-0" : "left-0", "absolute top-full z-50 mt-1 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50")}
+          className={clsx(align === "right" ? "right-0" : "left-0", "animate-pop-in absolute top-full z-50 mt-1 max-h-[70vh] w-60 overflow-y-auto rounded-xl border border-line bg-panel p-1 shadow-float")}
         >
           {heading("Status")}
           {statuses.map((s) =>
@@ -168,7 +168,7 @@ export function FilterMenu({
               <div role="separator" className="mx-1 my-1 h-px bg-line" />
               <button
                 onClick={() => onChange({ ...EMPTY_QUERY, search: query.search })}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12.5px] text-muted outline-none hover:bg-white/5 hover:text-fg focus:bg-white/5"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12.5px] text-muted outline-none hover:bg-hover hover:text-fg focus:bg-hover"
               >
                 <X size={13} /> Clear filters
               </button>
@@ -235,7 +235,7 @@ export function FilterBar({
   projects: FilterOption<string>[];
 }) {
   const chip = (key: string, label: ReactNode, remove: () => void) => (
-    <span key={key} className="inline-flex h-6 items-center gap-1 rounded-md border border-line bg-panel pr-0.5 pl-2 text-[12px] text-fg">
+    <span key={key} className="inline-flex h-6 items-center gap-1 rounded-lg border border-line bg-panel-2 pr-0.5 pl-2 text-[12px] text-fg shadow-card">
       {label}
       <button title="Remove this filter" onClick={remove} className="flex h-5 w-5 items-center justify-center rounded text-faint hover:text-fg">
         <X size={11} />

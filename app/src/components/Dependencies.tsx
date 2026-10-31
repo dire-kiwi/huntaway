@@ -70,7 +70,7 @@ export function Dependencies({ task, project }: { task: Task; project?: Project 
       {deps.length > 0 ? (
         <ul className="space-y-0.5">
           {deps.map((d) => (
-            <li key={d.id} className="group flex items-center gap-2 rounded-md px-1 py-1 text-[12.5px] hover:bg-white/[0.03]">
+            <li key={d.id} className="group flex items-center gap-2 rounded-md px-1 py-1 text-[12.5px] hover:bg-tint">
               <StatusIcon status={d.status} size={13} />
               <button className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => openTask(d.id)}>
                 <span className="shrink-0 font-mono text-[11.5px] text-faint">{keyOf(d, project)}</span>
@@ -107,7 +107,7 @@ export function Dependencies({ task, project }: { task: Task; project?: Project 
           ))}
         </select>
       )}
-      {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+      {err && <div className="rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
     </div>
   );
 }

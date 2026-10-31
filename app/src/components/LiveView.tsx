@@ -83,14 +83,14 @@ function PromptLine({ data, task }: { data: Any; task: Task }) {
         <span className="text-fg">{data.tool_name}</span> <span className="font-mono text-[11.5px] text-muted">{m.summary}</span>
       </span>
       {err && (
-        <span className="max-w-[30%] truncate text-red-400" title={err}>
+        <span className="max-w-[30%] truncate text-danger" title={err}>
           {err}
         </span>
       )}
       <button disabled={busy} onClick={() => decide("allow")} className="flex shrink-0 items-center gap-1 rounded bg-accent-strong px-1.5 py-0.5 text-white hover:bg-accent disabled:opacity-50">
         <Check size={11} /> Allow
       </button>
-      <button disabled={busy} onClick={() => decide("deny")} className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-red-300 hover:bg-red-500/15 disabled:opacity-50">
+      <button disabled={busy} onClick={() => decide("deny")} className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-danger hover:bg-danger/15 disabled:opacity-50">
         <X size={11} /> Deny
       </button>
     </div>
@@ -158,7 +158,7 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
     <div
       onContextMenu={onMenu && ((e) => onMenu(e, task))}
       className={clsx(
-        "flex h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border bg-[#0c0c10]",
+        "flex h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border bg-code",
         task.status === "needs_attention" ? "border-st-attention/45" : task.running ? "border-st-progress/30" : "border-line",
         open && "ring-1 ring-accent/60",
       )}
@@ -193,7 +193,7 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
               {l.text}
             </div>
           ) : l.kind === "event" ? (
-            <div key={l.key} className="line-clamp-2 text-amber-300/80">
+            <div key={l.key} className="line-clamp-2 text-warning">
               {l.text}
             </div>
           ) : (
@@ -212,7 +212,7 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
           <PromptLine key={p.key} data={p.data} task={task} />
         ))}
         {task.status === "needs_attention" && !prompts.length && task.attention_reason && (
-          <div className="line-clamp-3 rounded bg-st-attention/[0.1] px-2 py-1 font-sans text-[12px] text-amber-200/90" title={task.attention_reason}>
+          <div className="line-clamp-3 rounded bg-st-attention/[0.1] px-2 py-1 font-sans text-[12px] text-warning" title={task.attention_reason}>
             {task.attention_reason}
           </div>
         )}
@@ -231,7 +231,7 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
           className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-fg outline-none placeholder:text-faint"
         />
         {err && (
-          <span className="max-w-[40%] truncate text-[11px] text-red-400" title={err}>
+          <span className="max-w-[40%] truncate text-[11px] text-danger" title={err}>
             {err}
           </span>
         )}

@@ -101,11 +101,11 @@ export function ContextPill({ task, className }: { task: Task; className?: strin
       <button
         onClick={() => setOpen(true)}
         title={summaryTitle(ctx)}
-        className={clsx("flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-muted hover:bg-white/5", className)}
+        className={clsx("flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-muted hover:bg-hover", className)}
       >
         Context
         {fill != null && (
-          <span className="h-1 w-8 overflow-hidden rounded-full bg-white/[0.07]">
+          <span className="h-1 w-8 overflow-hidden rounded-full bg-hover">
             <span className={clsx("block h-full rounded-full", nearlyFull(ctx) ? "bg-st-attention" : "bg-accent")} style={{ width: `${fill}%` }} />
           </span>
         )}
@@ -177,7 +177,7 @@ function ContextDialog({ task, ctx, onClose }: { task: Task; ctx: ContextSummary
               No breakdown yet. Claude Code agents send one at the end of each turn; Codex agents only report the total.
             </div>
           )}
-          {err && <div className="text-[11.5px] text-red-300">{err}</div>}
+          {err && <div className="text-[11.5px] text-danger">{err}</div>}
         </div>
 
         <table className="w-full tabular-nums">
@@ -187,7 +187,7 @@ function ContextDialog({ task, ctx, onClose }: { task: Task; ctx: ContextSummary
                 key={s.id}
                 onMouseEnter={() => setHover(s.id)}
                 onMouseLeave={() => setHover(null)}
-                className={clsx(hover === s.id && "bg-white/5")}
+                className={clsx(hover === s.id && "bg-hover")}
                 title={s.note}
               >
                 <td className="w-4 py-0.5 pl-1">

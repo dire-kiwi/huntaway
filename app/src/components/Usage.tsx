@@ -39,13 +39,13 @@ function LimitRow({ limit, now }: { limit: UsageLimit; now: number }) {
     >
       <span className="w-10 shrink-0 truncate text-faint">{shortLabel(limit)}</span>
       {/* Filled by what's left, like a fuel gauge. */}
-      <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+      <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-hover">
         <span
-          className={clsx("block h-full rounded-full", left <= 10 ? "bg-red-400" : left <= 30 ? "bg-st-attention" : "bg-accent")}
+          className={clsx("block h-full rounded-full", left <= 10 ? "bg-danger" : left <= 30 ? "bg-st-attention" : "bg-accent")}
           style={{ width: `${100 - used}%` }}
         />
       </span>
-      <span className={clsx("w-7 shrink-0 text-right tabular-nums", left <= 10 ? "text-red-300" : "text-muted")}>{left}%</span>
+      <span className={clsx("w-7 shrink-0 text-right tabular-nums", left <= 10 ? "text-danger" : "text-muted")}>{left}%</span>
       <span className="w-11 shrink-0 truncate text-right text-faint tabular-nums">{reset}</span>
     </div>
   );

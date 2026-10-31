@@ -147,7 +147,7 @@ export function SkillMenu({ menu }: { menu: ReturnType<typeof useSkillMenu> }) {
           }}
           onMouseMove={() => n !== menu.selected && menu.setSelected(n)}
           title={i.description || undefined}
-          className={clsx("flex cursor-pointer items-center gap-2 px-4 py-1 text-[12.5px]", n === menu.selected && "bg-white/5")}
+          className={clsx("flex cursor-pointer items-center gap-2 px-4 py-1 text-[12.5px]", n === menu.selected && "bg-hover")}
         >
           {i.builtin ? <Layers size={12} className="shrink-0 text-faint" /> : <Sparkles size={12} className="shrink-0 text-faint" />}
           <span className="shrink-0 font-mono text-fg">

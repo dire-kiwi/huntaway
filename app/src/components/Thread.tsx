@@ -125,14 +125,14 @@ export function toolMeta(name: string, input: Any, cwd?: string | null): { icon:
 
 function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   return (
-    <pre className="overflow-x-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[12px] leading-[1.45]">
+    <pre className="overflow-x-auto rounded-lg border border-line bg-code p-2 font-mono text-[12px] leading-[1.45]">
       {oldStr.split("\n").map((l, i) => (
-        <div key={`o${i}`} className="bg-red-500/10 text-red-300">
+        <div key={`o${i}`} className="bg-danger/10 text-danger">
           - {l}
         </div>
       ))}
       {newStr.split("\n").map((l, i) => (
-        <div key={`n${i}`} className="bg-emerald-500/10 text-emerald-300">
+        <div key={`n${i}`} className="bg-success/10 text-success">
           + {l}
         </div>
       ))}
@@ -144,12 +144,12 @@ function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
 function PatchDiff({ change }: { change: Any }) {
   const tone = (l: string) =>
     l.startsWith("+") && !l.startsWith("+++")
-      ? "bg-emerald-500/10 text-emerald-300"
+      ? "bg-success/10 text-success"
       : l.startsWith("-") && !l.startsWith("---")
-        ? "bg-red-500/10 text-red-300"
+        ? "bg-danger/10 text-danger"
         : l.startsWith("@@")
           ? "text-faint"
-          : "text-[#c9c9d6]";
+          : "text-fg-2";
   const lines = String(change.diff ?? "").replace(/\n$/, "").split("\n");
   return (
     <div>
@@ -158,7 +158,7 @@ function PatchDiff({ change }: { change: Any }) {
         {change.path}
         {change.move_path ? ` → ${change.move_path}` : ""}
       </div>
-      <pre className="max-h-80 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[12px] leading-[1.45]">
+      <pre className="max-h-80 overflow-auto rounded-lg border border-line bg-code p-2 font-mono text-[12px] leading-[1.45]">
         {lines.map((l, i) => (
           <div key={i} className={tone(l)}>
             {l || " "}
@@ -207,9 +207,9 @@ function CodeBlock({ text, max = "max-h-80", tone }: { text: string; max?: strin
   return (
     <pre
       className={clsx(
-        "overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[12px] leading-[1.45] whitespace-pre-wrap break-words",
+        "overflow-auto rounded-lg border border-line bg-code p-2 font-mono text-[12px] leading-[1.45] whitespace-pre-wrap break-words",
         max,
-        tone === "error" ? "text-red-300" : "text-[#c9c9d6]",
+        tone === "error" ? "text-danger" : "text-fg-2",
       )}
     >
       {text || <span className="text-faint">(empty)</span>}
@@ -234,17 +234,17 @@ function PlainToolRow({ call, running, cwd }: { call: Call; running: boolean; cw
     <div data-tool-row>
       <button
         onClick={() => setOpen(!open)}
-        className="group flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12.5px] hover:bg-white/[0.03]"
+        className="group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12.5px] hover:bg-hover"
       >
         <ChevronRight size={12} className={clsx("shrink-0 text-faint transition-transform", open && "rotate-90")} />
         <span className="shrink-0 text-muted">{m.icon}</span>
         <span className="shrink-0 text-muted">{m.label}</span>
-        <span className="min-w-0 truncate font-mono text-[12px] text-[#b9b9c8]">{m.summary}</span>
+        <span className="min-w-0 truncate font-mono text-[12px] text-fg-2">{m.summary}</span>
         <span className="ml-auto shrink-0">
           {pending && running ? (
             <Loader2 size={12} className="animate-spin text-st-progress" />
           ) : call.result?.isError ? (
-            <X size={12} className="text-red-400" />
+            <X size={12} className="text-danger" />
           ) : null}
         </span>
       </button>
@@ -273,7 +273,7 @@ const ToolGroup = memo(function ToolGroup({ calls, running, cwd }: { calls: Call
   }, [focus]);
   const shown = expanded || hidden <= 0 ? calls : calls.slice(-LIMIT);
   return (
-    <div className="rounded-lg border border-line bg-panel/60 py-1">
+    <div className="rounded-xl border border-line bg-panel/60 py-1">
       {!expanded && hidden > 0 && (
         <button onClick={() => setExpanded(true)} className="px-3 py-1 text-[12px] text-faint hover:text-muted">
           Show {hidden} earlier tool call{hidden > 1 ? "s" : ""}
@@ -360,7 +360,7 @@ export function SubagentStatusBadge({ s, compact }: { s: Subagent; compact?: boo
   const took = duration(s);
   return (
     <span className="flex shrink-0 items-center gap-1.5 text-[11.5px]">
-      {s.background && <span className="rounded bg-white/5 px-1 py-px text-[10.5px] text-faint">background</span>}
+      {s.background && <span className="rounded bg-hover px-1 py-px text-[10.5px] text-faint">background</span>}
       {s.status === "running" && s.awaitingApproval ? (
         <span className="flex items-center gap-1 text-st-attention">
           needs approval <ShieldQuestion size={12} />
@@ -373,10 +373,10 @@ export function SubagentStatusBadge({ s, compact }: { s: Subagent; compact?: boo
       ) : s.status === "completed" ? (
         <>
           {took && <span className="text-faint">{took}</span>}
-          <Check size={12} className="text-emerald-400" />
+          <Check size={12} className="text-success" />
         </>
       ) : s.status === "failed" ? (
-        <span className="flex items-center gap-1 text-red-400">
+        <span className="flex items-center gap-1 text-danger">
           failed <X size={12} />
         </span>
       ) : (
@@ -415,14 +415,14 @@ function SubagentRow({ call, sub }: { call: Call; sub: Subagent }) {
 
   return (
     <div ref={ref} data-tool-row className={clsx("scroll-mt-4 rounded transition-colors", flash && "bg-accent/10")}>
-      <div className="group flex items-center rounded hover:bg-white/[0.03]">
+      <div className="group flex items-center rounded hover:bg-tint">
         <button onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-[12.5px]">
           <ChevronRight size={12} className={clsx("shrink-0 text-faint transition-transform", open && "rotate-90")} />
           <span className="shrink-0 text-muted">
             <Bot size={13} />
           </span>
           <span className="shrink-0 text-muted">{subagentKind(sub)}</span>
-          <span className="min-w-0 truncate text-[12.5px] text-[#b9b9c8]">{subagentTitle(sub)}</span>
+          <span className="min-w-0 truncate text-[12.5px] text-fg-2">{subagentTitle(sub)}</span>
           <span className="ml-auto">
             <SubagentStatusBadge s={sub} />
           </span>
@@ -431,7 +431,7 @@ function SubagentRow({ call, sub }: { call: Call; sub: Subagent }) {
           onClick={() => show(taskId, sub.id)}
           title="Open its thread"
           aria-label="Open subagent thread"
-          className="mr-1 shrink-0 rounded p-1 text-faint hover:bg-white/5 hover:text-fg"
+          className="mr-1 shrink-0 rounded p-1 text-faint hover:bg-hover hover:text-fg"
         >
           <Maximize2 size={12} />
         </button>
@@ -532,7 +532,7 @@ function SubagentBar({ sub }: { sub: Subagent }) {
       <button
         onClick={() => show(taskId, sub.parent)}
         title={sub.parent ? "Back to the subagent that started it" : "Back to the main thread (Esc)"}
-        className="shrink-0 rounded p-1 text-muted hover:bg-white/5 hover:text-fg"
+        className="shrink-0 rounded p-1 text-muted hover:bg-hover hover:text-fg"
       >
         <ArrowLeft size={14} />
       </button>
@@ -558,7 +558,7 @@ function SubagentBar({ sub }: { sub: Subagent }) {
             reveal(taskId, sub.id);
           }}
           title="Show where it is in the main thread"
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] text-muted hover:bg-white/5 hover:text-fg"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] text-muted hover:bg-hover hover:text-fg"
         >
           <LocateFixed size={12} /> Show in thread
         </button>
@@ -588,7 +588,7 @@ function Thinking({ text }: { text: string }) {
 
 function EventLine({ level, text, detail }: { level: string; text: string; detail?: string | null }) {
   const [open, setOpen] = useState(false);
-  const color = level === "error" ? "text-red-400" : level === "warn" ? "text-amber-400" : "text-faint";
+  const color = level === "error" ? "text-danger" : level === "warn" ? "text-warning" : "text-faint";
   return (
     <div className="text-[12px]">
       <button
@@ -677,7 +677,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
           <span
             className={clsx(
               "ml-auto rounded px-1.5 py-0.5 text-[11px]",
-              data.status === "allowed" ? "bg-emerald-500/10 text-emerald-300" : data.status === "denied" ? "bg-red-500/10 text-red-300" : "bg-white/5 text-faint",
+              data.status === "allowed" ? "bg-success/10 text-success" : data.status === "denied" ? "bg-danger/10 text-danger" : "bg-hover text-faint",
             )}
           >
             {data.status}
@@ -696,7 +696,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
           <Button size="sm" variant="danger" disabled={busy} onClick={() => decide("deny")} className="narrow:px-4">
             Deny
           </Button>
-          {err && <span className="self-center text-xs text-red-400">{err}</span>}
+          {err && <span className="self-center text-xs text-danger">{err}</span>}
         </div>
       )}
     </div>
@@ -745,7 +745,7 @@ function ResultLine({ data }: { data: Any }) {
   ].filter(Boolean);
   const error = !data.interrupted && (data.is_error || (data.subtype && data.subtype !== "success"));
   return (
-    <div className={clsx("flex items-center gap-2 text-[11.5px]", error ? "text-red-400" : "text-faint")}>
+    <div className={clsx("flex items-center gap-2 text-[11.5px]", error ? "text-danger" : "text-faint")}>
       <span className="h-px flex-1 bg-line" />
       {data.interrupted ? "Interrupted" : error ? `Ended: ${data.subtype ?? "error"}` : "Turn complete"} · {bits.join(" · ")}
       <span className="h-px flex-1 bg-line" />
@@ -1013,7 +1013,7 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
             title={it.steered ? "Sent while the agent was working; it read it here" : undefined}
             className={clsx(
               "max-w-[85%] rounded-2xl rounded-br-md border px-3.5 py-2 text-[13.5px] whitespace-pre-wrap narrow:break-words",
-              it.auto ? "border-line bg-transparent text-muted italic" : "border-line-strong bg-raised",
+              it.auto ? "border-line bg-transparent text-muted italic" : "border-accent/25 bg-accent/[0.08]",
             )}
           >
             <UserText text={it.text} hostId={hostId} />
@@ -1046,11 +1046,11 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
 
 const MODE_STYLE: Record<PermissionMode, { icon: ReactNode; className: string }> = {
   default: { icon: <ShieldQuestion size={12} />, className: "text-muted" },
-  acceptEdits: { icon: <Pencil size={12} />, className: "text-violet-300" },
-  auto: { icon: <Sparkles size={12} />, className: "text-sky-300" },
-  plan: { icon: <MapIcon size={12} />, className: "text-emerald-300" },
-  dontAsk: { icon: <Ban size={12} />, className: "text-amber-300" },
-  bypassPermissions: { icon: <ShieldOff size={12} />, className: "text-red-300" },
+  acceptEdits: { icon: <Pencil size={12} />, className: "text-st-review" },
+  auto: { icon: <Sparkles size={12} />, className: "text-info" },
+  plan: { icon: <MapIcon size={12} />, className: "text-success" },
+  dontAsk: { icon: <Ban size={12} />, className: "text-warning" },
+  bypassPermissions: { icon: <ShieldOff size={12} />, className: "text-danger" },
 };
 
 /** Modes Shift+Tab cycles through, like Claude Code. Riskier ones are picked from the menu. */
@@ -1116,7 +1116,7 @@ function ModeSelect({ control, running }: { control: ReturnType<typeof useModeCo
         onClick={() => setOpen(!open)}
         title={`Permission mode: ${current.description} (Shift+Tab to cycle)`}
         className={clsx(
-          "flex h-6 items-center gap-1 rounded-md border border-line px-1.5 text-[11.5px] hover:border-line-strong hover:bg-white/5",
+          "flex h-6 items-center gap-1 rounded-md border border-line px-1.5 text-[11.5px] hover:border-line-strong hover:bg-hover",
           MODE_STYLE[mode].className,
         )}
       >
@@ -1125,12 +1125,12 @@ function ModeSelect({ control, running }: { control: ReturnType<typeof useModeCo
         <ChevronDown size={11} className="text-faint" />
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 z-20 mb-1.5 w-80 rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl">
+        <div className="animate-pop-in absolute bottom-full left-0 z-20 mb-1.5 w-80 rounded-xl border border-line bg-panel p-1 shadow-xl shadow-shade">
           {PERMISSION_MODES.map((m) => (
             <button
               key={m.id}
               onClick={() => pick(m.id)}
-              className={clsx("flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-white/5", m.id === mode && "bg-white/[0.04]")}
+              className={clsx("flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover", m.id === mode && "bg-tint")}
             >
               <span className={clsx("mt-0.5", MODE_STYLE[m.id].className)}>{MODE_STYLE[m.id].icon}</span>
               <span className="min-w-0 flex-1">
@@ -1143,7 +1143,7 @@ function ModeSelect({ control, running }: { control: ReturnType<typeof useModeCo
           <button
             onClick={() => pick(null)}
             disabled={!overridden}
-            className="mt-1 flex w-full items-center gap-2 rounded-md border-t border-line px-2 py-1.5 text-left text-[11.5px] text-muted hover:bg-white/5 disabled:text-faint disabled:hover:bg-transparent"
+            className="mt-1 flex w-full items-center gap-2 rounded-md border-t border-line px-2 py-1.5 text-left text-[11.5px] text-muted hover:bg-hover disabled:text-faint disabled:hover:bg-transparent"
           >
             {overridden ? `Reset to ${source} (${inheritedLabel})` : `Using ${source} (${inheritedLabel})`}
           </button>
@@ -1332,9 +1332,9 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
-        {(err || modeControl.err) && <div className="mb-2 text-xs text-red-400">{err || modeControl.err}</div>}
+        {(err || modeControl.err) && <div className="mb-2 text-xs text-danger">{err || modeControl.err}</div>}
         {unsaved && (
-          <div className="mb-2 text-xs text-amber-400">
+          <div className="mb-2 text-xs text-warning">
             This browser couldn't save the draft (its storage may be full), so it's only kept until the page is closed or reloaded.
           </div>
         )}
@@ -1342,7 +1342,10 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
           {...attach.dropProps}
           // Keeps the side panel open on a click outside it (see TaskPanel).
           data-draft={text.trim() !== "" || attach.items.length > 0 || undefined}
-          className={clsx("rounded-2xl border border-line-strong bg-panel-2 focus-within:border-accent/50", attach.dragging && "border-accent! bg-accent/5")}
+          className={clsx(
+            "rounded-2xl border border-line-strong/80 bg-panel-2 shadow-card transition-[border-color,box-shadow] focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15",
+            attach.dragging && "border-accent! bg-accent/5",
+          )}
         >
           {task.steering?.map((s) => (
             <div key={s.id} className="flex items-start gap-2 border-b border-line py-2 pr-2 pl-4">
@@ -1371,7 +1374,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
               <button
                 onClick={unqueue}
                 title="Unqueue and edit"
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-faint hover:bg-white/5 hover:text-fg"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-fg"
               >
                 <X size={13} />
               </button>
@@ -1428,7 +1431,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                   onClick={send}
                   disabled={busy || attach.uploading}
                   title={canSteer && !task.queued_message ? "Send to the agent now (Enter)" : "Queue (Enter)"}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-tint-strong disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
                 </button>
@@ -1440,7 +1443,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                     api.stop(task.host_id, task.id).catch((e) => setErr(`Couldn't stop the agent: ${(e as Error).message}`));
                   }}
                   title={stopTitle(task, canSteer)}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15 narrow:h-9 narrow:w-9"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-tint-strong text-fg hover:bg-active narrow:h-9 narrow:w-9"
                 >
                   <Square size={11} fill="currentColor" />
                 </button>
@@ -1449,7 +1452,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                   onClick={send}
                   disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !canStartEmpty)}
                   title="Send (Enter)"
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-tint-strong disabled:text-faint narrow:h-9 narrow:w-9"
                 >
                   {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={15} />}
                 </button>

@@ -58,7 +58,7 @@ export function ProjectAgentTools({ project }: { project: Project }) {
       setErr((e as Error).message);
     }
   };
-  if (!tools) return err ? <div className="text-xs text-red-400">{err}</div> : null;
+  if (!tools) return err ? <div className="text-xs text-danger">{err}</div> : null;
   const seen = Object.values(tools.seen);
   const lastSeen = seen.map((s) => s.at).sort().pop();
   const toggleOther = (key: DisabledKey, name: string, on: boolean) => {
@@ -125,7 +125,7 @@ export function ProjectAgentTools({ project }: { project: Project }) {
           await reload();
         }}
       />
-      {err && <div className="text-xs text-red-400">{err}</div>}
+      {err && <div className="text-xs text-danger">{err}</div>}
     </>
   );
 }
@@ -188,7 +188,7 @@ function SharedList({
 
 function Section({ title, action, hint, children }: { title: string; action: ReactNode; hint: ReactNode; children: ReactNode }) {
   return (
-    <div className="space-y-3 rounded-xl border border-line p-4">
+    <div className="space-y-3 rounded-xl border border-line bg-panel p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="text-[13px] font-medium">{title}</div>
         {action}
@@ -379,7 +379,7 @@ function SkillEditor({ skill, onSave, onClose }: { skill: ProjectSkill | null; o
           <Textarea rows={20} className="font-mono text-[12px]" value={content} onChange={(e) => setContent(e.target.value)} spellCheck={false} autoFocus />
         </Field>
         <ModalFooter className="space-y-3">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-[11.5px] text-faint">{SUBMIT_KEYS} to save</span>
             <Button variant="ghost" onClick={onClose}>
@@ -594,7 +594,7 @@ function McpEditor({
           </>
         )}
         <ModalFooter className="space-y-4">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex items-center justify-end gap-2">
             <Button variant="ghost" className="mr-auto" onClick={switchMode}>
               {json === null ? "Edit as JSON" : "Edit as form"}
@@ -729,20 +729,20 @@ export function GlobalAgentToolsPanel() {
             <div className="rounded-xl border border-dashed border-line p-4 text-[12.5px] text-faint">No global skills or MCP servers on this host yet.</div>
           )}
           {tools.skills.length > 0 && (
-            <div className="rounded-xl border border-line">
+            <div className="rounded-xl border border-line bg-panel">
               <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">Skills</div>
               <div className="divide-y divide-line/70">{tools.skills.map((s) => row(s, "skill"))}</div>
             </div>
           )}
           {tools.mcp_servers.length > 0 && (
-            <div className="rounded-xl border border-line">
+            <div className="rounded-xl border border-line bg-panel">
               <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">MCP servers</div>
               <div className="divide-y divide-line/70">{tools.mcp_servers.map((s) => row(s, "server"))}</div>
             </div>
           )}
         </div>
       )}
-      {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
+      {err && <div className="mt-2 text-xs text-danger">{err}</div>}
       {editing?.kind === "skill" && (
         <SkillEditor
           skill={editing.item as ProjectSkill | null}

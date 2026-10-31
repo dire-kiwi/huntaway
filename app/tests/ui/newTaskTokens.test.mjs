@@ -56,7 +56,7 @@ test("tokens set a new task's options, and are taken out of its description", as
     ]);
     assert.equal(await page.evaluate(value), "/plan Price rules !sonnet ^high @XYZ #SHOP-1 ");
     // Known tokens are marked; one that isn't (@XYZ: there's nowhere else to go from a project's board) is left as text.
-    const marked = await page.$$eval("[data-modal] [aria-hidden] span[class*=bg-]", (els) => els.map((e) => [e.textContent, e.className.includes("amber")]));
+    const marked = await page.$$eval("[data-modal] [aria-hidden] span[class*=bg-]", (els) => els.map((e) => [e.textContent, e.className.includes("warning")]));
     assert.deepEqual(marked, [
       ["/plan", false],
       ["!sonnet", false],

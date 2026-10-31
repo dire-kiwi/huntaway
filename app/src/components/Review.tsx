@@ -60,7 +60,7 @@ const threadToOpen = (r: Review) => {
   return (parts.find((p) => p.state === "issues") ?? parts.find((p) => p.state === "running") ?? parts[0]).thread_id;
 };
 
-const TONE_TEXT = { running: "text-st-review", ok: "text-emerald-400/90", warn: "text-st-attention", muted: "text-faint" };
+const TONE_TEXT = { running: "text-st-review", ok: "text-success", warn: "text-st-attention", muted: "text-faint" };
 
 /** Whether a card shows its review: always while it runs, and its outcome until the agent works again. */
 export const showsReview = (t: Task) => !!t.review && (t.review.state === "running" || (!t.running && t.status !== "done"));
@@ -195,7 +195,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
             className={clsx(
               "flex items-center gap-1.5",
               d.tone === "running" && "text-st-review",
-              d.tone === "ok" && "text-emerald-300",
+              d.tone === "ok" && "text-success",
               d.tone === "warn" && "text-st-attention",
               d.tone === "muted" && "text-muted",
             )}
@@ -229,7 +229,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
           </Button>
         )}
       </div>
-      {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+      {err && <div className="rounded bg-danger/10 p-2 text-[11.5px] whitespace-pre-wrap text-danger">{err}</div>}
     </div>
   );
 }

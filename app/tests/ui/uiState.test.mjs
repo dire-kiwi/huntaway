@@ -269,7 +269,7 @@ test("a draft the browser can't store stays usable, and its send still goes", as
     assert.equal(sent, "Short, and then a much longer draft");
     await notice.waitFor({ state: "detached" });
     assert.equal(await stored(), null);
-    assert.equal(await page.locator(".text-red-400").count(), 0, "no error");
+    assert.equal(await page.locator(".text-danger").count(), 0, "no error");
   });
 });
 

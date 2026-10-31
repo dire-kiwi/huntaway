@@ -232,7 +232,7 @@ export function TimelineView({ tasks, projectOf, onMenu }: { tasks: Task[]; proj
           </span>
         </span>
       </div>
-      {errors.length > 0 && <div className="border-b border-line bg-amber-500/10 px-5 py-1.5 text-[12px] text-amber-300">{errors.join(" · ")}</div>}
+      {errors.length > 0 && <div className="border-b border-line bg-warning/10 px-5 py-1.5 text-[12px] text-warning">{errors.join(" · ")}</div>}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* The axis and how many ran at once stay at the top while the lanes scroll. */}
         <div className="sticky top-0 z-10 border-b border-line bg-bg">
@@ -302,7 +302,7 @@ export function TimelineView({ tasks, projectOf, onMenu }: { tasks: Task[]; proj
                   }
                 }}
                 onContextMenu={onMenu && ((e) => onMenu(e, t))}
-                className={clsx("group flex h-8 cursor-pointer items-stretch outline-none hover:bg-white/[0.03] focus-visible:bg-white/[0.04]", openId === t.id && "bg-accent/[0.07]")}
+                className={clsx("group flex h-8 cursor-pointer items-stretch outline-none hover:bg-tint focus-visible:bg-tint", openId === t.id && "bg-accent/[0.07]")}
               >
                 <div className="flex w-[300px] shrink-0 items-center gap-2 px-5 text-[12.5px]">
                   <StatusIcon status={t.status} size={13} />

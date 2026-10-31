@@ -128,7 +128,7 @@ export function ReminderModal({ task, onClose }: { task: Task; onClose: () => vo
         <Input autoFocus type="datetime-local" aria-label="Remind me at" value={at} onChange={(e) => setAt(e.target.value)} />
         <Input value={note} placeholder="What for (optional)" aria-label="What for" maxLength={500} onChange={(e) => setNote(e.target.value)} />
         <ModalFooter className="space-y-3">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
@@ -147,7 +147,7 @@ export function ReminderModal({ task, onClose }: { task: Task; onClose: () => vo
 export function StarButton({ task, onError }: { task: Task; onError: (msg: string) => void }) {
   return (
     <IconButton
-      className={clsx("h-7 w-7", task.starred && "text-amber-300 hover:text-amber-200")}
+      className={clsx("h-7 w-7", task.starred && "text-warning hover:text-warning")}
       title={task.starred ? "Unstar" : "Star (lists it in the sidebar)"}
       aria-pressed={!!task.starred}
       onClick={() => saveMarks(task, { starred: !task.starred }).catch((e) => onError((e as Error).message))}
@@ -172,7 +172,7 @@ export function ReminderButton({ task, onError }: { task: Task; onError: (msg: s
       {task.remind_at ? (
         <Button
           size="sm"
-          className={clsx(due && "border-st-attention/40 text-amber-300")}
+          className={clsx(due && "border-st-attention/40 text-warning")}
           title={`Reminder: ${new Date(task.remind_at).toLocaleString()}${task.reminder ? ` · ${task.reminder}` : ""}`}
           onClick={open}
         >
@@ -203,13 +203,13 @@ export function TaskMarks({ task, compact }: { task: Task; compact?: boolean }) 
   return (
     <>
       {task.starred && (
-        <span className="flex shrink-0 text-amber-300" title="Starred">
+        <span className="flex shrink-0 text-warning" title="Starred">
           <Star size={11} fill="currentColor" aria-label="Starred" />
         </span>
       )}
       {task.remind_at && (
         <span
-          className={clsx("flex shrink-0 items-center gap-1 whitespace-nowrap", isDue(task, now) ? "text-amber-300" : "text-muted")}
+          className={clsx("flex shrink-0 items-center gap-1 whitespace-nowrap", isDue(task, now) ? "text-warning" : "text-muted")}
           title={`Reminder: ${reminderLabel(task.remind_at, now)}, ${new Date(task.remind_at).toLocaleString()}${task.reminder ? ` · ${task.reminder}` : ""}`}
         >
           {isDue(task, now) ? <BellRing size={11} /> : <Bell size={11} />} {compact ? <Wide>{reminderLabel(task.remind_at, now)}</Wide> : reminderLabel(task.remind_at, now)}

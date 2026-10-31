@@ -53,9 +53,9 @@ function NavItem({ active, current, onClick, onContextMenu, icon, children, righ
       aria-expanded={expanded}
       aria-current={current || undefined}
       className={clsx(
-        "flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] narrow:h-10",
+        "focus-ring flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-colors narrow:h-10",
         active || current ? "text-fg" : "text-muted hover:text-fg",
-        active ? "bg-raised" : "hover:bg-white/[0.04]",
+        active ? "bg-active" : "hover:bg-hover",
         current && "relative before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent",
         className,
       )}
@@ -67,7 +67,7 @@ function NavItem({ active, current, onClick, onContextMenu, icon, children, righ
   );
 }
 
-const BADGE_TONE = { attention: "bg-st-attention/20 text-amber-300", review: "bg-st-review/20 text-violet-300", muted: "bg-white/10 text-muted" };
+const BADGE_TONE = { attention: "bg-st-attention/20 text-warning", review: "bg-st-review/20 text-st-review", muted: "bg-tint-strong text-muted" };
 
 function Badge({ n, tone = "attention", title }: { n: number; tone?: keyof typeof BADGE_TONE; title?: string }) {
   if (!n) return null;
@@ -192,7 +192,7 @@ function SectionHeading({ label, open, onToggle, right }: { label: string; open:
     <button
       onClick={onToggle}
       aria-expanded={open}
-      className="flex h-7 w-full items-center gap-1 px-2 text-left text-[11px] font-semibold tracking-wide text-faint uppercase hover:text-muted"
+      className="flex h-7 w-full items-center gap-1 px-2 text-left text-[10.5px] font-semibold tracking-wider text-faint uppercase hover:text-muted"
     >
       <ChevronRight size={12} className={clsx("transition-transform", open && "rotate-90")} />
       <span className="flex-1">{label}</span>
@@ -261,7 +261,7 @@ function MarkedTasks({ route }: { route: Route }) {
 
   return (
     <div className="space-y-1 pb-2">
-      {section("starred", "Starred", starred, (t) => row(t, <Star size={11} className="shrink-0 text-amber-300" fill="currentColor" />, t.title))}
+      {section("starred", "Starred", starred, (t) => row(t, <Star size={11} className="shrink-0 text-warning" fill="currentColor" />, t.title))}
       {section(
         "reminders",
         "Reminders",
@@ -270,7 +270,7 @@ function MarkedTasks({ route }: { route: Route }) {
           const on = isDue(t, now);
           return row(
             t,
-            <span className={clsx("flex shrink-0 items-center gap-1 text-[11px]", on ? "text-amber-300" : "text-faint")}>
+            <span className={clsx("flex shrink-0 items-center gap-1 text-[11px]", on ? "text-warning" : "text-faint")}>
               {on ? <BellRing size={11} /> : <Bell size={11} />}
               {reminderLabel(t.remind_at!, now)}
             </span>,
@@ -280,7 +280,7 @@ function MarkedTasks({ route }: { route: Route }) {
         <Badge n={due} title={`${due} reminder${due === 1 ? "" : "s"} due`} />,
       )}
       {err && (
-        <div className="flex items-start gap-1 px-2.5 py-1 text-[11.5px] text-red-400">
+        <div className="flex items-start gap-1 px-2.5 py-1 text-[11.5px] text-danger">
           <span className="min-w-0 flex-1">{err}</span>
           <IconButton className="h-5 w-5" title="Dismiss" onClick={() => setErr(null)}>
             <X size={12} />
@@ -324,7 +324,7 @@ function GroupNameModal({ title, initial, onSave, onClose }: { title: string; in
       <form onSubmit={submit} className="space-y-4">
         <Input autoFocus value={name} placeholder="Group name" maxLength={100} onChange={(e) => setName(e.target.value)} />
         <ModalFooter className="space-y-4">
-          {err && <div className="text-xs text-red-400">{err}</div>}
+          {err && <div className="text-xs text-danger">{err}</div>}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
@@ -567,7 +567,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
         onClick={() => navigate({ name: "board", projectId: p.id })}
         onContextMenu={(e) => projectMenu(e, p)}
         icon={
-          <span className="flex h-4.5 w-7 items-center justify-center rounded bg-white/[0.06] font-mono text-[9.5px] font-semibold text-muted">
+          <span className="flex h-4.5 w-7 items-center justify-center rounded-md bg-active font-mono text-[9.5px] font-semibold text-muted">
             {p.key.slice(0, 3)}
           </span>
         }
@@ -586,13 +586,13 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
   };
 
   return (
-    <aside className={clsx("flex h-full shrink-0 flex-col border-r border-line bg-panel", drawer ? "w-full" : "w-60")}>
-      <div className="drag flex h-12 items-center gap-2 px-4">
-        <img src="/icon.svg" className="h-5 w-5" alt="" />
-        <span className="text-[13.5px] font-semibold tracking-tight">Huntaway</span>
+    <aside className={clsx("flex h-full shrink-0 flex-col border-r border-line bg-sidebar", drawer ? "w-full" : "w-60")}>
+      <div className="drag flex h-12 items-center gap-2.5 px-4">
+        <img src="/icon.svg" className="h-5.5 w-5.5 rounded-md shadow-card" alt="" />
+        <span className="text-[14px] font-semibold tracking-tight">Huntaway</span>
         <span
           title={connected ? "Connected" : "Reconnecting…"}
-          className={clsx("ml-auto h-1.5 w-1.5 rounded-full", connected ? "bg-emerald-400" : "bg-red-400 animate-pulse-dot")}
+          className={clsx("ml-auto h-1.5 w-1.5 rounded-full", connected ? "bg-success" : "bg-danger animate-pulse-dot")}
         />
         {drawer && (
           <IconButton className="-mr-2" title="Close the menu" onClick={() => useDrawer.getState().setOpen(false)}>
@@ -623,7 +623,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
         <MarkedTasks route={route} />
         <div className="flex items-center px-2 pb-1">
-          <span className="min-w-0 truncate text-[11px] font-semibold tracking-wide text-faint uppercase">
+          <span className="min-w-0 truncate text-[10.5px] font-semibold tracking-wider text-faint uppercase">
             Projects
             {names.length > 1 && active && (
               <span className="font-normal tracking-normal normal-case" title={`${active}'s projects, and the pinned ones`}>
@@ -645,7 +645,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                   title={`Configure ${host.name}`}
                   className="flex w-full items-center gap-1.5 px-2.5 pt-1 pb-0.5 text-left text-[10.5px] text-faint hover:text-muted"
                 >
-                  <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-emerald-400/70" : "bg-red-400")} />
+                  <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-success/70" : "bg-danger")} />
                   {host.name}
                   {!host.connected && " · offline"}
                   {host.connected && ["incompatible", "board_outdated"].includes(hostCompat(host)) && " · needs update"}
@@ -684,8 +684,8 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                       <div className="min-w-0 flex-1">
                         <div
                           className={clsx(
-                            "flex h-8 items-center rounded-md text-[13px] narrow:h-10",
-                            onGroup || hidesActive ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
+                            "flex h-8 items-center rounded-lg text-[13px] transition-colors narrow:h-10",
+                            onGroup || hidesActive ? "bg-active text-fg" : "text-muted hover:bg-hover hover:text-fg",
                           )}
                           onContextMenu={(e) => groupMenu(e, entry.name, groupProjects(all, entry.hostId, entry.name), groupProjects(list, entry.hostId, entry.name))}
                         >
@@ -694,7 +694,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                             aria-label={`${open ? "Collapse" : "Expand"} ${entry.name}`}
                             title={open ? "Collapse" : "Expand"}
                             onClick={() => setCollapsedGroup(key, open)}
-                            className="flex h-8 w-6 shrink-0 items-center justify-center rounded-l-md text-faint hover:text-fg narrow:h-10 narrow:w-8"
+                            className="flex h-8 w-6 shrink-0 items-center justify-center rounded-l-lg text-faint hover:text-fg narrow:h-10 narrow:w-8"
                           >
                             <ChevronRight size={13} className={clsx("transition-transform", open && "rotate-90")} />
                           </button>
@@ -805,7 +805,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
             </div>
           ))}
           {groupErr && (
-            <div className="flex items-start gap-1 px-2.5 py-1 text-[11.5px] text-red-400">
+            <div className="flex items-start gap-1 px-2.5 py-1 text-[11.5px] text-danger">
               <span className="min-w-0 flex-1">{groupErr}</span>
               <IconButton className="h-5 w-5" title="Dismiss" onClick={() => setGroupErr(null)}>
                 <X size={12} />
@@ -813,7 +813,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
             </div>
           )}
           {shown.length === 0 && (
-            <button onClick={() => setAdding(true)} className="w-full rounded-md border border-dashed border-line px-3 py-3 text-[12px] text-faint hover:text-muted">
+            <button onClick={() => setAdding(true)} className="w-full rounded-lg border border-dashed border-line-strong px-3 py-3 text-[12px] text-faint hover:text-muted">
               {projects.length === 0 ? "Add your first project" : `Add a project to ${active}`}
             </button>
           )}

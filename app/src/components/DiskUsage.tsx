@@ -78,9 +78,9 @@ export function DiskUsage() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-6 p-6">
-          {error && <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-[12.5px] text-red-300">{error}</div>}
+          {error && <div className="rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
           {data?.errors.map((e) => (
-            <div key={e} className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12.5px] text-amber-200">
+            <div key={e} className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
               {e}
             </div>
           ))}
@@ -169,7 +169,7 @@ function Bars({ projects }: { projects: DProject[] }) {
           return (
             <div
               key={`${p.hostId}:${p.id}`}
-              className="flex cursor-default items-center gap-3 rounded-sm py-0.5 hover:bg-white/[0.03]"
+              className="flex cursor-default items-center gap-3 rounded-sm py-0.5 hover:bg-tint"
               {...bind(() => (
                 <>
                   <div className="mb-1 flex items-center gap-1.5 font-medium">
