@@ -827,6 +827,13 @@ fn signed(secret: &str, body: &[u8], header: Option<&str>) -> bool {
     hmac::verify(&hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes()), body, &tag).is_ok()
 }
 
+/// The delivery id of a signed delivery that came without one: its body's SHA-256.
+fn body_id(body: &[u8]) -> String {
+    use aws_lc_rs::digest;
+    let hash: String = digest::digest(&digest::SHA256, body).as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    format!("body-sha256:{hash}")
+}
+
 fn from_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
@@ -967,6 +974,11 @@ async fn receive(s: &Shared, a: &Automation, delivery: Delivery, raw: Option<(&[
             let why = if signature.is_some() { "its X-Hub-Signature-256 doesn't match the secret" } else { "it isn't signed (no X-Hub-Signature-256)" };
             return record(Run { status: "rejected".into(), ..run }.with_detail(format!("Rejected: {why}")));
         }
+        // A signed delivery without an id is known by its body, so one that's been captured can't
+        // be sent again with its id header taken out (which only the secret's holder could change).
+        if a.secret.as_deref().is_some_and(|s| !s.is_empty()) && run.delivery_id.is_none() {
+            run.delivery_id = Some(body_id(body));
+        }
         if !a.enabled {
             return record(Run { status: "skipped".into(), ..run }.with_detail("Skipped: the automation is off"));
         }
@@ -997,7 +1009,12 @@ async fn receive(s: &Shared, a: &Automation, delivery: Delivery, raw: Option<(&[
                 .optional()?;
             if seen.is_some() {
                 drop(c);
-                return record(Run { status: "duplicate".into(), batch_id: seen, ..run }.with_detail("Dropped: this delivery came before"));
+                let why = if id.starts_with("body-sha256:") {
+                    "Dropped: this delivery came before (it has no delivery id header, so it's known by its signed body)"
+                } else {
+                    "Dropped: this delivery came before"
+                };
+                return record(Run { status: "duplicate".into(), batch_id: seen, ..run }.with_detail(why));
             }
         }
         if coalesce {
@@ -1068,11 +1085,14 @@ pub async fn webhook(State(s): State<Shared>, Path((id, token)): Path<(String, S
     if !a.is_webhook() || !same_secret(&a.token, &token) {
         return not_found();
     }
-    if !allow_delivery(&a.id) {
+    let signature = headers.get("x-hub-signature-256").and_then(|v| v.to_str().ok());
+    // Counted after the signature check, so that anyone with the URL can't use up the minute's
+    // deliveries with unsigned ones. Those have a limit of their own, past which they aren't recorded.
+    let genuine = a.secret.as_deref().filter(|s| !s.is_empty()).is_none_or(|secret| signed(secret, &body, signature));
+    if !allow_delivery(&if genuine { a.id.clone() } else { format!("{}:unsigned", a.id) }) {
         return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": format!("too many deliveries: at most {RATE_PER_MINUTE} a minute")}))).into_response();
     }
     let delivery = Delivery::parse(&headers, uri.query(), &body);
-    let signature = headers.get("x-hub-signature-256").and_then(|v| v.to_str().ok());
     match receive(&s, &a, delivery, Some((&body, signature))).await {
         Ok(run) => {
             let status = match run.status.as_str() {
@@ -1837,6 +1857,35 @@ mod tests {
             assert_eq!(statuses(&s, &a).len(), RATE_PER_MINUTE);
             assert!(statuses(&s, &a).iter().all(|st| st == "filtered"));
             assert!(tasks(&s).is_empty());
+        })
+    }
+
+    // HA-42: unsigned deliveries counted toward the rate limit, so anyone with the URL could keep out
+    // the signed ones; and a signed delivery sent again without its id header ran again.
+    #[test]
+    fn unsigned_deliveries_dont_use_up_the_rate_and_signed_ones_cant_be_replayed() {
+        testing::run(async || {
+            let (s, p) = setup();
+            let app = api::router(s.clone());
+            let a = hook(&s, &p.id, json!({"kind": "webhook"}), json!({"kind": "create_task", "title": "{{body.title}}"}));
+            update(&s, &a.id, json!({"secret": "s3cret"})).await;
+            for i in 0..RATE_PER_MINUTE {
+                assert_eq!(deliver(&app, &a.hook_path(), &[], "{}").await.0, 401, "unsigned delivery {i}");
+            }
+            // Past their own limit, unsigned ones aren't even recorded.
+            assert_eq!(deliver(&app, &a.hook_path(), &[("x-hub-signature-256", &sign("wrong", "{}"))], "{}").await.0, 429);
+            assert_eq!(statuses(&s, &a).len(), RATE_PER_MINUTE);
+            let body = r#"{"title": "Real"}"#;
+            let (status, v) = deliver(&app, &a.hook_path(), &[("x-hub-signature-256", &sign("s3cret", body))], body).await;
+            assert_eq!((status, v["status"].as_str()), (202, Some("ok")), "{v}");
+            // The same signed body again, without a delivery id, is the same delivery.
+            let (status, v) = deliver(&app, &a.hook_path(), &[("x-hub-signature-256", &sign("s3cret", body))], body).await;
+            assert_eq!((status, v["status"].as_str()), (200, Some("duplicate")), "{v}");
+            assert!(v["detail"].as_str().unwrap().contains("signed body"), "{v}");
+            // One with an id of its own is told apart by it, as before.
+            let (status, v) = deliver(&app, &a.hook_path(), &[("x-hub-signature-256", &sign("s3cret", body)), ("x-github-delivery", "d2")], body).await;
+            assert_eq!((status, v["status"].as_str()), (202, Some("ok")), "{v}");
+            assert_eq!(tasks(&s).len(), 2);
         })
     }
 

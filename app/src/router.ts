@@ -125,6 +125,11 @@ export function usePanel(): Panel | null {
   return parsePanel(search);
 }
 
+/** Whether task `taskId` is open in the side panel. Unlike usePanel, it only re-renders when that changes (one card's, not every card's). */
+export function usePanelOpen(taskId: string): boolean {
+  return useSyncExternalStore(onNavigate, () => parsePanel(window.location.search)?.taskId === taskId);
+}
+
 /**
  * Opens a task in the side panel of the current page, keeping it expanded if it was. Off the
  * boards, goes to `/t/<id>`, which moves on to the task's board once it's known.

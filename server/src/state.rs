@@ -56,6 +56,8 @@ pub struct AppState {
     pub link_tasks: Mutex<HashMap<String, JoinHandle<()>>>,
     /// This host's API, for answering tunnelled and proxied requests in-process.
     pub local_router: OnceLock<Router>,
+    /// Where this host is reached through the broker it dials (`<broker>/_broker/h/<name>`), if any.
+    pub broker_url: OnceLock<String>,
     /// Calls waiting on a permission request's decision, by request id.
     pub perm_waiters: Mutex<HashMap<String, Vec<oneshot::Sender<()>>>>,
     /// MCP calls being executed, with duplicate deliveries waiting on the result.
@@ -102,6 +104,7 @@ impl AppState {
             links: Mutex::new(HashMap::new()),
             link_tasks: Mutex::new(HashMap::new()),
             local_router: OnceLock::new(),
+            broker_url: OnceLock::new(),
             perm_waiters: Mutex::new(HashMap::new()),
             calls_inflight: Mutex::new(HashMap::new()),
             meta,

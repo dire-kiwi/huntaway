@@ -4,8 +4,14 @@
 //! A host dials out to `/_broker/connect` (`huntaway serve --broker <url>`) and keeps that
 //! websocket open. Every other request the broker gets is passed down it to a host, which answers
 //! it from its own server: the board's UI, its API and its websockets. The broker keeps nothing
-//! but the list of connected hosts. It doesn't sign anyone in: the host's own token still guards
-//! its API, and the broker's token only says which hosts may connect.
+//! but the list of connected hosts, in memory. It doesn't sign anyone in: the host's own token
+//! still guards its API.
+//!
+//! The broker's token lets a host connect, under the name it asks for. Clients pick a host by its
+//! name, so a name stays with the first host that took it (the `host_id` and secret `key` of its
+//! `Hello`): another host asking for it is refused while that one is connected, and for `HOLD`
+//! after it goes. A broker that restarts forgets them, and the first host to connect again under a
+//! name has it.
 //!
 //! Which host a request goes to:
 //!
@@ -59,6 +65,8 @@ const CLOSE_GRACE: Duration = Duration::from_secs(2);
 /// A stream whose client takes none of what's waiting for it for this long is closed, and so is one
 /// whose data waits that long for the host to take it.
 const STALL: Duration = Duration::from_secs(60);
+/// How long a name is kept for its host after it goes, so another can't take it meanwhile.
+const HOLD: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -70,17 +78,60 @@ pub struct Config {
     pub max_streams: usize,
     /// How long a client may leave a stream's data waiting before it's closed (`STALL`).
     pub stall: Duration,
+    /// How long a name is kept for its host after it goes (`HOLD`).
+    pub hold: Duration,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { token: String::new(), default_host: None, max_streams: MAX_STREAMS, stall: STALL }
+        Config { token: String::new(), default_host: None, max_streams: MAX_STREAMS, stall: STALL, hold: HOLD }
     }
 }
 
 struct Broker {
     cfg: Config,
-    hosts: Mutex<HashMap<String, Arc<Host>>>,
+    names: Mutex<HashMap<String, Name>>,
+}
+
+impl Broker {
+    /// The host connected as `name`.
+    fn host(&self, name: &str) -> Option<Arc<Host>> {
+        self.names.lock().unwrap().get(name)?.host.clone()
+    }
+}
+
+/// A name taken on the broker: the host it's kept for, and that host's connection while it has one.
+struct Name {
+    owner: Owner,
+    host: Option<Arc<Host>>,
+    /// When the host went, while it isn't connected: the name is kept for it until `hold` after.
+    left: Instant,
+}
+
+/// Who a host says it is.
+struct Owner {
+    host_id: String,
+    key: Option<String>,
+}
+
+impl Owner {
+    /// Whether `other` is the host a name is kept for.
+    fn admits(&self, other: &Owner) -> bool {
+        match (&self.key, &other.key) {
+            (Some(a), Some(b)) => self.host_id == other.host_id && same(a.as_bytes(), b.as_bytes()),
+            (Some(_), None) => false,
+            // A host from before keys is known by its id alone, and keeps its name when it comes back with a key.
+            (None, _) => self.host_id == other.host_id,
+        }
+    }
+}
+
+/// How long `d` is, in words, rounded up to minutes.
+fn minutes(d: Duration) -> String {
+    match d.as_secs().div_ceil(60) {
+        0 | 1 => "a minute".into(),
+        n => format!("{n} minutes"),
+    }
 }
 
 /// A connected host.
@@ -323,7 +374,7 @@ impl Drop for Stream {
 }
 
 pub fn router(cfg: Config) -> Router {
-    let b = Arc::new(Broker { cfg, hosts: Mutex::new(HashMap::new()) });
+    let b = Arc::new(Broker { cfg, names: Mutex::new(HashMap::new()) });
     Router::new()
         .route("/_broker/connect", get(connect))
         .route("/_broker/health", get(|| async { Json(json!({"ok": true})) }))
@@ -358,7 +409,7 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
         _ => None,
     };
     let refuse = |error: String| Message::Text(serde_json::to_string(&Ctl::Refused { error }).unwrap_or_default().into());
-    let (name, host_id) = match hello {
+    let (name, owner) = match hello {
         Some(Ctl::Hello { protocol, .. }) if protocol != proto::PROTOCOL => {
             let _ = sink.send(refuse(format!("the broker speaks protocol {}, the host {protocol}", proto::PROTOCOL))).await;
             return;
@@ -367,10 +418,24 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             let _ = sink.send(refuse(format!("bad host name {name:?}: use up to 48 lowercase letters, digits and hyphens"))).await;
             return;
         }
-        Some(Ctl::Hello { name, host_id, .. }) => (name, host_id),
+        Some(Ctl::Hello { host_id, .. }) if host_id.is_empty() || host_id.len() > 128 => {
+            let _ = sink.send(refuse("bad host id".into())).await;
+            return;
+        }
+        Some(Ctl::Hello { key: Some(key), .. }) if key.len() > 256 => {
+            let _ = sink.send(refuse("bad key".into())).await;
+            return;
+        }
+        Some(Ctl::Hello { name, host_id, key, .. }) => (name, Owner { host_id, key: key.filter(|k| !k.is_empty()) }),
         _ => return,
     };
+    let host_id = owner.host_id.clone();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let host = Arc::new(Host { name: name.clone(), max_streams: b.cfg.max_streams, tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
+    if let Err(error) = take_name(&b, &name, owner, &host) {
+        let _ = sink.send(refuse(error)).await;
+        return;
+    }
     let writer = tokio::spawn(async move {
         let mut ping = tokio::time::interval(PING);
         loop {
@@ -387,7 +452,6 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             }
         }
     });
-    let host = Arc::new(Host { name: name.clone(), max_streams: b.cfg.max_streams, tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
     let watchdog = {
         let (host, stall) = (host.clone(), b.cfg.stall);
         tokio::spawn(async move {
@@ -398,10 +462,6 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             }
         })
     };
-    // A host that reconnects (its old connection not yet seen to drop) takes its name back.
-    if let Some(old) = b.hosts.lock().unwrap().insert(name.clone(), host.clone()) {
-        let _ = old.tx.send(Message::Close(Some(CloseFrame { code: 4000, reason: "replaced by a newer connection".into() })));
-    }
     host.send(&Ctl::Welcome { name: name.clone() });
     tracing::info!("host {name} ({host_id}) connected");
     loop {
@@ -435,11 +495,10 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             _ => {}
         }
     }
-    {
-        let mut hosts = b.hosts.lock().unwrap();
-        if hosts.get(&name).is_some_and(|h| Arc::ptr_eq(h, &host)) {
-            hosts.remove(&name);
-        }
+    // The name is kept for the host a while, unless it connected again meanwhile.
+    if let Some(n) = b.names.lock().unwrap().get_mut(&name).filter(|n| n.host.as_ref().is_some_and(|h| Arc::ptr_eq(h, &host))) {
+        n.host = None;
+        n.left = Instant::now();
     }
     // The requests in flight end (with what the host sent of them).
     for (_, e) in host.streams.lock().unwrap().drain() {
@@ -449,6 +508,27 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
     watchdog.abort();
     writer.abort();
     tracing::info!("host {name} disconnected");
+}
+
+/// Take `name` for `host`, unless it's kept for another. A host that connects again (its old
+/// connection not yet seen to drop) takes its name back, and the old connection is closed.
+fn take_name(b: &Broker, name: &str, owner: Owner, host: &Arc<Host>) -> Result<(), String> {
+    let mut names = b.names.lock().unwrap();
+    let hold = b.cfg.hold;
+    names.retain(|_, n| n.host.is_some() || n.left.elapsed() < hold);
+    if let Some(n) = names.get(name).filter(|n| !n.owner.admits(&owner)) {
+        tracing::info!("host {name}: refused host id {}, as the name is kept for {}", owner.host_id, n.owner.host_id);
+        let why = match n.host {
+            Some(_) => "another host is connected under it".into(),
+            None => format!("it's kept for the host that had it for {} more", minutes(hold.saturating_sub(n.left.elapsed()))),
+        };
+        return Err(format!("the name {name} is taken: {why}. Give this host another name (--broker-name)"));
+    }
+    let old = names.insert(name.into(), Name { owner, host: Some(host.clone()), left: Instant::now() });
+    if let Some(old) = old.and_then(|n| n.host) {
+        let _ = old.tx.send(Message::Close(Some(CloseFrame { code: 4000, reason: "replaced by a newer connection".into() })));
+    }
+    Ok(())
 }
 
 fn to_stream(host: &Host, id: u64, ev: Event, last: bool) {
@@ -494,7 +574,7 @@ async fn prefixed(State(b): State<Arc<Broker>>, Path(params): Path<HashMap<Strin
         (false, Some(q)) => format!("{rest}?{q}"),
         (false, None) => rest.into(),
     };
-    let Some(host) = b.hosts.lock().unwrap().get(&name).cloned() else {
+    let Some(host) = b.host(&name) else {
         return fail(&path, StatusCode::BAD_GATEWAY, &format!("host {name} isn't connected to the broker"));
     };
     forward(host, path, req).await
@@ -510,13 +590,16 @@ async fn picked(State(b): State<Arc<Broker>>, req: Request) -> Response {
         .map(String::from)
         .or_else(|| cookie(req.headers(), COOKIE))
         .or_else(|| b.cfg.default_host.clone());
-    let host = {
-        let hosts = b.hosts.lock().unwrap();
-        match &wanted {
-            Some(name) => hosts.get(name).cloned().ok_or_else(|| format!("host {name} isn't connected to the broker")),
-            None if hosts.len() == 1 => Ok(hosts.values().next().unwrap().clone()),
-            None if hosts.is_empty() => Err("no host is connected to the broker".into()),
-            None => Err("several hosts are connected to the broker: open /_broker/use/<name> to pick one".into()),
+    let host = match &wanted {
+        Some(name) => b.host(name).ok_or_else(|| format!("host {name} isn't connected to the broker")),
+        None => {
+            let names = b.names.lock().unwrap();
+            let mut hosts = names.values().filter_map(|n| n.host.clone());
+            match (hosts.next(), hosts.next()) {
+                (Some(h), None) => Ok(h),
+                (None, _) => Err("no host is connected to the broker".into()),
+                (Some(_), Some(_)) => Err("several hosts are connected to the broker: open /_broker/use/<name> to pick one".into()),
+            }
         }
     };
     match host {
@@ -745,9 +828,13 @@ mod tests {
     }
 
     async fn broker() -> String {
+        broker_with(Config::default()).await
+    }
+
+    async fn broker_with(cfg: Config) -> String {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = l.local_addr().unwrap();
-        let app = router(Config { token: TOKEN.into(), ..Default::default() });
+        let app = router(Config { token: TOKEN.into(), ..cfg });
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
         addr.to_string()
     }
@@ -760,7 +847,7 @@ mod tests {
         req.headers_mut().insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
         let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
         let (mut sink, mut source) = ws.split();
-        let hello = Ctl::Hello { name: name.into(), host_id: name.into(), version: "0".into(), protocol: proto::PROTOCOL };
+        let hello = Ctl::Hello { name: name.into(), host_id: name.into(), version: "0".into(), protocol: proto::PROTOCOL, key: Some(format!("{name}-key")) };
         sink.send(TMessage::Text(serde_json::to_string(&hello).unwrap().into())).await.unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel::<Ctl>();
         let (sent, ws_id) = (Arc::new(Mutex::new(Instant::now())), Arc::new(AtomicU64::new(0)));
@@ -839,6 +926,132 @@ mod tests {
             assert_eq!(live("gone-host"), 1);
             host.abort();
             until_gone("gone-host").await;
+        })
+    }
+
+    /// A host saying hello as `name`, with `host_id` and `key`, that answers each request with its
+    /// `host_id` in an `x-who` header. Err with what the broker said if it was refused.
+    async fn named_host(b: &str, name: &str, host_id: &str, key: Option<&str>) -> Result<tokio::task::JoinHandle<()>, String> {
+        let mut req = format!("ws://{b}/_broker/connect").into_client_request().unwrap();
+        req.headers_mut().insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
+        let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+        let (mut sink, mut source) = ws.split();
+        let text = |c: &Ctl| TMessage::Text(serde_json::to_string(c).unwrap().into());
+        let hello = Ctl::Hello { name: name.into(), host_id: host_id.into(), version: "0".into(), protocol: proto::PROTOCOL, key: key.map(String::from) };
+        sink.send(text(&hello)).await.unwrap();
+        match source.next().await {
+            Some(Ok(TMessage::Text(t))) => match serde_json::from_str::<Ctl>(&t).unwrap() {
+                Ctl::Welcome { .. } => {}
+                Ctl::Refused { error } => {
+                    // The broker hangs up after it.
+                    assert!(!matches!(source.next().await, Some(Ok(TMessage::Text(_)))), "the broker kept talking after refusing");
+                    return Err(error);
+                }
+                other => panic!("expected a welcome, got {other:?}"),
+            },
+            other => panic!("expected a welcome, got {other:?}"),
+        }
+        let host_id = host_id.to_string();
+        Ok(tokio::spawn(async move {
+            while let Some(Ok(m)) = source.next().await {
+                let TMessage::Text(t) = m else { continue };
+                match serde_json::from_str::<Ctl>(&t).unwrap() {
+                    Ctl::Req { id, .. } => {
+                        let _ = sink.send(text(&Ctl::Head { id, status: 200, headers: vec![("x-who".into(), host_id.clone())] })).await;
+                        let _ = sink.send(text(&Ctl::End { id })).await;
+                    }
+                    Ctl::Ping => {
+                        let _ = sink.send(text(&Ctl::Pong)).await;
+                    }
+                    _ => {}
+                }
+            }
+        }))
+    }
+
+    /// The host id of the host that answers for `name`, or the broker's error.
+    async fn who(b: &str, name: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut tcp = tokio::net::TcpStream::connect(b).await.unwrap();
+        tcp.write_all(format!("GET /_broker/h/{name}/ HTTP/1.1\r\nHost: b\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let mut res = String::new();
+        tcp.read_to_string(&mut res).await.unwrap();
+        match res.lines().find_map(|l| l.strip_prefix("x-who: ")) {
+            Some(who) => who.into(),
+            None => res.split("\r\n\r\n").nth(1).unwrap_or_default().trim().into(),
+        }
+    }
+
+    async fn until_who(b: &str, name: &str, want: &str) {
+        let started = Instant::now();
+        loop {
+            let got = who(b, name).await;
+            if got.contains(want) {
+                return;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5), "{name} still answers with {got:?}, not {want:?}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[test]
+    fn a_host_cant_take_another_hosts_name() {
+        run(async {
+            let b = broker().await;
+            let _desktop = named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap();
+            assert_eq!(who(&b, "desktop").await, "desktop-id");
+            // Knowing its host id isn't enough, nor is leaving the key out.
+            for (id, key) in [("other-id", Some("other-key")), ("desktop-id", Some("other-key")), ("desktop-id", None), ("other-id", None)] {
+                let error = named_host(&b, "desktop", id, key).await.unwrap_err();
+                assert!(error.contains("the name desktop is taken: another host is connected under it"), "{error}");
+                assert_eq!(who(&b, "desktop").await, "desktop-id", "after a hello from {id} with {key:?}");
+            }
+            // The host itself connecting again takes its name back.
+            let _again = named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap();
+            assert_eq!(who(&b, "desktop").await, "desktop-id");
+        })
+    }
+
+    #[test]
+    fn a_second_host_with_the_same_name_is_refused_until_the_first_has_been_gone_a_while() {
+        run(async {
+            let b = broker_with(Config { hold: Duration::from_millis(1500), ..Default::default() }).await;
+            let first = named_host(&b, "desktop", "first", Some("first-key")).await.unwrap();
+            // Refused rather than each replacing the other in turn.
+            for _ in 0..3 {
+                let error = named_host(&b, "desktop", "second", Some("second-key")).await.unwrap_err();
+                assert!(error.contains("another host is connected under it") && error.contains("--broker-name"), "{error}");
+                assert_eq!(who(&b, "desktop").await, "first");
+            }
+            first.abort();
+            until_who(&b, "desktop", "host desktop isn't connected to the broker").await;
+            let error = named_host(&b, "desktop", "second", Some("second-key")).await.unwrap_err();
+            assert!(error.contains("it's kept for the host that had it for a minute more"), "{error}");
+            // The first comes back to it meanwhile.
+            let first = named_host(&b, "desktop", "first", Some("first-key")).await.unwrap();
+            assert_eq!(who(&b, "desktop").await, "first");
+            first.abort();
+            until_who(&b, "desktop", "isn't connected").await;
+            tokio::time::sleep(Duration::from_millis(1600)).await;
+            let _second = named_host(&b, "desktop", "second", Some("second-key")).await.unwrap();
+            assert_eq!(who(&b, "desktop").await, "second");
+            let error = named_host(&b, "desktop", "first", Some("first-key")).await.unwrap_err();
+            assert!(error.contains("taken"), "{error}");
+        })
+    }
+
+    #[test]
+    fn a_host_from_before_keys_is_known_by_its_id() {
+        run(async {
+            let b = broker().await;
+            let old = named_host(&b, "desktop", "desktop-id", None).await.unwrap();
+            named_host(&b, "desktop", "other-id", None).await.unwrap_err();
+            named_host(&b, "desktop", "other-id", Some("other-key")).await.unwrap_err();
+            // Updated, it comes back with a key, which it's then held to.
+            old.abort();
+            let _new = named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap();
+            assert_eq!(who(&b, "desktop").await, "desktop-id");
+            named_host(&b, "desktop", "desktop-id", None).await.unwrap_err();
         })
     }
 }

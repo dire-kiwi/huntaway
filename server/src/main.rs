@@ -383,7 +383,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
             (Some(t), name) => {
                 let name = name.unwrap_or_else(|| huntaway_broker::proto::slug(&state.host_name));
-                broker::dial_out(&state, url.to_string(), t.to_string(), name);
+                broker::dial_out(&state, url.to_string(), t.to_string(), name, load_or_create_token(&data_dir, "broker_key")?);
             }
         }
     }

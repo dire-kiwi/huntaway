@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
-import { setUnauthorizedHandler, unauthorizedHere } from "./api";
+import { fetchOpenToken, getToken, setUnauthorizedHandler, unauthorizedHere } from "./api";
 import { Analytics } from "./components/Analytics";
 import { ProjectApprovals } from "./components/Approvals";
 import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/Board";
@@ -9,6 +9,7 @@ import { HostPage } from "./components/HostPage";
 import { Onboarding, ProjectSettings, Settings, TokenScreen } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { TaskPanel, TaskView } from "./components/TaskView";
+import { UnhandledErrors } from "./components/UnhandledErrors";
 import { useDrawer, useNarrow } from "./narrow";
 import { startNotifications } from "./notifier";
 import { startPush } from "./push";
@@ -27,9 +28,13 @@ export function App() {
   const drawer = useDrawer();
 
   useEffect(() => {
-    setUnauthorizedHandler((path) => {
-      const { localHostId, setAuthed } = useStore.getState();
-      if (unauthorizedHere(path, localHostId)) setAuthed(false);
+    // A token turned down that has been replaced since, or that a PR preview has replaced (rebuilt, it hands out a new
+    // one), loads the board again with the new one; otherwise it's asked for. A linked host turning it down is that
+    // host's trouble (its own token changed since it was linked), not this board's.
+    setUnauthorizedHandler(async (token, path) => {
+      if (!unauthorizedHere(path, useStore.getState().localHostId)) return;
+      if (getToken() !== token || (await fetchOpenToken())) window.location.reload();
+      else useStore.getState().setAuthed(false);
     });
     connectEvents();
     startToolKeepalive();
@@ -115,6 +120,7 @@ export function App() {
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
       <ProjectApprovals />
+      <UnhandledErrors />
     </div>
   );
 }
