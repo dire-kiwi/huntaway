@@ -26,7 +26,9 @@ give hosts the `https://` URL. It keeps no data and needs no volume. Things to k
   it every 20 seconds, so idle timeouts of a minute or more are fine. Don't stop it when it's idle (a scale-to-zero
   platform would cut hosts off).
 - Don't put a password (basic auth) in front of it: hosts and the board's API calls can't send one. Each host's own
-  token guards its API, and the broker's token guards who can connect as a host.
+  token guards its API, and the broker's token guards who can connect as a host. Anyone with the broker's token can
+  connect under a name that's free and be sent its clients' requests (with their host tokens), so give it only to
+  your own hosts.
 - A proxy's request size limit applies to uploads through it (Cloudflare's is 100 MB, which only matters for
   **Copy login** of a large Claude config).
 
@@ -35,6 +37,10 @@ up only its own request and the broker's memory stays bounded. A host has at mos
 When it has that many, a new one takes the place of the one whose client has left data waiting longest. A request
 or websocket that makes no progress for 60 seconds (its client takes nothing of what's waiting for it, or the host
 nothing of what the client sent) is closed.
+
+A name stays with the host that took it first (by its host id and the secret key it keeps in its data dir): another
+host asking for it is refused while that one is connected, and for an hour after it goes. Names are kept in memory
+only: after a restart, the first host to connect under a name has it.
 
 `GET /_broker/health` answers `{"ok": true}` without reaching a host, for health checks. To change the token or the
 default host, restart it with the new value: hosts reconnect by themselves within 30 seconds.
