@@ -1,3 +1,6 @@
+// The tool list in mcp.rs is one json! value, deeper than the default limit lets the macro expand.
+#![recursion_limit = "256"]
+
 mod admin;
 mod agent_tools;
 mod attachments;
@@ -44,6 +47,7 @@ mod usage;
 mod wait;
 mod util;
 mod worktree;
+mod worktree_files;
 
 use std::io::Write;
 use std::path::PathBuf;

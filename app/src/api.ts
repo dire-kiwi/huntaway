@@ -332,6 +332,10 @@ export interface Project {
   base_branch: string | null;
   setup_script: string;
   teardown_script: string;
+  /** Ignored files copied into each new worktree from the repository, as .gitignore-style patterns, one per line (API 81). */
+  copy_files?: string;
+  /** Ignored folders of the repository symlinked into each new worktree, one per line (API 81). */
+  link_folders?: string;
   /** Runs whenever one of the project's tasks changes status (API 37). */
   status_script?: string;
   /** A script per status, run when a task moves into it (API 38). */
