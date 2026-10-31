@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::state::{ApiError, ApiResult, Shared};
-use crate::util::{derive_key, expand_tilde, new_id, path_str};
+use crate::util::{derive_key, expand_tilde, new_id, path_str, same_secret};
 use crate::{admin, agent_tools, git_view, github, hub, permissions, relocate, runner, terminal, title, tools, worktree};
 
 /// This host's API (`/api/...`) plus the hub endpoints that span hosts.
@@ -177,11 +177,11 @@ async fn auth(State(s): State<Shared>, headers: HeaderMap, req: Request, next: N
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| t == s.token);
+        .is_some_and(|t| same_secret(t, &s.token));
     let query_ok = req
         .uri()
         .query()
-        .map(|q| q.split('&').any(|kv| kv.strip_prefix("token=").is_some_and(|t| t == s.token)))
+        .map(|q| q.split('&').any(|kv| kv.strip_prefix("token=").is_some_and(|t| same_secret(t, &s.token))))
         .unwrap_or(false);
     if header_ok || query_ok {
         next.run(req).await
@@ -1612,6 +1612,30 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         ],
     );
     check_reminder(Some(&current), &mut fields)?;
+    // A title is text that isn't blank, and a description is text (null clears it): anything else is
+    // turned away rather than kept as JSON text, or left to the database to refuse with a 500.
+    if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "title") {
+        let title = v.as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| ApiError::bad("title must be a non-empty string"))?;
+        *v = json!(title);
+    }
+    if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "description") {
+        match v {
+            Value::String(_) => {}
+            Value::Null => *v = json!(""),
+            _ => return Err(ApiError::bad("description must be a string")),
+        }
+    }
+    // SQLite keeps a value of the wrong type as it is (text in a REAL column, say), and the row
+    // can't be read back after: every list with the task in it would fail until it's repaired by hand.
+    if fields.iter().any(|(k, v)| *k == "position" && !v.is_number()) {
+        return Err(ApiError::bad("position must be a number"));
+    }
+    if fields.iter().any(|(k, v)| *k == "use_worktree" && !v.is_boolean()) {
+        return Err(ApiError::bad("use_worktree must be true or false"));
+    }
+    if fields.iter().any(|(k, v)| *k == "model" && !(v.is_null() || v.is_string())) {
+        return Err(ApiError::bad("model must be a string or null"));
+    }
     if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "base_branch") {
         *v = check_base_branch(v).await?;
     }
@@ -2340,6 +2364,12 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 /// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
 /// URLs are shown with.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
+    // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.
+    for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
+        if b.get(key).is_some_and(|v| !(v.is_null() || v.is_string())) {
+            return Err(ApiError::bad(format!("{key} must be a string or null")));
+        }
+    }
     if let Some(e) = b.get("default_effort").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) {
         if !db::EFFORTS.contains(&e) {
             return Err(ApiError::bad(format!("default_effort must be one of {:?}", db::EFFORTS)));
@@ -2834,6 +2864,62 @@ pub(crate) mod tests {
             assert_eq!(v["asana_user"], Value::Null);
             assert_eq!(db::get_profile(&s.db(), &p.id).unwrap().unwrap().asana_token, None);
             assert_eq!(call(&app, "GET", &search).await.0, 409);
+        })
+    }
+
+    #[test]
+    fn a_tasks_fields_are_checked_for_type_before_theyre_stored() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            let project = db::insert_project(&s.db(), project).unwrap();
+            let t = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "Fix it", "description": "How"})).unwrap()).unwrap();
+            let set = async |v: Value| update_task_inner(&s, &t.id, v.as_object().unwrap()).await;
+            for bad in [
+                json!({"title": null}),
+                json!({"title": ""}),
+                json!({"title": "  "}),
+                json!({"title": {"a": 1}}),
+                json!({"title": 7}),
+                json!({"description": 42}),
+                json!({"description": ["x"]}),
+                // Stored as text in a REAL or INTEGER column, these would make the row unreadable.
+                json!({"position": "top"}),
+                json!({"position": null}),
+                json!({"use_worktree": "yes"}),
+                json!({"use_worktree": 1}),
+                json!({"model": 3}),
+                json!({"base_branch": ["main"]}),
+            ] {
+                let err = set(bad.clone()).await.unwrap_err();
+                assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+            }
+            // Nothing stuck: the task reads back as it was, in every list.
+            let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert_eq!((t.title.as_str(), t.description.as_str(), t.position, t.use_worktree), ("Fix it", "How", t.position, false));
+            assert_eq!(db::list_tasks_for_project(&s.db(), &project.id, "task").unwrap().len(), 1);
+            assert_eq!(set(json!({"position": 2.5, "use_worktree": true, "model": "haiku", "base_branch": null})).await.unwrap().position, 2.5);
+            let t = set(json!({"title": " Fixed ", "description": null})).await.unwrap();
+            assert_eq!((t.title.as_str(), t.description.as_str()), ("Fixed", ""));
+        })
+    }
+
+    #[test]
+    fn a_setting_of_the_wrong_type_is_refused_rather_than_cleared() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let set = async |v: Value| update_settings(State(s.clone()), Json(v.as_object().unwrap().clone())).await.map(|j| j.0);
+            let out = set(json!({"default_model": "haiku", "default_effort": "high"})).await.unwrap();
+            assert_eq!((out["default_model"].as_str(), out["default_effort"].as_str()), (Some("haiku"), Some("high")));
+            for bad in [json!({"default_model": 123}), json!({"default_permission_mode": 5}), json!({"default_effort": ["high"]}), json!({"scratch_host": true})] {
+                let err = set(bad.clone()).await.unwrap_err();
+                assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+            }
+            let out = set(json!({})).await.unwrap();
+            assert_eq!((out["default_model"].as_str(), out["default_effort"].as_str()), (Some("haiku"), Some("high")), "nothing cleared");
+            let out = set(json!({"default_model": null, "default_effort": ""})).await.unwrap();
+            assert!(out["default_model"].is_null() && out["default_effort"].is_null(), "null and blank clear: {out}");
         })
     }
 

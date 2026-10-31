@@ -13,6 +13,7 @@ app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)
+               ui-check.mjs: drives a test server's board in Chromium, for screenshots and checks
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
@@ -192,7 +193,8 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
-Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
+Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
+servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+).
 
 ### Server options
 
@@ -204,6 +206,7 @@ Run the UI regression tests with `cd app && npm test` (Node.js 22.6+).
 | `--ui-dir` / `IA_UI_DIR` | auto | Built UI (`app/dist`) |
 | `IA_CLAUDE_BIN` | `claude` | Claude Code binary |
 | `IA_CODEX_BIN` | `codex` | Codex binary |
+| `--token` / `IA_TOKEN` | generated | Use this access token instead of the one in the data dir (a secret shared by deployments) |
 | `--name` / `IA_NAME` | hostname | Name this host shows on boards |
 | `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
 | `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
@@ -324,7 +327,7 @@ An `http:` one counts as a secure page in the app, so it can show notifications.
 curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway/master/scripts/install.sh | bash
 ```
 
-It checks for git, Node.js 22.12+, npm, Rust 1.85+ and a C compiler (and warns if `claude`/`codex`
+It checks for git, Node.js 22.12+, npm, Rust 1.89+ and a C compiler (and warns if `claude`/`codex`
 or `tmux` are missing), then clones the repository to `~/.local/share/huntaway-app` (`--dir`) and
 builds the UI and the server there. Last, it adds **Huntaway** to the app launcher: on Linux a
 `huntaway-app.desktop` entry that runs `~/.local/bin/huntaway-desktop`, and on macOS

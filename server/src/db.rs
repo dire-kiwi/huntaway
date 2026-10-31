@@ -627,12 +627,22 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN pr_preview_url TEXT;" };
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=63; COMMIT;"))?;
     }
+    if version < 64 {
+        // Runs are looked up by task (the latest one, every minute for idle sessions; whether one is
+        // active) and prompts counted by task on every task read; both tables only grow.
+        conn.execute_batch(
+            "BEGIN;
+             CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id, created_at);
+             CREATE INDEX IF NOT EXISTS permission_requests_task ON permission_requests(task_id, status);
+             PRAGMA user_version=64; COMMIT;",
+        )?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 63;
+pub const VERSION: i64 = 64;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -3600,6 +3610,10 @@ mod tests {
         }
         let c = open(&path).unwrap();
         assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let indexes: i64 = c
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('runs_task', 'permission_requests_task')", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(indexes, 2, "the indexes of version 64");
         assert_eq!(get_project(&c, "pr").unwrap().unwrap().archived_at, None);
         let t = get_task(&c, "s").unwrap().unwrap();
         assert_eq!((t.number, t.work_dir.as_deref(), t.is_scratch()), (1, Some("/old"), true));

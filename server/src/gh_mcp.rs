@@ -955,6 +955,10 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
             if remote.starts_with('-') || branch.starts_with('-') {
                 bail!("bad remote or branch");
             }
+            // A branch name, not a refspec: `+HEAD:refs/heads/master` would force-push master.
+            if branch.contains([':', '+', '^', '~', '*', '?', '[', '\\']) || branch.contains("..") || branch.contains(char::is_whitespace) {
+                bail!("branch must be a branch name");
+            }
             // HEAD pushes the current branch under its own name, and -u makes it the upstream.
             args.extend(["-u".into(), remote.into(), branch.into()]);
             return Ok(Command { program: "git", args, ok_codes, repo: None });
@@ -1251,6 +1255,11 @@ mod tests {
         }
         let push = command("git_push", &json!({"repo": "ignored"})).unwrap();
         assert_eq!((push.program, push.args), ("git", vec!["push".to_string(), "-u".into(), "origin".into(), "HEAD".into()]));
+        assert_eq!(command("git_push", &json!({"branch": "ia/x-1_fix.it"})).unwrap().args, ["push", "-u", "origin", "ia/x-1_fix.it"]);
+        // A branch name, not a refspec that would push (or force-push) another ref.
+        for bad in ["+HEAD:refs/heads/master", "HEAD:master", ":master", "-f", "a b", "a..b", "x^", "*"] {
+            assert!(command("git_push", &json!({"branch": bad})).is_err(), "{bad}");
+        }
     }
 
     #[test]

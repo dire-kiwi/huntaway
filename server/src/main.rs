@@ -45,6 +45,7 @@ mod wait;
 mod util;
 mod worktree;
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -204,12 +205,15 @@ fn load_or_create_token(data_dir: &std::path::Path, file: &str) -> Result<String
         }
     }
     let token = util::new_token();
-    std::fs::write(&path, &token)?;
+    // Made private from the start, rather than with the umask's mode and tightened after.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
+    opts.open(&path)?.write_all(token.as_bytes())?;
     Ok(token)
 }
 

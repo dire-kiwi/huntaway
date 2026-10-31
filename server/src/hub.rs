@@ -323,8 +323,11 @@ fn spawn_outbound(s: &Shared, link: Link) {
 /// Follow an outbound link's events; the link counts as connected while this is up.
 pub async fn run_outbound(s: &Shared, link: &Link, mode: &str) -> Result<()> {
     let (url, token) = (link.url.clone().context("link has no url")?, link.token.clone().context("link has no token")?);
-    let ws_url = format!("{}/api/host/ws?token={token}", url.trim_end_matches('/').replacen("http", "ws", 1));
-    let ws = relay::open(ws_url.into_client_request()?).await?;
+    // The token goes in a header rather than the URL, which proxies and brokers on the way log.
+    let ws_url = format!("{}/api/host/ws", url.trim_end_matches('/').replacen("http", "ws", 1));
+    let mut ws_req = ws_url.into_client_request()?;
+    ws_req.headers_mut().insert("Authorization", format!("Bearer {token}").parse()?);
+    let ws = relay::open(ws_req).await?;
     let conn = LinkConn::new(&link.id, &link.name, mode, Version::default(), Kind::Http { url, token, client: link_client() });
     if let Ok((200, info)) = conn.request("GET", "/api/info", None).await {
         *conn.version.lock().unwrap() = Version::from_info(&info);
@@ -376,7 +379,7 @@ const REFUSED: u16 = 1008;
 
 pub async fn accept(State(s): State<Shared>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
     let token = headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
-    if token != Some(s.hub_token.as_str()) {
+    if !token.is_some_and(|t| crate::util::same_secret(t, &s.hub_token)) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
     upgrade.on_upgrade(move |ws| async move {
@@ -699,8 +702,7 @@ pub async fn proxy(State(s): State<Shared>, Path((host_id, rest)): Path<(String,
         return proxy_ws(s, host_id, rest, req).await;
     }
     let method = req.method().as_str().to_string();
-    let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
-    let path = format!("/api/{rest}{query}");
+    let path = host_path(&rest, req.uri().query());
     let bytes = match axum::body::to_bytes(req.into_body(), 64 << 20).await {
         Ok(b) => b,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))).into_response(),
@@ -732,6 +734,13 @@ pub async fn proxy(State(s): State<Shared>, Path((host_id, rest)): Path<(String,
     }
 }
 
+/// The path a proxied request takes on its host. A client may authenticate to us with `?token=`;
+/// that token is ours, not the host's, so it isn't passed on (a linked host gets the link's token).
+fn host_path(rest: &str, query: Option<&str>) -> String {
+    let query: Vec<&str> = query.unwrap_or("").split('&').filter(|kv| !kv.is_empty() && !kv.starts_with("token=")).collect();
+    if query.is_empty() { format!("/api/{rest}") } else { format!("/api/{rest}?{}", query.join("&")) }
+}
+
 fn is_websocket(req: &Request) -> bool {
     req.headers().get(axum::http::header::UPGRADE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
 }
@@ -739,9 +748,7 @@ fn is_websocket(req: &Request) -> bool {
 /// A websocket for a host (a terminal): handled by our own router for this host, relayed
 /// to a linked one.
 async fn proxy_ws(s: Shared, host_id: String, rest: String, req: Request) -> Response {
-    // The UI authenticates to us with `?token=`; that token isn't for the host.
-    let query: Vec<&str> = req.uri().query().unwrap_or("").split('&').filter(|kv| !kv.is_empty() && !kv.starts_with("token=")).collect();
-    let path = if query.is_empty() { format!("/api/{rest}") } else { format!("/api/{rest}?{}", query.join("&")) };
+    let path = host_path(&rest, req.uri().query());
     let (mut parts, body) = req.into_parts();
     if host_id == s.host_id {
         let Some(router) = s.local_router.get().cloned() else {

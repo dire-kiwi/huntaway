@@ -91,6 +91,31 @@ async fn checked_out_in(repo: &Path, branch_ref: &str) -> Option<PathBuf> {
     None
 }
 
+/// Whether `dir` is one of `repo`'s worktrees (the main checkout included), by git's own list.
+async fn is_worktree_of(repo: &Path, dir: &Path) -> bool {
+    let Ok(list) = git_ok(repo, &["worktree", "list", "--porcelain"]).await else { return false };
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    list.lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .any(|p| PathBuf::from(p).canonicalize().map(|p| p == dir).unwrap_or(false))
+}
+
+/// Whether `wt` may be removed by hand when git won't remove it as a worktree: a folder inside the
+/// project's worktrees folder that isn't the repository (or another main checkout), so a stray folder
+/// there, or a misconfigured worktrees folder, can't cost work kept elsewhere.
+async fn removable_by_hand(project: &Project, repo: &Path, wt: &Path) -> bool {
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let (root, wt_c, repo_c) = (canon(Path::new(&project.worktrees_root)), canon(wt), canon(repo));
+    if !wt_c.starts_with(&root) || wt_c == root || wt_c == repo_c {
+        return false;
+    }
+    // A main checkout's git dir is its own `.git`; a linked worktree's is under the repository's.
+    match git(&wt_c, &["rev-parse", "--absolute-git-dir"]).await {
+        Ok(o) if o.ok => !Path::new(o.stdout.trim()).ends_with(".git"),
+        _ => true,
+    }
+}
+
 /// The commit `rev` names, if it names one.
 async fn commit(repo: &Path, rev: &str) -> Option<String> {
     git_ok(repo, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]).await.ok().map(|s| s.trim().to_string())
@@ -414,6 +439,11 @@ async fn setup_locked(state: &Shared, task_id: &str) -> Result<Task> {
         let _ = git(&repo, &["worktree", "prune"]).await;
 
         let mut from = base.clone();
+        // A folder there already is the task's worktree from before (a setup that didn't finish, say);
+        // anything else is in the way, not something to take over and later remove.
+        if wt.exists() && !is_worktree_of(&repo, &wt).await {
+            bail!("{} is in the way: it isn't a worktree of {}", wt.display(), repo.display());
+        }
         if !wt.exists() {
             let branch_exists = git(&repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).await?.ok;
             let wt_s = path_str(&wt);
@@ -576,7 +606,11 @@ pub async fn teardown(state: &Shared, task_id: &str, force: bool, delete_branch:
         if force {
             let o = git(&repo, &["worktree", "remove", "--force", &wt_s]).await?;
             if !o.ok && wt.exists() {
-                tokio::fs::remove_dir_all(&wt).await.ok();
+                if removable_by_hand(&project, &repo, &wt).await {
+                    tokio::fs::remove_dir_all(&wt).await.ok();
+                } else {
+                    state.add_event(task_id, "warn", format!("Left {} in place: git won't remove it as a worktree ({}) and it isn't in the project's worktrees folder", wt.display(), o.stderr.trim()), None);
+                }
             }
         } else {
             // What the teardown script left would be lost too, so it's checked again, and git's
@@ -1276,6 +1310,45 @@ mod tests {
             let results = remove_merged(&s, &p.id).await.unwrap();
             assert_eq!((&results[0]["removed"], &results[0]["detail"]), (&json!(true), &json!("merged into origin/master")));
             assert!(!wt.exists());
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    // HA-32: setup took over any folder at the worktree's path, and a forced teardown removed whatever was
+    // there when git wouldn't, so a shared or misconfigured worktrees folder could cost work kept elsewhere.
+    #[test]
+    fn a_folder_in_the_worktrees_way_is_neither_adopted_nor_removed() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let root = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            let repo = root.join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            sh(&repo, &["init", "-q", "-b", "master"]);
+            std::fs::write(repo.join("notes"), "1").unwrap();
+            sh(&repo, &["add", "notes"]);
+            sh(&repo, &["commit", "-qm", "init"]);
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&repo), key: Some("X".into()), base_branch: Some("master".into()), use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            let t = create_task_inner(&s, &p.id, CreateTask { title: "fix it".into(), ..Default::default() }).unwrap();
+            // Someone's folder where the task's worktree would go.
+            let wt = PathBuf::from(&p.worktrees_root).join(folder_name(&p, &t));
+            std::fs::create_dir_all(&wt).unwrap();
+            std::fs::write(wt.join("precious"), "mine").unwrap();
+            let err = setup(&s, &t.id).await.unwrap_err().to_string();
+            assert!(err.contains("in the way"), "{err}");
+            assert_eq!(std::fs::read_to_string(wt.join("precious")).unwrap(), "mine");
+            let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert_eq!((t.worktree_state.as_str(), t.worktree_path), ("error", None), "the failure is the task's to show, the folder nobody's");
+
+            // Only a folder inside the worktrees folder, other than a main checkout, is removed by hand.
+            assert!(removable_by_hand(&p, &repo, &wt).await, "a stray folder in the worktrees folder");
+            assert!(!removable_by_hand(&p, &repo, &repo).await, "the repository");
+            assert!(!removable_by_hand(&p, &repo, &root).await, "outside the worktrees folder");
+            assert!(!removable_by_hand(&p, &repo, Path::new(&p.worktrees_root)).await, "the worktrees folder itself");
+            let checkout = PathBuf::from(&p.worktrees_root).join("checkout");
+            sh(&root, &["clone", "-q", &path_str(&repo), &path_str(&checkout)]);
+            assert!(!removable_by_hand(&p, &repo, &checkout).await, "another main checkout");
             std::fs::remove_dir_all(&root).ok();
         })
     }
