@@ -408,8 +408,8 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "review",
     label: "Review",
     icon: <ScanSearch size={14} />,
-    description: "Reviewer agents that check each task's changes before it's merged, where its pull request is previewed, and what happens once it's merged.",
-    fields: ["auto_review", "review_rounds", "reviewers", "done_when_merged", "watch_pull_requests", "pr_preview_url"],
+    description: "Reviewer agents that check each task's changes before it's merged, a summary of the changes once they pass, where its pull request is previewed, and what happens once it's merged.",
+    fields: ["auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "done_when_merged", "watch_pull_requests", "pr_preview_url"],
   },
   {
     id: "prompts",
@@ -455,6 +455,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
   const host = useHost(project?.host_id);
   const hostMode = useStore((s) => (project ? s.hostSettings[project.host_id]?.default_permission_mode : null)) ?? "default";
   const allProjects = useStore((s) => s.projects);
+  const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project?.host_id)));
   const groups = useMemo(() => (project ? groupNames(allProjects, project.host_id) : []), [allProjects, project]);
   if (!project) return <div className="p-8 text-muted">Project not found.</div>;
   const form: Project = { ...project, ...edits };
@@ -716,6 +717,28 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                   </div>
                 </Field>
                 {hostSupports(host, 29) && <ProjectReviewers project={form} onChange={(v) => set("reviewers", v)} />}
+              </>
+            )}
+
+            {current.id === "review" && hostSupports(host, 82) && form.auto_summary !== undefined && (
+              <>
+                <div className="space-y-1.5">
+                  <Toggle checked={form.auto_summary} onChange={(v) => set("auto_summary", v)} label="Summarise each task's changes once its review passes" />
+                  <div className="text-[12px] text-faint">
+                    An agent reads the work in its own thread and writes a summary of what changed, which the task opens on while it waits in In
+                    review. Summarise now in the task's Summary tab writes one at any time.
+                  </div>
+                </div>
+                <Field label="Summarizer" hint="The agent that writes the summaries. A quick, cheap model is usually enough.">
+                  <ReviewerRow
+                    project={form}
+                    configs={configs}
+                    value={form.summarizer ?? DEFAULT_REVIEWER}
+                    // One with the defaults is the task's config, as the host saves it.
+                    onChange={(v) => set("summarizer", v && (v.claude_config_id || v.model || v.effort) ? v : null)}
+                    removable={false}
+                  />
+                </Field>
               </>
             )}
 
