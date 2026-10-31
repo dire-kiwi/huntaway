@@ -112,8 +112,7 @@ impl GhAsset {
 /// A release's `huntaway-<v>-release.json`: which desktop shell it was built with.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 struct Manifest {
-    #[serde(default)]
-    shell: Option<String>,
+    shell: String,
 }
 
 /// The release a check picked.
@@ -203,11 +202,11 @@ pub async fn check(state: &Shared) {
     next.checked_at = Some(crate::util::now());
     next.rate_limit_reset = None;
     match result {
-        Ok((etag, releases, latest, error)) => {
+        Ok((etag, releases, latest)) => {
             next.etag = etag;
             next.releases = Some(releases);
             next.latest = latest;
-            next.error = error;
+            next.error = None;
         }
         Err(e) => {
             tracing::warn!("checking {} for releases: {e:#}", cfg.repo);
@@ -219,10 +218,10 @@ pub async fn check(state: &Shared) {
     state.emit(json!({"type": "release_checked"}));
 }
 
-type Found = (Option<String>, Vec<GhRelease>, Option<Latest>, Option<String>);
+type Found = (Option<String>, Vec<GhRelease>, Option<Latest>);
 
-/// The list (fetched again, or the last one on a 304), the release picked from it, and an error
-/// that didn't stop the pick (a manifest that couldn't be read).
+/// The list (fetched again, or the last one on a 304) and the release picked from it. A manifest
+/// that can't be read fails the check, so the last result (and what it said of the shell) stands.
 async fn check_with(state: &Shared, cfg: &Config, last: &Checked) -> Result<Found> {
     let prereleases = prereleases(state)?;
     let url = format!("{}/repos/{}/releases?per_page=20", cfg.api, cfg.repo);
@@ -243,21 +242,18 @@ async fn check_with(state: &Shared, cfg: &Config, last: &Checked) -> Result<Foun
         return Err(refused(res).await);
     };
     let Some((version, release, asset)) = pick(&releases, &cfg.platform, prereleases) else {
-        return Ok((etag, releases, None, None));
+        return Ok((etag, releases, None));
     };
     // The manifest only changes with the release, so one read before is kept.
     let manifest_name = format!("huntaway-{}-release.json", tag_version(&release.tag_name));
     let manifest_asset = release.assets.iter().find(|a| a.name == manifest_name);
     let kept = last.latest.as_ref().filter(|l| l.version == version && l.release.tag_name == release.tag_name).and_then(|l| l.manifest.clone());
-    let (manifest, error) = match (manifest_asset, kept) {
-        (None, _) => (None, None),
-        (Some(_), Some(m)) => (Some(m), None),
-        (Some(a), None) => match fetch_manifest(a).await {
-            Ok(m) => (Some(m), None),
-            Err(e) => (None, Some(format!("reading {manifest_name}: {e:#}"))),
-        },
+    let manifest = match (manifest_asset, kept) {
+        (None, _) => None,
+        (Some(_), Some(m)) => Some(m),
+        (Some(a), None) => Some(fetch_manifest(a).await.with_context(|| format!("reading {manifest_name}"))?),
     };
-    Ok((etag, releases.clone(), Some(Latest { version, release: release.clone(), asset: asset.clone(), manifest }), error))
+    Ok((etag, releases.clone(), Some(Latest { version, release: release.clone(), asset: asset.clone(), manifest })))
 }
 
 fn request(url: &str) -> reqwest::RequestBuilder {
@@ -283,7 +279,10 @@ async fn refused(res: reqwest::Response) -> anyhow::Error {
 }
 
 async fn fetch_manifest(asset: &GhAsset) -> Result<Manifest> {
-    let res = request(&asset.browser_download_url).send().await?.error_for_status()?;
+    let res = request(&asset.browser_download_url).send().await?;
+    if !res.status().is_success() {
+        return Err(refused(res).await);
+    }
     Ok(res.json().await?)
 }
 
@@ -354,7 +353,7 @@ fn shell(cfg: &Config, latest: Option<&Latest>) -> Value {
         Some((kind, path)) => (kind, Some(path)),
         None => (install, None),
     };
-    let outdated = match (latest.and_then(|l| l.manifest.as_ref()?.shell.as_deref()), cfg.desktop_shell.as_deref()) {
+    let outdated = match (latest.and_then(|l| Some(l.manifest.as_ref()?.shell.as_str())), cfg.desktop_shell.as_deref()) {
         (Some(theirs), Some(ours)) => theirs != ours,
         _ => false,
     };
@@ -384,15 +383,28 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// A status for the fake to answer with instead, and its headers.
+    type Failure = Option<(u16, Vec<(&'static str, String)>)>;
+
     /// A fake GitHub: its releases (with `{base}` in URLs standing for its own address), the ETag
-    /// it gives them, and a status to answer with instead.
+    /// it gives them, and statuses to answer the list and the manifests with instead.
     #[derive(Default)]
     struct Fake {
         releases: Value,
         etag: String,
-        fail: Option<(u16, Vec<(&'static str, String)>)>,
+        fail: Failure,
+        manifest_fail: Failure,
         not_modified: AtomicUsize,
         manifests: AtomicUsize,
+    }
+
+    fn failure(code: u16, headers: &[(&'static str, String)]) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let mut res = (axum::http::StatusCode::from_u16(code).unwrap(), axum::Json(json!({"message": "nope"}))).into_response();
+        for (k, v) in headers {
+            res.headers_mut().insert(*k, v.parse().unwrap());
+        }
+        res
     }
 
     async fn github(fake: Arc<Mutex<Fake>>) -> String {
@@ -407,11 +419,7 @@ mod tests {
                 axum::routing::get(move |headers: HeaderMap| async move {
                     let f = f1.lock().unwrap();
                     if let Some((code, hs)) = &f.fail {
-                        let mut res = (StatusCode::from_u16(*code).unwrap(), axum::Json(json!({"message": "nope"}))).into_response();
-                        for (k, v) in hs {
-                            res.headers_mut().insert(*k, v.parse().unwrap());
-                        }
-                        return res;
+                        return failure(*code, hs);
                     }
                     if headers.get("if-none-match").and_then(|v| v.to_str().ok()) == Some(f.etag.as_str()) {
                         f.not_modified.fetch_add(1, Ordering::SeqCst);
@@ -424,10 +432,14 @@ mod tests {
             .route(
                 "/download/{name}",
                 axum::routing::get(move |axum::extract::Path(name): axum::extract::Path<String>| async move {
-                    f2.lock().unwrap().manifests.fetch_add(1, Ordering::SeqCst);
+                    let f = f2.lock().unwrap();
+                    f.manifests.fetch_add(1, Ordering::SeqCst);
+                    if let Some((code, hs)) = &f.manifest_fail {
+                        return failure(*code, hs);
+                    }
                     // The stamp is in the name: huntaway-<v>-release.json → shell-<v>.
                     let v = name.trim_start_matches("huntaway-").trim_end_matches("-release.json");
-                    axum::Json(json!({"version": v, "shell": format!("shell-{v}"), "electron": "38.0.0"}))
+                    axum::Json(json!({"version": v, "shell": format!("shell-{v}"), "electron": "38.0.0"})).into_response()
                 }),
             );
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -637,6 +649,47 @@ mod tests {
         });
     }
 
+    #[test]
+    fn a_manifest_that_cant_be_read_fails_the_check() {
+        testing::run(async || {
+            // 0.3.0 has a newer shell than the app's (see config).
+            let (fake, state) = setup(json!([release("v0.3.0", false)])).await;
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!((r["latest"]["version"].as_str(), r["shell"]["outdated"].as_bool()), (Some("0.3.0"), Some(true)));
+            state.release.last.lock().unwrap().checked_at = None;
+            // 0.4.0's manifest can't be read: what 0.3.0 said stands, with the error.
+            fake.lock().unwrap().releases = json!([release("v0.4.0", false), release("v0.3.0", false)]);
+            fake.lock().unwrap().etag = "\"two\"".into();
+            fake.lock().unwrap().manifest_fail = Some((500, vec![]));
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!((r["latest"]["version"].as_str(), r["shell"]["outdated"].as_bool()), (Some("0.3.0"), Some(true)));
+            assert_eq!(r["error"], "reading huntaway-0.4.0-release.json: GitHub answered 500 Internal Server Error: nope");
+            assert!(r["checked_at"].is_string(), "the attempt is recorded: {r}");
+            // Nor one that isn't a manifest.
+            fake.lock().unwrap().manifest_fail = Some((200, vec![]));
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!(r["latest"]["version"], "0.3.0");
+            assert!(r["error"].as_str().unwrap().starts_with("reading huntaway-0.4.0-release.json: "), "{r}");
+            // The rate limit on the manifest says when it resets.
+            let limited = vec![("x-ratelimit-remaining", "0".to_string()), ("x-ratelimit-reset", "1793491200".to_string())];
+            fake.lock().unwrap().manifest_fail = Some((429, limited));
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!((r["latest"]["version"].as_str(), r["rate_limit_reset"].as_str()), (Some("0.3.0"), Some("2026-11-01T00:00:00Z")));
+            assert!(r["error"].as_str().unwrap().contains("rate limit"), "{r}");
+            // Once it can be read, the check goes through (the list is asked for again, not taken from a 304).
+            fake.lock().unwrap().manifest_fail = None;
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!((r["latest"]["version"].as_str(), r["shell"]["outdated"].as_bool()), (Some("0.4.0"), Some(true)));
+            assert_eq!((r["error"].clone(), r["rate_limit_reset"].clone()), (Value::Null, Value::Null));
+            assert_eq!(fake.lock().unwrap().not_modified.load(Ordering::SeqCst), 0);
+        });
+    }
+
     async fn api(s: &Shared, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
         use tower::ServiceExt;
         let req = axum::http::Request::builder()
@@ -692,7 +745,7 @@ mod tests {
             version: semver::Version::new(0, 2, 0),
             release: serde_json::from_value(release("v0.2.0", false)).unwrap(),
             asset: serde_json::from_value(asset("huntaway-server-0.2.0-linux-x64.tar.gz", Some(DIGEST))).unwrap(),
-            manifest: Some(Manifest { shell: Some("shell-0.2.0".into()) }),
+            manifest: Some(Manifest { shell: "shell-0.2.0".into() }),
         };
         let s = shell(&cfg, Some(&latest));
         assert_eq!((s["install"].as_str(), s["path"].as_str()), (Some("appimage"), Some("/home/me/Huntaway.AppImage")));
