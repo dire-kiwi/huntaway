@@ -1265,7 +1265,7 @@ mod tests {
             const BROKER_TOKEN: &str = "broker-token-0123456789";
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let broker = l.local_addr().unwrap();
-            let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..Default::default() });
+            let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..Default::default() }).unwrap();
             tokio::spawn(async move { axum::serve(l, app).await });
             // The hub is on the broker, which it reaches its own API from.
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
