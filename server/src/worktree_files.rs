@@ -14,8 +14,11 @@
 //!   untracked, and doesn't keep the worktree from being removed. Removing the worktree removes
 //!   the link, not what it points to.
 //!
-//! Nothing is read from outside the repository (no `..`, no absolute paths, no symlinks that lead
-//! out of it), and nothing is written through a symlink in the worktree.
+//! Nothing is read through a symlink in the repository (one could lead out of it, to its `.git`,
+//! or to tracked files under an ignored name), nor from outside it (no `..`, no absolute paths),
+//! and nothing is written through a symlink in the worktree. The links made in each worktree are
+//! kept in its git folder (`huntaway-links`), so they're pointed at the repository's new place if
+//! it moves, whatever the setting says by then.
 
 use std::ffi::OsStr;
 use std::io::Write;
@@ -144,9 +147,13 @@ pub async fn bring_in(project: &Project, wt: &Path) -> Result<Report> {
         }
     }
     let mut patterns: Vec<String> = entries(&project.copy_files).map(str::to_string).collect();
-    if let Ok(text) = tokio::fs::read_to_string(top.join(INCLUDE_FILE)).await {
-        report.include_file = true;
-        patterns.extend(entries(&text).map(str::to_string));
+    match include_file(&top) {
+        Ok(Some(text)) => {
+            report.include_file = true;
+            patterns.extend(entries(&text).map(str::to_string));
+        }
+        Ok(None) => {}
+        Err(why) => report.skipped.push(format!("{INCLUDE_FILE}: {why}, not read")),
     }
     patterns.retain(|p| match check_pattern(p) {
         Ok(()) => true,
@@ -168,6 +175,27 @@ pub async fn bring_in(project: &Project, wt: &Path) -> Result<Report> {
         }
     }
     Ok(report)
+}
+
+/// The repository's `.worktreeinclude`, if it has one: a file of its own, not a symlink (which
+/// could lead anywhere, and its lines end up in the task's log).
+fn include_file(top: &Path) -> Result<Option<String>, String> {
+    let path = top.join(INCLUDE_FILE);
+    let meta = match path.symlink_metadata() {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("can't read it ({e})")),
+    };
+    if meta.is_symlink() {
+        return Err("a symbolic link".into());
+    }
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    if meta.len() > 64 * 1024 {
+        return Err("bigger than 64 KiB".into());
+    }
+    std::fs::read_to_string(&path).map(Some).map_err(|e| format!("can't read it ({e})"))
 }
 
 /// Copies the files `patterns` match (see the module's comment), except those under `links`
@@ -256,13 +284,14 @@ fn literal_matches(p: &str, f: &Path) -> bool {
 /// Copies `rel` from the repository at `top` into the worktree `wt`: true if copied, false if the
 /// worktree has it already, or why it can't be.
 fn copy_one(top: &Path, canon_top: &Path, wt: &Path, rel: &Path) -> Result<bool, String> {
+    symlink_in(top, rel)?;
     let src = top.join(rel);
-    let real = src.canonicalize().map_err(|e| format!("can't read it ({e})"))?;
-    if !real.starts_with(canon_top) {
-        return Err("a symbolic link out of the repository".into());
-    }
-    if !real.is_file() {
+    let meta = src.symlink_metadata().map_err(|e| format!("can't read it ({e})"))?;
+    if !meta.is_file() {
         return Err("not a file".into());
+    }
+    if !src.canonicalize().is_ok_and(|real| real.starts_with(canon_top)) {
+        return Err("not in the repository".into());
     }
     let dest = wt.join(rel);
     if dest.symlink_metadata().is_ok() {
@@ -270,8 +299,26 @@ fn copy_one(top: &Path, canon_top: &Path, wt: &Path, rel: &Path) -> Result<bool,
     }
     make_parents(wt, rel)?;
     // Copy-on-write where the filesystem has it (std uses clonefile on macOS, copy_file_range on Linux).
-    std::fs::copy(&real, &dest).map_err(|e| format!("copying it failed ({e})"))?;
+    std::fs::copy(&src, &dest).map_err(|e| format!("copying it failed ({e})"))?;
     Ok(true)
+}
+
+/// Refuses `rel` of the repository at `top` if it, or a folder it's in, is a symlink: the git
+/// checks that it's ignored and untracked are of its own path, not of where a link leads.
+fn symlink_in(top: &Path, rel: &Path) -> Result<(), String> {
+    let mut path = top.to_path_buf();
+    let n = rel.components().count();
+    for (i, c) in rel.components().enumerate() {
+        path.push(c);
+        match path.symlink_metadata() {
+            Ok(m) if m.is_symlink() && i + 1 == n => return Err("a symbolic link".into()),
+            Ok(m) if m.is_symlink() => return Err(format!("{} is a symbolic link", path.strip_prefix(top).unwrap_or(&path).display())),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("can't read it ({e})")),
+        }
+    }
+    Ok(())
 }
 
 /// Why `rel` can't go in the worktree `wt`, if it can't: one of the folders it's in there is a
@@ -317,17 +364,17 @@ enum Linked {
 
 /// Links folder `rel` of the repository at `top` into the worktree `wt`, or says why it can't.
 async fn link(top: &Path, canon_top: &Path, wt: &Path, rel: &Path) -> Result<Linked, String> {
+    symlink_in(top, rel)?;
     let src = top.join(rel);
-    let real = match src.canonicalize() {
-        Ok(r) => r,
+    match src.symlink_metadata() {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err("not a folder".into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("not in the repository".into()),
         Err(e) => return Err(format!("can't read it ({e})")),
-    };
-    if !real.starts_with(canon_top) || real == canon_top {
-        return Err("a symbolic link out of the repository".into());
     }
-    if !real.is_dir() {
-        return Err("not a folder".into());
+    let real = src.canonicalize().map_err(|e| format!("can't read it ({e})"))?;
+    if !real.starts_with(canon_top) || real == canon_top {
+        return Err("not in the repository".into());
     }
     if wt.canonicalize().is_ok_and(|w| w.starts_with(&real)) {
         return Err("the worktree is inside it".into());
@@ -353,6 +400,9 @@ async fn link(top: &Path, canon_top: &Path, wt: &Path, rel: &Path) -> Result<Lin
             let why = excluded.err().map_or("the repository's .gitignore files say not to ignore it".into(), |e| format!("{e:#}"));
             return Err(format!("the link would be an untracked file in the worktree ({why})"));
         }
+    }
+    if let Err(e) = record(wt, rel).await {
+        tracing::warn!("recording the link {} in {}: {e:#}", rel.display(), wt.display());
     }
     Ok(Linked::New(src))
 }
@@ -434,10 +484,50 @@ async fn exclude(wt: &Path, rel: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The file in a worktree's git folder that lists the links made in it, one path per line. It
+/// goes with the worktree when git removes it.
+const RECORD: &str = "huntaway-links";
+
+async fn record_file(wt: &Path) -> Result<PathBuf> {
+    Ok(PathBuf::from(git_text(wt, &["rev-parse", "--absolute-git-dir"]).await?.trim()).join(RECORD))
+}
+
+/// Adds `rel` to the links recorded for worktree `wt`.
+async fn record(wt: &Path, rel: &Path) -> Result<()> {
+    let file = record_file(wt).await?;
+    let text = std::fs::read(&file).unwrap_or_default();
+    let line = rel.as_os_str().as_bytes();
+    if text.split(|b| *b == b'\n').any(|l| l == line) {
+        return Ok(());
+    }
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&file).with_context(|| format!("opening {}", file.display()))?;
+    f.write_all(&[line, b"\n"].concat())?;
+    Ok(())
+}
+
+/// The links recorded for worktree `wt`, as paths inside it.
+async fn recorded(wt: &Path) -> Vec<PathBuf> {
+    let Ok(file) = record_file(wt).await else { return Vec::new() };
+    let text = std::fs::read(&file).unwrap_or_default();
+    text.split(|b| *b == b'\n')
+        .map(|l| PathBuf::from(OsStr::from_bytes(l)))
+        .filter(|p| !p.as_os_str().is_empty() && p.components().all(|c| matches!(c, Component::Normal(n) if n != ".git")))
+        .collect()
+}
+
 /// Points the folder links in worktree `wt` that lead into the repository's old folder at its
-/// new one, after the repository moved (`map` gives a path's new place, see relocate.rs).
-pub fn relink(wt: &Path, link_folders: &str, map: impl Fn(&Path) -> Option<PathBuf>) {
-    for rel in entries(link_folders).filter_map(|l| link_path(l).ok()) {
+/// new one, after the repository moved and the worktree was repaired (`map` gives a path's new
+/// place, see relocate.rs): those recorded for it, and those the project's `link_folders` name.
+pub async fn relink(wt: &Path, link_folders: &str, map: impl Fn(&Path) -> Option<PathBuf>) {
+    let mut links = recorded(wt).await;
+    links.extend(entries(link_folders).filter_map(|l| link_path(l).ok()));
+    links.sort();
+    links.dedup();
+    for rel in links {
+        // Not through a symlink in the worktree.
+        if not_a_folder(wt, &rel).is_some() {
+            continue;
+        }
         let dest = wt.join(&rel);
         let Ok(old) = std::fs::read_link(&dest) else { continue };
         let Some(new) = map(&old).filter(|n| *n != old) else { continue };
@@ -631,14 +721,14 @@ mod tests {
                 "copied sub/.env",
                 "copied config/dev.local.json",
                 &format!("linked node_modules -> {}", f.repo.join("node_modules").display()),
-                "left out: leak: a symbolic link out of the repository",
+                "left out: leak: a symbolic link",
                 "left out: 1 matching file git doesn't ignore (only ignored files are copied): notes.txt",
                 "left out: README: tracked by git, not copied",
                 "left out: missing.txt: not in the repository",
                 "left out: ../escape: patterns are relative to the repository, without ..",
                 "left out: missing-dir: not in the repository",
                 "left out: .env: not a folder",
-                "left out: out-dir: a symbolic link out of the repository",
+                "left out: out-dir: a symbolic link",
                 "left out: README: not a folder",
                 "left out: /etc: folders are relative to the repository",
             ] {
@@ -784,15 +874,79 @@ mod tests {
 
     #[test]
     fn relinks_folders_after_the_repository_moves() {
+        crate::testing::run(async || {
         let root = std::env::temp_dir().join(format!("ia-wf-{}", crate::util::new_id()));
         let wt = root.join("wt");
         std::fs::create_dir_all(wt.join("a")).unwrap();
         std::os::unix::fs::symlink(root.join("old/models"), wt.join("models")).unwrap();
         std::os::unix::fs::symlink(root.join("elsewhere"), wt.join("a/b")).unwrap();
         let map = |p: &Path| p.strip_prefix(root.join("old")).ok().map(|r| root.join("new").join(r));
-        relink(&wt, "models\na/b\n", map);
+        relink(&wt, "models\na/b\n", map).await;
         assert_eq!(std::fs::read_link(wt.join("models")).unwrap(), root.join("new/models"));
         assert_eq!(std::fs::read_link(wt.join("a/b")).unwrap(), root.join("elsewhere"));
         std::fs::remove_dir_all(&root).unwrap();
+        })
+    }
+
+    // HA-52 review: the git checks were of a symlink's own (ignored, untracked) path, while the
+    // copy or link led to tracked files or the repository's .git.
+    #[test]
+    fn symlinks_in_the_repository_are_neither_copied_nor_linked() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let f = fixture(&s, "alias-file\nvia/x.env\n", "alias-dir\ngit-alias\nvia/inner\n").await;
+            write(&f.repo.join("src/app.txt"), "tracked app");
+            write(&f.repo.join("src/inner/x.env"), "tracked env");
+            write(&f.repo.join("src/x.env"), "tracked env");
+            sh(&f.repo, &["add", "src"]);
+            sh(&f.repo, &["commit", "-qm", "src"]);
+            for (name, to) in [("alias-file", "src/app.txt"), ("alias-dir", "src"), ("git-alias", ".git"), ("via", "src")] {
+                std::os::unix::fs::symlink(f.repo.join(to), f.repo.join(name)).unwrap();
+            }
+            std::fs::write(f.repo.join(".git/info/exclude"), "alias-file\nalias-dir\ngit-alias\nvia\n").unwrap();
+            let (t, wt) = new_task(&s, &f, "Do it").await;
+            for name in ["alias-file", "alias-dir", "git-alias", "via"] {
+                assert!(wt.join(name).symlink_metadata().is_err(), "{name}");
+            }
+            let detail = events(&s, &t.id).into_iter().find_map(|e| e["detail"].as_str().filter(|d| d.contains("left out")).map(str::to_string)).unwrap();
+            for line in ["left out: alias-file: a symbolic link", "left out: alias-dir: a symbolic link", "left out: git-alias: a symbolic link", "left out: via/inner: via is a symbolic link"] {
+                assert!(detail.lines().any(|l| l == line), "{line:?} not in:\n{detail}");
+            }
+            assert_eq!(read(&f.repo.join("src/app.txt")), "tracked app");
+        })
+    }
+
+    #[test]
+    fn a_worktreeinclude_that_is_a_symlink_isnt_read() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let f = fixture(&s, "", "").await;
+            write(&f.outside.join("private"), "CANARY-SECRET\n");
+            std::fs::remove_file(f.repo.join(INCLUDE_FILE)).unwrap();
+            std::os::unix::fs::symlink(f.outside.join("private"), f.repo.join(INCLUDE_FILE)).unwrap();
+            let (t, wt) = new_task(&s, &f, "Do it").await;
+            let events = serde_json::to_string(&events(&s, &t.id)).unwrap();
+            assert!(!events.contains("CANARY"), "{events}");
+            assert!(events.contains("left out: .worktreeinclude: a symbolic link, not read"), "{events}");
+            // Nor is it copied from the folder it leads to.
+            assert!(!wt.join("config/dev.local.json").exists());
+        })
+    }
+
+    #[test]
+    fn links_are_moved_with_the_repository_even_once_out_of_the_setting() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let f = fixture(&s, "", "node_modules\n").await;
+            let (_, wt) = new_task(&s, &f, "Do it").await;
+            assert_eq!(std::fs::read_link(wt.join("node_modules")).unwrap(), f.repo.join("node_modules"));
+            let body = json!({"link_folders": ""});
+            crate::api::update_project_inner(&s, &f.project_id, body.as_object().unwrap()).await.unwrap();
+            let moved = f.root.join("moved");
+            let body = json!({"repo_path": path_str(&moved), "move_repo": true});
+            crate::api::update_project_inner(&s, &f.project_id, body.as_object().unwrap()).await.unwrap();
+            assert_eq!(std::fs::read_link(wt.join("node_modules")).unwrap(), moved.join("node_modules"));
+            assert_eq!(read(&wt.join("node_modules/pkg/index.js")), "module");
+        })
     }
 }

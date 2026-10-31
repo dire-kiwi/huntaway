@@ -99,7 +99,7 @@ pub async fn change(s: &Shared, project: &Project, new: &Path, move_folder: bool
         relink(&common, &mapping, &worktrees);
         // The folders linked into them lead into the old folder.
         for wt in &worktrees {
-            crate::worktree_files::relink(wt, &project.link_folders, |p| mapping.map(p));
+            crate::worktree_files::relink(wt, &project.link_folders, |p| mapping.map(p)).await;
         }
         relink_submodules(&new, &common, &mapping).await;
     }

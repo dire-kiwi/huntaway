@@ -887,11 +887,13 @@ skipped. Auto-compacting idle sessions is Claude-only.
     repository's `.git/info/exclude` (shared by its worktrees, under a comment saying why), so the
     link doesn't show as untracked, doesn't get committed, and doesn't keep the worktree from
     being removed. Changes made through a link change the original; removing the worktree
-    (teardown, forced or not, or **Remove merged worktrees**) removes the link only. Moving the
-    project's folder (`move_repo`) points the links at its new place.
+    (teardown, forced or not, or **Remove merged worktrees**) removes the link only.
 
-  Nothing is read from outside the repository (`..`, absolute paths and symlinks that lead out of
-  it are refused) or written through a symlink in the worktree. The task's log lists what was
+  Nothing is read from outside the repository (`..` and absolute paths are refused) or through a
+  symlink in it (a symlinked file, folder or `.worktreeinclude` is left out, since it could lead
+  out of the repository, to its `.git` or to tracked files), and nothing is written through a
+  symlink in the worktree. The links made in a worktree are listed in its git folder
+  (`huntaway-links`), so moving the repository repoints them even if the setting has changed since. The task's log lists what was
   copied and linked, what was already there, and what was left out and why. Agents' `update_project`
   can change both lists only once the user approves, as with the scripts, since they can put
   secrets in reach of every task's agent. The setup script then runs there with `IA_REPO_PATH`,
