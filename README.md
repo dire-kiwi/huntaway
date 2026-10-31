@@ -805,6 +805,16 @@ skipped. Auto-compacting idle sessions is Claude-only.
   each done task's worktree as removed or kept, and why. The tasks and their branches are kept;
   if a task's agent runs again, its worktree is set up again in the same folder (named from its
   branch), so its conversation carries on.
+  A project that uses worktrees but whose folder can't have them yet (it isn't the top folder of
+  a git repository, or the repository has no commit to branch from) shows its **setup thread**
+  instead of its board (API 73). *Start setup thread* (`POST /projects/{id}/setup-thread`, with
+  an optional `message` for the agent) makes a task in the project, without a worktree, whose
+  agent looks at the folder, makes it a repository with a `.gitignore` and a first commit, and
+  offers to put it on GitHub, asking before anything hard to undo. The project keeps it as
+  `setup_task_id`, so asking again gives the same thread. The page looks at the folder every few
+  seconds, and the board comes back, with the thread's task on it, once the folder is ready.
+  *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
+  Projects list `has_commits` beside `is_git`.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that

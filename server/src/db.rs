@@ -597,12 +597,18 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN watch_pull_requests TEXT NOT NULL DEFAULT 'off';" };
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=60; COMMIT;"))?;
     }
+    if version < 61 {
+        // The thread that helps get a project's folder ready for worktrees (see Project::setup_task_id).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='setup_task_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN setup_task_id TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=61; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 60;
+pub const VERSION: i64 = 61;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1076,6 +1082,14 @@ pub struct Project {
     /// Whether the repo is a git repository (looked up when the project is loaded).
     #[serde(default)]
     pub is_git: bool,
+    /// Whether it has a commit checked out, which a worktree needs to branch from (looked up
+    /// when the project is loaded; false when it isn't a git repository).
+    #[serde(default)]
+    pub has_commits: bool,
+    /// The task whose thread helps the user get the folder ready for worktrees (a git
+    /// repository with a commit), which the board shows in its place until it is (API 73).
+    #[serde(default)]
+    pub setup_task_id: Option<String>,
     /// Falls back to the host's default mode when unset.
     pub permission_mode: Option<String>,
     pub model: Option<String>,
@@ -1135,6 +1149,8 @@ impl Project {
             status_scripts: json_or_default(r.get("status_scripts")?),
             use_worktrees: r.get("use_worktrees")?,
             is_git: crate::util::is_git_root(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            has_commits: crate::util::has_commits(std::path::Path::new(&r.get::<_, String>("repo_path")?)),
+            setup_task_id: r.get("setup_task_id")?,
             permission_mode: r.get("permission_mode")?,
             model: r.get("model")?,
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
@@ -2205,7 +2221,7 @@ const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
     "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
-    "archived_at", "github_account", "watch_pull_requests",
+    "archived_at", "github_account", "watch_pull_requests", "setup_task_id",
 ];
 
 pub fn update_project(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Project>> {
@@ -3112,6 +3128,32 @@ mod tests {
         for table in ["automations", "automation_runs"] {
             assert!(c.query_row("SELECT COUNT(*) FROM pragma_table_info(?1)", [table], |r| r.get::<_, i64>(0)).unwrap() > 0, "{table}");
         }
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_from_version_60_gets_setup_threads() {
+        let path = std::env::temp_dir().join(format!("huntaway-v60-{}.db", crate::util::new_id()));
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN setup_task_id;
+                 PRAGMA user_version=60;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','Web','WEB','/nowhere','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        // Master's version 60 stays (HA-15's watch_pull_requests), and projects from before have no setup thread yet.
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert_eq!((p.watch_pull_requests.as_str(), p.setup_task_id), ("off", None));
+        assert_eq!(update_project(&c, "pr", &[("setup_task_id", json!("t"))]).unwrap().unwrap().setup_task_id.as_deref(), Some("t"));
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

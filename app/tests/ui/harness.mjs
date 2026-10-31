@@ -2,6 +2,7 @@
 // with agents switched off) and a browser on it (scripts/ui-check.mjs). They test the built UI, so run
 // `npm run build` (and `cargo build` in server/) first; `npm run test:ui` does the UI build.
 import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { open } from "../../../scripts/ui-check.mjs";
 
@@ -28,6 +29,13 @@ export function startServer(...args) {
   };
   const stop = () => execFileSync(script, ["stop", vars.IA_TEST_DATA_DIR], { stdio: "ignore" });
   return { url, token, dataDir: vars.IA_TEST_DATA_DIR, api, stop };
+}
+
+/** A git repository at `dir` with a commit, so a project on it can have worktrees (HA-20: else its board is its setup thread). */
+export function gitRepo(dir) {
+  mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-q", dir]);
+  execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first"]);
 }
 
 /** The demo project that `--demo` seeds. */

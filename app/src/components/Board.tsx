@@ -16,6 +16,7 @@ import {
   LABELS,
   LABELS_API,
   rejoinsMerge,
+  needsWorktreeSetup,
   STATUSES,
   taskLabels,
   worktreesOn,
@@ -46,6 +47,7 @@ import { withAttachments, type AttachmentRef } from "../attachments";
 import { AttachButton, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { AsanaIcon, AsanaPicker, ExternalLinkIcon, LinkList, LINKS_API, usesAsana } from "./ExternalLinks";
 import { ReviewBadge } from "./Review";
+import { WorktreeSetup } from "./WorktreeSetup";
 import { DependencyBadge } from "./Dependencies";
 import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
@@ -1672,6 +1674,8 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
       </div>
     );
   if (!project) return <div className="p-8 text-muted">Project not found.</div>;
+  // Its tasks wait for worktrees, so the board shows the thread that helps get the folder ready instead.
+  if (!subproject && needsWorktreeSetup(project, host)) return <WorktreeSetup project={project} hostName={hostCount > 1 ? host?.name : undefined} />;
   const boardKey = subproject ? `subproject:${project.host_id}:${subproject.id}` : `project:${project.host_id}:${project.id}`;
   return (
     <TaskBoard

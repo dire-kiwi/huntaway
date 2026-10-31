@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { startServer, withBrowser } from "./harness.mjs";
+import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let project;
@@ -11,14 +10,13 @@ let shopfront;
 before(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
-  mkdirSync(repo);
-  execFileSync("git", ["init", "-q", repo]);
+  gitRepo(repo);
   const [profile] = await server.api("GET", "/profiles");
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
   dep = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Checkout rework" });
   // SHOP-1 is the start of SHOP-10 and SHOP-11, and SHOP of SHOPF.
   for (let i = 2; i <= 11; i++) await server.api("POST", `/projects/${project.id}/tasks`, { title: `Chore ${i}` });
-  shopfront = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shopfront", repo_path: `${server.dataDir}/shopfront`, key: "SHOPF" });
+  shopfront = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shopfront", repo_path: `${server.dataDir}/shopfront`, key: "SHOPF", use_worktrees: false });
   // A project keyed like `@none`.
   await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Nonesuch", repo_path: `${server.dataDir}/nonesuch`, key: "NONE" });
 });
@@ -198,7 +196,7 @@ test("a draft saved where Add another creates a task comes back rather than bein
 });
 
 // IA-220 review: the project the dialog starts in is the board's as it is now, so a repository that became git's after
-// the board loaded (which the dialog's refresh finds) gets worktrees and offers subprojects.
+// the board loaded gets worktrees and offers subprojects. Until it has a commit, the board is its setup thread (HA-20).
 test("a repository that becomes git's after the board loads gets worktrees and subprojects", async () => {
   const [profile] = await server.api("GET", "/profiles");
   const dir = `${server.dataDir}/later`;
@@ -206,9 +204,9 @@ test("a repository that becomes git's after the board loads gets worktrees and s
   const later = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Later", repo_path: dir, key: "LATER", use_worktrees: true });
   assert.equal(later.is_git, false);
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${later.id}`, "wait New task"]);
-    execFileSync("git", ["init", "-q", dir]);
-    // A subproject is offered once the dialog's refresh is in.
+    await ui.run([`goto /p/${later.id}`, "wait Start setup thread"]);
+    gitRepo(dir);
+    // A subproject is offered once the board is back.
     await ui.run(["click New task", "type /subproject", "press Space", "wait New subproject in Later", "type Fresh task", "press Control+Enter", "gone Reads as"]);
     await ui.run(["click New task", "wait Own git worktree", "type Plain task", "press Control+Enter", "gone Reads as"]);
   });
