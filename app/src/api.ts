@@ -64,6 +64,10 @@ export const dependencyQueued = (t: Task) => !!t.waiting && t.status === "in_pro
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
 export const worktreesOn = (p: Project) => p.use_worktrees && p.is_git !== false;
 
+/** Whether the project wants worktrees but its folder can't have them yet (not a git repository, or one with no
+ * commit to branch from), so the board shows its setup thread instead of its tasks (API 73). */
+export const needsWorktreeSetup = (p: Project, h: Host | undefined) => hostSupports(h, 73) && p.use_worktrees && !(p.is_git && p.has_commits);
+
 export const isMerged = (t: Task) => t.status === "done" && (t.resolution ?? "done") === "done";
 
 /** How long a task stays in Done before it's archived. */
@@ -334,6 +338,10 @@ export interface Project {
   use_worktrees: boolean;
   /** Whether the repo is a git repository (API 31). */
   is_git?: boolean;
+  /** Whether it has a commit checked out for worktrees to branch from (API 73). */
+  has_commits?: boolean;
+  /** The task whose thread helps get the folder ready for worktrees (API 73). */
+  setup_task_id?: string | null;
   /** Falls back to the host's default mode when null (API 2; always set by older hosts). */
   permission_mode: PermissionMode | null;
   model: string | null;
@@ -358,8 +366,13 @@ export interface Project {
   archived_at?: string | null;
   /** Overrides the profile's GitHub account; null uses the profile's (API 50). */
   github_account?: string | null;
+  /** Which news about an In review task's pull request wakes its agent (API 72). */
+  watch_pull_requests?: WatchPullRequests;
   created_at: string;
 }
+
+/** off; failures: failed checks and conflicts; all: comments and reviews too. */
+export type WatchPullRequests = "off" | "failures" | "all";
 
 export type PromptField = "start_prompt" | "review_prompt" | "merge_prompt";
 
@@ -423,20 +436,25 @@ export interface AgentWait {
 
 export type PrWaitEvent = "checks_failed" | "checks_passed" | "comments" | "conflicts";
 
-/** A task that makes a document instead of code: an HTML plan or artifact, or a Mermaid diagram (API 42). */
-export type DocumentType = "plan" | "artifact" | "diagram";
+export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
+import type { DocumentType } from "./labels";
 
-/** What a task makes, if not code: a document, or for a scratch task (in no project, API 47, or in one, API 51) nothing in particular. */
-export type TaskType = DocumentType | "scratch";
+/** Hosts from this API version on take labels (before, the board made a task of a label's type instead). */
+export const LABELS_API = 71;
+
+/** What a task is, if not a code task: a scratch task (in no project, API 47, or in one, API 51). On hosts before API 71,
+ *  also a plan, artifact or diagram task. */
+export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
-/** The document a task makes, if it's a plan, artifact or diagram task. */
-export const documentType = (t: Pick<Task, "task_type">): DocumentType | undefined => (t.task_type && t.task_type !== "scratch" ? t.task_type : undefined);
+/** Where the task's agent works, if not where its kind and project say and the folder is one to show: one in the host's
+ *  data dir (a task that makes only documents) is given relative to it. */
+export const ownWorkDir = (t: Pick<Task, "work_dir">) => (t.work_dir && /^[/~]/.test(t.work_dir) ? t.work_dir : null);
 
-/** One version of a plan, artifact or diagram task's document; `open` while the agent's turn is still writing it. */
+/** One version of a task's document for one of its labels; `open` while the agent's turn is still writing it. */
 export interface DocumentVersion {
   version: number;
   open: boolean;
@@ -446,7 +464,8 @@ export interface DocumentVersion {
 }
 
 export interface TaskDocument {
-  task_type: DocumentType | null;
+  /** Which of its labels' documents it is (API 71). */
+  label?: DocumentType;
   /** Where the agent writes it, on the task's host. */
   file: string | null;
   versions: DocumentVersion[];
@@ -470,12 +489,15 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task makes, if not code: its agent writes a document the board keeps and shows (API 42), or for
-   *  a scratch task nothing in particular (API 47). */
-  task_type?: TaskType | null;
-  /** When its document last changed (API 42). */
+  /** What the task is, if not a code task: a scratch task (API 47). On hosts before API 71, also a plan, artifact or
+   *  diagram task (API 42), whose agent writes a document the board keeps and shows: see `taskLabels`. */
+  task_type?: TaskType | DocumentType | null;
+  /** The documents its agent writes besides its other work, each shown in a tab of the task (API 71). */
+  labels?: DocumentType[];
+  /** When one of its documents last changed (API 42). */
   document_at?: string | null;
-  /** Where a scratch task made from a scratch chat works: the chat's folder (API 47). */
+  /** Where a scratch task made from a scratch chat works: the chat's folder (API 47). For a task that makes only
+   *  documents, its own folder, relative to the host's data dir (API 71): see `ownWorkDir`. */
   work_dir?: string | null;
   number: number;
   title: string;
@@ -541,6 +563,8 @@ export interface Task {
   review?: Review | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
+  /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
+  rewind?: PendingRewind | null;
   cost_usd: number;
   last_activity_at: string;
   created_at: string;
@@ -651,6 +675,82 @@ export interface GitStash {
   sha: string;
   subject: string;
   time: number;
+}
+
+/** A conversation rollback waiting for a task's next run (API 70): it goes on from before turn `turn`. */
+export interface PendingRewind {
+  turn: number;
+  message_id: number;
+  session: string;
+}
+
+/** What a turn changed, without the files git brought in by a merge, pull or rebase (API 70). */
+export interface TurnStats {
+  files: number;
+  additions: number;
+  deletions: number;
+  /** The files left out (the first 200), and how many. */
+  excluded: string[];
+  excluded_count: number;
+}
+
+/** One of the agent's turns with a checkpoint after it (API 70). */
+export interface Turn {
+  /** Its number among the task's turns. */
+  turn: number;
+  /** Its checkpoint, and the one it started from (null when there's none, as for a turn from before checkpoints). */
+  n: number;
+  before_n: number | null;
+  run_id: string | null;
+  /** The user message it started with, and its text. */
+  message_id: number | null;
+  text: string;
+  auto: boolean;
+  /** Set for a round of fixes a review sent back. */
+  review_round: number | null;
+  /** done, stopped or failed */
+  status: string | null;
+  /** A rewind has gone back to before it. */
+  stale: boolean;
+  /** When it ended. */
+  at: string;
+  /** HEAD after it, and before it. */
+  head: string | null;
+  before_head: string | null;
+  stats: TurnStats | null;
+  /** Both of its checkpoints are there to diff. */
+  diff: boolean;
+  /** Whether the task can be rewound to before it, and its agent's conversation with it (`fresh`: it starts over). */
+  rewind: { ok: true; conversation: { ok: true; fresh: boolean } | { ok: false; reason: string } } | { ok: false; reason: string };
+}
+
+export interface TurnsResult {
+  available: boolean;
+  reason?: string;
+  turns: Turn[];
+  head?: string | null;
+  rewind?: PendingRewind | null;
+  agent?: "claude" | "codex";
+}
+
+export interface TurnDiff {
+  patch: string;
+  too_large: boolean;
+  stats: TurnStats;
+  excluded: string[];
+}
+
+export interface RewindResult {
+  task: Task;
+  written: number;
+  removed: number;
+  /** Files left as they were: submodules, and ones marked skip-worktree or assume-unchanged. */
+  skipped: string[];
+  branch: { from: string; to: string } | null;
+  /** The ref the replaced files are kept in. */
+  kept: string;
+  /** The message rewound to, to edit and send again. */
+  message: { text: string | null; auto: boolean };
 }
 
 /** The Changes tab's view of a task's repository (API 62). */
@@ -967,7 +1067,10 @@ export type AutomationAction =
       kind: "create_task";
       title: string;
       description: string;
-      task_type: TaskType | null;
+      /** A label as its type, in an action saved before API 71. */
+      task_type: TaskType | DocumentType | null;
+      /** API 71. */
+      labels?: DocumentType[];
       claude_config_id: string | null;
       model: string | null;
       effort: string | null;
@@ -1173,7 +1276,32 @@ export interface HostInfo {
   home: string | null;
 }
 
+/** Which of the board's notifications a device gets by push (see notifications.ts). */
+export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean>;
+
+/** A device that gets the board's notifications by Web Push (API 74; see server/src/push.rs). */
+export interface PushDevice {
+  id: string;
+  /** Its push service's URL for it, which tells this browser's own from the others. */
+  endpoint: string;
+  name: string;
+  events: PushEvents;
+  created_at: string;
+  last_sent_at: string | null;
+  /** Why the last push to it failed, until one works. */
+  last_error: string | null;
+}
+
 export const api = {
+  // Push to devices (API 74): the board's key to subscribe with, and the devices that have.
+  push: () => get<{ public_key: string; subscriptions: PushDevice[] }>("/push"),
+  /** Adds this browser's subscription (`PushSubscription.toJSON()`), or updates it; events are kept unless given. */
+  pushSubscribe: (b: { endpoint: string; keys: { p256dh: string; auth: string }; name: string; events?: PushEvents }) =>
+    post<PushDevice>("/push/subscriptions", b),
+  updatePushDevice: (id: string, b: { name?: string; events?: PushEvents }) => patch<PushDevice>(`/push/subscriptions/${enc(id)}`, b),
+  removePushDevice: (id: string) => del(`/push/subscriptions/${enc(id)}`),
+  testPush: (id: string) => post(`/push/subscriptions/${enc(id)}/test`),
+
   // Hub: the hosts on this board.
   hosts: () => get<Host[]>("/hosts"),
   addHost: (url: string, token: string) => post<Host>("/hosts", { url, token }),
@@ -1253,6 +1381,7 @@ export const api = {
   updateProject: (h: string, id: string, b: Partial<Project> & { move_repo?: boolean; archived?: boolean }) => on(h).patch<Project>(`/projects/${enc(id)}`, b),
   deleteProject: (h: string, id: string) => on(h).del(`/projects/${enc(id)}`),
   /** Remove the worktrees of the project's done tasks that are merged and have nothing uncommitted (API 39). */
+  startSetupThread: (h: string, id: string, message: string) => on(h).post<Task>(`/projects/${enc(id)}/setup-thread`, { message }),
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
@@ -1302,6 +1431,8 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
+      /** API 71. */
+      labels?: DocumentType[];
       external_links?: ExternalLink[];
       fanout_id?: string;
     },
@@ -1319,7 +1450,10 @@ export const api = {
       model?: string;
       effort?: Effort;
       claude_config_id?: string;
+      /** A plan, artifact or diagram task, on hosts before API 71. */
       task_type?: DocumentType;
+      /** API 71. */
+      labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
@@ -1342,8 +1476,10 @@ export const api = {
       subproject?: boolean;
       claude_config_id?: string;
       depends_on?: string[];
-      /** A scratch task in the project needs API 51. */
-      task_type?: TaskType;
+      /** A scratch task in the project needs API 51; a plan, artifact or diagram task is one on hosts before API 71. */
+      task_type?: TaskType | DocumentType;
+      /** API 71. */
+      labels?: DocumentType[];
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
@@ -1375,6 +1511,8 @@ export const api = {
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
+  /** Whether moving the task to Done would leave its work unmerged (API 75). */
+  unmerged: (h: string, id: string) => on(h).get<{ unmerged: boolean }>(`/tasks/${enc(id)}/unmerged`),
   /**
    * The Changes tab's git (API 62): the status, a file's unstaged or staged diff, and a commit's or stash's. A diff that
    * isn't UTF-8 comes as a `preview` with `not_utf8` and no `patch`, as lines patched from it would be written back wrong.
@@ -1395,12 +1533,20 @@ export const api = {
   gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
     on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
   gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
+  /** The task's turns with checkpoints, and the changes between two checkpoints (API 70). */
+  turns: (h: string, id: string) => on(h).get<TurnsResult>(`/tasks/${enc(id)}/turns`),
+  turnDiff: (h: string, id: string, from: number, to: number) => on(h).get<TurnDiff>(`/tasks/${enc(id)}/turns/diff?from=${from}&to=${to}`),
+  /** Restores the files to before the turn `message_id` started, and optionally the branch and the agent's conversation. */
+  rewind: (h: string, id: string, b: { message_id: number; conversation: boolean; branch: boolean }) => on(h).post<RewindResult>(`/tasks/${enc(id)}/rewind`, b),
+  cancelRewind: (h: string, id: string) => on(h).del<Task>(`/tasks/${enc(id)}/rewind`),
   /** How full the agent's context is, with the latest breakdown (API 40). */
   context: (h: string, id: string) => on(h).get<{ context: ContextSummary | null; detail: ContextDetail | null }>(`/tasks/${enc(id)}/context`),
   /** The skills the task's agent can be asked to use, for the composer's `/` menu (API 54). */
   taskSkills: (h: string, id: string) => on(h).get<TaskSkills>(`/tasks/${enc(id)}/skills`),
-  /** A plan, artifact or diagram task's document: the latest version, or `version` (API 42). */
-  document: (h: string, id: string, version?: number) => on(h).get<TaskDocument>(`/tasks/${enc(id)}/document${version ? `?version=${version}` : ""}`),
+  /** A task's document for one of its labels (API 71; a host before then has the one its type makes, API 42): the
+   *  latest version, or `version`. */
+  document: (h: string, id: string, label: DocumentType, version?: number) =>
+    on(h).get<TaskDocument>(`/tasks/${enc(id)}/document?label=${label}${version ? `&version=${version}` : ""}`),
   /** The task's shell, or with `tool` one of the host's terminal tools (API 13). */
   terminal: (h: string, id: string, tool?: string) => on(h).get<TerminalStatus>(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),
   killTerminal: (h: string, id: string, tool?: string) => on(h).del(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),

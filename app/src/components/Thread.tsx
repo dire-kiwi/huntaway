@@ -12,6 +12,7 @@ import {
   Clock,
   FileText,
   Globe,
+  History,
   Hourglass,
   Layers,
   LayoutGrid,
@@ -20,6 +21,7 @@ import {
   LocateFixed,
   Map as MapIcon,
   Maximize2,
+  MessageSquare,
   Pencil,
   Search,
   ShieldOff,
@@ -46,11 +48,12 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type Task } from "../api";
+import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type RewindResult, type Task, type Turn } from "../api";
 import { useHost, useProject, useStore, useThreadMessages } from "../store";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
+import { lineRange, removeComments, reviewMessage, useReview, withComments, type LineComment } from "../lineComments";
 import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard } from "./Approvals";
 import { AskCard, BoardQuestionCard, PlanCard } from "./Questions";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
@@ -58,6 +61,8 @@ import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } fr
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
 import { useTouch } from "../narrow";
 import { Button, RunningDot, WaitReason, waitTitle } from "./ui";
+import { RewindDialog, RewindNote } from "./Rewind";
+import { useTurns } from "../turns";
 
 // ---------- markdown ----------
 
@@ -781,6 +786,17 @@ export const Thread = memo(function Thread({
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, []);
 
+  // The turns with checkpoints, for rewinding to before one of the user's messages (API 70).
+  const turns = useTurns(task);
+  const [rewinding, setRewinding] = useState<Turn | null>(null);
+  const turnsCtx = useMemo(() => {
+    const list = turns.data?.turns;
+    if (!list?.length) return null;
+    // A message's first turn (the agent can go on by itself after it).
+    const byMessage = new Map<number, Turn>();
+    for (const t of list) if (t.message_id !== null && !byMessage.has(t.message_id)) byMessage.set(t.message_id, t);
+    return { byMessage, rewind: setRewinding };
+  }, [turns.data]);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, pages?.subagents);
   const items = useStableGroupKeys(model.items, task.id);
   const data = useMemo(
@@ -910,7 +926,9 @@ export const Thread = memo(function Thread({
           )}
           <div ref={list} className={clsx("mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4", viewed && "hidden")}>
             {messages && items.length === 0 && !task.running && !pages?.more && empty}
-            <ItemList items={items} running={task.running} hostId={task.host_id} cwd={cwd} />
+            <TurnsCtx.Provider value={turnsCtx}>
+              <ItemList items={items} running={task.running} hostId={task.host_id} cwd={cwd} />
+            </TurnsCtx.Provider>
             <StreamingText taskId={task.id} onGrow={follow} />
             {task.running && (
               <div className="flex items-center gap-2 text-[12.5px] text-muted">
@@ -934,6 +952,9 @@ export const Thread = memo(function Thread({
         </div>
         {/* A fresh draft per task: its attachments are on this task's host. */}
         <Composer key={task.id} task={task} placeholder={placeholder} />
+        {rewinding && (
+          <RewindDialog task={task} turn={rewinding} head={turns.data?.head} onClose={() => setRewinding(null)} onDone={(r, convo) => rewound(task, r, convo)} />
+        )}
       </div>
     </ThreadCtx.Provider>
   );
@@ -1004,11 +1025,39 @@ const ItemList = memo(function ItemList({ items, running, hostId, cwd }: { items
 });
 
 /** Memoized: a new message leaves the items it doesn't change as they were (see buildModel), and their rows with them. */
+/** The thread's turns with checkpoints, by the message each started with, and how to rewind to before one (API 70). */
+const TurnsCtx = createContext<{ byMessage: Map<number, Turn>; rewind: (t: Turn) => void } | null>(null);
+
+/** Beside a user message that started a turn: rewind the task to before it, or that it was rewound. */
+function RewindMark({ id }: { id: string }) {
+  const turns = useContext(TurnsCtx);
+  const turn = turns?.byMessage.get(Number(id));
+  if (!turns || !turn) return null;
+  if (turn.stale)
+    return (
+      <span className="mr-2 self-center text-[11px] text-faint" title="A rewind went back to before this message">
+        rewound
+      </span>
+    );
+  if (!turn.rewind.ok) return null;
+  return (
+    <button
+      className="mr-1 self-center rounded p-1 text-faint opacity-0 group-hover:opacity-100 hover:bg-white/5 hover:text-fg focus:opacity-100"
+      title="Rewind to here: put the files back to how they were before this message"
+      aria-label="Rewind to here"
+      onClick={() => turns.rewind(turn)}
+    >
+      <History size={13} />
+    </button>
+  );
+}
+
 const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running: boolean; hostId: string; cwd?: string | null }) {
   switch (it.type) {
     case "user":
       return (
-        <div className="flex justify-end">
+        <div className="group flex justify-end">
+          <RewindMark id={it.key} />
           <div
             title={it.steered ? "Sent while the agent was working; it read it here" : undefined}
             className={clsx(
@@ -1158,6 +1207,39 @@ function ModeSelect({ control, running }: { control: ReturnType<typeof useModeCo
   );
 }
 
+/** The diff's comments waiting to go with the next message: each one's file and lines, and its note. */
+function ComposerComments({ task, comments }: { task: Task; comments: LineComment[] }) {
+  return (
+    <div className="border-b border-line px-4 py-2" data-comments>
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-faint">
+        <MessageSquare size={11} className="text-accent" />
+        {comments.length === 1 ? "A comment" : `${comments.length} comments`} on the diff, sent with this message
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {comments.map((c) => (
+          <span
+            key={c.id}
+            title={`${c.path}, ${lineRange(c)} (${c.source})\n\n${c.note}`}
+            className="flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-line-strong bg-raised py-0.5 pr-0.5 pl-2 text-[11.5px]"
+          >
+            <span className="shrink-0 font-mono text-muted">
+              {c.path.split("/").pop()}:{c.start === c.end ? c.start : `${c.start}–${c.end}`}
+            </span>
+            <span className="max-w-[28ch] min-w-0 truncate text-fg">{c.note}</span>
+            <button
+              onClick={() => removeComments(task.host_id, task.id, [c.id])}
+              title="Remove the comment"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-faint hover:bg-white/10 hover:text-fg"
+            >
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** A user message: its text, and the files attached to it. */
 function UserText({ text, hostId }: { text: string; hostId: string }) {
   const { text: body, files } = useMemo(() => splitAttachments(text), [text]);
@@ -1211,7 +1293,7 @@ function saveComposerDraft(key: string, text: string, files: AttachmentRef[]) {
 }
 
 /** `typed` once `sent` has gone: what was typed after it while it was sending, or all of it if what was sent was changed. */
-export const afterSent = (typed: string, sent: string) => (typed.startsWith(sent) ? typed.slice(sent.length).replace(/^\s+/, "") : typed);
+export const afterSent = (typed: string, sent: string) => (sent && typed.startsWith(sent) ? typed.slice(sent.length).replace(/^\s+/, "") : typed);
 
 /** How a send ended: what went (text as typed, and files), or why it didn't. */
 type SendEnd = { sent: string; files: AttachmentRef[] } | { error: string };
@@ -1224,7 +1306,8 @@ type SendEnd = { sent: string; files: AttachmentRef[] } | { error: string };
 const sending = new Map<string, number>();
 const sendWatchers = new Map<string, Set<(end: SendEnd) => void>>();
 
-async function sendDraft(key: string, task: Task, body: string, sent: string, files: AttachmentRef[]) {
+/** Sends a message: what was typed (`sent`), the files attached and the diff comments in it (by id) come off the draft once it's gone. */
+async function sendDraft(key: string, task: Task, body: string, sent: string, files: AttachmentRef[], comments: string[] = []): Promise<SendEnd> {
   sending.set(key, (sending.get(key) ?? 0) + 1);
   let end: SendEnd;
   try {
@@ -1232,6 +1315,7 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
     // Off the saved draft as well, for when no composer shows it.
     const d = loadComposerDraft(key);
     if (d) saveComposerDraft(key, afterSent(d.text, sent), d.files.filter((f) => !files.some((x) => x.id === f.id)));
+    removeComments(task.host_id, task.id, comments);
     end = { sent, files };
   } catch (e) {
     end = { error: (e as Error).message };
@@ -1240,6 +1324,35 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
   if (n) sending.set(key, n);
   else sending.delete(key);
   for (const watch of sendWatchers.get(key) ?? []) watch(end);
+  return end;
+}
+
+/** Sends the task's diff comments (from the Changes tab) on their own, as the composer would with nothing typed. */
+export const sendComments = (task: Task, comments: LineComment[]) =>
+  sendDraft(
+    composerDraftKey(task),
+    task,
+    reviewMessage(comments),
+    "",
+    [],
+    comments.map((c) => c.id),
+  );
+
+/** The composers showing each draft, to put text into. */
+const composerFills = new Map<string, (text: string, files: AttachmentRef[]) => void>();
+
+/**
+ * After a rewind that took the conversation back: the message rewound to goes into the task's composer (ahead of
+ * what's there), to edit and send again. Not the board's own messages (a review's issues, say).
+ */
+export function rewound(task: Task, r: RewindResult, conversation: boolean) {
+  if (!conversation || r.message.auto || !r.message.text?.trim()) return;
+  const { text, files } = splitAttachments(r.message.text.trim());
+  const key = composerDraftKey(task);
+  const fill = composerFills.get(key);
+  if (fill) return fill(text, files);
+  const d = loadComposerDraft(key);
+  saveComposerDraft(key, d?.text.trim() ? `${text}\n\n${d.text}` : text, [...files, ...(d?.files ?? [])]);
 }
 
 export function Composer({ task, placeholder }: { task: Task; placeholder?: string }) {
@@ -1262,6 +1375,8 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   const blocked = task.running && !canQueue;
   const attach = useAttachmentDraft(task.host_id, hostSupports(host, 18), saved?.files);
   const skills = useSkillMenu(task, text, setText);
+  // Comments on lines of the diff (the Changes tab's), which go with the message.
+  const { comments } = useReview(task.host_id, task.id);
   // Saved as it's written. Files still uploading are left out until they're on the host.
   const draftJson = JSON.stringify({ text, files: attach.files });
   useEffect(() => {
@@ -1307,15 +1422,33 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // A rewound message to edit and send again (see `rewound`).
+  const restore = useRef(attach.restore);
+  restore.current = attach.restore;
+  useEffect(() => {
+    composerFills.set(draftKey, (fill, files) => {
+      setText((cur) => (cur.trim() ? `${fill}\n\n${cur}` : fill));
+      restore.current(files);
+      ref.current?.focus();
+    });
+    return () => void composerFills.delete(draftKey);
+  }, [draftKey]);
 
   const send = () => {
     const files = attach.files;
-    const body = withAttachments(text.trim(), files);
+    const body = withAttachments(withComments(text, comments), files);
     if (blocked || busy || attach.uploading) return;
     if (!body && (task.session_id || task.running)) return;
     setBusy(true);
     setErr(null);
-    sendDraft(draftKey, task, body, text, files);
+    void sendDraft(
+      draftKey,
+      task,
+      body,
+      text,
+      files,
+      comments.map((c) => c.id),
+    );
   };
 
   /** Take the queued message back into the composer to edit it. */
@@ -1335,6 +1468,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
+        <RewindNote task={task} />
         {(err || modeControl.err) && <div className="mb-2 text-xs text-red-400">{err || modeControl.err}</div>}
         {unsaved && (
           <div className="mb-2 text-xs text-amber-400">
@@ -1380,6 +1514,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
               </button>
             </div>
           )}
+          {comments.length > 0 && <ComposerComments task={task} comments={comments} />}
           <SkillMenu menu={skills} />
           {skills.hint && <SkillHint item={skills.hint} />}
           <textarea
@@ -1401,7 +1536,9 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
             }}
             rows={1}
             placeholder={
-              task.running
+              comments.length && !blocked
+                ? `Add a message to the comment${comments.length === 1 ? "" : "s"}, or press Enter to send ${comments.length === 1 ? "it" : "them"}…`
+                : task.running
                 ? canQueue
                   ? task.queued_message
                     ? "Add to the queued message…"
@@ -1425,7 +1562,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
             </span>
             <div className="ml-auto flex items-center gap-1.5">
               <AttachButton draft={attach} />
-              {task.running && canQueue && (text.trim() || attach.items.length > 0) && (
+              {task.running && canQueue && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
                 <button
                   onClick={send}
                   disabled={busy || attach.uploading}
@@ -1449,7 +1586,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
               ) : (
                 <button
                   onClick={send}
-                  disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !canStartEmpty)}
+                  disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !comments.length && !canStartEmpty)}
                   title={`Send${enter}`}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >

@@ -1,4 +1,6 @@
 import type { Status, Task } from "./api";
+// With its extension, for the unit tests (which run it in node).
+import { documentsOnly, taskLabels } from "./labels.ts";
 
 /**
  * What a board shows: its search, filters and sort, which apply to the kanban board and the list
@@ -15,7 +17,7 @@ export interface BoardQuery {
 
 export const EMPTY_QUERY: BoardQuery = { search: "", statuses: [], kinds: [], projects: [], flags: [] };
 
-/** What a task is, for the Type filter. */
+/** What a task is, or a label it has, for the Type filter. */
 export type TaskKind = "code" | "subproject" | "group" | "plan" | "artifact" | "diagram" | "scratch";
 
 export const TASK_KINDS: { id: TaskKind; label: string }[] = [
@@ -37,8 +39,21 @@ export const TASK_FLAGS: { id: TaskFlag; label: string; test: (t: Task) => boole
   { id: "reminder", label: "Has a reminder", test: (t) => !!t.remind_at },
 ];
 
+/** What a task is: one that makes only documents (a plan, artifact or diagram task from before they were labels) is its
+ *  first label. */
 export const taskKind = (t: Task): TaskKind =>
-  t.subproject ? "subproject" : !t.project_id && t.group_name ? "group" : t.task_type ? t.task_type : "code";
+  t.subproject
+    ? "subproject"
+    : !t.project_id && t.group_name
+      ? "group"
+      : t.task_type === "scratch"
+        ? "scratch"
+        : documentsOnly(t)
+          ? (taskLabels(t)[0] ?? "code")
+          : "code";
+
+/** What the Type filter finds a task as: what it is, and its labels. */
+export const taskKinds = (t: Task): TaskKind[] => [...new Set<TaskKind>([taskKind(t), ...taskLabels(t)])];
 
 export type SortKey = "manual" | "activity" | "newest" | "oldest" | "title" | "cost";
 
@@ -71,7 +86,7 @@ export function taskMatcher(q: BoardQuery, key: (t: Task) => string, projectName
   const words = q.search.toLowerCase().split(/\s+/).filter(Boolean);
   const flags = TASK_FLAGS.filter((f) => q.flags.includes(f.id));
   return (t) => {
-    if (q.kinds.length && !q.kinds.includes(taskKind(t))) return false;
+    if (q.kinds.length && !taskKinds(t).some((k) => q.kinds.includes(k))) return false;
     if (q.projects.length && !q.projects.includes(t.project_id ? `${t.host_id}:${t.project_id}` : "")) return false;
     if (!flags.every((f) => f.test(t))) return false;
     if (!words.length) return true;

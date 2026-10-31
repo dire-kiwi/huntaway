@@ -37,9 +37,9 @@ pub fn start(project: Option<&Project>) -> &str {
 }
 
 /// What `task`'s agent is told to do when it starts. A project's own instructions are for its
-/// code tasks, so a plan, artifact or diagram task gets the default.
+/// code tasks, so a scratch task, or one that makes only documents, gets the default.
 pub fn start_task<'a>(task: &Task, project: Option<&'a Project>) -> &'a str {
-    start(project.filter(|_| task.task_type.is_none()))
+    start(project.filter(|_| task.task_type.is_none() && !crate::documents::documents_only(task)))
 }
 
 /// What the reviewer looks for, after the task and where its changes are.

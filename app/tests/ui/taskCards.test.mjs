@@ -19,7 +19,7 @@ const STATES = {
   "Card: waiting agent": { running: true, run_started_at: ago(1380), agent_wait: { reason: "Waiting for CI on the release branch to finish", since: ago(600), until: later(1800) } },
   "Card: needs you": { status: "needs_attention", attention_reason: "Which of the two layouts should the sidebar use? I need your call before I go on.", starred: true, remind_at: later(86400) },
   "Card: reviewed": { status: "in_review", review: review("issues", Array(12).fill("an issue")), preview_url: "http://127.0.0.1:1/", pr_url: "https://github.com/o/r/pull/7", branch: "ia/b" },
-  "Card: everything": { status: "in_review", task_type: "plan", starred: true, remind_at: later(3 * 3600), review: review("running"), depends: true, branch: "ia/c", cost_usd: 12.75 },
+  "Card: everything": { status: "in_review", labels: ["plan"], starred: true, remind_at: later(3 * 3600), review: review("running"), depends: true, branch: "ia/c", cost_usd: 12.75 },
   // Agents stopped on a permission prompt: still running, and needing you.
   "Card: approval while working": { status: "needs_attention", running: true, run_started_at: ago(600), attention_reason: "Allow Bash: cargo test?" },
   "Card: approval while merging": { status: "needs_attention", running: true, merging: true, run_started_at: ago(900), attention_reason: "Allow Bash: git push?" },

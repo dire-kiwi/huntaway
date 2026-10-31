@@ -76,6 +76,8 @@ pub struct AppState {
     /// The tasks being deleted (by how many deletions), which no task can be added to meanwhile
     /// (see api::Deleting).
     pub deleting: Mutex<HashMap<String, usize>>,
+    /// Web Push to devices (see push.rs).
+    pub push: crate::push::PushState,
 }
 
 pub type Shared = Arc<AppState>;
@@ -109,6 +111,7 @@ impl AppState {
             project_changes: tokio::sync::Mutex::new(()),
             relocating: Mutex::new(Default::default()),
             deleting: Mutex::new(HashMap::new()),
+            push: Default::default(),
         })
     }
 

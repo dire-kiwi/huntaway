@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { startServer, withBrowser } from "./harness.mjs";
+import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 // IA-227 with a Claude Code config and a Codex one, whose models the board fetches from the host (faked here, as the
 // test server can't run Codex).
@@ -13,8 +13,7 @@ let cart;
 before(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
-  mkdirSync(repo);
-  execFileSync("git", ["init", "-q", repo]);
+  gitRepo(repo);
   const [profile] = await server.api("GET", "/profiles");
   codex = await server.api("POST", "/claude-configs", { name: "Codex", config_dir: `${server.dataDir}/codex`, agent: "codex" });
   await server.api("PATCH", `/profiles/${profile.id}`, { claude_config_ids: [...profile.claude_config_ids, codex.id] });

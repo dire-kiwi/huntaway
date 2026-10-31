@@ -678,7 +678,7 @@ fn send_issues(state: &Shared, task: &Task, mut review: Review, rounds: u32, sav
          fixing it needs a decision or information from the user, leave that issue alone and call `request_user_input` \
          explaining your reasoning or question, so the task moves to \"Needs attention\" for the user to decide."
     );
-    if let Err(e) = runner::send_as(state, &task.id, &text, true) {
+    if let Err(e) = runner::send_fixes(state, &task.id, &text, review.fixes) {
         state.add_event(&task.id, "error", "Couldn't send the review's issues to the agent", Some(e.1));
     }
 }

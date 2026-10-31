@@ -1,19 +1,21 @@
-import type { DocumentType, Task } from "./api";
+import type { Task } from "./api";
+// With its extension, for the unit tests (which run it in node).
+import { documentsOnly, taskLabels } from "./labels.ts";
 
 /**
- * A plan, artifact or diagram task's document is ready for the user once there is one and its agent
- * isn't working on it (running or queued) or waiting on them (needs attention, answered in the thread).
+ * A task's documents are ready for the user once there is one and its agent isn't working on them (running or queued)
+ * or waiting on them (needs attention, answered in the thread).
  */
 export const documentReady = (task: Task) => !!task.document_at && !task.running && task.status !== "in_progress" && task.status !== "needs_attention";
 
 /**
- * The tab a task opens on. A plan, artifact or diagram task opens on its document when it's ready, and
- * otherwise on the thread. Any other task not started yet (to do or backlog) opens on its details, the
+ * The tab a task opens on. A task with labels opens on its first label's document when it's ready. Otherwise one that
+ * makes only documents opens on the thread, and any other task not started yet (to do or backlog) on its details, the
  * rest on the thread.
  */
 export function openingTab(task: Task | undefined): string {
-  // As `documentType`, which this doesn't import so that it runs in the unit tests.
-  const doc = task?.task_type && task.task_type !== "scratch" ? (task.task_type as DocumentType) : undefined;
-  if (doc) return documentReady(task!) ? doc : "thread";
+  const labels = task ? taskLabels(task) : [];
+  if (labels.length && documentReady(task!)) return labels[0];
+  if (task && documentsOnly(task)) return "thread";
   return task?.status === "todo" || task?.status === "backlog" ? "details" : "thread";
 }
