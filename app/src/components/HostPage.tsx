@@ -6,8 +6,8 @@ import { navigate } from "../router";
 import { profileConfigLabel, useStore } from "../store";
 import { HostClaudeConfigs } from "./ClaudeConfigs";
 import { AgentDefaultsRow, CopyLoginModal, HostVersion, ProfileForm, TerminalToolsRow } from "./Hosts";
-import { ServerPanel } from "./Server";
-import { Button, IconButton, MenuButton, Modal, timeAgo } from "./ui";
+import { RestartModal, ServerPanel } from "./Server";
+import { Button, IconButton, MenuButton, Modal, timeAgo, useConfirm } from "./ui";
 
 const MODE: Record<string, string> = { local: "this hub's own host", outbound: "linked by URL", inbound: "dials in", ssh: "over SSH" };
 
@@ -15,6 +15,7 @@ const MODE: Record<string, string> = { local: "this hub's own host", outbound: "
 export function HostPage({ hostId }: { hostId: string }) {
   const host = useStore((s) => s.hosts.find((h) => h.id === hostId));
   const hostCount = useStore((s) => s.hosts.length);
+  const confirm = useConfirm();
   if (!host) return <div className="p-8 text-muted">Host not found.</div>;
   const agents = canRunAgents(host);
   return (
@@ -80,17 +81,25 @@ export function HostPage({ hostId }: { hostId: string }) {
                 <Button
                   size="sm"
                   variant="danger"
-                  onClick={async () => {
-                    if (!confirm(`Remove ${host.name} from this board?`)) return;
-                    await api.removeHost(host.id);
-                    navigate({ name: "settings" }, true);
-                  }}
+                  onClick={() =>
+                    confirm.ask({
+                      title: `Remove ${host.name}`,
+                      body: `Remove ${host.name} from this board? Its projects, threads and agents stay on that host.`,
+                      action: "Remove from board",
+                      danger: true,
+                      onConfirm: async () => {
+                        await api.removeHost(host.id);
+                        navigate({ name: "settings" }, true);
+                      },
+                    })
+                  }
                 >
                   <Trash2 size={12} /> Remove from board
                 </Button>
               </div>
             </section>
           )}
+          {confirm.dialog}
         </div>
       </div>
     </div>
@@ -103,6 +112,7 @@ function HostProfiles({ hostId, canCopy }: { hostId: string; canCopy: boolean })
   const profiles = all.filter((p) => p.host_id === hostId);
   const [editing, setEditing] = useState<Profile | "new" | null>(null);
   const [copying, setCopying] = useState<Profile | null>(null);
+  const confirm = useConfirm();
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
@@ -131,9 +141,16 @@ function HostProfiles({ hostId, canCopy }: { hostId: string; canCopy: boolean })
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => {
-                if (confirm(`Delete profile "${p.name}" on this host, with all its projects and tasks here?`)) api.deleteProfile(p.host_id, p.id);
-              }}
+              title="Delete"
+              onClick={() =>
+                confirm.ask({
+                  title: `Delete profile ${p.name}`,
+                  body: `Delete profile "${p.name}" on this host, with all its projects and tasks here?`,
+                  action: "Delete profile",
+                  danger: true,
+                  onConfirm: () => api.deleteProfile(p.host_id, p.id),
+                })
+              }
             >
               <Trash2 size={13} />
             </Button>
@@ -147,6 +164,7 @@ function HostProfiles({ hostId, canCopy }: { hostId: string; canCopy: boolean })
         </Modal>
       )}
       {copying && <CopyLoginModal from={copying} onClose={() => setCopying(null)} />}
+      {confirm.dialog}
     </section>
   );
 }
@@ -164,7 +182,7 @@ function RemoteServer({ hostId }: { hostId: string }) {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [watching, setWatching] = useState<string | null>(null); // boot id before the restart
   const [down, setDown] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
@@ -194,17 +212,6 @@ function RemoteServer({ hostId }: { hostId: string }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [status?.restart?.log]);
 
-  const restart = async (rebuild: boolean) => {
-    if (!status) return;
-    setErr(null);
-    try {
-      await api.restartServer(hostId, { rebuild });
-      setWatching(status.boot_id);
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  };
-
   const job = status?.restart;
   const busy = !!watching;
   const short = (c?: string | null) => (c ? c.slice(0, 7) : "unknown");
@@ -212,16 +219,10 @@ function RemoteServer({ hostId }: { hostId: string }) {
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[13px] font-semibold">Server</h2>
-        <div className="flex gap-2">
-          {status?.source_dir && (
-            <Button size="sm" disabled={!status || busy} onClick={() => restart(true)}>
-              <RotateCw size={13} /> Rebuild &amp; restart
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" disabled={!status || busy} onClick={() => restart(false)}>
-            Restart
-          </Button>
-        </div>
+        {/* Asks first, as this board's own Rebuild & restart does: it says what the restart takes in and what's running. */}
+        <Button size="sm" disabled={!status || busy} onClick={() => setAsking(true)}>
+          <RotateCw size={13} /> {status?.source_dir ? <>Rebuild &amp; restart</> : "Restart"}
+        </Button>
       </div>
       <div className="space-y-2 rounded-xl border border-line p-4 text-[12.5px] text-muted">
         {status ? (
@@ -260,8 +261,8 @@ function RemoteServer({ hostId }: { hostId: string }) {
             {job.log}
           </pre>
         )}
-        {err && <div className="text-red-400">{err}</div>}
       </div>
+      {asking && status && <RestartModal status={status} hostId={hostId} onStarted={() => setWatching(status.boot_id)} onClose={() => setAsking(false)} />}
     </section>
   );
 }

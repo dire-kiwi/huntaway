@@ -9,6 +9,7 @@ import { HostPage } from "./components/HostPage";
 import { Onboarding, ProjectSettings, Settings, TokenScreen } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { TaskPanel, TaskView } from "./components/TaskView";
+import { UnhandledErrors } from "./components/UnhandledErrors";
 import { useDrawer, useNarrow } from "./narrow";
 import { startNotifications } from "./notifier";
 import { startPush } from "./push";
@@ -112,6 +113,7 @@ export function App() {
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
       <ProjectApprovals />
+      <UnhandledErrors />
     </div>
   );
 }

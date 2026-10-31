@@ -26,7 +26,7 @@ import {
 } from "../api";
 import { openTask } from "../router";
 import { onAutomationsChanged, useAvailableConfigs, useHost, useStore } from "../store";
-import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo } from "./ui";
+import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useAsyncAction, useConfirm, useDraft } from "./ui";
 
 type TimeZone = { name: string | null; offset: string };
 
@@ -142,6 +142,7 @@ export function ProjectAutomations({ project }: { project: Project }) {
       if (h === hostId && pid === project.id) reload();
     });
   }, [reload, hostId, project.id]);
+  const confirm = useConfirm();
   const run = async (fn: () => Promise<unknown>) => {
     setErr(null);
     try {
@@ -167,13 +168,22 @@ export function ProjectAutomations({ project }: { project: Project }) {
               onToggle={(enabled) => run(() => api.updateAutomation(hostId, a.id, { enabled }))}
               onEdit={() => setEditing(a)}
               onRun={() => (a.trigger.kind === "webhook" ? setTesting(a) : run(() => api.runAutomation(hostId, a.id)))}
-              onDelete={() => confirm(`Delete the automation "${a.name}"? Its run history goes with it.`) && run(() => api.deleteAutomation(hostId, a.id))}
+              onDelete={() =>
+                confirm.ask({
+                  title: `Delete automation ${a.name}`,
+                  body: `Delete the automation "${a.name}"? Its run history goes with it.`,
+                  action: "Delete automation",
+                  danger: true,
+                  onConfirm: () => api.deleteAutomation(hostId, a.id).then(reload),
+                })
+              }
             />
           ))}
         </div>
       )}
       {list && !list.length && <div className="text-[12px] text-faint">No automations yet.</div>}
       {err && <div className="text-xs text-red-400">{err}</div>}
+      {confirm.dialog}
       {editing && (
         <AutomationEditor
           project={project}
@@ -825,12 +835,10 @@ function WebhookFields({
   const hostId = project.host_id;
   const host = useHost(hostId);
   const publicUrl = useStore((s) => s.hostSettings[hostId]?.public_url ?? "");
-  const [address, setAddress] = useState(publicUrl);
-  const [addressErr, setAddressErr] = useState<string | null>(null);
-  const [rotateErr, setRotateErr] = useState<string | null>(null);
-  useEffect(() => {
-    setAddress(publicUrl);
-  }, [publicUrl]);
+  // Follows the saved address until it's edited, so a refresh of the host's settings doesn't overwrite what's typed.
+  const { draft: address, setDraft: setAddress } = useDraft(publicUrl);
+  const saveAddress = useAsyncAction();
+  const confirm = useConfirm();
   const [copied, setCopied] = useState(false);
   const base = publicUrl || (host?.local ? window.location.origin : "");
   const path = saved?.trigger.kind === "webhook" ? saved.hook_path : undefined;
@@ -873,15 +881,16 @@ function WebhookFields({
             </IconButton>
             <IconButton
               title="Make a new URL (the old one stops working)"
-              onClick={async (e) => {
+              onClick={(e) => {
                 e.preventDefault();
-                if (!saved || !confirm("Make a new URL? The current one stops working, so update it wherever it's used.")) return;
-                setRotateErr(null);
-                try {
-                  onRotated(await api.updateAutomation(hostId, saved.id, { rotate_token: true }));
-                } catch (err) {
-                  setRotateErr(`Couldn't make a new URL: ${(err as Error).message}`);
-                }
+                if (!saved) return;
+                confirm.ask({
+                  title: "Make a new URL",
+                  body: "Make a new URL? The current one stops working, so update it wherever it's used.",
+                  action: "Make a new URL",
+                  danger: true,
+                  onConfirm: async () => onRotated(await api.updateAutomation(hostId, saved.id, { rotate_token: true })),
+                });
               }}
             >
               <RefreshCw size={13} />
@@ -890,7 +899,6 @@ function WebhookFields({
         ) : (
           <div className="text-[12px] text-faint">Shown here once it's saved.</div>
         )}
-        {rotateErr && <div className="text-xs text-red-400">{rotateErr}</div>}
       </Field>
       <Field label="This host's public address" hint="For every webhook on this host. Where a tunnel or the connection broker reaches it from outside.">
         <div className="flex items-center gap-2">
@@ -903,22 +911,20 @@ function WebhookFields({
           {address.trim() !== publicUrl && (
             <Button
               size="sm"
-              onClick={async (e) => {
+              disabled={saveAddress.busy}
+              onClick={(e) => {
                 e.preventDefault();
-                setAddressErr(null);
-                try {
+                void saveAddress.run(async () => {
                   await api.updateSettings(hostId, { public_url: address.trim() || null });
                   await useStore.getState().loadHostSettings(hostId);
-                } catch (err) {
-                  setAddressErr((err as Error).message);
-                }
+                });
               }}
             >
               Save address
             </Button>
           )}
         </div>
-        {addressErr && <div className="text-xs text-red-400">{addressErr}</div>}
+        {saveAddress.error && <div className="text-xs text-red-400">{saveAddress.error}</div>}
       </Field>
       <Field
         label="Secret"
@@ -1014,6 +1020,7 @@ function WebhookFields({
           <Input className="font-mono text-[12px]" value={d.coalesceKey} placeholder="{{body.issue.number}} (blank: all of them)" onChange={(e) => set("coalesceKey", e.target.value)} />
         </Field>
       </div>
+      {confirm.dialog}
     </div>
   );
 }
