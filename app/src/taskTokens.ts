@@ -1,5 +1,6 @@
 // Tokens typed in a new task's description that set its options (IA-220): `/plan` its type, `@IA` where it goes,
-// `!sonnet` its model, `^high` its effort and `#IA-212` a task it depends on.
+// `!sonnet` its model, `^high` its effort, `#IA-212` a task it depends on and `from:IA-12` what its worktree starts from
+// (HA-55: another task, a branch, a pull request or a commit).
 //
 // A token is its prefix at the start of a word, with the value right after it, so `# Heading` isn't one. Only values
 // the dialog knows count (`@someone` and `#123` stay text), and nothing in a code span or fenced code block is a token.
@@ -7,7 +8,7 @@
 import type { Nodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 
-export const TOKEN_PREFIXES = ["/", "@", "!", "^", "#"] as const;
+export const TOKEN_PREFIXES = ["/", "@", "!", "^", "#", "from:"] as const;
 export type TokenPrefix = (typeof TOKEN_PREFIXES)[number];
 
 export interface Token {
@@ -27,6 +28,8 @@ export type Vocab = Partial<Record<TokenPrefix, readonly string[]>>;
 // A value ends in a letter or digit, so a full stop or a dash after it isn't part of it; and isn't followed by a path,
 // another prefix or a bracket (`/home/me`, `@IA/x` and `!claude-opus-5-5[1m]` aren't tokens).
 const TOKEN = /(?<=^|\s)([/@!^#])([\w.-]*\w)(?![\w/@#^[-])/g;
+// `from:` takes a branch (`feature/x`), a pull request (`#12`, or its URL) too, up to a space or what ends a sentence.
+const FROM = /(?<=^|\s)(from:)([^\s`'"<>()]*[^\s`'"<>().,;:!?])/g;
 
 let parsed: { text: string; ranges: [number, number][] } | null = null;
 
@@ -52,8 +55,9 @@ const inRanges = (at: number, ranges: [number, number][]) => ranges.some(([s, e]
 /** Everything in the text that could be a token, outside code, before it's looked up. */
 export function findTokens(text: string): Token[] {
   const code = codeRanges(text);
-  return [...text.matchAll(TOKEN)]
+  return [...text.matchAll(TOKEN), ...text.matchAll(FROM)]
     .filter((m) => !inRanges(m.index!, code))
+    .sort((a, b) => a.index! - b.index!)
     .map((m) => ({ prefix: m[1] as TokenPrefix, word: m[2], start: m.index!, end: m.index! + m[0].length }));
 }
 
@@ -165,9 +169,10 @@ export interface Completion {
 
 /** The token the caret is in, to suggest values for, unless it's in code. */
 export function completionAt(text: string, caret: number): Completion | null {
-  const m = /(?<=^|\s)([/@!^#])([\w.-]*)$/.exec(text.slice(0, caret));
+  const before = text.slice(0, caret);
+  const m = /(?<=^|\s)(from:)(\S*)$/.exec(before) ?? /(?<=^|\s)([/@!^#])([\w.-]*)$/.exec(before);
   if (!m || inRanges(m.index, codeRanges(text))) return null;
-  const rest = /^[\w.-]*/.exec(text.slice(caret))![0];
+  const rest = (m[1] === "from:" ? /^\S*/ : /^[\w.-]*/).exec(text.slice(caret))![0];
   return { prefix: m[1] as TokenPrefix, query: m[2], start: m.index, end: caret + rest.length };
 }
 

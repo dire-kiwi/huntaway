@@ -1685,6 +1685,29 @@ mod tests {
         api::create_task_inner(s, project, body).map_err(|e| e.1).unwrap()
     }
 
+    #[test]
+    fn agents_say_what_a_task_starts_from() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "web", "WEB");
+            let me = ctx(&p);
+            let first = call(&s, &me, "create_task", json!({"title": "First", "project_id": "WEB", "use_worktree": true})).await.unwrap();
+            assert!(first.get("start_from").is_none());
+            let t = call(&s, &me, "create_task", json!({"title": "On top", "project_id": "WEB", "use_worktree": true, "start_from": "web-1"})).await.unwrap();
+            assert_eq!(t["start_from"], "task WEB-1");
+            let task = db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap();
+            assert_eq!(task.start_from, Some(db::StartFrom::Task { task_id: first["id"].as_str().unwrap().into() }));
+            let t = call(&s, &me, "update_task", json!({"task_id": "WEB-2", "start_from": "https://github.com/o/web/pull/7"})).await.unwrap();
+            assert_eq!(t["start_from"], "pull request o/web#7");
+            let t = call(&s, &me, "update_task", json!({"task_id": "WEB-2", "start_from": ""})).await.unwrap();
+            assert!(t.get("start_from").is_none());
+            // Not for a task without a worktree.
+            let err = call(&s, &me, "create_task", json!({"title": "Here", "project_id": "WEB", "start_from": "dev"})).await.unwrap_err();
+            assert!(err.contains("start_from is for a task with a worktree"), "{err}");
+        });
+    }
+
     fn grant(s: &Shared, p: &db::Profile, names: &[&str]) {
         db::update_profile(&s.db(), &p.id, &[("agent_access", json!(names))]).unwrap();
     }

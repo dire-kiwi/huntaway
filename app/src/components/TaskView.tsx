@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, ApiError, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, ApiError, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, START_FROM_API, type Project, type StartFrom, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -936,6 +936,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
                   <span className="font-mono text-[11.5px]">{task.base_branch}</span>
                 </Row>
               )}
+              {hostSupports(host, START_FROM_API) && <StartFromRow task={task} project={project} onError={(e) => setErr("worktree", e)} />}
               {task.worktree_path && (
                 <Row label="Path">
                   <span className="group flex items-start gap-1 font-mono text-[11px]">
@@ -1293,6 +1294,52 @@ function SubprojectSection({ task }: { task: Task }) {
  * A field saved when it loses focus. It follows the task's value only while it's neither focused nor changed, so a
  * value the agent sets meanwhile doesn't overwrite what's being typed (and isn't written back over with the old one).
  */
+/** What a task's start_from says, as it's typed: another task's key, a branch, `#12` (or a pull request's URL) or a commit. */
+function startFromText(sf: StartFrom | null | undefined, other: Task | undefined, project?: Project | null): string | null {
+  if (!sf) return null;
+  switch (sf.type) {
+    case "branch":
+      return sf.branch;
+    case "task":
+      return other ? `${project?.key ?? "T"}-${other.number}` : "a deleted task";
+    case "pull_request":
+      return sf.repo ? `https://github.com/${sf.repo}/pull/${sf.number}` : `#${sf.number}`;
+    case "commit":
+      return sf.commit;
+  }
+}
+
+/**
+ * What the task's worktree starts from (API 81): until its branch exists, another task's key (stacking it on that task's
+ * branch), a branch, a pull request or a commit, or blank for the base branch; then what it started from, if anything.
+ * A subproject's tasks start from its branch.
+ */
+function StartFromRow({ task, project, onError }: { task: Task; project?: Project | null; onError: (e: string | null) => void }) {
+  const other = useStore((s) => (task.start_from?.type === "task" ? s.tasks[task.start_from.task_id] : undefined));
+  const text = startFromText(task.start_from, other, project);
+  if (task.parent_id) return null;
+  // Until the branch is made (a setup that failed before then can be tried again from elsewhere).
+  if (task.branch || !["none", "error"].includes(task.worktree_state)) {
+    return text ? (
+      <Row label="Started from">
+        <span className="font-mono text-[11.5px] break-all">{text}</span>
+      </Row>
+    ) : null;
+  }
+  return (
+    <Row label="Starts from">
+      <TextInput
+        value={text}
+        placeholder={`${task.base_branch || project?.base_branch || "the base branch"}, or a task, branch, #PR or commit`}
+        onSave={(v) => {
+          onError(null);
+          api.updateTask(task.host_id, task.id, { start_from: v || null }).catch((e) => onError(`Couldn't change where it starts from: ${errorText(e)}`));
+        }}
+      />
+    </Row>
+  );
+}
+
 function TextInput({ value, placeholder, onSave }: { value: string | null; placeholder: string; onSave: (v: string) => void }) {
   const [focused, setFocused] = useState(false);
   const { draft: v, setDraft: setV, dirty } = useDraft(value ?? "", focused);

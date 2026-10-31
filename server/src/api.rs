@@ -1924,7 +1924,13 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
             fields.push(("agent_wait", json!(db::AgentWait { moved_to: Some(st.to_string()), ..w })));
         }
     }
-    if fields.iter().any(|(k, _)| ["use_worktree", "base_branch", "start_from"].contains(k)) && current.worktree_state != "none" {
+    // A setup that failed before making the branch (a branch or pull request that isn't there, say) left nothing to
+    // tear down, so what it starts from can be put right, and it's set up again from scratch.
+    let unmade = |t: &db::Task| t.worktree_state == "none" || (t.worktree_state == "error" && t.branch.is_none());
+    if fields.iter().any(|(k, _)| ["use_worktree", "base_branch", "start_from"].contains(k)) && current.worktree_state == "error" && unmade(&current) {
+        fields.extend([("worktree_state", json!("none")), ("worktree_error", Value::Null)]);
+    }
+    if fields.iter().any(|(k, _)| ["use_worktree", "base_branch", "start_from"].contains(k)) && !unmade(&current) {
         return Err(ApiError::conflict("tear down the worktree before changing worktree settings"));
     }
     if merge && s.is_running(id) {
@@ -1961,7 +1967,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
             Some(ApiError::conflict(format!("the task was moved to {} meanwhile", now.status)))
         } else if merge && running {
             Some(ApiError::conflict("the agent is still running; wait for it to finish before moving the task to Ready for merge"))
-        } else if worktree_settings && now.worktree_state != "none" {
+        } else if worktree_settings && !unmade(&now) {
             Some(ApiError::conflict("tear down the worktree before changing worktree settings"))
         } else if config && (now.session_id.is_some() || running) {
             Some(ApiError::conflict("the agent has already started with its Claude config"))

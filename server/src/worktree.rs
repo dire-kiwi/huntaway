@@ -1814,6 +1814,10 @@ mod tests {
             let err = setup(&s, &t.id).await.unwrap_err().to_string();
             assert!(err.contains("commit deadbeefdeadbeef isn't in the repository (give its full SHA to fetch it)"), "{err}");
             assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().worktree_state, "error");
+            // It can be put right, and set up again.
+            let t = crate::api::update_task_inner(&s, &t.id, json!({"start_from": &first[..8]}).as_object().unwrap()).await.unwrap();
+            assert_eq!((t.worktree_state.as_str(), t.worktree_error), ("none", None));
+            assert_eq!(rev(Path::new(setup(&s, &t.id).await.unwrap().worktree_path.as_deref().unwrap()), "HEAD"), first);
 
             // A branch only on the remote, named with it, is that branch: fetched, and its base.
             sh(&other, &["checkout", "-q", "-b", "feature", "origin/master"]);

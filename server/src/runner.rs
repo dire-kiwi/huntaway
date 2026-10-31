@@ -3216,6 +3216,40 @@ mod tests {
     }
 
     #[test]
+    fn a_stacked_task_targets_the_branch_it_stacks_on_until_that_task_is_merged() {
+        let s = crate::testing::state();
+        let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: Some("main"), use_worktrees: true };
+        let project = db::insert_project(&s.db(), np).unwrap();
+        let new = |title| db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title, description: "", status: "in_review", use_worktree: true, model: None, effort: None, claude_config_id: None };
+        let first = db::insert_task(&s.db(), new("First")).unwrap();
+        let first = s.update_task(&first.id, &[("branch", json!("ia/web-1-first")), ("base_branch", json!("main"))]).unwrap().unwrap();
+        let second = db::insert_task(&s.db(), new("Second")).unwrap();
+        let sf = db::StartFrom::Task { task_id: first.id.clone() };
+        let fields = [("branch", json!("ia/web-2-second")), ("base_branch", json!("ia/web-1-first")), ("start_from", json!(sf)), ("worktree_path", json!("/w/2-second"))];
+        let second = s.update_task(&second.id, &fields).unwrap().unwrap();
+        let gh = worktree::Github { remote: "origin".into(), repo: "o/web".into() };
+        let text = system_prompt(&second, Some(&project), None, &[], &[], Some(&gh), true);
+        assert!(text.contains("stacked on another task: `ia/web-1-first` is that task's branch"), "{text}");
+        assert!(text.contains("head `ia/web-2-second` and base `ia/web-1-first`"), "{text}");
+
+        // While First is open, Second merges into its branch.
+        let mut base = second.base_branch.clone();
+        let said = stacked_merge(&s, &second, Some(&project), &mut base).unwrap();
+        assert_eq!(base.as_deref(), Some("ia/web-1-first"));
+        assert!(said.contains("stacked on WEB-1 (\"First\", in review), which isn't merged yet"), "{said}");
+        // Once it's merged, where First went.
+        s.update_task(&first.id, &[("status", json!("done"))]).unwrap();
+        let said = stacked_merge(&s, &second, Some(&project), &mut base).unwrap();
+        assert_eq!(base.as_deref(), Some("main"));
+        assert!(said.contains("if its pull request still targets `ia/web-1-first`, change its base to `main` first"), "{said}");
+        // A task that isn't stacked is told nothing more.
+        let mut base = first.base_branch.clone();
+        assert_eq!(stacked_merge(&s, &first, Some(&project), &mut base).unwrap(), "");
+        assert_eq!(base.as_deref(), Some("main"));
+    }
+
+    #[test]
     fn the_github_account_is_the_projects_or_the_profiles() {
         let c = db::open(std::path::Path::new(":memory:")).unwrap();
         let mut profile = db::insert_profile(&c, "p", &[], None).unwrap();

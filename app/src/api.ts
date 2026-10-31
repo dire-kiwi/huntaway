@@ -318,6 +318,16 @@ export interface MergedWorktreeResult {
   detail: string;
 }
 
+/** What a task's worktree starts from (API 81): its base branch, which its pull request targets, comes from it. */
+export type StartFrom =
+  | { type: "branch"; branch: string }
+  | { type: "task"; task_id: string }
+  | { type: "pull_request"; number: number; repo?: string }
+  | { type: "commit"; commit: string };
+
+/** The API that takes a task's start_from, and lists a project's branches. */
+export const START_FROM_API = 81;
+
 export interface Project {
   host_id: string;
   id: string;
@@ -529,6 +539,8 @@ export interface Task {
   worktree_path: string | null;
   branch: string | null;
   base_branch: string | null;
+  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 81). */
+  start_from?: StartFrom | null;
   worktree_state: "none" | "setting_up" | "ready" | "tearing_down" | "error";
   worktree_error: string | null;
   session_id: string | null;
@@ -1477,6 +1489,8 @@ export const api = {
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
+  /** The branches of the project's repository, latest first; those only on a remote named with it (API 81). */
+  projectBranches: (h: string, id: string) => on(h).get<{ branches: { name: string; remote: boolean }[] }>(`/projects/${enc(id)}/branches`),
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
   systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>
     on(h).get<{ text: string; runtime: Agent; permission_mode: PermissionMode }>(
@@ -1580,10 +1594,12 @@ export const api = {
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
+      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 81). */
+      start_from?: string;
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (h: string, id: string, b: Partial<Task>) => {
+  updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { start_from?: StartFrom | string | null }) => {
     // Noted before the request: the task event it causes reaches every tab before the response does.
     if (b.status) noteMove(h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);
