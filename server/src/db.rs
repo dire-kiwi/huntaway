@@ -2012,6 +2012,23 @@ pub fn review_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
+/// The tasks made together from one prompt (`fanout_id`, see api::CreateTask) in a profile, in the order they were made.
+pub fn fanout_tasks(c: &Connection, profile_id: &str, fanout_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE profile_id=?1 AND fanout_id=?2 AND kind='task' ORDER BY created_at, number")?;
+    let rows = st.query_map([profile_id, fanout_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// How long a task's agent has run, in seconds, over all of its runs (one still going counts up to `now`), and how many
+/// runs it has had.
+pub fn run_time(c: &Connection, task_id: &str, now: &str) -> Result<(f64, i64)> {
+    Ok(c.query_row(
+        "SELECT COALESCE(SUM(MAX(0, julianday(COALESCE(ended_at, ?2)) - julianday(created_at))), 0) * 86400, COUNT(*) FROM runs WHERE task_id=?1",
+        [task_id, now],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
+}
+
 /// A subproject's tasks, in board order.
 pub fn subproject_tasks(c: &Connection, subproject_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='task' ORDER BY position, created_at")?;
