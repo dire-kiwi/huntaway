@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { Ban, Check, CheckCircle2, CircleAlert, CircleSlash, GitBranch, GitPullRequest, Hourglass, Loader2, Menu, X } from "lucide-react";
+import { Ban, Check, CheckCircle2, CircleAlert, CircleSlash, CircleX, GitBranch, GitPullRequest, Hourglass, Loader2, Menu, X } from "lucide-react";
 import { createContext, Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ComponentProps, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { agentWaiting, type AgentWait, type PrWaitEvent, type Resolution, type Status, type Task } from "../api";
+import { agentWaiting, failedChecks, type AgentWait, type PrWaitEvent, type Resolution, type Status, type Task } from "../api";
 import { useDrawer, useNarrow } from "../narrow";
 import { usePreviewUp } from "../preview";
 
@@ -740,6 +740,19 @@ export function PrIcon({ url, label, className }: { url: string; label?: boolean
       <GitPullRequest size={11} />
       {label && <span>{prLabel(url)}</span>}
     </a>
+  );
+}
+
+/** A red mark for a task whose pull request has failed checks (see `failedChecks`), naming them. */
+export function ChecksMark({ task, className }: { task: Task; className?: string }) {
+  const c = failedChecks(task);
+  if (!c) return null;
+  const n = c.failed.length + c.more_failed;
+  const names = c.failed.map((f) => f.name).join(", ") + (c.more_failed ? ` and ${c.more_failed} more` : "");
+  return (
+    <span title={`${n} check${n === 1 ? "" : "s"} failed on ${prLabel(c.url)}: ${names}`} className={clsx("inline-flex shrink-0 items-center text-red-400", className)}>
+      <CircleX size={11} />
+    </span>
   );
 }
 

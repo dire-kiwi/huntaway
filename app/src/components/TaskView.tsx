@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleX, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, ApiError, canRunAgents, dependencyQueued, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, ApiError, canRunAgents, CHECKS_API, dependencyQueued, failedChecks, prChecks, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -25,7 +25,7 @@ import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Ago, Button, ConfirmModal, cost, ErrorBox, errorText, IconButton, Input, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut, useDraft } from "./ui";
+import { ActivityTime, Ago, Button, ConfirmModal, cost, ErrorBox, errorText, useAsyncAction, IconButton, Input, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut, useDraft } from "./ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));
@@ -892,6 +892,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
             }}
           />
           {errs.pr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.pr}</div>}
+          {hostSupports(host, CHECKS_API) && <FailedChecks task={task} />}
         </Section>
       )}
 
@@ -1286,6 +1287,83 @@ function SubprojectSection({ task }: { task: Task }) {
       )}
       {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
     </Section>
+  );
+}
+
+/**
+ * Fix broken checks for an open task's pull request, with its failed checks as the board last read them. The button is
+ * there without them too: a pull request that no read watches (in a project that neither watches pull requests in
+ * review nor moves them to Done when merged, or a task idle in another column) has none, or an outdated one, and the
+ * button reads it afresh, sending the failures it finds or saying there are none.
+ */
+function FailedChecks({ task }: { task: Task }) {
+  const { busy, error, run } = useAsyncAction();
+  // The head commit whose failures were sent, while it's still the one that failed.
+  const [sent, setSent] = useState<string | null>(null);
+  if (!task.pr_url || task.status === "done") return null;
+  const checks = failedChecks(task);
+  const fix = () => run(async () => setSent((await api.fixChecks(task.host_id, task.id)).pr_checks?.head ?? null));
+  const button = (
+    <Button size="sm" disabled={busy} onClick={fix} title="Read the pull request's checks now and send the agent the failed ones, with the ends of their logs, asking it to fix them and push">
+      {busy && <Loader2 size={12} className="animate-spin" />}
+      Fix broken checks
+    </Button>
+  );
+  if (!checks) {
+    const last = prChecks(task);
+    return (
+      <div className="mt-2 space-y-2" data-checks="none">
+        <div className="flex items-center gap-2">
+          {button}
+          <span className="text-[11px] text-faint">
+            {last ? (
+              <>
+                Checks {last.outcome === "none" ? "none" : last.outcome} on <span className="font-mono">{last.head.slice(0, 7)}</span> as last read,{" "}
+                <Ago at={last.since} />
+              </>
+            ) : (
+              "Reads the pull request's checks now"
+            )}
+          </span>
+        </div>
+        {error && <ErrorBox>{error}</ErrorBox>}
+      </div>
+    );
+  }
+  const n = checks.failed.length + checks.more_failed;
+  return (
+    <div className="mt-2 rounded-md border border-red-500/20 bg-red-500/[0.06] p-2 text-[12px]">
+      <div className="flex items-center gap-1.5 text-red-300">
+        <CircleX size={12} className="shrink-0" />
+        <span>
+          {n} check{n === 1 ? "" : "s"} failed on <span className="font-mono text-[11.5px]">{checks.head.slice(0, 7)}</span>
+        </span>
+        <span className="ml-auto shrink-0 text-[11px] text-faint">
+          <Ago at={checks.since} title={`Read from GitHub ${new Date(checks.since).toLocaleString()} or since`} />
+        </span>
+      </div>
+      <ul className="mt-1.5 space-y-0.5">
+        {checks.failed.map((c, i) => (
+          <li key={i} className="flex min-w-0 items-baseline gap-1.5">
+            {c.url ? (
+              <a href={c.url} target="_blank" rel="noreferrer" className="truncate text-fg hover:underline">
+                {c.name}
+              </a>
+            ) : (
+              <span className="truncate text-fg">{c.name}</span>
+            )}
+            <span className="shrink-0 text-[11px] text-faint">{c.conclusion.replace(/_/g, " ")}</span>
+          </li>
+        ))}
+        {checks.more_failed > 0 && <li className="text-faint">and {checks.more_failed} more</li>}
+      </ul>
+      <div className="mt-2 flex items-center gap-2">
+        {button}
+        {sent === checks.head && <span className="text-[11px] text-muted">Sent to the agent</span>}
+        {checks.pending > 0 && <span className="ml-auto text-[11px] text-faint">{checks.pending} still running</span>}
+      </div>
+      {error && <ErrorBox className="mt-2">{error}</ErrorBox>}
+    </div>
   );
 }
 

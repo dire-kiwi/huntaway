@@ -11,7 +11,7 @@ import { DependencyBadge } from "./Dependencies";
 import { FanoutBadge } from "./Fanout";
 import { TaskMarks } from "./Reminders";
 import { TaskTypeBadge } from "./Document";
-import { ActivityTime, BranchIcon, CARD_BADGE, CardState, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "./ui";
+import { ActivityTime, BranchIcon, CARD_BADGE, CardState, ChecksMark, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "./ui";
 import { useNarrow, useTouch } from "../narrow";
 
 
@@ -310,6 +310,7 @@ export const TaskCard = memo(function TaskCard({
           {showsPreview(task) && <PreviewDot url={task.preview_url!} label />}
           {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
           {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
+          <ChecksMark task={task} />
           {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
           {cost(task.cost_usd) && <span className="ml-auto shrink-0">{cost(task.cost_usd)}</span>}
         </div>
@@ -364,6 +365,7 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {showsPreview(task) && <PreviewDot url={task.preview_url!} label />}
         {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
+        <ChecksMark task={task} />
         {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
         {cost(task.cost_usd) && <span>{cost(task.cost_usd)}</span>}
         <span className="w-14 text-right narrow:ml-auto narrow:w-auto narrow:shrink-0">

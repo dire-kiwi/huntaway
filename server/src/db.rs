@@ -637,12 +637,18 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=64; COMMIT;",
         )?;
     }
+    if version < 65 {
+        // How a task's pull request's checks stood at the latest read (see Task::pr_checks).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='pr_checks'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN pr_checks TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=65; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 64;
+pub const VERSION: i64 = 65;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1338,6 +1344,9 @@ pub struct Task {
     /// The task's pull request.
     #[serde(default)]
     pub pr_url: Option<String>,
+    /// How its pull request's checks stood when the board last read them (see pr_watch::record_checks).
+    #[serde(default)]
+    pub pr_checks: Option<PrChecks>,
     /// The tasks elsewhere (in Asana) that this one is for.
     #[serde(default)]
     pub external_links: Vec<ExternalLink>,
@@ -1386,6 +1395,40 @@ pub const LINK_PROVIDERS: &[&str] = &["asana"];
 
 /// How many external links a task can have.
 pub const MAX_LINKS: usize = 20;
+
+/// How a task's pull request's checks stood on its head commit when the board last read them:
+/// by a `wait` on it, while it's watched in review, when its state is read for *Done when merged*,
+/// or for *Fix broken checks* (see pr_watch::record_checks). Stored on its task as JSON.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct PrChecks {
+    /// The pull request read (see pr_watch::Target::url).
+    pub url: String,
+    /// The head commit whose checks these are.
+    pub head: String,
+    /// `failed` (one or more did), `passed` (all those that have to), `pending` or `none`.
+    pub outcome: String,
+    /// The checks that failed (`FAILED_MAX` at most).
+    #[serde(default)]
+    pub failed: Vec<FailedCheck>,
+    /// How many more failed than are listed.
+    #[serde(default)]
+    pub more_failed: usize,
+    #[serde(default)]
+    pub pending: usize,
+    #[serde(default)]
+    pub passed: usize,
+    /// When a read first found them like this.
+    pub since: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct FailedCheck {
+    /// `Workflow / job` for GitHub Actions, the check's or status's name otherwise.
+    pub name: String,
+    /// How it ended: `failure`, `cancelled`, `timed_out`…
+    pub conclusion: String,
+    pub url: Option<String>,
+}
 
 /// How much of a thread's context window its agent's session uses (see context.rs), stored on
 /// its task as JSON.
@@ -1598,6 +1641,7 @@ impl Task {
             auto_allow: serde_json::from_str(&auto_allow).unwrap_or_default(),
             preview_url: r.get("preview_url")?,
             pr_url: r.get("pr_url")?,
+            pr_checks: r.get::<_, Option<String>>("pr_checks")?.and_then(|v| serde_json::from_str(&v).ok()),
             external_links: json_or_default(r.get::<_, Option<String>>("external_links")?),
             fanout_id: r.get("fanout_id")?,
             starred: r.get("starred")?,
@@ -2240,7 +2284,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -3547,6 +3591,30 @@ mod tests {
         assert_eq!(p.preview_for(Some("https://github.com/o/r/pull/3/files")).as_deref(), Some("https://pr3.example.com/"));
         assert_eq!(p.preview_for(Some("https://example.com/o/r/issues/3")), None);
         assert_eq!(p.preview_for(None), None);
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_database_at_version_64_gets_tasks_pr_checks() {
+        // As master's build left it, with the runs index (64) and no pr_checks yet.
+        let path = std::env::temp_dir().join(format!("huntaway-v64-{}.db", crate::util::new_id()));
+        let id = {
+            let c = open(&path).unwrap();
+            let p = insert_profile(&c, "p", &[], None).unwrap();
+            let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let t = insert_task(&c, t).unwrap();
+            c.execute_batch("ALTER TABLE tasks DROP COLUMN pr_checks; PRAGMA user_version=64;").unwrap();
+            t.id
+        };
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        assert_eq!(get_task(&c, &id).unwrap().unwrap().pr_checks, None);
+        let checks = PrChecks { url: "https://github.com/o/r/pull/1".into(), head: "a1".into(), outcome: "failed".into(), since: "1".into(), ..Default::default() };
+        let t = update_task(&c, &id, &[("pr_checks", serde_json::json!(checks))]).unwrap().unwrap();
+        assert_eq!(t.pr_checks, Some(checks));
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
