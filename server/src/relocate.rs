@@ -440,6 +440,13 @@ async fn check_same_repo(project: &Project, old: &Path, new: &Path, tasks: &[Tas
         if roots.split(' ').any(|r| theirs.split(' ').any(|o| o == r)) {
             return Ok(());
         }
+        // A shallow clone's history starts where it was cut off, which is no root once the rest is
+        // fetched: the commit is in the history all the same.
+        for r in roots.split(' ') {
+            if worktree::git(new, &["merge-base", "--is-ancestor", r, "HEAD"]).await.is_ok_and(|o| o.ok) {
+                return Ok(());
+            }
+        }
         return not_it("it has none of the commits the project's history started from");
     }
     // …or, when the board doesn't know its history, its tasks' branches.

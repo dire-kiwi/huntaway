@@ -403,6 +403,23 @@ fn check_clone_dir(v: &Value) -> ApiResult<Value> {
     Ok(json!(dir))
 }
 
+/// A project's or task's base branch: null (or blank) for the default, else a name git takes for a
+/// branch, as an agent may set it to anything.
+async fn check_base_branch(v: &Value) -> ApiResult<Value> {
+    let name = match v {
+        Value::Null => return Ok(Value::Null),
+        Value::String(b) => b.trim(),
+        _ => return Err(ApiError::bad("base_branch must be null or a string")),
+    };
+    if name.is_empty() {
+        return Ok(Value::Null);
+    }
+    if !worktree::valid_branch_name(name).await {
+        return Err(ApiError::bad(format!("base_branch {name:?} isn't a valid branch name")));
+    }
+    Ok(json!(name))
+}
+
 /// Profile names whose agents may use a profile's board, tidied (`*` for every profile).
 fn check_agent_access(own_name: &str, v: &Value) -> ApiResult<Vec<String>> {
     let names: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("agent_access must be a list of profile names"))?;
@@ -580,8 +597,8 @@ pub async fn create_project_inner(s: &Shared, profile_id: &str, b: CreateProject
     }
     let repo = repo.canonicalize().unwrap_or(repo);
     let is_git = worktree::is_git_repo(&repo).await;
-    let base_branch = match b.base_branch.filter(|b| !b.trim().is_empty()) {
-        Some(b) => Some(b),
+    let base_branch = match check_base_branch(&json!(b.base_branch)).await?.as_str() {
+        Some(b) => Some(b.to_string()),
         None if is_git => worktree::current_branch(&repo).await,
         None => None,
     };
@@ -704,7 +721,7 @@ pub async fn update_project_inner(s: &Shared, id: &str, b: &Map<String, Value>) 
     // the key this one checked, or store old keys this one would overwrite.
     let _changing = s.project_changes.lock().await;
     let before = db::get_project(&s.db(), id)?.ok_or_else(|| ApiError::not_found("project"))?;
-    let mut fields = project_fields(s, &before, b)?;
+    let mut fields = project_fields(s, &before, b).await?;
     // Archiving is stored on its own, once the other changes check out (see archive).
     let mut archive_now = false;
     if let Some(i) = fields.iter().position(|(k, _)| *k == "archived") {
@@ -814,7 +831,7 @@ fn archive(s: &Shared, p: &db::Project) -> ApiResult<()> {
 
 /// The project fields in `b`, checked and as they're stored, for a change to `before`.
 /// `archived` stays as given, for update_project_inner to turn into `archived_at`.
-pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) -> ApiResult<Vec<(&'static str, Value)>> {
+pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) -> ApiResult<Vec<(&'static str, Value)>> {
     let mut fields = pick(
         b,
         &[
@@ -860,6 +877,7 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
                 }
                 *v = json!(path_str(&expand_tilde(path)));
             }
+            "base_branch" => *v = check_base_branch(v).await?,
             "name" => {
                 let name = v.as_str().map(str::trim).unwrap_or_default();
                 if name.is_empty() {
@@ -915,6 +933,19 @@ pub fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Value>) 
                 *v = json!(ids.map(|ids| json!(ids).to_string()));
             }
             _ => {}
+        }
+    }
+    // A relative worktrees folder would be made against the server's folder but used by git from
+    // the repository's, which puts worktrees in the main checkout; and it can't be the checkout.
+    if let Some((_, root)) = fields.iter().find(|(k, _)| *k == "worktrees_root") {
+        let root = PathBuf::from(root.as_str().unwrap_or_default());
+        let repo = fields.iter().find(|(k, _)| *k == "repo_path").and_then(|(_, v)| v.as_str()).unwrap_or(&before.repo_path);
+        if !root.is_absolute() {
+            return Err(ApiError::bad("worktrees_root must be an absolute path, or start with ~/"));
+        }
+        let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.components().collect());
+        if canon(&root) == canon(std::path::Path::new(repo)) {
+            return Err(ApiError::bad("worktrees_root can't be the repository folder: give it a folder of its own"));
         }
     }
     Ok(fields)
@@ -1444,6 +1475,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         ],
     );
     check_reminder(Some(&current), &mut fields)?;
+    if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "base_branch") {
+        *v = check_base_branch(v).await?;
+    }
     if let Some(v) = b.get("labels") {
         if current.kind != "task" {
             return Err(ApiError::bad("only a task can have labels"));
@@ -1551,12 +1585,13 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     if remerge && !(current.merging && s.is_running(id) && b.get("status").and_then(Value::as_str) == Some("in_progress")) {
         return Err(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"));
     }
-    // Moving a task to "Ready for merge" asks its agent to merge it (if agents can run here),
-    // once no other task in its project is merging.
+    // Moving a task to "Ready for merge" asks its agent to merge it, once no other task in its
+    // project is merging. On a host that can't run agents it joins the queue all the same, and
+    // its merge starts once they can (see runner::start_queued_merges).
     let mut merge = false;
     if let Some(v) = fields.iter().find(|(k, _)| *k == "status").map(|(_, v)| v.clone()) {
         let st = v.as_str().filter(|st| STATUSES.contains(st)).ok_or_else(|| ApiError::bad(format!("status must be one of {STATUSES:?}")))?;
-        merge = st == "ready_for_merge" && current.status != st && current.kind == "task" && crate::runs::can_run_agents(s);
+        merge = st == "ready_for_merge" && current.status != st && current.kind == "task";
         if st != "needs_attention" {
             fields.push(("attention_reason", Value::Null));
         }
@@ -1604,6 +1639,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     let t = s.update_task(id, &fields)?.ok_or_else(|| ApiError::not_found("task"))?;
     if remerge {
         s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
+    }
+    if merge && !crate::runs::can_run_agents(s) {
+        s.add_event(id, "warn", "Agents can't run on this host yet (no Claude Code or Codex found), so the task waits in the merge queue until they can", None);
     }
     // Unpinned, the title catches up with what the task is about now.
     if unpinned {
@@ -1895,8 +1933,9 @@ async fn review_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResu
 }
 
 async fn setup_worktree(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    if s.is_running(&id) {
-        return Err(ApiError::conflict("agent is running"));
+    // Reviewers work in the worktree too.
+    if worktree::agent_in_worktree(&s, &id) {
+        return Err(ApiError::conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it"));
     }
     let t = worktree::setup(&s, &id).await.map_err(|e| ApiError::bad(format!("{e:#}")))?;
     Ok(Json(json!(t)))
@@ -1911,8 +1950,9 @@ struct TeardownBody {
 }
 
 async fn teardown_worktree(State(s): State<Shared>, Path(id): Path<String>, body: Option<Json<TeardownBody>>) -> ApiResult<Json<Value>> {
-    if s.is_running(&id) {
-        return Err(ApiError::conflict("agent is running"));
+    // Reviewers work in the worktree too.
+    if worktree::agent_in_worktree(&s, &id) {
+        return Err(ApiError::conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it"));
     }
     let b = body.map(|b| b.0).unwrap_or_default();
     let t = worktree::teardown(&s, &id, b.force, b.delete_branch).await.map_err(|e| ApiError::conflict(format!("{e:#}")))?;
