@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { Copy, Loader2, Plus, Trash2 } from "lucide-react";
+import { Copy, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { AGENTS, agentInfo, agentOf, api, canRunAgents, hostSupports, type Agent, type ClaudeConfig } from "../api";
-import { useStore } from "../store";
+import { usageKey, useStore } from "../store";
+import { usageAlert } from "../usageConfigs";
 import { CopyLoginModal } from "./Hosts";
 import { Button, Field, Input, Modal, ModalFooter, useAsyncAction, useConfirm } from "./ui";
 
@@ -312,14 +313,36 @@ export function ConfigPicker({ hostId, value, onChange }: { hostId: string; valu
 
 /** Which of several agent configs a thread uses. */
 export function ConfigSelect({ configs, value, onChange, className }: { configs: ClaudeConfig[]; value: string; onChange: (id: string) => void; className?: string }) {
+  const usage = useStore((s) => s.usage);
+  // Which are running low or out, so another can be picked before the work starts.
+  const alert = (c: ClaudeConfig) => usageAlert(usage[usageKey(c.host_id, c.id)]);
   return (
     <select className={className} title="Agent config" value={value} onChange={(e) => onChange(e.target.value)}>
       {configs.map((c) => (
         <option key={c.id} value={c.id}>
           {c.name}
           {agentOf(c) === "codex" ? " (Codex)" : ""}
+          {alert(c) ? ` · ${alert(c)!.short}` : ""}
         </option>
       ))}
     </select>
+  );
+}
+
+/** A warning that `config` is running low on usage, or out of it, by where it's picked. */
+export function ConfigUsageNote({ config, className }: { config: ClaudeConfig | undefined; className?: string }) {
+  const u = useStore((s) => (config ? s.usage[usageKey(config.host_id, config.id)] : undefined));
+  const alert = usageAlert(u);
+  if (!config || !alert) return null;
+  return (
+    <span
+      data-usage-alert={alert.level}
+      className={clsx("flex items-center gap-1 text-[11.5px]", alert.level === "out" ? "text-red-300" : "text-st-attention", className)}
+    >
+      <TriangleAlert size={12} className="shrink-0" />
+      <span>
+        {config.name}: {alert.text}
+      </span>
+    </span>
   );
 }
