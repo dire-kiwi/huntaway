@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, CircleX, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, ApiError, canRunAgents, CHECKS_API, dependencyQueued, failedChecks, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { api, ApiError, canRunAgents, CHECKS_API, dependencyQueued, failedChecks, prChecks, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, configDir } from "./ClaudeConfigs";
@@ -1291,19 +1291,46 @@ function SubprojectSection({ task }: { task: Task }) {
 }
 
 /**
- * A field saved when it loses focus. It follows the task's value only while it's neither focused nor changed, so a
- * value the agent sets meanwhile doesn't overwrite what's being typed (and isn't written back over with the old one).
+ * Fix broken checks for an open task's pull request, with its failed checks as the board last read them. The button is
+ * there without them too: a pull request that no read watches (in a project that neither watches pull requests in
+ * review nor moves them to Done when merged, or a task idle in another column) has none, or an outdated one, and the
+ * button reads it afresh, sending the failures it finds or saying there are none.
  */
-/** The failed checks of the task's pull request, as the board last read them, and Fix broken checks to send them to its agent. */
 function FailedChecks({ task }: { task: Task }) {
   const { busy, error, run } = useAsyncAction();
   // The head commit whose failures were sent, while it's still the one that failed.
   const [sent, setSent] = useState<string | null>(null);
+  if (!task.pr_url || task.status === "done") return null;
   const checks = failedChecks(task);
-  // A fresh read that finds none failed any more says so here, as the list goes.
-  if (!checks) return error ? <ErrorBox className="mt-2">{error}</ErrorBox> : null;
+  const fix = () => run(async () => setSent((await api.fixChecks(task.host_id, task.id)).pr_checks?.head ?? null));
+  const button = (
+    <Button size="sm" disabled={busy} onClick={fix} title="Read the pull request's checks now and send the agent the failed ones, with the ends of their logs, asking it to fix them and push">
+      {busy && <Loader2 size={12} className="animate-spin" />}
+      Fix broken checks
+    </Button>
+  );
+  if (!checks) {
+    const last = prChecks(task);
+    return (
+      <div className="mt-2 space-y-2" data-checks="none">
+        <div className="flex items-center gap-2">
+          {button}
+          <span className="text-[11px] text-faint">
+            {last ? (
+              <>
+                Checks {last.outcome === "none" ? "none" : last.outcome} on <span className="font-mono">{last.head.slice(0, 7)}</span> as last read,{" "}
+                <Ago at={last.since} />
+              </>
+            ) : (
+              "Reads the pull request's checks now"
+            )}
+          </span>
+        </div>
+        {error && <ErrorBox>{error}</ErrorBox>}
+      </div>
+    );
+  }
   const n = checks.failed.length + checks.more_failed;
-  const fix = () => run(async () => (await api.fixChecks(task.host_id, task.id), setSent(checks.head)));
   return (
     <div className="mt-2 rounded-md border border-red-500/20 bg-red-500/[0.06] p-2 text-[12px]">
       <div className="flex items-center gap-1.5 text-red-300">
@@ -1331,10 +1358,7 @@ function FailedChecks({ task }: { task: Task }) {
         {checks.more_failed > 0 && <li className="text-faint">and {checks.more_failed} more</li>}
       </ul>
       <div className="mt-2 flex items-center gap-2">
-        <Button size="sm" disabled={busy} onClick={fix} title="Read the pull request's checks again and send the agent the failed ones, with the ends of their logs, asking it to fix them and push">
-          {busy && <Loader2 size={12} className="animate-spin" />}
-          Fix broken checks
-        </Button>
+        {button}
         {sent === checks.head && <span className="text-[11px] text-muted">Sent to the agent</span>}
         {checks.pending > 0 && <span className="ml-auto text-[11px] text-faint">{checks.pending} still running</span>}
       </div>
@@ -1343,6 +1367,10 @@ function FailedChecks({ task }: { task: Task }) {
   );
 }
 
+/**
+ * A field saved when it loses focus. It follows the task's value only while it's neither focused nor changed, so a
+ * value the agent sets meanwhile doesn't overwrite what's being typed (and isn't written back over with the old one).
+ */
 function TextInput({ value, placeholder, onSave }: { value: string | null; placeholder: string; onSave: (v: string) => void }) {
   const [focused, setFocused] = useState(false);
   const { draft: v, setDraft: setV, dirty } = useDraft(value ?? "", focused);

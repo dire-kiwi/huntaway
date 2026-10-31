@@ -608,12 +608,18 @@ export const CHECKS_API = 81;
 
 const prKey = (url: string) => url.match(/^https?:\/\/(?:www\.)?([^/]+\/[^/]+\/[^/]+)\/pull\/(\d+)/i)?.slice(1).join("#").toLowerCase();
 
-/** The failed checks of an open task's pull request, if the board's latest read of it found some. */
-export function failedChecks(t: Task): PrChecks | null {
+/** How the checks of the task's pull request stood at the board's latest read of it, if it has read the one the task has now. */
+export function prChecks(t: Task): PrChecks | null {
   const c = t.pr_checks;
-  if (!c || c.outcome !== "failed" || !t.pr_url || t.status === "done") return null;
+  if (!c || !t.pr_url) return null;
   const key = prKey(t.pr_url);
   return key && key === prKey(c.url) ? c : null;
+}
+
+/** The failed checks of an open task's pull request, if the board's latest read of it found some. */
+export function failedChecks(t: Task): PrChecks | null {
+  const c = prChecks(t);
+  return c && c.outcome === "failed" && t.status !== "done" ? c : null;
 }
 
 export interface ContextSummary {
