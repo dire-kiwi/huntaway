@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ArrowRight, Check, Clock, ShieldAlert, Trash2, Webhook, X, Zap } from "lucide-react";
+import { ArrowRight, Check, Clock, FolderPlus, ShieldAlert, Trash2, Webhook, X, Zap } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
   api,
@@ -12,6 +12,8 @@ import {
   type DeletionApproval,
   type ProjectApproval,
   type ProjectChange,
+  type ProjectCreation,
+  type ProjectCreationApproval,
   type TaskDeletion,
 } from "../api";
 import { filterText, triggerText } from "./Automations";
@@ -107,6 +109,38 @@ export function ProjectChangeDetail({ change }: { change: ProjectChange }) {
   );
 }
 
+/** A project an agent asked to add: where it is, and what its agents would be allowed to do there. */
+export function ProjectCreationDetail({ creation }: { creation: ProjectCreation }) {
+  const { reason, project } = creation;
+  const mode = PERMISSION_MODES.find((m) => m.id === creation.permission_mode)?.label ?? creation.permission_mode;
+  return (
+    <div className="space-y-3 text-[13px]">
+      {reason && <div className="rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-2 text-muted">{reason}</div>}
+      <div className="space-y-2 rounded-md border border-st-attention/30 bg-[#0c0c10] px-3 py-2">
+        <Row label="Folder">
+          <Mono>{creation.repo_path}</Mono>
+          {!creation.exists ? (
+            <div className="text-[12px] text-amber-200/90">Doesn't exist yet: it's created.</div>
+          ) : (
+            !creation.git && <div className="text-[12px] text-faint">Not a git repository.</div>
+          )}
+        </Row>
+        <Row label="Name">
+          {project.name} <span className="font-mono text-[12px] text-faint">{project.key}</span>
+        </Row>
+        <Row label="Board">{creation.board}</Row>
+        <Row label="Permission mode">{mode} (the host's default)</Row>
+      </div>
+      <p className="text-muted">
+        Its tasks' agents work in this folder, and can read and change what's in it. Agents can start them straight away, with that permission mode.
+      </p>
+    </div>
+  );
+}
+
+/** Whether an approval is to add a project. */
+const isCreation = (a: Pick<Approval, "kind" | "tool_name">): a is ProjectCreationApproval => a.kind === "project" && a.tool_name === "create_project";
+
 /** A task as an approval names it: its key and title. */
 const taskName = (t: { key?: string; title: string }) => (t.key ? `${t.key} ${t.title}` : t.title);
 
@@ -127,6 +161,10 @@ function Asker({ approval }: { approval: Approval }) {
           <span className="text-fg">
             {project?.name} ({project?.key})
           </span>
+        </>
+      ) : isCreation(approval) ? (
+        <>
+          wants to add the project <span className="text-fg">{approval.input.project.name}</span> to the {approval.input.board} board
         </>
       ) : approval.kind === "delete_task" ? (
         <>
@@ -362,6 +400,7 @@ const isDeletion = (a: Pick<Approval, "kind" | "input">) => a.kind === "delete_t
 const TITLES = { project: "Approve a project change?", delete_task: "Delete a task?" };
 
 function approvalTitle(a: Approval) {
+  if (isCreation(a)) return "Add a project?";
   if (a.kind === "automation") return a.input.op === "delete" ? "Delete an automation?" : "Approve an automation?";
   return TITLES[a.kind];
 }
@@ -419,6 +458,8 @@ export function ProjectApprovals() {
             <Trash2 size={15} className="text-red-400" />
           ) : a.kind === "automation" ? (
             <Zap size={15} className="text-st-attention" />
+          ) : isCreation(a) ? (
+            <FolderPlus size={15} className="text-st-attention" />
           ) : (
             <ShieldAlert size={15} className="text-st-attention" />
           )}
@@ -433,6 +474,8 @@ export function ProjectApprovals() {
           <TaskDeletionDetail deletion={a.input} />
         ) : a.kind === "automation" ? (
           <AutomationChangeDetail change={a.input} />
+        ) : isCreation(a) ? (
+          <ProjectCreationDetail creation={a.input} />
         ) : (
           <ProjectChangeDetail change={a.input} />
         )}
@@ -505,10 +548,11 @@ export function TaskDeletionCard({ data, hostId }: { data: DeletionApproval; hos
   );
 }
 
-/** A project change in its thread: the same question as the dialog, and its answer once given. */
-export function ProjectChangeCard({ data, hostId }: { data: ProjectApproval; hostId: string }) {
+/** A project change (or a new project) in its thread: the same question as the dialog, and its answer once given. */
+export function ProjectChangeCard({ data, hostId }: { data: ProjectApproval | ProjectCreationApproval; hostId: string }) {
   const pending = data.status === "pending";
   const [open, setOpen] = useState(false);
+  if (isCreation(data)) return <ProjectCreationCard data={data} hostId={hostId} />;
   return (
     <div className={clsx("rounded-lg border p-3", pending ? "border-st-attention/50 bg-st-attention/[0.06]" : "border-line bg-panel/60")}>
       <div className="mb-2 flex items-center gap-2 text-[13px]">
@@ -523,6 +567,35 @@ export function ProjectChangeCard({ data, hostId }: { data: ProjectApproval; hos
       ) : (
         <button className="truncate text-left font-mono text-[12px] text-faint hover:text-muted" onClick={() => setOpen(true)}>
           {(data.input.changes ?? []).map((c) => c.field).join(", ")}
+        </button>
+      )}
+      {pending && (
+        <div className="mt-3">
+          <DecideButtons hostId={hostId} approval={data} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A project an agent asked to add, in its thread. */
+function ProjectCreationCard({ data, hostId }: { data: ProjectCreationApproval; hostId: string }) {
+  const pending = data.status === "pending";
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={clsx("rounded-lg border p-3", pending ? "border-st-attention/50 bg-st-attention/[0.06]" : "border-line bg-panel/60")}>
+      <div className="mb-2 flex items-center gap-2 text-[13px]">
+        <FolderPlus size={15} className={pending ? "text-st-attention" : "text-faint"} />
+        <span className={clsx("min-w-0 truncate", pending ? "text-fg" : "text-muted")}>
+          Add the project <span className="font-medium">{data.input.project.name}</span>
+        </span>
+        {!pending && <Answer status={data.status} />}
+      </div>
+      {pending || open ? (
+        <ProjectCreationDetail creation={data.input} />
+      ) : (
+        <button className="truncate text-left font-mono text-[12px] text-faint hover:text-muted" onClick={() => setOpen(true)}>
+          {data.input.repo_path}
         </button>
       )}
       {pending && (
