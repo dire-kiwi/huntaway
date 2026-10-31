@@ -57,7 +57,7 @@ export function NotificationsPanel() {
     if (showsNotifications(settings.mode)) showNotification("Huntaway", "Notifications are on. Tasks that need you will show like this.");
   };
 
-  const unavailable = permission === "insecure" || permission === "unsupported" || permission === "denied";
+  const unavailable = permission === "insecure" || permission === "unsupported" || permission === "denied" || permission === "preview";
   return (
     <section>
       <h2 className="mb-3 text-[13px] font-semibold">Notifications</h2>
@@ -308,5 +308,7 @@ function PermissionNote({ permission }: { permission: ReturnType<typeof notifyPe
       );
     case "unsupported":
       return <>This browser doesn't support notifications. The sound and the count still work.</>;
+    case "preview":
+      return <>This board is a preview (it signs in any browser that opens it), so it doesn't show system notifications. The sound and the count still work.</>;
   }
 }

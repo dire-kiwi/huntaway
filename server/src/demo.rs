@@ -22,7 +22,7 @@ const TASKS: &[(&str, &str, &str)] = &[
     ("An idea for later", "Backlog items come first on the board, in a column that starts collapsed.", "backlog"),
 ];
 
-/// Tasks that make a document, each with one version of it: (type, title, description, document).
+/// Tasks with a label that asks for a document, each with one version of it: (label, title, description, document).
 const DOCUMENTS: &[(&str, &str, &str, &str)] = &[
     (
         "diagram",
@@ -163,7 +163,7 @@ pub async fn seed(s: &Shared) -> Result<()> {
     let project = create_project_inner(
         s,
         &profile.id,
-        CreateProject { name: "Demo".into(), repo_path: path_str(&repo), key: Some("DEMO".into()), base_branch: None, use_worktrees: None },
+        CreateProject { name: "Demo".into(), repo_path: path_str(&repo), key: Some("DEMO".into()), base_branch: None, use_worktrees: Some(false) },
     )
     .await
     .map_err(|e| anyhow!(e.1))?;
@@ -202,7 +202,7 @@ pub async fn seed(s: &Shared) -> Result<()> {
     )?;
     let week_ago = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     db::update_task(&s.db(), &old.id, &[("done_at", json!(week_ago))])?;
-    for (task_type, title, description, document) in DOCUMENTS {
+    for (label, title, description, document) in DOCUMENTS {
         let t = db::insert_task(
             &s.db(),
             NewTask {
@@ -218,9 +218,9 @@ pub async fn seed(s: &Shared) -> Result<()> {
                 claude_config_id: None,
             },
         )?;
-        let t = db::update_task(&s.db(), &t.id, &[("task_type", json!(task_type))])?.ok_or_else(|| anyhow!("task not found"))?;
+        let t = db::update_task(&s.db(), &t.id, &[("labels", json!([label]))])?.ok_or_else(|| anyhow!("task not found"))?;
         // Kept as an agent's turn would have kept it.
-        let file = crate::documents::path(s, &t).ok_or_else(|| anyhow!("no document for {task_type}"))?;
+        let file = crate::documents::path(s, &t, label).ok_or_else(|| anyhow!("no document for {label}"))?;
         std::fs::create_dir_all(crate::documents::dir(s, &t.id))?;
         std::fs::write(file, document)?;
         crate::documents::turn_ended(s, &t.id);

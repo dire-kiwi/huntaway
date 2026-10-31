@@ -133,6 +133,10 @@ fn board_tools() -> Value {
         "type": "string",
         "description": "Task id or key like ABC-12; <profile>:ABC-12 for a task on another profile's board whose key is also used elsewhere"
     });
+    let labels = json!({
+        "type": "array", "items": {"type": "string", "enum": crate::db::LABELS},
+        "description": "Documents the task's agent writes besides its other work, each shown in a tab of the task (get_task gives their files): 'plan', an HTML plan it writes first and iterates on with the user before doing the work; 'artifact', an HTML page (an explainer, dashboard or prototype); 'diagram', a Mermaid diagram. On update_task it replaces the task's labels; [] clears them."
+    });
     let depends_on = json!({
         "type": "array", "items": {"type": "string"},
         "description": "Tasks in the same project (ids or keys like ABC-12) that have to be merged (done) before this task's agent starts. Until then, starting it queues it in in_progress. Replaces the task's current list; [] clears it."
@@ -241,7 +245,8 @@ fn board_tools() -> Value {
                 "start": {"type": "boolean"},
                 "subproject": {"type": "string", "description": "Add the task to this subproject (task id or key): it branches from the subproject's branch and merges back into it. Defaults to your own subproject, if you're in one; 'none' for a top-level task."},
                 "is_subproject": {"type": "boolean", "description": "Make the new task a subproject, with its own board of tasks that merge into its branch"},
-                "type": {"type": "string", "enum": ["plan", "artifact", "diagram", "scratch", "subproject"], "description": "Make a task whose agent writes a document instead of changing code: an HTML plan to iterate on with the user, an HTML artifact (a page, explainer, dashboard or prototype), or a Mermaid diagram. The board keeps it and shows it in the task; get_task gives its file. Or 'scratch' for a scratch task, whose agent works in its own folder for whatever the user asks, without a worktree, branch or merge: in no project (keyed S-<n>) unless you give project_id or subproject, where it can read the repository (and the subproject's worktree). Or 'subproject', the same as is_subproject. Leave out for a normal task."},
+                "labels": labels,
+                "type": {"type": "string", "enum": ["scratch", "subproject"], "description": "'scratch' for a scratch task, whose agent works in its own folder for whatever the user asks, without a worktree, branch or merge: in no project (keyed S-<n>) unless you give project_id or subproject, where it can read the repository (and the subproject's worktree). Or 'subproject', the same as is_subproject. Leave out for a normal task."},
                 "depends_on": depends_on,
                 "starred": starred,
                 "remind_at": remind_at,
@@ -250,7 +255,7 @@ fn board_tools() -> Value {
         },
         {
             "name": "update_task",
-            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done).",
+            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
             "inputSchema": {"type": "object", "properties": {
                 "task_id": task_ref,
                 "profile": profile,
@@ -260,6 +265,8 @@ fn board_tools() -> Value {
                 "resolution": resolution,
                 "pr_url": {"type": "string", "description": "The task's pull request; the board links it from the task's card. Empty string clears it."},
                 "preview_url": {"type": "string", "description": "Where the task's work can be tried (e.g. its PR's preview deployment); the board shows whether it's up. Empty string clears it."},
+                "labels": labels,
+                "remerge": {"type": "boolean", "description": "With status in_progress, on a task that's merging: it steps out of the merge queue so the next task can merge, and rejoins the end of the queue when its agent's run ends, rather than going to in_review."},
                 "depends_on": depends_on,
                 "starred": starred,
                 "remind_at": remind_at,
@@ -300,7 +307,7 @@ fn board_tools() -> Value {
                 and each replaces a default: start_prompt is sent to a task's agent when it starts (moving to in_progress), after the task's \
                 title and description; review_prompt tells the reviewer what to look for when the task moves to in_review, after where its \
                 changes are (the board adds how to report the verdict); merge_prompt tells the agent how to merge when the task moves to \
-                ready_for_merge, after which branch to merge into which (the board adds asking the user if it can't, and setting the task to \
+                ready_for_merge, after which branch to merge into which (the board adds asking the user if it can't, stepping out of the merge queue to make changes, and setting the task to \
                 done). An empty string resets a prompt, base_branch, model or permission_mode to the default. Only change these when the user asks. \
                 Changing permission_mode, a script, repo_path (and move_repo), use_worktrees or worktrees_root asks the user to approve the whole change first \
                 (say why in reason): the call waits for their answer, and if they don't approve it nothing changes. A project's agent configs \
@@ -374,7 +381,7 @@ fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
     });
     let action = json!({
         "type": "object",
-        "description": "What it does: {kind: 'create_task', title, description, task_type, claude_config_id, model, effort, status, start} creates a task in the automation's project, \
+        "description": "What it does: {kind: 'create_task', title, description, task_type, labels, claude_config_id, model, effort, status, start} creates a task in the automation's project, \
             or {kind: 'send_to_task', task_id, message} sends a message to one of the project's tasks. Title, description and message are templates: \
             {{body.<path>}}, {{headers.<name>}}, {{query.<name>}}, {{event}}, {{action}}, {{labels}} and {{delivery}} from a webhook delivery \
             (marked as untrusted data for the agent), and {{date}}, {{time}}, {{now}}, {{automation}} and {{count}} from the board.",
@@ -383,6 +390,7 @@ fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
             "title": {"type": "string"},
             "description": {"type": "string", "description": "Instructions for the new task's agent (markdown)"},
             "task_type": {"type": "string", "enum": crate::db::TASK_TYPES, "description": "Leave out for a code task"},
+            "labels": {"type": "array", "items": {"type": "string", "enum": crate::db::LABELS}, "description": "Documents the task's agent writes besides its other work: a plan, an artifact (an HTML page) or a diagram"},
             "claude_config_id": {"type": "string", "description": "One of the project's agent configs; leave out for its default"},
             "model": {"type": "string"},
             "effort": {"type": "string", "enum": crate::db::THREAD_EFFORTS},

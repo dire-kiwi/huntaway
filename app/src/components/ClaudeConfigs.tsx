@@ -5,7 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import { AGENTS, agentInfo, agentOf, api, canRunAgents, hostSupports, type Agent, type ClaudeConfig } from "../api";
 import { useStore } from "../store";
 import { CopyLoginModal } from "./Hosts";
-import { Button, Field, Input, Modal } from "./ui";
+import { Button, Field, Input, Modal, ModalFooter } from "./ui";
 
 /** Hosts that can run agents and keep Claude configs of their own (API 20). */
 const configHosts = (hosts: ReturnType<typeof useStore.getState>["hosts"]) => hosts.filter((h) => canRunAgents(h) && hostSupports(h, 20));
@@ -251,15 +251,17 @@ function ConfigForm({
         <Input className="font-mono text-[12px]" value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && submit()} />
       </Field>
       {initial && <div className="text-[12px] text-faint">Changing the directory moves agents to it, but threads already started keep their conversation in the old one.</div>}
-      {err && <div className="text-xs text-red-400">{err}</div>}
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button variant="primary" disabled={!name.trim()} onClick={submit}>
-          {initial ? "Save" : "Add config"}
-        </Button>
-      </div>
+      <ModalFooter className="space-y-3">
+        {err && <div className="text-xs text-red-400">{err}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={!name.trim()} onClick={submit}>
+            {initial ? "Save" : "Add config"}
+          </Button>
+        </div>
+      </ModalFooter>
     </div>
   );
 }

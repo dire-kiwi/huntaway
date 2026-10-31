@@ -156,3 +156,29 @@ test("Settings says why notifications can't work on a page that isn't secure", a
     assert.equal(await page.getByRole("button", { name: "Enable" }).count(), 0);
   });
 });
+
+// HA-26: a PR preview (a board that hands out its token) shows no system notifications, though they're allowed and
+// picked; the count still shows.
+test("a PR preview doesn't show system notifications", async () => {
+  const preview = startServer("--open-token");
+  try {
+    const demo = await demoProject(preview);
+    const task = await preview.api("POST", `/projects/${demo.id}/tasks`, { title: "Notify: preview", status: "in_progress" });
+    await withBrowser(preview, {}, async (ui) => {
+      const context = ui.page.context();
+      await context.grantPermissions(["notifications"], { origin: preview.url });
+      await context.addInitScript(recordNotifications);
+      await context.addInitScript(() => localStorage.setItem("ia.notifications", JSON.stringify({ mode: "notify" })));
+      await ui.run([`goto /p/${demo.id}`, "wait Notify: preview"]);
+      await preview.api("PATCH", `/tasks/${task.id}`, { status: "needs_attention" });
+      const n = (await preview.api("GET", `/projects/${demo.id}/tasks`)).filter((t) => t.status === "needs_attention").length;
+      await ui.page.waitForFunction((n) => document.title === `(${n}) Huntaway`, n);
+      await sleep(1000);
+      assert.deepEqual(await notes(ui.page), []);
+      await ui.run(["goto /settings", "wait It doesn't show system notifications"]);
+      assert.equal(await ui.page.getByRole("button", { name: "Enable" }).count(), 0);
+    });
+  } finally {
+    preview.stop();
+  }
+});

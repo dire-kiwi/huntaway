@@ -263,6 +263,7 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
           <Row label="Settings">
             {[
               act.task_type ? TYPE_NAMES[act.task_type] ?? act.task_type : "Code task",
+              act.labels?.length ? `labelled ${act.labels.join(", ")}` : null,
               a.config ? a.config.name : "project's agent config",
               act.model ? `model ${act.model}` : null,
               act.effort ? `effort ${act.effort}` : null,

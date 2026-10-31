@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { startServer, withBrowser } from "./harness.mjs";
+import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let project;
@@ -10,8 +8,7 @@ before(async () => {
   server = startServer();
   // Subprojects need worktrees, so a project on a git repository.
   const repo = `${server.dataDir}/shop`;
-  mkdirSync(repo);
-  execFileSync("git", ["init", "-q", repo]);
+  gitRepo(repo);
   const [profile] = await server.api("GET", "/profiles");
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
 });
