@@ -9,7 +9,7 @@ import { availableConfigs, taskKey, useHost, useStore } from "../store";
 import { CARD_BADGE } from "./ui";
 
 /** Hosts from this API version compare them, and pick one (see Compare.tsx). */
-export const COMPARE_API = 81;
+export const COMPARE_API = 83;
 
 /** The tasks made from the same prompt as `task`, it among them, in the order they were made. */
 export function useFanout(task: Task): Task[] {

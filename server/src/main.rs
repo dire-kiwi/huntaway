@@ -1,3 +1,6 @@
+// The tool list in mcp.rs is one json! value, deeper than the default limit lets the macro expand.
+#![recursion_limit = "256"]
+
 mod admin;
 mod agent_tools;
 mod attachments;
@@ -45,6 +48,7 @@ mod usage;
 mod wait;
 mod util;
 mod worktree;
+mod worktree_files;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -356,6 +360,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     // Agents kept running while we were down; catch up on their output.
     runner::load_active(&state)?;
     runner::auto_compact(&state);
+    usage::resume_loop(&state);
     pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);

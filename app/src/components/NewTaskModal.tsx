@@ -26,7 +26,7 @@ import { effortOptions, inheritedModel, isClaudeModel, modelOptions, useConfigsM
 import { harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses";
 import { allValues, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens, type Token, type TokenPrefix, type Vocab } from "../taskTokens";
 import { keyPrefix, useAvailableConfigs, useHost, useStore } from "../store";
-import { ConfigSelect } from "./ClaudeConfigs";
+import { ConfigSelect, ConfigUsageNote } from "./ClaudeConfigs";
 import { withAttachments, type AttachmentRef } from "../attachments";
 import { AttachButton, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { AsanaIcon, AsanaPicker, LinkList, LINKS_API, usesAsana } from "./ExternalLinks";
@@ -1118,6 +1118,7 @@ export function NewTaskModal({
           {!subproject && inProject && codeTask && !asSubproject && !fanout && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
           {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
           {pickConfig && <ConfigSelect className={pickerClass} configs={configs} value={config} onChange={setConfig} />}
+          <ConfigUsageNote config={configObj} />
           <div className="-my-1 ml-auto flex items-center gap-1">
             {linking && (
               <button

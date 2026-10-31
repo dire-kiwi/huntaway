@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { lazy, Suspense, useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
-import { fetchOpenToken, getToken, setUnauthorizedHandler, unauthorizedHere } from "./api";
+import { fetchOpenToken, getToken, setUnauthorizedHandler } from "./api";
 import { Analytics } from "./components/Analytics";
 import { ProjectApprovals } from "./components/Approvals";
 import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/Board";
@@ -31,10 +31,8 @@ export function App() {
 
   useEffect(() => {
     // A token turned down that has been replaced since, or that a PR preview has replaced (rebuilt, it hands out a new
-    // one), loads the board again with the new one; otherwise it's asked for. A linked host turning it down is that
-    // host's trouble (its own token changed since it was linked), not this board's.
-    setUnauthorizedHandler(async (token, path) => {
-      if (!unauthorizedHere(path, useStore.getState().localHostId)) return;
+    // one), loads the board again with the new one; otherwise it's asked for.
+    setUnauthorizedHandler(async (token) => {
       if (getToken() !== token || (await fetchOpenToken())) window.location.reload();
       else useStore.getState().setAuthed(false);
     });
