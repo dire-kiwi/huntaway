@@ -634,6 +634,15 @@ fn effective(c: &Connection, project: &crate::db::Project) -> rusqlite::Result<(
 
 /// Set up a project's skills and servers for a run.
 pub fn for_run(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
+    run_tools(state, project_id, true)
+}
+
+/// A project's skills and servers as a run would have them, without setting up its skills.
+pub fn for_preview(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
+    run_tools(state, project_id, false)
+}
+
+fn run_tools(state: &Shared, project_id: &str, sync: bool) -> anyhow::Result<RunTools> {
     let (skills, servers, o) = {
         let c = state.db();
         let project = crate::db::get_project(&c, project_id)?.ok_or_else(|| anyhow::anyhow!("project not found"))?;
@@ -642,7 +651,9 @@ pub fn for_run(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
     };
     let enabled: Vec<&Skill> = skills.iter().collect();
     let root = skills_root(state, project_id);
-    sync_skills(&root.join(".claude").join("skills"), &enabled)?;
+    if sync {
+        sync_skills(&root.join(".claude").join("skills"), &enabled)?;
+    }
     let mut t = RunTools { skills_dir: (!enabled.is_empty()).then(|| crate::util::path_str(&root)), ..Default::default() };
     for s in servers {
         if s.auto_allow {

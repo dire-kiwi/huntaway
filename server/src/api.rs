@@ -91,6 +91,7 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}/tasks", get(list_project_tasks).post(create_task))
         .route("/projects/{id}/remove-merged-worktrees", post(remove_merged_worktrees))
         .route("/projects/{id}/setup-thread", post(start_setup_thread))
+        .route("/projects/{id}/system-prompt", get(system_prompt_preview))
         .route("/projects/{id}/automations", get(crate::automations::list_handler).post(crate::automations::create_handler))
         .route(
             "/automations/{id}",
@@ -2148,6 +2149,14 @@ async fn teardown_worktree(State(s): State<Shared>, Path(id): Path<String>, body
     let b = body.map(|b| b.0).unwrap_or_default();
     let t = worktree::teardown(&s, &id, b.force, b.delete_branch).await.map_err(|e| ApiError::conflict(format!("{e:#}")))?;
     Ok(Json(json!(t)))
+}
+
+/// `GET /projects/{id}/system-prompt` (API 80): what the agent of a new thread in the project is told on top of its
+/// agent's own system prompt, for the options given (see runner::preview): `{text, runtime, permission_mode}`.
+async fn system_prompt_preview(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<runner::PreviewOptions>) -> ApiResult<Json<Value>> {
+    let project = db::get_project(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("project"))?;
+    let (text, codex, mode) = runner::preview(&s, &project, &q).await?;
+    Ok(Json(json!({"text": text, "runtime": if codex { "codex" } else { "claude" }, "permission_mode": mode})))
 }
 
 /// Remove the worktrees of the project's done tasks that are merged and have nothing
