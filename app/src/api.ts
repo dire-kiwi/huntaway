@@ -125,6 +125,8 @@ export interface Host {
   /** Commit the host runs, if it runs from a git checkout. */
   commit?: string | null;
   last_seen?: string | null;
+  /** When the hub last heard from a connected host (API 75); pings keep it within about 20s. */
+  last_message_at?: string;
 }
 
 export interface Profile {

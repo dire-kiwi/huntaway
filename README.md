@@ -387,6 +387,12 @@ Settings → Hosts offers two ways to link a host:
   is needed, which suits cloud VMs or machines behind NAT. The hub's requests are tunnelled
   back over that connection.
 
+Both ends of a link ping each other every 20 seconds, and drop a connection they've heard nothing
+from for a minute (one that died without closing, say after a laptop slept or a NAT mapping
+expired), so the host is shown offline and the link is made again. `GET /api/hosts` gives each
+connected host's `last_message_at`, and an offline one's `last_seen` is when it was last heard from.
+A host that dials in under the id of one that is already connected in is refused.
+
 The UI reaches each host via `/api/h/<host_id>/…` on the hub, and events from every host
 arrive on one websocket tagged with `host_id`. Agents' board tools act on their own host. A
 project or task that isn't found there is looked up on linked hosts, and `list_projects` covers

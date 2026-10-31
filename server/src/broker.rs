@@ -73,6 +73,7 @@ type Streams = Arc<Mutex<HashMap<u64, Entry>>>;
 
 /// Keep a connection to the broker at `url`, as `name`.
 pub fn dial_out(s: &Shared, url: String, token: String, name: String) {
+    let _ = s.broker_url.set(format!("{}/_broker/h/{name}", url.trim_end_matches('/')));
     let s = s.clone();
     tokio::spawn(async move {
         let mut backoff = 1;

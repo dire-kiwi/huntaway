@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -32,7 +32,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
 
 use crate::db::{self, Link};
-use crate::relay::{self, Frame, Pipe};
+use crate::relay::{self, Frame, PING, Pipe, SILENCE};
 use crate::proto::{API_COMPAT, API_VERSION, BUILD_ID, Down, PROTOCOL, Up};
 use crate::state::{ApiError, ApiResult, Shared};
 
@@ -43,6 +43,8 @@ pub struct LinkConn {
     pub mode: String,
     /// What the host reported; 0 for builds that predate API versioning.
     pub version: Mutex<Version>,
+    /// When we last heard anything from the host (a pong counts), in Unix milliseconds.
+    heard: AtomicI64,
     kind: Kind,
 }
 
@@ -70,7 +72,9 @@ impl Version {
 }
 
 enum Kind {
-    Http { url: String, token: String },
+    /// With a client of its own, so its connections go with it: a connection that died without
+    /// closing would otherwise be kept for the next one, and hold up its requests.
+    Http { url: String, token: String, client: reqwest::Client },
     Tunnel {
         tx: mpsc::UnboundedSender<Down>,
         pending: Mutex<HashMap<u64, oneshot::Sender<(u16, Value)>>>,
@@ -87,13 +91,38 @@ pub(crate) fn http() -> &'static reqwest::Client {
     CLIENT.get_or_init(reqwest::Client::new)
 }
 
+/// A client for one connection to a host. TCP keepalive is a backstop for the pings on its events.
+fn link_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .tcp_keepalive(PING)
+        .tcp_keepalive_interval(PING)
+        .tcp_keepalive_retries(3)
+        .build()
+        .unwrap_or_default()
+}
+
 impl LinkConn {
+    fn new(id: &str, name: &str, mode: &str, version: Version, kind: Kind) -> Self {
+        let heard = AtomicI64::new(chrono::Utc::now().timestamp_millis());
+        LinkConn { id: id.into(), name: name.into(), mode: mode.into(), version: Mutex::new(version), heard, kind }
+    }
+
+    fn heard(&self) {
+        self.heard.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+    }
+
+    /// When we last heard from the host, as `util::now` formats it.
+    pub fn last_message_at(&self) -> String {
+        let at = chrono::DateTime::from_timestamp_millis(self.heard.load(Ordering::Relaxed)).unwrap_or_default();
+        at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+
     /// Call the host's API. `path` starts with `/api/` and may carry a query string.
     pub async fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value)> {
         match &self.kind {
-            Kind::Http { url, token } => {
+            Kind::Http { url, token, client } => {
                 let m = reqwest::Method::from_bytes(method.as_bytes())?;
-                let mut req = http().request(m, format!("{}{path}", url.trim_end_matches('/'))).bearer_auth(token).timeout(Duration::from_secs(300));
+                let mut req = client.request(m, format!("{}{path}", url.trim_end_matches('/'))).bearer_auth(token).timeout(Duration::from_secs(300));
                 if let Some(b) = body {
                     req = req.json(&b);
                 }
@@ -107,7 +136,7 @@ impl LinkConn {
                 // An older host's UI also answers a route it doesn't have with an empty 405 for methods other than GET,
                 // the same as the API does for a route without this method. The UI's page for a HEAD tells them apart.
                 if status == 405 && text.is_empty() {
-                    let head = http().head(format!("{}{path}", url.trim_end_matches('/'))).bearer_auth(token).timeout(Duration::from_secs(30));
+                    let head = client.head(format!("{}{path}", url.trim_end_matches('/'))).bearer_auth(token).timeout(Duration::from_secs(30));
                     if head.send().await.is_ok_and(|r| is_html(&r)) {
                         return Ok((404, crate::api::no_route_error(method, path)));
                     }
@@ -136,7 +165,7 @@ impl LinkConn {
     /// Open a websocket to `path` (starting with `/api/`) on the host.
     pub async fn open_ws(self: &Arc<Self>, path: &str) -> Result<Pipe> {
         match &self.kind {
-            Kind::Http { url, token } => {
+            Kind::Http { url, token, .. } => {
                 let url = format!("{}{path}", url.trim_end_matches('/').replacen("http", "ws", 1));
                 relay::connect(&url, token).await.with_context(|| format!("host {} unreachable", self.name))
             }
@@ -198,19 +227,41 @@ fn changed(s: &Shared) {
     let _ = s.hub_events.send(json!({"type": "hosts_changed"}));
 }
 
-fn register(s: &Shared, conn: LinkHandle) {
-    s.links.lock().unwrap().insert(conn.id.clone(), conn);
-    changed(s);
+/// A link counted as connected, until this is dropped: however its loop ends, by an error or by an
+/// abort when the link is added again or removed.
+struct Registered {
+    s: Shared,
+    conn: LinkHandle,
 }
 
-fn unregister(s: &Shared, conn: &LinkHandle) {
-    let mut links = s.links.lock().unwrap();
-    if links.get(&conn.id).is_some_and(|c| Arc::ptr_eq(c, conn)) {
-        links.remove(&conn.id);
+impl Drop for Registered {
+    fn drop(&mut self) {
+        let (s, conn) = (&self.s, &self.conn);
+        let mut links = s.links.lock().unwrap();
+        if links.get(&conn.id).is_some_and(|c| Arc::ptr_eq(c, conn)) {
+            links.remove(&conn.id);
+        }
+        drop(links);
+        // Last seen when we last heard from it, which for a connection that died without closing is
+        // a while before we gave up on it.
+        let _ = s.db().execute("UPDATE links SET last_seen=?1 WHERE id=?2", rusqlite::params![conn.last_message_at(), conn.id]);
+        changed(s);
     }
+}
+
+/// Count `conn` as connected, in place of any other connection to its host, except that a host
+/// that dials in while it's already connected in is refused (two hosts with the same id would
+/// otherwise take each other's place for as long as both run).
+fn register(s: &Shared, conn: LinkHandle) -> Option<Registered> {
+    let mut links = s.links.lock().unwrap();
+    let tunnel = |c: &LinkConn| matches!(c.kind, Kind::Tunnel { .. });
+    if tunnel(&conn) && links.get(&conn.id).is_some_and(|c| tunnel(c)) {
+        return None;
+    }
+    links.insert(conn.id.clone(), conn.clone());
     drop(links);
-    let _ = s.db().execute("UPDATE links SET last_seen=?1 WHERE id=?2", rusqlite::params![crate::util::now(), conn.id]);
     changed(s);
+    Some(Registered { s: s.clone(), conn })
 }
 
 fn forward_event(s: &Shared, host_id: &str, mut ev: Value) {
@@ -273,34 +324,55 @@ fn spawn_outbound(s: &Shared, link: Link) {
 pub async fn run_outbound(s: &Shared, link: &Link, mode: &str) -> Result<()> {
     let (url, token) = (link.url.clone().context("link has no url")?, link.token.clone().context("link has no token")?);
     let ws_url = format!("{}/api/host/ws?token={token}", url.trim_end_matches('/').replacen("http", "ws", 1));
-    let (ws, _) = tokio_tungstenite::connect_async(ws_url.into_client_request()?).await?;
-    let conn = LinkConn { id: link.id.clone(), name: link.name.clone(), mode: mode.into(), version: Mutex::default(), kind: Kind::Http { url, token } };
+    let ws = relay::open(ws_url.into_client_request()?).await?;
+    let conn = LinkConn::new(&link.id, &link.name, mode, Version::default(), Kind::Http { url, token, client: link_client() });
     if let Ok((200, info)) = conn.request("GET", "/api/info", None).await {
         *conn.version.lock().unwrap() = Version::from_info(&info);
     }
     let conn = Arc::new(conn);
-    register(s, conn.clone());
+    let _registered = register(s, conn.clone());
     tracing::info!("connected to host {}", link.name);
-    let (_sink, mut stream) = ws.split();
+    let (mut sink, mut stream) = ws.split();
     // Anything missed while disconnected: tell the UI to reload this host.
     forward_event(s, &link.id, json!({"type": "resync"}));
-    while let Some(msg) = stream.next().await {
-        match msg {
-            Ok(TMessage::Text(t)) => {
-                if let Ok(ev) = serde_json::from_str::<Value>(&t) {
-                    forward_event(s, &link.id, ev);
+    // Hosts answer websocket pings whatever their version, which keeps the events coming or ends the link.
+    let mut ping = tokio::time::interval(PING);
+    let quiet = tokio::time::sleep(SILENCE);
+    tokio::pin!(quiet);
+    loop {
+        tokio::select! {
+            msg = stream.next() => {
+                conn.heard();
+                quiet.as_mut().reset(tokio::time::Instant::now() + SILENCE);
+                match msg {
+                    Some(Ok(TMessage::Text(t))) => {
+                        if let Ok(ev) = serde_json::from_str::<Value>(&t) {
+                            forward_event(s, &link.id, ev);
+                        }
+                    }
+                    Some(Ok(TMessage::Close(_)) | Err(_)) | None => break,
+                    _ => {}
                 }
             }
-            Ok(TMessage::Close(_)) | Err(_) => break,
-            _ => {}
+            _ = ping.tick() => {
+                if sink.send(TMessage::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
+            _ = &mut quiet => {
+                tracing::info!("nothing from host {} for {}s", link.name, SILENCE.as_secs());
+                break;
+            }
         }
     }
-    unregister(s, &conn);
     tracing::info!("lost host {}", link.name);
     Ok(())
 }
 
 // ---------- inbound tunnel (hosts started with --hub) ----------
+
+/// The close code a hub refuses a host's tunnel with (a policy violation).
+const REFUSED: u16 = 1008;
 
 pub async fn accept(State(s): State<Shared>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
     let token = headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer "));
@@ -330,23 +402,34 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
     if host_id == s.host_id {
         bail!("a host can't link to itself");
     }
-    db::upsert_link(&s.db(), &host_id, &name, "inbound", None, None)?;
     let (tx, mut rx) = mpsc::unbounded_channel::<Down>();
+    let kind = Kind::Tunnel { tx, pending: Mutex::new(HashMap::new()), streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) };
+    let conn = Arc::new(LinkConn::new(&host_id, &name, "inbound", version, kind));
+    let Some(_registered) = register(&s, conn.clone()) else {
+        let reason = format!("host {host_id} is already connected to this hub");
+        let _ = sink.send(WsMessage::Close(Some(axum::extract::ws::CloseFrame { code: REFUSED, reason: reason.clone().into() }))).await;
+        bail!("{name}: {reason}");
+    };
+    db::note_inbound_link(&s.db(), &host_id, &name)?;
     let writer = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if sink.send(WsMessage::Text(serde_json::to_string(&msg).unwrap_or_default().into())).await.is_err() {
-                break;
+        let mut ping = tokio::time::interval(PING);
+        loop {
+            let msgs = tokio::select! {
+                msg = rx.recv() => match msg {
+                    Some(msg) => vec![WsMessage::Text(serde_json::to_string(&msg).unwrap_or_default().into())],
+                    None => break,
+                },
+                // A websocket ping for hosts from before `Down::Ping`, which answer it whatever their
+                // version; `Down::Ping` for the others, which gets through a broker.
+                _ = ping.tick() => vec![WsMessage::Ping(Default::default()), WsMessage::Text(serde_json::to_string(&Down::Ping).unwrap_or_default().into())],
+            };
+            for msg in msgs {
+                if sink.send(msg).await.is_err() {
+                    return;
+                }
             }
         }
     });
-    let conn = Arc::new(LinkConn {
-        id: host_id.clone(),
-        name: name.clone(),
-        mode: "inbound".into(),
-        version: Mutex::new(version),
-        kind: Kind::Tunnel { tx, pending: Mutex::new(HashMap::new()), streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) },
-    });
-    register(&s, conn.clone());
     forward_event(&s, &host_id, json!({"type": "resync"}));
     tracing::info!("host {name} connected in");
     // The hello doesn't carry the commit; ask once the tunnel is up.
@@ -359,10 +442,18 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
             }
         });
     }
-    while let Some(msg) = stream.next().await {
+    loop {
+        let msg = match tokio::time::timeout(SILENCE, stream.next()).await {
+            Ok(msg) => msg,
+            Err(_) => {
+                tracing::info!("nothing from host {name} for {}s", SILENCE.as_secs());
+                break;
+            }
+        };
+        conn.heard();
         let text = match msg {
-            Ok(WsMessage::Text(t)) => t.to_string(),
-            Ok(WsMessage::Close(_)) | Err(_) => break,
+            Some(Ok(WsMessage::Text(t))) => t.to_string(),
+            Some(Ok(WsMessage::Close(_)) | Err(_)) | None => break,
             _ => continue,
         };
         match serde_json::from_str::<Up>(&text) {
@@ -388,12 +479,16 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
                     }
                 }
             }
-            Ok(Up::Hello { .. }) => {}
+            Ok(Up::Hello { .. } | Up::Pong) => {}
             Err(e) => tracing::warn!("bad tunnel message from {name}: {e}"),
         }
     }
     writer.abort();
-    unregister(&s, &conn);
+    // Requests and websockets in flight hold the connection, so they'd wait for answers that won't come.
+    if let Kind::Tunnel { pending, streams, .. } = &conn.kind {
+        pending.lock().unwrap().clear();
+        streams.lock().unwrap().clear();
+    }
     tracing::info!("host {name} disconnected");
     Ok(())
 }
@@ -420,8 +515,7 @@ async fn tunnel_to(s: &Shared, hub: &str, token: &str) -> Result<()> {
     let url = format!("{}/api/hub/connect", hub.trim_end_matches('/').replacen("http", "ws", 1));
     let mut req = url.into_client_request()?;
     req.headers_mut().insert("Authorization", format!("Bearer {token}").parse()?);
-    let (ws, _) = tokio_tungstenite::connect_async(req).await?;
-    let (mut sink, mut stream) = ws.split();
+    let (mut sink, mut stream) = relay::open(req).await?.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Up>();
     tx.send(Up::Hello {
         host_id: s.host_id.clone(),
@@ -431,9 +525,19 @@ async fn tunnel_to(s: &Shared, hub: &str, token: &str) -> Result<()> {
         api_version: API_VERSION,
         api_compat: API_COMPAT,
     })?;
+    // Websocket pings rather than a message of the tunnel's own, which hubs from before `Down::Ping`
+    // would log as bad. Through a broker that answers them, we hear from the hub by its `Down::Ping`.
     let writer = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if sink.send(TMessage::Text(serde_json::to_string(&msg).unwrap_or_default().into())).await.is_err() {
+        let mut ping = tokio::time::interval(PING);
+        loop {
+            let msg = tokio::select! {
+                msg = rx.recv() => match msg {
+                    Some(msg) => TMessage::Text(serde_json::to_string(&msg).unwrap_or_default().into()),
+                    None => break,
+                },
+                _ = ping.tick() => TMessage::Ping(Default::default()),
+            };
+            if sink.send(msg).await.is_err() {
                 break;
             }
         }
@@ -458,53 +562,71 @@ async fn tunnel_to(s: &Shared, hub: &str, token: &str) -> Result<()> {
         })
     };
     tracing::info!("connected to hub {hub}");
-    // Websockets the hub opened on our API, by id.
-    let streams: Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<Frame>>>> = Arc::default();
-    while let Some(msg) = stream.next().await {
-        let text = match msg? {
-            TMessage::Text(t) => t.to_string(),
-            TMessage::Close(_) => break,
-            _ => continue,
-        };
-        match serde_json::from_str::<Down>(&text) {
-            Ok(Down::Req { id, method, path, body }) => {
-                let (s, tx) = (s.clone(), tx.clone());
-                tokio::spawn(async move {
-                    let (status, body) = match local_request(&s, &method, &path, body.map(|b| b.to_string().into_bytes())).await {
-                        Ok(r) => r,
-                        Err(e) => (500, json!({"error": format!("{e:#}")})),
-                    };
-                    let _ = tx.send(Up::Res { id, status, body });
-                });
-            }
-            Ok(Down::WsOpen { id, path }) => {
-                // Registered right away: the hub's first messages can arrive while we connect.
-                let (hub_tx, hub_rx) = mpsc::unbounded_channel();
-                streams.lock().unwrap().insert(id, hub_tx);
-                let (s, tx, streams) = (s.clone(), tx.clone(), streams.clone());
-                tokio::spawn(async move {
-                    relay_local(&s, id, &path, hub_rx, &tx).await;
-                    streams.lock().unwrap().remove(&id);
-                });
-            }
-            Ok(Down::WsMsg { id, text, data }) => {
-                if let (Some(w), Some(f)) = (streams.lock().unwrap().get(&id), Frame::from_wire(text, data)) {
-                    let _ = w.send(f);
-                }
-            }
-            Ok(Down::WsClose { id }) => {
-                if let Some(w) = streams.lock().unwrap().remove(&id) {
-                    let _ = w.send(Frame::Close(None));
-                }
-            }
-            Err(_) => {}
+    let streams: HubStreams = Arc::default();
+    let result = async {
+        loop {
+            let text = match tokio::time::timeout(SILENCE, stream.next()).await {
+                Err(_) => bail!("nothing from the hub for {}s", SILENCE.as_secs()),
+                Ok(None) => return Ok(()),
+                Ok(Some(msg)) => match msg? {
+                    TMessage::Text(t) => t.to_string(),
+                    TMessage::Close(Some(f)) if u16::from(f.code) == REFUSED => bail!("refused: {}", f.reason),
+                    TMessage::Close(_) => return Ok(()),
+                    _ => continue,
+                },
+            };
+            tunnel_message(s, &text, &tx, &streams);
         }
     }
+    .await;
     // Dropping the senders closes the relayed websockets.
     streams.lock().unwrap().clear();
     events.abort();
     writer.abort();
-    Ok(())
+    result
+}
+
+/// Websockets the hub opened on our API, by id.
+type HubStreams = Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<Frame>>>>;
+
+/// Act on a message from the hub.
+fn tunnel_message(s: &Shared, text: &str, tx: &mpsc::UnboundedSender<Up>, streams: &HubStreams) {
+    match serde_json::from_str::<Down>(text) {
+        Ok(Down::Req { id, method, path, body }) => {
+            let (s, tx) = (s.clone(), tx.clone());
+            tokio::spawn(async move {
+                let (status, body) = match local_request(&s, &method, &path, body.map(|b| b.to_string().into_bytes())).await {
+                    Ok(r) => r,
+                    Err(e) => (500, json!({"error": format!("{e:#}")})),
+                };
+                let _ = tx.send(Up::Res { id, status, body });
+            });
+        }
+        Ok(Down::WsOpen { id, path }) => {
+            // Registered right away: the hub's first messages can arrive while we connect.
+            let (hub_tx, hub_rx) = mpsc::unbounded_channel();
+            streams.lock().unwrap().insert(id, hub_tx);
+            let (s, tx, streams) = (s.clone(), tx.clone(), streams.clone());
+            tokio::spawn(async move {
+                relay_local(&s, id, &path, hub_rx, &tx).await;
+                streams.lock().unwrap().remove(&id);
+            });
+        }
+        Ok(Down::WsMsg { id, text, data }) => {
+            if let (Some(w), Some(f)) = (streams.lock().unwrap().get(&id), Frame::from_wire(text, data)) {
+                let _ = w.send(f);
+            }
+        }
+        Ok(Down::WsClose { id }) => {
+            if let Some(w) = streams.lock().unwrap().remove(&id) {
+                let _ = w.send(Frame::Close(None));
+            }
+        }
+        Ok(Down::Ping) => {
+            let _ = tx.send(Up::Pong);
+        }
+        Err(_) => {}
+    }
 }
 
 /// Open a websocket on our own API for the hub and relay it until either side closes.
@@ -670,6 +792,8 @@ pub async fn list_hosts(State(s): State<Shared>) -> ApiResult<Json<Value>> {
             v["api_compat"] = json!(ver.api_compat);
             v["commit"] = json!(ver.commit);
             v["agents"] = json!(ver.agents);
+            // Pings keep this recent on a live link: a while ago means the link is about to be dropped.
+            v["last_message_at"] = json!(c.last_message_at());
         }
         if let Some(t) = l.ssh.as_deref().and_then(|j| serde_json::from_str::<crate::ssh::Target>(j).ok()) {
             v["url"] = json!(format!("ssh://{}", t.target));
@@ -738,17 +862,29 @@ pub async fn remove_host(State(s): State<Shared>, Path(id): Path<String>) -> Api
 
 /// What a host needs to dial in to this hub.
 pub async fn join_info(State(s): State<Shared>, headers: HeaderMap) -> Json<Value> {
-    let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("this-hub:7878").to_string();
-    // Behind a TLS proxy (Caddy sets X-Forwarded-Proto), hosts must dial https: they don't follow redirects.
-    let scheme = match headers.get("x-forwarded-proto").and_then(|h| h.to_str().ok()) {
-        Some("https") => "https",
-        _ => "http",
-    };
     Json(json!({
         "hub_token": s.hub_token,
         "host_token": s.token,
-        "command": format!("huntaway serve --hub {scheme}://{host} --hub-token {}", s.hub_token),
+        "command": format!("huntaway serve --hub {} --hub-token {}", hub_url(&s, &headers), s.hub_token),
     }))
+}
+
+/// The URL hosts dial this hub at, as the browser asking reaches it.
+fn hub_url(s: &Shared, headers: &HeaderMap) -> String {
+    // Through a broker, whose request comes from loopback without the client's Host: at the broker.
+    if headers.contains_key(crate::broker::VIA_BROKER)
+        && let Some(url) = s.broker_url.get()
+    {
+        return url.clone();
+    }
+    let header = |name: &str| headers.get(name).and_then(|h| h.to_str().ok()).and_then(|h| h.split(',').next()).map(str::trim).filter(|h| !h.is_empty());
+    // Behind a TLS proxy (Caddy sets X-Forwarded-Proto), hosts must dial https: they don't follow redirects.
+    let scheme = match header("x-forwarded-proto") {
+        Some("https") => "https",
+        _ => "http",
+    };
+    let host = header("x-forwarded-host").or_else(|| header("host")).unwrap_or("this-hub:7878");
+    format!("{scheme}://{host}")
 }
 
 /// Merged events from every host, for the UI.
@@ -913,9 +1049,9 @@ pub(crate) async fn link_http(s: &Shared, id: &str, app: Router, api_version: u3
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await });
-    let kind = Kind::Http { url, token: String::new() };
-    let version = Mutex::new(Version { api_version, ..Default::default() });
-    register(s, Arc::new(LinkConn { id: id.into(), name: id.into(), mode: "http".into(), version, kind }));
+    let kind = Kind::Http { url, token: String::new(), client: link_client() };
+    let conn = LinkConn::new(id, id, "http", Version { api_version, ..Default::default() }, kind);
+    s.links.lock().unwrap().insert(id.into(), Arc::new(conn));
 }
 
 #[cfg(test)]
@@ -970,5 +1106,197 @@ mod tests {
             assert!(!e.1.contains("update it"), "{}", e.1);
             std::fs::remove_dir_all(&ui).ok();
         })
+    }
+
+    fn node(id: &str, name: &str) -> Shared {
+        crate::testing::state_as(crate::state::Identity {
+            host_id: id.into(),
+            host_name: name.into(),
+            token: format!("{id}-tok"),
+            hub_token: format!("{id}-hub"),
+            internal_url: String::new(),
+        })
+    }
+
+    /// Serve a node's API, returning its address.
+    async fn serve(s: &Shared) -> std::net::SocketAddr {
+        let app = crate::api::router(s.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await });
+        addr
+    }
+
+    /// A TCP proxy to `to`. `freeze` makes the connections it has so far stop passing anything on, either
+    /// way, without closing them: what a NAT mapping that expired, or a laptop that went to sleep, does.
+    struct Proxy {
+        addr: std::net::SocketAddr,
+        conns: Arc<Mutex<Vec<Arc<std::sync::atomic::AtomicBool>>>>,
+    }
+
+    impl Proxy {
+        async fn new(to: std::net::SocketAddr) -> Proxy {
+            use std::sync::atomic::AtomicBool;
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            async fn pipe(mut from: tokio::net::tcp::OwnedReadHalf, mut to: tokio::net::tcp::OwnedWriteHalf, frozen: Arc<AtomicBool>) {
+                let mut buf = vec![0; 1 << 16];
+                while let Ok(n @ 1..) = from.read(&mut buf).await {
+                    if !frozen.load(Ordering::Relaxed) && to.write_all(&buf[..n]).await.is_err() {
+                        return;
+                    }
+                }
+                // Nor does a frozen connection pass on that one end closed.
+                if frozen.load(Ordering::Relaxed) {
+                    std::future::pending::<()>().await;
+                }
+            }
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let conns: Arc<Mutex<Vec<Arc<AtomicBool>>>> = Arc::default();
+            let list = conns.clone();
+            tokio::spawn(async move {
+                while let Ok((a, _)) = listener.accept().await {
+                    let Ok(b) = tokio::net::TcpStream::connect(to).await else { continue };
+                    let frozen = Arc::new(AtomicBool::new(false));
+                    list.lock().unwrap().push(frozen.clone());
+                    let ((ar, aw), (br, bw)) = (a.into_split(), b.into_split());
+                    tokio::spawn(pipe(ar, bw, frozen.clone()));
+                    tokio::spawn(pipe(br, aw, frozen));
+                }
+            });
+            Proxy { addr, conns }
+        }
+
+        fn freeze(&self) {
+            for c in self.conns.lock().unwrap().iter() {
+                c.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Wait (up to 20s) for `f` to give something.
+    async fn until<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> T {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(v) = f() {
+                return v;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    fn outbound_link(id: &str, url: &str, token: &str) -> Link {
+        Link {
+            id: id.into(),
+            name: id.into(),
+            mode: "outbound".into(),
+            url: Some(url.into()),
+            token: Some(token.into()),
+            ssh: None,
+            last_seen: None,
+            created_at: crate::util::now(),
+        }
+    }
+
+    #[test]
+    fn a_host_dialled_in_over_a_dead_connection_reconnects() {
+        crate::testing::run(async || {
+            let (hub, host) = (node("hub", "hub"), node("host", "laptop"));
+            let _ = crate::api::router(host.clone());
+            let proxy = Proxy::new(serve(&hub).await).await;
+            dial_out(&host, format!("http://{}", proxy.addr), "hub-hub".into());
+            let first = until("the host to dial in", || find_link(&hub, "host")).await;
+            assert_eq!(first.request("GET", "/api/info", None).await.unwrap().0, 200);
+
+            // Both ends notice that they hear nothing, and the host dials in again. A request waiting on the
+            // dead connection fails then, rather than after the request timeout.
+            proxy.freeze();
+            let waiting = tokio::time::timeout(SILENCE * 3, first.request("GET", "/api/info", None)).await.expect("the request still waits");
+            assert!(format!("{:#}", waiting.unwrap_err()).contains("disconnected"));
+            let second = until("the host to dial in again", || find_link(&hub, "host").filter(|l| !Arc::ptr_eq(l, &first))).await;
+            assert_eq!(second.request("GET", "/api/info", None).await.unwrap().0, 200);
+            // Pings keep it connected meanwhile.
+            tokio::time::sleep(SILENCE * 2).await;
+            assert!(find_link(&hub, "host").is_some_and(|l| Arc::ptr_eq(&l, &second)));
+        })
+    }
+
+    #[test]
+    fn a_host_dialled_over_a_dead_connection_is_dialled_again() {
+        crate::testing::run(async || {
+            let (hub, host) = (node("hub", "hub"), node("host", "laptop"));
+            let proxy = Proxy::new(serve(&host).await).await;
+            let url = format!("http://{}", proxy.addr);
+            db::upsert_link(&hub.db(), "host", "laptop", "outbound", Some(&url), Some("host-tok")).unwrap();
+            spawn_outbound(&hub, outbound_link("host", &url, "host-tok"));
+            let first = until("the hub to connect", || find_link(&hub, "host")).await;
+            let hosts = list_hosts(State(hub.clone())).await.unwrap().0;
+            assert!(hosts[1]["last_message_at"].as_str().is_some_and(|t| t.ends_with('Z')), "{hosts}");
+
+            proxy.freeze();
+            until("the hub to give up on it", || find_link(&hub, "host").is_none().then_some(())).await;
+            let second = until("the hub to connect again", || find_link(&hub, "host")).await;
+            assert!(!Arc::ptr_eq(&first, &second));
+            tokio::time::sleep(SILENCE * 2).await;
+            assert!(find_link(&hub, "host").is_some_and(|l| Arc::ptr_eq(&l, &second)));
+        })
+    }
+
+    #[test]
+    fn a_host_added_again_drops_its_old_connection() {
+        crate::testing::run(async || {
+            let (hub, host) = (node("hub", "hub"), node("host", "laptop"));
+            let addr = serve(&host).await;
+            spawn_outbound(&hub, outbound_link("host", &format!("http://{addr}"), "host-tok"));
+            until("the hub to connect", || find_link(&hub, "host")).await;
+            // Added again at a URL where nothing answers: it's no longer connected.
+            spawn_outbound(&hub, outbound_link("host", "http://127.0.0.1:1", "host-tok"));
+            until("the old connection to go", || find_link(&hub, "host").is_none().then_some(())).await;
+        })
+    }
+
+    #[test]
+    fn a_host_dialling_in_keeps_its_link_and_a_second_one_is_refused() {
+        crate::testing::run(async || {
+            let (hub, host) = (node("hub", "hub"), node("host", "laptop"));
+            let _ = crate::api::router(host.clone());
+            // The hub also dials this host (it isn't up at the moment).
+            db::upsert_link(&hub.db(), "host", "laptop", "outbound", Some("http://127.0.0.1:1"), Some("host-tok")).unwrap();
+            let url = format!("http://{}", serve(&hub).await);
+            dial_out(&host, url.clone(), "hub-hub".into());
+            let first = until("the host to dial in", || find_link(&hub, "host")).await;
+            assert_eq!(first.mode, "inbound");
+            let link = db::get_link(&hub.db(), "host").unwrap().unwrap();
+            assert_eq!((link.mode.as_str(), link.url.as_deref()), ("outbound", Some("http://127.0.0.1:1")));
+
+            // Another host with the same id is turned away, and the first stays connected.
+            let twin = node("host", "twin");
+            let refused = tokio::time::timeout(Duration::from_secs(5), tunnel_to(&twin, &url, "hub-hub")).await.expect("the twin's tunnel stays up");
+            assert!(format!("{:#}", refused.unwrap_err()).contains("already connected"));
+            assert!(find_link(&hub, "host").is_some_and(|l| Arc::ptr_eq(&l, &first)));
+            assert_eq!(first.name, "laptop");
+
+            // A host seen for the first time is noted as dialling in.
+            let other = node("other", "desktop");
+            let _ = crate::api::router(other.clone());
+            dial_out(&other, url, "hub-hub".into());
+            until("the other host to dial in", || find_link(&hub, "other")).await;
+            assert_eq!(db::get_link(&hub.db(), "other").unwrap().unwrap().mode, "inbound");
+        })
+    }
+
+    #[test]
+    fn the_join_command_dials_the_hub_where_the_browser_reached_it() {
+        let s = node("hub", "hub");
+        let headers = |pairs: &[(&'static str, &str)]| pairs.iter().map(|(k, v)| (axum::http::HeaderName::from_static(k), v.parse().unwrap())).collect::<HeaderMap>();
+        assert_eq!(hub_url(&s, &headers(&[("host", "box:7878")])), "http://box:7878");
+        let proxied = headers(&[("host", "127.0.0.1:7878"), ("x-forwarded-host", "board.example.com, inner"), ("x-forwarded-proto", "https")]);
+        assert_eq!(hub_url(&s, &proxied), "https://board.example.com");
+        // Through the broker, at the broker, once it's known.
+        let brokered = headers(&[("host", "127.0.0.1:7878"), (crate::broker::VIA_BROKER, "1")]);
+        assert_eq!(hub_url(&s, &brokered), "http://127.0.0.1:7878");
+        s.broker_url.set("https://broker.example.com/_broker/h/hub".into()).unwrap();
+        assert_eq!(hub_url(&s, &brokered), "https://broker.example.com/_broker/h/hub");
     }
 }
