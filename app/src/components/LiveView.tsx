@@ -2,8 +2,9 @@ import clsx from "clsx";
 import { Check, Map as MapIcon, Maximize2, MessageCircleQuestion, Send, ShieldQuestion, X } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ownWorkDir, type Message, type Project, type Task } from "../api";
-import { openTask, usePanel } from "../router";
+import { openTask, usePanelOpen } from "../router";
 import { keyPrefix, useStore, useThreadMessages } from "../store";
+import { useDelta } from "../deltas";
 import { threadModel, type Item } from "../threadModel";
 import { QUESTION_TOOLS, questionsOf } from "../questions";
 import { toolMeta } from "./Thread";
@@ -126,12 +127,12 @@ export function PendingPrompts({ task }: { task: Task }) {
 function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu?: OnMenu }) {
   const messages = useThreadMessages(task.id);
   const earlier = useStore((s) => s.threads[task.id]?.subagents);
-  const delta = useStore((s) => s.deltas[task.id]);
+  const delta = useDelta(task.id);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
   const cwd = task.worktree_path ?? ownWorkDir(task);
   const lines = useMemo(() => tail(model.items, cwd), [model.items, cwd]);
   const prompts = pendingPrompts(model.items);
-  const open = usePanel()?.taskId === task.id;
+  const open = usePanelOpen(task.id);
   const [text, setText] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);

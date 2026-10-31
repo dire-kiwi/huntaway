@@ -40,7 +40,7 @@ import { dropPosition } from "../taskOrder";
 import { allValues, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens, type Token, type TokenPrefix, type Vocab } from "../taskTokens";
 import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKinds, taskMatcher, type BoardQuery, type SortKey, type TaskKind } from "../boardQuery";
 import { FilterBar, FilterMenu, SearchBox, SortMenu, type FilterOption } from "./BoardControls";
-import { navigate, openTask, usePanel } from "../router";
+import { navigate, openTask, usePanelOpen } from "../router";
 import { isGroupTask, keyPrefix, scratchHost, useAvailableConfigs, useHost, useStore } from "../store";
 import { ConfigSelect } from "./ClaudeConfigs";
 import { withAttachments, type AttachmentRef } from "../attachments";
@@ -66,34 +66,65 @@ export type Progress = { done: number; total: number };
 // A subproject's scratch tasks aren't part of its work.
 const subprojectWork = (t: Task) => t.kind === "task" && !!t.parent_id && !isScratch(t);
 
+type StoreState = ReturnType<typeof useStore.getState>;
+
+/**
+ * A store selector of progress by id, worked out again only when the tasks or projects change, which
+ * keeps each progress object that's the same as before (and the record, when they all are): a task
+ * event doesn't redraw the memoized cards whose progress it leaves be, or what shows none of it.
+ */
+function progressSelector(compute: (tasks: Record<string, Task>, projects: Project[]) => Record<string, Progress>) {
+  let tasks: Record<string, Task> | undefined;
+  let projects: Project[] | undefined;
+  let last: Record<string, Progress> = {};
+  return (s: StoreState) => {
+    if (s.tasks === tasks && s.projects === projects) return last;
+    tasks = s.tasks;
+    projects = s.projects;
+    const next = compute(tasks, projects);
+    let same = Object.keys(next).length === Object.keys(last).length;
+    for (const [id, p] of Object.entries(next)) {
+      const before = last[id];
+      if (before && before.done === p.done && before.total === p.total) next[id] = before;
+      else same = false;
+    }
+    if (!same) last = next;
+    return last;
+  };
+}
+
+const subprojectProgress = progressSelector((all) => {
+  const by: Record<string, Progress> = {};
+  for (const t of Object.values(all)) {
+    if (!subprojectWork(t)) continue;
+    const p = (by[t.parent_id!] ??= { done: 0, total: 0 });
+    p.total++;
+    if (t.status === "done") p.done++;
+  }
+  return by;
+});
+
+const createdProgress = progressSelector((all, projects) => {
+  const by: Record<string, Progress> = {};
+  for (const t of Object.values(all)) {
+    if (t.kind !== "task" || !t.created_by) continue;
+    const creator = all[t.created_by];
+    if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : taskLabels(creator).includes("plan"))) continue;
+    const p = (by[t.created_by] ??= { done: 0, total: 0 });
+    p.total++;
+    if (t.status === "done") p.done++;
+  }
+  return by;
+});
+
 /** Progress of every subproject on the board, by subproject id. */
 export function useProgress(): Record<string, Progress> {
-  const all = useStore((s) => s.tasks);
-  return useMemo(() => {
-    const by: Record<string, Progress> = {};
-    for (const t of Object.values(all)) {
-      if (!subprojectWork(t)) continue;
-      const p = (by[t.parent_id!] ??= { done: 0, total: 0 });
-      p.total++;
-      if (t.status === "done") p.done++;
-    }
-    return by;
-  }, [all]);
+  return useStore(subprojectProgress);
 }
 
 /** One subproject's progress (none without tasks). Unlike useProgress, it only re-renders when that changes. */
 export function useSubprojectProgress(id: string): Progress | undefined {
-  return useStore(
-    useShallow((s) => {
-      const p = { done: 0, total: 0 };
-      for (const t of Object.values(s.tasks)) {
-        if (t.parent_id !== id || !subprojectWork(t)) continue;
-        p.total++;
-        if (t.status === "done") p.done++;
-      }
-      return p.total ? p : undefined;
-    }),
-  );
+  return useStore((s) => subprojectProgress(s)[id]);
 }
 
 /**
@@ -101,20 +132,7 @@ export function useSubprojectProgress(id: string): Progress | undefined {
  * the group task's id; and for a plan in a project, of the tasks its agent broke it into.
  */
 export function useCreatedProgress(): Record<string, Progress> {
-  const all = useStore((s) => s.tasks);
-  const projects = useStore((s) => s.projects);
-  return useMemo(() => {
-    const by: Record<string, Progress> = {};
-    for (const t of Object.values(all)) {
-      if (t.kind !== "task" || !t.created_by) continue;
-      const creator = all[t.created_by];
-      if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : taskLabels(creator).includes("plan"))) continue;
-      const p = (by[t.created_by] ??= { done: 0, total: 0 });
-      p.total++;
-      if (t.status === "done") p.done++;
-    }
-    return by;
-  }, [all, projects]);
+  return useStore(createdProgress);
 }
 
 export function GroupTaskBadge({ progress, compact }: { progress?: Progress; compact?: boolean }) {
@@ -265,7 +283,7 @@ export const TaskCard = memo(function TaskCard({
   draggable?: boolean;
   onMenu?: OnMenu;
 }) {
-  const open = usePanel()?.taskId === task.id;
+  const open = usePanelOpen(task.id);
   return (
     <div
       draggable={draggable}
@@ -1545,7 +1563,7 @@ export function NewTaskModal({
 }
 
 export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }: { task: Task; project?: Project; progress?: Progress; onMenu?: OnMenu }) {
-  const open = usePanel()?.taskId === task.id;
+  const open = usePanelOpen(task.id);
   return (
     <div
       draggable
@@ -1827,7 +1845,6 @@ function TaskBoard({
   const project = choices[0] as Project | undefined;
   const hosts = useStore((s) => s.hosts);
   const hostOf = (t: Task) => hosts.find((h) => h.id === t.host_id);
-  const all = useStore((s) => s.tasks);
   const upsertTask = useStore((s) => s.upsertTask);
   const [newIn, setNewIn] = useState<Status | null>(null);
   const [view, setView] = useState<BoardView>(() => {
@@ -1891,15 +1908,28 @@ function TaskBoard({
   // Project ids are only unique on their host.
   const byId = useMemo(() => new Map(projects.map((p) => [`${p.host_id}:${p.id}`, p])), [projects]);
 
+  // The board's tasks, picked in the store: an event about a task on another board leaves this one be.
+  // Worked out again only when the tasks change, and the same list while it has the same tasks.
+  const pickTasks = useMemo(() => {
+    let from: Record<string, Task> | undefined;
+    let picked: Task[] = [];
+    return (s: { tasks: Record<string, Task> }) => {
+      if (s.tasks === from) return picked;
+      from = s.tasks;
+      const list = Object.values(from);
+      picked = [
+        ...list.filter((t) => t.project_id && byId.has(`${t.host_id}:${t.project_id}`) && t.kind === "task" && (t.parent_id ?? null) === parentId),
+        ...(group && hostId && !subproject ? groupTasks(list, hostId, group) : []),
+        ...(profiles ? list.filter((t) => !t.project_id && t.kind === "task" && profiles.has(`${t.host_id}:${t.profile_id}`)) : []),
+      ];
+      return picked;
+    };
+  }, [byId, parentId, group, hostId, subproject, profiles]);
+  const tasks = useStore(useShallow(pickTasks));
+
   // Done tasks are archived as they pass two days in Done, while the board is open too.
   const now = useClock(60_000);
   const { columns, archived } = useMemo(() => {
-    const list = Object.values(all);
-    const tasks = [
-      ...list.filter((t) => t.project_id && byId.has(`${t.host_id}:${t.project_id}`) && t.kind === "task" && (t.parent_id ?? null) === parentId),
-      ...(group && hostId && !subproject ? groupTasks(list, hostId, group) : []),
-      ...(profiles ? list.filter((t) => !t.project_id && t.kind === "task" && profiles.has(`${t.host_id}:${t.profile_id}`)) : []),
-    ];
     const by: Record<Status, Task[]> = { todo: [], in_progress: [], needs_attention: [], in_review: [], ready_for_merge: [], done: [], backlog: [] };
     const archived: Task[] = [];
     for (const t of tasks) (isArchived(t, now) ? archived : by[t.status])?.push(t);
@@ -1908,7 +1938,7 @@ function TaskBoard({
     const doneAt = (t: Task) => t.done_at ?? t.updated_at;
     archived.sort((a, b) => doneAt(b).localeCompare(doneAt(a)));
     return { columns: by, archived };
-  }, [all, byId, parentId, group, hostId, subproject, profiles, now]);
+  }, [tasks, now]);
   const projectOf = (t: Task) => byId.get(`${t.host_id}:${t.project_id ?? ""}`);
 
   // What the search, filters and sort leave of `columns` and `archived`, to show. Dropping a task
@@ -2054,7 +2084,7 @@ function TaskBoard({
     e.preventDefault();
     const target = dropTarget;
     setDropTarget(null);
-    const task = all[e.dataTransfer.getData("text/task-id")];
+    const task = useStore.getState().tasks[e.dataTransfer.getData("text/task-id")];
     if (task) moveTask(task, status, target?.before ?? null);
   };
 
@@ -2076,6 +2106,7 @@ function TaskBoard({
     const resolution = hostSupports(host, 19) ? (status === "done" ? (task.resolution ?? "done") : null) : task.resolution;
     // As the server sets it (API 53). Hosts from before go by the time the task last changed, which this move changes too.
     const done_at = status !== "done" ? null : unarchive || task.status !== "done" ? new Date().toISOString() : task.done_at;
+    const all = useStore.getState().tasks;
     const moved = moves.map((m) => ({ before: all[m.id], position: m.position }));
     upsertTask({ ...task, status, position, resolution, done_at });
     for (const m of moved) upsertTask({ ...m.before, position: m.position });
@@ -2123,7 +2154,7 @@ function TaskBoard({
     [hosts],
   );
 
-  const menuTask = menu && all[menu.taskId];
+  const menuTask = useStore((s) => (menu ? s.tasks[menu.taskId] : null));
   /** The columns to move a task to from its menu: all but Done where Done's resolutions follow them. */
   const moveItems = (task: Task): MenuItem[] =>
     statuses

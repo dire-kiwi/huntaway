@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { BellRing, ChevronRight, CircleAlert, Eye, GitMerge, MessagesSquare, Play, PlayCircle, Square } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, canRunAgents, dependencyQueued, type Project, type Task } from "../api";
-import { openTask, usePanel } from "../router";
+import { openTask, usePanelOpen } from "../router";
 import { keyPrefix, useHost, useStore } from "../store";
 import { isDue } from "../reminders";
 import { Composer, Markdown } from "./Thread";
@@ -72,7 +72,7 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
   const upsertTask = useStore((s) => s.upsertTask);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const open = usePanel()?.taskId === task.id;
+  const open = usePanelOpen(task.id);
   const key = `${keyPrefix(task, project)}-${task.number}`;
 
   const act = async (f: () => Promise<unknown>) => {
