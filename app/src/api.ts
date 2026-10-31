@@ -677,6 +677,8 @@ export interface FanoutFacts {
   uncommitted: string[];
   uncommitted_count: number;
   uncommitted_error: string | null;
+  /** Commits in its worktree that no branch, remote branch or tag has (a detached HEAD's): picking keeps the worktree. */
+  stray_commits?: number;
   /** Its branch, if the repository has it, and where it's pushed (`origin/ia/x-1`). */
   branch: string | null;
   pushed: string | null;

@@ -595,6 +595,12 @@ function PickDialog({
                     {x.uncommitted_count > 3 && "…"}
                   </span>,
                 );
+              if (x?.stray_commits)
+                notes.push(
+                  <span className="text-amber-300">
+                    {plural(x.stray_commits, "commit")} in its worktree on no branch (a detached HEAD): its worktree is kept, so they aren't lost.
+                  </span>,
+                );
               if (x?.uncommitted_error) notes.push(<span className="text-amber-300">Its worktree couldn't be checked: {x.uncommitted_error}</span>);
               if (!t.worktree_path) notes.push("It has no worktree.");
               return (
@@ -628,8 +634,8 @@ function PickDialog({
             {branches.length > 0 && (
               <Check checked={deleteBranches} onChange={setDeleteBranches} danger label={branches.length === 1 ? "Delete its branch" : "Delete their branches"}>
                 {branches.map((t) => f(t)!.branch).join(", ")}
-                {branches.some((t) => f(t)!.pushed) && ", here and where they're pushed (unless a pull request kept open has them)"}. Commits on them that
-                aren't merged anywhere are lost.
+                {branches.some((t) => f(t)!.pushed) && ", here and where they're pushed"}. Commits on them that aren't merged anywhere are lost. A branch
+                is kept while its worktree is, while a pull request kept open has it, or if its pushed copy can't be deleted: picking again deletes it.
               </Check>
             )}
             {prs.length > 0 && (

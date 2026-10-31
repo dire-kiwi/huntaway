@@ -542,10 +542,12 @@ skipped. Auto-compacting idle sessions is Claude-only.
   branch. **Pick this one** keeps that task as it is and completes the others as *Not done*: their
   agents (and reviewers) are stopped and their worktrees removed. Its dialog lists what each has
   uncommitted, and asks whether to discard that (unticked, those worktrees are kept with the
-  changes in), to delete their branches (and the pushed copies, unless a pull request kept open
-  has them; unmerged commits on them are lost) and to close their pull requests (with gh, as the
-  task's GitHub account). Anything that couldn't be done is listed after. Picking again cleans up
-  what was kept the first time. `GET /tasks/{id}/fanout` gives each one's agent time, uncommitted
+  changes in), to delete their branches (and the pushed copies; unmerged commits on them are lost)
+  and to close their pull requests (with gh, as the task's GitHub account). A worktree whose HEAD
+  has commits on no branch (a detached HEAD's) is always kept, as they'd be lost with it. A branch
+  is deleted after its pushed copy, so it's kept while its worktree is, while a pull request kept
+  open has it, or when its pushed copy can't be deleted. Anything that couldn't be done is listed
+  after, and picking again cleans up what was kept the first time. `GET /tasks/{id}/fanout` gives each one's agent time, uncommitted
   files and branch, and `POST /tasks/{id}/fanout/pick` (`delete_branches`, `close_prs`,
   `discard_uncommitted`) picks it.
 - **Agents across profiles** (API 23): each profile has its own board, and agents' board tools

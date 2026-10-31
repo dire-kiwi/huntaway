@@ -40,6 +40,9 @@ pub struct Facts {
     pub uncommitted_count: usize,
     /// Why its worktree couldn't be checked for them.
     pub uncommitted_error: Option<String>,
+    /// Commits in its worktree that no branch, remote branch or tag has (a detached HEAD's): only the worktree has them,
+    /// so it's kept when picking.
+    pub stray_commits: usize,
     /// Its branch, if the repository has it, and its upstream (`origin/ia/x-1`) if it's been pushed.
     pub branch: Option<String>,
     pub pushed: Option<String>,
@@ -99,15 +102,26 @@ pub async fn facts(s: &Shared, t: &Task) -> anyhow::Result<Facts> {
         _ => None,
     };
     let (mut uncommitted, mut uncommitted_error) = (Vec::new(), None);
+    let mut stray_commits = 0;
     if let Some(wt) = t.worktree_path.as_deref().map(Path::new).filter(|w| t.worktree_state == "ready" && w.exists()) {
         match worktree::uncommitted(wt).await {
             Ok(status) => uncommitted = status.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect(),
             Err(e) => uncommitted_error = Some(format!("{e:#}")),
         }
+        stray_commits = stray(wt).await.unwrap_or(0);
     }
     let uncommitted_count = uncommitted.len();
     uncommitted.truncate(LISTED);
-    Ok(Facts { id: t.id.clone(), run_secs, runs, working: worktree::agent_in_worktree(s, &t.id), uncommitted, uncommitted_count, uncommitted_error, branch, pushed })
+    let working = worktree::agent_in_worktree(s, &t.id);
+    Ok(Facts { id: t.id.clone(), run_secs, runs, working, uncommitted, uncommitted_count, uncommitted_error, stray_commits, branch, pushed })
+}
+
+/// How many commits a worktree's HEAD has that no branch, remote branch or tag has: a detached HEAD's, which nothing
+/// but the worktree keeps (they'd be garbage once it's gone).
+async fn stray(wt: &Path) -> anyhow::Result<usize> {
+    let o = worktree::git(wt, &["rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"]).await?;
+    anyhow::ensure!(o.ok, "git rev-list failed: {}", o.stderr.trim());
+    Ok(o.stdout.trim().parse()?)
 }
 
 /// `GET /tasks/{id}/fanout`: `{tasks: [Facts]}` for the tasks made from the same prompt as this one, it among them.
@@ -188,7 +202,10 @@ async fn stopped(s: &Shared, id: &str) -> bool {
     let until = Instant::now() + STOP_WAIT;
     loop {
         let reviews = db::review_threads(&s.db(), id).unwrap_or_default();
-        let active = |t: &str| s.is_running(t) || db::has_active_run(&s.db(), t).unwrap_or(true);
+        // The run's end is written to the task (its column, `running`) after the run is marked exited: until then the
+        // runner could put it back in a column after it's been completed.
+        let marked = |t: &str| db::get_task(&s.db(), t).map_or(true, |t| t.is_some_and(|t| t.running));
+        let active = |t: &str| s.is_running(t) || db::has_active_run(&s.db(), t).unwrap_or(true) || marked(t);
         if !active(id) && !reviews.iter().any(|r| active(&r.id)) {
             return true;
         }
@@ -246,50 +263,57 @@ async fn retire(s: &Shared, o: &Task, picked: &str, b: &Pick) -> Outcome {
 
     let branch = branch_of(repo.as_deref(), &o).await;
     let pushed = match (&repo, &branch) {
-        (Some(r), Some(br)) if b.delete_branches => pushed(r, br).await,
+        (Some(r), Some(br)) => pushed(r, br).await,
         _ => None,
     };
     (out.branch, out.pushed_branch, out.worktree) = (had(branch.is_some()), had(pushed.is_some()), had(o.worktree_path.is_some()));
-    if o.worktree_path.is_some() {
-        match worktree::teardown(s, &o.id, b.discard_uncommitted, b.delete_branches).await {
-            Ok(t) => {
-                out.worktree = "removed";
-                if branch.is_some() && t.branch.is_none() {
-                    out.branch = "deleted";
-                }
-            }
-            Err(e) => out.notes.push(format!("Kept its worktree: {e:#}")),
-        }
-    } else if let (Some(repo), Some(br)) = (repo.as_deref().filter(|_| b.delete_branches), &branch) {
-        match worktree::git(repo, &["branch", "-D", br]).await {
-            Ok(g) if g.ok => {
-                out.branch = "deleted";
-                s.add_event(&o.id, "info", format!("Deleted branch {br}"), None);
-                if let Err(e) = s.update_task(&o.id, &[("branch", Value::Null)]) {
-                    tracing::warn!(task = %o.id, "couldn't clear the deleted branch: {e:#}");
-                }
-            }
-            Ok(g) => out.notes.push(format!("Couldn't delete its branch {br}: {}", g.stderr.trim())),
-            Err(e) => out.notes.push(format!("Couldn't delete its branch {br}: {e:#}")),
+    // The worktree first, keeping the branch: the branch goes once its pushed copy has (or there's none), so that what
+    // can't be done now (a pull request kept open, a push that fails) can be done by picking again.
+    if let Some(wt) = o.worktree_path.as_deref().map(Path::new) {
+        let strays = if wt.exists() { stray(wt).await } else { Ok(0) };
+        match strays {
+            Ok(0) => match worktree::teardown(s, &o.id, b.discard_uncommitted, false).await {
+                Ok(_) => out.worktree = "removed",
+                Err(e) => out.notes.push(format!("Kept its worktree: {e:#}")),
+            },
+            Ok(n) => out.notes.push(format!("Kept its worktree: it has {n} commit{} on no branch (a detached HEAD), which would be lost", if n == 1 { "" } else { "s" })),
+            Err(e) => out.notes.push(format!("Kept its worktree: couldn't check it for commits on no branch: {e:#}")),
         }
     }
-    if let (Some(p), Some(repo)) = (&pushed, repo.as_deref()) {
-        if out.branch != "deleted" {
-            out.notes.push(format!("Kept the pushed branch {}, as the branch here is kept", p.short));
-        } else if out.pr == "kept" {
+    let (Some(repo), Some(br)) = (repo.as_deref().filter(|_| b.delete_branches), &branch) else { return out };
+    if out.worktree == "kept" {
+        out.notes.push("Kept its branch, as its worktree is kept".into());
+        return out;
+    }
+    if let Some(p) = &pushed {
+        if out.pr == "kept" {
             // Deleting a pull request's branch closes it.
-            out.notes.push(format!("Kept the pushed branch {}: its pull request is still open", p.short));
-        } else {
-            match tokio::time::timeout(REMOTE_TIMEOUT, worktree::git(repo, &["push", &p.remote, "--delete", &p.remote_ref])).await {
-                Ok(Ok(g)) if g.ok => {
-                    out.pushed_branch = "deleted";
-                    s.add_event(&o.id, "info", format!("Deleted the pushed branch {}", p.short), None);
-                }
-                Ok(Ok(g)) => out.notes.push(format!("Couldn't delete the pushed branch {}: {}", p.short, g.stderr.trim())),
-                Ok(Err(e)) => out.notes.push(format!("Couldn't delete the pushed branch {}: {e:#}", p.short)),
-                Err(_) => out.notes.push(format!("Couldn't delete the pushed branch {}: git push timed out", p.short)),
+            out.notes.push(format!("Kept its branch and the pushed copy {}: its pull request is still open", p.short));
+            return out;
+        }
+        let failed = match tokio::time::timeout(REMOTE_TIMEOUT, worktree::git(repo, &["push", &p.remote, "--delete", &p.remote_ref])).await {
+            Ok(Ok(g)) if g.ok => None,
+            Ok(Ok(g)) => Some(g.stderr.trim().to_string()),
+            Ok(Err(e)) => Some(format!("{e:#}")),
+            Err(_) => Some("git push timed out".into()),
+        };
+        if let Some(why) = failed {
+            out.notes.push(format!("Kept its branch, as its pushed copy {} couldn't be deleted: {why}", p.short));
+            return out;
+        }
+        out.pushed_branch = "deleted";
+        s.add_event(&o.id, "info", format!("Deleted the pushed branch {}", p.short), None);
+    }
+    match worktree::git(repo, &["branch", "-D", br]).await {
+        Ok(g) if g.ok => {
+            out.branch = "deleted";
+            s.add_event(&o.id, "info", format!("Deleted branch {br}"), None);
+            if let Err(e) = s.update_task(&o.id, &[("branch", Value::Null)]) {
+                tracing::warn!(task = %o.id, "couldn't clear the deleted branch: {e:#}");
             }
         }
+        Ok(g) => out.notes.push(format!("Couldn't delete its branch {br}: {}", g.stderr.trim())),
+        Err(e) => out.notes.push(format!("Couldn't delete its branch {br}: {e:#}")),
     }
     out
 }
@@ -474,22 +498,142 @@ mod tests {
             let pr = "https://github.com/o/r/pull/7";
             s.update_task(&ts[1].id, &[("pr_url", json!(pr))]).unwrap();
 
-            // Branches deleted, pull requests kept open: the pull request's branch stays where it's pushed.
+            // Branches deleted, pull requests kept open: the pull request's branch is kept, here and where it's pushed.
             let v = pick_inner(&s, &ts[0].id, &Pick { delete_branches: true, ..Default::default() }).await.unwrap();
             let r = &v["results"];
-            assert_eq!((&r[0]["branch"], &r[0]["pushed_branch"], &r[0]["pr"]), (&json!("deleted"), &json!("kept"), &json!("kept")));
+            assert_eq!((&r[0]["branch"], &r[0]["pushed_branch"], &r[0]["pr"]), (&json!("kept"), &json!("kept"), &json!("kept")));
             assert!(r[0]["notes"][0].as_str().unwrap().contains("its pull request is still open"), "{}", r[0]["notes"]);
             assert_eq!((&r[1]["branch"], &r[1]["pushed_branch"]), (&json!("deleted"), &json!("deleted")));
-            assert!(has_ref(&origin, &format!("refs/heads/{}", ts[1].branch.as_deref().unwrap())));
+            let b1 = format!("refs/heads/{}", ts[1].branch.as_deref().unwrap());
+            assert!(has_ref(&origin, &b1) && has_ref(&repo, &b1));
             assert!(!has_ref(&origin, &format!("refs/heads/{}", ts[2].branch.as_deref().unwrap())));
             assert!(!log.exists());
+            // So the board still offers to delete it.
+            let Json(f) = get(State(s.clone()), UrlPath(ts[0].id.clone())).await.unwrap();
+            assert_eq!(f["tasks"][1]["pushed"].as_str(), Some(format!("origin/{}", ts[1].branch.as_deref().unwrap()).as_str()));
 
-            // Asked to close them, it's closed.
-            let v = pick_inner(&s, &ts[0].id, &Pick { close_prs: true, ..Default::default() }).await.unwrap();
-            assert_eq!(&v["results"][0]["pr"], "closed");
+            // HA-51 review: asked to close it on a later pick, it's closed, and then its branch goes too, from both.
+            let v = pick_inner(&s, &ts[0].id, &Pick { close_prs: true, delete_branches: true, ..Default::default() }).await.unwrap();
+            let r = &v["results"][0];
+            assert_eq!((&r["pr"], &r["branch"], &r["pushed_branch"], &r["notes"]), (&json!("closed"), &json!("deleted"), &json!("deleted"), &json!([])));
             assert_eq!(std::fs::read_to_string(&log).unwrap(), format!("pr close {pr}\n"));
+            assert!(!has_ref(&origin, &b1) && !has_ref(&repo, &b1));
             assert!(has_ref(&repo, &format!("refs/heads/{}", ts[0].branch.as_deref().unwrap())));
             crate::gh_mcp::TEST_GH_PROGRAM.set(None);
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    // HA-51 review: a pushed copy that couldn't be deleted was forgotten with the branch here, so picking again
+    // couldn't delete it.
+    #[test]
+    fn a_pushed_branch_that_cant_be_deleted_is_deleted_by_picking_again() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, ts) = fanned_out(&s).await;
+            let (repo, origin) = (root.join("repo"), root.join("origin.git"));
+            sh(Path::new(ts[1].worktree_path.as_ref().unwrap()), &["push", "-q", "-u", "origin", ts[1].branch.as_deref().unwrap()]);
+            let hook = origin.join("hooks/pre-receive");
+            std::fs::write(&hook, "#!/bin/sh\necho no deleting >&2\nexit 1\n").unwrap();
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let delete = Pick { delete_branches: true, ..Default::default() };
+            let v = pick_inner(&s, &ts[0].id, &delete).await.unwrap();
+            let r = &v["results"][0];
+            assert_eq!((&r["worktree"], &r["branch"], &r["pushed_branch"]), (&json!("removed"), &json!("kept"), &json!("kept")));
+            assert!(r["notes"][0].as_str().unwrap().contains("no deleting"), "{}", r["notes"]);
+            let b1 = format!("refs/heads/{}", ts[1].branch.as_deref().unwrap());
+            assert!(has_ref(&repo, &b1) && has_ref(&origin, &b1));
+            std::fs::remove_file(&hook).unwrap();
+            let v = pick_inner(&s, &ts[0].id, &delete).await.unwrap();
+            let r = &v["results"][0];
+            assert_eq!((&r["branch"], &r["pushed_branch"], &r["notes"]), (&json!("deleted"), &json!("deleted"), &json!([])));
+            assert!(!has_ref(&repo, &b1) && !has_ref(&origin, &b1));
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    // HA-51 review: commits on a detached HEAD are on no branch, so removing the worktree lost them.
+    #[test]
+    fn a_worktree_with_commits_on_no_branch_is_kept() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, ts) = fanned_out(&s).await;
+            let wt = PathBuf::from(ts[1].worktree_path.clone().unwrap());
+            sh(&wt, &["checkout", "-q", "--detach"]);
+            std::fs::write(wt.join("loose"), "x").unwrap();
+            sh(&wt, &["add", "."]);
+            sh(&wt, &["commit", "-qm", "detached"]);
+            let Json(f) = get(State(s.clone()), UrlPath(ts[0].id.clone())).await.unwrap();
+            assert_eq!((&f["tasks"][1]["stray_commits"], &f["tasks"][1]["uncommitted_count"], &f["tasks"][2]["stray_commits"]), (&json!(1), &json!(0), &json!(0)));
+            let all = Pick { delete_branches: true, discard_uncommitted: true, close_prs: true };
+            let v = pick_inner(&s, &ts[0].id, &all).await.unwrap();
+            let r = &v["results"];
+            assert_eq!((&r[0]["completed"], &r[0]["worktree"], &r[0]["branch"]), (&json!(true), &json!("kept"), &json!("kept")));
+            assert!(r[0]["notes"][0].as_str().unwrap().contains("1 commit on no branch"), "{}", r[0]["notes"]);
+            assert!(wt.join("loose").exists());
+            assert_eq!((&r[1]["worktree"], &r[1]["branch"]), (&json!("removed"), &json!("deleted")));
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    /// Task `t`'s agent at work, as the runner has it: a run, its handle (which stopping cancels) and the task marked
+    /// running. The run ends as the runner ends one that's stopped, a moment after.
+    fn at_work(s: &Shared, t: &Task) {
+        let run = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+        s.db().execute("UPDATE runs SET status='running', between_turns=1 WHERE id=?1", [&run.id]).unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        s.runs.lock().unwrap().insert(t.id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: Some(tx) });
+        // With a pull request, the run's end doesn't look one up with gh.
+        s.update_task(&t.id, &[("running", json!(true)), ("status", json!("in_progress")), ("pr_url", json!("https://github.com/o/r/pull/1"))]).unwrap();
+        let s = s.clone();
+        tokio::spawn(async move {
+            let _ = rx.await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            crate::runner::finish(&s, &run.id, crate::runner::Outcome::Cancelled);
+        });
+    }
+
+    #[test]
+    fn an_agent_at_work_is_stopped_before_its_task_is_completed() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, ts) = fanned_out(&s).await;
+            at_work(&s, &ts[1]);
+            let v = pick_inner(&s, &ts[0].id, &Pick::default()).await.unwrap();
+            let r = &v["results"][0];
+            assert_eq!((&r["stopped"], &r["completed"], &r["worktree"], &r["notes"]), (&json!(true), &json!(true), &json!("removed"), &json!([])));
+            let t = task(&s, &ts[1].id);
+            assert_eq!((t.status.as_str(), t.resolution.as_deref(), t.running), ("done", Some("not_done"), false));
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    // HA-51 review: the run was marked exited before the runner wrote its end to the task, and picking in between
+    // completed the task only for the runner to move it to Needs attention.
+    #[test]
+    fn a_task_is_completed_only_once_the_runner_has_written_its_runs_end() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, ts) = fanned_out(&s).await;
+            let run = db::insert_run(&s.db(), &ts[1].id, "prompt").unwrap();
+            s.db().execute("UPDATE runs SET status='running', between_turns=1 WHERE id=?1", [&run.id]).unwrap();
+            s.runs.lock().unwrap().insert(ts[1].id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
+            s.update_task(&ts[1].id, &[("running", json!(true)), ("status", json!("in_progress")), ("pr_url", json!("https://github.com/o/r/pull/1"))]).unwrap();
+            // Picked once the run is marked exited, before its end is written to the task.
+            let (s2, picked) = (s.clone(), ts[0].id.clone());
+            let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let out = result.clone();
+            crate::testing::when("finish:exited", move || {
+                crate::testing::run(async move || *out.lock().unwrap() = Some(pick_inner(&s2, &picked, &Pick::default()).await.unwrap()));
+            });
+            crate::runner::finish(&s, &run.id, crate::runner::Outcome::Cancelled);
+            let v = result.lock().unwrap().take().unwrap();
+            let r = &v["results"][0];
+            assert_eq!((&r["completed"], &r["worktree"]), (&json!(false), &json!("kept")));
+            assert!(r["notes"][0].as_str().unwrap().contains("didn't stop in time"), "{}", r["notes"]);
+            // Left as the runner left it, not completed and then moved back.
+            let t = task(&s, &ts[1].id);
+            assert_eq!((t.status.as_str(), t.resolution.as_deref()), ("needs_attention", None));
             std::fs::remove_dir_all(&root).ok();
         })
     }
