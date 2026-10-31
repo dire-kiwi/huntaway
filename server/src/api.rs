@@ -281,7 +281,13 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     let current = db::get_profile(&c, &id)?.ok_or_else(|| ApiError::not_found("profile"))?;
     let mut fields = pick(&b, &["default_model"]);
     if let Some(v) = b.get("name") {
-        fields.push(("name", json!(check_profile_name(&c, Some(&id), v)?)));
+        // Its name unchanged passes even if another profile has it in another case (allowed
+        // before HA-37), since the profile form sends it with every save.
+        let name = match v.as_str().map(str::trim) {
+            Some(n) if n == current.name => n.to_string(),
+            _ => check_profile_name(&c, Some(&id), v)?,
+        };
+        fields.push(("name", json!(name)));
     }
     if let Some((token, user)) = asana {
         fields.push(("asana_token", token));
@@ -574,17 +580,13 @@ async fn delete_profile(State(s): State<Shared>, Path(id): Path<String>) -> ApiR
         st.query_map([&id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
     };
     for t in rest {
-        // A review thread goes with its task, so it may be gone already.
+        // Review threads go first, so each is cleaned up on its own rather than in its task's
+        // cascade. One may have been deleted meanwhile.
         let Some(t) = db::get_task(&s.db(), &t)? else { continue };
         delete_one(&s, &t, false).await?;
     }
     s.db().execute("DELETE FROM profiles WHERE id=?1", [&id])?;
-    let dir = s.data_dir.join("profiles").join(&id);
-    if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
-        if let Err(e) = std::fs::remove_dir_all(&dir) {
-            tracing::warn!("removing {} after deleting its profile: {e}", dir.display());
-        }
-    }
+    remove_unused_dir(&s, &s.data_dir.join("profiles").join(&id), "profile")?;
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!({"ok": true})))
 }
@@ -1106,16 +1108,22 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
 }
 
 /// Removes a deleted project's folder in the data dir (its scratch and worktrees folders, unless
-/// they were moved, and its skills), unless what's left on the host is in it: a repository, a
-/// worktree, or a folder another project was pointed at.
+/// they were moved, and its skills), unless what's left on the host is in it (see remove_unused_dir).
 fn remove_project_dir(s: &Shared, id: &str) -> ApiResult<()> {
-    let dir = s.data_dir.join("projects").join(id);
-    let Ok(meta) = std::fs::symlink_metadata(&dir) else { return Ok(()) };
+    remove_unused_dir(s, &s.data_dir.join("projects").join(id), "project")
+}
+
+/// Removes a deleted project's or profile's (`what`) folder in the data dir, unless what's left on
+/// the host is in it: a repository, a worktree, or a folder another project or task was pointed at.
+fn remove_unused_dir(s: &Shared, dir: &std::path::Path, what: &str) -> ApiResult<()> {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else { return Ok(()) };
     if !meta.is_dir() {
         return Ok(());
     }
     let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    let root = canonical(&dir);
+    // A path that doesn't exist yet isn't resolved, so through a symlinked data dir it can only
+    // match the folder as it's named.
+    let roots = [canonical(dir), dir.to_path_buf()];
     let used: Vec<String> = {
         let c = s.db();
         let mut st = c.prepare(
@@ -1124,12 +1132,13 @@ fn remove_project_dir(s: &Shared, id: &str) -> ApiResult<()> {
         )?;
         st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
     };
-    if let Some(p) = used.iter().map(PathBuf::from).find(|p| p.is_absolute() && canonical(p).starts_with(&root)) {
-        tracing::warn!("keeping {} after deleting its project: {} is in it", dir.display(), p.display());
+    let inside = |p: &std::path::Path| p.is_absolute() && roots.iter().any(|r| canonical(p).starts_with(r) || p.starts_with(r));
+    if let Some(p) = used.iter().map(PathBuf::from).find(|p| inside(p)) {
+        tracing::warn!("keeping {} after deleting its {what}: {} is in it", dir.display(), p.display());
         return Ok(());
     }
-    if let Err(e) = std::fs::remove_dir_all(&dir) {
-        tracing::warn!("removing {} after deleting its project: {e}", dir.display());
+    if let Err(e) = std::fs::remove_dir_all(dir) {
+        tracing::warn!("removing {} after deleting its {what}: {e}", dir.display());
     }
     Ok(())
 }
@@ -3596,6 +3605,62 @@ pub(crate) mod tests {
             // Its own name in another case is fine.
             assert_eq!(rename(&personal["id"], json!("Personal")).await.unwrap().0["name"], "Personal");
             assert_eq!(rename(&work["id"], json!(" office ")).await.unwrap().0["name"], "office");
+        })
+    }
+
+    // HA-47: two profiles named in different cases before HA-37 got a 409 on every save of either.
+    #[test]
+    fn profiles_sharing_a_name_in_another_case_can_still_be_saved() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let upper = db::insert_profile(&s.db(), "Work", &[], None).unwrap();
+            let lower = db::insert_profile(&s.db(), "work", &[], None).unwrap();
+            let save = async |id: &str, body: Value| update_profile(State(s.clone()), Path(id.into()), Json(body.as_object().unwrap().clone())).await;
+            for p in [&upper, &lower] {
+                let saved = save(&p.id, json!({"name": format!(" {} ", p.name), "default_model": "haiku"})).await.unwrap().0;
+                assert_eq!((saved["name"].as_str(), saved["default_model"].as_str()), (Some(p.name.as_str()), Some("haiku")));
+            }
+            // A change of case is still checked.
+            assert_eq!(save(&lower.id, json!({"name": "WORK"})).await.unwrap_err().0, StatusCode::CONFLICT);
+            assert_eq!(save(&lower.id, json!({"name": "office"})).await.unwrap().0["name"], "office");
+        })
+    }
+
+    // HA-47: deleting a profile removed its folder even with another project's worktrees in it.
+    #[test]
+    fn deleting_a_profile_keeps_its_folder_if_a_project_uses_it() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let gone = db::insert_profile(&s.db(), "gone", &[], None).unwrap();
+            let folder = s.data_dir.join("profiles").join(&gone.id);
+            std::fs::create_dir_all(folder.join("scratch")).unwrap();
+            let (dir, p) = git_project(&s).await;
+            s.db().execute("UPDATE projects SET worktrees_root=?1 WHERE id=?2", [&path_str(&folder.join("worktrees")), &p.id]).unwrap();
+            let _ = delete_profile(State(s.clone()), Path(gone.id.clone())).await.unwrap();
+            assert!(folder.is_dir());
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::remove_dir_all(&s.data_dir).ok();
+        })
+    }
+
+    // HA-47: through a symlinked data dir, a used path that didn't exist yet didn't keep its folder.
+    #[test]
+    fn a_folder_is_kept_for_a_path_in_it_through_a_symlink() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let tmp = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            std::fs::create_dir_all(tmp.join("real/projects/x")).unwrap();
+            std::os::unix::fs::symlink(tmp.join("real"), tmp.join("link")).unwrap();
+            let dir = tmp.join("link/projects/x");
+            let (repo, p) = git_project(&s).await;
+            s.db().execute("UPDATE projects SET worktrees_root=?1 WHERE id=?2", [&path_str(&dir.join("worktrees")), &p.id]).unwrap();
+            remove_unused_dir(&s, &dir, "project").unwrap();
+            assert!(tmp.join("real/projects/x").is_dir());
+            s.db().execute("UPDATE projects SET worktrees_root=?1 WHERE id=?2", [&path_str(&tmp.join("elsewhere")), &p.id]).unwrap();
+            remove_unused_dir(&s, &dir, "project").unwrap();
+            assert!(!tmp.join("real/projects/x").exists());
+            std::fs::remove_dir_all(&repo).ok();
+            std::fs::remove_dir_all(&tmp).ok();
         })
     }
 
