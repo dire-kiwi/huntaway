@@ -122,6 +122,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/stop", post(stop_task))
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/review", post(review_task))
+        .route("/tasks/{id}/fix_checks", post(fix_checks))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
@@ -2122,6 +2123,12 @@ async fn stop_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult
 async fn review_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let t = crate::review::start(&s, &id, true).await?;
     Ok(Json(json!(t)))
+}
+
+/// Send the agent its pull request's failed checks, with the ends of their logs (API 81, see
+/// pr_watch::fix_checks).
+async fn fix_checks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(crate::pr_watch::fix_checks(&s, &id).await?)))
 }
 
 async fn setup_worktree(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
