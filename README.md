@@ -911,12 +911,18 @@ skipped. Auto-compacting idle sessions is Claude-only.
     worktree set up first (as a subproject's is for its tasks), and one that's merged already has
     the task start from where it was merged. Merging a stacked task while the other is open puts
     its work on the other's branch, as stacked pull requests do, so it reaches the base branch
-    with the other's merge; once the other is merged, its agent is asked to merge into where that
-    went instead, retargeting its pull request first (GitHub does that by itself when the other's
-    branch is deleted). *Remove merged worktrees* counts a stacked task merged into the project's
-    base branch as merged too. Stacking doesn't make it wait for the other task: add a dependency
-    for that.
-  - **A branch** becomes its base branch, fetched first as the project's is.
+    with the other's merge. Once the other is merged, the stacked task goes where that went
+    instead, as GitHub retargets a pull request whose base branch is deleted: its agent is told
+    to merge, and open its pull request, there (retargeting one it has first), its merged checks
+    look there, and its *Changes* and reviews start from the later of its merge bases with that
+    and with the other's old branch, so a squashed parent's work isn't counted as its own before
+    it's rebased, nor after. *Remove merged worktrees* counts a stacked task merged into the
+    project's base branch as merged too. Stacking doesn't make it wait for the other task: add a
+    dependency for that. A task can't start from one that (by way of others, or a subproject it's
+    in) starts from it.
+  - **A branch** becomes its base branch, fetched first as the project's is. A remote's branch
+    (`upstream/feature`) is that remote's, fetched even if it never was before, unless it's the
+    remote the branch's name alone follows (usually `origin`), where it's the branch of that name.
   - **A pull request** in the project's GitHub repository (looked up with gh, as the task's GitHub
     account) is its branch, as for a task. A merged one is where it was merged; one from a fork,
     or closed, starts from its head commit, fetched by its SHA, with the pull request's base as the
@@ -924,8 +930,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   - **A commit** is where its branch starts, fetched by its full SHA if the repository doesn't have
     it; its base branch stays the project's, and its *Changes* and reviews start after the commit
     when the base branch doesn't have it.
-  The task's log says where it started. It can't change once the task's branch exists (it's set up
-  again from that branch), a subproject's tasks start from the subproject's branch, and a task
+  The task's log says where it started. Its branch, base branch and worktree folder are saved as
+  soon as git makes them, so a setup script that fails doesn't lose them. It can't change once the
+  task's branch exists (it's set up again from that branch), a subproject's tasks start from the subproject's branch, and a task
   that doesn't use a worktree has nothing to start. `base_branch` and `start_from` replace each
   other. `GET /projects/{id}/branches` lists the branches of a project's repository, latest first.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
