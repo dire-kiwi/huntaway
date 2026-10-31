@@ -46,7 +46,7 @@ import { navigate, parse } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useHost, useStore } from "../store";
 import { GlobalAgentToolsPanel, ProjectAgentTools } from "./AgentTools";
 import { ProjectAutomations } from "./Automations";
-import { ModelPicker } from "./Board";
+import { ModelPicker } from "./NewTaskModal";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";

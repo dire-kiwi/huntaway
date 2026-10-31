@@ -87,7 +87,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode }) {
   return (
-    <button type="button" onClick={() => onChange(!checked)} className="flex items-center gap-2.5 text-[13px] text-fg">
+    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="flex items-center gap-2.5 text-[13px] text-fg">
       <span
         className={clsx(
           "relative h-4.5 w-8 rounded-full transition-colors",
@@ -184,11 +184,30 @@ export function Modal({
       if (before?.isConnected && (!document.activeElement || document.activeElement === document.body || el?.contains(document.activeElement))) before.focus();
     };
   }, [before]);
+  // A click on the backdrop closes the dialog, if it was pressed there too (not a drag out of a field) and nothing typed in
+  // it would be lost: a field marked `data-draft`, or a text field changed since it was first focused. Escape and the
+  // close button still close it.
+  const pressed = useRef(false);
+  const initial = useRef(new WeakMap<Element, string>());
+  const hasDraft = () => {
+    const el = box.current;
+    if (!el) return false;
+    if (el.querySelector("[data-draft]")) return true;
+    return Array.from(el.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("textarea, input")).some((f) => {
+      const was = initial.current.get(f);
+      return was !== undefined && f.value !== was;
+    });
+  };
   return (
     <div
       data-modal
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[10vh] backdrop-blur-[2px] narrow:overflow-y-auto narrow:p-2 narrow:pt-[max(0.5rem,env(safe-area-inset-top))]"
-      onMouseDown={onClose}
+      onMouseDown={(e) => (pressed.current = e.target === e.currentTarget && e.button === 0)}
+      onClick={(e) => {
+        const close = pressed.current && e.target === e.currentTarget && !hasDraft();
+        pressed.current = false;
+        if (close) onClose();
+      }}
     >
       <div
         ref={box}
@@ -198,6 +217,10 @@ export function Modal({
         tabIndex={-1}
         className={clsx("flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-2xl shadow-black/50 outline-none", width)}
         onMouseDown={(e) => e.stopPropagation()}
+        onFocus={(e) => {
+          const f = e.target;
+          if ((f instanceof HTMLInputElement || f instanceof HTMLTextAreaElement) && !initial.current.has(f)) initial.current.set(f, f.value);
+        }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
           <div id={titleId} className="text-[14px] font-semibold">
@@ -662,9 +685,20 @@ export function ActivityTime({ task, title }: { task: Task; title?: string }) {
 }
 
 /** "5m ago", kept up to date (memoized cards don't redraw as the minutes pass). */
-function Ago({ at, title }: { at: string; title?: string }) {
+export function Ago({ at, title }: { at: string; title?: string }) {
   useClock(60_000);
   return <span title={title ?? new Date(at).toLocaleString()}>{timeAgo(at)}</span>;
+}
+
+/** Saves `text` as a file called `name`. */
+export function download(name: string, text: string, type: string) {
+  // Saved as a file, never opened here: a page opened from a blob URL would run with the board's origin.
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function cost(usd: number) {

@@ -31,7 +31,7 @@ import { navigate } from "../router";
 import { useStore } from "../store";
 import { Swatch, useTip } from "./chart";
 import { DiskUsage } from "./DiskUsage";
-import { Button, IconButton, MenuButton } from "./ui";
+import { Button, download, IconButton, MenuButton } from "./ui";
 
 const selectClass = "h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] text-fg outline-none";
 
@@ -207,12 +207,7 @@ export function Analytics() {
 
   const exportCsv = () => {
     if (!view) return;
-    const blob = new Blob([toCsv(view.data, view.events, view.spans, view.runs)], { type: "text/csv" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `prompt-activity-${dayKey(range.from)}-to-${dayKey(range.to - 1)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    download(`prompt-activity-${dayKey(range.from)}-to-${dayKey(range.to - 1)}.csv`, toCsv(view.data, view.events, view.spans, view.runs), "text/csv");
   };
 
   const switchCal = (m: "month" | "week") => {

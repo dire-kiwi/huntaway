@@ -92,7 +92,7 @@ export function WorktreeSetup({ project, hostName }: { project: Project; hostNam
       </div>
       {err && <div className="shrink-0 border-b border-line px-5 py-2 text-[12px] text-red-400">{err}</div>}
       <main className="min-h-0 flex-1">
-        {task ? <Thread task={task} cwd={project.repo_path} /> : <StartSetup project={project} missing={missing} onError={setErr} />}
+        {task ? <Thread key={`${task.host_id}:${task.id}`} task={task} cwd={project.repo_path} /> : <StartSetup project={project} missing={missing} onError={setErr} />}
       </main>
     </div>
   );

@@ -7,9 +7,9 @@ import { afterSend, answered, answersMessage, loadAnswers, readFields, resetFiel
 import { isWholePage, themedPlan } from "../planTheme";
 import planCss from "../planTheme.css?raw";
 import { useHost, useThreadMessages } from "../store";
-import type { Progress } from "./Board";
+import type { Progress } from "./TaskCard";
 import { Composer, Markdown } from "./Thread";
-import { Button, CARD_BADGE, copyText, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "./ui";
+import { Button, CARD_BADGE, copyText, download, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "./ui";
 
 /** What each label asks its task's agent for (API 71; types of task from API 42), in the order tasks show them. */
 export const LABEL_INFO: { id: DocumentType; label: string; icon: ReactNode; file: string; hint: string }[] = [
@@ -65,16 +65,6 @@ function lastReply(messages: Message[] | undefined): string | null {
     }
   }
   return null;
-}
-
-function download(name: string, text: string, type: string) {
-  // Saved as a file, never opened here: a page opened from a blob URL would run with the board's origin.
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** A short hash of a document's content (FNV-1a), to tell its revisions apart. */
@@ -388,9 +378,10 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
 
 /**
  * An HTML page in a sandboxed frame: its scripts run, but in an origin of their own, so it can't
- * reach the board (or its token). It keeps its scroll position as the page changes, and leaves
- * `inset` pixels at its bottom for what covers it. With `plan`, `html` is a plan's content, shown in
- * the theme, with the answers to its questions that haven't been sent put back in each time it loads.
+ * reach the board (or its token), nor show alerts or prompts (no allow-modals) that would pass for the app's own. It
+ * keeps its scroll position as the page changes, and leaves `inset` pixels at its bottom for what covers it. With
+ * `plan`, `html` is a plan's content, shown in the theme, with the answers to its questions that haven't been sent put
+ * back in each time it loads.
  */
 function HtmlFrame({
   frame,
@@ -441,7 +432,7 @@ function HtmlFrame({
       title={title}
       srcDoc={doc}
       onLoad={sendInset}
-      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals"
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
       referrerPolicy="no-referrer"
       className={clsx("block h-full w-full", plan ? "bg-bg" : "bg-white")}
     />
