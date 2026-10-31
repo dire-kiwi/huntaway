@@ -82,6 +82,15 @@ test("keys still work after a dialog opened from a menu", async () => {
 });
 
 async function waitFor(check, ms = 5000) {
-  for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (check()) return;
+  // A check that throws hasn't passed yet: `git stash list` can fail with "bad revision 'refs/stash'" while the
+  // server's stash or drop is half done.
+  const passes = () => {
+    try {
+      return check();
+    } catch {
+      return false;
+    }
+  };
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (passes()) return;
   assert.ok(check(), `timed out waiting for ${check}`);
 }

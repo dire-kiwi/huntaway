@@ -68,8 +68,8 @@ Keep test servers fully separate from it:
   - `--fake-claude` runs agents with `scripts/fake-claude`, a stub that logs each call (args,
     cwd, config dir, prompt) to `<data dir>/fake-claude.log`, then prints a reply and a
     `{"type":"result","subtype":"success",…}` line and exits. Use it for runner, queue, steering
-    and merge logic. `IA_FAKE_CLAUDE_SLEEP`, `_TEXT`, `_RESULT` and `_EXIT` in the environment of
-    `test-server.sh` change what it does (see the script). Codex runs fail with it.
+    and merge logic. `IA_FAKE_CLAUDE_SLEEP`, `_TEXT`, `_RESULT`, `_EXIT` and `_TITLE` (the generated
+    title) in the environment of `test-server.sh` change what it does (see the script). Codex runs fail with it.
   - `--no-agents` sets `IA_CLAUDE_BIN` and `IA_CODEX_BIN` to `/bin/false`, so no agent runs.
     (`IA_CLAUDE_BIN=/bin/false` alone doesn't stop Codex runs.)
   - `scripts/test-server.sh restart` restarts the server on the same port, data, binary path (so
@@ -130,7 +130,7 @@ Keep test servers fully separate from it:
 finish, and click through what you changed: typechecked-only UI changes have shipped lost drafts,
 stale forms and broken reordering that one interaction would have shown. Run the test server with a
 fresh `npm run build` (it serves `app/dist`), then drive it with `scripts/ui-check.mjs`. It uses
-`playwright-core` from `app/node_modules` (so `npm ci` in `app/` first) and `/usr/bin/chromium`;
+`playwright-core` from `app/node_modules` (so `npm ci` in `app/` first) and `/usr/bin/chromium` (or `$CHROMIUM`);
 there's no other browser tooling to look for.
 
 ```sh
@@ -169,8 +169,8 @@ node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New
   calls in between), import `open` from `scripts/ui-check.mjs` and use `ui.page`, which is a
   Playwright page. Checks for bugs that are easy to bring back go in `app/tests/ui/` and run with
   `npm run test:ui` in `app/` (it builds the UI, and each file starts its own `--demo` test server
-  with agents switched off, so `cargo build` in `server/` first). They aren't part of `npm test`.
-  Run them when you change the UI they cover, and add one when an interaction found a bug.
+  with agents switched off, so `cargo build` in `server/` first). They aren't part of `npm test`,
+  but CI runs them (`Tests / ui`). Run them when you change the UI they cover, and add one when an interaction found a bug.
 - For a change meant to make the UI faster, measure it: `node scripts/ui-profile.mjs --env /tmp/ia<N>-env
   --task <id>` opens a task with a long thread and feeds the page streamed tokens, task events and
   messages, then prints the main-thread time each took. Run it on the build with the change set
@@ -197,8 +197,9 @@ node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New
 - The code is formatted by hand, with lines of up to about 160 characters, and there's no
   Prettier, ESLint or rustfmt config. Don't run `prettier`, `eslint` or `cargo fmt`, because each
   rewrites whole files. Match the surrounding style, and check `git diff --stat` before committing.
-- CI runs `cargo test`, `npm run typecheck` and `npm test` on every PR (`.github/workflows/test.yml`,
-  the `Tests / server` and `Tests / app` checks, on GitHub-hosted runners). Still run them
+- CI runs `cargo test`, `npm run typecheck` and `npm test` on every PR, and `npm run test:ui` and
+  `scripts/ia-api-test.py` (`.github/workflows/test.yml`, the `Tests / server`, `Tests / app` and
+  `Tests / ui` checks, on GitHub-hosted runners). Still run them
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
 - `scripts/ia-api` has its own tests (a faked server and clock): `python3 scripts/ia-api-test.py`.

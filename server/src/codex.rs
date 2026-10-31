@@ -1328,6 +1328,17 @@ fn finish_turn(state: &Shared, run: &Run, turn: &Value) -> Result<()> {
         "interrupted" => Some("The turn was interrupted".to_string()),
         _ => Some(turn["error"]["message"].as_str().map(String::from).unwrap_or_else(|| format!("the turn ended as {status}"))),
     };
+    // Refused for the account's usage limit (see usage.rs).
+    if turn["error"]["codexErrorInfo"] == "usageLimitExceeded" {
+        let config = {
+            let c = state.db();
+            db::get_task(&c, &run.task_id)?.map(|t| db::task_claude_config(&c, &t)).transpose()?.flatten()
+        };
+        if let Some(config) = config {
+            crate::usage::codex_refused(state, &config.id);
+            crate::usage::ran_out(state, &run.task_id, &config.id);
+        }
+    }
     // `/compact` may report its end twice (see handle_line); other runs can go several turns.
     let saw: bool = state.db().query_row("SELECT saw_result FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
     if saw && run.kind == "compact" {

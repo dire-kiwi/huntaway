@@ -10,9 +10,9 @@
   ia-api approve-all [<task>] [--deny-pattern REGEX]
   ia-api wait-idle <task> [--timeout SECS] [--approve [--deny-pattern REGEX]] [--grace SECS]
 
-A <task> is an id, or a key like TES-3 (looked up in $IA_TEST_PROJECT), here and in a path's
-/tasks/<task>. The server comes from
---env FILE, $IA_TEST_ENV, $IA_TEST_URL and $IA_TEST_TOKEN, or the worktree's .ia-test-env (the
+A <task> is an id, or a key like TES-3 (looked up in $IA_TEST_PROJECT), S-3 or G-3 (a scratch or
+group task, in $IA_TEST_PROFILE, or in any profile without one), here and in a path's
+/tasks/<task>. The server comes from --env FILE, $IA_TEST_ENV, $IA_TEST_URL and $IA_TEST_TOKEN, or the worktree's .ia-test-env (the
 latest test-server.sh start), in that order. It has to be a test server on 127.0.0.1 (not port
 7878) or a server that hands out its token (`--open-token`, as PR previews do), so never the live
 board. Responses are printed as JSON; an HTTP error exits 1 with the error body on stderr.
@@ -125,19 +125,37 @@ class Api:
         return json.loads(text) if text.strip() else None
 
     def task_id(self, ref):
-        """An id, or a key like TEST-3 in $IA_TEST_PROJECT."""
+        """An id, or a key: like TES-3 in $IA_TEST_PROJECT, or S-3 (a scratch task) or G-3 (a group task) in
+        $IA_TEST_PROFILE, or in any profile without one."""
         m = re.fullmatch(r"([A-Za-z][A-Za-z0-9]*)-(\d+)", ref)
         if not m:
             return ref
+        prefix, number = m.group(1).upper(), int(m.group(2))
+        if prefix in ("S", "G"):
+            # Tasks outside a project (runner::key_prefix): a profile's tasks list has them, with project_id null.
+            profile = self.env.get("IA_TEST_PROFILE")
+            profiles = [profile] if profile else [p["id"] for p in self.call("get", "/profiles")]
+            found = [
+                t["id"]
+                for p in profiles
+                for t in self.call("get", f"/profiles/{p}/tasks")
+                if not t.get("project_id") and t["number"] == number and (bool(t.get("group_name")) if prefix == "G" else t.get("task_type") == "scratch")
+            ]
+            if len(found) > 1:
+                die(f"{ref} is in more than one profile: set IA_TEST_PROFILE, or use the task id")
+            if not found:
+                die(f"no task {ref}" + (f" in profile {profile}" if profile else ""))
+            return found[0]
         project = self.env.get("IA_TEST_PROJECT")
         if not project:
             die(f"{ref} looks like a key, but there's no IA_TEST_PROJECT (start with --seed, or use the task id)")
-        key = self.call("get", f"/projects/{project}")["key"]
-        for kind in ("task", "scratch"):
-            for t in self.call("get", f"/projects/{project}/tasks?kind={kind}"):
-                if key.upper() == m.group(1).upper() and t["number"] == int(m.group(2)):
-                    return t["id"]
-        die(f"no task {ref} in project {key}")
+        p = self.call("get", f"/projects/{project}")
+        if prefix not in [k.upper() for k in [p["key"], *p.get("former_keys", [])]]:
+            die(f"{ref} isn't a key of project {p['key']} ($IA_TEST_PROJECT)")
+        for t in self.call("get", f"/projects/{project}/tasks"):
+            if t["number"] == number:
+                return t["id"]
+        die(f"no task {ref} in project {p['key']}")
 
     def pending(self, task=None):
         q = f"?task_id={urllib.parse.quote(self.task_id(task))}" if task else ""

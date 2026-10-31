@@ -37,6 +37,8 @@ const LABELS: Record<string, string> = {
   permission_mode: "Permission mode",
   setup_script: "Setup script",
   teardown_script: "Teardown script",
+  copy_files: "Files to copy",
+  link_folders: "Folders to link",
   status_script: "Status script (any column)",
   status_scripts: "Column scripts",
   repo_path: "Repository path",
@@ -46,7 +48,7 @@ const LABELS: Record<string, string> = {
 };
 
 /** Settings shown as blocks of text rather than inline. */
-const LONG = ["start_prompt", "review_prompt", "merge_prompt", "setup_script", "teardown_script", "status_script", "status_scripts", "reviewers"];
+const LONG = ["start_prompt", "review_prompt", "merge_prompt", "setup_script", "teardown_script", "copy_files", "link_folders", "status_script", "status_scripts", "reviewers"];
 
 function valueText(field: string, v: unknown): string {
   if (v === null || v === undefined) return field === "group_name" ? "(none)" : "(default)";
