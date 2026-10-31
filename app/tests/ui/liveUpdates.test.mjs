@@ -46,9 +46,10 @@ test("streamed text, task events and the clock still update the thread, cards an
         data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `Reply ${i}\n\nwith a second paragraph` }] } } } });
     await ui.run(["wait Reply 39"]);
 
-    // At its end, the thread follows the text as it streams in.
+    // At its end, the thread follows the text as it streams in. It's drawn as it comes (HA-39): as markdown again for
+    // each token, a long reply took longer and longer; the saved message is markdown.
     send({ type: "delta", task_id: task.id, text: "Streaming **now**" });
-    await ui.run(["wait Streaming now"]);
+    await ui.run(["wait Streaming **now**"]);
     for (let i = 0; i < 30; i++) send({ type: "delta", task_id: task.id, text: `\n\nstreamed ${i}` });
     await ui.run(["wait streamed 29"]);
     assert.ok((await thread()).gap < 80, "a thread at its end follows streamed text");
@@ -61,7 +62,7 @@ test("streamed text, task events and the clock still update the thread, cards an
 
     // The saved message takes the streamed text's place.
     send({ type: "delta_reset", task_id: task.id });
-    await ui.run(["gone Streaming now"]);
+    await ui.run(["gone Streaming **now**"]);
 
     // A task event redraws its card, and the open task's header.
     send({ type: "task", task: { ...task, title: "Live: renamed" } });
@@ -83,5 +84,12 @@ test("streamed text, task events and the clock still update the thread, cards an
     await page.locator("header button", { hasText: "0/2" }).waitFor();
     send({ type: "task", task: child(1, "done") });
     await page.locator("header button", { hasText: "1/2" }).waitFor();
+
+    // The open task's card is marked, and only its: each card follows whether it's the one open (HA-39).
+    const marked = (id) =>
+      page.waitForFunction((id) => [...document.querySelectorAll("[data-task][aria-current]")].map((e) => e.dataset.task).join() === id, id, { timeout: 5000 });
+    await marked(task.id);
+    await page.locator(`[data-task="${other.id}"]`).click();
+    await marked(other.id);
   });
 });
