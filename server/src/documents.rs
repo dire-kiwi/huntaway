@@ -415,9 +415,11 @@ const PLAN_FORMAT: &str = "The board shows the plan in its own theme (dark) with
     - <ia-badge kind=\"accent|ok|warn|danger|info\">label</ia-badge>: inline, e.g. in table cells\n\
     - <ul class=\"pros\">, <ul class=\"cons\">, <ul class=\"checklist\"> (<li class=\"done\"> for ticked items), \
     <ul class=\"files\"> (<li><code>path</code> what changes</li>)\n\
-    - <ia-diagram><svg viewBox=\"…\">…</svg></ia-diagram>: an inline SVG diagram; give shapes class \"box\" \
-    (\"box accent\" to highlight), lines class \"edge\" (and arrowhead paths class \"arrow\"), and text is \
-    themed already\n\
+    - <ia-diagram><pre>flowchart LR\nA[\"Start\"] --&gt; B[\"Finish\"]</pre></ia-diagram>: a Mermaid diagram, \
+    rendered by the board in its dark theme. Always use Mermaid for plan diagrams, never hand-written SVG. \
+    Put only Mermaid source inside the <pre>, without Markdown fences, scripts or a CDN. HTML-escape & and < \
+    in the source (&amp; and &lt;); keep labels short and quote those with punctuation. Use the diagram type \
+    that fits (flowchart, sequenceDiagram, stateDiagram-v2, etc.).\n\
     - <ia-question name=\"id\" type=\"radio|checkbox|select|text|textarea\" title=\"The question?\">…</ia-question>: \
     a question the user answers in the plan. Give each a unique name. Radio (one choice), checkbox (any \
     number, also for a checklist to tick) and select (a dropdown) take the choices as children, \

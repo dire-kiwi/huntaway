@@ -83,11 +83,28 @@ const escapeCss = (s) => s.replace(/["\\]/g, "\\$&");
 /** The browser to launch: $CHROMIUM, else /usr/bin/chromium, else undefined (Playwright's own, where it installs it). */
 export const defaultChromium = () => process.env.CHROMIUM || (fs.existsSync("/usr/bin/chromium") ? "/usr/bin/chromium" : undefined);
 
+let browserTmp;
+
+/**
+ * A TMPDIR for the browsers this process launches, removed when it exits: Chromium leaves folders behind in its TMPDIR
+ * (org.chromium.Chromium.*) on every launch, which used to pile up in /tmp.
+ */
+function browserTmpDir() {
+  if (!browserTmp) {
+    browserTmp = fs.mkdtempSync(path.join(os.tmpdir(), "ia-ui-check-"));
+    process.on("exit", () => fs.rmSync(browserTmp, { recursive: true, force: true }));
+  }
+  return browserTmp;
+}
+
 /**
  * Launch options for `chromium` (a path, or undefined for Playwright's own). Playwright's own is its full Chromium, in the
  * new headless mode as /usr/bin/chromium runs: its headless shell has no notifications or push.
  */
-export const launchOptions = (chromium = defaultChromium()) => (chromium ? { executablePath: chromium } : { channel: "chromium" });
+export const launchOptions = (chromium = defaultChromium()) => ({
+  ...(chromium ? { executablePath: chromium } : { channel: "chromium" }),
+  env: { ...process.env, TMPDIR: browserTmpDir() },
+});
 
 /**
  * Open a browser on the server. `errors` collects page and console errors that weren't allowed.

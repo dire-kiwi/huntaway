@@ -2116,6 +2116,23 @@ pub fn summary_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
+/// The tasks made together from one prompt (`fanout_id`, see api::CreateTask) in a profile, in the order they were made.
+pub fn fanout_tasks(c: &Connection, profile_id: &str, fanout_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE profile_id=?1 AND fanout_id=?2 AND kind='task' ORDER BY created_at, number")?;
+    let rows = st.query_map([profile_id, fanout_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// How long a task's agent has run, in seconds, over all of its runs (one still going counts up to `now`), and how many
+/// runs it has had.
+pub fn run_time(c: &Connection, task_id: &str, now: &str) -> Result<(f64, i64)> {
+    Ok(c.query_row(
+        "SELECT COALESCE(SUM(MAX(0, julianday(COALESCE(ended_at, ?2)) - julianday(created_at))), 0) * 86400, COUNT(*) FROM runs WHERE task_id=?1",
+        [task_id, now],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
+}
+
 /// A subproject's tasks, in board order.
 pub fn subproject_tasks(c: &Connection, subproject_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='task' ORDER BY position, created_at")?;
@@ -3012,8 +3029,7 @@ mod tests {
 
     #[test]
     fn commits_dont_sync_to_disk_one_by_one() {
-        let dir = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         let c = open(&dir.join("huntaway.db")).unwrap();
         let mode: String = c.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
         assert_eq!(mode, "wal");
@@ -3287,7 +3303,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled() {
-        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3334,7 +3350,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_54_gets_automations() {
-        let path = std::env::temp_dir().join(format!("huntaway-v54-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch("DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version=54;").unwrap();
@@ -3352,7 +3368,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_60_gets_setup_threads() {
-        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3378,7 +3394,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_48_has_its_done_tasks_done_since_they_last_changed() {
-        let path = std::env::temp_dir().join(format!("huntaway-v48-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3403,7 +3419,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_49_gets_profiles_cloning_into_their_own_folder() {
-        let path = std::env::temp_dir().join(format!("huntaway-v49-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3427,7 +3443,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_50_gets_external_links_and_asana_tokens() {
-        let path = std::env::temp_dir().join(format!("huntaway-v50-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3454,7 +3470,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_51_keeps_asana_on_for_its_profiles() {
-        let path = std::env::temp_dir().join(format!("huntaway-v51-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3480,7 +3496,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_56_gets_remerge() {
-        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3507,7 +3523,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_52_gets_fanout_ids() {
-        let path = std::env::temp_dir().join(format!("huntaway-v52-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3532,7 +3548,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_61_gets_push_subscriptions() {
-        let path = std::env::temp_dir().join(format!("huntaway-v61-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch("DROP TABLE push_subscriptions; PRAGMA user_version=61;").unwrap();
@@ -3550,7 +3566,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_53_gets_pull_request_watches() {
-        let path = std::env::temp_dir().join(format!("huntaway-v53-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3588,7 +3604,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_47_gets_show_usage_off() {
-        let path = std::env::temp_dir().join(format!("huntaway-v47-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3611,7 +3627,7 @@ mod tests {
     #[test]
     fn a_database_at_version_59_gets_projects_watch_pull_requests() {
         // As master's build left it, with labels (59) and no watch_pull_requests yet.
-        let path = std::env::temp_dir().join(format!("huntaway-v59-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3636,7 +3652,7 @@ mod tests {
     #[test]
     fn a_database_at_version_66_gets_the_summary_columns() {
         // As master's build left it, with copy_files and link_folders (66) and no summaries yet.
-        let path = std::env::temp_dir().join(format!("huntaway-v66-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3657,16 +3673,12 @@ mod tests {
         assert_eq!(p.summarizer, None);
         let t = insert_task(&c, NewTask { profile_id: "p", project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
         assert!(t.summary.is_none());
-        drop(c);
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
     }
 
     #[test]
     fn a_database_at_version_62_gets_projects_pr_preview_url() {
         // As master's build left it, with push_subscriptions (62) and no pr_preview_url yet.
-        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3695,7 +3707,7 @@ mod tests {
 
     #[test]
     fn a_database_at_version_65_gets_projects_copy_files_and_link_folders() {
-        let path = std::env::temp_dir().join(format!("huntaway-v65-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3731,7 +3743,7 @@ mod tests {
             (44, format!("ALTER TABLE tasks DROP COLUMN starred; ALTER TABLE tasks DROP COLUMN remind_at; ALTER TABLE tasks DROP COLUMN reminder; {newer}")),
             (45, newer.to_string()),
         ] {
-            let path = std::env::temp_dir().join(format!("huntaway-gh{version}-{}.db", crate::util::new_id()));
+            let path = crate::testing::temp_dir().join("huntaway.db");
             {
                 let c = open(&path).unwrap();
                 c.execute_batch(&format!(
@@ -3757,7 +3769,7 @@ mod tests {
 
     #[test]
     fn a_database_where_scratch_tasks_were_version_42_gets_archived_projects() {
-        let path = std::env::temp_dir().join(format!("huntaway-v42-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             // As a build of scratch tasks from before archived projects took version 42 left it.
@@ -3792,7 +3804,7 @@ mod tests {
 
     #[test]
     fn a_database_where_stars_and_reminders_were_version_42_keeps_them() {
-        let path = std::env::temp_dir().join(format!("huntaway-v42-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             // As a build of stars and reminders from before archived projects and scratch tasks
@@ -3826,8 +3838,7 @@ mod tests {
 
     #[test]
     fn scratch_chats_become_scratch_tasks() {
-        let dir = std::env::temp_dir().join(format!("huntaway-v41-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         let path = dir.join("huntaway.db");
         {
             let c = open(&path).unwrap();
@@ -3885,7 +3896,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_38_gets_permission_request_kinds() {
-        let path = std::env::temp_dir().join(format!("huntaway-v38-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             // As version 38 (task documents) left it, before permission requests had a kind (and

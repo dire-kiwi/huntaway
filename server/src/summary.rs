@@ -331,20 +331,19 @@ mod tests {
     }
 
     /// A task in review whose review passed, in a project that summarises, with a worktree branch with a commit.
-    fn passed(s: &Shared) -> (Task, std::path::PathBuf) {
+    fn passed(s: &Shared) -> Task {
         let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
         let np = db::NewProject { id: "pr", profile_id: &p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: true };
         db::insert_project(&s.db(), np).unwrap();
         let new = NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title: "t", description: "", status: "in_review", use_worktree: true, model: None, effort: None, claude_config_id: None };
         let task = db::insert_task(&s.db(), new).unwrap();
-        let dir = std::env::temp_dir().join(format!("ia-summary-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         for args in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]] {
             assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).status().unwrap().success());
         }
         let review = db::Review { thread_id: "r".into(), state: "passed".into(), summary: Some("Fine.".into()), updated_at: now(), ..Default::default() };
         let fields = [("worktree_path", json!(crate::util::path_str(&dir))), ("worktree_state", json!("ready")), ("branch", json!("ia/x")), ("review", json!(review))];
-        (db::update_task(&s.db(), &task.id, &fields).unwrap().unwrap(), dir)
+        db::update_task(&s.db(), &task.id, &fields).unwrap().unwrap()
     }
 
     fn summary_of(s: &Shared, task: &Task) -> Option<ChangeSummary> {
@@ -366,7 +365,7 @@ mod tests {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
-            let (task, dir) = passed(&s);
+            let task = passed(&s);
             let haiku = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
             db::update_project(&s.db(), "pr", &[("summarizer", json!(json!(haiku).to_string()))]).unwrap();
             start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().expect("it starts");
@@ -396,7 +395,6 @@ mod tests {
             let sum = summary_of(&s, &task).unwrap();
             assert_eq!(sum.state, "failed", "{:?}", sum.text);
             crate::runs::TEST_CAN_RUN.set(false);
-            std::fs::remove_dir_all(&dir).unwrap();
         })
     }
 
@@ -405,7 +403,7 @@ mod tests {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
-            let (task, dir) = passed(&s);
+            let task = passed(&s);
             db::update_project(&s.db(), "pr", &[("auto_summary", json!(false))]).unwrap();
             assert!(start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().is_none());
             db::update_project(&s.db(), "pr", &[("auto_summary", json!(true))]).unwrap();
@@ -417,7 +415,6 @@ mod tests {
             assert!(start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().is_none());
             assert!(summary_of(&s, &task).is_none() && db::summary_threads(&s.db(), &task.id).unwrap().is_empty());
             crate::runs::TEST_CAN_RUN.set(false);
-            std::fs::remove_dir_all(&dir).unwrap();
         })
     }
 
@@ -426,7 +423,7 @@ mod tests {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
-            let (task, dir) = passed(&s);
+            let task = passed(&s);
             start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().unwrap();
             let thread = db::summary_threads(&s.db(), &task.id).unwrap().remove(0);
             crate::runner::send(&s, &task.id, "one more thing").unwrap();
@@ -436,7 +433,6 @@ mod tests {
             reply(&s, &thread, Some("A summary."));
             assert_eq!(summary_of(&s, &task).unwrap().state, "stopped");
             crate::runs::TEST_CAN_RUN.set(false);
-            std::fs::remove_dir_all(&dir).unwrap();
         })
     }
 
@@ -445,7 +441,7 @@ mod tests {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
-            let (task, dir) = passed(&s);
+            let task = passed(&s);
             start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().unwrap();
             let thread = db::summary_threads(&s.db(), &task.id).unwrap().remove(0);
             reply(&s, &thread, Some("A summary."));
@@ -453,7 +449,6 @@ mod tests {
             let review = db::get_task(&s.db(), &task.id).unwrap().unwrap().review.unwrap();
             assert_ne!(review.reviewers[0].thread_id, thread.id);
             crate::runs::TEST_CAN_RUN.set(false);
-            std::fs::remove_dir_all(&dir).unwrap();
         })
     }
 }

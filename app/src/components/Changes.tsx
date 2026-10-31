@@ -1652,7 +1652,7 @@ function PatchView({ files, head, empty, layout, source }: { files: FileDiff[]; 
         const k = `${i}:${f.path}`;
         const fold = isFolded(f, i);
         return (
-          <div key={k} ref={(el) => void (refs.current[i] = el)}>
+          <div key={k} ref={(el) => void (refs.current[i] = el)} data-file={f.path}>
             <div
               data-file-head
               onClick={() => setFolded((s) => ({ ...s, [k]: !fold }))}
@@ -1764,7 +1764,7 @@ function TurnView({ turn, shown, layout }: { turn: Turn; shown: { diff?: TurnDif
 }
 
 /** The branch's changes against its base: its commits, and everything changed (uncommitted work too). */
-function BranchView({ diff, layout }: { diff: DiffResult | null; layout: Layout }) {
+export function BranchView({ diff, layout }: { diff: DiffResult | null; layout: Layout }) {
   const files = useMemo(() => parseDiff(diff?.patch ?? ""), [diff]);
   const base = diff?.base;
   const source = useMemo<CommentSource>(() => ({ key: "branch", label: base ? `the branch's changes against ${base}, uncommitted ones too` : "the branch's changes" }), [base]);
@@ -1778,7 +1778,12 @@ function BranchView({ diff, layout }: { diff: DiffResult | null; layout: Layout 
       empty="No changes yet."
       head={
         <div className="mb-2 px-1.5">
-          {diff.merge_base && <div className="text-faint">From {diff.merge_base.slice(0, 8)} on {diff.base}, with uncommitted changes</div>}
+          {diff.merge_base && (
+            <div className="text-faint">
+              From {diff.merge_base.slice(0, 8)} on {diff.base}
+              {diff.branch ? `: the commits on ${diff.branch} (the task has no worktree)` : ", with uncommitted changes"}
+            </div>
+          )}
           {diff.commits?.trim() && <div className="mt-1 whitespace-pre-wrap text-muted">{diff.commits.trim()}</div>}
           {diff.patch?.includes("\n… [truncated") && <div className="mt-1 text-amber-300">The diff is too big to show all of it.</div>}
         </div>
@@ -1800,7 +1805,7 @@ function EmptyMain({ text }: { text: string }) {
 }
 
 /** Unified or side-by-side diffs (`|`). */
-function LayoutToggle({ layout, onToggle }: { layout: Layout; onToggle: () => void }) {
+export function LayoutToggle({ layout, onToggle }: { layout: Layout; onToggle: () => void }) {
   return (
     <span className="flex gap-0.5" title="Unified or split diffs (|)">
       {(["unified", "split"] as Layout[]).map((l) => (

@@ -754,7 +754,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
               </>
             )}
 
-            {current.id === "review" && hostSupports(host, 83) && form.auto_summary !== undefined && (
+            {current.id === "review" && hostSupports(host, 84) && form.auto_summary !== undefined && (
               <>
                 <div className="space-y-1.5">
                   <Toggle checked={form.auto_summary} onChange={(v) => set("auto_summary", v)} label="Summarise each task's changes once its review passes" />

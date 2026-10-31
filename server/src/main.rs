@@ -17,6 +17,7 @@ mod db;
 mod demo;
 mod disk;
 mod documents;
+mod fanout;
 mod gh_mcp;
 mod git_view;
 mod github;
@@ -431,8 +432,7 @@ async fn shutdown_signal() {
 mod tests {
     #[test]
     fn db_path_keeps_the_database_from_before_the_rename() {
-        let dir = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         assert_eq!(super::db_path(&dir), dir.join("huntaway.db"));
         std::fs::write(dir.join("issue-agent.db"), "").unwrap();
         assert_eq!(super::db_path(&dir), dir.join("issue-agent.db"));

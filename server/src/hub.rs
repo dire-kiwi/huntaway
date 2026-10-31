@@ -1097,8 +1097,7 @@ mod tests {
                     .route("/api/permissions/{id}", axum::routing::post(|| async { Json(json!({})) }))
             };
             link_http(&s, "old", old(), 0).await;
-            let ui = std::env::temp_dir().join(format!("ia-ui-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&ui).unwrap();
+            let ui = crate::testing::temp_dir();
             std::fs::write(ui.join("index.html"), "<!doctype html>").unwrap();
             let files = tower_http::services::ServeDir::new(&ui).fallback(tower_http::services::ServeFile::new(ui.join("index.html")));
             link_http(&s, "old-ui", old().fallback_service(files), 0).await;
@@ -1298,7 +1297,7 @@ mod tests {
             const BROKER_TOKEN: &str = "broker-token-0123456789";
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let broker = l.local_addr().unwrap();
-            let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..Default::default() });
+            let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..Default::default() }).unwrap();
             tokio::spawn(async move { axum::serve(l, app).await });
             // The hub is on the broker, which it reaches its own API from.
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

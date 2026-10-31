@@ -167,6 +167,28 @@ function ReviewerPart({ part, thread, current }: { part: ReviewerRun; thread: Ta
   );
 }
 
+/** What a task's latest review found, as the compare view shows it (HA-51): its verdict, and each reviewer's. */
+export function ReviewVerdict({ task }: { task: Task }) {
+  const r = task.review;
+  const threads = useThreads(r);
+  if (!r) return <div className="text-faint">Not reviewed yet</div>;
+  const d = describeReview(r, threads);
+  const parts = reviewParts(r);
+  return (
+    <div className="space-y-1.5">
+      <button className={clsx("flex items-center gap-1.5 hover:underline", TONE_TEXT[d.tone])} title={`${d.title}\n\nClick to open the review thread.`} onClick={() => openTask(threadToOpen(r))}>
+        {r.state === "running" ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />}
+        {d.headline}
+      </button>
+      {parts.length > 1 ? (
+        parts.map((p, i) => <ReviewerPart key={p.thread_id} part={p} thread={threads[i]} current={false} />)
+      ) : (
+        <Findings summary={r.summary} issues={r.issues} running={r.state === "running"} />
+      )}
+    </div>
+  );
+}
+
 /** A task's review tab: the latest review and a way to run one. `threadId` is
  * the review thread it's shown beside, if any. */
 export function ReviewSummary({ task, threadId }: { task: Task; threadId?: string }) {
@@ -238,7 +260,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
   );
 }
 
-/** A task's summary tab: the summary of its changes written once its review passed (API 83), and a way to write one. */
+/** A task's summary tab: the summary of its changes written once its review passed (API 84), and a way to write one. */
 export function ChangeSummaryView({ task }: { task: Task }) {
   const s = task.summary;
   const auto = useProject(task.project_id)?.auto_summary;

@@ -196,7 +196,7 @@ details[open] > summary {
   margin-bottom: 8px;
 }
 
-/* Inline SVG diagrams: shapes and text in the theme's colours. */
+/* Older plans' inline SVG diagrams. New diagrams use Mermaid, shown as images. */
 svg text {
   fill: var(--fg);
   font-family: var(--font-sans);
@@ -481,6 +481,23 @@ ia-diagram {
 ia-diagram svg {
   max-width: 100%;
   height: auto;
+}
+ia-diagram > img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+ia-diagram > pre {
+  text-align: left;
+}
+ia-diagram > pre[hidden] {
+  display: none;
+}
+ia-diagram .ia-diagram-error {
+  color: var(--danger);
+  white-space: pre-wrap;
+  text-align: left;
 }
 
 /* Free-form HTML, as a page of its own in a frame that fits it (planTheme.ts). */

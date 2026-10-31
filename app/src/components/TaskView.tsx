@@ -1,12 +1,12 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, GitCompareArrows, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, ApiError, canRunAgents, dependencyQueued, limitQueued, outOfUsage, documentsOnly, hostStatuses, isScratch, isSummaryThread, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
-import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
+import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openCompare, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, ConfigUsageNote, configDir } from "./ClaudeConfigs";
-import { harnessLabels, useConfigsOf, useFanout } from "./Fanout";
+import { COMPARE_API, harnessLabels, useConfigsOf, useFanout } from "./Fanout";
 import { effortOptions, inheritedModel, useAgentModels } from "../agents";
 import { useNarrow } from "../narrow";
 import { resetsPhrase, resetTime } from "../usageConfigs";
@@ -226,8 +226,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const tabs: Tab[] = [...labels, ...(group || scratch || docsOnly ? ["thread"] : ["thread", "changes"])];
   const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch;
   if (reviews) tabs.push("review");
-  // Once there's a summary, or a review that passed to summarise (API 83): the tabs fit a phone's width until then.
-  const summaries = reviews && hostSupports(host, 83) && (!!task.summary || task.review?.state === "passed");
+  // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
+  const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
@@ -494,7 +494,7 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
   const project = useProject(thread.project_id);
   const [rootRef, wide] = useWide();
   const key = parent && `${project?.key ?? "T"}-${parent.number}`;
-  // Which of the task's reviewers this is, when it has several. A summary thread summarises its changes instead (API 83).
+  // Which of the task's reviewers this is, when it has several. A summary thread summarises its changes instead (API 84).
   const reviewer = parent?.review && reviewParts(parent.review).find((p) => p.thread_id === thread.id)?.label;
   const summary = isSummaryThread(thread);
   const back = () => (parent ? openTask(parent.id) : project ? navigate({ name: "board", projectId: project.id }) : history.back());
@@ -1150,10 +1150,20 @@ function FanoutSection({ task }: { task: Task }) {
   const tasks = useFanout(task);
   const projects = useStore((s) => s.projects);
   const configs = useConfigsOf(tasks);
+  const compares = hostSupports(useHost(task.host_id), COMPARE_API);
   if (tasks.length < 2) return null;
   const labels = harnessLabels(tasks, configs);
   return (
-    <Section title="Same prompt">
+    <Section
+      title="Same prompt"
+      right={
+        compares && (
+          <button className="flex items-center gap-1 text-[11.5px] text-faint hover:text-fg" onClick={() => openCompare(task.id)} title="Compare their work side by side, and pick one">
+            <GitCompareArrows size={12} /> Compare all {tasks.length}
+          </button>
+        )
+      }
+    >
       <div className="-mx-1 space-y-0.5">
         {tasks.map((t, i) => (
           <button

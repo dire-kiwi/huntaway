@@ -376,9 +376,9 @@ export interface Project {
   done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
-  /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 83). */
+  /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
-  /** Who writes those summaries; null is the task's config with the default model and effort (API 83). */
+  /** Who writes those summaries; null is the task's config with the default model and effort (API 84). */
   summarizer?: Reviewer | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
@@ -452,7 +452,7 @@ export interface Review {
 
 export type SummaryState = "running" | "done" | "failed" | "stopped";
 
-/** A summary of a task's changes, written once its review passed (API 83). */
+/** A summary of a task's changes, written once its review passed (API 84). */
 export interface ChangeSummary {
   /** The summary thread: a task of kind "review" and type "summary" whose parent is the task. */
   thread_id: string;
@@ -502,7 +502,7 @@ export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
-/** A review thread that summarises its task's changes rather than reviewing them (API 83): its type is "summary". */
+/** A review thread that summarises its task's changes rather than reviewing them (API 84): its type is "summary". */
 export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "summary";
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
@@ -619,7 +619,7 @@ export interface Task {
   reminder?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
-  /** The latest summary of its changes (API 83). */
+  /** The latest summary of its changes (API 84). */
   summary?: ChangeSummary | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
@@ -706,6 +706,42 @@ export interface DiffResult {
   stat?: string;
   patch?: string;
   untracked?: string[];
+  /** Set when the task has no worktree (API 81): the diff is of the commits on this branch of its. */
+  branch?: string;
+}
+
+/** What the compare view shows of a task made from one prompt with others, besides the task (API 81). */
+export interface FanoutFacts {
+  id: string;
+  /** How long its agent has run, all of its runs together, and how many runs. */
+  run_secs: number;
+  runs: number;
+  /** Its agent, or one of its reviewers, is at work. */
+  working: boolean;
+  /** Its worktree's uncommitted changes as `git status --porcelain` lists them (the first 20), and how many. */
+  uncommitted: string[];
+  uncommitted_count: number;
+  uncommitted_error: string | null;
+  /** Commits in its worktree that no branch, remote branch or tag has (a detached HEAD's): picking keeps the worktree. */
+  stray_commits?: number;
+  /** Its branch, if the repository has it, and where it's pushed (`origin/ia/x-1`). */
+  branch: string | null;
+  pushed: string | null;
+}
+
+/** What picking one of them did with another (API 81). */
+export interface PickOutcome {
+  id: string;
+  key: string;
+  stopped: boolean;
+  /** Completed as not done (rather than done already). */
+  completed: boolean;
+  worktree: "removed" | "kept" | "none";
+  branch: "deleted" | "kept" | "none";
+  pushed_branch: "deleted" | "kept" | "none";
+  pr: "closed" | "kept" | "none";
+  /** What didn't go as asked, and why. */
+  notes: string[];
 }
 
 /** A file with changes, as in `git status --short`: its index (`x`) and working tree (`y`) state (API 62). */
@@ -1652,6 +1688,11 @@ export const api = {
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
+  /** The tasks made from the same prompt as this one, it among them (API 81). */
+  fanout: (h: string, id: string) => on(h).get<{ tasks: FanoutFacts[] }>(`/tasks/${enc(id)}/fanout`),
+  /** Keeps this task, and completes the others made from the same prompt as not done, cleaning up after them (API 81). */
+  pickFanout: (h: string, id: string, b: { delete_branches: boolean; close_prs: boolean; discard_uncommitted: boolean }) =>
+    on(h).post<{ task: Task; results: PickOutcome[] }>(`/tasks/${enc(id)}/fanout/pick`, b),
   /** Whether moving the task to Done would leave its work unmerged (API 75). */
   unmerged: (h: string, id: string) => on(h).get<{ unmerged: boolean }>(`/tasks/${enc(id)}/unmerged`),
   /**

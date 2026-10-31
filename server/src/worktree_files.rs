@@ -619,7 +619,7 @@ mod tests {
     }
 
     async fn fixture(s: &Shared, copy_files: &str, link_folders: &str) -> Fixture {
-        let root = std::env::temp_dir().join(format!("ia-wf-{}", crate::util::new_id()));
+        let root = crate::testing::temp_dir();
         let (repo, outside) = (root.join("repo"), root.join("outside"));
         std::fs::create_dir_all(&repo).unwrap();
         write(&outside.join("passwd"), "outside");
@@ -875,7 +875,7 @@ mod tests {
     #[test]
     fn relinks_folders_after_the_repository_moves() {
         crate::testing::run(async || {
-        let root = std::env::temp_dir().join(format!("ia-wf-{}", crate::util::new_id()));
+        let root = crate::testing::temp_dir();
         let wt = root.join("wt");
         std::fs::create_dir_all(wt.join("a")).unwrap();
         std::os::unix::fs::symlink(root.join("old/models"), wt.join("models")).unwrap();

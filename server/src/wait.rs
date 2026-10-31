@@ -826,8 +826,7 @@ mod tests {
     #[test]
     fn its_command_is_stopped_when_the_server_goes_without_cleaning_up() {
         testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-test-{}", new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let log = std::fs::File::create(dir.join("log")).unwrap();
             let pid_file = dir.join("pid");
             // `wait` waits for its own jobs only, not the watchdog.
