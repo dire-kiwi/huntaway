@@ -1142,6 +1142,11 @@ async fn check(s: &Shared, task: &Task, mode: &str, w: &mut Watched, now: Instan
     let failed_checks: Vec<&Check> = pr.checks.iter().filter(|c| c.state == CheckState::Failed).collect();
     let checks_failed = wake.news["events"].as_array().is_some_and(|e| e.iter().any(|e| e == "checks_failed"));
     let logs = if checks_failed { watcher.failed_logs(&failed_checks).await } else { Vec::new() };
+    // Fetching them takes a while: the news waits for the next read if the task moved on meanwhile.
+    if !still_wakes(s, &task.id, &key, &wake.call_id) {
+        w.failures = 0;
+        return;
+    }
     match crate::runner::send_as(s, &task.id, &wake_message(&wake.news, &logs), true) {
         Ok(_) => {
             w.failures = 0;
@@ -1157,6 +1162,19 @@ async fn check(s: &Shared, task: &Task, mode: &str, w: &mut Watched, now: Instan
         // Started meanwhile, say: the news waits for the next read.
         Err(e) => failed(w, format!("couldn't wake the agent: {}", e.1)),
     }
+}
+
+/// Whether the news kept as `call_id` (see `news_to_wake`) still wakes `task_id`'s agent: the task is
+/// still in review on the pull request `key`, its agent is idle, and a wait wasn't told that news meanwhile.
+fn still_wakes(s: &Shared, task_id: &str, key: &str, call_id: &str) -> bool {
+    if s.is_running(task_id) {
+        return false;
+    }
+    let c = s.db();
+    let on_pr = |t: &Task| t.pr_url.as_deref().and_then(|u| Target::parse(u, None).ok()).is_some_and(|t| t.key() == key);
+    let task = db::get_task(&c, task_id).ok().flatten();
+    task.is_some_and(|t| t.status == "in_review" && idle(&t) && on_pr(&t))
+        && load(&c, task_id, key).ok().flatten().and_then(|r| r.pending).is_some_and(|p| p.call_id == call_id)
 }
 
 /// The watcher of the pull request `url` of `task`, unless it can't be read as the task's
@@ -2188,14 +2206,14 @@ mod tests {
         c["checkSuite"] = json!({"workflowRun": {"workflow": {"name": "CI"}}});
     }
 
-    /// A fake gh in `dir` that prints a log for `gh run view --job 42 --log-failed` and fails
-    /// for any other job, writing each call's arguments to `dir/calls`.
+    /// A fake gh in `dir` that prints a log for `gh run view --job 42 --log-failed` (once there's no
+    /// `dir/hold`) and fails for any other job, writing each call's arguments to `dir/calls`.
     fn fake_gh(dir: &std::path::Path) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(dir).unwrap();
         let gh = dir.join("gh");
         let script = format!(
-            "#!/bin/sh\necho \"$*\" >> '{}/calls'\ncase \"$*\" in\n  'run view --job 42 --log-failed -R o/r') printf 'test\\tRun tests\\t2026-11-01T01:02:05.0000000Z FAILED a::b <script>\\n';;\n  *) echo 'gh: job not found' >&2; exit 1;;\nesac\n",
+            "#!/bin/sh\necho \"$*\" >> '{0}/calls'\ncase \"$*\" in\n  'run view --job 42 --log-failed -R o/r') while [ -e '{0}/hold' ]; do sleep 0.02; done; printf 'test\\tRun tests\\t2026-11-01T01:02:05.0000000Z FAILED a::b <script>\\n';;\n  *) echo 'gh: job not found' >&2; exit 1;;\nesac\n",
             dir.display()
         );
         std::fs::write(&gh, script).unwrap();
@@ -2299,6 +2317,47 @@ mod tests {
             assert!(sent[0].contains("Failed checks:\n- CI / test (failure): https://github.com/o/r/actions/runs/0\n  The end of its failed steps' log:\n<untrusted-data>\n--- Run tests ---\nFAILED a::b &lt;script&gt;\n</untrusted-data>\n- Vercel (failure): https://github.com/o/r/actions/runs/1\n\n"), "{}", sent[0]);
             // The board shows them, from the same read.
             assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().pr_checks.unwrap().failed.len(), 2);
+            settle(&s, &t.id).await;
+            crate::gh_mcp::TEST_GH_PROGRAM.set(None);
+            crate::runs::TEST_CAN_RUN.set(false);
+            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    // HA-53 review: fetching the logs takes a while, and the task can leave review meanwhile.
+    #[test]
+    fn a_task_moved_out_of_review_while_its_logs_are_fetched_isnt_woken() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let dir = std::env::temp_dir().join(format!("ia-wake-moved-{}", crate::util::new_id()));
+            fake_gh(&dir);
+            std::fs::write(dir.join("hold"), "").unwrap();
+            let s = crate::testing::state();
+            let (t, gh) = in_review(&s, "failures");
+            let (start, mut watched) = (Instant::now(), HashMap::new());
+            sweep_at(&s, &mut watched, start, 1).await;
+            let mut v = response("me", "b2", &[("test", "COMPLETED", "FAILURE", true)], &[]);
+            actions_job(&mut v, 0, 42);
+            *gh.borrow_mut() = v;
+            // Once its log is asked for, the user moves the task to Done.
+            let moved = async {
+                while !std::fs::read_to_string(dir.join("calls")).unwrap_or_default().contains("run view") {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                db::update_task(&s.db(), &t.id, &[("status", json!("done"))]).unwrap();
+                std::fs::remove_file(dir.join("hold")).unwrap();
+            };
+            tokio::join!(sweep_at(&s, &mut watched, start, 2), moved);
+            assert_eq!(wakes(&s, &t.id), Vec::<String>::new());
+            assert!(!s.is_running(&t.id));
+            assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().status, "done");
+            // Back in review, the failure is still news for it.
+            db::update_task(&s.db(), &t.id, &[("status", json!("in_review"))]).unwrap();
+            sweep_at(&s, &mut watched, start, 3).await;
+            sweep_at(&s, &mut watched, start, 4).await;
+            let sent = wakes(&s, &t.id);
+            assert_eq!(sent.len(), 1, "{sent:?}");
+            assert!(sent[0].contains("FAILED a::b"), "{}", sent[0]);
             settle(&s, &t.id).await;
             crate::gh_mcp::TEST_GH_PROGRAM.set(None);
             crate::runs::TEST_CAN_RUN.set(false);
