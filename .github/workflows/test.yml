@@ -109,14 +109,6 @@ jobs:
         working-directory: app
         run: npm run test:ui
 
-      # TEMPORARY (HA-41): planTheme's browser closes on the runners; this shows why.
-      - name: planTheme with the browser's log
-        if: failure()
-        working-directory: app
-        env:
-          DEBUG: pw:browser*
-        run: node --experimental-strip-types --test tests/ui/planTheme.test.mjs 2>&1 | tail -150
-
       # What the page showed when a step failed (scripts/ui-check.mjs saves it).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
