@@ -50,6 +50,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, dependencyQueued, hostSupports, PERMISSION_MODES, runningAgentSteers, stopTitle, type Message, type PermissionMode, type RewindResult, type Task, type Turn } from "../api";
 import { useHost, useProject, useStore, useThreadMessages } from "../store";
+import { useDelta } from "../deltas";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../subagents";
 import { buildItems, threadModel, type Call, type Item, type ThreadModel, type ToolResult } from "../threadModel";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../attachments";
@@ -869,11 +870,6 @@ export const Thread = memo(function Thread({
   // Another subagent (or the main conversation) tries a page that failed again.
   useEffect(() => setOlderFailed(false), [viewKey]);
 
-  useEffect(() => {
-    pinned.current = true;
-    mainScroll.current = null;
-    setOlderFailed(false);
-  }, [task.id]);
 
   // Escape goes back from a subagent's thread (before the task panel takes it to close).
   useEffect(() => {
@@ -1006,11 +1002,22 @@ function useStableGroupKeys(items: Item[], taskId: string): Item[] {
   }, [items, taskId]);
 }
 
-/** The agent's reply as it streams in (not yet saved as a message). `onGrow` keeps the thread scrolled to it. */
+/**
+ * The agent's reply as it streams in (not yet saved as a message), as plain text: drawing it as markdown
+ * again for each token would take longer the longer it got. The saved message is markdown. A paragraph
+ * each, so a token changes (and lays out again) only the last one. `onGrow` keeps the thread scrolled to it.
+ */
 function StreamingText({ taskId, onGrow }: { taskId: string; onGrow: () => void }) {
-  const delta = useStore((s) => s.deltas[taskId]);
+  const delta = useDelta(taskId);
   useLayoutEffect(onGrow, [delta, onGrow]);
-  return delta ? <Markdown text={delta} /> : null;
+  if (!delta) return null;
+  return (
+    <div className="prose-chat break-words whitespace-pre-wrap">
+      {delta.split(/\n{2,}/).map((p, i) => (
+        <p key={i}>{p}</p>
+      ))}
+    </div>
+  );
 }
 
 // Memoized: the thread redraws for changes to its task (e.g. its context use), which leave the items as they were.
@@ -1163,7 +1170,7 @@ function ModeSelect({ control, running }: { control: ReturnType<typeof useModeCo
     <div ref={root} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        title={`Permission mode: ${current.description} (Shift+Tab to cycle)`}
+        title={`Permission mode: ${current.description} (Shift+Tab in the message box to cycle; Escape, Shift+Tab to leave the box)`}
         className={clsx(
           "flex h-6 items-center gap-1 rounded-md border border-line px-1.5 text-[11.5px] hover:border-line-strong hover:bg-white/5",
           MODE_STYLE[mode].className,
@@ -1363,6 +1370,8 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   const [err, setErr] = useState<string | null>(null);
   const [unsaved, setUnsaved] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Set by Escape, so the next Shift+Tab leaves the field rather than cycling the permission mode.
+  const tabLeaves = useRef(false);
   const modeControl = useModeControl(task);
   // Hosts before API 10 refuse messages while the agent is running.
   const host = useHost(task.host_id);
@@ -1524,7 +1533,10 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
             onPaste={attach.onPaste}
             onKeyDown={(e) => {
               if (skills.onKeyDown(e)) return;
-              if (e.key === "Tab" && e.shiftKey) {
+              // Shift+Tab cycles the permission mode; after Escape it moves focus out of the field, as it does elsewhere.
+              const leaving = tabLeaves.current;
+              tabLeaves.current = e.key === "Escape" || (leaving && e.key === "Shift");
+              if (e.key === "Tab" && e.shiftKey && !leaving) {
                 e.preventDefault();
                 modeControl.cycle();
                 return;

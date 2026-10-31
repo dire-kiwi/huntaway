@@ -1267,7 +1267,7 @@ mod tests {
             let hub = crate::testing::state_as(id);
             let app = crate::api::router(hub.clone());
             tokio::spawn(async move { axum::serve(l, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await });
-            crate::broker::dial_out(&hub, format!("http://{broker}"), BROKER_TOKEN.into(), "hub".into());
+            crate::broker::dial_out(&hub, format!("http://{broker}"), BROKER_TOKEN.into(), "hub".into(), "hub-key".into());
 
             // The host dials the hub at the broker, over a connection that dies.
             let host = node("host", "laptop");

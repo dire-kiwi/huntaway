@@ -446,10 +446,9 @@ huntaway serve --broker https://broker.example.com --broker-token <broker token>
 
 Then open `https://broker.example.com/?token=<host token>` from anywhere: the broker serves that
 host's board, API and websockets. Its token (`huntaway token`) still guards the API, so the broker
-signs no one in; the broker's own token only says which hosts may connect, and `/api/open-token`
-(`--open-token`) isn't served through it. Each host is known on the broker by a name
-(`--broker-name`, by default its own name as lowercase letters, digits and hyphens), and a request
-reaches the host:
+signs no one in, and `/api/open-token` (`--open-token`) isn't served through it. Each host is known
+on the broker by a name (`--broker-name`, by default its own name as lowercase letters, digits and
+hyphens), and a request reaches the host:
 
 - at `/_broker/h/<name>/…`, for anything that takes a base URL: a hub links a host through the
   broker with `--hub https://broker.example.com/_broker/h/<hub's name>` (the host dials in to a hub
@@ -461,6 +460,15 @@ reaches the host:
 A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
 whose board links the others) on the broker, and its board shows every host it links. Running the
 broker is in `server/broker/README.md`.
+
+The broker's token lets a host connect under any name that's free, and the browsers and hubs that
+pick that name then send it their requests, host token included. So keep it as secret as a host
+token, and give it only to your own hosts. A name stays with the host that took it: each host keeps
+a secret key in its data dir (`broker_key`), and the broker refuses the name to any other host while
+that one is connected and for an hour after it goes. A second host with the same name (two machines
+with the same host name, say) is refused with a message saying so, and keeps trying until the name
+is free: give it its own `--broker-name`. The broker keeps names in memory only, so after it
+restarts, the first host to connect under a name has it.
 
 ### Codex agents
 

@@ -122,58 +122,118 @@ function findServerBinary() {
   return candidates.find((p) => fs.existsSync(p));
 }
 
-async function healthy(base) {
-  try {
-    const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000) });
-    return res.ok;
-  } catch {
-    return false;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Whether a fetch failed because nothing listens there, rather than a server that's slow (still starting, or busy). */
+const refused = (e) => e?.cause?.code === "ECONNREFUSED";
+
+/**
+ * Whether a server answers at `base`. Only a refused connection counts as none: one that's still starting (a previous
+ * launch's, or one restarting itself) is waited for, for up to `tries` seconds, rather than started a second time.
+ */
+async function healthy(base, tries = 10) {
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000) });
+      if (res.ok) return true;
+    } catch (e) {
+      if (refused(e)) return false;
+    }
+    if (i + 1 >= tries) throw new Error(`Something on ${base} doesn't answer as a Huntaway server. Is another program using port ${port}?`);
+    await sleep(1000);
   }
 }
 
-/** Start the server and resolve with its token once it prints IA_READY. */
-function startServer() {
+// The server's last lines of output, for the error page.
+const LOG_LINES = 40;
+const serverLog = [];
+let partial = "";
+function keepLog(chunk) {
+  const lines = (partial + chunk.toString()).split(/\r?\n/);
+  partial = lines.pop();
+  for (const line of lines) if (line.trim()) serverLog.push(line);
+  serverLog.splice(0, serverLog.length - LOG_LINES);
+}
+
+/** Start the server and resolve with its token once it prints IA_READY. `onLost` runs if it exits after that. */
+function startServer(onLost) {
   const bin = findServerBinary();
   if (!bin) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
   const args = ["serve", "--port", String(port)];
   if (process.env.IA_DATA_DIR || config.dataDir) args.push("--data-dir", defaultDataDir());
   if (config.host) args.push("--host", config.host);
-  serverProc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
-  serverProc.stderr.on("data", (d) => process.stderr.write(d));
-  serverProc.on("exit", (code) => {
-    console.error(`huntaway server exited (${code})`);
-    serverProc = null;
+  serverLog.length = 0;
+  partial = "";
+  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  serverProc = proc;
+  let ready = false;
+  proc.stderr.on("data", (d) => {
+    process.stderr.write(d);
+    keepLog(d);
+  });
+  // Once it's exited and the last of its output is in: on close, unless agents it started still hold its pipes.
+  const ended = new Promise((resolve) =>
+    proc.on("exit", (code, signal) => {
+      if (serverProc === proc) serverProc = null;
+      proc.once("close", () => resolve({ code, signal }));
+      setTimeout(() => resolve({ code, signal }), 500);
+    }),
+  );
+  ended.then(({ code, signal }) => {
+    console.error(`huntaway server exited (${signal ?? code})`);
+    if (ready && !stopping) onLost?.();
   });
   return new Promise((resolve, reject) => {
     let buf = "";
     const timer = setTimeout(() => reject(new Error("Server did not start within 15s")), 15000);
-    serverProc.stdout.on("data", (d) => {
+    proc.stdout.on("data", (d) => {
       process.stdout.write(d);
       buf += d.toString();
       const m = buf.match(/IA_READY (\{.*\})/);
       if (m) {
         clearTimeout(timer);
+        ready = true;
         resolve(JSON.parse(m[1]).token);
       }
     });
-    serverProc.on("exit", (code) => {
+    proc.on("error", (e) => {
       clearTimeout(timer);
-      reject(new Error(`Server exited with code ${code}`));
+      reject(e);
+    });
+    ended.then(({ code, signal }) => {
+      clearTimeout(timer);
+      reject(new Error(`Server exited with ${signal ? `signal ${signal}` : `code ${code}`}`));
     });
   });
 }
 
-async function resolveTarget() {
+/** The server to use: the one configured, one already running on the port, or one started here. */
+async function resolveTarget(onLost) {
   if (config.serverUrl) return { base: config.serverUrl.replace(/\/$/, ""), token: config.token || "" };
   const base = `http://127.0.0.1:${port}`;
-  const token = (await healthy(base)) ? readToken() : await startServer();
-  return { base, token };
+  if (await healthy(base)) return { base, token: readToken() };
+  try {
+    return { base, token: await startServer(onLost) };
+  } catch (e) {
+    // Another launch's server may have taken the port meanwhile: use it.
+    if (await healthy(base, 3).catch(() => false)) return { base, token: readToken() };
+    throw e;
+  }
 }
 
-function errorPage(message) {
+// The error page's Retry goes here, and is stopped on its way (a web address, so that it's navigated to like one).
+const RETRY_URL = "https://retry.huntaway.invalid/";
+
+function errorPage(message, title = "Huntaway couldn't start") {
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const log = serverLog.length
+    ? `<p style="color:#9a9aab;margin-top:24px">The server's last output:</p>
+    <pre style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:#c8c8d0;background:#16161d;border:1px solid #24242e;border-radius:8px;padding:12px;max-height:50vh;overflow:auto">${esc(serverLog.join("\n"))}</pre>`
+    : "";
   const html = `<body style="background:#0b0b0e;color:#e6e6ec;font:14px system-ui;padding:40px">
-    <h2>Huntaway couldn't start</h2><pre style="white-space:pre-wrap;color:#f87171">${String(message).replace(/</g, "&lt;")}</pre>
-    <p style="color:#9a9aab">Config: ${CONFIG_PATH}</p></body>`;
+    <h2>${esc(title)}</h2><pre style="white-space:pre-wrap;color:#f87171">${esc(message)}</pre>${log}
+    <p><a href="${RETRY_URL}" style="display:inline-block;margin-top:8px;padding:6px 14px;border-radius:6px;background:#6366f1;color:#fff;text-decoration:none">Retry</a></p>
+    <p style="color:#9a9aab">Config: ${esc(CONFIG_PATH)}</p></body>`;
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
 
@@ -215,12 +275,50 @@ async function createWindow() {
     shell.openExternal(url);
     return { action: "deny" };
   });
+  // The error page's Retry.
+  win.webContents.on("will-navigate", (e, url) => {
+    if (url !== RETRY_URL) return;
+    e.preventDefault();
+    void load(win);
+  });
+  await load(win);
+}
+
+async function load(win) {
   try {
-    const { base, token } = await resolveTarget();
+    const { base, token } = await resolveTarget(() => void serverLost(win));
     const ui = process.env.IA_DEV_URL || base;
     await win.loadURL(`${ui}/${token ? `?token=${encodeURIComponent(token)}` : ""}`);
   } catch (e) {
-    await win.loadURL(errorPage(e.message || e));
+    if (!win.isDestroyed()) await win.loadURL(errorPage(e.message || e));
+  }
+}
+
+/**
+ * The server started here stopped. The board stays open and reconnects once there's a server again: one that started
+ * meanwhile (a restart that runs the new binary from a new process), or one started here again, waiting longer after
+ * each that stops at once. After a few of those, the error page says why.
+ */
+let restarts = [];
+async function serverLost(win) {
+  const now = Date.now();
+  restarts = restarts.filter((t) => now - t < 5 * 60_000);
+  const delay = Math.min(30_000, 1000 * 2 ** restarts.length);
+  if (restarts.length >= 5) {
+    if (!win.isDestroyed()) await win.loadURL(errorPage(`It stopped ${restarts.length + 1} times in five minutes.`, "Huntaway's server stopped"));
+    restarts = [];
+    return;
+  }
+  restarts.push(now);
+  await sleep(delay);
+  if (stopping || win.isDestroyed()) return;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    if (await healthy(base)) return;
+    await startServer(() => void serverLost(win));
+  } catch (e) {
+    if (await healthy(base, 3).catch(() => false)) return;
+    if (!win.isDestroyed()) await win.loadURL(errorPage(`It didn't start again: ${e.message || e}`, "Huntaway's server stopped"));
   }
 }
 

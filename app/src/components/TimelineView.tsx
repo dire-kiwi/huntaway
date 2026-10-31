@@ -6,7 +6,7 @@ import { usePanel, openTask } from "../router";
 import { keyPrefix, useStore } from "../store";
 import { ticks } from "../timeline";
 import { duration, StatusIcon, STATUS_COLOR, useClock } from "./ui";
-import type { OnMenu } from "./Board";
+import type { OnMenu } from "./TaskCard";
 
 /**
  * The board's tasks on a time axis: a lane for each task, with its agent's runs as bars and the
