@@ -894,9 +894,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     // (`work_dir` says the same for a thread whose run is going.)
     let doc_dir = crate::documents::work_dir(state, &task);
     let cwd: String = match (task.kind.as_str(), &project) {
-        // A plan, artifact or diagram is written in the task's own folder, reading the project.
-        // A scratch task works there too, reading its project if it's in one. One in a
-        // subproject reads the subproject's worktree as well.
+        // A scratch task works in its own folder, reading its project if it's in one, as does a
+        // task that makes only documents (see documents::documents_only). One in a subproject
+        // reads the subproject's worktree as well.
         (_, p) if doc_dir.is_some() => {
             add_dirs.extend(p.as_ref().map(|p| p.repo_path.clone()));
             if let Some(sp) = parent.as_ref().filter(|t| task.kind == "task" && t.subproject && t.worktree_state == "ready") {
@@ -931,6 +931,14 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     crate::checkpoints::before_run(state, &task, run).await;
     task = db::get_task(&state.db(), task_id)?.ok_or_else(|| anyhow!("task not found"))?;
     let rewind = crate::checkpoints::pending_rewind(&task).cloned();
+    // A labelled task's agent writes its documents in the task's own folder, wherever it works.
+    let documents: Vec<(&str, String)> = crate::documents::paths(state, &task).into_iter().map(|(l, p)| (l, path_str(&p))).collect();
+    let own_dir = crate::documents::dir(state, &task.id);
+    let own_dir = (!documents.is_empty() && doc_dir.as_ref() != Some(&own_dir)).then(|| path_str(&own_dir));
+    if let Some(d) = &own_dir {
+        tokio::fs::create_dir_all(d).await.ok();
+        add_dirs.push(d.clone());
+    }
     // Setting up a subproject task's worktree may have set up the subproject's too.
     let parent = match (&task.parent_id, task.kind.as_str()) {
         (Some(id), "task") => db::get_task(&state.db(), id)?,
@@ -945,7 +953,6 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         _ => None,
     };
 
-    let document = crate::documents::path(state, &task).map(|p| path_str(&p));
     let prompt = if task.session_id.is_none() && task.kind == "task" && run.kind != "compact" {
         start_prompt(&task, project.as_ref(), text)
     } else {
@@ -991,7 +998,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             None => Default::default(),
         };
         let gh_tools = uses_gh_server(&tools);
-        let mut instructions = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, document.as_deref(), github.as_ref(), gh_tools);
+        let mut instructions = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
         if permission_mode == "plan" {
             instructions.push_str(
                 " You are in plan mode: investigate and propose a plan, but don't change any files. The user will \
@@ -1033,6 +1040,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         }
         let mut writable_roots: Vec<String> = git_dir.into_iter().collect();
         writable_roots.extend(cache_dirs());
+        writable_roots.extend(own_dir.clone());
         let spec = crate::codex::Spec {
             cwd: cwd.clone(),
             thread_id: task.session_id.clone(),
@@ -1087,7 +1095,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
-    let mut prompt_extra = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, document.as_deref(), github.as_ref(), gh_tools);
+    let mut prompt_extra = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
     if gh_tools {
         prompt_extra.push_str(&gh_note(github_account.as_deref()));
     }
@@ -1558,15 +1566,15 @@ fn profiles_note(profiles: &[db::Profile], own: &db::Profile) -> String {
     s
 }
 
-/// `group`: for a group task, its group's projects. `document`: for a plan, artifact or diagram
-/// task, the file it writes (see documents.rs). `github`: where a task with its own branch opens
+/// `group`: for a group task, its group's projects. `documents`: the files its labels ask it to
+/// write, by label (see documents.rs). `github`: where a task with its own branch opens
 /// its pull request, if its repository is on GitHub.
 fn system_prompt(
     task: &Task,
     project: Option<&Project>,
     parent: Option<&Task>,
     group: &[Project],
-    document: Option<&str>,
+    documents: &[(&str, String)],
     github: Option<&worktree::Github>,
     gh_tools: bool,
 ) -> String {
@@ -1580,7 +1588,7 @@ fn system_prompt(
          comments or reviews, the branch conflicts with its base, or it's merged or closed, and says what happened. For \
          a deploy, give it a `command` that exits once it's done."
     );
-    match (task.kind.as_str(), project) {
+    let mut s = match (task.kind.as_str(), project) {
         ("task", p) if task.is_scratch() => {
             // One from a scratch chat works in the chat's folder, which may be shared.
             let dir = match &task.work_dir {
@@ -1652,14 +1660,14 @@ fn system_prompt(
             );
             s
         }
-        ("task", p) if task.task_type.is_some() => {
+        ("task", p) if crate::documents::documents_only(task) => {
             let key = key_prefix(task, p);
             let mut s = format!(
                 "You are an agent working on task {key}-{} (\"{}\", id {}) on the Huntaway board, a kanban board where each \
                  task is worked by its own Claude agent.",
                 task.number, task.title, task.id
             );
-            s.push_str(&crate::documents::system_prompt(task, document.unwrap_or("?"), p, group));
+            s.push_str(&crate::documents::system_prompt(task, documents, p, group));
             s.push_str(&format!(
                 " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
                  with your question (and its `options`, when the choices are known) and then end your turn — the task is \
@@ -1778,7 +1786,12 @@ fn system_prompt(
             ));
             s
         }
+    };
+    // What its labels ask for (a task that makes only documents was told already).
+    if !crate::documents::documents_only(task) {
+        s.push_str(&crate::documents::labels_prompt(documents));
     }
+    s
 }
 
 const SUBAGENT_EVENTS: [&str; 4] = ["task_started", "task_progress", "task_updated", "task_notification"];
@@ -2948,7 +2961,7 @@ mod tests {
         let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Plan it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let task = db::insert_group_task(&c, t, "Shop").unwrap();
         let group = db::group_projects(&c, &p.id, "Shop").unwrap();
-        let text = system_prompt(&task, None, None, &group, None, None, true);
+        let text = system_prompt(&task, None, None, &group, &[], None, true);
         assert!(text.contains("task G-1 (\"Plan it\"") && text.contains("Web (key WEB, id pr, repository /src/web)"), "{text}");
         assert!(start_prompt(&task, None, "").starts_with("# G-1: Plan it\n"));
     }
@@ -2964,20 +2977,20 @@ mod tests {
         (task.worktree_path, task.branch) = (Some("/w/1-fix-it".into()), Some("ia/web-1-fix-it".into()));
         // Pushed to a mirror: gh is told which repository, as it would pick the fetch remote's.
         let gh = worktree::Github { remote: "origin".into(), repo: "o/web-mirror".into() };
-        let text = system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), false);
         assert!(text.contains("Do not merge or switch branches unless asked."), "{text}");
         assert!(text.contains("on GitHub (o/web-mirror)") && text.contains("`git push -u origin ia/web-1-fix-it`"), "{text}");
         assert!(text.contains("into `main` in o/web-mirror (`gh pr create --repo o/web-mirror --head ia/web-1-fix-it --base main`"), "{text}");
         // With the gh server, which turns away gh in Bash, through its tools.
-        let text = system_prompt(&task, Some(&project), None, &[], None, Some(&gh), true);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), true);
         assert!(text.contains("in o/web-mirror (the gh tools' pr_create with repo `o/web-mirror`, head `ia/web-1-fix-it` and base `main`)"), "{text}");
         assert!(!text.contains("gh pr create"), "{text}");
 
         // Without GitHub (or a branch of its own), it leaves pushing to the user.
-        let text = system_prompt(&task, Some(&project), None, &[], None, None, false);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], None, false);
         assert!(text.contains("Do not push, merge, or switch branches unless asked.") && !text.contains("open a pull request"), "{text}");
         task.branch = None;
-        assert!(!system_prompt(&task, Some(&project), None, &[], None, Some(&gh), false).contains("open a pull request"));
+        assert!(!system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), false).contains("open a pull request"));
         // Every agent is told it can wait on one, though.
         assert!(text.contains("For CI or reviews on a pull request, give it the `pull_request`"), "{text}");
     }
@@ -3016,7 +3029,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_task_is_told_where_to_write_its_plan() {
+    fn a_plan_task_from_before_labels_is_told_to_make_only_its_plan() {
         let c = db::open(std::path::Path::new(":memory:")).unwrap();
         let p = db::insert_profile(&c, "p", &[], None).unwrap();
         let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
@@ -3024,14 +3037,43 @@ mod tests {
         project.start_prompt = Some("Write a failing test first.".into());
         let t = db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title: "Plan search", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let task = db::insert_task(&c, t).unwrap();
-        let task = db::update_task(&c, &task.id, &[("task_type", serde_json::json!("plan"))]).unwrap().unwrap();
-        let text = system_prompt(&task, Some(&project), None, &[], Some("/data/documents/t/plan.html"), None, true);
-        assert!(text.contains("task WEB-1 (\"Plan search\"") && text.contains("Write it to /data/documents/t/plan.html"), "{text}");
+        // As the migration to labels leaves it.
+        let fields = [("labels", serde_json::json!(["plan"])), ("work_dir", serde_json::json!(format!("documents/{}", task.id)))];
+        let task = db::update_task(&c, &task.id, &fields).unwrap().unwrap();
+        let docs = [("plan", "/data/documents/t/plan.html".to_string())];
+        let text = system_prompt(&task, Some(&project), None, &[], &docs, None, true);
+        assert!(text.contains("task WEB-1 (\"Plan search\"") && text.contains("a plan (HTML) to /data/documents/t/plan.html"), "{text}");
+        assert!(text.contains("Rather than changing code") && text.contains("break it into tasks"), "{text}");
         assert!(text.contains("repository /src/web, which you can read") && !text.contains("worktree"), "{text}");
+        assert!(!text.contains("label plan") && !text.contains("carry it out in this task"), "{text}");
         // It's told about the plan theme's components.
         assert!(text.contains("<ia-steps>") && text.contains("<ia-html><template>"), "{text}");
         // The project's start instructions are for its code tasks.
         assert!(start_prompt(&task, Some(&project), "").contains(crate::prompts::DEFAULT_START));
+    }
+
+    #[test]
+    fn a_labelled_task_is_told_to_write_its_documents_besides_its_work() {
+        let c = db::open(std::path::Path::new(":memory:")).unwrap();
+        let p = db::insert_profile(&c, "p", &[], None).unwrap();
+        let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: true };
+        let mut project = db::insert_project(&c, np).unwrap();
+        project.start_prompt = Some("Write a failing test first.".into());
+        let t = db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title: "Search", description: "", status: "todo", use_worktree: true, model: None, effort: None, claude_config_id: None };
+        let mut task = db::insert_task(&c, t).unwrap();
+        (task.branch, task.worktree_path) = (Some("ia/web-1-search".into()), Some("/w/1".into()));
+        let plain = system_prompt(&task, Some(&project), None, &[], &[], None, true);
+        assert!(!plain.contains("label") && !plain.contains("<ia-steps>"), "{plain}");
+        task.labels = vec!["plan".into(), "diagram".into()];
+        let docs = [("plan", "/d/plan.html".to_string()), ("diagram", "/d/diagram.mmd".to_string())];
+        let text = system_prompt(&task, Some(&project), None, &[], &docs, None, true);
+        // A code task still, in its worktree.
+        assert!(text.starts_with(&plain) && text.contains("dedicated git worktree at /w/1"), "{text}");
+        assert!(text.contains("the labels plan, diagram") && text.contains("a plan (HTML) to /d/plan.html and a Mermaid diagram to /d/diagram.mmd"), "{text}");
+        assert!(text.contains("don't commit them") && text.contains("The plan comes first") && text.contains("carry it out in this task"), "{text}");
+        assert!(text.contains("<ia-steps>") && text.contains("Mermaid source") && !text.contains("Rather than changing code"), "{text}");
+        // And it starts with the project's instructions.
+        assert!(start_prompt(&task, Some(&project), "").contains("Write a failing test first."));
     }
 
     #[test]
@@ -3040,12 +3082,12 @@ mod tests {
         let p = db::insert_profile(&c, "p", &[], None).unwrap();
         let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Ask", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let mut task = db::insert_scratch_task(&c, t).unwrap();
-        let text = system_prompt(&task, None, None, &[], None, None, true);
+        let text = system_prompt(&task, None, None, &[], &[], None, true);
         assert!(text.contains("scratch task S-1 (\"Ask\"") && text.contains("isn't in a project or a repository"), "{text}");
         assert!(text.contains("the task's own folder") && text.contains("write freely") && !text.contains("worktree"), "{text}");
         // One from a scratch chat isn't told its (maybe shared) folder is free to write in.
         task.work_dir = Some("/data/profiles/p/scratch".into());
-        let text = system_prompt(&task, None, None, &[], None, None, true);
+        let text = system_prompt(&task, None, None, &[], &[], None, true);
         assert!(text.contains("a scratch folder") && !text.contains("write freely"), "{text}");
         assert!(start_prompt(&task, None, "").starts_with("# S-1: Ask"));
     }
@@ -3061,11 +3103,11 @@ mod tests {
         (sp.subproject, sp.branch, sp.worktree_path, sp.worktree_state) = (true, Some("ia/web-1-search".into()), Some("/w/1".into()), "ready".into());
         let task = db::insert_task(&c, t("Ask")).unwrap();
         let task = db::update_task(&c, &task.id, &[("task_type", serde_json::json!("scratch"))]).unwrap().unwrap();
-        let text = system_prompt(&task, Some(&project), None, &[], None, None, true);
+        let text = system_prompt(&task, Some(&project), None, &[], &[], None, true);
         assert!(text.contains("scratch task WEB-2 (\"Ask\"") && text.contains("in the project Web") && text.contains("repository /src/web, which you can read"), "{text}");
         assert!(text.contains("Don't change the repository") && !text.contains("subproject") && !text.contains("isn't in a project"), "{text}");
         // In a subproject, it's told about the subproject's branch and worktree.
-        let text = system_prompt(&task, Some(&project), Some(&sp), &[], None, None, true);
+        let text = system_prompt(&task, Some(&project), Some(&sp), &[], &[], None, true);
         assert!(text.contains("part of the subproject WEB-1 (\"Search\"), whose branch `ia/web-1-search`") && text.contains("worktree at /w/1, which you can read"), "{text}");
         assert!(start_prompt(&task, Some(&project), "").starts_with("# WEB-2: Ask"));
     }

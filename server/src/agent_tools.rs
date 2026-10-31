@@ -795,8 +795,8 @@ fn with_board_skills(mut skills: Vec<TaskSkill>, board: Vec<Skill>, codex: bool,
 }
 
 /// Where a task's agent runs and the folders it's given to read, as runner::launch has them, for
-/// the skills it finds there: a plan, artifact, diagram or scratch task in its own folder, reading
-/// its project's; a review thread in the reviewed task's worktree; a task in its worktree once it
+/// the skills it finds there: a scratch task (or one that makes only documents) in its own folder,
+/// reading its project's; a review thread in the reviewed task's worktree; a task in its worktree once it
 /// has one, else the project's checkout; one in no project in its profile's scratch folder.
 fn skill_places(state: &Shared, c: &Connection, task: &crate::db::Task, project: Option<&crate::db::Project>) -> anyhow::Result<(Option<PathBuf>, Vec<PathBuf>)> {
     let parent = task.parent_id.as_deref().map(|id| crate::db::get_task(c, id)).transpose()?.flatten();
@@ -1181,9 +1181,9 @@ mod tests {
         let task = crate::db::update_task(&c, &task.id, &[("worktree_path", json!("/w/1")), ("worktree_state", json!("ready"))]).unwrap().unwrap();
         assert_eq!(places(&task), ("/w/1".into(), vec![]));
         assert_eq!(places(&review), ("/w/1".into(), vec![]));
-        // A plan works in its own folder, reading the project's checkout.
+        // A plan task from before labels works in its own folder, reading the project's checkout.
         let plan = crate::db::insert_task(&c, new(Some("pr"), "task")).unwrap();
-        let plan = crate::db::update_task(&c, &plan.id, &[("task_type", json!("plan"))]).unwrap().unwrap();
+        let plan = crate::db::update_task(&c, &plan.id, &[("labels", json!(["plan"])), ("work_dir", json!(format!("documents/{}", plan.id)))]).unwrap().unwrap();
         let doc = crate::util::path_str(&crate::documents::work_dir(&state, &plan).unwrap());
         assert_eq!(places(&plan), (doc, vec!["/main".to_string()]));
         // A scratch task in no project works in its own folder (or its chat's), one without a type in the profile's.

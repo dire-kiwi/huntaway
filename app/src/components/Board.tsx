@@ -13,8 +13,11 @@ import {
   isMerged,
   isScratch,
   mergeQueued,
+  LABELS,
+  LABELS_API,
   rejoinsMerge,
   STATUSES,
+  taskLabels,
   worktreesOn,
   type ClaudeConfig,
   type DocumentType,
@@ -34,7 +37,7 @@ import { harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type
 import { groupProjects, groupTasks, inGroupTaskGroup } from "../projectGroups";
 import { dropPosition } from "../taskOrder";
 import { allValues, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens, type Token, type TokenPrefix, type Vocab } from "../taskTokens";
-import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKind, taskMatcher, type BoardQuery, type SortKey, type TaskKind } from "../boardQuery";
+import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKinds, taskMatcher, type BoardQuery, type SortKey, type TaskKind } from "../boardQuery";
 import { FilterBar, FilterMenu, SearchBox, SortMenu, type FilterOption } from "./BoardControls";
 import { navigate, openTask, usePanel } from "../router";
 import { isGroupTask, keyPrefix, scratchHost, useAvailableConfigs, useHost, useStore } from "../store";
@@ -47,7 +50,7 @@ import { DependencyBadge } from "./Dependencies";
 import { FanoutBadge } from "./Fanout";
 import { ReminderModal, reminderItems, starItem, TaskMarks } from "./Reminders";
 import { REMINDERS_API } from "../reminders";
-import { SCRATCH_TYPE, TASK_TYPES, TaskTypeBadge } from "./Document";
+import { documentInfo, LABEL_INFO, SCRATCH_TYPE, TaskTypeBadge } from "./Document";
 import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
@@ -103,7 +106,7 @@ export function useCreatedProgress(): Record<string, Progress> {
     for (const t of Object.values(all)) {
       if (t.kind !== "task" || !t.created_by) continue;
       const creator = all[t.created_by];
-      if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : creator.task_type === "plan")) continue;
+      if (!creator || !(isGroupTask(creator) ? inGroupTaskGroup(t, creator, projects) : taskLabels(creator).includes("plan"))) continue;
       const p = (by[t.created_by] ??= { done: 0, total: 0 });
       p.total++;
       if (t.status === "done") p.done++;
@@ -126,6 +129,20 @@ export function GroupTaskBadge({ progress, compact }: { progress?: Progress; com
     <span className="flex items-center gap-1 text-accent" title="Group task: plans the work of the group's projects and creates their tasks">
       <Folder size={11} /> {progress?.total ? `${progress.done}/${progress.total} done` : "group task"}
     </span>
+  );
+}
+
+/** A scratch task's badge, and its labels': a plan's with how the tasks it created are doing (`progress`, which a group
+ *  task or a subproject shows on its own badge). */
+function TypeBadges({ task, progress, compact }: { task: Task; progress?: Progress; compact?: boolean }) {
+  const ownProgress = isGroupTask(task) || task.subproject ? undefined : progress;
+  return (
+    <>
+      {isScratch(task) && <TaskTypeBadge type="scratch" compact={compact} />}
+      {taskLabels(task).map((l) => (
+        <TaskTypeBadge key={l} type={l} progress={l === "plan" ? ownProgress : undefined} compact={compact} />
+      ))}
+    </>
   );
 }
 
@@ -271,7 +288,7 @@ export const TaskCard = memo(function TaskCard({
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           {task.subproject && <SubprojectBadge progress={progress} compact />}
           {isGroupTask(task) && <GroupTaskBadge progress={progress} compact />}
-          {task.task_type && <TaskTypeBadge type={task.task_type} progress={isGroupTask(task) ? undefined : progress} compact />}
+          <TypeBadges task={task} progress={progress} compact />
           {mergeQueued(task) && (
             <span className={clsx(CARD_BADGE, "text-muted")} title="Queued to merge: waits for the merge in progress in this project">
               <Clock size={11} /> <Wide>queued to merge</Wide>
@@ -441,10 +458,18 @@ export function ModelPicker({
   );
 }
 
-/** What the new task dialog makes: code (null), a subproject, a document or a scratch task. */
+/** What the new task dialog makes: code (null), a subproject or a scratch task. */
 type NewTaskType = TaskType | "subproject" | null;
 
-const documentTypeOf = (t: NewTaskType): DocumentType | null => (t === "plan" || t === "artifact" || t === "diagram" ? t : null);
+/** The labels, which `/` names too: `/plan /diagram` gives a task both. */
+const LABEL_WORDS: string[] = LABELS;
+const isLabelWord = (w: string | undefined): w is DocumentType => LABEL_WORDS.includes(w ?? "");
+
+/** "a plan and a diagram". */
+function labelList(labels: DocumentType[]) {
+  const words = labels.map((l) => ({ plan: "a plan", artifact: "an artifact", diagram: "a diagram" })[l]);
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : (words[0] ?? "");
+}
 
 /** A subproject, which the new task dialog offers as a type of task in a project that uses worktrees (API 17). */
 const SUBPROJECT_TYPE = {
@@ -468,7 +493,7 @@ type Suggestion = { value: string; label: string; hint?: string };
 
 /** The token prefixes, in the order the legend and the placeholder give them. */
 const TOKEN_HELP: { prefix: TokenPrefix; what: string; asks: string }[] = [
-  { prefix: "/", what: "type", asks: "a type" },
+  { prefix: "/", what: "type or label", asks: "a type or label" },
   { prefix: "@", what: "where", asks: "where it goes" },
   { prefix: "!", what: "model", asks: "a model (or several, for a task each)" },
   { prefix: "^", what: "effort", asks: "effort" },
@@ -586,18 +611,15 @@ export function NewTaskModal({
   const project = atProject ?? baseProject;
   // The project's host decides which types it offers, while the task is in no project too.
   const projectHost = useHost(project?.host_id);
-  // What it makes: code (null); a subproject, with its own board of tasks (API 17); a plan,
-  // artifact or diagram, which its agent writes in the task's own folder rather than a worktree
-  // (API 42); or a scratch task, whose agent works in its own folder on whatever it's asked
-  // (in no project, API 47, or in the project, API 51). Each is offered where it can go.
-  const types = hostSupports(projectHost, 42);
+  // What it is: code (null); a subproject, with its own board of tasks (API 17); or a scratch task, whose agent
+  // works in its own folder on whatever it's asked (in no project, API 47, or in the project, API 51). Each is offered
+  // where it can go. Labels come on top (see below).
   const canSubproject = !subproject && !!project && hostSupports(projectHost, 17) && worktreesOn(project);
   const projectScratch = !!project && hostSupports(projectHost, 51);
   // The types it can be, by the project's host (or the scratch task's, in no project).
   const typeTabs: { id: NewTaskType; label: string; icon: ReactNode; hint: string }[] = [
     ...(project ? [{ id: null, label: "Task", icon: <FolderGit2 size={12} />, hint: "Its agent works on the code" }] : []),
     ...(canSubproject ? [SUBPROJECT_TYPE] : []),
-    ...(project && types ? TASK_TYPES : []),
     ...(scratch || projectScratch ? [SCRATCH_TYPE] : []),
   ];
   const typeOf = (word: string | undefined) => typeTabs.find((t) => typeWord(t.id) === word);
@@ -626,8 +648,8 @@ export function NewTaskModal({
   const offered: NewTaskType[] = noProject
     ? ["scratch"]
     : asGroup
-      ? [null, ...(types ? TASK_TYPES.map((t) => t.id) : [])]
-      : [null, ...(canSubproject ? ["subproject" as const] : []), ...(types ? TASK_TYPES.map((t) => t.id) : []), ...(projectScratch ? ["scratch" as const] : [])];
+      ? [null]
+      : [null, ...(canSubproject ? ["subproject" as const] : []), ...(projectScratch ? ["scratch" as const] : [])];
 
   const agents = canRunAgents(host);
   const hostCount = hosts.length;
@@ -719,9 +741,15 @@ export function NewTaskModal({
     const m = h.model ? (c?.models.find((x) => x.id === h.model)?.label ?? h.model) : inherits ? `default model (${inherits})` : "default model";
     return pickConfig && c ? `${m} · ${c.name}` : m;
   };
+  // Labels, each a document its agent writes besides its other work, shown in a tab of the task (API 71). A host from
+  // API 42 makes a task of one of them as its type instead (a plan, artifact or diagram task), which is a code task in
+  // a project or a group task, and makes only the document.
+  const labelling = hostSupports(host, LABELS_API);
+  const labelTypes = !labelling && hostSupports(host, 42) && !noProject && taskType === null;
+  const labelWords = labelling || labelTypes ? LABEL_WORDS : [];
   const tokens = resolve({
     "@": atVocab,
-    "/": offered.map(typeWord),
+    "/": [...offered.map(typeWord), ...labelWords],
     "!": modelVocab,
     ...(efforts ? { "^": [DEFAULT_WORD, ...effortList] } : {}),
     ...(deps ? { "#": depTasks.map(depKey) } : {}),
@@ -732,11 +760,13 @@ export function NewTaskModal({
   // What its agent is given: the description without its tokens.
   const text = stripTokens(description, tokens);
 
-  const docType = documentTypeOf(taskType);
+  const labels = LABELS.filter((l) => allValues(tokens, "/").includes(l));
+  // On a host before API 71, the label it's made as (one at most).
+  const docType = labelTypes ? (labels[0] ?? null) : null;
   // A subproject's branch is what its tasks branch from, so it and they get worktrees.
   const asSubproject = taskType === "subproject";
-  const codeTask = taskType === null || asSubproject;
-  const noun = taskType === "scratch" ? "scratch task" : asGroup && !docType ? "group task" : (taskType ?? "task");
+  const codeTask = (taskType === null && !docType) || asSubproject;
+  const noun = taskType === "scratch" ? "scratch task" : asGroup && !docType ? "group task" : (docType ?? taskType ?? "task");
 
   const attach = useAttachmentDraft(target.host_id, hostSupports(host, 18), saved?.files);
   // The Asana tasks it's for (API 57), in the profile it goes in, unless that has Asana turned off.
@@ -767,16 +797,19 @@ export function NewTaskModal({
   const worktreePref = worktreeChoice ?? (!!inProject && worktreesOn(inProject));
   // Tasks made from one prompt each get a worktree too, so their agents don't change the same checkout (as in t3code).
   const worktree = !!inProject && codeTask && (worktreePref || fanout || asSubproject || !!subproject);
-  // What can't be made a task for each of several harnesses.
+  // What can't be made a task for each of several harnesses. A group task coordinates its group's work, so it takes one,
+  // unless it has labels: then they write documents to compare.
   const fanoutBlock = !fanout
     ? null
     : asSubproject
       ? "A subproject has one agent, so it takes one model."
-      : asGroup && !docType
+      : asGroup && !docType && !labels.length
         ? "A group task has one agent, so it takes one model."
         : worktree && inProject?.is_git === false
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
+  // A host before API 71 makes a task of one label's type.
+  const labelBlock = labelTypes && labels.length > 1 ? `${host?.name ?? "This host"} makes a task of one of plan, artifact or diagram, not several: update it for labels.` : null;
   // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
   // out, with its token sent as text); which config a `!` names a model of, when a config of the same agent before it
   // (the picked one, then in order) may have the model too (so it doesn't depend on which answers first); and whether the effort picked
@@ -822,7 +855,7 @@ export function NewTaskModal({
       ? `Couldn't load ${configNames(failedFor.map((f) => f.config))}'s models (${failedFor[0].error}), so there's no telling ${unknown(failedFor.map((f) => f.config))}: take ${takeOut(failedFor.map((f) => f.config))}, or open the dialog again to try again.`
       : null;
   // While they're loading, creating it waits for them (see whenLoaded).
-  const submitBlock = fanoutBlock ?? (modelsLoading ? null : modelsBlock);
+  const submitBlock = labelBlock ?? fanoutBlock ?? (modelsLoading ? null : modelsBlock);
   const [startPref, setStartPref] = useState(() => localStorage.getItem(startKey(prefId)) === "1");
   const start = agents && startPref;
   const setStart = (v: boolean) => {
@@ -922,6 +955,7 @@ export function NewTaskModal({
         // The server titles it from the description.
         const runEffort = efforts && pickedEffort && runEfforts(run).includes(pickedEffort) ? pickedEffort : undefined;
         const common = {
+          ...(labelling && labels.length ? { labels } : {}),
           description: withAttachments(text, attach.files),
           start,
           status,
@@ -942,7 +976,7 @@ export function NewTaskModal({
                     use_worktree: worktree,
                     ...(subproject ? { parent_id: subproject.id } : {}),
                     // Sent as the flag, which hosts before API 51 take too.
-                    ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : {}),
+                    ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : docType ? { task_type: docType } : {}),
                     ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
                   }),
           );
@@ -1019,7 +1053,10 @@ export function NewTaskModal({
     submit();
   });
   const suggestions: Record<TokenPrefix, Suggestion[]> = {
-    "/": typeTabs.map((t) => ({ value: typeWord(t.id), label: t.label, hint: t.hint })),
+    "/": [
+      ...typeTabs.map((t) => ({ value: typeWord(t.id), label: t.label, hint: t.hint })),
+      ...LABEL_INFO.filter((l) => labelWords.includes(l.id)).map((l) => ({ value: l.id, label: labelling ? `${l.label} label` : l.label, hint: l.hint })),
+    ],
     "@": subproject
       ? []
       : [
@@ -1149,7 +1186,7 @@ export function NewTaskModal({
 
   // The prefixes that can set something here, for the legend and the placeholder, with an example of each.
   const example: Partial<Record<TokenPrefix, string>> = {
-    ...(typeTabs.length > 1 ? { "/": typeTabs.some((t) => t.id === "plan") ? "plan" : typeWord(typeTabs.find((t) => t.id !== offered[0])?.id ?? null) } : {}),
+    ...(labelWords.length ? { "/": "plan" } : typeTabs.length > 1 ? { "/": typeWord(typeTabs.find((t) => t.id !== offered[0])?.id ?? null) } : {}),
     ...(atVocab.length ? { "@": placeNames[(projects ?? []).findIndex((p) => p.id !== project?.id)] ?? atVocab[0] } : {}),
     "!": modelList[0]?.id ?? DEFAULT_WORD,
     ...(efforts ? { "^": effortList.includes("high") ? "high" : (effortList[0] ?? DEFAULT_WORD) } : {}),
@@ -1160,7 +1197,8 @@ export function NewTaskModal({
 
   // What the tokens set, and what a token set (its × takes it out).
   const setBy = (prefix: TokenPrefix) => tokens.some((t) => t.prefix === prefix && t.value !== undefined);
-  const removeKind = (prefix: TokenPrefix) => () => untoken((t) => t.prefix === prefix);
+  const removeKind = (prefix: TokenPrefix) => () => untoken((t) => t.prefix === prefix && !(prefix === "/" && isLabelWord(t.value)));
+  const typeSet = tokens.some((t) => t.prefix === "/" && t.value !== undefined && !isLabelWord(t.value));
   const typeInfo = typeTabs.find((t) => t.id === taskType);
   const modelLabel = (m: string) => modelList.find((x) => x.id === m)?.label ?? m;
   const where = subproject
@@ -1212,11 +1250,11 @@ export function NewTaskModal({
                 ? "Ask anything, or describe what to try out or look into (markdown). Its agent works in its own folder, with no repository, and can use the board."
                 : taskType === "scratch"
                   ? "Ask anything about the project, or describe what to look into or try out (markdown). Its agent works in its own folder, reads the repository and can use the board."
-                  : taskType === "plan"
+                  : docType === "plan"
                     ? "Describe what to plan. Its agent looks into it and writes an HTML plan that you iterate on together (markdown)."
-                    : taskType === "artifact"
+                    : docType === "artifact"
                       ? "Describe the artifact: what it's for and what it should show or do (markdown). Its agent designs it as an HTML page, kept and shown in the task."
-                      : taskType === "diagram"
+                      : docType === "diagram"
                         ? "Describe what to diagram: the flow, structure or sequence to show (markdown). Its agent draws it as a Mermaid diagram."
                         : asGroup
                           ? "Describe the work. Its agent plans it across the group's projects and creates their tasks (markdown)."
@@ -1266,7 +1304,7 @@ export function NewTaskModal({
               onMouseDown={(e) => e.preventDefault()}
             >
               <div className="px-2 pt-1 pb-1 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
-                {{ "/": "Type", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
+                {{ "/": "Type or label", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
               </div>
               {matches.map((s, i) => (
                 <button
@@ -1296,10 +1334,20 @@ export function NewTaskModal({
               icon={asGroup && !docType ? <Folder size={12} /> : typeInfo.icon}
               label={asGroup && !docType ? "Group task" : typeInfo.label}
               title={typeInfo.hint}
-              onRemove={setBy("/") ? removeKind("/") : undefined}
+              onRemove={typeSet ? removeKind("/") : undefined}
               removeTitle="Remove the type"
             />
           )}
+          {labels.map((l) => (
+            <ReadsChip
+              key={l}
+              icon={documentInfo(l).icon}
+              label={labelling ? documentInfo(l).label : `${documentInfo(l).label} task`}
+              title={documentInfo(l).hint}
+              onRemove={() => untoken((t) => t.prefix === "/" && t.value === l)}
+              removeTitle={labelling ? "Remove the label" : "Remove the type"}
+            />
+          ))}
           <ReadsChip
             icon={noProject ? <NotebookPen size={12} /> : asGroup ? <Folder size={12} /> : <FolderGit2 size={12} />}
             label={noProject ? `No project (${scratch!.name})` : asGroup ? group : subproject ? `${project!.key}-${subproject.number}` : project!.name}
@@ -1369,7 +1417,7 @@ export function NewTaskModal({
         </div>
         <DraftAttachments draft={attach} hostId={target.host_id} />
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pt-1">
-          {!subproject && inProject && taskType === null && !fanout && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
+          {!subproject && inProject && codeTask && !asSubproject && !fanout && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
           {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
           {pickConfig && <ConfigSelect className={pickerClass} configs={configs} value={config} onChange={setConfig} />}
           <div className="-my-1 ml-auto flex items-center gap-1">
@@ -1406,6 +1454,12 @@ export function NewTaskModal({
             board and create and start tasks{subproject ? " (in the subproject)" : ""}. There's no worktree, review or merge.
           </div>
         )}
+        {labelling && labels.length > 0 && (
+          <div className="text-[12px] text-muted">
+            Besides its other work, its agent writes {labelList(labels)} in the task's own folder, each shown in a tab of the task.
+            {labels.includes("plan") && " It writes the plan first, for you to agree on before it starts the work."}
+          </div>
+        )}
         {docType && (
           <div className="text-[12px] text-muted">
             {asGroup
@@ -1421,6 +1475,7 @@ export function NewTaskModal({
               : "It gets its own worktree and thread, and a board of tasks: each branches from the subproject's branch and merges back into it, and the subproject is merged as a whole through its own pull request."}
           </div>
         )}
+        {labelBlock && <div className="text-[12px] text-amber-300">{labelBlock}</div>}
         {fanout && (
           <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>
             {fanoutBlock ??
@@ -1523,7 +1578,7 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {task.subproject && <SubprojectBadge progress={progress} />}
         {task.subproject && <SubprojectBoardButton task={task} />}
         {isGroupTask(task) && <GroupTaskBadge progress={progress} />}
-        {task.task_type && <TaskTypeBadge type={task.task_type} progress={isGroupTask(task) ? undefined : progress} />}
+        <TypeBadges task={task} progress={progress} />
         {task.running && <RunState task={task} />}
         {mergeQueued(task) && (
           <span className="flex items-center gap-1 text-muted" title="Waits for the merge in progress in this project">
@@ -1827,7 +1882,7 @@ function TaskBoard({
   }, [hosts, hostId, projects, profiles]);
   const progress = useProgress();
   const createdProgress = useCreatedProgress();
-  const progressOf = (t: Task) => (isGroupTask(t) || t.task_type === "plan" ? createdProgress[t.id] : progress[t.id]);
+  const progressOf = (t: Task) => (isGroupTask(t) || (!t.subproject && taskLabels(t).includes("plan")) ? createdProgress[t.id] : progress[t.id]);
   const parentId = subproject?.id ?? null;
   // Project ids are only unique on their host.
   const byId = useMemo(() => new Map(projects.map((p) => [`${p.host_id}:${p.id}`, p])), [projects]);
@@ -1878,7 +1933,7 @@ function TaskBoard({
   const statusOptions: FilterOption<Status>[] = statuses.map((s) => ({ id: s.id, label: s.label }));
   const kinds = useMemo(() => {
     const on = new Set<TaskKind>(query.kinds);
-    for (const ts of [...Object.values(columns), archived]) for (const t of ts) on.add(taskKind(t));
+    for (const ts of [...Object.values(columns), archived]) for (const t of ts) for (const k of taskKinds(t)) on.add(k);
     return [...on];
   }, [columns, archived, query.kinds]);
   const projectOptions = useMemo(() => {
