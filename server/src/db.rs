@@ -637,12 +637,18 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=64; COMMIT;",
         )?;
     }
+    if version < 65 {
+        // What a task's worktree starts from, when not the project's base branch (see Task::start_from).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='start_from'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN start_from TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=65; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 64;
+pub const VERSION: i64 = 65;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1278,6 +1284,10 @@ pub struct Task {
     pub worktree_path: Option<String>,
     pub branch: Option<String>,
     pub base_branch: Option<String>,
+    /// What its worktree starts from, when it isn't the project's base branch (API 81): picked
+    /// before the worktree is made, which sets `base_branch` from it (see worktree::setup).
+    #[serde(default)]
+    pub start_from: Option<StartFrom>,
     pub worktree_state: String,
     pub worktree_error: Option<String>,
     pub session_id: Option<String>,
@@ -1405,6 +1415,45 @@ pub struct Context {
     /// When the breakdown of what's in it (`GET /tasks/{id}/context`) was taken, if there is one.
     #[serde(default)]
     pub detail_at: Option<String>,
+}
+
+/// What a task's worktree starts from instead of the project's base branch (API 81), stored on
+/// it as JSON. Set before the worktree is made; worktree::setup turns it into the task's base
+/// branch (which its pull request targets and its changes are compared with) and the commit its
+/// branch starts at.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StartFrom {
+    /// A branch, local or on the remote, which becomes the task's base branch.
+    Branch { branch: String },
+    /// Another task in the project (by id): its branch, so the task is stacked on it.
+    Task { task_id: String },
+    /// A pull request in the project's GitHub repository: its branch, as for a task. `repo`
+    /// (`OWNER/REPO`) is the repository its URL named, if it was given one.
+    PullRequest {
+        number: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+    },
+    /// A commit (its SHA, in full when it was found in the repository); the base branch stays
+    /// the project's.
+    Commit { commit: String },
+}
+
+impl StartFrom {
+    /// What it is, as people and agents read it: `task ABC-12` (`key` is its project's key),
+    /// `branch feature`, `pull request #12` or `commit 0123abcd`.
+    pub fn describe(&self, c: &Connection, key: &str) -> String {
+        match self {
+            StartFrom::Branch { branch } => format!("branch {branch}"),
+            StartFrom::Task { task_id } => match get_task(c, task_id).ok().flatten() {
+                Some(t) => format!("task {key}-{}", t.number),
+                None => "a deleted task".into(),
+            },
+            StartFrom::PullRequest { number, repo } => format!("pull request {}#{number}", repo.as_deref().unwrap_or_default()),
+            StartFrom::Commit { commit } => format!("commit {}", &commit[..commit.len().min(12)]),
+        }
+    }
 }
 
 /// What an agent in the `wait` tool is waiting for (see wait.rs), stored on its task as JSON.
@@ -1576,6 +1625,7 @@ impl Task {
             worktree_path: r.get("worktree_path")?,
             branch: r.get("branch")?,
             base_branch: r.get("base_branch")?,
+            start_from: r.get::<_, Option<String>>("start_from")?.and_then(|v| serde_json::from_str(&v).ok()),
             worktree_state: r.get("worktree_state")?,
             worktree_error: r.get("worktree_error")?,
             session_id: r.get("session_id")?,
@@ -2062,6 +2112,24 @@ pub fn is_merged(t: &Task) -> bool {
     t.status == "done" && t.resolution.as_deref().is_none_or(|r| r == "done")
 }
 
+/// The branch `task` merges into and is compared with: its base branch, else its project's. One
+/// stacked on another task (see StartFrom) that's merged by now goes where that one went instead,
+/// as GitHub retargets a pull request whose base branch is deleted.
+pub fn task_base(c: &Connection, task: &Task, project: Option<&Project>) -> Option<String> {
+    let own = |t: &Task| t.base_branch.clone().or_else(|| project.and_then(|p| p.base_branch.clone())).filter(|b| !b.is_empty());
+    let mut t = task.clone();
+    // Each step is to a task it starts from, which can't lead back (see api::check_start_from); a
+    // few are as deep as stacks go.
+    for _ in 0..16 {
+        let Some(StartFrom::Task { task_id }) = &t.start_from else { break };
+        match get_task(c, task_id).ok().flatten() {
+            Some(other) if is_merged(&other) && other.branch.is_some() && other.branch == t.base_branch => t = other,
+            _ => break,
+        }
+    }
+    own(&t)
+}
+
 /// The tasks `task` depends on that aren't merged yet, in the order it lists them. Deleted
 /// ones don't count.
 pub fn unmet_dependencies(c: &Connection, task: &Task) -> Result<Vec<Task>> {
@@ -2239,7 +2307,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
-    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
+    "base_branch", "start_from", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
     "queued_message", "steering", "steerable", "depends_on", "waiting", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 

@@ -103,3 +103,29 @@ test("@ words: a project's key, or its key and host or profile where that's ambi
   const vocab = { "@": ["IA.desktop", "IA.laptop"] };
   assert.deepEqual(resolveTokens(findTokens("@ia.laptop and @IA"), vocab).map((t) => t.value), ["IA.laptop", undefined]);
 });
+
+test("from: takes a task, a branch, a pull request or a commit, up to a space or what ends a sentence", () => {
+  const text = "Fix it from:IA-12. Or from:feature/x-1, from:#12 from:https://github.com/o/r/pull/12/files) from:abc1234! `from:IA-3` from: nothing x-from:y";
+  const found = findTokens(text);
+  assert.deepEqual(
+    found.map((t) => `${t.prefix}${t.word}`),
+    ["from:IA-12", "from:feature/x-1", "from:#12", "from:https://github.com/o/r/pull/12/files", "from:abc1234"],
+  );
+  // Known like any other: by the vocabulary, so a task's key comes out as the board has it.
+  const tokens = resolveTokens(findTokens("from:ia-12 Fix it"), { "from:": ["IA-12"] });
+  assert.equal(lastValue(tokens, "from:"), "IA-12");
+  assert.equal(stripTokens("from:ia-12 Fix it", tokens), "Fix it");
+  // In order with the other tokens.
+  assert.deepEqual(
+    findTokens("#IA-1 from:dev /plan").map((t) => t.prefix),
+    ["#", "from:", "/"],
+  );
+});
+
+test("completes a from: token, slashes, hashes and all", () => {
+  assert.deepEqual(completionAt("Fix from:feat", 13), { prefix: "from:", query: "feat", start: 4, end: 13 });
+  assert.deepEqual(completionAt("Fix from:origin/fe x", 18), { prefix: "from:", query: "origin/fe", start: 4, end: 18 });
+  assert.deepEqual(completionAt("from:#1", 7), { prefix: "from:", query: "#1", start: 0, end: 7 });
+  assert.equal(completionAt("`from:x`", 7), null);
+  assert.deepEqual(insertCompletion("Fix from:fe", { start: 4, end: 11 }, "from:", "feature/x"), { text: "Fix from:feature/x ", caret: 19 });
+});
