@@ -1185,8 +1185,8 @@ with the token. The `gh` tool (and `gh` in a wait's command) refuses `gh auth` (
 would put the token in the thread), `config get` of a host's settings (with `-h`/`--host`, or of
 `oauth_token`, which prints the token too), `gh extension` and changes to gh's aliases and settings
 (`alias set`, `alias import`, `alias delete`, `config set`, `config clear-cache`), whatever the
-thread's permission mode, and gh's command has to come first (only `--help` and `--version` may
-come before it). An account that isn't signed in to gh fails the tool call
+thread's permission mode. gh's command has to come first (only `--help` and `--version` may come
+before it), and so does `alias`'s and `config`'s subcommand. An account that isn't signed in to gh fails the tool call
 (and a `wait` with a command, without running it) with a message saying so, and the host skips its
 own lookups. `GET /github-accounts` lists the accounts gh is signed in to on a host
 (API 50), and profiles and projects take `github_account` (a login, or `HOST/LOGIN` for a GitHub

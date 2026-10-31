@@ -952,10 +952,12 @@ fn refuse<S: AsRef<str>>(args: &[S]) -> Result<()> {
         [first, ..] if first.starts_with('-') => bail!("put gh's command first, e.g. [\"release\", \"list\", {first:?}]"),
         ["auth", ..] => "gh auth",
         ["extension" | "extensions" | "ext", ..] => "gh extension",
+        // Their subcommands come first too, for the same reason.
+        ["alias" | "config", second, ..] if second.starts_with('-') => bail!("put the subcommand straight after {:?}", args[0]),
         ["alias", "set" | "import" | "delete", ..] => "changing gh's aliases",
         ["config", "set" | "clear-cache", ..] => "changing gh's settings",
         // A host's settings are its login, token and all (`config get -h HOST oauth_token` prints it).
-        ["config", "get", ref rest @ ..] if rest.iter().any(|a| a.contains("oauth_token") || a.starts_with("-h") || a.starts_with("--host")) => {
+        ["config", ref rest @ ..] if rest.iter().any(|a| a.contains("oauth_token") || a.starts_with("-h") || a.starts_with("--host")) => {
             "reading a host's gh settings"
         }
         _ => return Ok(()),
@@ -1211,9 +1213,14 @@ mod tests {
             &["config", "get", "oauth_token", "--host=github.com"],
             &["config", "get", "-hgithub.com", "user"],
             &["config", "get", "oauth_token"],
+            &["config", "--host=github.com", "get", "oauth_token"],
+            &["config", "-hgithub.com", "get", "oauth_token"],
+            &["config", "--host", "github.com", "get", "oauth_token"],
+            &["config", "--help", "get", "-h", "github.com", "user"],
+            &["alias", "--help", "set", "co", "!sh"],
         ] {
             let err = command("gh", &json!({"args": refused})).unwrap_err().to_string();
-            assert!(err.contains("isn't available to agents") || err.contains("put gh's command first"), "{refused:?}: {err}");
+            assert!(err.contains("isn't available to agents") || err.contains("put gh's command first") || err.contains("put the subcommand"), "{refused:?}: {err}");
         }
         for allowed in [&["release", "list"][..], &["--version"], &["alias", "list"], &["config", "get", "editor"], &["issue", "create", "--title", "auth"]] {
             assert!(command("gh", &json!({"args": allowed})).is_ok(), "{allowed:?}");
