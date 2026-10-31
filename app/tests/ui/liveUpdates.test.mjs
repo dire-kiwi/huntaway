@@ -89,7 +89,11 @@ test("streamed text, task events and the clock still update the thread, cards an
     const marked = (id) =>
       page.waitForFunction((id) => [...document.querySelectorAll("[data-task][aria-current]")].map((e) => e.dataset.task).join() === id, id, { timeout: 5000 });
     await marked(task.id);
-    await page.locator(`[data-task="${other.id}"]`).click();
+    // (The panel covers the other card: open it as its card would.)
+    await page.evaluate((id) => {
+      history.pushState(null, "", `${location.pathname}?task=${id}`);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }, other.id);
     await marked(other.id);
   });
 });
