@@ -923,6 +923,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "done_when_merged",
             "watch_pull_requests",
             "pr_preview_url",
+            "copy_files",
+            "link_folders",
         ],
     );
     for (k, v) in fields.iter_mut() {
@@ -956,6 +958,15 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
                     return Err(ApiError::bad("pr_preview_url must be null or an http(s) URL with {pr} for the pull request's number"));
                 }
                 *v = if url.is_empty() { Value::Null } else { json!(url) };
+            }
+            // One per line; null is none.
+            "copy_files" | "link_folders" => {
+                if !(v.is_null() || v.is_string()) {
+                    return Err(ApiError::bad(format!("{k} must be a string, one entry per line")));
+                }
+                let text = v.as_str().map(str::trim).unwrap_or_default();
+                crate::worktree_files::check(k, text).map_err(ApiError::bad)?;
+                *v = json!(text);
             }
             // null falls back to the host's default mode.
             "permission_mode" if !(v.is_null() || v.as_str().is_some_and(|m| PERMISSION_MODES.contains(&m))) => {
