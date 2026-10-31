@@ -456,7 +456,13 @@ function GitView({ task }: { task: Task }) {
     });
   };
   const head = commits[0];
+  // A project folder that's only part of its repository: what acts on the whole repository is left to a terminal.
+  const wholeRepo = (what: string) => {
+    if (status?.folder) setFlash({ text: `${what} would act on the whole repository, not just ${status.folder}: do it in a terminal`, error: true });
+    return !!status?.folder;
+  };
   const amend = () => {
+    if (wholeRepo("Amending")) return;
     if (!head) return setFlash({ text: "There's no commit to amend", error: true });
     if (status?.merge_base && !head.on_branch) return setFlash({ text: "The last commit isn't on this branch", error: true });
     setDialog({
@@ -472,7 +478,7 @@ function GitView({ task }: { task: Task }) {
     });
   };
   const reword = (c: GitCommit | undefined) => {
-    if (!c) return;
+    if (!c || wholeRepo("Rewording")) return;
     if (c.sha !== status?.head) return setFlash({ text: "Only the latest commit can be reworded here", error: true });
     void api
       .gitShow(h, id, c.sha)
@@ -486,7 +492,7 @@ function GitView({ task }: { task: Task }) {
       .catch((e) => setFlash({ text: errText(e), error: true }));
   };
   const resetMenu = (c: GitCommit | undefined) => {
-    if (!c) return;
+    if (!c || wholeRepo("Resetting")) return;
     const to = `${short(c.sha)} ${c.subject}`;
     const reset = (mode: "soft" | "mixed" | "hard") => () => void act("Resetting", () => api.gitReset(h, id, c.sha, mode), `Reset to ${short(c.sha)}`);
     setDialog({
@@ -514,6 +520,7 @@ function GitView({ task }: { task: Task }) {
     });
   };
   const stashPush = (mode: "all" | "staged" | "unstaged") => {
+    if (wholeRepo("Stashing")) return;
     if (!files.length) return setFlash({ text: "Nothing to stash" });
     setDialog({
       kind: "input",
@@ -524,6 +531,7 @@ function GitView({ task }: { task: Task }) {
     });
   };
   const stashMenu = () =>
+    !wholeRepo("Stashing") &&
     setDialog({
       kind: "menu",
       title: "Stash",
@@ -1047,8 +1055,14 @@ function GitView({ task }: { task: Task }) {
 
   return shell(
     <>
-      {(task.running || status.state || loadErr) && (
+      {(task.running || status.state || loadErr || status.folder) && (
         <div className="shrink-0 border-b border-line px-3 py-1 text-[11.5px]">
+          {status.folder && (
+            <div className="text-amber-300">
+              The project's folder is only <span className="font-mono">{status.folder}</span> in the repository at <span className="font-mono">{status.dir}</span>: this shows
+              its files and the commits that touch them. Committing what's staged elsewhere, amending, stashing and resetting are left to a terminal.
+            </div>
+          )}
           {loadErr && <div className="text-red-400">Couldn't refresh: {loadErr}</div>}
           {status.state && <div className="text-amber-300">The repository is {status.state}: finish or abort that in the terminal.</div>}
           {task.running && <div className="text-faint">The agent is working in this folder: changes made here may clash with its own.</div>}
