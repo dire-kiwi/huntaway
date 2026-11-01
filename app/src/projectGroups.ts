@@ -1,4 +1,5 @@
 import type { Project, Task } from "./api";
+import { byName } from "./projectOrder.ts";
 
 /** A row of a host's projects on the sidebar: a project on its own, or a group of them. */
 export type SidebarEntry =
@@ -38,7 +39,7 @@ export function orphanGroupNames(tasks: Task[], projects: Project[], hostId: str
   return [...new Set(names)].sort((a, b) => a.localeCompare(b));
 }
 
-/** A host's (sorted) projects as sidebar rows: each group sits where its first project is. */
+/** A host's (sorted) projects as sidebar rows, in alphabetical order: each group sits where its name does, its projects inside it. */
 export function sidebarEntries(projects: Project[]): SidebarEntry[] {
   const entries: SidebarEntry[] = [];
   const groups = new Map<string, Extract<SidebarEntry, { kind: "group" }>>();
@@ -56,7 +57,8 @@ export function sidebarEntries(projects: Project[]): SidebarEntry[] {
       entries.push(entry);
     }
   }
-  return entries;
+  const name = (e: SidebarEntry) => (e.kind === "project" ? e.project.name : e.name);
+  return entries.sort((a, b) => byName(name(a), name(b)));
 }
 
 /** A set of strings kept in this browser under `key`. */
@@ -98,6 +100,12 @@ const PINNED_KEY = "ia.pinnedProjects";
 export const loadPinnedProjects = () => loadKeys(PINNED_KEY);
 export const savePinnedProjects = (keys: Set<string>) => saveKeys(PINNED_KEY, keys);
 
+const FAVORITES_KEY = "ia.favoriteProjects";
+
+/** Favorite projects, listed in a section of their own above the others, by hiddenKey; kept in this browser. */
+export const loadFavoriteProjects = () => loadKeys(FAVORITES_KEY);
+export const saveFavoriteProjects = (keys: Set<string>) => saveKeys(FAVORITES_KEY, keys);
+
 /**
  * The projects the sidebar lists while `profile` is active: its own and the pinned ones, in
  * order. `profileOf` names a project's profile (profiles are merged across hosts by name).
@@ -106,14 +114,14 @@ export const profileProjects = (projects: Project[], profile: string | undefined
   projects.filter((p) => profileOf(p) === profile || pinned.has(hiddenKey(p)));
 
 /**
- * The sidebar rows that aren't hidden: a group shows its projects that aren't, and goes once
- * they all are. A group keeps its place (at its first project, hidden or not), so it doesn't
- * move when one of its projects is hidden or shown again.
+ * The sidebar rows that aren't hidden (or favorites, which have a section of their own): a
+ * group shows its other projects, and goes once there are none.
  */
-export function visibleEntries(entries: SidebarEntry[], hidden: Set<string>): SidebarEntry[] {
+export function visibleEntries(entries: SidebarEntry[], hidden: Set<string>, favorites = new Set<string>()): SidebarEntry[] {
+  const listed = (p: Project) => !hidden.has(hiddenKey(p)) && !favorites.has(hiddenKey(p));
   return entries.flatMap((e): SidebarEntry[] => {
-    if (e.kind === "project") return hidden.has(hiddenKey(e.project)) ? [] : [e];
-    const projects = e.projects.filter((p) => !hidden.has(hiddenKey(p)));
+    if (e.kind === "project") return listed(e.project) ? [e] : [];
+    const projects = e.projects.filter(listed);
     return projects.length ? [{ ...e, projects }] : [];
   });
 }

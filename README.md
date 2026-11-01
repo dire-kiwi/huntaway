@@ -90,9 +90,10 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
-Reorder projects in the sidebar by dragging their grip handles. With a handle focused,
-Alt + Up/Down moves the project using the keyboard. Projects stay within their host group;
-the order is saved in this browser.
+The sidebar lists projects in alphabetical order, with each group in its place by its own name
+and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
+under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
+out of its group); *Remove from favorites* puts it back. Favorites are saved in this browser.
 
 Rename a project, change its key or point it at a moved repository folder in its settings (or
 with the `update_project` tool, API 45). After a key change the old task keys (e.g. `OS-2`) still
@@ -107,13 +108,13 @@ Group projects by right-clicking one in the sidebar (or with *Group* in its sett
 shows as a collapsible folder with its projects underneath, and clicking it opens one board
 (or list) with all of their tasks. Right-click a group to rename or ungroup it. Groups are
 saved on the host, per project, so projects on different hosts are in separate groups; which
-groups are collapsed is saved in this browser. Drag a group by its grip to move it with all
-its projects; projects inside a group reorder within it.
+groups are collapsed is saved in this browser.
 
 Hide a project from the sidebar by right-clicking it and picking *Hide from sidebar* (a group's
 menu hides all of its projects). Each host's hidden projects sit under a *N hidden* row at the
 end of its list, which carries their counts and opens to show them; right-click one there to
-show it again. A hidden project is only left out of the sidebar: its tasks are still on its
+show it again. A hidden favorite stays there rather than under *Favorites*, and making a hidden project a
+favorite shows it again. A hidden project is only left out of the sidebar: its tasks are still on its
 profile's and its group's boards. Hidden projects are saved in this browser.
 
 Archive a project you're done with by right-clicking it and picking *Archive…*, or with *Archive

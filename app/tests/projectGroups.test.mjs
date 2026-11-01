@@ -7,11 +7,13 @@ import {
   hiddenKey,
   inGroupTaskGroup,
   loadCollapsedGroups,
+  loadFavoriteProjects,
   loadHiddenProjects,
   loadPinnedProjects,
   orphanGroupNames,
   profileProjects,
   saveCollapsedGroups,
+  saveFavoriteProjects,
   saveHiddenProjects,
   savePinnedProjects,
   sidebarEntries,
@@ -21,12 +23,16 @@ import {
 const project = (id, group_name = null, host_id = "desktop") => ({ id, name: id, host_id, group_name });
 afterEach(() => { delete globalThis.localStorage; });
 
-test("puts each group where its first project is, with its projects in order", () => {
-  const list = [project("a"), project("b", "G"), project("c"), project("d", "G"), project("e", "H")];
+// HA-84: groups sit among the projects in alphabetical order, by their own name.
+test("puts groups and projects in alphabetical order, with each group's projects in order", () => {
+  const list = [project("a"), project("b", "G"), project("c"), project("d", "G"), project("e", "H"), project("x")];
   const entries = sidebarEntries(list);
-  assert.deepEqual(entries.map((e) => e.key), ["p:a", "g:desktop:G", "p:c", "g:desktop:H"]);
-  assert.deepEqual(entries[1].projects.map((p) => p.id), ["b", "d"]);
-  assert.equal(entries[1].name, "G");
+  assert.deepEqual(entries.map((e) => e.key), ["p:a", "p:c", "g:desktop:G", "g:desktop:H", "p:x"]);
+  assert.deepEqual(entries[2].projects.map((p) => p.id), ["b", "d"]);
+  assert.equal(entries[2].name, "G");
+  // Case doesn't count: "beta" comes before the group "Gamma" and after "Alpha".
+  const mixed = sidebarEntries([{ ...project("1"), name: "Alpha" }, { ...project("2"), name: "beta" }, { ...project("3", "Gamma"), name: "a" }]);
+  assert.deepEqual(mixed.map((e) => e.key), ["p:1", "p:2", "g:desktop:Gamma"]);
 });
 
 test("finds groups that only have group tasks left", () => {
@@ -69,13 +75,23 @@ test("remembers collapsed groups, and copes without storage", () => {
 test("leaves hidden projects out, and a group once all of its projects are hidden", () => {
   const list = [project("a"), project("b", "G"), project("c"), project("d", "G"), project("e", "H"), project("a", null, "laptop")];
   const hide = (...keys) => visibleEntries(sidebarEntries(list), new Set(keys));
-  assert.deepEqual(hide().map((e) => e.key), ["p:a", "g:desktop:G", "p:c", "g:desktop:H", "p:a"]);
+  assert.deepEqual(hide().map((e) => e.key), ["p:a", "p:a", "p:c", "g:desktop:G", "g:desktop:H"]);
   // Ids are per host: hiding desktop's "a" leaves laptop's.
   const some = hide(hiddenKey(list[0]), "desktop:b", "desktop:e");
-  assert.deepEqual(some.map((e) => e.key), ["g:desktop:G", "p:c", "p:a"]);
-  // The group stays where its (hidden) first project is, showing the rest.
-  assert.deepEqual(some[0].projects.map((p) => p.id), ["d"]);
-  assert.deepEqual(sidebarEntries(list)[1].projects.map((p) => p.id), ["b", "d"], "doesn't change the entries it's given");
+  assert.deepEqual(some.map((e) => e.key), ["p:a", "p:c", "g:desktop:G"]);
+  assert.equal(some[0].project.host_id, "laptop");
+  // The group shows the rest of its projects.
+  assert.deepEqual(some[2].projects.map((p) => p.id), ["d"]);
+  assert.deepEqual(sidebarEntries(list)[3].projects.map((p) => p.id), ["b", "d"], "doesn't change the entries it's given");
+});
+
+// HA-84: favorites are listed in a section of their own, so they leave the host's list (and their group).
+test("leaves favorites out, and a group once all of its projects are favorites or hidden", () => {
+  const list = [project("a"), project("b", "G"), project("c"), project("d", "G")];
+  const shown = (hidden, favorites) => visibleEntries(sidebarEntries(list), new Set(hidden), new Set(favorites)).map((e) => e.kind === "group" ? `${e.key}=${e.projects.map((p) => p.id)}` : e.key);
+  assert.deepEqual(shown([], ["desktop:a", "desktop:b"]), ["p:c", "g:desktop:G=d"]);
+  assert.deepEqual(shown(["desktop:d"], ["desktop:b"]), ["p:a", "p:c"]);
+  assert.deepEqual(shown([], ["laptop:a"]), ["p:a", "p:c", "g:desktop:G=b,d"], "ids are per host");
 });
 
 test("keeps hidden projects in this browser", () => {
@@ -117,6 +133,18 @@ test("lists a profile's projects and the pinned ones", () => {
   assert.deepEqual(ids(profileProjects(list, "work", profileOf, new Set())), ["b", "c", "e"]);
   assert.deepEqual(ids(profileProjects(list, "personal", profileOf, new Set(["desktop:e", "laptop:b"]))), ["a", "d", "e"]);
   assert.deepEqual(ids(profileProjects(list, "work", profileOf, new Set(["desktop:a"]))), ["a", "b", "c", "e"]);
+});
+
+test("keeps favorite projects in this browser", () => {
+  const store = new Map();
+  globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  assert.deepEqual([...loadFavoriteProjects()], []);
+  saveFavoriteProjects(new Set(["desktop:a"]));
+  assert.deepEqual([...loadFavoriteProjects()], ["desktop:a"]);
+  assert.deepEqual([...loadPinnedProjects()], [], "apart from the pinned ones");
+  globalThis.localStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+  assert.deepEqual([...loadFavoriteProjects()], []);
+  assert.doesNotThrow(() => saveFavoriteProjects(new Set(["x"])));
 });
 
 test("keeps pinned projects in this browser", () => {

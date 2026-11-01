@@ -1,6 +1,6 @@
 import clsx from "clsx";
-import { Bell, BellRing, ChartColumn, ChevronRight, EyeOff, Folder, GripVertical, Pin, Plus, Settings, Star, X } from "lucide-react";
-import { useEffect, useMemo, useState, type Dispatch, type FormEvent, type MouseEvent, type ReactNode, type SetStateAction } from "react";
+import { Bell, BellRing, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../activeProfile";
 import { api, hostCompat, hostSupports, readyToCheck, type Project, type Status, type Task } from "../api";
 import {
@@ -10,11 +10,13 @@ import {
   groupTasks,
   hiddenKey,
   loadCollapsedGroups,
+  loadFavoriteProjects,
   loadHiddenProjects,
   loadPinnedProjects,
   orphanGroupNames,
   profileProjects,
   saveCollapsedGroups,
+  saveFavoriteProjects,
   saveHiddenProjects,
   savePinnedProjects,
   sidebarEntries,
@@ -88,91 +90,6 @@ function Counts({ attention, ready }: Pick<Stats, "attention" | "ready">) {
       <Badge n={ready} tone="review" title={`${ready} in review and ready to check`} />
       <Badge n={attention} title={`${attention} need${attention === 1 ? "s" : ""} attention`} />
     </>
-  );
-}
-
-/** A row that can be reordered among its siblings: a project, or a group with its projects. */
-type Item = { key: string; ids: string[]; name: string };
-
-interface Reorder {
-  /** The row being dragged, and the key of the list it's in. */
-  dragged: { key: string; parent: string } | null;
-  setDragged: (d: { key: string; parent: string } | null) => void;
-  dropTarget: { key: string; position: "before" | "after" } | null;
-  setDropTarget: Dispatch<SetStateAction<{ key: string; position: "before" | "after" } | null>>;
-  move: (item: Item, target: Item, position: "before" | "after", siblings: Item[]) => void;
-}
-
-/**
- * Drags (by its grip) or moves with Alt + Up/Down among `siblings`, the rows of the same list:
- * the projects and groups of a host, or the projects of a group.
- */
-function Reorderable({ item, siblings, parent, reorder, children }: { item: Item; siblings: Item[]; parent: string; reorder: Reorder; children: ReactNode }) {
-  const { dragged, dropTarget, setDragged, setDropTarget } = reorder;
-  const index = siblings.findIndex((x) => x.key === item.key);
-  return (
-    <div
-      className={clsx(
-        "group/project relative flex items-start rounded-md",
-        dragged?.key === item.key && "opacity-40",
-        dropTarget?.key === item.key && "before:pointer-events-none before:absolute before:inset-x-0 before:z-10 before:h-0.5 before:bg-accent",
-        dropTarget?.key === item.key && (dropTarget.position === "before" ? "before:top-0" : "before:bottom-0"),
-      )}
-      onDragOver={(e) => {
-        if (!dragged || dragged.parent !== parent || dragged.key === item.key) return;
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = "move";
-        const rect = e.currentTarget.getBoundingClientRect();
-        const position = e.clientY < rect.top + rect.height / 2 ? "before" : "after";
-        setDropTarget((old) => (old?.key === item.key && old.position === position ? old : { key: item.key, position }));
-      }}
-      onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget((old) => (old?.key === item.key ? null : old));
-      }}
-      onDrop={(e) => {
-        if (!dragged || dragged.parent !== parent || dropTarget?.key !== item.key || e.dataTransfer.getData("text/sidebar-item") !== dragged.key) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const source = siblings.find((x) => x.key === dragged.key);
-        if (source) reorder.move(source, item, dropTarget.position, siblings);
-        setDragged(null);
-        setDropTarget(null);
-      }}
-    >
-      {siblings.length > 1 && (
-        <button
-          draggable
-          aria-label={`Reorder ${item.name}`}
-          aria-describedby="project-reorder-help"
-          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-          title="Drag to reorder, or use Alt + Up/Down"
-          className="flex h-8 w-4 shrink-0 cursor-grab items-center justify-center rounded text-faint opacity-0 hover:text-fg focus-visible:opacity-100 group-hover/project:opacity-100 active:cursor-grabbing narrow:hidden"
-          onDragStart={(e) => {
-            e.stopPropagation();
-            e.dataTransfer.setData("text/sidebar-item", item.key);
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setDragImage(e.currentTarget.parentElement!, 16, 16);
-            setDragged({ key: item.key, parent });
-          }}
-          onDragEnd={() => {
-            setDragged(null);
-            setDropTarget(null);
-          }}
-          onKeyDown={(e) => {
-            if (!e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const up = e.key === "ArrowUp";
-            const target = siblings[index + (up ? -1 : 1)];
-            if (target) reorder.move(item, target, up ? "before" : "after", siblings);
-          }}
-        >
-          <GripVertical size={12} />
-        </button>
-      )}
-      {children}
-    </div>
   );
 }
 
@@ -346,15 +263,12 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
   const projects = useStore((s) => s.projects);
   const tasks = useStore((s) => s.tasks);
   const connected = useStore((s) => s.connected);
-  const moveProjects = useStore((s) => s.moveProjects);
   const upsertProject = useStore((s) => s.upsertProject);
   const [adding, setAdding] = useState(false);
-  const [dragged, setDragged] = useState<Reorder["dragged"]>(null);
-  const [dropTarget, setDropTarget] = useState<Reorder["dropTarget"]>(null);
-  const [announcement, setAnnouncement] = useState("");
   const [collapsed, setCollapsed] = useState(loadCollapsedGroups);
   const [hidden, setHidden] = useState(loadHiddenProjects);
   const [pinned, setPinned] = useState(loadPinnedProjects);
+  const [favorites, setFavorites] = useState(loadFavoriteProjects);
   const [savedProfile, setSavedProfile] = useState(loadActiveProfile);
   /** Hosts whose hidden projects are shown, under their other projects (for this session). */
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -426,6 +340,9 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
   }, [active, savedProfile]);
 
   const shown = profileProjects(projects, active, profileOf, pinned);
+  // Favorites are listed above the others, in a section of their own, unless they're hidden.
+  const isFavorite = (p: Project) => favorites.has(hiddenKey(p)) && !hidden.has(hiddenKey(p));
+  const favoriteList = shown.filter(isFavorite);
   const profileTasks = useMemo(() => taskList.filter((t) => profileOf(t) === active), [taskList, profileOf, active]);
   // Group projects by host once more than one host is involved.
   const groups = hosts
@@ -437,22 +354,9 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
       orphans: orphanGroupNames(profileTasks, shown, h.id),
     }))
     .filter(
-      (g) => g.projects.length > 0 || g.orphans.length > 0 || !g.host.connected || ["incompatible", "board_outdated"].includes(hostCompat(g.host)),
+      (g) => g.projects.some((p) => !isFavorite(p)) || g.orphans.length > 0 || !g.host.connected || ["incompatible", "board_outdated"].includes(hostCompat(g.host)),
     );
   const grouped = hosts.length > 1;
-
-  const reorder: Reorder = {
-    dragged,
-    setDragged,
-    dropTarget,
-    setDropTarget,
-    move: (item, target, position, siblings) => {
-      moveProjects(item.ids, target.ids, position);
-      const rest = siblings.filter((x) => x !== item);
-      const to = rest.indexOf(target) + (position === "after" ? 1 : 0);
-      setAnnouncement(`${item.name} moved to position ${to + 1} of ${siblings.length}.`);
-    },
-  };
 
   const setCollapsedGroup = (key: string, on: boolean) =>
     setCollapsed((old) => {
@@ -487,6 +391,20 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
       return next;
     });
 
+  /** Lists `list` under *Favorites*, above the other projects, or takes them out. A hidden project made a favorite is shown again. */
+  const setProjectsFavorite = (list: Project[], on: boolean) => {
+    setFavorites((old) => {
+      const next = new Set(old);
+      for (const p of list) {
+        if (on) next.add(hiddenKey(p));
+        else next.delete(hiddenKey(p));
+      }
+      saveFavoriteProjects(next);
+      return next;
+    });
+    if (on) setProjectsHidden(list, false);
+  };
+
   /** Puts `list` in group `name` (null takes them out of their group). */
   const setGroup = async (list: Project[], name: string | null) => {
     setGroupErr(null);
@@ -508,6 +426,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
     e.preventDefault();
     const grouping = hostSupports(hosts.find((h) => h.id === p.host_id), 32);
     const isHidden = hidden.has(hiddenKey(p));
+    const favorite = favorites.has(hiddenKey(p));
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -520,10 +439,9 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
               { label: "No group", checked: !p.group_name, onSelect: () => trySetGroup([p], null) },
             ]
           : []),
-        ...(names.length > 1 || isPinned(p)
-          ? [{ label: isPinned(p) ? "Unpin" : "Pin to every profile", divider: true, onSelect: () => setProjectsPinned([p], !isPinned(p)) }]
-          : []),
-        { label: isHidden ? "Show in sidebar" : "Hide from sidebar", divider: names.length < 2 && !isPinned(p), onSelect: () => setProjectsHidden([p], !isHidden) },
+        { label: favorite ? "Remove from favorites" : "Add to favorites", divider: true, onSelect: () => setProjectsFavorite([p], !favorite) },
+        ...(names.length > 1 || isPinned(p) ? [{ label: isPinned(p) ? "Unpin" : "Pin to every profile", onSelect: () => setProjectsPinned([p], !isPinned(p)) }] : []),
+        { label: isHidden ? "Show in sidebar" : "Hide from sidebar", onSelect: () => setProjectsHidden([p], !isHidden) },
         ...(hostSupports(hosts.find((h) => h.id === p.host_id), 46) ? [{ label: "Archive…", onSelect: () => setArchiving(p) }] : []),
       ],
     });
@@ -556,6 +474,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
     const owner = profileOf(p);
     const pin = isPinned(p);
     const notes = [
+      grouped && isFavorite(p) && `On ${hosts.find((h) => h.id === p.host_id)?.name ?? p.host_id}`,
       dim && `${p.name} is hidden from the sidebar; right-click it to show it again`,
       pin && (owner !== active ? `In ${owner}, pinned to every profile's sidebar` : "Pinned to every profile's sidebar"),
     ].filter(Boolean);
@@ -622,6 +541,21 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
         <MarkedTasks route={route} />
+        {favoriteList.length > 0 && (
+          <div className="pb-3">
+            <div className="flex h-6 items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold tracking-wide text-faint uppercase">
+              <Star size={11} className="shrink-0" />
+              Favorites
+            </div>
+            <div role="group" aria-label="Favorites" className="space-y-0.5">
+              {favoriteList.map((p) => (
+                <div key={`${p.host_id}:${p.id}`} className="flex">
+                  {projectRow(p)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="flex items-center px-2 pb-1">
           <span className="min-w-0 truncate text-[11px] font-semibold tracking-wide text-faint uppercase">
             Projects
@@ -652,23 +586,16 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                 </button>
               )}
               {(() => {
-                const entries = visibleEntries(sidebarEntries(list), hidden);
-                // A group moves with its hidden projects too, so they stay in it.
-                const items: Item[] = entries.map((x) =>
-                  x.kind === "project"
-                    ? { key: x.key, ids: [x.project.id], name: x.project.name }
-                    : { key: x.key, ids: groupProjects(all, x.hostId, x.name).map((p) => p.id), name: x.name },
-                );
-                return entries.map((entry, i) => {
+                const entries = visibleEntries(sidebarEntries(list), hidden, favorites);
+                return entries.map((entry) => {
                   if (entry.kind === "project")
                     return (
-                      <Reorderable key={entry.key} item={items[i]} siblings={items} parent={host.id} reorder={reorder}>
+                      <div key={entry.key} className="flex">
                         {projectRow(entry.project)}
-                      </Reorderable>
+                      </div>
                     );
                   const key = groupKey(entry.hostId, entry.name);
                   const open = !collapsed.has(key);
-                  const children: Item[] = entry.projects.map((p) => ({ key: `p:${p.id}`, ids: [p.id], name: p.name }));
                   const total = [...entry.projects.map((p) => p.id), `g:${key}`].reduce(
                     (t, id) => ({
                       attention: t.attention + (stats.by[id]?.attention ?? 0),
@@ -680,7 +607,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                   const onGroup = route.name === "group" && route.hostId === entry.hostId && route.group === entry.name;
                   const hidesActive = !open && entry.projects.some((p) => p.id === activeProject);
                   return (
-                    <Reorderable key={entry.key} item={items[i]} siblings={items} parent={host.id} reorder={reorder}>
+                    <div key={entry.key} className="flex">
                       <div className="min-w-0 flex-1">
                         <div
                           className={clsx(
@@ -715,15 +642,15 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                         </div>
                         {open && (
                           <div role="group" aria-label={entry.name} className="ml-3 space-y-0.5 border-l border-line pl-1">
-                            {entry.projects.map((p, j) => (
-                              <Reorderable key={p.id} item={children[j]} siblings={children} parent={`g:${key}`} reorder={reorder}>
+                            {entry.projects.map((p) => (
+                              <div key={p.id} className="flex">
                                 {projectRow(p)}
-                              </Reorderable>
+                              </div>
                             ))}
                           </div>
                         )}
                       </div>
-                    </Reorderable>
+                    </div>
                   );
                 });
               })()}
@@ -819,12 +746,6 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
           )}
         </div>
       </div>
-      <p id="project-reorder-help" className="sr-only">
-        Drag to reorder projects and groups within a host, or hold Alt and press Up or Down. Order is saved in this browser.
-      </p>
-      <p aria-live="polite" className="sr-only">
-        {announcement}
-      </p>
 
       <UsagePanel profile={active} />
       <div className="border-t border-line p-2">
