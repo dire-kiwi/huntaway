@@ -942,7 +942,7 @@ export interface ServerStatus {
   deployed?: { commit: string | null; checked_at: string; error: string | null } | null;
   /** `<short sha> <subject>` for the deployed commits this server isn't running (when it's ahead of it). */
   deployed_commits?: string[];
-  /** API 87, with `--release-updates`: the GitHub release this server could update to. */
+  /** API 88, with `--release-updates`: the GitHub release this server could update to. */
   release?: ReleaseStatus;
 }
 
@@ -955,7 +955,7 @@ export interface ReleaseAsset {
   sha256: string | null;
 }
 
-/** What the release checks found (API 87). Checked 30s after start, every 6 hours and on `POST /admin/release/check`. */
+/** What the release checks found (API 88). Checked 30s after start, every 6 hours and on `POST /admin/release/check`. */
 export interface ReleaseStatus {
   /** `OWNER/REPO` on GitHub. */
   repo: string;
@@ -1395,7 +1395,7 @@ export interface HostSettings {
   terminal_tools?: TerminalTool[];
   /** Where the host is reached from outside, which its webhook URLs are shown with (API 63). */
   public_url?: string | null;
-  /** Whether release checks include prereleases (API 87). Changing it checks again. */
+  /** Whether release checks include prereleases (API 88). Changing it checks again. */
   release_prereleases?: boolean;
 }
 
@@ -1879,7 +1879,7 @@ export const api = {
   updateSettings: (h: string, b: Partial<HostSettings>) => on(h).patch<HostSettings>("/settings", b),
   serverStatus: (h: string) => on(h).get<ServerStatus>("/admin/server"),
   restartServer: (h: string, b: { rebuild: boolean }) => on(h).post(`/admin/restart`, b),
-  /** API 87, with `--release-updates`: check now, and get the server's status after. */
+  /** API 88, with `--release-updates`: check now, and get the server's status after. */
   checkReleases: (h: string) => on(h).post<ServerStatus>("/admin/release/check"),
   /** Restart onto a release (staged, or downloaded first), as a restart job. */
   updateRelease: (h: string, version: string) => on(h).post<{ ok: boolean }>("/admin/release/update", { version }),

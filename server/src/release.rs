@@ -1,6 +1,6 @@
 //! Updates for release installs (the desktop app's packages, or a server installed from a release
 //! tarball): with `--release-updates <OWNER/REPO>`, check that repository's GitHub releases for a
-//! newer server, and report what was found in `GET /admin/server` (API 87). A newer release is downloaded into
+//! newer server, and report what was found in `GET /admin/server` (API 88). A newer release is downloaded into
 //! `<data dir>/app/` in the background (see staging.rs), `POST /admin/release/update` restarts onto it, and
 //! `POST /admin/release/rollback` goes back to the version before.
 

@@ -216,7 +216,7 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `IA_CLOUDFLARED_BIN` (env only) | `cloudflared` | Connector binary for a broker with managed tunnels |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
-| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 87) |
+| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
