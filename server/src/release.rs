@@ -1127,10 +1127,9 @@ mod tests {
         aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes).as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 
+    /// A folder removed when the test ends (see `testing::temp_dir`).
     fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ia-release-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::testing::temp_dir()
     }
 
     /// A release's files in `dir`: `huntaway` (a script that runs `script`), `ia-shim` and `ui/index.html`.
