@@ -275,8 +275,8 @@ A release newer than the running server is downloaded in the background into
 system `tar` (refusing entries outside its folder, and links), and smoke-tested with
 `huntaway --version`. It's then renamed to `app/<v>/` and reported as `release.staged`; progress
 and failures are in `release.download`, and a failed download is tried again on the next check.
-A staged version that a later check no longer picks (a prerelease once they're turned off, or a
-release that was taken down) is unstaged and deleted.
+A staged version that a later check no longer offers (a prerelease once they're turned off, or a
+release that was taken down) is unstaged and deleted, even while a newer release downloads.
 `POST /api/admin/release/update {"version": "<v>"}` restarts onto it in place (agents keep running,
 as with a rebuild), downloading it first if it isn't staged yet, and
 `POST /api/admin/release/rollback` marks the running version bad and restarts onto the one before
@@ -474,7 +474,7 @@ exec /opt/huntaway-server/huntaway "$@"
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
 background downloads, Update with an agent running, a broken version, Roll back, prereleases and
 the AppImage replacing itself (`--pacman` adds the Arch package, in a docker container). It needs
-`npm ci` in `app/` and about 2 GB in `/tmp`.
+`npm ci` in `app/` and about 2 GB in `~/.cache/huntaway-release-e2e`.
 
 ## Hosts
 

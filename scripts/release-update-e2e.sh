@@ -7,7 +7,8 @@
 #
 #   scripts/release-update-e2e.sh [--work DIR] [--no-build] [--pacman] [--keep]
 #
-# --work      where builds and runs go (default /tmp/huntaway-release-e2e); builds are reused with --no-build
+# --work      where builds and runs go (default ~/.cache/huntaway-release-e2e, about 2 GB: not /tmp, which may be a
+#             small tmpfs); builds are reused with --no-build
 # --no-build  use the packages already in DIR/assets
 # --build-only  only build
 # --pacman    run the container check too (needs docker and the archlinux image; downloads the package's deps)
@@ -24,7 +25,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-work=/tmp/huntaway-release-e2e
+work="${XDG_CACHE_HOME:-$HOME/.cache}/huntaway-release-e2e"
 build=1
 run=1
 run_args=()

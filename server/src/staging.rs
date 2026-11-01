@@ -137,14 +137,14 @@ pub fn staged(app: &Path, s: &Installed) -> Option<String> {
     s.staged.clone().filter(|v| !s.is_bad(v) && version_dir(app, v).is_some_and(|d| complete(&d)))
 }
 
-/// Unstage the staged version if it's above `latest` (or there's no latest), and delete it unless state.json names it
-/// as something else.
-pub fn unstage_above(state: &Shared, latest: Option<&semver::Version>) {
+/// Unstage the staged version unless `keep` says it's still offered, and delete it unless state.json names it as
+/// something else.
+pub fn unstage_unless(state: &Shared, keep: impl Fn(&semver::Version) -> bool) {
     let app = app_dir(state);
     let _one = state.release.files.lock().unwrap();
     let mut s = read(&app);
     let Some(v) = s.staged.clone() else { return };
-    if semver::Version::parse(&v).is_ok_and(|staged| latest.is_some_and(|l| staged <= *l)) {
+    if semver::Version::parse(&v).is_ok_and(|staged| keep(&staged)) {
         return;
     }
     tracing::info!("unstaging release {v}, which the last check didn't offer");

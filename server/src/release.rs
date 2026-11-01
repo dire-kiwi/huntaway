@@ -235,18 +235,22 @@ pub async fn check(state: &Shared) {
     stage_latest(state);
 }
 
-/// Once a check has succeeded, unstage a staged version above the release it picked, which it would no longer offer: a
-/// prerelease after "Include prereleases" is turned off, or a release that was taken down. One below it stays offered
-/// until the newer one's download replaces it.
+/// Once a check has succeeded, unstage a staged version it would no longer offer: a prerelease after "Include
+/// prereleases" is turned off, or a release that was taken down. One it still offers stays, even below the latest, until
+/// the latest's download replaces it.
 fn unstage_unpicked(state: &Shared) {
-    let latest = {
+    let Some(cfg) = &state.meta.release else { return };
+    let releases = {
         let last = state.release.last.lock().unwrap();
         if last.checked_at.is_none() || last.error.is_some() {
             return;
         }
-        last.latest.as_ref().map(|l| l.version.clone())
+        last.releases.clone().unwrap_or_default()
     };
-    staging::unstage_above(state, latest.as_ref());
+    let Ok(prereleases) = prereleases(state) else { return };
+    let bad = staging::read(&staging::app_dir(state)).bad;
+    let still: Vec<semver::Version> = offered(&releases, &cfg.platform, prereleases, &bad).map(|(v, ..)| v).collect();
+    staging::unstage_unless(state, |v| still.contains(v));
 }
 
 /// The version this server runs.
@@ -357,10 +361,20 @@ fn tag_version(tag: &str) -> &str {
 /// bad (rolled back from, or failed to start), and has a server tarball for `platform` with a
 /// sha256 digest.
 fn pick<'a>(releases: &'a [GhRelease], platform: &str, prereleases: bool, bad: &[String]) -> Option<(semver::Version, &'a GhRelease, &'a GhAsset)> {
+    offered(releases, platform, prereleases, bad).max_by(|a, b| a.0.cmp(&b.0))
+}
+
+/// The releases a check could pick (see `pick`), each with its version and server tarball.
+fn offered<'a, 'b>(
+    releases: &'a [GhRelease],
+    platform: &'b str,
+    prereleases: bool,
+    bad: &'b [String],
+) -> impl Iterator<Item = (semver::Version, &'a GhRelease, &'a GhAsset)> {
     releases
         .iter()
-        .filter(|r| !r.draft && (prereleases || !r.prerelease))
-        .filter_map(|r| {
+        .filter(move |r| !r.draft && (prereleases || !r.prerelease))
+        .filter_map(move |r| {
             let text = tag_version(&r.tag_name);
             let version = semver::Version::parse(text).ok()?;
             if bad.iter().any(|b| semver::Version::parse(b).is_ok_and(|b| b == version)) {
@@ -370,7 +384,6 @@ fn pick<'a>(releases: &'a [GhRelease], platform: &str, prereleases: bool, bad: &
             let asset = r.assets.iter().find(|a| a.name == name && a.sha256().is_some())?;
             Some((version, r, asset))
         })
-        .max_by(|a, b| a.0.cmp(&b.0))
 }
 
 /// The `release` block of `GET /admin/server`, when release updates are on.
@@ -1344,6 +1357,78 @@ mod tests {
             }
             assert_eq!(release_status(&state)["staged"], "0.2.0");
             assert_eq!(app_entries(&state), ["0.2.0", "state.json"]);
+        });
+    }
+
+    /// A prerelease 0.3.0-rc.1 staged with prereleases on, then a stable 0.3.0 served with `serve` (and `digest`, if
+    /// given) and prereleases turned off: the check that follows unstages the prerelease, below 0.3.0 as it is.
+    async fn prerelease_below_a_newer_stable(serve: Serve, digest: Option<&str>) -> (Arc<Mutex<Fake>>, Shared) {
+        let (fake, state) = setup_with(|f| {
+            let mut rc = served(f, "v0.3.0-rc.1", tarball("0.3.0-rc.1", None, &[]), Serve::Whole);
+            rc["prerelease"] = json!(true);
+            json!([rc])
+        })
+        .await;
+        crate::db::set_setting(&state.db(), PRERELEASES, Some("true")).unwrap();
+        check(&state).await;
+        assert_eq!(finished(&state).await.phase, "staged");
+        let mut rc = served(&fake, "v0.3.0-rc.1", tarball("0.3.0-rc.1", None, &[]), Serve::Whole);
+        rc["prerelease"] = json!(true);
+        let mut stable = served(&fake, "v0.3.0", tarball("0.3.0", None, &[]), serve);
+        if let Some(d) = digest {
+            stable["assets"][0]["digest"] = json!(d);
+        }
+        relist(&fake, json!([stable, rc]));
+        crate::db::set_setting(&state.db(), PRERELEASES, None).unwrap();
+        check(&state).await;
+        let r = release_status(&state);
+        assert_eq!((r["latest"]["version"].as_str(), r["staged"].as_str()), (Some("0.3.0"), None));
+        assert!(!staging::app_dir(&state).join("0.3.0-rc.1").exists());
+        let (code, body) = api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.3.0-rc.1"}))).await;
+        assert_eq!(code, 400, "{body}");
+        (fake, state)
+    }
+
+    // HA-69 review: a disabled prerelease below a newer stable release stayed offered while that one's download failed.
+    #[test]
+    fn a_disabled_prerelease_below_a_stable_whose_download_fails_is_unstaged() {
+        testing::run(async || {
+            let (_, state) = prerelease_below_a_newer_stable(Serve::Whole, Some(&format!("sha256:{}", "0".repeat(64)))).await;
+            let d = finished(&state).await;
+            assert_eq!((d.version.as_str(), d.phase.as_str()), ("0.3.0", "failed"));
+            assert_eq!(release_status(&state)["staged"], Value::Null);
+            assert_eq!(app_entries(&state), ["state.json"]);
+        });
+    }
+
+    #[test]
+    fn a_disabled_prerelease_is_unstaged_while_the_stable_one_downloads() {
+        testing::run(async || {
+            let go = Arc::new(tokio::sync::Notify::new());
+            let (_, state) = prerelease_below_a_newer_stable(Serve::Held(go.clone()), None).await;
+            assert_eq!(release_status(&state)["download"]["version"], "0.3.0");
+            go.notify_one();
+            let d = finished(&state).await;
+            assert_eq!((d.version.as_str(), d.phase.as_str()), ("0.3.0", "staged"));
+            assert_eq!(app_entries(&state), ["0.3.0", "state.json"]);
+        });
+    }
+
+    #[test]
+    fn an_older_staged_release_stays_offered_while_a_newer_one_downloads() {
+        testing::run(async || {
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])).await;
+            check(&state).await;
+            assert_eq!(finished(&state).await.phase, "staged");
+            let go = Arc::new(tokio::sync::Notify::new());
+            let older = served(&fake, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole);
+            relist(&fake, json!([served(&fake, "v0.3.0", tarball("0.3.0", None, &[]), Serve::Held(go.clone())), older]));
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!((r["staged"].as_str(), r["download"]["version"].as_str()), (Some("0.2.0"), Some("0.3.0")));
+            go.notify_one();
+            assert_eq!(finished(&state).await.phase, "staged");
+            assert_eq!(release_status(&state)["staged"], "0.3.0");
         });
     }
 

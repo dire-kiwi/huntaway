@@ -14,13 +14,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 const opt = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-const work = path.resolve(opt("--work") ?? "/tmp/huntaway-release-e2e");
+const work = path.resolve(opt("--work") ?? path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "huntaway-release-e2e"));
 const assets = path.join(work, "assets");
 const only = opt("--only")?.split(",");
 const keep = args.includes("--keep");
@@ -165,7 +166,7 @@ class App {
   constructor(name, gh) {
     this.dir = path.join(runs, name);
     fs.rmSync(this.dir, { recursive: true, force: true });
-    for (const d of ["data", "config", "claude"]) fs.mkdirSync(path.join(this.dir, d), { recursive: true });
+    for (const d of ["data", "config", "claude", "tmp"]) fs.mkdirSync(path.join(this.dir, d), { recursive: true });
     this.data = path.join(this.dir, "data");
     this.gh = gh;
     this.env = {};
@@ -190,7 +191,9 @@ class App {
       IA_CLAUDE_BIN: path.join(root, "scripts/fake-claude"),
       IA_CODEX_BIN: "/bin/false",
       IA_FAKE_CLAUDE_LOG: path.join(this.dir, "fake-claude.log"),
+      // The AppImage runs from a copy it extracts into $TMPDIR, which it doesn't remove when it's killed: keep it here.
       APPIMAGE_EXTRACT_AND_RUN: "1",
+      TMPDIR: path.join(this.dir, "tmp"),
       ...this.env,
     };
     delete env.DISPLAY;
