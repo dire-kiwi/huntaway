@@ -136,7 +136,12 @@ pub fn answer(s: &Shared, task_id: &str, message_id: i64, answer: Answer) -> Api
     if taken == 0 {
         return Err(ApiError::conflict("this question has been answered already"));
     }
-    match crate::runner::send(s, task_id, &reply) {
+    let sent = if let Some(attempt) = asked["merge_approval_id"].as_str() {
+        crate::merge_approval::answer(s, task_id, attempt, choices == ["Approve"])
+    } else {
+        crate::runner::send(s, task_id, &reply)
+    };
+    match sent {
         Ok(task) => {
             emit(s, message_id);
             // Any other question it was waiting on is settled by this reply.

@@ -168,6 +168,7 @@ fn host_routes() -> Router<Shared> {
         .route("/permissions/{id}", post(resolve_permission))
         .route("/project-approvals", get(project_approvals))
         .route("/internal/mcp", post(internal_mcp))
+        .route("/internal/merge-approval/{id}", get(internal_merge_approval))
         .route("/tools/{tool}", post(remote_tool))
         .route("/usage", get(crate::usage::list))
         .route("/settings", get(get_settings).patch(update_settings))
@@ -266,6 +267,8 @@ struct CreateProfile {
     /// See `db::Profile::summarizer` (API 87).
     #[serde(default)]
     summarizer: Value,
+    #[serde(default)]
+    summarize_merge: bool,
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -282,7 +285,7 @@ async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -
     let (reviewers, summarizer) = (reviewers_value(&c, &b.reviewers, true, &[])?, summarizer_value(&c, &b.summarizer, true, &[])?);
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
-    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
+    fields.extend([("summarize_merge", json!(b.summarize_merge)), ("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -330,7 +333,7 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     if let Some(v) = b.get("asana_enabled") {
         fields.push(("asana_enabled", json!(v.as_bool().ok_or_else(|| ApiError::bad("asana_enabled must be true or false"))?)));
     }
-    for key in ["limit_wait", "limit_switch"] {
+    for key in ["limit_wait", "limit_switch", "summarize_merge"] {
         if let Some(v) = b.get(key) {
             fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
         }
@@ -961,7 +964,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
         b,
         &[
             "name", "key", "repo_path", "base_branch", "setup_script", "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model",
-            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
+            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarize_merge", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
             "done_when_merged",
@@ -1056,6 +1059,9 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" | "pull_requests" | "subproject_pull_requests" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
+            }
+            "summarize_merge" if !v.is_null() && !v.is_boolean() => {
+                return Err(ApiError::bad("summarize_merge must be true, false or null (profile default)"));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
                 return Err(ApiError::bad("review_rounds must be a whole number from 0 to 20"));
@@ -2518,6 +2524,15 @@ async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Valu
 
 // ---------- agent tools ----------
 
+/// The gh helper checks the task's current approval before every merge.
+async fn internal_merge_approval(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let c = s.db();
+    let run = db::get_run(&c, &id)?.ok_or_else(|| ApiError::not_found("run"))?;
+    let task = db::get_task(&c, &run.task_id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    let disabled = crate::merge_approval::disabled(&c, &task)?;
+    Ok(Json(json!({"disabled": disabled, "reason": crate::merge_approval::DISABLED})))
+}
+
 /// From an agent's MCP helper; may block (permission prompts) until the user answers.
 async fn internal_mcp(State(s): State<Shared>, Json(call): Json<tools::McpCall>) -> Json<Value> {
     Json(match tools::handle_mcp(&s, call).await {
@@ -2919,6 +2934,39 @@ pub(crate) mod tests {
             assert_eq!(update(json!({"github_account": "ghe.example.com/me"})).await.unwrap().0["github_account"], "ghe.example.com/me");
             assert_eq!(update(json!({"github_account": ""})).await.unwrap().0["github_account"], Value::Null);
         })
+    }
+
+    #[test]
+    fn merge_summary_settings_validate_inherit_and_gate_the_current_run() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let Json(p) = create_profile(State(s.clone()), Json(serde_json::from_value(json!({"name": "work", "summarize_merge": true})).unwrap())).await.unwrap();
+            assert_eq!(p["summarize_merge"], true);
+            let pid = p["id"].as_str().unwrap();
+            let update = |b: Value| update_profile(State(s.clone()), Path(pid.to_string()), Json(b.as_object().unwrap().clone()));
+            assert!(update(json!({"summarize_merge": null})).await.is_err());
+            assert!(update(json!({"summarize_merge": "true"})).await.is_err());
+            db::insert_project(&s.db(), db::NewProject { id: "pr", profile_id: pid, name: "P", key: "P", repo_path: "/x",
+                scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false }).unwrap();
+            let set = async |b: Value| { update_project_inner(&s, "pr", b.as_object().unwrap()).await };
+            assert_eq!(set(json!({"summarize_merge": false})).await.unwrap().summarize_merge, Some(false));
+            assert_eq!(set(json!({"summarize_merge": true})).await.unwrap().summarize_merge, Some(true));
+            assert_eq!(set(json!({"summarize_merge": null})).await.unwrap().summarize_merge, None);
+            assert!(set(json!({"summarize_merge": 1})).await.is_err());
+            let t = db::insert_task(&s.db(), db::NewTask { profile_id: pid, project_id: Some("pr"), kind: "task", title: "t", description: "",
+                status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
+            let run = db::insert_run(&s.db(), &t.id, "p").unwrap();
+            let check = || internal_merge_approval(State(s.clone()), Path(run.id.clone()));
+            assert_eq!(check().await.unwrap().0["disabled"], true);
+            let t = s.update_task(&t.id, &[("merging", json!(true))]).unwrap().unwrap();
+            assert_eq!(check().await.unwrap().0["disabled"], true);
+            let mut approval = t.merge_approval.unwrap();
+            approval.decision = "approved".into();
+            s.update_task(&t.id, &[("merge_approval", json!(approval))]).unwrap();
+            assert_eq!(check().await.unwrap().0["disabled"], false);
+            s.update_task(&t.id, &[("merging", json!(false))]).unwrap();
+            assert_eq!(check().await.unwrap().0["disabled"], true);
+        });
     }
 
     #[test]

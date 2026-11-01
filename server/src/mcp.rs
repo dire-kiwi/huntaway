@@ -329,6 +329,7 @@ fn board_tools() -> Value {
                 "start_prompt": {"type": "string"},
                 "review_prompt": {"type": "string"},
                 "merge_prompt": {"type": "string"},
+                "summarize_merge": {"type": ["boolean", "null"], "description": "Summarise proposed merges and require approval before merging; null inherits the profile. Only change when asked."},
                 "auto_review": {"type": "boolean", "description": "Review each task's changes when it moves to in_review"},
                 "review_rounds": {"type": "integer", "minimum": 0, "maximum": 20, "description": "How many times in a row a review's serious issues go back to the agent to fix before the task is left for the user"},
                 "group_name": {"type": "string", "description": "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group"},

@@ -247,6 +247,16 @@ const STEP_OUT: &str = "Tasks queued to merge after this one wait while you merg
 /// Ask the agent on a task that was moved to "Ready for merge" to merge its work. The task
 /// stays in that column while it does; the agent moves it to "Done" once merged.
 pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
+    let task = &crate::merge_approval::ensure(state, task)?;
+    let text = if task.merge_approval.as_ref().is_some_and(|a| a.decision != "approved") {
+        crate::merge_approval::PROMPT.to_string()
+    } else {
+        merge_prompt(state, task)?
+    };
+    send_as(state, &task.id, &text, true)
+}
+
+pub fn merge_prompt(state: &Shared, task: &Task) -> ApiResult<String> {
     let (project, open) = {
         let c = state.db();
         let project = match &task.project_id {
@@ -282,7 +292,7 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
             ));
         }
     }
-    send_as(state, &task.id, &text, true)
+    Ok(text)
 }
 
 /// Held while picking a project's next merge, so two merges can't take its slot at once.

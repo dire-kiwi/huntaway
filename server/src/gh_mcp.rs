@@ -1062,8 +1062,25 @@ fn clip(s: &str) -> String {
     format!("{}\n\n[… {} bytes cut …]\n\n{}", &s[..head], tail - head, &s[tail..])
 }
 
+/// Re-read the board's persisted decision on every merge, including in an already running agent.
+async fn check_merge_approval() -> Result<()> {
+    let Ok(run) = std::env::var("IA_RUN_ID") else { return Ok(()) };
+    let url = std::env::var("IA_URL").context("merge approval check needs IA_URL")?;
+    let token = std::env::var("IA_TOKEN").context("merge approval check needs IA_TOKEN")?;
+    let v: Value = reqwest::Client::new().get(format!("{url}/api/internal/merge-approval/{run}"))
+        .bearer_auth(token).timeout(Duration::from_secs(15)).send().await?
+        .error_for_status()?.json().await?;
+    if v["disabled"] != false {
+        bail!("{}", crate::merge_approval::DISABLED);
+    }
+    Ok(())
+}
+
 /// Run a tool call: its output, and whether it failed.
 async fn run(tool: &str, a: &Value) -> Result<(String, bool)> {
+    if tool == "pr_merge" || (tool == "gh" && a["args"].as_array().is_some_and(|args| args.first() == Some(&json!("pr")) && args.get(1) == Some(&json!("merge")))) {
+        check_merge_approval().await?;
+    }
     let a = if tool == "pr_merge" { resolve_pr(a).await? } else { a.clone() };
     exec(&command(tool, &a)?, &a).await
 }

@@ -96,7 +96,7 @@ pub async fn start(state: &Shared, l: Launch) -> Result<()> {
                 "type": "stdio",
                 "command": path_str(&state.exe),
                 "args": ["gh-mcp"],
-                "env": {"IA_CWD": l.cwd}
+                "env": {"IA_CWD": l.cwd, "IA_URL": state.internal_url, "IA_TOKEN": state.token, "IA_RUN_ID": l.run_id}
             }
         }
     });

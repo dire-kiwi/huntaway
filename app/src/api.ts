@@ -168,6 +168,8 @@ export interface Profile {
   reviewers?: Reviewer[];
   /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 87). */
   summarizer?: Reviewer | null;
+  /** Summarise a proposed merge and require approval (API 89). */
+  summarize_merge?: boolean;
   created_at: string;
 }
 
@@ -411,6 +413,8 @@ export interface Project {
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
+  /** Null inherits the profile (API 89). */
+  summarize_merge?: boolean | null;
   /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
   summarizer?: Reviewer | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
@@ -1619,6 +1623,7 @@ export const api = {
       limit_switch?: boolean;
       reviewers?: Reviewer[];
       summarizer?: Reviewer | null;
+      summarize_merge?: boolean;
     },
   ) =>
     on(h).post<Profile>("/profiles", b),
