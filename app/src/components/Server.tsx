@@ -461,7 +461,11 @@ export function RestartModal({
   const running = status.release?.running;
   const logRef = useRef<HTMLPreElement>(null);
   // Seed with the server's view in case the restart began elsewhere.
-  const job = remote ? null : (live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null));
+  const current = remote ? null : (live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null));
+  // Whether this dialog has started a restart. A failed one from before it opened (another action, or one from before
+  // a reload) isn't shown: Try again would run this dialog's action, not that one, and it would hide what this one does.
+  const [started, setStarted] = useState(false);
+  const job = current && (current.phase !== "failed" || started) ? current : null;
   const inProgress = !!job && job.phase !== "failed";
 
   // Once the server goes down for the restart, wait for the new process, then reload for the new UI.
@@ -507,6 +511,7 @@ export function RestartModal({
       }
       return;
     }
+    setStarted(true);
     useStore.setState({ restart: { phase: "starting", error: null, log: [] } });
     try {
       const host = useStore.getState().localHostId!;

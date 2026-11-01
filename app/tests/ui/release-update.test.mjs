@@ -171,3 +171,34 @@ test("Roll back asks first, and the app's own update shows its command", async (
     assert.equal(calls.rollback, 1);
   });
 });
+
+// HA-67 review: the dialog showed the restart job the server had kept, failed or not, in place of its confirm. After a
+// failed Update, Roll back showed that failure and "Try again", which then rolled back without the migration warning.
+test("an earlier failed restart doesn't stand in for Update's or Roll back's confirm", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const latest = { ...release().latest, version: "0.3.0", url: "https://github.com/dire-kiwi/huntaway/releases/tag/v0.3.0" };
+    const r = release({ running: "0.2.0", staged: "0.3.0", latest, previous: "0.1.0", rollback_to: "0.1.0" });
+    // A failed update from before the page loaded, as the server keeps it.
+    const calls = await fakeReleases(page, () => ({ release: r, restart: { phase: "failed", log: "Downloading 0.3.0", error: "the old failure" } }));
+    let socket;
+    await page.routeWebSocket(/\/api\/ws/, (ws) => {
+      socket = ws;
+      ws.connectToServer();
+    });
+    const dialog = page.getByRole("dialog");
+    await ui.run(["goto /settings", "click Update to v0.3.0", "wait Release notes", "gone the old failure", "gone Restart failed"]);
+    // This dialog's own failure shows in it.
+    await dialog.getByRole("button", { name: "Update & restart" }).click();
+    await ui.run(["wait Starting…"]);
+    socket.send(JSON.stringify({ type: "restart", phase: "failed", error: "sha256 mismatch" }));
+    await ui.run(["wait Restart failed", "wait sha256 mismatch", "wait The server is still running v0.2.0."]);
+    await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
+    await ui.run(["gone Update Huntaway"]);
+    // Roll back still asks, with its warning, and isn't a retry of the update.
+    await ui.run(["click Roll back to v0.1.0", "wait Roll back Huntaway", "wait v0.2.0 may have migrated the database", "gone sha256 mismatch", "gone Try again"]);
+    await dialog.getByRole("button", { name: "Roll back to v0.1.0" }).click();
+    await ui.run(["wait Starting…"]);
+    assert.deepEqual([calls.update, calls.rollback], [[{ version: "0.3.0" }], 1]);
+  });
+});
