@@ -93,7 +93,8 @@ searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `rep
 The sidebar lists projects in alphabetical order, with each group in its place by its own name
 and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
 under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
-out of its group); *Remove from favorites* puts it back. Favorites are saved in this browser.
+out of its group, whose row stays while it has group tasks even if all its projects are favorites);
+*Remove from favorites* puts it back. Favorites are saved in this browser.
 
 Rename a project, change its key or point it at a moved repository folder in its settings (or
 with the `update_project` tool, API 45). After a key change the old task keys (e.g. `OS-2`) still

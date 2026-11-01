@@ -29,6 +29,9 @@ const inGroup = (t: Task, hostId: string, name?: string) =>
  */
 export const groupTasks = (tasks: Task[], hostId: string, name: string) => tasks.filter((t) => inGroup(t, hostId, name));
 
+/** The groups that have group tasks among `tasks`, by groupKey. */
+export const groupsWithTasks = (tasks: Task[]) => new Set(tasks.filter((t) => inGroup(t, t.host_id)).map((t) => groupKey(t.host_id, t.group_name!)));
+
 /**
  * Groups on a host that only have group tasks left, their projects having been ungrouped or
  * deleted, by name. They keep a board so their tasks can still be opened.
@@ -115,14 +118,17 @@ export const profileProjects = (projects: Project[], profile: string | undefined
 
 /**
  * The sidebar rows that aren't hidden (or favorites, which have a section of their own): a
- * group shows its other projects, and goes once there are none.
+ * group shows its other projects, and goes once there are none. A group whose projects left are
+ * all favorites stays, with none, while it has group tasks (`withTasks`, by groupKey), as the
+ * way to its board.
  */
-export function visibleEntries(entries: SidebarEntry[], hidden: Set<string>, favorites = new Set<string>()): SidebarEntry[] {
-  const listed = (p: Project) => !hidden.has(hiddenKey(p)) && !favorites.has(hiddenKey(p));
+export function visibleEntries(entries: SidebarEntry[], hidden: Set<string>, favorites = new Set<string>(), withTasks = new Set<string>()): SidebarEntry[] {
+  const shown = (p: Project) => !hidden.has(hiddenKey(p));
+  const listed = (p: Project) => shown(p) && !favorites.has(hiddenKey(p));
   return entries.flatMap((e): SidebarEntry[] => {
     if (e.kind === "project") return listed(e.project) ? [e] : [];
     const projects = e.projects.filter(listed);
-    return projects.length ? [{ ...e, projects }] : [];
+    return projects.length || (e.projects.some(shown) && withTasks.has(groupKey(e.hostId, e.name))) ? [{ ...e, projects }] : [];
   });
 }
 

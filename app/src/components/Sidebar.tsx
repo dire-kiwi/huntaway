@@ -8,6 +8,7 @@ import {
   groupNames,
   groupProjects,
   groupTasks,
+  groupsWithTasks,
   hiddenKey,
   loadCollapsedGroups,
   loadFavoriteProjects,
@@ -344,6 +345,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
   const isFavorite = (p: Project) => favorites.has(hiddenKey(p)) && !hidden.has(hiddenKey(p));
   const favoriteList = shown.filter(isFavorite);
   const profileTasks = useMemo(() => taskList.filter((t) => profileOf(t) === active), [taskList, profileOf, active]);
+  const withTasks = useMemo(() => groupsWithTasks(profileTasks), [profileTasks]);
   // Group projects by host once more than one host is involved.
   const groups = hosts
     .map((h) => ({
@@ -351,10 +353,11 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
       projects: shown.filter((p) => p.host_id === h.id),
       // Every profile's projects on the host, for what a group does as a whole (moving, renaming).
       all: projects.filter((p) => p.host_id === h.id),
+      entries: visibleEntries(sidebarEntries(shown.filter((p) => p.host_id === h.id)), hidden, favorites, withTasks),
       orphans: orphanGroupNames(profileTasks, shown, h.id),
     }))
     .filter(
-      (g) => g.projects.some((p) => !isFavorite(p)) || g.orphans.length > 0 || !g.host.connected || ["incompatible", "board_outdated"].includes(hostCompat(g.host)),
+      (g) => g.entries.length > 0 || g.projects.some((p) => hidden.has(hiddenKey(p))) || g.orphans.length > 0 || !g.host.connected || ["incompatible", "board_outdated"].includes(hostCompat(g.host)),
     );
   const grouped = hosts.length > 1;
 
@@ -571,7 +574,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
           </IconButton>
         </div>
         <div className="space-y-0.5">
-          {groups.map(({ host, projects: list, all, orphans }) => (
+          {groups.map(({ host, projects: list, all, entries, orphans }) => (
             <div key={host.id} className={clsx(grouped && "pb-2")}>
               {grouped && (
                 <button
@@ -585,37 +588,40 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                   {host.connected && ["incompatible", "board_outdated"].includes(hostCompat(host)) && " · needs update"}
                 </button>
               )}
-              {(() => {
-                const entries = visibleEntries(sidebarEntries(list), hidden, favorites);
-                return entries.map((entry) => {
-                  if (entry.kind === "project")
-                    return (
-                      <div key={entry.key} className="flex">
-                        {projectRow(entry.project)}
-                      </div>
-                    );
-                  const key = groupKey(entry.hostId, entry.name);
-                  const open = !collapsed.has(key);
-                  const total = [...entry.projects.map((p) => p.id), `g:${key}`].reduce(
-                    (t, id) => ({
-                      attention: t.attention + (stats.by[id]?.attention ?? 0),
-                      running: t.running + (stats.by[id]?.running ?? 0),
-                      ready: t.ready + (stats.by[id]?.ready ?? 0),
-                    }),
-                    { attention: 0, running: 0, ready: 0 },
-                  );
-                  const onGroup = route.name === "group" && route.hostId === entry.hostId && route.group === entry.name;
-                  const hidesActive = !open && entry.projects.some((p) => p.id === activeProject);
+              {entries.map((entry) => {
+                if (entry.kind === "project")
                   return (
                     <div key={entry.key} className="flex">
-                      <div className="min-w-0 flex-1">
-                        <div
-                          className={clsx(
-                            "flex h-8 items-center rounded-md text-[13px] narrow:h-10",
-                            onGroup || hidesActive ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
-                          )}
-                          onContextMenu={(e) => groupMenu(e, entry.name, groupProjects(all, entry.hostId, entry.name), groupProjects(list, entry.hostId, entry.name))}
-                        >
+                      {projectRow(entry.project)}
+                    </div>
+                  );
+                const key = groupKey(entry.hostId, entry.name);
+                const open = !collapsed.has(key);
+                // Its projects are all favorites: the row stays for its group tasks (see visibleEntries), with nothing to open.
+                const empty = !entry.projects.length;
+                const total = [...entry.projects.map((p) => p.id), `g:${key}`].reduce(
+                  (t, id) => ({
+                    attention: t.attention + (stats.by[id]?.attention ?? 0),
+                    running: t.running + (stats.by[id]?.running ?? 0),
+                    ready: t.ready + (stats.by[id]?.ready ?? 0),
+                  }),
+                  { attention: 0, running: 0, ready: 0 },
+                );
+                const onGroup = route.name === "group" && route.hostId === entry.hostId && route.group === entry.name;
+                const hidesActive = !open && entry.projects.some((p) => p.id === activeProject);
+                return (
+                  <div key={entry.key} className="flex">
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={clsx(
+                          "flex h-8 items-center rounded-md text-[13px] narrow:h-10",
+                          onGroup || hidesActive ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
+                        )}
+                        onContextMenu={(e) => groupMenu(e, entry.name, groupProjects(all, entry.hostId, entry.name), groupProjects(list, entry.hostId, entry.name))}
+                      >
+                        {empty ? (
+                          <span className="w-6 shrink-0 narrow:w-8" />
+                        ) : (
                           <button
                             aria-expanded={open}
                             aria-label={`${open ? "Collapse" : "Expand"} ${entry.name}`}
@@ -625,35 +631,35 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                           >
                             <ChevronRight size={13} className={clsx("transition-transform", open && "rotate-90")} />
                           </button>
-                          <button
-                            onClick={() => navigate({ name: "group", hostId: entry.hostId, group: entry.name })}
-                            title={`All of ${entry.name}'s tasks`}
-                            className="flex h-8 min-w-0 flex-1 items-center gap-2 pr-2.5 text-left narrow:h-10"
-                          >
-                            <Folder size={14} className="shrink-0" />
-                            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                            {!open && (
-                              <span className="flex items-center gap-1.5">
-                                {total.running ? <RunningDot /> : null}
-                                <Counts attention={total.attention} ready={total.ready} />
-                              </span>
-                            )}
-                          </button>
-                        </div>
-                        {open && (
-                          <div role="group" aria-label={entry.name} className="ml-3 space-y-0.5 border-l border-line pl-1">
-                            {entry.projects.map((p) => (
-                              <div key={p.id} className="flex">
-                                {projectRow(p)}
-                              </div>
-                            ))}
-                          </div>
                         )}
+                        <button
+                          onClick={() => navigate({ name: "group", hostId: entry.hostId, group: entry.name })}
+                          title={`All of ${entry.name}'s tasks`}
+                          className="flex h-8 min-w-0 flex-1 items-center gap-2 pr-2.5 text-left narrow:h-10"
+                        >
+                          <Folder size={14} className="shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                          {(!open || empty) && (
+                            <span className="flex items-center gap-1.5">
+                              {total.running ? <RunningDot /> : null}
+                              <Counts attention={total.attention} ready={total.ready} />
+                            </span>
+                          )}
+                        </button>
                       </div>
+                      {open && !empty && (
+                        <div role="group" aria-label={entry.name} className="ml-3 space-y-0.5 border-l border-line pl-1">
+                          {entry.projects.map((p) => (
+                            <div key={p.id} className="flex">
+                              {projectRow(p)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  );
-                });
-              })()}
+                  </div>
+                );
+              })}
               {(() => {
                 const off = list.filter((p) => hidden.has(hiddenKey(p)));
                 if (!off.length) return null;

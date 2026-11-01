@@ -4,6 +4,7 @@ import {
   groupNames,
   groupProjects,
   groupTasks,
+  groupsWithTasks,
   hiddenKey,
   inGroupTaskGroup,
   loadCollapsedGroups,
@@ -92,6 +93,23 @@ test("leaves favorites out, and a group once all of its projects are favorites o
   assert.deepEqual(shown([], ["desktop:a", "desktop:b"]), ["p:c", "g:desktop:G=d"]);
   assert.deepEqual(shown(["desktop:d"], ["desktop:b"]), ["p:a", "p:c"]);
   assert.deepEqual(shown([], ["laptop:a"]), ["p:a", "p:c", "g:desktop:G=b,d"], "ids are per host");
+});
+
+// HA-84 review: a group stays the way to its group tasks' board when its projects are all favorites.
+test("keeps a group with group tasks when its projects are all favorites", () => {
+  const list = [project("a"), project("b", "G"), project("d", "G"), project("e", "H")];
+  const withTasks = groupsWithTasks([
+    { host_id: "desktop", kind: "task", project_id: null, group_name: "G" },
+    { host_id: "desktop", kind: "task", project_id: "e", group_name: "H" },
+    { host_id: "laptop", kind: "task", project_id: null, group_name: "H" },
+  ]);
+  assert.deepEqual([...withTasks], ["desktop:G", "laptop:H"]);
+  const shown = (hidden, favorites) =>
+    visibleEntries(sidebarEntries(list), new Set(hidden), new Set(favorites), withTasks).map((e) => e.kind === "group" ? `${e.key}=${e.projects.map((p) => p.id)}` : e.key);
+  assert.deepEqual(shown([], ["desktop:b", "desktop:d", "desktop:e"]), ["p:a", "g:desktop:G="]);
+  assert.deepEqual(shown(["desktop:d"], ["desktop:b"]), ["p:a", "g:desktop:G=", "g:desktop:H=e"]);
+  // Hidden goes as before, group tasks or not.
+  assert.deepEqual(shown(["desktop:b", "desktop:d"], []), ["p:a", "g:desktop:H=e"]);
 });
 
 test("keeps hidden projects in this browser", () => {
