@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { chooseServer, compareVersions, installKind, markBad, readState, releaseEnv, writeState } = require("../electron/versions.cjs");
+const { chooseServer, compareVersions, installKind, markBad, readState, releaseEnv, startWithFallback, writeState } = require("../electron/versions.cjs");
 
 const dirs = [];
 afterEach(() => {
@@ -132,4 +132,75 @@ test("the install kind and the environment for a release build's server", () => 
   assert.equal(releaseEnv({ env: { IA_RELEASE_UPDATES: "me/fork" }, ...desktop }).IA_RELEASE_UPDATES, "me/fork");
   // Blank turns them off (the server takes a blank IA_RELEASE_UPDATES as none).
   assert.equal(releaseEnv({ env: { IA_RELEASE_UPDATES: "" }, ...desktop }).IA_RELEASE_UPDATES, "");
+});
+
+/**
+ * startWithFallback over `servers`: version -> what starting it does ("ok", "exit" before it's ready, "slow" for a
+ * timeout), with the bundled server as null. `after` runs after each start, to change the world (another launch's
+ * server taking the port).
+ */
+function fallback({ order, servers, failed = new Set(), portTaken = () => false, stopping = () => false, after = () => {} }) {
+  const started = [];
+  const saved = [];
+  const run = startWithFallback({
+    choose: (skip) => ({ version: order.find((v) => !skip.includes(v)) ?? null }),
+    start: async ({ version }) => {
+      started.push(version);
+      const what = servers[version ?? "bundled"];
+      after(version);
+      if (what === "ok") return `token-${version}`;
+      throw Object.assign(new Error(what), { early: what === "exit" });
+    },
+    portTaken: async () => portTaken(),
+    failed,
+    saveBad: (v) => saved.push(v),
+    stopping,
+  });
+  return { run, started, saved, failed };
+}
+
+test("a version that exits before it's ready is passed over, and marked bad once another comes up", async () => {
+  const f = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "exit", "0.2.0": "ok" } });
+  assert.deepEqual(await f.run, { token: "token-0.2.0", choice: { version: "0.2.0" } });
+  assert.deepEqual(f.started, ["0.3.0", "0.2.0"]);
+  assert.deepEqual(f.saved, ["0.3.0"]);
+  assert.equal(f.failed.size, 0);
+  // Down to the bundled server.
+  const g = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "exit", "0.2.0": "exit", bundled: "ok" } });
+  assert.equal((await g.run).token, "token-null");
+  assert.deepEqual(g.saved, ["0.3.0", "0.2.0"]);
+});
+
+test("a trying version (or one that exited after the timeout) is skipped, and marked bad once another comes up", async () => {
+  const f = fallback({ order: ["0.4.0", "0.2.0"], servers: { "0.2.0": "ok" }, failed: new Set(["0.4.0"]) });
+  assert.equal((await f.run).token, "token-0.2.0");
+  assert.deepEqual(f.started, ["0.2.0"]);
+  assert.deepEqual(f.saved, ["0.4.0"]);
+});
+
+test("when another launch's server takes the port, no version is marked bad", async () => {
+  // Two launches start 0.3.0 at once; this one loses the port.
+  let taken = false;
+  const f = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "exit", "0.2.0": "ok" }, failed: new Set(["0.4.0"]), portTaken: () => taken, after: () => (taken = true) });
+  await assert.rejects(f.run, /exit/);
+  assert.deepEqual(f.started, ["0.3.0"]);
+  assert.deepEqual(f.saved, []);
+  assert.equal(f.failed.size, 0);
+});
+
+test("a failure every server has (none comes up) marks nothing bad", async () => {
+  const f = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "exit", "0.2.0": "exit", bundled: "exit" } });
+  await assert.rejects(f.run, /exit/);
+  assert.deepEqual(f.started, ["0.3.0", "0.2.0", null]);
+  assert.deepEqual(f.saved, []);
+  assert.equal(f.failed.size, 0);
+});
+
+test("a slow start, or one stopped by quitting, isn't a bad version and isn't fallen back from", async () => {
+  const slow = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "slow", "0.2.0": "ok" } });
+  await assert.rejects(slow.run, /slow/);
+  assert.deepEqual(slow.started, ["0.3.0"]);
+  const quit = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "exit", "0.2.0": "ok" }, stopping: () => true });
+  await assert.rejects(quit.run, /exit/);
+  assert.deepEqual([quit.started, quit.saved], [["0.3.0"], []]);
 });

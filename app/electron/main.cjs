@@ -125,29 +125,29 @@ const EXE = process.platform === "win32" ? "huntaway.exe" : "huntaway";
 const releaseDir = () => path.join(defaultDataDir(), "app");
 
 /**
- * The server to start, as {bin, version, release}: IA_SERVER_BIN or config.serverBin; for a release build, the
- * installed version chooseServer picks (`version`; versions in `skip` failed just now) or the bundled one (`version`
- * null); from a checkout, its own build. `release` is whether it's a release build's server, which gets releaseEnv.
+ * The server to start, as {bin, version, bundled}: IA_SERVER_BIN or config.serverBin; for a release build, the
+ * installed version chooseServer picks (`version`; versions in `skip` failed just now) or the bundled one; from a
+ * checkout, its own build.
  */
 function findServerBinary(skip = []) {
   const override = [process.env.IA_SERVER_BIN, config.serverBin].filter(Boolean).find((p) => fs.existsSync(p));
-  if (override) return { bin: override, version: null, release: false };
+  if (override) return { bin: override, version: null };
   if (resourcesDir) {
     const bundled = path.join(resourcesDir, EXE);
     const choice = versions.chooseServer({ appDir: releaseDir(), bundled, minVersion: app.getVersion(), exe: EXE, skip });
-    if (choice.version || fs.existsSync(bundled)) return { ...choice, release: true };
+    if (choice.version || fs.existsSync(bundled)) return { ...choice, bundled: !choice.version };
   }
   const bin = [
     path.join(__dirname, "..", "..", "server", "target", "release", EXE),
     path.join(__dirname, "..", "..", "server", "target", "debug", EXE),
   ].find((p) => fs.existsSync(p));
-  return bin ? { bin, version: null, release: false } : null;
+  return bin ? { bin, version: null } : null;
 }
 
 let installKind;
-/** The environment for a server started here: a release build's turns on release updates (releaseEnv). */
-function serverEnv(choice) {
-  if (!choice.release) return process.env;
+/** The environment for a server started here: a release build's, whichever binary it runs, turns on release updates. */
+function serverEnv() {
+  if (!resourcesDir) return process.env;
   installKind ??= versions.installKind({ resourcesPath: resourcesDir });
   const desktop = { version: app.getVersion(), shell: startStamp, install: installKind, bundled: path.join(resourcesDir, EXE) };
   return { ...process.env, ...versions.releaseEnv(desktop) };
@@ -203,8 +203,8 @@ function note(line) {
 }
 
 /** Mark an installed release version bad in state.json, so that it isn't started again. */
-function badVersion(version, why) {
-  note(`huntaway ${version} ${why}: marking it bad`);
+function badVersion(version) {
+  note(`marking huntaway ${version} bad`);
   try {
     versions.markBad(releaseDir(), version);
   } catch (e) {
@@ -212,47 +212,73 @@ function badVersion(version, why) {
   }
 }
 
+/** Installed versions that failed to start, saved as bad once another server comes up (startWithFallback). */
+const failedVersions = new Set();
+
+const localBase = () => `http://127.0.0.1:${port}`;
+
 /**
- * Start the server and resolve with its token once it prints IA_READY. `onLost` runs if it exits after that.
+ * Start the server and resolve with its token once it prints IA_READY. If it exits after that, serverLost runs.
  *
  * Its callers have found nothing on the port, so for a release build, a version an Update was exec'ing into (`trying`)
- * didn't come up, and is marked bad. An installed version that exits before IA_READY is marked bad too, and the next
- * one chooseServer picks is started at once: these don't count as the server stopping (serverLost).
+ * didn't come up. It's passed over, and so is an installed version that exits before IA_READY, which doesn't count as
+ * the server stopping (serverLost): the next one chooseServer picks is started at once. Either is marked bad once a
+ * server comes up.
  */
-async function startServer(onLost) {
+async function startServer(win) {
   serverLog.length = 0;
   partial = "";
-  const failed = [];
   const { trying } = resourcesDir ? versions.readState(releaseDir()) : {};
-  if (typeof trying === "string") {
-    failed.push(trying);
-    badVersion(trying, "didn't come up after an update");
+  if (typeof trying === "string" && !failedVersions.has(trying)) {
+    note(`huntaway ${trying} didn't come up after an update`);
+    failedVersions.add(trying);
   }
-  for (;;) {
-    const choice = findServerBinary(failed);
-    if (!choice) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
-    try {
-      return await spawnServer(choice, onLost);
-    } catch (e) {
-      // One stopped by quitting isn't a bad version.
-      if (!choice.version || !e.early || stopping) throw e;
-      failed.push(choice.version);
-      badVersion(choice.version, `didn't start (${e.message})`);
-    }
-  }
+  const { token } = await versions.startWithFallback({
+    choose: (skip) => {
+      const choice = findServerBinary(skip);
+      if (!choice) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
+      return choice;
+    },
+    start: (choice) =>
+      spawnServer(choice, {
+        onLost: () => void serverLost(win),
+        onLate: () => lateExit(win, choice.version),
+      }).catch((e) => {
+        if (choice.version && e.early && !stopping) note(`huntaway ${choice.version} didn't start (${e.message})`);
+        throw e;
+      }),
+    // Another launch's server may have taken the port meanwhile: then the version isn't to blame, and that server is used.
+    portTaken: () => healthy(localBase(), 3).catch(() => true),
+    failed: failedVersions,
+    saveBad: badVersion,
+    stopping: () => stopping,
+  });
+  return token;
 }
 
-/** Start `choice` (findServerBinary's), resolving with its token once it's ready. A rejection's `early` is whether it
- * exited (or couldn't be run) before then, rather than taking too long. */
-function spawnServer(choice, onLost) {
+/** An installed version exited before it was ready, but after startServer stopped waiting: start the next one. */
+function lateExit(win, version) {
+  if (!version || stopping || win.isDestroyed()) return;
+  note(`huntaway ${version} exited before it was ready`);
+  failedVersions.add(version);
+  void load(win);
+}
+
+/**
+ * Start `choice` (findServerBinary's), resolving with its token once it's ready. A rejection's `early` is whether it
+ * exited (or couldn't be run) before then, rather than taking too long. `onLost` runs if it exits after it's ready, and
+ * `onLate` if it exits before that but after the wait timed out, unless another server has been started since.
+ */
+function spawnServer(choice, { onLost, onLate }) {
   const { bin, version } = choice;
   const args = ["serve", "--port", String(port)];
   if (process.env.IA_DATA_DIR || config.dataDir) args.push("--data-dir", defaultDataDir());
   if (config.host) args.push("--host", config.host);
-  console.log(`starting the huntaway server${version ? ` ${version}` : choice.release ? " bundled with the app" : ""}: ${bin}`);
-  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: serverEnv(choice) });
+  console.log(`starting the huntaway server${version ? ` ${version}` : choice.bundled ? " bundled with the app" : ""}: ${bin}`);
+  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: serverEnv() });
   serverProc = proc;
   let ready = false;
+  let timedOut = false;
   proc.stderr.on("data", (d) => {
     process.stderr.write(d);
     keepLog(d);
@@ -260,18 +286,24 @@ function spawnServer(choice, onLost) {
   // Once it's exited and the last of its output is in: on close, unless agents it started still hold its pipes.
   const ended = new Promise((resolve) =>
     proc.on("exit", (code, signal) => {
-      if (serverProc === proc) serverProc = null;
-      proc.once("close", () => resolve({ code, signal }));
-      setTimeout(() => resolve({ code, signal }), 500);
+      const latest = serverProc === proc;
+      if (latest) serverProc = null;
+      proc.once("close", () => resolve({ code, signal, latest }));
+      setTimeout(() => resolve({ code, signal, latest }), 500);
     }),
   );
-  ended.then(({ code, signal }) => {
+  ended.then(({ code, signal, latest }) => {
     console.error(`huntaway server exited (${signal ?? code})`);
-    if (ready && !stopping) onLost?.();
+    if (stopping) return;
+    if (ready) onLost?.();
+    else if (timedOut && latest) onLate?.();
   });
   return new Promise((resolve, reject) => {
     let buf = "";
-    const timer = setTimeout(() => reject(new Error("Server did not start within 15s")), 15000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error("Server did not start within 15s"));
+    }, 15000);
     proc.stdout.on("data", (d) => {
       process.stdout.write(d);
       buf += d.toString();
@@ -294,12 +326,12 @@ function spawnServer(choice, onLost) {
 }
 
 /** The server to use: the one configured, one already running on the port, or one started here. */
-async function resolveTarget(onLost) {
+async function resolveTarget(win) {
   if (config.serverUrl) return { base: config.serverUrl.replace(/\/$/, ""), token: config.token || "" };
-  const base = `http://127.0.0.1:${port}`;
+  const base = localBase();
   if (await healthy(base)) return { base, token: readToken() };
   try {
-    return { base, token: await startServer(onLost) };
+    return { base, token: await startServer(win) };
   } catch (e) {
     // Another launch's server may have taken the port meanwhile: use it.
     if (await healthy(base, 3).catch(() => false)) return { base, token: readToken() };
@@ -392,7 +424,7 @@ let boardOrigin = null;
 
 async function load(win) {
   try {
-    const { base, token } = await resolveTarget(() => void serverLost(win));
+    const { base, token } = await resolveTarget(win);
     const ui = process.env.IA_DEV_URL || base;
     boardOrigin = new URL(ui).origin;
     await win.loadURL(`${ui}/${token ? `?token=${encodeURIComponent(token)}` : ""}`);
@@ -406,8 +438,8 @@ async function load(win) {
  * meanwhile (a restart that runs the new binary from a new process), or one started here again, waiting longer after
  * each that stops at once. After a few of those, the error page says why.
  *
- * A release version an Update exec'd into that died before it came up is still `trying`, so startServer marks it bad
- * and starts the one before it, rather than the same one again.
+ * A release version an Update exec'd into that died before it came up is still `trying`, so startServer passes it over
+ * (and marks it bad) and starts the one before it, rather than the same one again.
  */
 let restarts = [];
 async function serverLost(win) {
@@ -422,10 +454,10 @@ async function serverLost(win) {
   restarts.push(now);
   await sleep(delay);
   if (stopping || win.isDestroyed()) return;
-  const base = `http://127.0.0.1:${port}`;
+  const base = localBase();
   try {
     if (await healthy(base)) return;
-    await startServer(() => void serverLost(win));
+    await startServer(win);
   } catch (e) {
     if (await healthy(base, 3).catch(() => false)) return;
     if (!win.isDestroyed()) await win.loadURL(errorPage(`It didn't start again: ${e.message || e}`, "Huntaway's server stopped"));

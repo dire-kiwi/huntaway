@@ -9,7 +9,8 @@
 //   bad       versions that didn't start, which are passed over
 //
 // Both processes write the file through a temp file and a rename, and keep each other's keys. The shell writes it only
-// while no server is running (or the one it started has just failed), so the two don't race in practice.
+// to mark versions bad, once the server it started has come up (startWithFallback): the server settles the file just
+// before it says it's ready, and doesn't write it again until a release check, so the two don't race in practice.
 
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -108,6 +109,38 @@ function chooseServer({ appDir, bundled, minVersion, exe = "huntaway", skip = []
 }
 
 /**
+ * Start a server: the one `choose(skip)` picks, and if that's an installed version (`choice.version`) that exits before
+ * it's ready (`start` rejects with `early`), the next one, at once. Resolves with {token, choice}.
+ *
+ * `failed` holds the versions that failed (the caller keeps it, for `trying` and for one that exits after `start` gave
+ * up waiting): they're skipped, and saved with `saveBad` only once a server has come up. A failure that every server
+ * has (a wrong host, the port taken by another launch's server) isn't the version's, so if none comes up, or something
+ * answers on the port after a failure (`portTaken`), it rejects and `failed` is forgotten. So is a failure while the
+ * app quits (`stopping`).
+ */
+async function startWithFallback({ choose, start, portTaken, failed, saveBad, stopping = () => false }) {
+  try {
+    for (;;) {
+      const choice = choose([...failed]);
+      let token;
+      try {
+        token = await start(choice);
+      } catch (e) {
+        if (!choice.version || !e.early || stopping() || (await portTaken())) throw e;
+        failed.add(choice.version);
+        continue;
+      }
+      for (const v of failed) saveBad(v);
+      failed.clear();
+      return { token, choice };
+    }
+  } catch (e) {
+    failed.clear();
+    throw e;
+  }
+}
+
+/**
  * How this app was installed, for the server's shell updates (IA_DESKTOP_INSTALL): `appimage:<file>`, `pacman` (the
  * package's files in /opt, owned by pacman), `mac:<.app>`, or `other`. `pacmanOwns` is for tests.
  */
@@ -145,4 +178,4 @@ function releaseEnv({ env = process.env, version, shell, install, bundled }) {
   };
 }
 
-module.exports = { parseVersion, compareVersions, readState, writeState, markBad, chooseServer, installKind, releaseEnv };
+module.exports = { parseVersion, compareVersions, readState, writeState, markBad, chooseServer, startWithFallback, installKind, releaseEnv };
