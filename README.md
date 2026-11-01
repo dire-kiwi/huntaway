@@ -591,7 +591,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
   limit resets and notes the reset on the task. Usage at 100% alone doesn't count, since a
-  plan with extra usage carries on past it. Until API 81 such a run just failed, and its task
+  plan with extra usage carries on past it, and nor does a `rejected` event on extra usage
+  (`isUsingOverage`, or an `overageStatus` of `allowed`), whose turns go on. Until API 81 such a run just failed, and its task
   needed attention with "Run failed: You've hit your 5-hour limit · resets …". Now the task
   needs attention with that message and offers *Carry on then*: it waits in *In progress*
   (with an hourglass and the countdown on its card), and when the limit resets its agent is
@@ -607,6 +608,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   A waiting task keeps waiting, whatever these settings say: a message sent to it (or *Start*)
   joins its queue. Moved to another config before its agent has started, it stops waiting for
   the old config's reset and starts on the new one (or waits for that one's, if it's out too).
+  A merge that runs out doesn't wait: waiting in *In progress* would give up its place in the
+  merge queue to the next task's merge. It needs attention, keeping its place, and you message
+  its agent once the limit has reset.
   Whether a config is out is kept in memory by the host the config is on, from its own runs,
   so a restart forgets it until a run is refused again; a waiting task keeps its reset time
   in the database and carries on after a restart. Codex doesn't say which limit refused it,
