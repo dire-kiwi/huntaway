@@ -4,7 +4,7 @@ runner, queue and merge logic without a model.
 
 An agent run (`-p --output-format stream-json`) reads its first prompt, prints a system init,
 one assistant message and a `result`, then exits. Title generation (`--output-format text`)
-prints a title. Each call appends a JSON line (args, cwd, config dir, prompt) to
+prints a title. Each call appends a JSON line (args, cwd, config dir, TMPDIR, prompt) to
 $IA_FAKE_CLAUDE_LOG, if set (test-server.sh sets it to <data dir>/fake-claude.log).
 
 Set these in the server's environment (before test-server.sh, which keeps them for `restart`):
@@ -59,7 +59,7 @@ if "--version" in args:
 prompt = read_prompt()
 log = os.environ.get("IA_FAKE_CLAUDE_LOG")
 if log:
-    entry = {"time": time.time(), "args": args, "cwd": os.getcwd(), "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"), "prompt": prompt}
+    entry = {"time": time.time(), "args": args, "cwd": os.getcwd(), "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"), "tmpdir": os.environ.get("TMPDIR"), "prompt": prompt}
     with open(log, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
