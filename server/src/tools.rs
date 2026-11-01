@@ -94,7 +94,7 @@ pub struct McpCall {
 /// (`wait` and `permission_prompt`, by their call id). A call to another tool that was cut short
 /// may have taken effect, so it isn't run again.
 const RERUNNABLE: &[&str] =
-    &["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations"];
+    &["permission_prompt", "request_user_input", "request_merge_approval", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations"];
 
 /// A call being executed, which duplicate deliveries wait on (see `handle_mcp`). Dropped without
 /// `done`, as when its request is cut short, it lets them go: a retry then finds it recorded as
@@ -232,8 +232,13 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             let tool_name = c.args["tool_name"].as_str().unwrap_or("").to_string();
             permissions::prompt(s, &task, &c.call_id, &tool_name, &c.args["input"], c.args["tool_use_id"].as_str()).await.map_err(|e| format!("{e:#}"))
         }
-        "request_user_input" => {
-            let card = crate::questions::card(&c.args)?;
+        "request_user_input" | "request_merge_approval" => {
+            let card = if c.tool == "request_merge_approval" {
+                let task = crate::merge_approval::ensure(s, &task).map_err(|e| e.to_string())?;
+                crate::merge_approval::card(&task, &c.args)?
+            } else {
+                crate::questions::card(&c.args)?
+            };
             let question = card["question"].as_str().unwrap_or("The agent needs your input").to_string();
             s.db().execute("UPDATE runs SET attention=?1 WHERE id=?2", rusqlite::params![question, c.run_id]).map_err(|e| e.to_string())?;
             let options = card["options"].as_array().is_some_and(|o| !o.is_empty());
@@ -753,7 +758,7 @@ fn project_or_own(s: &Shared, ctx: &Ctx, pid: Option<String>, profile: Option<&s
 /// The settings `update_project` changes without asking: how the project's agents are
 /// prompted and reviewed, and what it's called and where on the board it is.
 const AGENT_FIELDS: &[&str] = &[
-    "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "auto_summary",
+    "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarize_merge",
     "summarizer", "group_name",
 ];
 
@@ -773,7 +778,7 @@ async fn update_project(s: &Shared, ctx: &Ctx, p: &db::Project, args: &Value, re
     for k in AGENT_FIELDS.iter().chain(APPROVAL_FIELDS) {
         let v = &args[*k];
         // An explicit null summarizer or reviewers goes back to the profile's.
-        if v.is_null() && !(["reviewers", "summarizer"].contains(k) && args.get(*k).is_some()) {
+        if v.is_null() && !(["reviewers", "summarizer", "summarize_merge"].contains(k) && args.get(*k).is_some()) {
             continue;
         }
         if ["name", "key", "repo_path"].contains(k) && v.as_str().is_none_or(|v| v.trim().is_empty()) {
@@ -1267,6 +1272,8 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["pr_preview_url"] = json!(p.pr_preview_url);
     out["reviewers"] = json!(p.reviewers);
     out["auto_summary"] = json!(p.auto_summary);
+    out["summarize_merge"] = json!(p.summarize_merge);
+    out["profile_summarize_merge"] = json!(board.summarize_merge);
     out["summarizer"] = json!(p.summarizer);
     // What the project's empty reviewers and null summarizer use.
     out["profile_reviewers"] = json!(board.reviewers);
@@ -1383,6 +1390,7 @@ fn task_details(s: &Shared, ctx: &Ctx, t: &Task) -> ToolResult {
     let mut out = summarize(s, t);
     out["description"] = json!(t.description);
     out["worktree_path"] = json!(t.worktree_path);
+    out["merge_approval"] = json!(t.merge_approval);
     out["last_message"] = json!(db::last_assistant_text(&s.db(), &t.id)?);
     // A task can create tasks on boards the caller cannot use (or no longer can use).
     let readable = boards(s, ctx)?;

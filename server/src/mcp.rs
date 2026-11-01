@@ -188,6 +188,14 @@ fn board_tools() -> Value {
             }, "required": ["question"]}
         },
         {
+            "name": "request_merge_approval",
+            "description": "Ask the user to approve a proposed merge after summarising it. Only use for merge approval, not clarification or permission questions (use request_user_input for those). The board shows your summary in an Approve / Deny card, stores the decision, and keeps merging disabled until approval. End your turn after calling. Requires a pending merge attempt: its ID comes in the summary prompt, or get_task's merge_approval.id.",
+            "inputSchema": {"type": "object", "properties": {
+                "attempt_id": {"type": "string", "description": "The current merge attempt's ID, from the board's summary prompt or get_task's merge_approval.id"},
+                "summary": {"type": "string", "description": "What will be merged: source and target branches, changes and impact, validation, risks and outstanding work"}
+            }, "required": ["attempt_id", "summary"]}
+        },
+        {
             "name": "wait",
             "description": format!("Wait without doing anything, e.g. for the tasks you created to finish, for a pull request's checks or reviews, or for a deploy or a background command. \
                 The call blocks until the wait period is over, one of the listed tasks changes status, there's news about your pull_request, a subagent completes, fails or stops, your command exits, a message is sent to you, the run is \
@@ -329,6 +337,7 @@ fn board_tools() -> Value {
                 "start_prompt": {"type": "string"},
                 "review_prompt": {"type": "string"},
                 "merge_prompt": {"type": "string"},
+                "summarize_merge": {"type": ["boolean", "null"], "description": "Summarise proposed merges and require approval before merging; null inherits the profile. Only change when asked."},
                 "auto_review": {"type": "boolean", "description": "Review each task's changes when it moves to in_review"},
                 "review_rounds": {"type": "integer", "minimum": 0, "maximum": 20, "description": "How many times in a row a review's serious issues go back to the agent to fix before the task is left for the user"},
                 "group_name": {"type": "string", "description": "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group"},
@@ -613,6 +622,8 @@ mod tests {
         let want = ["get_project", "get_task", "get_task_field", "list_projects", "list_tasks", "permission_prompt", "request_user_input", "submit_review", "wait"];
         assert_eq!(review, want);
         assert!(task.contains(&"delete_task".into()));
+        assert!(task.contains(&"request_merge_approval".into()));
+        assert!(!for_reviewers("request_merge_approval"));
     }
 
     #[test]

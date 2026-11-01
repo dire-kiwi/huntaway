@@ -96,6 +96,11 @@ pub fn answer(s: &Shared, task_id: &str, message_id: i64, answer: Answer) -> Api
         .query_row("SELECT data FROM messages WHERE id=?1 AND task_id=?2 AND kind='question'", rusqlite::params![message_id, task_id], |r| r.get(0))
         .map_err(|_| ApiError::not_found("question"))?;
     let asked: Value = serde_json::from_str(&data).map_err(anyhow::Error::from)?;
+    // Older builds tagged every question during a merge. Those cards cannot safely express
+    // merge consent: ask for a fresh, explicit summary card instead of granting approval.
+    if asked.get("merge_approval_id").is_some() && asked["purpose"] != "merge_approval" {
+        return Err(ApiError::conflict("this approval card predates explicit merge summaries; ask the agent for a new merge summary and approval card"));
+    }
     if asked["status"] != "pending" {
         return Err(ApiError::conflict("this question has been answered already"));
     }
@@ -136,7 +141,12 @@ pub fn answer(s: &Shared, task_id: &str, message_id: i64, answer: Answer) -> Api
     if taken == 0 {
         return Err(ApiError::conflict("this question has been answered already"));
     }
-    match crate::runner::send(s, task_id, &reply) {
+    let sent = if let Some(attempt) = asked["merge_approval_id"].as_str() {
+        crate::merge_approval::answer(s, task_id, attempt, choices == ["Approve"])
+    } else {
+        crate::runner::send(s, task_id, &reply)
+    };
+    match sent {
         Ok(task) => {
             emit(s, message_id);
             // Any other question it was waiting on is settled by this reply.

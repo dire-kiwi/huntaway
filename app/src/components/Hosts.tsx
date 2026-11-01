@@ -579,6 +579,7 @@ export function ProfileForm({
   const [cloneDir, setCloneDir] = useState(initial?.clone_dir ?? "");
   const [asana, setAsana] = useState(usesAsana(initial));
   const [limitWait, setLimitWait] = useState(!!initial?.limit_wait);
+  const [summarizeMerge, setSummarizeMerge] = useState(!!initial?.summarize_merge);
   const [limitSwitch, setLimitSwitch] = useState(!!initial?.limit_switch);
   const [reviewers, setReviewers] = useState<Reviewer[]>(initial?.reviewers ?? []);
   const [summarizer, setSummarizer] = useState<Reviewer>(initial?.summarizer ?? DEFAULT_REVIEWER);
@@ -610,6 +611,7 @@ export function ProfileForm({
         ...(limits ? { limit_wait: limitWait, limit_switch: limitSwitch } : {}),
         // The host saves just the defaults as none, which is the same.
         ...(reviewing ? { reviewers, summarizer } : {}),
+        ...(hostSupports(hosts.find((h) => h.id === host), 89) ? { summarize_merge: summarizeMerge } : {}),
       };
       if (initial) await api.updateProfile(initial.host_id, initial.id, body);
       else {
@@ -689,6 +691,16 @@ export function ProfileForm({
             {limitSwitch
               ? "A task that hasn't started yet starts on the next of its configs (of the same agent) that isn't out, instead of its own."
               : ""}
+          </span>
+        </div>
+      )}
+      {hostSupports(hosts.find((h) => h.id === host), 89) && (
+        <div className="space-y-1.5">
+          <span className="block text-xs font-medium text-muted">Summarize merge</span>
+          <Toggle checked={summarizeMerge} onChange={setSummarizeMerge} label="Summarise and approve before merging" />
+          <span className="block text-xs text-faint">
+            When a task moves to Ready for merge, its agent summarises what will be merged and asks you to approve or deny it.
+            Merging stays disabled until you approve. Projects can override this.
           </span>
         </div>
       )}

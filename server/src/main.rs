@@ -24,6 +24,7 @@ mod github;
 mod hub;
 mod mcp;
 mod merged;
+mod merge_approval;
 mod permissions;
 mod pr_watch;
 mod prompts;

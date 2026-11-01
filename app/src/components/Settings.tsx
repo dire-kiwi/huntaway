@@ -413,6 +413,7 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
       "review_rounds",
       "reviewers",
       "auto_summary",
+      "summarize_merge",
       "summarizer",
       "pull_requests",
       "subproject_pull_requests",
@@ -761,6 +762,10 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                 </Field>
                 {hostSupports(host, 29) && <ProjectReviewers project={form} host={host} onChange={(v) => set("reviewers", v)} />}
               </>
+            )}
+
+            {current.id === "review" && hostSupports(host, 89) && (
+              <ProjectMergeSummary project={form} onChange={(v) => set("summarize_merge", v)} />
             )}
 
             {current.id === "review" && hostSupports(host, 84) && form.auto_summary !== undefined && (
@@ -1213,6 +1218,21 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
           />
         )}
       </div>
+    </Field>
+  );
+}
+
+function ProjectMergeSummary({ project, onChange }: { project: Project; onChange: (v: boolean | null) => void }) {
+  const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
+  return (
+    <Field label="Summarize merge" hint="On Ready for merge, the task summarises what will be merged and asks you to approve or deny it. Merging stays disabled until you approve. Denying returns it to In review.">
+      <select aria-label="Summarize merge" value={project.summarize_merge == null ? "profile" : String(project.summarize_merge)}
+        onChange={(e) => onChange(e.target.value === "profile" ? null : e.target.value === "true")}
+        className="h-8 rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+        <option value="profile">Profile's setting ({profile?.summarize_merge ? "on" : "off"})</option>
+        <option value="true">On — summarise and approve before merging</option>
+        <option value="false">Off — merge when ready</option>
+      </select>
     </Field>
   );
 }

@@ -964,6 +964,18 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (bar *Needs attention*) takes it out of the queue.
   A merge waiting on you in *Needs attention* still holds the queue; move it to another column to
   let the next one go. You can't message a queued task's agent until it's its turn.
+- **Summarize merge** (API 89): enable *Summarize merge* in *Settings → Profiles*, or choose
+  On/Off in a project's *Review* settings (by default it inherits the profile; profiles default
+  to off). When a task enters the merge queue with this on, its agent first summarises what will
+  be merged and calls `request_merge_approval` with the summary and current merge-attempt ID to
+  ask an **Approve / Deny** question. Ordinary `request_user_input` questions keep their options
+  and do not grant merge approval. It is explicitly told not to merge yet.
+  The summary and your decision stay in the thread. **Approve** sends the usual merge instructions;
+  **Deny** returns the task to *In review* and frees its merge slot. A reply typed in the thread
+  does not approve it. The gh `pr_merge` tool checks the stored approval on each call and returns
+  disabled until approval, for both Claude and Codex runs. Leaving the merge queue to make changes
+  and rejoining asks for fresh approval. Tasks with nothing to merge still go straight to *Done*.
+  The API setting is `summarize_merge`: boolean on profiles, boolean or null (inherit) on projects.
 - **Dependencies:** a task can depend on other tasks in its project (*Depends on* in its
   sidebar, the new task dialog, or `depends_on` in the agents' `create_task`/`update_task`).
   Moved to *In progress* (or started) before they're all merged, it shows *queued* and its agent
