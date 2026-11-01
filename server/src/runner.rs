@@ -2243,52 +2243,61 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
         }
         "control_response" => crate::context::on_control_response(state, task_id, &v)?,
         "result" => {
-            // The turn was refused: its config is out of usage (see usage.rs).
-            if v["api_error"] == "usage_limit_reached" {
-                if let Some(config) = task_config(state, task_id)? {
-                    crate::usage::ran_out(state, task_id, &config.id);
-                }
-            }
-            crate::context::on_result(state, task_id, &v)?;
-            // Before the turn's end closes its input (see `turn_ended`).
-            crate::context::request(state, run);
-            // A running total for the agent's process, which may go on for several turns.
-            let total = v["total_cost_usd"].as_f64().unwrap_or(0.0);
-            let so_far: f64 = state.db().query_row("SELECT cost_usd FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
-            let cost = (total - so_far).max(0.0);
-            state.db().execute("UPDATE runs SET cost_usd=?1 WHERE id=?2", rusqlite::params![total.max(so_far), run.id])?;
-            let task = db::get_task(&state.db(), task_id)?;
-            if let Some(t) = task {
-                let mut fields = vec![("cost_usd", json!(t.cost_usd + cost))];
-                if let Some(sid) = v["session_id"].as_str() {
-                    fields.push(("session_id", json!(sid)));
-                }
-                state.update_task(task_id, &fields)?;
-            }
-            let mut result_error = None;
-            if v["is_error"] == true || v["subtype"].as_str().is_some_and(|s| s != "success") {
-                result_error = Some(
-                    v["result"]
-                        .as_str()
-                        .map(String::from)
-                        .or_else(|| v["errors"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("\n")))
-                        .unwrap_or_else(|| format!("run ended with {}", v["subtype"])),
-                );
-            }
-            let slimmed = json!({
-                "type": "result",
-                "subtype": v["subtype"],
-                "is_error": v["is_error"],
-                "result": v["result"],
-                "duration_ms": v["duration_ms"],
-                "num_turns": v["num_turns"],
-                "total_cost_usd": cost,
-            });
-            record_result(state, run, result_error, slimmed)?;
+            let recorded = claude_result(state, run, &v);
+            // Whatever of it failed to be recorded (see `record_result`).
+            turn_ended(state, run);
+            recorded?;
         }
         _ => {}
     }
     Ok(())
+}
+
+/// The end of one of Claude Code's turns (its `result`, `v`), but for closing its input (see `turn_ended`).
+fn claude_result(state: &Shared, run: &Run, v: &Value) -> Result<()> {
+    let task_id = run.task_id.as_str();
+    // The turn was refused: its config is out of usage (see usage.rs).
+    if v["api_error"] == "usage_limit_reached" {
+        if let Some(config) = task_config(state, task_id)? {
+            crate::usage::ran_out(state, task_id, &config.id);
+        }
+    }
+    crate::context::on_result(state, task_id, v)?;
+    // Before the turn's end closes its input (see `turn_ended`).
+    crate::context::request(state, run);
+    // A running total for the agent's process, which may go on for several turns.
+    let total = v["total_cost_usd"].as_f64().unwrap_or(0.0);
+    let so_far: f64 = state.db().query_row("SELECT cost_usd FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
+    let cost = (total - so_far).max(0.0);
+    state.db().execute("UPDATE runs SET cost_usd=?1 WHERE id=?2", rusqlite::params![total.max(so_far), run.id])?;
+    let task = db::get_task(&state.db(), task_id)?;
+    if let Some(t) = task {
+        let mut fields = vec![("cost_usd", json!(t.cost_usd + cost))];
+        if let Some(sid) = v["session_id"].as_str() {
+            fields.push(("session_id", json!(sid)));
+        }
+        state.update_task(task_id, &fields)?;
+    }
+    let mut result_error = None;
+    if v["is_error"] == true || v["subtype"].as_str().is_some_and(|s| s != "success") {
+        result_error = Some(
+            v["result"]
+                .as_str()
+                .map(String::from)
+                .or_else(|| v["errors"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("\n")))
+                .unwrap_or_else(|| format!("run ended with {}", v["subtype"])),
+        );
+    }
+    let slimmed = json!({
+        "type": "result",
+        "subtype": v["subtype"],
+        "is_error": v["is_error"],
+        "result": v["result"],
+        "duration_ms": v["duration_ms"],
+        "num_turns": v["num_turns"],
+        "total_cost_usd": cost,
+    });
+    record_turn_end(state, run, result_error, slimmed)
 }
 
 /// The end of one of the agent's turns (Claude Code's `result`, or a Codex turn completing):
@@ -3037,11 +3046,13 @@ mod tests {
     #[test]
     fn a_turns_end_closes_the_input_even_if_it_cant_be_recorded() {
         crate::testing::run(async || {
-            let (state, _task, run) = running(true);
-            // The disk is full, say.
-            state.db().execute_batch("CREATE TRIGGER full BEFORE INSERT ON messages BEGIN SELECT RAISE(FAIL, 'database or disk is full'); END;").unwrap();
-            output(&state, &run, &[result("success", 0.1)]);
-            assert!(input_closed(&state, &run));
+            // The disk is full, say, as the turn's result goes in the thread, or as its cost is added up.
+            for failing in ["BEFORE INSERT ON messages", "BEFORE UPDATE OF cost_usd ON tasks"] {
+                let (state, _task, run) = running(true);
+                state.db().execute_batch(&format!("CREATE TRIGGER full {failing} BEGIN SELECT RAISE(FAIL, 'database or disk is full'); END;")).unwrap();
+                output(&state, &run, &[result("success", 0.1)]);
+                assert!(input_closed(&state, &run), "{failing}");
+            }
         });
     }
 

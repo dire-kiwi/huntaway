@@ -1718,6 +1718,13 @@ mod tests {
         db::update_profile(&s.db(), &p.id, &[("agent_access", json!(names))]).unwrap();
     }
 
+    /// A run of `task_id` that holds its thread, as a started one does (see runner::start_run).
+    fn started_run(s: &Shared, task_id: &str) -> db::Run {
+        let run = db::insert_run(&s.db(), task_id, "prompt").unwrap();
+        s.runs.lock().unwrap().insert(task_id.to_string(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
+        run
+    }
+
     fn ctx(p: &db::Profile) -> Ctx {
         Ctx { profile_id: Some(p.id.clone()), profile_name: p.name.clone(), task: None, call_id: None, task_fields: true }
     }
@@ -2904,7 +2911,7 @@ mod tests {
             assert_eq!((projects(), root.join("remote").exists()), (2, false));
 
             // Cut short by a restart while the user is asked, the retried call waits for the same answer.
-            let run = db::insert_run(&s.db(), &caller.id, "prompt").unwrap();
+            let run = started_run(&s, &caller.id);
             let later = root.join("later");
             let mcp = || McpCall { task_fields: true, run_id: run.id.clone(), call_id: "m1".into(), tool: "create_project".into(), args: json!({"repo_path": later}) };
             assert!(tokio::time::timeout(std::time::Duration::from_millis(100), handle_mcp(&s, mcp())).await.is_err());
@@ -3217,7 +3224,7 @@ mod tests {
             let repo = crate::testing::temp_dir();
             db::update_project(&s.db(), "kiwicd", &[("repo_path", json!(repo))]).unwrap();
             let planner = task(&s, "kiwicd", "Plan");
-            let run = db::insert_run(&s.db(), &planner.id, "prompt").unwrap();
+            let run = started_run(&s, &planner.id);
             let mcp = |call_id: &str, args: Value| McpCall { task_fields: true, run_id: run.id.clone(), call_id: call_id.into(), tool: "wait".into(), args };
             // Answers the call's prompt once it's raised.
             let answer = |call_id: &'static str, allow: bool| {
@@ -3258,7 +3265,7 @@ mod tests {
             db::update_project(&s.db(), "kiwicd", &[("repo_path", json!(repo))]).unwrap();
             let planner = task(&s, "kiwicd", "Plan");
             let launched = |mode: &str, allowed: &str| {
-                let run = db::insert_run(&s.db(), &planner.id, "prompt").unwrap();
+                let run = started_run(&s, &planner.id);
                 let dir = crate::runs::run_dir(&s, &run.id);
                 std::fs::create_dir_all(&dir).unwrap();
                 let args = ["-p", "--permission-mode", mode, "--allowedTools", allowed, "mcp__gh__pr_view", "--add-dir", "/a"];
@@ -3267,7 +3274,7 @@ mod tests {
             };
             // A Codex run in auto mode, from this build (whose reviewer reviews waits) or an older one.
             let codex_launched = |review_waits: Option<bool>| {
-                let run = db::insert_run(&s.db(), &planner.id, "prompt").unwrap();
+                let run = started_run(&s, &planner.id);
                 let dir = crate::runs::run_dir(&s, &run.id);
                 std::fs::create_dir_all(&dir).unwrap();
                 let spec_path = dir.join("codex.json");
@@ -3305,6 +3312,7 @@ mod tests {
             let runs = runs.into_iter().chain([codex_launched(None), codex_launched(Some(false))]);
             for (n, run) in runs.enumerate() {
                 let call_id = format!("asked{n}");
+                s.runs.lock().unwrap().insert(planner.id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
                 let call = tokio::spawn({
                     let (s, call) = (s.clone(), mcp(&run.id, &call_id));
                     async move { handle_mcp(&s, call).await }
@@ -3739,7 +3747,7 @@ mod tests {
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
             let caller = task(&s, "kiwicd", "Caller");
-            let run = db::insert_run(&s.db(), &caller.id, "prompt").unwrap();
+            let run = started_run(&s, &caller.id);
             let call = |id: &str, script: &str| McpCall { task_fields: true, run_id: run.id.clone(), call_id: id.into(), tool: "update_project".into(), args: json!({"setup_script": script}) };
             let script = || db::get_project(&s.db(), "kiwicd").unwrap().unwrap().setup_script;
             let cut_short = async |c: McpCall| assert!(tokio::time::timeout(std::time::Duration::from_millis(100), handle_mcp(&s, c)).await.is_err());
@@ -4001,7 +4009,7 @@ mod tests {
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
             let caller = task(&s, "kiwicd", "Caller");
-            let run = db::insert_run(&s.db(), &caller.id, "prompt").unwrap();
+            let run = started_run(&s, &caller.id);
             let call = |id: &str, args: Value| McpCall { task_fields: true, run_id: run.id.clone(), call_id: id.into(), tool: "create_automation".into(), args };
             let cut_short = async |c: McpCall| assert!(tokio::time::timeout(std::time::Duration::from_millis(100), handle_mcp(&s, c)).await.is_err());
             let asks = || s.db().query_row("SELECT COUNT(*) FROM permission_requests WHERE kind='automation'", [], |r| r.get::<_, i64>(0)).unwrap();
