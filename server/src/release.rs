@@ -63,6 +63,45 @@ impl Config {
     }
 }
 
+/// On the startup of a server with release updates that the desktop app didn't start (a tarball host's, started again
+/// by its supervisor after a reboot, say): exec the release in `app/` it last updated to, when that's newer than this
+/// one (`staging::choose_at_startup`). The desktop app chooses for the servers it starts, and a server in `app/` is the
+/// one chosen. Returns when there's nothing to start, or the exec failed.
+#[cfg(unix)]
+pub fn exec_installed(data_dir: &std::path::Path) {
+    use std::os::unix::process::CommandExt;
+    if std::env::var_os("IA_DESKTOP_VERSION").is_some_and(|v| !v.is_empty()) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    if staging::running_from_app(data_dir, &exe).is_some() {
+        return;
+    }
+    let app = data_dir.join("app");
+    let (v, bin) = match staging::choose_at_startup(&app, &running()) {
+        Ok(Some(pick)) => pick,
+        Ok(None) => return,
+        Err(e) => return tracing::warn!("choosing a release in {} to start: {e:#}", app.display()),
+    };
+    tracing::info!("starting release {v}, which this host last updated to, from {}", bin.display());
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.args(std::env::args_os().skip(1));
+    // So that Roll back can come back to this server.
+    if std::env::var_os("IA_BUNDLED_SERVER").is_none_or(|v| v.is_empty()) {
+        cmd.env("IA_BUNDLED_SERVER", &exe);
+    }
+    let err = cmd.exec();
+    tracing::warn!("starting {}: {err}; running {} instead", bin.display(), env!("CARGO_PKG_VERSION"));
+    let mut s = staging::read(&app);
+    if s.trying.as_deref() == Some(v.as_str()) {
+        s.trying = None;
+        s.bad.push(v);
+        if let Err(e) = staging::write(&app, &s) {
+            tracing::warn!("marking the release bad: {e:#}");
+        }
+    }
+}
+
 /// This build's `<os>-<arch>`, with the names `release.yml` uses.
 fn platform() -> String {
     let os = match std::env::consts::OS {
@@ -1128,9 +1167,8 @@ mod tests {
     }
 
     fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ia-release-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        // Canonical, as the server's data dir is.
+        testing::temp_dir().canonicalize().unwrap()
     }
 
     /// A release's files in `dir`: `huntaway` (a script that runs `script`), `ia-shim` and `ui/index.html`.
@@ -1596,6 +1634,42 @@ mod tests {
             assert_eq!(staging::settle(&other).unwrap(), None);
             assert_eq!(app_entries(&other), ["0.1.0", "0.2.0", "0.3.0.partial"]);
         });
+    }
+
+    /// A tarball's server, started again by its supervisor, picks the version it last updated to, and a version that
+    /// didn't come up isn't picked again (or it would be started on every restart).
+    #[test]
+    fn a_server_started_again_picks_the_version_it_updated_to() {
+        let app = temp_dir();
+        let v = |s: &str| semver::Version::parse(s).unwrap();
+        let state = |s: &Value| std::fs::write(app.join("state.json"), s.to_string()).unwrap();
+        let installed = || -> Value { serde_json::from_slice(&std::fs::read(app.join("state.json")).unwrap()).unwrap() };
+        // Nothing downloaded: nothing to pick, and no state.json written.
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap(), None);
+        assert!(!app.join("state.json").exists());
+        for ver in ["0.2.0", "0.3.0"] {
+            server_files(&app.join(ver), "true");
+        }
+        state(&json!({"current": "0.3.0", "previous": "0.2.0", "staged": null, "trying": null, "bad": [], "shell": 1}));
+        let pick = staging::choose_at_startup(&app, &v("0.1.0")).unwrap();
+        assert_eq!(pick, Some(("0.3.0".to_string(), app.join("0.3.0/huntaway"))));
+        assert_eq!(installed(), json!({"current": "0.3.0", "previous": "0.2.0", "staged": null, "trying": "0.3.0", "bad": [], "shell": 1}));
+        // It came up and settled; a newer tarball (0.3.0 or later) runs itself.
+        state(&json!({"current": "0.3.0", "previous": "0.2.0", "bad": []}));
+        assert_eq!(staging::choose_at_startup(&app, &v("0.3.0")).unwrap(), None);
+        assert_eq!(staging::choose_at_startup(&app, &v("0.4.0")).unwrap(), None);
+        // 0.3.0 exited before it was listening (trying is still set): it's bad, and 0.2.0 is current and tried.
+        state(&json!({"current": "0.3.0", "previous": "0.2.0", "trying": "0.3.0", "bad": []}));
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap().unwrap().0, "0.2.0");
+        let s = staging::read(&app);
+        assert_eq!((s.current.as_deref(), s.previous.as_deref(), s.trying.as_deref(), s.bad.clone()), (Some("0.2.0"), None, Some("0.2.0"), vec!["0.3.0".into()]));
+        // And when 0.2.0 doesn't come up either, the tarball's own server runs.
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap(), None);
+        let s = staging::read(&app);
+        assert_eq!((s.trying, s.bad), (None, vec!["0.3.0".to_string(), "0.2.0".to_string()]));
+        // A version without its files isn't picked.
+        state(&json!({"current": "0.4.0", "bad": []}));
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap(), None);
     }
 
     #[test]

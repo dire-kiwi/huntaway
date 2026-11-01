@@ -175,6 +175,40 @@ pub fn settle(state: &Shared) -> Result<Option<String>> {
     Ok(Some(v))
 }
 
+/// For a server whose version nothing else chooses (a tarball's, which its supervisor starts again after a reboot), the
+/// version in `app/` to exec instead, as the desktop app chooses (`chooseServer` in app/electron/versions.cjs): `current`,
+/// else `previous`, the first newer than `running` (so a newer tarball wins over older downloads) that isn't bad and has
+/// its files. It's set as `trying`, which it clears once it's listening (`settle`).
+///
+/// A `trying` still set here never came up, from an Update or an earlier start like this one, so it's marked bad first:
+/// a version that exits on startup is tried once, rather than on every restart.
+pub fn choose_at_startup(app: &Path, running: &semver::Version) -> Result<Option<(String, PathBuf)>> {
+    let old = read(app);
+    let mut s = old.clone();
+    if let Some(t) = s.trying.take() {
+        tracing::warn!("release {t} didn't start last time, so it isn't started or offered again");
+        if !s.is_bad(&t) {
+            s.bad.push(t);
+        }
+    }
+    let newer = |v: &str| semver::Version::parse(v).is_ok_and(|v| v > *running);
+    let pick = [&s.current, &s.previous]
+        .into_iter()
+        .flatten()
+        .find(|v| !s.is_bad(v) && newer(v) && version_dir(app, v).is_some_and(|d| complete(&d)))
+        .cloned();
+    // Falling back to previous: it's current now, rather than the one passed over becoming previous when it settles.
+    if pick.is_some() && pick != s.current {
+        s.current = pick.clone();
+        s.previous = None;
+    }
+    s.trying = pick.clone();
+    if s != old {
+        write(app, &s)?;
+    }
+    Ok(pick.map(|v| (v.clone(), app.join(v).join("huntaway"))))
+}
+
 fn settled(s: &mut Installed, v: &str) {
     if s.trying.as_deref() == Some(v) {
         if s.current.as_deref() != Some(v) {
