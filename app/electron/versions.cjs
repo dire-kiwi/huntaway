@@ -116,27 +116,33 @@ function chooseServer({ appDir, bundled, minVersion, exe = "huntaway", skip = []
  * up waiting): they're skipped, and saved with `saveBad` only once a server has come up. A failure that every server
  * has (a wrong host, the port taken by another launch's server) isn't the version's, so if none comes up, or something
  * answers on the port after a failure (`portTaken`), it rejects and `failed` is forgotten. So is a failure while the
- * app quits (`stopping`).
+ * app quits (`stopping`). A timeout (a rejection without `early`) keeps them: that server is still starting, and if it
+ * exits too, the caller adds it and starts the next one.
  */
 async function startWithFallback({ choose, start, portTaken, failed, saveBad, stopping = () => false }) {
-  try {
-    for (;;) {
-      const choice = choose([...failed]);
-      let token;
-      try {
-        token = await start(choice);
-      } catch (e) {
-        if (!choice.version || !e.early || stopping() || (await portTaken())) throw e;
-        failed.add(choice.version);
-        continue;
-      }
-      for (const v of failed) saveBad(v);
-      failed.clear();
-      return { token, choice };
-    }
-  } catch (e) {
+  const giveUp = (e) => {
     failed.clear();
     throw e;
+  };
+  for (;;) {
+    let choice;
+    try {
+      choice = choose([...failed]);
+    } catch (e) {
+      giveUp(e);
+    }
+    let token;
+    try {
+      token = await start(choice);
+    } catch (e) {
+      if (!e.early) throw e;
+      if (!choice.version || stopping() || (await portTaken())) giveUp(e);
+      failed.add(choice.version);
+      continue;
+    }
+    for (const v of failed) saveBad(v);
+    failed.clear();
+    return { token, choice };
   }
 }
 

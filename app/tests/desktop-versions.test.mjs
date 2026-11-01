@@ -204,3 +204,36 @@ test("a slow start, or one stopped by quitting, isn't a bad version and isn't fa
   await assert.rejects(quit.run, /exit/);
   assert.deepEqual([quit.started, quit.saved], [["0.3.0"], []]);
 });
+
+test("versions that exit after the wait timed out, one after another, reach the bundled server and are all marked bad", async () => {
+  // As main.cjs's lateExit has it: each start times out, then that version exits, and the shell starts again.
+  const failed = new Set();
+  const servers = { "0.3.0": "slow", "0.2.0": "slow", bundled: "ok" };
+  const first = fallback({ order: ["0.3.0", "0.2.0"], servers, failed });
+  await assert.rejects(first.run, /slow/);
+  failed.add("0.3.0");
+  const second = fallback({ order: ["0.3.0", "0.2.0"], servers, failed });
+  await assert.rejects(second.run, /slow/);
+  assert.deepEqual([...failed], ["0.3.0"], "a timeout keeps the failures before it");
+  failed.add("0.2.0");
+  const third = fallback({ order: ["0.3.0", "0.2.0"], servers, failed });
+  assert.equal((await third.run).token, "token-null");
+  assert.deepEqual([first.started, second.started, third.started], [["0.3.0"], ["0.2.0"], [null]]);
+  assert.deepEqual(third.saved, ["0.3.0", "0.2.0"]);
+  assert.equal(failed.size, 0);
+});
+
+test("with no server left to try, the failures are forgotten", async () => {
+  const failed = new Set(["0.3.0"]);
+  const f = startWithFallback({
+    choose: () => {
+      throw new Error("no server");
+    },
+    start: assert.fail,
+    portTaken: async () => false,
+    failed,
+    saveBad: assert.fail,
+  });
+  await assert.rejects(f, /no server/);
+  assert.equal(failed.size, 0);
+});
