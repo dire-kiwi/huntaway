@@ -13,12 +13,19 @@ export async function renderMermaid(source: string): Promise<string> {
   const mermaid = await load();
   const id = `ia-mermaid-${++renders}`;
   try {
-    return (await mermaid.render(id, source)).svg;
+    return asXml((await mermaid.render(id, source)).svg);
   } finally {
     // Mermaid can leave these behind after a failed render.
     document.getElementById(id)?.remove();
     document.getElementById(`d${id}`)?.remove();
   }
+}
+
+/** Mermaid writes labels' HTML as HTML (`<br>` for a line break, `&nbsp;`), which isn't XML, so an image of
+ *  the SVG wouldn't load. Read it as HTML and write it out again as XML. */
+export function asXml(svg: string): string {
+  const root = new DOMParser().parseFromString(svg, "text/html").querySelector("svg");
+  return root ? new XMLSerializer().serializeToString(root) : svg;
 }
 
 // Display SVGs as images, so they can't execute scripts even if something gets past Mermaid's sanitizer.
