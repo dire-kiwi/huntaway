@@ -79,8 +79,8 @@ pub fn state() -> Shared {
     state_with(meta())
 }
 
-fn meta() -> crate::admin::ServerMeta {
-    crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] }
+pub fn meta() -> crate::admin::ServerMeta {
+    crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] }
 }
 
 fn identity() -> Identity {
@@ -95,6 +95,12 @@ pub fn state_with(meta: crate::admin::ServerMeta) -> Shared {
 /// An `AppState` on an in-memory database, for a host with these ids, tokens and URL.
 pub fn state_as(id: Identity) -> Shared {
     state_of(id, meta())
+}
+
+/// An `AppState` on an in-memory database, with its data in `data_dir`, for a server whose binary is `exe`.
+pub fn state_at(meta: crate::admin::ServerMeta, data_dir: std::path::PathBuf, exe: std::path::PathBuf) -> Shared {
+    let c = crate::db::open(std::path::Path::new(":memory:")).unwrap();
+    AppState::with_exe(c, data_dir, identity(), meta, exe)
 }
 
 fn state_of(id: Identity, meta: crate::admin::ServerMeta) -> Shared {

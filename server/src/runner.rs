@@ -2532,7 +2532,7 @@ mod tests {
         };
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
-        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] };
+        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] };
         let dir = crate::testing::TempDir::new();
         let state: Shared = crate::state::AppState::new(c, dir.to_path_buf(), id, meta);
         let _ = state.test_dir.set(dir);

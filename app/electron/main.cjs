@@ -12,15 +12,25 @@
 // server's Rebuild & restart, or Update when it follows a deployment (IA_UPDATE_FROM). The window
 // reloads onto the new UI, and the app relaunches itself if the update changed this directory.
 //
-// A release build (`npm run dist`, attached to each GitHub release by .github/workflows/release.yml) carries the
-// server, ia-shim and the UI in its resources. It has no checkout, so it's updated by installing a newer release.
+// A release build (`npm run dist`, attached to each GitHub release by .github/workflows/release.yml: the AppImage, the
+// pacman package and the mac app) carries the server, ia-shim and the UI in its resources. The server it starts checks
+// GitHub's releases (IA_RELEASE_UPDATES, see releaseEnv in versions.cjs) and downloads each new one's server into
+// `<data dir>/app/<version>/`, per user, so pacman's files in /opt stay as they are. The sidebar's Update restarts the
+// server onto it, and from then on this app starts that version (chooseServer in versions.cjs) rather than its bundled
+// one, unless the package is newer. A version that won't start is marked bad, and the one before it, or the bundled
+// one, runs instead. A release that also changed this shell (Electron and electron/) needs a newer package: an AppImage
+// or the pacman package installs it from the board's Settings → Server (updateShell in shellupdate.cjs) and relaunches.
+// A server this app finds already running, or a remote serverUrl, isn't started here, so it never gets release updates
+// from the app. README's "Updating the desktop app" has the whole story; scripts/release-update-e2e.sh tests it.
 
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
-const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const shellUpdate = require("./shellupdate.cjs");
+const { shellStamp } = require("./stamp.cjs");
+const versions = require("./versions.cjs");
 
 /** `dir`, or `legacy` from before the rename to Huntaway if only that one exists. */
 function renamed(dir, legacy) {
@@ -110,16 +120,46 @@ function readToken() {
   }
 }
 
-function findServerBinary() {
-  const exe = process.platform === "win32" ? "huntaway.exe" : "huntaway";
-  const candidates = [
-    process.env.IA_SERVER_BIN,
-    config.serverBin,
-    app.isPackaged ? path.join(process.resourcesPath, exe) : null,
-    path.join(__dirname, "..", "..", "server", "target", "release", exe),
-    path.join(__dirname, "..", "..", "server", "target", "debug", exe),
-  ].filter(Boolean);
-  return candidates.find((p) => fs.existsSync(p));
+// A release build's resources: the bundled server, ia-shim and UI. IA_PACKAGED_RESOURCES runs a checkout as a release
+// build with its resources in that dir, to try the release layout (chooseServer, the fallback) without packaging.
+const resourcesDir = process.env.IA_PACKAGED_RESOURCES || (app.isPackaged ? process.resourcesPath : null);
+const EXE = process.platform === "win32" ? "huntaway.exe" : "huntaway";
+
+/** Where the server downloads release versions, and their state.json (see versions.cjs). */
+const releaseDir = () => path.join(defaultDataDir(), "app");
+
+/**
+ * The server to start, as {bin, version, bundled}: IA_SERVER_BIN or config.serverBin; for a release build, the
+ * installed version chooseServer picks (`version`; versions in `skip` failed just now) or the bundled one; from a
+ * checkout, its own build.
+ */
+function findServerBinary(skip = []) {
+  const override = [process.env.IA_SERVER_BIN, config.serverBin].filter(Boolean).find((p) => fs.existsSync(p));
+  if (override) return { bin: override, version: null };
+  if (resourcesDir) {
+    const bundled = path.join(resourcesDir, EXE);
+    const choice = versions.chooseServer({ appDir: releaseDir(), bundled, minVersion: app.getVersion(), exe: EXE, skip });
+    if (choice.version || fs.existsSync(bundled)) return { ...choice, bundled: !choice.version };
+  }
+  const bin = [
+    path.join(__dirname, "..", "..", "server", "target", "release", EXE),
+    path.join(__dirname, "..", "..", "server", "target", "debug", EXE),
+  ].find((p) => fs.existsSync(p));
+  return bin ? { bin, version: null } : null;
+}
+
+let installKindCache;
+/** How this release build was installed (versions.installKind). */
+function installKind() {
+  installKindCache ??= versions.installKind({ resourcesPath: resourcesDir });
+  return installKindCache;
+}
+
+/** The environment for a server started here: a release build's, whichever binary it runs, turns on release updates. */
+function serverEnv() {
+  if (!resourcesDir) return process.env;
+  const desktop = { version: app.getVersion(), shell: startStamp, install: installKind(), bundled: path.join(resourcesDir, EXE) };
+  return { ...process.env, ...versions.releaseEnv(desktop) };
 }
 
 /** Whether `url` is one for a browser (http, https or mailto), rather than a file or another app's scheme. */
@@ -164,18 +204,101 @@ function keepLog(chunk) {
   serverLog.splice(0, serverLog.length - LOG_LINES);
 }
 
-/** Start the server and resolve with its token once it prints IA_READY. `onLost` runs if it exits after that. */
-function startServer(onLost) {
-  const bin = findServerBinary();
-  if (!bin) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
+/** A line about the server's start, in the app's log and the error page's server output. */
+function note(line) {
+  console.error(line);
+  serverLog.push(line);
+  serverLog.splice(0, serverLog.length - LOG_LINES);
+}
+
+/** Mark an installed release version bad in state.json, so that it isn't started again. */
+function badVersion(version) {
+  note(`marking huntaway ${version} bad`);
+  try {
+    versions.markBad(releaseDir(), version);
+  } catch (e) {
+    note(`couldn't save that in ${path.join(releaseDir(), "state.json")}: ${e.message}`);
+  }
+}
+
+/** Installed versions that failed to start, saved as bad once another server comes up (startWithFallback). */
+const failedVersions = new Set();
+
+const localBase = () => `http://127.0.0.1:${port}`;
+
+/**
+ * Start the server and resolve with its token once it prints IA_READY. If it exits after that, serverLost runs.
+ *
+ * Its callers have found nothing on the port, so for a release build, a version an Update was exec'ing into (`trying`)
+ * didn't come up. It's passed over, and so is an installed version that exits before IA_READY, which doesn't count as
+ * the server stopping (serverLost): the next one chooseServer picks is started at once. Either is marked bad once a
+ * server comes up.
+ */
+async function startServer(win) {
+  serverLog.length = 0;
+  partial = "";
+  const { trying } = resourcesDir ? versions.readState(releaseDir()) : {};
+  if (typeof trying === "string" && !failedVersions.has(trying)) {
+    note(`huntaway ${trying} didn't come up after an update`);
+    failedVersions.add(trying);
+  }
+  const started = versions.startWithFallback({
+    choose: (skip) => {
+      const choice = findServerBinary(skip);
+      if (!choice) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
+      return choice;
+    },
+    start: (choice) =>
+      spawnServer(choice, {
+        onLost: () => void serverLost(win),
+        onLate: () => lateExit(win, choice.version),
+      }).catch((e) => {
+        if (choice.version && e.early && !stopping) note(`huntaway ${choice.version} didn't start (${e.message})`);
+        throw e;
+      }),
+    // Another launch's server may have taken the port meanwhile: then the version isn't to blame, and that server is used.
+    portTaken: () => healthy(localBase(), 3).catch(() => true),
+    failed: failedVersions,
+    saveBad: badVersion,
+    stopping: () => stopping,
+  });
+  try {
+    return (await started).token;
+  } catch (e) {
+    // It timed out, then came up after all (startWithFallback has saved the failures before it): show the board.
+    e.ready?.then(() => {
+      if (!stopping && !win.isDestroyed()) void load(win);
+    });
+    throw e;
+  }
+}
+
+/** An installed version exited before it was ready, but after startServer stopped waiting: start the next one. */
+function lateExit(win, version) {
+  if (!version || stopping || win.isDestroyed()) return;
+  note(`huntaway ${version} exited before it was ready`);
+  failedVersions.add(version);
+  void load(win);
+}
+
+/**
+ * Start `choice` (findServerBinary's), resolving with its token once it's ready. A rejection's `early` is whether it
+ * exited (or couldn't be run) before then, rather than taking too long. `onLost` runs if it exits after it's ready, and
+ * `onLate` if it exits before that but after the wait timed out, unless another server has been started since. A
+ * timeout's `ready` resolves if it's ready after all, on the same terms.
+ */
+function spawnServer(choice, { onLost, onLate }) {
+  const { bin, version } = choice;
   const args = ["serve", "--port", String(port)];
   if (process.env.IA_DATA_DIR || config.dataDir) args.push("--data-dir", defaultDataDir());
   if (config.host) args.push("--host", config.host);
-  serverLog.length = 0;
-  partial = "";
-  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  console.log(`starting the huntaway server${version ? ` ${version}` : choice.bundled ? " bundled with the app" : ""}: ${bin}`);
+  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: serverEnv() });
   serverProc = proc;
   let ready = false;
+  let timedOut = false;
+  let lateReady;
+  const readyLate = new Promise((resolve) => (lateReady = resolve));
   proc.stderr.on("data", (d) => {
     process.stderr.write(d);
     keepLog(d);
@@ -183,46 +306,53 @@ function startServer(onLost) {
   // Once it's exited and the last of its output is in: on close, unless agents it started still hold its pipes.
   const ended = new Promise((resolve) =>
     proc.on("exit", (code, signal) => {
-      if (serverProc === proc) serverProc = null;
-      proc.once("close", () => resolve({ code, signal }));
-      setTimeout(() => resolve({ code, signal }), 500);
+      const latest = serverProc === proc;
+      if (latest) serverProc = null;
+      proc.once("close", () => resolve({ code, signal, latest }));
+      setTimeout(() => resolve({ code, signal, latest }), 500);
     }),
   );
-  ended.then(({ code, signal }) => {
+  ended.then(({ code, signal, latest }) => {
     console.error(`huntaway server exited (${signal ?? code})`);
-    if (ready && !stopping) onLost?.();
+    if (stopping) return;
+    if (ready) onLost?.();
+    else if (timedOut && latest) onLate?.();
   });
   return new Promise((resolve, reject) => {
     let buf = "";
-    const timer = setTimeout(() => reject(new Error("Server did not start within 15s")), 15000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      reject(Object.assign(new Error("Server did not start within 15s"), { ready: readyLate }));
+    }, 15000);
     proc.stdout.on("data", (d) => {
       process.stdout.write(d);
       buf += d.toString();
       const m = buf.match(/IA_READY (\{.*\})/);
-      if (m) {
+      if (m && !ready) {
         clearTimeout(timer);
         ready = true;
         resolve(JSON.parse(m[1]).token);
+        if (timedOut && serverProc === proc && !stopping) lateReady();
       }
     });
     proc.on("error", (e) => {
       clearTimeout(timer);
-      reject(e);
+      reject(Object.assign(e, { early: true }));
     });
     ended.then(({ code, signal }) => {
       clearTimeout(timer);
-      reject(new Error(`Server exited with ${signal ? `signal ${signal}` : `code ${code}`}`));
+      reject(Object.assign(new Error(`Server exited with ${signal ? `signal ${signal}` : `code ${code}`}`), { early: true }));
     });
   });
 }
 
 /** The server to use: the one configured, one already running on the port, or one started here. */
-async function resolveTarget(onLost) {
+async function resolveTarget(win) {
   if (config.serverUrl) return { base: config.serverUrl.replace(/\/$/, ""), token: config.token || "" };
-  const base = `http://127.0.0.1:${port}`;
+  const base = localBase();
   if (await healthy(base)) return { base, token: readToken() };
   try {
-    return { base, token: await startServer(onLost) };
+    return { base, token: await startServer(win) };
   } catch (e) {
     // Another launch's server may have taken the port meanwhile: use it.
     if (await healthy(base, 3).catch(() => false)) return { base, token: readToken() };
@@ -246,16 +376,18 @@ function errorPage(message, title = "Huntaway couldn't start") {
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
 
-/** This process's own code (this directory) and the Electron that npm installed, to see when an update changed them. */
+/** This process's own code (this directory) and its Electron (the one npm installed, from source), to see when an update
+ * changed them. A release's manifest has the same stamp for its packaged app (stamp.cjs). */
 function mainStamp() {
-  const hash = crypto.createHash("sha256");
-  for (const f of fs.readdirSync(__dirname).sort()) hash.update(f).update(fs.readFileSync(path.join(__dirname, f)));
-  try {
-    hash.update(JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version);
-  } catch {
-    /* packaged, or not installed */
+  let electron = process.versions.electron;
+  if (!app.isPackaged) {
+    try {
+      electron = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version;
+    } catch {
+      electron = undefined; // not installed
+    }
   }
-  return hash.digest("hex");
+  return shellStamp(__dirname, electron);
 }
 const startStamp = mainStamp();
 
@@ -310,10 +442,12 @@ async function createWindow() {
 
 /** The board's origin once it has loaded, the one navigation the window takes. */
 let boardOrigin = null;
+/** The server the board is on, {base, token}, once it's resolved. */
+let target = null;
 
 async function load(win) {
   try {
-    const { base, token } = await resolveTarget(() => void serverLost(win));
+    const { base, token } = (target = await resolveTarget(win));
     const ui = process.env.IA_DEV_URL || base;
     boardOrigin = new URL(ui).origin;
     await win.loadURL(`${ui}/${token ? `?token=${encodeURIComponent(token)}` : ""}`);
@@ -326,6 +460,9 @@ async function load(win) {
  * The server started here stopped. The board stays open and reconnects once there's a server again: one that started
  * meanwhile (a restart that runs the new binary from a new process), or one started here again, waiting longer after
  * each that stops at once. After a few of those, the error page says why.
+ *
+ * A release version an Update exec'd into that died before it came up is still `trying`, so startServer passes it over
+ * (and marks it bad) and starts the one before it, rather than the same one again.
  */
 let restarts = [];
 async function serverLost(win) {
@@ -340,10 +477,10 @@ async function serverLost(win) {
   restarts.push(now);
   await sleep(delay);
   if (stopping || win.isDestroyed()) return;
-  const base = `http://127.0.0.1:${port}`;
+  const base = localBase();
   try {
     if (await healthy(base)) return;
-    await startServer(() => void serverLost(win));
+    await startServer(win);
   } catch (e) {
     if (await healthy(base, 3).catch(() => false)) return;
     if (!win.isDestroyed()) await win.loadURL(errorPage(`It didn't start again: ${e.message || e}`, "Huntaway's server stopped"));
@@ -360,6 +497,70 @@ ipcMain.on("huntaway:focus", (e) => {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+});
+
+/**
+ * What the app can install of its own package (HA-68): "appimage", "pacman", or null for a mac app (which keeps the
+ * instruction), one run from a checkout, or one on a remote server (whose release status is that machine's).
+ */
+function shellUpdateKind() {
+  if (!resourcesDir || config.serverUrl || process.env.IA_RELEASE_UPDATES?.trim() === "") return null;
+  return shellUpdate.updateKind(installKind());
+}
+
+ipcMain.on("huntaway:shell-update-kind", (e) => {
+  e.returnValue = shellUpdateKind();
+});
+
+/** The package update under way, so that a second click doesn't start another. */
+let updatingShell = false;
+
+/**
+ * Install the latest release's package and relaunch. It takes nothing from the page: the version is the server's latest
+ * release, and the package and its digest are GitHub's (shellupdate.cjs). Progress goes back as huntaway:update-shell-progress.
+ */
+ipcMain.handle("huntaway:update-shell", async (e) => {
+  const kind = shellUpdateKind();
+  if (!kind || !target) return { error: "This app can't install its own package." };
+  let origin = null;
+  try {
+    origin = new URL(e.senderFrame?.url ?? "").origin;
+  } catch {
+    // not the board
+  }
+  if (origin !== boardOrigin) return { error: "Only the board can update the app." };
+  if (updatingShell) return { error: "The app is already being updated." };
+  updatingShell = true;
+  const sender = e.sender;
+  let sent = 0;
+  const progress = (p) => {
+    // Downloads report every chunk: a few a second is enough for the page.
+    if (p.phase === "downloading" && p.bytes && p.bytes !== p.total && Date.now() - sent < 200) return;
+    sent = Date.now();
+    if (!sender.isDestroyed()) sender.send("huntaway:update-shell-progress", p);
+  };
+  try {
+    const { version } = await shellUpdate.updateShell({
+      kind,
+      appimage: process.env.APPIMAGE,
+      base: target.base,
+      token: target.token,
+      current: app.getVersion(),
+      api: (process.env.IA_RELEASE_API?.trim() || "https://api.github.com").replace(/\/+$/, ""),
+      repo: process.env.IA_RELEASE_UPDATES?.trim() || "dire-kiwi/huntaway",
+      onProgress: progress,
+    });
+    console.log(`installed the desktop app v${version}; relaunching`);
+    progress({ phase: "restarting", version });
+    // The AppImage's new file is at the same path, and so is the package's app in /opt.
+    app.relaunch(kind === "appimage" ? { execPath: process.env.APPIMAGE, args: process.argv.slice(1) } : undefined);
+    app.quit();
+    return { version };
+  } catch (err) {
+    console.error(`updating the desktop app failed: ${err.message}`);
+    updatingShell = false;
+    return { error: err.message };
+  }
 });
 
 app.whenReady().then(createWindow);

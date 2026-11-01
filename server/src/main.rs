@@ -32,11 +32,13 @@ mod proto;
 mod pty;
 mod push;
 mod relay;
+mod release;
 mod relocate;
 mod review;
 mod runner;
 mod runs;
 mod ssh;
+mod staging;
 mod state;
 mod status_script;
 mod summary;
@@ -59,7 +61,7 @@ use clap::{Parser, Subcommand};
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Parser)]
-#[command(name = "huntaway", about = "Kanban board that orchestrates Claude Code and Codex agents")]
+#[command(name = "huntaway", version, about = "Kanban board that orchestrates Claude Code and Codex agents")]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -140,6 +142,10 @@ struct ServeArgs {
     /// than this server, the UI offers to update to it (fetched from the source checkout's origin).
     #[arg(long, env = "IA_UPDATE_FROM")]
     update_from: Option<String>,
+    /// A GitHub repository (OWNER/REPO) whose releases this server checks for a newer version of
+    /// itself, for release installs (the desktop app's packages and the server tarball).
+    #[arg(long, env = "IA_RELEASE_UPDATES")]
+    release_updates: Option<String>,
     /// Name shown for this host on boards (defaults to the hostname).
     #[arg(long, env = "IA_NAME")]
     name: Option<String>,
@@ -323,6 +329,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         source_dir,
         running_commit,
         update_from: args.update_from.clone().map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty()),
+        // A blank IA_RELEASE_UPDATES is none.
+        release: args.release_updates.as_deref().filter(|r| !r.trim().is_empty()).map(release::Config::from_env).transpose()?,
         args: std::env::args_os().skip(1).collect(),
     };
     let identity = state::Identity { host_id, host_name, token: token.clone(), hub_token, internal_url };
@@ -370,6 +378,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);
+    release::start(&state);
     // Subscribe before outbound links can announce their initial snapshots.
     push::start(&state);
     hub::start(&state)?;
@@ -404,6 +413,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tracing::info!("listening on http://{}:{port}/ (token from IA_TOKEN)", args.host);
     } else {
         tracing::info!("listening on http://{}:{port}/?token={}", args.host, token);
+    }
+    // A release installed in <data dir>/app/ is current once it's up (and an Update onto it done).
+    if let Err(e) = staging::settle(&state) {
+        tracing::warn!("settling the release in {}: {e:#}", staging::app_dir(&state).display());
     }
     // Machine-readable line for the Electron shell.
     let ready_token = if token_from_env { None } else { Some(&token) };
