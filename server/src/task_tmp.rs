@@ -1,7 +1,14 @@
 //! Each task's agents get a temp folder of their own, `$TMPDIR` for its runs and terminals, so what
 //! they leave in it (test servers' data, build output, logs, browsers' profiles) goes with the task
-//! rather than piling up in /tmp: `<system temp>/huntaway-<data dir's hash>/<task id>`. A review
-//! thread uses the folder of the task it reviews, as it works in that task's worktree.
+//! rather than piling up in /tmp: `<system temp>/ha-<data dir's hash>/<start of the task id>`. A
+//! review thread uses the folder of the task it reviews, as it works in that task's worktree.
+//!
+//! The path is kept short (`/tmp/ha-0123abcd/0123456789ab`) because programs put sockets in their
+//! TMPDIR, whose paths can't be longer than 107 bytes: Chromium's ProcessSingleton socket is
+//! `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket`, 46 bytes more, and scripts/ui-check.mjs
+//! puts the browser's TMPDIR in a folder of its own in the agent's (20 more). A folder is named after
+//! the first 12 hex digits of its task's id, so it's found by those; two tasks that share them (1 in
+//! 2^48) share a folder, which goes once both are done.
 //!
 //! A task's folder is removed as soon as the task is done and no agent works in it (its own or a
 //! reviewer), or when its run ends if the task went to *Done* while it ran, and when the task is
@@ -42,7 +49,17 @@ pub fn root(state: &AppState) -> PathBuf {
     if cfg!(test) {
         return state.data_dir.join("task-tmp");
     }
-    std::env::temp_dir().join(format!("huntaway-{:016x}", fnv1a(crate::util::path_str(&state.data_dir).as_bytes())))
+    root_in(&std::env::temp_dir(), &state.data_dir)
+}
+
+/// The root for data dir `data` in the system's temp folder `temp`.
+fn root_in(temp: &Path, data: &Path) -> PathBuf {
+    temp.join(format!("ha-{:08x}", fnv1a(crate::util::path_str(data).as_bytes()) as u32))
+}
+
+/// The name of task `id`'s folder: the first 12 hex digits of its id (a UUID, see util::new_id).
+pub fn folder(id: &str) -> String {
+    id.chars().filter(char::is_ascii_alphanumeric).take(12).collect()
 }
 
 /// FNV-1a: a hash that stays the same across builds (std's may not), so a new build finds the
@@ -61,7 +78,7 @@ pub fn owner(task: &Task) -> &str {
 
 /// `task`'s temp folder (made or not).
 pub fn dir(state: &AppState, task: &Task) -> PathBuf {
-    root(state).join(owner(task))
+    root(state).join(folder(owner(task)))
 }
 
 /// Make `task`'s temp folder (readable only by this user) and return it. None, with a warning
@@ -79,7 +96,7 @@ pub fn ensure(state: &AppState, task: &Task) -> Option<PathBuf> {
 }
 
 fn make(root: &Path, dir: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    use std::os::unix::fs::DirBuilderExt;
     let mut b = std::fs::DirBuilder::new();
     b.recursive(true).mode(0o700);
     b.create(root)?;
@@ -100,10 +117,11 @@ fn check_root(root: &Path) -> anyhow::Result<()> {
 }
 
 /// Whether an entry of the root is one of our folders: a folder (not a link), named after a task
-/// (a UUID, see util::new_id) or being removed.
+/// (see `folder`) or being removed.
 fn ours(e: &std::fs::DirEntry) -> bool {
     let name = e.file_name().to_string_lossy().into_owned();
-    e.file_type().is_ok_and(|t| t.is_dir()) && (name.starts_with(REMOVING) || uuid::Uuid::try_parse(&name).is_ok())
+    let task = name.len() == 12 && name.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    e.file_type().is_ok_and(|t| t.is_dir()) && (name.starts_with(REMOVING) || task)
 }
 
 /// Call when task `t`'s status or running state changed: once it's done and its agents have
@@ -114,48 +132,54 @@ pub fn changed(state: &Shared, t: &Task) {
         return;
     }
     let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
-    let (s, id) = (state.clone(), owner(t).to_string());
-    if !root(&s).join(&id).exists() {
+    let (s, name) = (state.clone(), folder(owner(t)));
+    if !root(&s).join(&name).exists() {
         return;
     }
     rt.spawn(async move {
-        remove(&s, &id).await;
+        remove(&s, &name).await;
     });
 }
 
 /// Call once task `id` has been deleted (with its agents stopped): its folder goes.
 pub async fn deleted(state: &Shared, id: &str) {
-    remove(state, id).await;
+    remove(state, &folder(id)).await;
 }
 
-/// Whether task `id`'s folder can go: the task is done (or deleted) and no agent works in it.
-fn removable(state: &Shared, id: &str) -> bool {
+/// The tasks whose folder is `name` (see `folder`): usually one, none once it's deleted.
+fn tasks_of(state: &Shared, name: &str) -> anyhow::Result<Vec<Task>> {
+    let c = state.db();
+    let mut st = c.prepare("SELECT id FROM tasks WHERE kind != 'review' AND substr(replace(id, '-', ''), 1, 12) = ?1")?;
+    let ids = st.query_map([name], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ids.iter().filter_map(|id| db::get_task(&c, id).transpose()).collect::<anyhow::Result<Vec<_>>>()?)
+}
+
+/// Whether folder `name` can go: its tasks are done (or deleted) and no agent works in them.
+fn removable(state: &Shared, name: &str) -> bool {
     // Read (and the database unlocked) before agent_in_worktree reads it again.
-    let task = db::get_task(&state.db(), id);
-    match task {
-        Ok(None) => true,
-        Ok(Some(t)) => t.status == "done" && !t.running && !crate::worktree::agent_in_worktree(state, id),
+    match tasks_of(state, name) {
+        Ok(tasks) => tasks.iter().all(|t| t.status == "done" && !t.running && !crate::worktree::agent_in_worktree(state, &t.id)),
         Err(e) => {
-            tracing::warn!(task = id, "reading the task for its temp folder: {e:#}");
+            tracing::warn!(folder = name, "reading the tasks of a temp folder: {e:#}");
             false
         }
     }
 }
 
-/// Remove task `id`'s folder if it can go (see `removable`). Returns whether it went.
-async fn remove(state: &Shared, id: &str) -> bool {
-    let Some(away) = take(state, id) else { return false };
-    let id = id.to_string();
+/// Remove folder `name` (see `folder`) if it can go (see `removable`). Returns whether it went.
+async fn remove(state: &Shared, name: &str) -> bool {
+    let Some(away) = take(state, name) else { return false };
+    let id = name.to_string();
     match tokio::task::spawn_blocking(move || remove_all(&away)).await {
-        Ok(Ok(())) => tracing::info!(task = id, "removed the task's temp folder"),
-        Ok(Err(e)) => tracing::warn!(task = id, "removing the task's temp folder: {e:#}"),
-        Err(e) => tracing::warn!(task = id, "removing the task's temp folder: {e}"),
+        Ok(Ok(())) => tracing::info!(folder = id, "removed a task's temp folder"),
+        Ok(Err(e)) => tracing::warn!(folder = id, "removing a task's temp folder: {e:#}"),
+        Err(e) => tracing::warn!(folder = id, "removing a task's temp folder: {e}"),
     }
     true
 }
 
-/// Rename task `id`'s folder away, if it can go, under `LOCK`: a run that starts later sets up a
-/// new one. Returns where it went.
+/// Rename folder `id` away, if it can go, under `LOCK`: a run that starts later sets up a new one.
+/// Returns where it went.
 fn take(state: &Shared, id: &str) -> Option<PathBuf> {
     let _lock = lock();
     let root = root(state);
@@ -281,7 +305,35 @@ mod tests {
         let mut r = t.clone();
         (r.id, r.kind, r.parent_id) = ("r".into(), "review".into(), Some(t.id.clone()));
         assert_eq!(dir(&s, &r), dir(&s, &t));
-        assert_eq!(dir(&s, &t), root(&s).join(&t.id));
+        assert_eq!(dir(&s, &t), root(&s).join(&t.id.replace('-', "")[..12]));
+    }
+
+    #[test]
+    fn the_path_leaves_room_for_sockets_in_it() {
+        let dir = root_in(Path::new("/tmp"), Path::new("/home/someone-with-a-long-name/.local/share/issue-agent")).join(folder(&crate::util::new_id()));
+        let len = crate::util::path_str(&dir).len();
+        assert_eq!(len, "/tmp/ha-0123abcd/0123456789ab".len(), "{}", dir.display());
+        // Chromium's socket (46 bytes), in ui-check.mjs's folder for the browser (20), fits in a
+        // socket path (107 bytes), with room to spare.
+        assert!(len + "/ia-ui-check-XXXXXX".len() + "/org.chromium.Chromium.XXXXXX/SingletonSocket".len() <= 100);
+    }
+
+    #[test]
+    fn tasks_whose_ids_start_alike_share_a_folder_until_both_are_done() {
+        testing::run(async || {
+            let s = testing::state();
+            let (a, b) = (task(&s), task(&s));
+            let b_id = format!("{}{}", &a.id[..14], &b.id[14..]);
+            s.db().execute("UPDATE tasks SET id=?1 WHERE id=?2", [&b_id, &b.id]).unwrap();
+            let b = db::get_task(&s.db(), &b_id).unwrap().unwrap();
+            let d = ensure(&s, &a).unwrap();
+            assert_eq!(ensure(&s, &b), Some(d.clone()));
+            db::update_task(&s.db(), &a.id, &[("status", json!("done"))]).unwrap();
+            assert_eq!(sweep(&s).await, 0);
+            db::update_task(&s.db(), &b.id, &[("status", json!("done"))]).unwrap();
+            assert_eq!(sweep(&s).await, 1);
+            assert!(!d.exists());
+        })
     }
 
     #[test]
@@ -325,7 +377,7 @@ mod tests {
             let (open_dir, done_dir) = (ensure(&s, &open).unwrap(), ensure(&s, &done).unwrap());
             // Done while the server was down, so nothing saw it change.
             db::update_task(&s.db(), &done.id, &[("status", json!("done"))]).unwrap();
-            let deleted = root(&s).join(crate::util::new_id());
+            let deleted = root(&s).join(folder(&crate::util::new_id()));
             std::fs::create_dir_all(&deleted).unwrap();
             let unfinished = root(&s).join(format!("{REMOVING}x-1"));
             std::fs::create_dir_all(unfinished.join("y")).unwrap();
@@ -344,7 +396,7 @@ mod tests {
             std::fs::write(elsewhere.join("docs/important.txt"), "x").unwrap();
             let r = root(&s);
             std::fs::create_dir(r.join("notes")).unwrap();
-            std::os::unix::fs::symlink(&elsewhere, r.join(crate::util::new_id())).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, r.join(folder(&crate::util::new_id()))).unwrap();
             assert_eq!(sweep(&s).await, 0);
             assert!(r.join("notes").is_dir() && elsewhere.join("docs/important.txt").exists());
         })
@@ -359,7 +411,7 @@ mod tests {
             db::update_task(&s.db(), &t.id, &[("status", json!("done"))]).unwrap();
             // Someone left a link where the root goes, to a folder with a done task's name in it.
             let elsewhere = testing::temp_dir();
-            for d in [t.id.clone(), crate::util::new_id(), format!("{REMOVING}x"), "docs".into()] {
+            for d in [folder(&t.id), folder(&crate::util::new_id()), format!("{REMOVING}x"), "docs".into()] {
                 std::fs::create_dir_all(elsewhere.join(&d)).unwrap();
                 std::fs::write(elsewhere.join(&d).join("important.txt"), "x").unwrap();
             }
@@ -367,7 +419,7 @@ mod tests {
             std::fs::create_dir_all(root(&s).parent().unwrap()).unwrap();
             std::os::unix::fs::symlink(&elsewhere, root(&s)).unwrap();
             assert_eq!(sweep(&s).await, 0);
-            assert!(!remove(&s, &t.id).await);
+            assert!(!remove(&s, &folder(&t.id)).await);
             assert_eq!(count(), 4);
             assert_eq!(ensure(&s, &task(&s)), None);
             // Nor through a root others can write to.

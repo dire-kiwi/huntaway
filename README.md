@@ -1018,7 +1018,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
 - **Temp folders:** each task's agents get a temp folder of their own,
-  `<system temp>/huntaway-<hash of the data dir>/<task id>`, as `$TMPDIR` for its runs (Claude and
+  `<system temp>/ha-<hash of the data dir>/<first 12 hex digits of the task id>` (kept short, as
+  sockets in it can't have paths over 107 bytes), as `$TMPDIR` for its runs (Claude and
   Codex) and its terminals, so what they leave there (test servers' data, build and test output,
   logs, browsers' profiles) doesn't pile up in `/tmp`. They're told to use it, Claude gets it as an
   `--add-dir` and Codex as a writable root. Review threads share the folder of the task they
