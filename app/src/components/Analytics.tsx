@@ -9,6 +9,7 @@ import {
   hm,
   HOUR,
   loadActivity,
+  loadContext,
   mergeSpans,
   NEUTRAL,
   SCRATCH,
@@ -22,6 +23,7 @@ import {
   type AEvent,
   type AProject,
   type ATask,
+  type ContextData,
   type Rules,
   type RunSpan,
   type Span,
@@ -30,6 +32,7 @@ import {
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Swatch, useTip } from "./chart";
+import { ContextStats } from "./ContextStats";
 import { DiskUsage } from "./DiskUsage";
 import { Button, download, IconButton, MenuButton } from "./ui";
 
@@ -131,6 +134,31 @@ function useActivity(range: Range, rules: Rules, enabled: boolean) {
   return { data, loading, error, reload: () => setNonce((n) => n + 1) };
 }
 
+function useContext(range: Range, enabled: boolean, nonce: number) {
+  const profilesKey = useStore((s) => s.profiles.map((p) => `${p.host_id}:${p.id}`).join(","));
+  const hostsKey = useStore((s) => s.hosts.map((h) => `${h.id}:${h.connected}:${h.api_version}`).join(","));
+  const [data, setData] = useState<ContextData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    setLoading(true);
+    loadContext(range.from, range.to)
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [range.from, range.to, profilesKey, hostsKey, nonce, enabled]);
+  return { data, loading, error };
+}
+
 /** What a range shows once the project filter is applied. */
 interface View {
   data: Activity;
@@ -181,7 +209,7 @@ function SpanTip({ a, s, label }: { a: Activity; s: Span; label: string }) {
 // ---------- page ----------
 
 export function Analytics() {
-  const [tab, setTab] = usePersisted<"report" | "calendar" | "disk">("ia.analytics.tab", "report");
+  const [tab, setTab] = usePersisted<"report" | "calendar" | "context" | "disk">("ia.analytics.tab", "report");
   const [preset, setPreset] = usePersisted<Preset>("ia.analytics.preset", "this_week");
   const [custom, setCustom] = usePersisted("ia.analytics.custom", { from: dayKey(addDays(Date.now(), -6)), to: dayKey(Date.now()) });
   const [rules, setRules] = usePersisted<Rules>("ia.analytics.rules", { idleMin: 30, leadMin: 5 });
@@ -191,7 +219,7 @@ export function Analytics() {
   const [selected, setSelected] = useState<number | null>(() => startOfDay(Date.now()));
 
   const range = useMemo<Range>(() => {
-    if (tab === "report") return presetRange(preset, custom);
+    if (tab === "report" || tab === "context") return presetRange(preset, custom);
     if (calMode === "week") {
       const from = startOfWeek(anchor);
       return { from, to: addDays(from, 7) };
@@ -201,8 +229,13 @@ export function Analytics() {
     return { from, to: addDays(startOfWeek(addDays(addMonths(startOfMonth(anchor), 1), -1)), 7) };
   }, [tab, preset, custom, calMode, anchor]);
 
-  const { data, loading, error, reload } = useActivity(range, rules, tab !== "disk");
-  const view = useView(data, rules, project);
+  const activity = useActivity(range, rules, tab === "report" || tab === "calendar");
+  const [contextNonce, setContextNonce] = useState(0);
+  const context = useContext(range, tab === "context", contextNonce);
+  const { data, error } = tab === "context" ? { data: context.data, error: context.error } : activity;
+  const loading = tab === "context" ? context.loading : activity.loading;
+  const reload = tab === "context" ? () => setContextNonce((n) => n + 1) : activity.reload;
+  const view = useView(activity.data, rules, project);
   const projects = data ? Object.values(data.projects).filter((p) => p.id !== SCRATCH) : [];
 
   const exportCsv = () => {
@@ -228,7 +261,7 @@ export function Analytics() {
         <MenuButton />
         <h1 className="text-[14px] font-semibold">Analytics</h1>
         <div className="no-drag flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5">
-          {(["report", "calendar", "disk"] as const).map((t) => (
+          {(["report", "calendar", "context", "disk"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -247,7 +280,7 @@ export function Analytics() {
         <>
           {/* Filters: one row above everything they apply to. */}
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2">
-            {tab === "report" ? (
+            {tab === "report" || tab === "context" ? (
               <>
                 <select className={selectClass} value={preset} onChange={(e) => setPreset(e.target.value as Preset)} title="Time range">
                   {PRESETS.map((p) => (
@@ -311,26 +344,30 @@ export function Analytics() {
               <option value={SCRATCH}>In no project</option>
             </select>
             <div className="ml-auto flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-[12px] text-faint" title="A longer gap between prompts counts as a break">
-                Break after
-                <select className={selectClass} value={rules.idleMin} onChange={(e) => setRules({ ...rules, idleMin: Number(e.target.value) })}>
-                  {[10, 15, 30, 45, 60, 90, 120].map((m) => (
-                    <option key={m} value={m}>
-                      {hm(m * 60_000)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-1.5 text-[12px] text-faint" title="Time credited to the first prompt after a break">
-                First prompt
-                <select className={selectClass} value={rules.leadMin} onChange={(e) => setRules({ ...rules, leadMin: Number(e.target.value) })}>
-                  {[0, 2, 5, 10, 15].map((m) => (
-                    <option key={m} value={m}>
-                      {hm(m * 60_000)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {tab !== "context" && (
+                <>
+                  <label className="flex items-center gap-1.5 text-[12px] text-faint" title="A longer gap between prompts counts as a break">
+                    Break after
+                    <select className={selectClass} value={rules.idleMin} onChange={(e) => setRules({ ...rules, idleMin: Number(e.target.value) })}>
+                      {[10, 15, 30, 45, 60, 90, 120].map((m) => (
+                        <option key={m} value={m}>
+                          {hm(m * 60_000)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[12px] text-faint" title="Time credited to the first prompt after a break">
+                    First prompt
+                    <select className={selectClass} value={rules.leadMin} onChange={(e) => setRules({ ...rules, leadMin: Number(e.target.value) })}>
+                      {[0, 2, 5, 10, 15].map((m) => (
+                        <option key={m} value={m}>
+                          {hm(m * 60_000)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
               <IconButton title="Refresh" onClick={reload}>
                 <RefreshCw size={14} className={clsx(loading && "animate-spin")} />
               </IconButton>
@@ -351,6 +388,7 @@ export function Analytics() {
                 </div>
               ))}
               {view && tab === "report" && <Report view={view} />}
+              {context.data && tab === "context" && <ContextStats data={context.data} project={project} />}
               {view && tab === "calendar" && (
                 <>
                   {calMode === "month" ? (
@@ -361,12 +399,20 @@ export function Analytics() {
                   {selected !== null && selected >= range.from && selected < range.to && <DayDetail view={view} day={selected} />}
                 </>
               )}
-              <p className="text-[11.5px] leading-relaxed text-faint">
-                Active time credits each prompt with the time since your previous prompt on any task, so reading an agent's output and writing the next
-                prompt counts toward the task you prompted. Gaps over {hm(rules.idleMin * 60_000)} are breaks; the first prompt after one counts{" "}
-                {hm(rules.leadMin * 60_000)}. Prompts are the messages you send, plus starting a task and moving it to Ready for merge. Agent time is how
-                long agents ran, including reviews.
-              </p>
+              {tab === "context" ? (
+                <p className="text-[11.5px] leading-relaxed text-faint">
+                  A turn's context is what its agent's session held when the turn ended, which the next prompt starts from: the system prompt, tools and the
+                  conversation so far. Compactions are Idle (the board's, after a session sat idle for a while), /compact (sent by someone) and the agent's
+                  own (as its context filled up). Turn sizes are recorded from this version on; compactions go back further, from what threads show.
+                </p>
+              ) : (
+                <p className="text-[11.5px] leading-relaxed text-faint">
+                  Active time credits each prompt with the time since your previous prompt on any task, so reading an agent's output and writing the next
+                  prompt counts toward the task you prompted. Gaps over {hm(rules.idleMin * 60_000)} are breaks; the first prompt after one counts{" "}
+                  {hm(rules.leadMin * 60_000)}. Prompts are the messages you send, plus starting a task and moving it to Ready for merge. Agent time is how
+                  long agents ran, including reviews.
+                </p>
+              )}
             </div>
           </div>
         </>

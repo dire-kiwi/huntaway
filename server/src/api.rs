@@ -85,6 +85,7 @@ fn host_routes() -> Router<Shared> {
         .route("/profiles/{id}/scratch", get(list_profile_scratch))
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))
+        .route("/profiles/{id}/context-stats", get(crate::analytics::context))
         .route("/profiles/{id}/disk-usage", get(crate::disk::get))
         .route("/profiles/{id}/asana/tasks", get(asana_tasks))
         .route("/projects/{id}", get(get_project).patch(update_project).delete(delete_project))
@@ -927,6 +928,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "archived",
             "github_account",
             "done_when_merged",
+            "pull_requests",
+            "subproject_pull_requests",
             "watch_pull_requests",
             "pr_preview_url",
             "copy_files",
@@ -1009,7 +1012,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
                 return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
             }
-            "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" | "pull_requests" | "subproject_pull_requests" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
@@ -2421,7 +2424,7 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 /// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`). And the
 /// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
 /// URLs are shown with. And whether release checks include prereleases (`release_prereleases`,
-/// API 85), which checks again when it changes.
+/// API 87), which checks again when it changes.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.
     for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
@@ -3141,6 +3144,26 @@ pub(crate) mod tests {
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             assert!(create_task_inner(&s, &p.id, task("after")).unwrap().use_worktree);
             std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn projects_turn_their_tasks_pull_requests_on_and_off() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let dir = crate::testing::temp_dir().join("x");
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            assert!(p.pull_requests && p.subproject_pull_requests);
+            let set = async |b: Value| update_project_inner(&s, &p.id, b.as_object().unwrap()).await;
+            let p = set(json!({"subproject_pull_requests": false})).await.unwrap();
+            assert!(p.pull_requests && !p.subproject_pull_requests);
+            let p = set(json!({"pull_requests": false, "subproject_pull_requests": true})).await.unwrap();
+            assert!(!p.pull_requests && p.subproject_pull_requests);
+            for bad in [json!("no"), Value::Null, json!(0)] {
+                assert!(set(json!({ "pull_requests": bad })).await.is_err());
+            }
         })
     }
 

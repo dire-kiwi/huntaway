@@ -216,7 +216,7 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `IA_CLOUDFLARED_BIN` (env only) | `cloudflared` | Connector binary for a broker with managed tunnels |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
-| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 85) |
+| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 87) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
@@ -1458,6 +1458,13 @@ only remote), by its push URL. The PR goes in the repository the branch is pushe
 agent names with `gh pr create --repo … --head …`, since gh would otherwise pick one from the
 remotes' fetch URLs (so a fork's PR goes into the fork, not its upstream). Agents in a worktree in other repositories are told not to push unless asked, and
 tasks without a worktree (working in the repository's own checkout) don't open pull requests.
+
+A project's settings can turn pull requests off (API 85), on its *Review* tab: *Open a pull
+request for each task* (`pull_requests`) for its tasks, subprojects included, and *Open a pull
+request for each task in a subproject* (`subproject_pull_requests`) for its subprojects' tasks,
+which are then merged into the subproject's branch without one. Both are on by default. An agent
+whose task has them off is told not to push its branch or open one unless the user asks, even if
+the project's own instructions say to.
 
 A task can carry its pull request's URL, shown on its card as a pull request icon next to the
 branch icon that links to it. Its agent can set it (`pr_url` via `update_task`), or set it under

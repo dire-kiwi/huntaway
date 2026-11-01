@@ -1260,6 +1260,8 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["is_git"] = json!(p.is_git);
     out["auto_review"] = json!(p.auto_review);
     out["review_rounds"] = json!(p.review_rounds);
+    out["pull_requests"] = json!(p.pull_requests);
+    out["subproject_pull_requests"] = json!(p.subproject_pull_requests);
     out["watch_pull_requests"] = json!(p.watch_pull_requests);
     out["pr_preview_url"] = json!(p.pr_preview_url);
     out["reviewers"] = json!(p.reviewers);
