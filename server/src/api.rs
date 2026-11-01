@@ -218,6 +218,8 @@ async fn info(State(s): State<Shared>) -> Json<Value> {
         "api_version": crate::proto::API_VERSION,
         "api_compat": crate::proto::API_COMPAT,
         "commit": s.meta.running_commit,
+        // API 89: how a hub's Update reaches it.
+        "updates_from": admin::updates_from(&s.meta),
         "agents": crate::runs::can_run_agents(&s),
         // API 25: which agent CLIs it has.
         "agent_clis": db::AGENTS.iter().filter(|a| crate::runs::has_agent(a)).collect::<Vec<_>>(),
@@ -2729,15 +2731,26 @@ async fn roll_back_release(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 
 #[derive(Deserialize)]
 struct UpdateBody {
+    /// Missing from a hub that runs a release, which only release hosts can update from.
+    #[serde(default)]
     commit: String,
     /// With a bundle (a hub that has a checkout), update from it; otherwise fetch the
     /// commit from this host's own `origin` (API 3+).
     bundle: Option<String>,
     branch: Option<String>,
+    /// The hub's version (API 89), which a release install updates to instead.
+    version: Option<String>,
 }
 
-/// A hub asking this host to update to its commit.
+/// A hub asking this host to update to its commit, or a release install to its version.
 async fn update_from_hub(State(s): State<Shared>, Json(b): Json<UpdateBody>) -> ApiResult<Json<Value>> {
+    if admin::updates_from(&s.meta) == Some("releases") {
+        let version = b.version.as_deref().ok_or_else(|| ApiError::bad("this host updates from releases, and the board didn't say which version it runs (it needs API 89)"))?;
+        return Ok(Json(crate::release::update_from_hub(&s, version).await?));
+    }
+    if b.commit.is_empty() {
+        return Err(ApiError::bad("the board runs a release rather than a checkout, so it can't say which commit to update this host to"));
+    }
     Ok(Json(match (&b.bundle, &b.branch) {
         (Some(bundle), Some(branch)) => admin::update_from_bundle(&s, branch, &b.commit, bundle).await?,
         _ => admin::update_from_origin(&s, &b.commit).await?,

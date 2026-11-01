@@ -471,6 +471,12 @@ back to the tarball's own server, from the first Update on: the tarball's server
 `IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
 Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
+`scripts/install-release-host.sh` installs a host this way: it downloads the latest release's tarball
+(or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
+`~/.local/share/huntaway-server/current` at it, and prints the command to start it with
+`IA_RELEASE_UPDATES` set, and the forced command for a host a hub starts over SSH
+(`command="IA_RELEASE_UPDATES=dire-kiwi/huntaway …/current/huntaway ssh-host --port 7878"`).
+
 `scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
 background downloads, Update with an agent running, a broken version, Roll back, prereleases and
@@ -536,6 +542,14 @@ it over the link, so no git remote or inbound access is needed. The host fast-fo
 checkout (it refuses if the checkout is dirty, on another branch, or has diverged), then
 rebuilds and restarts like Rebuild & restart; agents keep running. Hosts from before
 versioning need one manual update (`git pull`, then Rebuild & restart).
+
+A host installed from a release (with `--release-updates`, see *Release updates*; `/api/info`
+reports `updates_from: "releases"` rather than `"checkout"`, API 89) goes by version instead: when
+the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
+onto that release as its own Update would, checking for releases first if it hasn't seen it yet. It
+refuses a version older than its own, or one older than the latest release it knows of (update the
+hub first). A hub without a checkout or `IA_COMMIT` that runs a release sends only its version, so
+it can update release hosts but not checkouts.
 
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
