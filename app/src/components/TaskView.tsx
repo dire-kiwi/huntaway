@@ -4,7 +4,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import { useShallow } from "zustand/react/shallow";
 import { api, ApiError, canRunAgents, dependencyQueued, limitQueued, outOfUsage, documentsOnly, hostStatuses, isScratch, isSummaryThread, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openCompare, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
-import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
+import { isGroupTask, keyPrefix, profileNameOf, taskConfig, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, ConfigUsageNote, configDir } from "./ClaudeConfigs";
 import { COMPARE_API, harnessLabels, useConfigsOf, useFanout } from "./Fanout";
 import { effortOptions, inheritedModel, useAgentModels } from "../agents";
@@ -14,6 +14,7 @@ import { useOpenTools } from "../terminalTools";
 import { openingTab } from "../openingTab";
 import { useSubagentView } from "../subagents";
 import { AgentsPill } from "./AgentsPill";
+import { AgentIcon } from "./AgentIcon";
 import { ContextPill } from "./Context";
 import { inGroupTaskGroup } from "../projectGroups";
 import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgress, useSubprojectProgress } from "./TaskCard";
@@ -391,7 +392,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
             </>
           )}
-          <span className="shrink-0 font-mono text-[12px] text-faint">{key}</span>
+          <AgentIcon task={task} />
+          <span className="-ml-1 shrink-0 font-mono text-[12px] text-faint">{key}</span>
           {scratch && (
             <span className="shrink-0 text-[11.5px]">
               <TaskTypeBadge type="scratch" />
@@ -1111,10 +1113,7 @@ function UsageLimitNote({ task, onError }: { task: Task; onError: (e: string | n
 function useThreadConfig(task: Task) {
   const project = useProject(task.project_id);
   const available = useAvailableConfigs(task.host_id, task.profile_id, project);
-  const own = useStore((s) => s.claudeConfigs.find((c) => c.host_id === task.host_id && c.id === task.claude_config_id));
-  // A config deleted since falls back to the default. One that started with none (its
-  // profile had no configs then) stays in Claude's default config.
-  const current = own ?? (task.claude_config_id || !task.session_id ? available[0] : undefined);
+  const current = useStore((s) => taskConfig(s, task));
   return { current, available };
 }
 
