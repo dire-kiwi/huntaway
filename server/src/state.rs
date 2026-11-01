@@ -66,6 +66,8 @@ pub struct AppState {
     pub restart: Mutex<Option<RestartJob>>,
     /// What `--update-from` last reported (see admin::start_update_check).
     pub deployed: Mutex<Option<crate::admin::Deployed>>,
+    /// What the release checks found (see release.rs).
+    pub release: crate::release::Releases,
     /// Claude usage limits by Claude config id.
     pub usage: Mutex<HashMap<String, crate::usage::Usage>>,
     /// Held while a project is created or changed, so a key is checked against the keys as they
@@ -89,6 +91,12 @@ pub type Shared = Arc<AppState>;
 
 impl AppState {
     pub fn new(db: Connection, data_dir: PathBuf, id: Identity, meta: ServerMeta) -> Shared {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("huntaway"));
+        Self::with_exe(db, data_dir, id, meta, exe)
+    }
+
+    /// `new`, for a server whose binary is `exe` (for tests of what depends on where it runs from).
+    pub fn with_exe(db: Connection, data_dir: PathBuf, id: Identity, meta: ServerMeta, exe: PathBuf) -> Shared {
         let (events, _) = broadcast::channel(1024);
         let (hub_events, _) = broadcast::channel(4096);
         Arc::new_cyclic(|me| Self {
@@ -100,7 +108,7 @@ impl AppState {
             token: id.token,
             hub_token: id.hub_token,
             internal_url: id.internal_url,
-            exe: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("huntaway")),
+            exe,
             events,
             hub_events,
             runs: Mutex::new(HashMap::new()),
@@ -113,6 +121,7 @@ impl AppState {
             meta,
             restart: Mutex::new(None),
             deployed: Mutex::new(None),
+            release: Default::default(),
             usage: Mutex::new(HashMap::new()),
             project_changes: tokio::sync::Mutex::new(()),
             relocating: Mutex::new(Default::default()),

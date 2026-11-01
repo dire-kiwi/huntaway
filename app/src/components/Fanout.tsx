@@ -5,7 +5,7 @@ import { Cpu } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { agentOf, hostSupports, type ClaudeConfig, type Task } from "../api";
 import { openCompare } from "../router";
-import { availableConfigs, taskKey, useHost, useStore } from "../store";
+import { taskConfig, taskKey, useHost, useStore } from "../store";
 import { CARD_BADGE } from "./ui";
 
 /** Hosts from this API version compare them, and pick one (see Compare.tsx). */
@@ -24,17 +24,9 @@ export function useFanout(task: Task): Task[] {
   );
 }
 
-/** The config each task runs with: its own, or the first its project (or profile) offers. */
+/** The config each task runs with (see taskConfig). */
 export function useConfigsOf(tasks: Task[]): (ClaudeConfig | undefined)[] {
-  return useStore(
-    useShallow((s) =>
-      tasks.map(
-        (t) =>
-          s.claudeConfigs.find((c) => c.host_id === t.host_id && c.id === t.claude_config_id) ??
-          availableConfigs(s, t.host_id, t.profile_id, s.projects.find((p) => p.host_id === t.host_id && p.id === t.project_id))[0],
-      ),
-    ),
-  );
+  return useStore(useShallow((s) => tasks.map((t) => taskConfig(s, t))));
 }
 
 /** What tells each of them apart: its model, and its config when they don't all have the same. */

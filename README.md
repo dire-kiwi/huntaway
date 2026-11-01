@@ -216,6 +216,7 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `IA_CLOUDFLARED_BIN` (env only) | `cloudflared` | Connector binary for a broker with managed tunnels |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
+| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
@@ -260,6 +261,43 @@ it, API 65) and fetches it from the checkout's `origin`. When that commit is ahe
 one, the sidebar shows **N new commits · Update**. Update fast-forwards the checkout to the commit
 (it refuses if the checkout is dirty, or has diverged from the commit), then rebuilds and restarts
 as above. Settings → Server shows the commit the deployment runs and when it was last checked.
+
+With `--release-updates <OWNER/REPO>`, for a server installed from a release rather than a
+checkout, the server checks that repository's GitHub releases 30 seconds after it starts, every six
+hours, and on `POST /api/admin/release/check`. It picks the highest semver release (not drafts,
+and prereleases only with `release_prereleases` on in `/api/settings`) that has a
+`huntaway-server-<v>-<os>-<arch>.tar.gz` for this machine with a sha256 digest, and reports it,
+with any error, as `release` in `/api/admin/server`. Requests send the last ETag, so a check when
+nothing changed doesn't count against GitHub's limit of 60 unauthenticated requests an hour.
+`IA_RELEASE_API` points it at another API than `https://api.github.com` (for tests).
+
+A release newer than the running server is downloaded in the background into
+`<data-dir>/app/<v>.partial/`, checked against the sha256 GitHub lists for it, unpacked with the
+system `tar` (refusing entries outside its folder, and links), and smoke-tested with
+`huntaway --version`. It's then renamed to `app/<v>/` and reported as `release.staged`; progress
+and failures are in `release.download`, and a failed download is tried again on the next check.
+A staged version that a later check no longer offers (a prerelease once they're turned off, or a
+release that was taken down) is unstaged and deleted, even while a newer release downloads.
+`POST /api/admin/release/update {"version": "<v>"}` restarts onto it in place (agents keep running,
+as with a rebuild), downloading it first if it isn't staged yet, and
+`POST /api/admin/release/rollback` marks the running version bad and restarts onto the one before
+it (or the desktop app's own server, `IA_BUNDLED_SERVER`). `app/state.json` records `current`,
+`previous`, `staged`, `trying` and `bad`, and is shared with the desktop app, which picks the version
+to start from it. A server running from `app/<v>/huntaway` makes itself `current` on startup and
+deletes the versions nothing needs (all but current, previous and staged).
+
+On the board, a staged release shows in the sidebar as **v<version> · Update**, which opens its
+release notes and restarts onto it (a download still running, or one that failed, shows only in
+Settings). Settings → Server shows the version running and where from, the latest release and when
+it was checked, the background download, **Check now**, **Include prereleases** and **Roll back**.
+When the latest release needs a new desktop app too (`release.shell.outdated`), it says how to
+install it: the `sudo pacman -U` command, the AppImage's link, or the dmg on the release page. The
+AppImage and the pacman package can also do it themselves: **Update app** downloads the new AppImage
+beside the running one, checks its sha256 against GitHub's digest and renames it over the old file;
+**Install** downloads and checks the `.pacman` the same way and runs `pkexec pacman -U --noconfirm`
+on it, which asks for your password in polkit's dialog. Either then relaunches the app. The app
+takes the version from its server's release check and the package from GitHub's API
+(`IA_RELEASE_API`), never from the page.
 
 ### Network access
 
@@ -362,15 +400,84 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
 | `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update changes the app itself rather than only the server and the UI |
+
+The server's version is the release's too (`huntaway --version`).
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
-from the Dock or an app launcher. A release build isn't a checkout, so **Rebuild & restart** and
-**Update** don't apply to it: install a newer release to update it. The Mac build is ad-hoc signed,
+from the Dock or an app launcher. A release build isn't a checkout, so it has no **Rebuild &
+restart**: it updates from GitHub's releases instead (see below). The Mac build is ad-hoc signed,
 not signed with a Developer ID, so macOS blocks a downloaded copy until you run
 `xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
 run `npm run dist` in `app/`, which puts them in `app/release/`. To build an existing release
 again, use Actions → Release → Run workflow with its tag, which replaces its files.
+
+### Updating the desktop app
+
+A release build (the AppImage, the pacman package or the Mac app) updates itself from this
+repository's GitHub releases; nothing needs root. The server it starts checks for a newer release 30
+seconds after it starts and every six hours (or with **Check now** in Settings → Server), downloads
+the new server in the background, checks it against the sha256 GitHub lists for it, and unpacks it
+into `<data dir>/app/<version>/` (`~/.local/share/huntaway/app/` on Linux,
+`~/Library/Application Support/huntaway/app/` on a Mac). That's per user, so the pacman package's
+files in `/opt/Huntaway` stay as pacman installed them. Nothing changes until you click
+**v<version> · Update** in the sidebar, which shows the release notes and restarts the server onto
+the new version in place: running agents keep going, as with a rebuild. Downloading the next
+version is all a check does; quitting and starting the app again still runs the one you had.
+
+- **Which version runs.** The app starts the version you last updated to, if it's at least as new
+  as the app's own server, and otherwise its own. So installing a newer package (a `pacman -Syu`,
+  or a new AppImage) takes over from older downloads by itself. `IA_SERVER_BIN` or `serverBin` in
+  the desktop config still win over both.
+- **A version that won't start.** If an Update's version doesn't come up, or a downloaded version
+  exits before it's ready, the app marks it bad and starts the one before it, then its own server.
+  A bad version isn't offered again; the next release is.
+- **Roll back.** Settings → Server → **Roll back** marks the running version bad and restarts onto
+  the one before it, or onto the app's own server when there's none (or the one before it is older
+  than the app's own server, which a newer package's takes over from). A newer server may have
+  updated the database; the older one runs on it as it is (the changes so far only add to it).
+- **Prereleases** are offered only with **Include prereleases** on in Settings → Server. Turning it
+  off again withdraws a prerelease that was downloaded but not yet updated to.
+- **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
+  rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
+  each. Deleting `app/` goes back to the app's own server.
+- **The app itself.** Most releases change only the server and the UI. When a release newer than the
+  app also changes it (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records),
+  Settings → Server says so and how to install it. An app installed from a prerelease isn't offered
+  an older release's package while prereleases are off. The AppImage's **Update app** downloads the new AppImage beside the
+  running one, checks it, renames it over the old file and relaunches. The pacman package's
+  **Install** downloads and checks the `.pacman`, then runs `pkexec pacman -U --noconfirm` on it,
+  which asks for your password in polkit's dialog (without a polkit agent, use the `sudo pacman -U`
+  command it shows). On a Mac, download the new dmg from the release page.
+- **When it doesn't apply.** An app that finds a server already running on its port (your own
+  `huntaway serve`, say) or that uses a remote `serverUrl` leaves updates to that server, and never
+  offers releases. A blank `IA_RELEASE_UPDATES` in the app's environment turns release updates off.
+  An install from source (`scripts/install.sh`) updates from its checkout instead, as above.
+
+A host installed from the server tarball can update the same way with
+`huntaway serve --release-updates dire-kiwi/huntaway` (or `IA_RELEASE_UPDATES=dire-kiwi/huntaway`):
+the board it serves shows the same Update, Check now and Roll back, and versions go into
+`<data dir>/app/` as above. Set `IA_BUNDLED_SERVER` to the tarball's `huntaway` so that Roll back
+can go back to it. There's no desktop app to choose the version, so a supervisor that restarts the
+server (after a reboot, say) runs the binary it names, the tarball's, until you click Update again.
+To keep the version you updated to, have it start the current one instead, with a script like this:
+
+```sh
+#!/bin/sh
+# Start the release last updated to, or the installed one. It doesn't compare versions, so after
+# installing a newer tarball, delete <data dir>/app/.
+data=${IA_DATA_DIR:-$HOME/.local/share/huntaway}
+v=$(sed -n 's/^ *"current": *"\([^"]*\)".*/\1/p' "$data/app/state.json" 2>/dev/null)
+[ -n "$v" ] && [ -x "$data/app/$v/huntaway" ] && exec "$data/app/$v/huntaway" "$@"
+exec /opt/huntaway-server/huntaway "$@"
+```
+
+`scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
+checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
+background downloads, Update with an agent running, a broken version, Roll back, prereleases and
+the AppImage replacing itself (`--pacman` adds the Arch package, in a docker container). It needs
+`npm ci` in `app/` and about 2 GB in `~/.cache/huntaway-release-e2e`.
 
 ## Hosts
 
@@ -903,6 +1010,13 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
+- **A profile's reviewers and summarizer** (API 87): a profile's settings (*Settings → Profiles →
+  Edit*) pick the *Reviewers* and *Summarizer* for its projects, and each project's *Review*
+  settings use *The profile's* until you switch to *This project's own*, which starts from the
+  profile's and overrides them. A project's own can still be one reviewer with the task's config,
+  over a profile's that differ. Through the API a project's `reviewers: []` and `summarizer: null`
+  use the profile's (`reviewers` and `summarizer` on `PATCH /profiles/{id}`), and `get_project`
+  shows the profile's as `profile_reviewers` and `profile_summarizer`.
 - **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
   to read before merging: what changed and why, the main changes, and how to try it. It reads the
   pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
@@ -911,8 +1025,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
   writes one at any time. A summary in progress stops when the task's agent works again, and the
   next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
-  config, model and effort; the task's config by default), in the project's *Review* settings
-  (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  config, model and effort; the profile's, and otherwise the task's config, by default), in the
+  project's *Review* settings (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
   summarises on demand.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when

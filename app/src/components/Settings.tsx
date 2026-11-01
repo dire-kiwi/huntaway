@@ -10,7 +10,6 @@ import {
   KeyRound,
   Loader2,
   MessageSquareText,
-  Plus,
   Puzzle,
   ScanSearch,
   SlidersHorizontal,
@@ -20,23 +19,22 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../agents";
 import {
   AGENTS,
-  agentOf,
   api,
   getToken,
   LABELS,
   hostStatuses,
   hostSupports,
   PERMISSION_MODES,
+  PROFILE_REVIEWERS_API,
   setToken,
   type Agent,
-  type ClaudeConfig,
   type DocumentType,
   type Status,
   type PermissionMode,
   type DirListing,
+  type Host,
   type HostInfo,
   type MergedWorktreeResult,
   type Project,
@@ -51,13 +49,13 @@ import { navigate, parse } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useHost, useStore } from "../store";
 import { GlobalAgentToolsPanel, ProjectAgentTools } from "./AgentTools";
 import { ProjectAutomations } from "./Automations";
-import { ModelPicker } from "./NewTaskModal";
+import { DEFAULT_REVIEWER, InheritPicker, isDefaultReviewer, ReviewerList, ReviewerRow, reviewerLabel } from "./Reviewers";
 import { ClaudeConfigsPanel, ConfigPicker } from "./ClaudeConfigs";
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "./Notifications";
 import { ServerPanel } from "./Server";
-import { Button, ConfirmModal, Field, IconButton, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
+import { Button, ConfirmModal, Field, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "./ui";
 
 // ---------- directory picker ----------
 
@@ -467,7 +465,6 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
   const host = useHost(project?.host_id);
   const hostMode = useStore((s) => (project ? s.hostSettings[project.host_id]?.default_permission_mode : null)) ?? "default";
   const allProjects = useStore((s) => s.projects);
-  const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project?.host_id)));
   const groups = useMemo(() => (project ? groupNames(allProjects, project.host_id) : []), [allProjects, project]);
   if (!project) return <div className="p-8 text-muted">Project not found.</div>;
   const form: Project = { ...project, ...edits };
@@ -762,7 +759,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                     />
                   </div>
                 </Field>
-                {hostSupports(host, 29) && <ProjectReviewers project={form} onChange={(v) => set("reviewers", v)} />}
+                {hostSupports(host, 29) && <ProjectReviewers project={form} host={host} onChange={(v) => set("reviewers", v)} />}
               </>
             )}
 
@@ -775,16 +772,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                     review. Summarise now in the task's Summary tab writes one at any time.
                   </div>
                 </div>
-                <Field label="Summarizer" hint="The agent that writes the summaries. A quick, cheap model is usually enough.">
-                  <ReviewerRow
-                    project={form}
-                    configs={configs}
-                    value={form.summarizer ?? DEFAULT_REVIEWER}
-                    // One with the defaults is the task's config, as the host saves it.
-                    onChange={(v) => set("summarizer", v && (v.claude_config_id || v.model || v.effort) ? v : null)}
-                    removable={false}
-                  />
-                </Field>
+                <ProjectSummarizer project={form} host={host} onChange={(v) => set("summarizer", v)} />
               </>
             )}
 
@@ -1192,92 +1180,75 @@ function ProjectGithubAccount({ project, onChange }: { project: Project; onChang
   );
 }
 
-const DEFAULT_REVIEWER: Reviewer = { claude_config_id: null, model: null, effort: null };
-const MAX_REVIEWERS = 6;
 const pickerClass = "h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] text-fg outline-none";
 
-/** Who reviews each task: one reviewer with the task's config, until it has others. */
-function ProjectReviewers({ project, onChange }: { project: Project; onChange: (v: Reviewer[]) => void }) {
+/** Who reviews each task: the profile's reviewers (API 87), or the project's own, at first one with the task's config. */
+function ProjectReviewers({ project, host, onChange }: { project: Project; host: Host | undefined; onChange: (v: Reviewer[]) => void }) {
   const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project.host_id)));
-  const list = project.reviewers?.length ? project.reviewers : [DEFAULT_REVIEWER];
-  const change = (i: number, r: Reviewer | null) => onChange(r ? list.map((x, j) => (j === i ? r : x)) : list.filter((_, j) => j !== i));
+  const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
+  const inherits = hostSupports(host, PROFILE_REVIEWERS_API);
+  const own = !!project.reviewers?.length;
+  const profiles = profile?.reviewers?.length ? profile.reviewers : [DEFAULT_REVIEWER];
   return (
     <Field
       label="Reviewers"
       hint="Each reviews in a thread of its own, e.g. one with Codex and one with Claude. Once they've all finished, the serious issues they found go to the task's agent together."
     >
       <div className="space-y-2">
-        {list.map((r, i) => (
-          <ReviewerRow key={i} project={project} configs={configs} value={r} onChange={(v) => change(i, v)} removable={list.length > 1} />
-        ))}
-        {list.length < MAX_REVIEWERS && (
-          <Button size="sm" variant="ghost" onClick={() => onChange([...list, DEFAULT_REVIEWER])}>
-            <Plus size={12} /> Add reviewer
-          </Button>
+        {inherits && (
+          <InheritPicker
+            own={own}
+            onChange={(v) => onChange(v ? profiles : [])}
+            what="reviewers"
+            profileHas={`${profiles.map((r) => reviewerLabel(r, configs)).join("; ")}. Change them in Settings → Profiles.`}
+          />
+        )}
+        {(own || !inherits) && (
+          <ReviewerList
+            hostId={project.host_id}
+            configs={configs}
+            models={{ project: project.model, profile: profile?.default_model }}
+            value={project.reviewers ?? []}
+            onChange={onChange}
+          />
         )}
       </div>
     </Field>
   );
 }
 
-function ReviewerRow({
-  project,
-  configs,
-  value,
-  onChange,
-  removable,
-}: {
-  project: Project;
-  configs: ClaudeConfig[];
-  value: Reviewer;
-  onChange: (v: Reviewer | null) => void;
-  removable: boolean;
-}) {
-  const config = configs.find((c) => c.id === value.claude_config_id);
-  const models = useAgentModels(config);
+/** Who summarises each task's changes: the profile's summarizer (API 87), or the project's own. */
+function ProjectSummarizer({ project, host, onChange }: { project: Project; host: Host | undefined; onChange: (v: Reviewer | null) => void }) {
+  const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project.host_id)));
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
-  const hostSettings = useStore((s) => s.hostSettings[project.host_id]);
-  const model = value.model ?? "";
+  const inherits = hostSupports(host, PROFILE_REVIEWERS_API);
+  const own = project.summarizer != null;
+  const profiles = profile?.summarizer ?? DEFAULT_REVIEWER;
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <select
-        className={pickerClass}
-        title="Agent config"
-        value={value.claude_config_id ?? ""}
-        // Another agent has other models.
-        onChange={(e) => onChange({ claude_config_id: e.target.value || null, model: null, effort: null })}
-      >
-        <option value="">The task's config</option>
-        {configs.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-            {agentOf(c) === "codex" ? " (Codex)" : ""}
-          </option>
-        ))}
-        {value.claude_config_id && !config && <option value={value.claude_config_id}>Deleted config (uses the task's)</option>}
-      </select>
-      <ModelPicker
-        value={model}
-        onChange={(m) => onChange({ ...value, model: m || null })}
-        options={modelOptions(config, models)}
-        placeholder={agentOf(config) === "codex" ? "model id, e.g. gpt-6.1-sol" : undefined}
-        inherited={inheritedModel(config, models, project.model, profile?.default_model, hostSettings?.default_model)}
-      />
-      <select className={pickerClass} title="Effort" value={value.effort ?? ""} onChange={(e) => onChange({ ...value, effort: e.target.value || null })}>
-        <option value="">{hostSettings?.default_effort ? `Default effort (${hostSettings.default_effort})` : "Default effort"}</option>
-        {effortOptions(config, models, model).map((e) => (
-          <option key={e} value={e}>
-            {e} effort
-          </option>
-        ))}
-        {value.effort && !effortOptions(config, models, model).includes(value.effort) && <option value={value.effort}>{value.effort} effort</option>}
-      </select>
-      {removable && (
-        <IconButton title="Remove this reviewer" onClick={() => onChange(null)}>
-          <Trash2 size={13} />
-        </IconButton>
-      )}
-    </div>
+    <Field label="Summarizer" hint="The agent that writes the summaries. A quick, cheap model is usually enough.">
+      <div className="space-y-2">
+        {inherits && (
+          <InheritPicker
+            own={own}
+            onChange={(v) => onChange(v ? profiles : null)}
+            what="summarizer"
+            profileHas={`${reviewerLabel(profiles, configs)}. Change it in Settings → Profiles.`}
+          />
+        )}
+        {(own || !inherits) && (
+          <ReviewerRow
+            hostId={project.host_id}
+            configs={configs}
+            models={{ project: project.model, profile: profile?.default_model }}
+            value={project.summarizer ?? DEFAULT_REVIEWER}
+            // A host from before API 87 saves one with the defaults as none, the task's config;
+            // from then on it's this project's choice, over the profile's.
+            onChange={(v) => onChange(inherits ? (v ?? DEFAULT_REVIEWER) : isDefaultReviewer(v) ? null : v)}
+            removable={false}
+          />
+        )}
+      </div>
+    </Field>
   );
 }
 
