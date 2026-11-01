@@ -52,9 +52,10 @@ Faster Rust builds: install [sccache](https://github.com/mozilla/sccache) (`carg
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
 them again. Without sccache, or where it can't start its server (a sandbox with no network), cargo
-runs rustc directly. `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s`
-shows the hit rate. Debug builds also leave dependencies' debuginfo out, which keeps each
-worktree's `target/` smaller.
+runs rustc directly. The server is started with `$XDG_RUNTIME_DIR` (or `/tmp`) as its `TMPDIR`
+rather than the build's, which may be a task's temp folder that goes when the task is done.
+`RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s` shows the hit rate.
+Debug builds also leave dependencies' debuginfo out, which keeps each worktree's `target/` smaller.
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
 of how many of its tasks are in progress (blue), need attention (amber), in review (purple) and
