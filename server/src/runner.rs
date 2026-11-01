@@ -248,8 +248,8 @@ const STEP_OUT: &str = "Tasks queued to merge after this one wait while you merg
 /// stays in that column while it does; the agent moves it to "Done" once merged.
 pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
     let task = &crate::merge_approval::ensure(state, task)?;
-    let text = if task.merge_approval.as_ref().is_some_and(|a| a.decision != "approved") {
-        crate::merge_approval::PROMPT.to_string()
+    let text = if let Some(approval) = task.merge_approval.as_ref().filter(|a| a.decision != "approved") {
+        crate::merge_approval::prompt(approval)
     } else {
         merge_prompt(state, task)?
     };

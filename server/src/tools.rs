@@ -94,7 +94,7 @@ pub struct McpCall {
 /// (`wait` and `permission_prompt`, by their call id). A call to another tool that was cut short
 /// may have taken effect, so it isn't run again.
 const RERUNNABLE: &[&str] =
-    &["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations"];
+    &["permission_prompt", "request_user_input", "request_merge_approval", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations"];
 
 /// A call being executed, which duplicate deliveries wait on (see `handle_mcp`). Dropped without
 /// `done`, as when its request is cut short, it lets them go: a retry then finds it recorded as
@@ -232,10 +232,13 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             let tool_name = c.args["tool_name"].as_str().unwrap_or("").to_string();
             permissions::prompt(s, &task, &c.call_id, &tool_name, &c.args["input"], c.args["tool_use_id"].as_str()).await.map_err(|e| format!("{e:#}"))
         }
-        "request_user_input" => {
-            let mut card = crate::questions::card(&c.args)?;
-            let task = crate::merge_approval::ensure(s, &task).map_err(|e| e.to_string())?;
-            crate::merge_approval::tag_question(&task, &mut card);
+        "request_user_input" | "request_merge_approval" => {
+            let card = if c.tool == "request_merge_approval" {
+                let task = crate::merge_approval::ensure(s, &task).map_err(|e| e.to_string())?;
+                crate::merge_approval::card(&task, &c.args)?
+            } else {
+                crate::questions::card(&c.args)?
+            };
             let question = card["question"].as_str().unwrap_or("The agent needs your input").to_string();
             s.db().execute("UPDATE runs SET attention=?1 WHERE id=?2", rusqlite::params![question, c.run_id]).map_err(|e| e.to_string())?;
             let options = card["options"].as_array().is_some_and(|o| !o.is_empty());
@@ -1387,6 +1390,7 @@ fn task_details(s: &Shared, ctx: &Ctx, t: &Task) -> ToolResult {
     let mut out = summarize(s, t);
     out["description"] = json!(t.description);
     out["worktree_path"] = json!(t.worktree_path);
+    out["merge_approval"] = json!(t.merge_approval);
     out["last_message"] = json!(db::last_assistant_text(&s.db(), &t.id)?);
     // A task can create tasks on boards the caller cannot use (or no longer can use).
     let readable = boards(s, ctx)?;

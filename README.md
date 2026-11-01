@@ -970,7 +970,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
 - **Summarize merge** (API 89): enable *Summarize merge* in *Settings → Profiles*, or choose
   On/Off in a project's *Review* settings (by default it inherits the profile; profiles default
   to off). When a task enters the merge queue with this on, its agent first summarises what will
-  be merged and asks an **Approve / Deny** question. It is explicitly told not to merge yet.
+  be merged and calls `request_merge_approval` with the summary and current merge-attempt ID to
+  ask an **Approve / Deny** question. Ordinary `request_user_input` questions keep their options
+  and do not grant merge approval. It is explicitly told not to merge yet.
   The summary and your decision stay in the thread. **Approve** sends the usual merge instructions;
   **Deny** returns the task to *In review* and frees its merge slot. A reply typed in the thread
   does not approve it. The gh `pr_merge` tool checks the stored approval on each call and returns

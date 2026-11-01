@@ -7,8 +7,12 @@ use serde_json::{Value, json};
 use crate::db::{self, Task};
 use crate::state::{ApiError, ApiResult, Shared};
 
-pub const DISABLED: &str = "pr_merge is disabled: the merge has not been approved yet. Summarise what will be merged and ask for approval with request_user_input. Wait for the user to approve the merge card before merging.";
-pub const PROMPT: &str = "The user moved this task to \"Ready for merge\". Summarise what will be merged, including the target branch, the changes and their impact, validation, and any risks or outstanding work. Do not merge yet. Call `request_user_input` with your summary in the question and Approve / Deny options, then end your turn. The board stores the decision and will send the merge instructions only after the user approves. pr_merge is disabled until then.";
+pub const DISABLED: &str = "pr_merge is disabled: the merge has not been approved yet. Summarise what will be merged and call request_merge_approval with the current merge_approval.id from get_task. Ordinary request_user_input questions do not approve merges. Wait for the user to approve the merge card before merging.";
+pub const PROMPT: &str = "The user moved this task to \"Ready for merge\". Summarise what will be merged, including the target branch, the changes and their impact, validation, and any risks or outstanding work. Do not merge yet. Call `request_merge_approval` with your summary and the merge attempt ID below, then end your turn. Use `request_user_input` for any ordinary clarification or permission questions; their answers do not approve the merge. The board stores the decision and will send the merge instructions only after the user approves. pr_merge is disabled until then.";
+
+pub fn prompt(approval: &Approval) -> String {
+    format!("{PROMPT}\n\nMerge attempt ID (`attempt_id`): `{}`.", approval.id)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Approval {
@@ -48,14 +52,23 @@ pub fn ensure(s: &Shared, task: &Task) -> anyhow::Result<Task> {
     Ok(task.clone())
 }
 
-/// An agent supplies the summary, but cannot choose what counts as approval.
-pub fn tag_question(task: &Task, card: &mut Value) {
-    if let Some(a) = task.merge_approval.as_ref().filter(|a| task.merging && a.decision == "pending") {
-        card["merge_approval_id"] = json!(a.id);
-        card["options"] = json!([{"label": "Approve"}, {"label": "Deny"}]);
-        card["allow_other"] = json!(false);
-        card["multi_select"] = json!(false);
+/// Only this explicit tool makes a merge approval card. Ordinary questions remain ordinary,
+/// even when they happen to offer Approve / Deny while a merge is pending.
+pub fn card(task: &Task, args: &Value) -> Result<Value, String> {
+    let approval = task.merge_approval.as_ref().filter(|a| task.merging && a.decision == "pending")
+        .ok_or("this task has no pending merge approval; move it to Ready for merge first")?;
+    if args["attempt_id"].as_str() != Some(approval.id.as_str()) {
+        return Err(format!("this merge attempt is no longer current; the pending attempt_id is {}", approval.id));
     }
+    let summary = args["summary"].as_str().map(str::trim).filter(|s| !s.is_empty()).ok_or("request_merge_approval needs a non-empty merge summary")?;
+    Ok(json!({
+        "question": format!("Approve this merge?\n\n{summary}"),
+        "purpose": "merge_approval",
+        "merge_approval_id": approval.id,
+        "options": [{"label": "Approve"}, {"label": "Deny"}],
+        "allow_other": false,
+        "multi_select": false,
+    }))
 }
 
 /// Called only from the user's answer route, never from agent tools or a free-text reply.
@@ -111,13 +124,87 @@ mod tests {
     }
 
     async fn ask(s: &Shared, run: &db::Run, call_id: &str) -> db::Message {
-        tools::handle_mcp(s, tools::McpCall { run_id: run.id.clone(), call_id: call_id.into(), tool: "request_user_input".into(),
-            args: json!({"question": "Merge into master: adds merge approval. Tests pass. Approve?", "options": ["Yes"], "multi_select": true}), task_fields: true }).await.unwrap();
+        let task = db::get_task(&s.db(), &run.task_id).unwrap().unwrap();
+        tools::handle_mcp(s, tools::McpCall { run_id: run.id.clone(), call_id: call_id.into(), tool: "request_merge_approval".into(),
+            args: json!({"summary": "Merge into master: adds merge approval. Tests pass.", "attempt_id": task.merge_approval.unwrap().id}), task_fields: true }).await.unwrap();
         db::list_messages(&s.db(), &run.task_id).unwrap().into_iter().filter(|m| m.kind == "question").last().unwrap()
     }
 
     fn pick(s: &Shared, task: &Task, question: &db::Message, choice: &str) -> ApiResult<Task> {
         questions::answer(s, &task.id, question.id, questions::Answer { choices: vec![choice.into()], text: None })
+    }
+
+    #[test]
+    fn ordinary_questions_keep_their_answers_and_do_not_approve_a_merge() {
+        testing::run(async || {
+            for (question, options, choice) in [
+                ("May I enable network access to fetch the PR before writing the merge summary?", json!([{"label": "Approve"}, {"label": "Deny"}]), "Approve"),
+                ("Which target branch should I inspect?", json!([{"label": "master", "description": "Default branch"}, {"label": "release"}]), "release"),
+            ] {
+                let s = testing::state();
+                let (t, run) = setup(&s);
+                tools::handle_mcp(&s, tools::McpCall { run_id: run.id.clone(), call_id: "ordinary".into(), tool: "request_user_input".into(),
+                    args: json!({"question": question, "options": options, "allow_other": true}), task_fields: true }).await.unwrap();
+                let q = db::list_messages(&s.db(), &t.id).unwrap().into_iter().find(|m| m.kind == "question").unwrap();
+                assert_eq!(q.data["options"], options);
+                assert!(q.data["merge_approval_id"].is_null());
+                assert_eq!(q.data["allow_other"], true);
+                let answered = pick(&s, &t, &q, choice).unwrap();
+                assert_eq!(answered.merge_approval.as_ref().unwrap().decision, "pending");
+                assert!(disabled(&s.db(), &answered).unwrap());
+                assert_eq!(answered.queued_message.as_deref(), Some(questions::reply_text(question, &[choice.into()], None).as_str()));
+            }
+        });
+    }
+
+    #[test]
+    fn explicit_approvals_require_a_summary_and_the_current_pending_attempt() {
+        testing::run(async || {
+            let s = testing::state();
+            let (t, run) = setup(&s);
+            let attempt = t.merge_approval.as_ref().unwrap().id.clone();
+            for (i, args) in [
+                json!({"summary": "Merge this change into master."}),
+                json!({"attempt_id": attempt, "summary": "  "}),
+                json!({"attempt_id": "old-attempt", "summary": "Merge this change into master."}),
+            ].into_iter().enumerate() {
+                assert!(tools::handle_mcp(&s, tools::McpCall { run_id: run.id.clone(), call_id: format!("invalid-{i}"), tool: "request_merge_approval".into(),
+                    args, task_fields: true }).await.is_err());
+            }
+            assert!(!db::list_messages(&s.db(), &t.id).unwrap().iter().any(|m| m.kind == "question"));
+            let q = ask(&s, &run, "valid").await;
+            assert_eq!(q.data["purpose"], "merge_approval");
+            assert!(q.data["question"].as_str().unwrap().starts_with("Approve this merge?"));
+            assert!(prompt(t.merge_approval.as_ref().unwrap()).contains(&attempt));
+            // Retrying a tool call after a restart still produces only one card.
+            s.db().execute("UPDATE mcp_calls SET status='executing' WHERE id='valid'", []).unwrap();
+            ask(&s, &run, "valid").await;
+            assert_eq!(db::list_messages(&s.db(), &t.id).unwrap().iter().filter(|m| m.kind == "question").count(), 1);
+            s.update_task(&t.id, &[("merging", json!(false))]).unwrap();
+            s.update_task(&t.id, &[("merging", json!(true))]).unwrap();
+            assert!(pick(&s, &t, &q, "Approve").is_err());
+            let current = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert!(card(&current, &json!({"attempt_id": attempt, "summary": "Old summary"})).is_err());
+            let leaving = s.update_task(&t.id, &[("merging", json!(false))]).unwrap().unwrap();
+            assert!(card(&leaving, &json!({"attempt_id": leaving.merge_approval.as_ref().unwrap().id, "summary": "Summary"})).is_err());
+        });
+    }
+
+    #[test]
+    fn legacy_implicitly_tagged_questions_cannot_grant_merge_approval() {
+        testing::run(async || {
+            let s = testing::state();
+            let (t, _) = setup(&s);
+            let mut legacy = questions::card(&json!({"question": "May I enable network access?", "options": ["Approve", "Deny"], "allow_other": false})).unwrap();
+            legacy["merge_approval_id"] = json!(t.merge_approval.as_ref().unwrap().id);
+            questions::ask(&s, &t, "legacy", legacy).unwrap();
+            let q = db::list_messages(&s.db(), &t.id).unwrap().into_iter().find(|m| m.kind == "question").unwrap();
+            assert!(pick(&s, &t, &q, "Approve").unwrap_err().1.contains("predates explicit merge summaries"));
+            let reloaded = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert_eq!(reloaded.merge_approval.as_ref().unwrap().decision, "pending");
+            assert!(disabled(&s.db(), &reloaded).unwrap());
+            assert!(reloaded.queued_message.is_none());
+        });
     }
 
     #[test]
