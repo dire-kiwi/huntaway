@@ -89,6 +89,12 @@ pub fn state_as(id: Identity) -> Shared {
     state_of(id, meta())
 }
 
+/// An `AppState` on an in-memory database, with its data in `data_dir`, for a server whose binary is `exe`.
+pub fn state_at(meta: crate::admin::ServerMeta, data_dir: std::path::PathBuf, exe: std::path::PathBuf) -> Shared {
+    let c = crate::db::open(std::path::Path::new(":memory:")).unwrap();
+    AppState::with_exe(c, data_dir, identity(), meta, exe)
+}
+
 fn state_of(id: Identity, meta: crate::admin::ServerMeta) -> Shared {
     let c = crate::db::open(std::path::Path::new(":memory:")).unwrap();
     let data_dir = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));

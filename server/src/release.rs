@@ -1,15 +1,20 @@
 //! Updates for release installs (the desktop app's packages, or a server installed from a release
 //! tarball): with `--release-updates <OWNER/REPO>`, check that repository's GitHub releases for a
-//! newer server, and report what was found in `GET /admin/server` (API 83).
+//! newer server, and report what was found in `GET /admin/server` (API 83). A newer release is downloaded into
+//! `<data dir>/app/` in the background (see staging.rs), `POST /admin/release/update` restarts onto it, and
+//! `POST /admin/release/rollback` goes back to the version before.
 
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::state::Shared;
+use crate::admin;
+use crate::staging::{self, Asset, Download, Installed, Start};
+use crate::state::{ApiError, ApiResult, Shared};
 
 /// The settings key for "Include prereleases" (`"true"` when on).
 pub const PRERELEASES: &str = "release_prereleases";
@@ -107,6 +112,10 @@ impl GhAsset {
     fn json(&self) -> Value {
         json!({"name": self.name, "url": self.browser_download_url, "size": self.size, "sha256": self.sha256()})
     }
+
+    fn to_asset(&self) -> Option<Asset> {
+        Some(Asset { name: self.name.clone(), url: self.browser_download_url.clone(), size: self.size, sha256: self.sha256()?.to_string() })
+    }
 }
 
 /// A release's `huntaway-<v>-release.json`: which desktop shell it was built with.
@@ -126,12 +135,18 @@ struct Latest {
     manifest: Option<Manifest>,
 }
 
-/// What the checks found (in `AppState::release`).
+/// What the checks found (in `AppState::release`), and the download of the release they found.
 #[derive(Default)]
 pub struct Releases {
     last: Mutex<Checked>,
     /// Held for a check, so there's one at a time.
     checking: tokio::sync::Mutex<()>,
+    /// The download in progress, or the last one (see staging::start).
+    pub download: tokio::sync::watch::Sender<Option<Download>>,
+    /// Held for a download, so there's one at a time.
+    pub staging: Arc<tokio::sync::Mutex<()>>,
+    /// Held to change `app/state.json` or the versions in `app/` (see staging::change).
+    pub files: Mutex<()>,
 }
 
 #[derive(Default, Clone)]
@@ -216,6 +231,35 @@ pub async fn check(state: &Shared) {
     }
     *state.release.last.lock().unwrap() = next;
     state.emit(json!({"type": "release_checked"}));
+    stage_latest(state);
+}
+
+/// The version this server runs.
+fn running() -> semver::Version {
+    semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("the server's version is semver")
+}
+
+/// Start downloading the latest release in the background, if it's newer than this server and isn't staged yet (nor
+/// bad: those aren't picked). A download that failed is tried again; one that's running isn't started twice.
+fn stage_latest(state: &Shared) {
+    let Some(latest) = state.release.last.lock().unwrap().latest.clone() else { return };
+    if latest.version <= running() {
+        return;
+    }
+    let Some(asset) = latest.asset.to_asset() else { return };
+    let version = latest.version.to_string();
+    if staging::start(state, &version, asset) == Start::Started {
+        tracing::info!("downloading release {version}");
+    }
+}
+
+/// After a download of `version`: if a check found a newer release meanwhile, download that one now rather than
+/// after the next check.
+pub fn downloaded(state: &Shared, version: &str) {
+    let latest = state.release.last.lock().unwrap().latest.as_ref().map(|l| l.version.to_string());
+    if latest.is_some_and(|l| l != version) {
+        stage_latest(state);
+    }
 }
 
 type Found = (Option<String>, Vec<GhRelease>, Option<Latest>);
@@ -224,6 +268,7 @@ type Found = (Option<String>, Vec<GhRelease>, Option<Latest>);
 /// that can't be read fails the check, so the last result (and what it said of the shell) stands.
 async fn check_with(state: &Shared, cfg: &Config, last: &Checked) -> Result<Found> {
     let prereleases = prereleases(state)?;
+    let bad = staging::read(&staging::app_dir(state)).bad;
     let url = format!("{}/repos/{}/releases?per_page=20", cfg.api, cfg.repo);
     let mut req = request(&url).header("accept", "application/vnd.github+json").header("x-github-api-version", "2022-11-28");
     // Only with the list it goes with: a 304 means "the list you have".
@@ -241,7 +286,7 @@ async fn check_with(state: &Shared, cfg: &Config, last: &Checked) -> Result<Foun
     } else {
         return Err(refused(res).await);
     };
-    let Some((version, release, asset)) = pick(&releases, &cfg.platform, prereleases) else {
+    let Some((version, release, asset)) = pick(&releases, &cfg.platform, prereleases, &bad) else {
         return Ok((etag, releases, None));
     };
     // The manifest only changes with the release, so one read before is kept.
@@ -291,15 +336,19 @@ fn tag_version(tag: &str) -> &str {
     tag.strip_prefix('v').unwrap_or(tag)
 }
 
-/// The highest semver release that isn't a draft (nor a prerelease, unless they're included) and
-/// has a server tarball for `platform` with a sha256 digest.
-fn pick<'a>(releases: &'a [GhRelease], platform: &str, prereleases: bool) -> Option<(semver::Version, &'a GhRelease, &'a GhAsset)> {
+/// The highest semver release that isn't a draft (nor a prerelease, unless they're included) nor
+/// bad (rolled back from, or failed to start), and has a server tarball for `platform` with a
+/// sha256 digest.
+fn pick<'a>(releases: &'a [GhRelease], platform: &str, prereleases: bool, bad: &[String]) -> Option<(semver::Version, &'a GhRelease, &'a GhAsset)> {
     releases
         .iter()
         .filter(|r| !r.draft && (prereleases || !r.prerelease))
         .filter_map(|r| {
             let text = tag_version(&r.tag_name);
             let version = semver::Version::parse(text).ok()?;
+            if bad.iter().any(|b| semver::Version::parse(b).is_ok_and(|b| b == version)) {
+                return None;
+            }
             let name = format!("huntaway-server-{text}-{platform}.tar.gz");
             let asset = r.assets.iter().find(|a| a.name == name && a.sha256().is_some())?;
             Some((version, r, asset))
@@ -313,6 +362,9 @@ pub fn status(state: &Shared) -> Result<Option<Value>> {
     let prereleases = prereleases(state)?;
     let last = state.release.last.lock().unwrap().clone();
     let running = env!("CARGO_PKG_VERSION");
+    let app = staging::app_dir(state);
+    let installed = staging::read(&app);
+    let download = state.release.download.borrow().clone();
     let latest = last.latest.as_ref().map(|l| {
         json!({
             "version": l.version.to_string(),
@@ -334,12 +386,191 @@ pub fn status(state: &Shared) -> Result<Option<Value>> {
         "rate_limit_reset": last.rate_limit_reset,
         "shell": shell(cfg, last.latest.as_ref()),
         "bundled_server": cfg.bundled_server,
-        // Filled in by the background download and Update.
-        "staged": null,
-        "download": null,
-        "previous": null,
-        "bad": [],
+        // A version downloaded and checked, for Update to restart onto.
+        "staged": staging::staged(&app, &installed),
+        "download": download.as_ref().and_then(Download::reported),
+        "previous": installed.previous,
+        "bad": installed.bad,
+        // What Roll back would start: a version, "bundled" (the desktop app's own server), or null.
+        "rollback_to": rollback_target(state).map(|(_, v)| v.unwrap_or_else(|| "bundled".into())),
     })))
+}
+
+// ---------- Update and Roll back ----------
+
+/// Restart onto `version` (a `RestartJob`): straight away if it's staged, after its background download if that's
+/// still running, or after downloading it now. Anything that goes wrong before the exec leaves this server running.
+pub fn update(state: &Shared, version: &str) -> ApiResult<()> {
+    if state.meta.release.is_none() {
+        return Err(ApiError::bad("this server doesn't update from releases (start it with --release-updates OWNER/REPO)"));
+    }
+    let version = semver::Version::parse(version.trim().trim_start_matches('v')).map_err(|_| ApiError::bad(format!("{version:?} isn't a version")))?;
+    if version <= running() {
+        return Err(ApiError::bad(format!("this server runs {}, which isn't older than {version}", running())));
+    }
+    let v = version.to_string();
+    if staging::read(&staging::app_dir(state)).is_bad(&v) {
+        return Err(ApiError::bad(format!("{v} was rolled back from or didn't start, so it isn't offered again")));
+    }
+    // The asset, in case it has to be downloaded: only the latest release's is known.
+    let latest = state.release.last.lock().unwrap().latest.clone();
+    let asset = latest.filter(|l| l.version == version).and_then(|l| l.asset.to_asset());
+    if asset.is_none() && !staging::is_staged(state, &v) {
+        return Err(ApiError::bad(format!("{v} isn't the latest release; check for releases again")));
+    }
+    admin::begin(state, move |st| async move {
+        wait_for_staging(&st, &v, asset).await?;
+        restart_onto(&st, &v).await
+    })
+}
+
+/// Until `v` is staged: follow its download (starting one if none is running) in the restart's phases and log.
+async fn wait_for_staging(st: &Shared, v: &str, asset: Option<Asset>) -> Result<()> {
+    let mut rx = st.release.download.subscribe();
+    let mut started = false;
+    let mut logged: Option<(String, u64)> = None;
+    loop {
+        if staging::is_staged(st, v) {
+            return Ok(());
+        }
+        let d = rx.borrow_and_update().clone().filter(|d| d.version == v);
+        match d {
+            Some(d) if d.running() => {
+                mirror(st, &d, &mut logged);
+                rx.changed().await?;
+                continue;
+            }
+            Some(d) if started => bail!("{}", d.error.unwrap_or_else(|| format!("{v} wasn't staged"))),
+            _ => {}
+        }
+        let asset = asset.clone().with_context(|| format!("{v} isn't staged any more; check for releases again"))?;
+        match staging::start(st, v, asset) {
+            Start::Started => started = true,
+            Start::Staged => return Ok(()),
+            Start::Busy => {
+                let d = st.release.download.borrow().clone().filter(|d| d.running());
+                match d {
+                    // Followed next time round.
+                    Some(d) if d.version == v => {}
+                    d => {
+                        if let Some(other) = d {
+                            admin::log_line(st, &format!("Waiting for the download of {} to finish", other.version));
+                        }
+                        drop(st.release.staging.lock().await);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Show a download's progress in the restart job: its phase, and a line in the log for each phase and tenth.
+fn mirror(st: &Shared, d: &Download, logged: &mut Option<(String, u64)>) {
+    let tenth = d.total.filter(|t| *t > 0).map(|t| d.bytes * 10 / t).unwrap_or(0);
+    if logged.as_ref().is_some_and(|(phase, t)| *phase == d.phase && *t == tenth) {
+        return;
+    }
+    if logged.as_ref().is_none_or(|(phase, _)| *phase != d.phase) {
+        admin::set_phase(st, &d.phase, None);
+        admin::log_line(
+            st,
+            &match d.phase.as_str() {
+                "downloading" => format!("Downloading {}{}", d.version, d.total.map(|t| format!(" ({})", mb(t))).unwrap_or_default()),
+                "verifying" => "Checking its sha256 and what it holds".into(),
+                _ => format!("Unpacking it into {}, and checking that it runs", crate::util::path_str(&staging::app_dir(st).join(&d.version))),
+            },
+        );
+    } else if let Some(total) = d.total {
+        admin::log_line(st, &format!("{}0% ({} of {})", tenth, mb(d.bytes), mb(total)));
+    }
+    *logged = Some((d.phase.clone(), tenth));
+}
+
+fn mb(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1e6)
+}
+
+/// Set `trying` and exec `app/<v>/huntaway`. When that fails, `trying` is put back.
+async fn restart_onto(st: &Shared, v: &str) -> Result<()> {
+    let app = staging::app_dir(st);
+    let exe = staging::version_dir(&app, v).context("not a version")?.join("huntaway");
+    let old = staging::change(st, |s| s.trying = Some(v.to_string()))?;
+    let err = admin::restart_into(st, &exe).await;
+    staging::change(st, |s| {
+        if s.trying.as_deref() == Some(v) {
+            s.trying = old.trying;
+        }
+    })?;
+    Err(err)
+}
+
+/// What Roll back would exec, and its version (none for the desktop app's own server): the version before this one,
+/// or else the bundled server. Only for a server running from `app/`.
+fn rollback_target(state: &Shared) -> Option<(PathBuf, Option<String>)> {
+    let current = staging::running_from_app(&state.data_dir, &state.exe)?;
+    let app = staging::app_dir(state);
+    let installed = staging::read(&app);
+    let previous = installed.previous.clone().filter(|p| *p != current && !installed.is_bad(p));
+    if let Some(p) = previous {
+        if let Some(dir) = staging::version_dir(&app, &p).filter(|d| staging::complete(d)) {
+            return Some((dir.join("huntaway"), Some(p)));
+        }
+    }
+    let bundled = PathBuf::from(state.meta.release.as_ref()?.bundled_server.as_ref()?);
+    bundled.is_file().then_some((bundled, None))
+}
+
+/// Mark the running version bad and restart onto the one before it (or the desktop app's own server). When the exec
+/// fails, `app/state.json` is put back.
+pub fn rollback(state: &Shared) -> ApiResult<()> {
+    if state.meta.release.is_none() {
+        return Err(ApiError::bad("this server doesn't update from releases (start it with --release-updates OWNER/REPO)"));
+    }
+    let Some(current) = staging::running_from_app(&state.data_dir, &state.exe) else {
+        return Err(ApiError::bad("this server isn't an installed release, so there's nothing to roll back"));
+    };
+    if rollback_target(state).is_none() {
+        return Err(ApiError::bad("there's no earlier version to roll back to"));
+    }
+    admin::begin(state, move |st| async move {
+        let (exe, previous) = rollback_target(&st).context("there's no earlier version to roll back to")?;
+        admin::log_line(&st, &format!("Rolling back from {current} to {}", previous.as_deref().unwrap_or("the app's own server")));
+        let old = staging::change(&st, |s| rolled_back(s, &current, previous.as_deref()))?;
+        let err = admin::restart_into(&st, &exe).await;
+        // Only what the rollback changed is put back: a download may have staged a version meanwhile.
+        staging::change(&st, |s| not_rolled_back(s, &old, &current, previous.as_deref()))?;
+        Err(err)
+    })
+}
+
+/// Undo `rolled_back(s, current, previous)` on `s`, which was `old` before it, for the fields it changed and nothing
+/// has changed since.
+fn not_rolled_back(s: &mut Installed, old: &Installed, current: &str, previous: Option<&str>) {
+    if !old.is_bad(current) {
+        s.bad.retain(|b| b != current);
+    }
+    if s.current.as_deref() == previous {
+        s.current = old.current.clone();
+    }
+    if s.previous.is_none() {
+        s.previous = old.previous.clone();
+    }
+    if old.trying.as_deref() == Some(current) && s.trying.is_none() {
+        s.trying = old.trying.clone();
+    }
+}
+
+/// `s` once `current` is rolled back from to `previous` (none for the bundled server, which the desktop app starts
+/// when there's no current).
+fn rolled_back(s: &mut Installed, current: &str, previous: Option<&str>) {
+    if !s.is_bad(current) {
+        s.bad.push(current.to_string());
+    }
+    s.current = previous.map(String::from);
+    s.previous = None;
+    if s.trying.as_deref() == Some(current) {
+        s.trying = None;
+    }
 }
 
 /// The desktop app this server was started by, and whether the latest release has a newer shell
@@ -387,7 +618,8 @@ mod tests {
     type Failure = Option<(u16, Vec<(&'static str, String)>)>;
 
     /// A fake GitHub: its releases (with `{base}` in URLs standing for its own address), the ETag
-    /// it gives them, and statuses to answer the list and the manifests with instead.
+    /// it gives them, and statuses to answer the list and the manifests with instead. The files
+    /// in `files` are served as they are, and any other download as a manifest.
     #[derive(Default)]
     struct Fake {
         releases: Value,
@@ -396,6 +628,45 @@ mod tests {
         manifest_fail: Failure,
         not_modified: AtomicUsize,
         manifests: AtomicUsize,
+        files: std::collections::HashMap<String, (Vec<u8>, Serve)>,
+        downloads: AtomicUsize,
+    }
+
+    /// How the fake serves a file.
+    #[derive(Clone, Default)]
+    enum Serve {
+        #[default]
+        Whole,
+        /// Half of it, then the connection breaks.
+        CutOff,
+        /// All of it, once the test lets it go.
+        Held(Arc<tokio::sync::Notify>),
+    }
+
+    async fn serve_file(bytes: Vec<u8>, serve: Serve) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let len = bytes.len().to_string();
+        match serve {
+            Serve::Whole => ([("content-length", len)], bytes).into_response(),
+            Serve::Held(go) => {
+                go.notified().await;
+                ([("content-length", len)], bytes).into_response()
+            }
+            Serve::CutOff => {
+                // Half, and a moment later the error, so the half is sent first.
+                let half = bytes[..bytes.len() / 2].to_vec();
+                let chunks = futures::stream::unfold(Some(half), |half| async move {
+                    match half {
+                        Some(half) => Some((Ok(half), None)),
+                        None => {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            Some((Err(std::io::Error::other("cut off")), None))
+                        }
+                    }
+                });
+                ([("content-length", len)], axum::body::Body::from_stream(chunks)).into_response()
+            }
+        }
     }
 
     fn failure(code: u16, headers: &[(&'static str, String)]) -> axum::response::Response {
@@ -432,8 +703,22 @@ mod tests {
             .route(
                 "/download/{name}",
                 axum::routing::get(move |axum::extract::Path(name): axum::extract::Path<String>| async move {
+                    let file = {
+                        let f = f2.lock().unwrap();
+                        let file = f.files.get(&name).cloned();
+                        if file.is_some() {
+                            f.downloads.fetch_add(1, Ordering::SeqCst);
+                        }
+                        file
+                    };
+                    if let Some((bytes, serve)) = file {
+                        return serve_file(bytes, serve).await;
+                    }
                     let f = f2.lock().unwrap();
-                    f.manifests.fetch_add(1, Ordering::SeqCst);
+                    // (Not the server tarballs the other tests' checks start downloading.)
+                    if name.ends_with("-release.json") {
+                        f.manifests.fetch_add(1, Ordering::SeqCst);
+                    }
                     if let Some((code, hs)) = &f.manifest_fail {
                         return failure(*code, hs);
                     }
@@ -773,6 +1058,545 @@ mod tests {
             check(&state).await;
             assert_eq!(status(&state).unwrap(), None);
             assert!(crate::admin::status(&state).await.unwrap().get("release").is_none());
+        });
+    }
+
+    // ---------- staging, Update and Roll back ----------
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes).as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ia-release-{}", crate::util::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A release's files in `dir`: `huntaway` (a script that runs `script`), `ia-shim` and `ui/index.html`.
+    fn server_files(dir: &std::path::Path, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir.join("ui")).unwrap();
+        std::fs::write(dir.join("huntaway"), format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(dir.join("huntaway"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(dir.join("ia-shim"), "shim").unwrap();
+        std::fs::write(dir.join("ui/index.html"), "<html>").unwrap();
+    }
+
+    /// A server tarball for `v` as release.yml packs it (`huntaway-server-<v>-linux-x64/…`), whose `huntaway` runs
+    /// `script` (by default, prints its version like clap does), with `tar`'s extra arguments for other entries.
+    fn tarball(v: &str, script: Option<&str>, extra: &[&str]) -> Vec<u8> {
+        let dir = temp_dir();
+        let top = format!("huntaway-server-{v}-linux-x64");
+        server_files(&dir.join(&top), script.unwrap_or(&format!("echo 'huntaway {v}'")));
+        std::fs::write(dir.join("evil"), "outside").unwrap();
+        let o = std::process::Command::new("tar").current_dir(&dir).args(["-czPf", "out.tar.gz", &top]).args(extra).output().unwrap();
+        assert!(o.status.success(), "tar: {}", String::from_utf8_lossy(&o.stderr));
+        std::fs::read(dir.join("out.tar.gz")).unwrap()
+    }
+
+    /// A release of `tag` whose linux-x64 server tarball is `bytes`, served the way `serve` says.
+    fn served(fake: &Arc<Mutex<Fake>>, tag: &str, bytes: Vec<u8>, serve: Serve) -> Value {
+        let mut r = release(tag, false);
+        let name = r["assets"][0]["name"].as_str().unwrap().to_string();
+        r["assets"][0]["digest"] = json!(format!("sha256:{}", sha256_hex(&bytes)));
+        r["assets"][0]["size"] = json!(bytes.len());
+        fake.lock().unwrap().files.insert(name, (bytes, serve));
+        r
+    }
+
+    /// A host checking a fake GitHub that has the releases `make` gives.
+    async fn setup_with(make: impl FnOnce(&Arc<Mutex<Fake>>) -> Value) -> (Arc<Mutex<Fake>>, Shared) {
+        let (fake, state) = setup(json!([])).await;
+        let releases = make(&fake);
+        fake.lock().unwrap().releases = releases;
+        (fake, state)
+    }
+
+    /// Change what the fake lists (with a new ETag, so it's read again).
+    fn relist(fake: &Arc<Mutex<Fake>>, releases: Value) {
+        let mut f = fake.lock().unwrap();
+        f.releases = releases;
+        f.etag = format!("\"{}\"", crate::util::new_id());
+    }
+
+    /// The download, once it has finished (staged or failed).
+    async fn finished(state: &Shared) -> Download {
+        let mut rx = state.release.download.subscribe();
+        loop {
+            if let Some(d) = rx.borrow_and_update().clone().filter(|d| !d.running()) {
+                return d;
+            }
+            rx.changed().await.unwrap();
+        }
+    }
+
+    /// The names in `app/`, sorted.
+    fn app_entries(state: &Shared) -> Vec<String> {
+        let Ok(dir) = std::fs::read_dir(staging::app_dir(state)) else { return vec![] };
+        let mut names: Vec<String> = dir.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    fn downloads(fake: &Arc<Mutex<Fake>>) -> usize {
+        fake.lock().unwrap().downloads.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_newer_release_is_staged_in_the_background() {
+        testing::run(async || {
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])).await;
+            let mut events = state.events.subscribe();
+            check(&state).await;
+            let d = finished(&state).await;
+            assert_eq!((d.phase.as_str(), d.error.clone()), ("staged", None));
+            assert_eq!(Some(d.bytes), d.total);
+            let app = staging::app_dir(&state);
+            assert!(staging::complete(&app.join("0.2.0")));
+            assert_eq!(app_entries(&state), ["0.2.0", "state.json"], "no tarball or .partial is left");
+            assert_eq!(staging::read(&app).staged.as_deref(), Some("0.2.0"));
+            let r = release_status(&state);
+            assert_eq!((r["staged"].as_str(), r["download"].clone()), (Some("0.2.0"), Value::Null));
+            // The UI hears how it goes.
+            let mut phases = vec![];
+            while let Ok(ev) = events.try_recv() {
+                if ev["type"] == "release_download" {
+                    phases.push(ev["download"]["phase"].as_str().unwrap_or("done").to_string());
+                }
+            }
+            phases.dedup();
+            assert_eq!(phases, ["downloading", "verifying", "installing", "done"]);
+            // Checking again doesn't download it again.
+            check(&state).await;
+            assert_eq!(downloads(&fake), 1);
+            assert_eq!(release_status(&state)["staged"], "0.2.0");
+        });
+    }
+
+    /// Stage a release whose tarball is `bytes`, served with `serve`, and expect it to fail with `error`, leaving
+    /// nothing in `app/`.
+    async fn refused(bytes: Vec<u8>, serve: Serve, digest: Option<&str>, error: &str) -> (Arc<Mutex<Fake>>, Shared) {
+        let (fake, state) = setup_with(|f| {
+            let mut r = served(f, "v0.2.0", bytes, serve);
+            if let Some(d) = digest {
+                r["assets"][0]["digest"] = json!(d);
+            }
+            json!([r])
+        })
+        .await;
+        check(&state).await;
+        let d = finished(&state).await;
+        assert_eq!(d.phase, "failed");
+        assert!(d.error.as_deref().unwrap().contains(error), "{d:?}");
+        assert_eq!(app_entries(&state), Vec::<String>::new(), "nothing is left behind");
+        assert!(!state.data_dir.join("evil").exists() && !staging::app_dir(&state).join("evil").exists());
+        let r = release_status(&state);
+        assert_eq!((r["download"]["phase"].as_str(), r["staged"].clone()), (Some("failed"), Value::Null));
+        assert_eq!(r["download"]["error"], json!(d.error));
+        (fake, state)
+    }
+
+    #[test]
+    fn a_wrong_digest_leaves_nothing_behind_and_is_tried_again() {
+        testing::run(async || {
+            let bytes = tarball("0.2.0", None, &[]);
+            let (fake, state) = refused(bytes.clone(), Serve::Whole, Some(DIGEST), "has sha256").await;
+            // The next check tries again, and the release has the right digest now.
+            relist(&fake, json!([served(&fake, "v0.2.0", bytes, Serve::Whole)]));
+            check(&state).await;
+            assert_eq!(finished(&state).await.phase, "staged");
+            assert_eq!(release_status(&state)["staged"], "0.2.0");
+        });
+    }
+
+    #[test]
+    fn a_cut_off_download_leaves_nothing_behind() {
+        testing::run(async || {
+            refused(tarball("0.2.0", None, &[]), Serve::CutOff, None, "cut off").await;
+        });
+    }
+
+    #[test]
+    fn entries_outside_the_folder_are_refused() {
+        testing::run(async || {
+            // top/../evil would unpack beside app/0.2.0.partial.
+            refused(tarball("0.2.0", None, &["huntaway-server-0.2.0-linux-x64/../evil"]), Serve::Whole, None, "outside its folder").await;
+        });
+    }
+
+    #[test]
+    fn links_are_refused() {
+        testing::run(async || {
+            let dir = temp_dir();
+            let top = "huntaway-server-0.2.0-linux-x64";
+            server_files(&dir.join(top), "echo huntaway 0.2.0");
+            std::os::unix::fs::symlink("/etc", dir.join(top).join("etc")).unwrap();
+            assert!(std::process::Command::new("tar").current_dir(&dir).args(["-czf", "out.tar.gz", top]).status().unwrap().success());
+            refused(std::fs::read(dir.join("out.tar.gz")).unwrap(), Serve::Whole, None, "isn't a file or a folder").await;
+        });
+    }
+
+    #[test]
+    fn a_server_that_fails_its_smoke_test_is_refused() {
+        testing::run(async || {
+            refused(tarball("0.2.0", Some("echo broken >&2; exit 3"), &[]), Serve::Whole, None, "--version failed with exit status: 3: broken").await;
+            refused(tarball("0.2.0", Some("echo huntaway 0.1.9"), &[]), Serve::Whole, None, "printed \"huntaway 0.1.9\", not 0.2.0").await;
+            // Or that's missing its UI.
+            let dir = temp_dir();
+            let top = "huntaway-server-0.2.0-linux-x64";
+            server_files(&dir.join(top), "echo huntaway 0.2.0");
+            std::fs::remove_dir_all(dir.join(top).join("ui")).unwrap();
+            assert!(std::process::Command::new("tar").current_dir(&dir).args(["-czf", "out.tar.gz", top]).status().unwrap().success());
+            refused(std::fs::read(dir.join("out.tar.gz")).unwrap(), Serve::Whole, None, "doesn't have huntaway, ia-shim and ui/index.html").await;
+        });
+    }
+
+    #[test]
+    fn one_download_at_a_time() {
+        testing::run(async || {
+            let go = Arc::new(tokio::sync::Notify::new());
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Held(go.clone()))])).await;
+            check(&state).await;
+            check(&state).await;
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!((r["download"]["version"].as_str(), r["download"]["phase"].as_str()), (Some("0.2.0"), Some("downloading")));
+            assert_eq!(r["staged"], Value::Null);
+            go.notify_one();
+            assert_eq!(finished(&state).await.phase, "staged");
+            assert_eq!(downloads(&fake), 1);
+        });
+    }
+
+    #[test]
+    fn a_release_found_during_a_download_is_downloaded_after_it() {
+        testing::run(async || {
+            let go = Arc::new(tokio::sync::Notify::new());
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Held(go.clone()))])).await;
+            check(&state).await;
+            relist(&fake, json!([served(&fake, "v0.3.0", tarball("0.3.0", None, &[]), Serve::Whole)]));
+            check(&state).await;
+            assert_eq!(release_status(&state)["download"]["version"], "0.2.0");
+            go.notify_one();
+            let mut rx = state.release.download.subscribe();
+            while rx.borrow_and_update().as_ref().is_none_or(|d| d.version != "0.3.0" || d.running()) {
+                rx.changed().await.unwrap();
+            }
+            assert_eq!(release_status(&state)["staged"], "0.3.0");
+            assert_eq!(app_entries(&state), ["0.3.0", "state.json"]);
+        });
+    }
+
+    #[test]
+    fn a_newer_release_replaces_an_unused_staged_one() {
+        testing::run(async || {
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])).await;
+            check(&state).await;
+            assert_eq!(finished(&state).await.phase, "staged");
+            let older = served(&fake, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole);
+            relist(&fake, json!([served(&fake, "v0.3.0", tarball("0.3.0", None, &[]), Serve::Whole), older]));
+            check(&state).await;
+            let d = finished(&state).await;
+            assert_eq!((d.version.as_str(), d.phase.as_str()), ("0.3.0", "staged"));
+            assert_eq!(app_entries(&state), ["0.3.0", "state.json"]);
+            assert_eq!(release_status(&state)["staged"], "0.3.0");
+        });
+    }
+
+    #[test]
+    fn a_bad_version_isnt_offered_or_staged() {
+        testing::run(async || {
+            let (fake, state) = setup_with(|f| {
+                let newer = served(f, "v0.3.0", tarball("0.3.0", None, &[]), Serve::Whole);
+                json!([newer, served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])
+            })
+            .await;
+            staging::write(&staging::app_dir(&state), &Installed { bad: vec!["0.3.0".into()], ..Default::default() }).unwrap();
+            check(&state).await;
+            let d = finished(&state).await;
+            assert_eq!((d.version.as_str(), d.phase.as_str()), ("0.2.0", "staged"));
+            let r = release_status(&state);
+            assert_eq!((r["latest"]["version"].as_str(), r["bad"].clone()), (Some("0.2.0"), json!(["0.3.0"])));
+            let (code, v) = api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.3.0"}))).await;
+            assert_eq!(code, 400, "{v}");
+            // A newer one is.
+            relist(&fake, json!([served(&fake, "v0.3.1", tarball("0.3.1", None, &[]), Serve::Whole)]));
+            check(&state).await;
+            assert_eq!(finished(&state).await.version, "0.3.1");
+            assert_eq!(release_status(&state)["staged"], "0.3.1");
+            assert_eq!(downloads(&fake), 2);
+        });
+    }
+
+    /// A host running from `app/<running>/huntaway` in its own data dir, whose `app/` has these versions.
+    fn host_at(cfg: Config, running: Option<&str>, versions: &[&str]) -> Shared {
+        let data_dir = temp_dir().canonicalize().unwrap();
+        for v in versions.iter().chain(&running) {
+            server_files(&data_dir.join("app").join(v), &format!("echo huntaway {v}"));
+        }
+        let exe = match running {
+            Some(v) => data_dir.join("app").join(v).join("huntaway"),
+            None => std::env::current_exe().unwrap(),
+        };
+        let mut meta = testing::meta();
+        meta.release = Some(cfg);
+        testing::state_at(meta, data_dir, exe)
+    }
+
+    #[test]
+    fn settling_keeps_current_previous_and_staged() {
+        testing::run(async || {
+            let state = host_at(config("http://unused"), Some("0.2.0"), &["0.1.0", "0.1.5", "0.3.0"]);
+            let app = staging::app_dir(&state);
+            std::fs::create_dir_all(app.join("0.4.0.partial")).unwrap();
+            std::fs::write(app.join("state.json.123.tmp"), "{").unwrap();
+            std::fs::write(app.join("notes.txt"), "the desktop app's").unwrap();
+            // An Update from 0.1.0 onto 0.2.0.
+            let before = json!({"current": "0.1.0", "previous": "0.1.5", "staged": "0.2.0", "trying": "0.2.0", "bad": ["0.0.9"], "shell": {"x": 1}});
+            std::fs::write(app.join("state.json"), before.to_string()).unwrap();
+            assert_eq!(staging::settle(&state).unwrap().as_deref(), Some("0.2.0"));
+            let after: Value = serde_json::from_slice(&std::fs::read(app.join("state.json")).unwrap()).unwrap();
+            assert_eq!(after, json!({"current": "0.2.0", "previous": "0.1.0", "staged": null, "trying": null, "bad": ["0.0.9"], "shell": {"x": 1}}));
+            assert_eq!(app_entries(&state), ["0.1.0", "0.2.0", "notes.txt", "state.json"]);
+            // A later start (not an Update) keeps previous, and a staged version.
+            server_files(&app.join("0.3.0"), "echo huntaway 0.3.0");
+            staging::change(&state, |s| s.staged = Some("0.3.0".into())).unwrap();
+            staging::settle(&state).unwrap();
+            let s = staging::read(&app);
+            assert_eq!((s.current.as_deref(), s.previous.as_deref(), s.staged.as_deref()), (Some("0.2.0"), Some("0.1.0"), Some("0.3.0")));
+            assert_eq!(app_entries(&state), ["0.1.0", "0.2.0", "0.3.0", "notes.txt", "state.json"]);
+            // One staged that isn't newer than what runs (updated past it) is dropped.
+            staging::change(&state, |s| s.staged = Some("0.1.5".into())).unwrap();
+            server_files(&app.join("0.1.5"), "echo huntaway 0.1.5");
+            staging::settle(&state).unwrap();
+            assert_eq!(staging::read(&app).staged, None);
+            assert_eq!(app_entries(&state), ["0.1.0", "0.2.0", "notes.txt", "state.json"]);
+            // A server that isn't running from app/ leaves it alone.
+            let other = host_at(config("http://unused"), None, &["0.1.0", "0.2.0"]);
+            std::fs::create_dir_all(staging::app_dir(&other).join("0.3.0.partial")).unwrap();
+            assert_eq!(staging::settle(&other).unwrap(), None);
+            assert_eq!(app_entries(&other), ["0.1.0", "0.2.0", "0.3.0.partial"]);
+        });
+    }
+
+    #[test]
+    fn state_json_round_trips_with_unknown_keys() {
+        let app = temp_dir();
+        assert_eq!(staging::read(&app), Installed::default());
+        let written = json!({"current": "0.2.0", "previous": null, "staged": "0.3.0", "trying": 7, "bad": ["0.2.5", 3], "launches": [1, 2], "x": "y"});
+        std::fs::write(app.join("state.json"), written.to_string()).unwrap();
+        let mut s = staging::read(&app);
+        assert_eq!((s.current.as_deref(), s.staged.as_deref(), s.trying.clone(), s.bad.clone()), (Some("0.2.0"), Some("0.3.0"), None, vec!["0.2.5".to_string()]));
+        s.trying = Some("0.3.0".into());
+        staging::write(&app, &s).unwrap();
+        let back: Value = serde_json::from_slice(&std::fs::read(app.join("state.json")).unwrap()).unwrap();
+        assert_eq!(back, json!({"current": "0.2.0", "previous": null, "staged": "0.3.0", "trying": "0.3.0", "bad": ["0.2.5"], "launches": [1, 2], "x": "y"}));
+        assert_eq!(std::fs::read_dir(&app).unwrap().count(), 1, "no temp file is left");
+        // One that can't be read counts as none.
+        std::fs::write(app.join("state.json"), "{not json").unwrap();
+        assert_eq!(staging::read(&app), Installed::default());
+    }
+
+    /// The restart job's phases until it fails, and its error.
+    async fn job_fails(events: &mut tokio::sync::broadcast::Receiver<Value>) -> (Vec<String>, String) {
+        let mut phases = vec![];
+        loop {
+            let ev = events.recv().await.unwrap();
+            if ev["type"] == "restart" {
+                phases.push(ev["phase"].as_str().unwrap().to_string());
+                if ev["phase"] == "failed" {
+                    phases.dedup();
+                    return (phases, ev["error"].as_str().unwrap().to_string());
+                }
+            }
+        }
+    }
+
+    /// state.json as it is when the job execs.
+    fn at_exec(state: &Shared) -> Arc<Mutex<Option<Installed>>> {
+        let seen = Arc::new(Mutex::new(None));
+        let (s, app) = (seen.clone(), staging::app_dir(state));
+        testing::when("exec", move || *s.lock().unwrap() = Some(staging::read(&app)));
+        seen
+    }
+
+    #[test]
+    fn update_restarts_onto_a_staged_version() {
+        testing::run(async || {
+            let (_, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])).await;
+            check(&state).await;
+            assert_eq!(finished(&state).await.phase, "staged");
+            let seen = at_exec(&state);
+            let mut events = state.events.subscribe();
+            let (code, v) = api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.2.0"}))).await;
+            assert_eq!(code, 200, "{v}");
+            // One at a time.
+            assert_eq!(api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.2.0"}))).await.0, 409);
+            let (phases, error) = job_fails(&mut events).await;
+            assert_eq!(phases, ["restarting", "failed"]);
+            let exe = staging::app_dir(&state).join("0.2.0/huntaway");
+            assert_eq!(error, format!("failed to exec {}: not in a test", exe.display()));
+            assert_eq!(seen.lock().unwrap().as_ref().unwrap().trying.as_deref(), Some("0.2.0"), "trying is set for the exec");
+            // It failed, so this server carries on as it was.
+            let s = staging::read(&staging::app_dir(&state));
+            assert_eq!((s.trying, s.staged.as_deref()), (None, Some("0.2.0")));
+        });
+    }
+
+    #[test]
+    fn update_waits_for_the_background_download() {
+        testing::run(async || {
+            let go = Arc::new(tokio::sync::Notify::new());
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Held(go.clone()))])).await;
+            check(&state).await;
+            let seen = at_exec(&state);
+            let mut events = state.events.subscribe();
+            assert_eq!(api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.2.0"}))).await.0, 200);
+            go.notify_one();
+            let (phases, error) = job_fails(&mut events).await;
+            assert_eq!(phases, ["downloading", "verifying", "installing", "restarting", "failed"]);
+            assert!(error.ends_with("0.2.0/huntaway: not in a test"), "{error}");
+            assert_eq!(seen.lock().unwrap().as_ref().unwrap().trying.as_deref(), Some("0.2.0"));
+            assert_eq!(downloads(&fake), 1, "the job didn't start another");
+            let log = state.restart.lock().unwrap().clone().unwrap().log;
+            assert!(log.contains("Downloading 0.2.0") && log.contains("Checking its sha256"), "{log}");
+        });
+    }
+
+    #[test]
+    fn update_downloads_first_when_the_background_download_failed() {
+        testing::run(async || {
+            let bytes = tarball("0.2.0", None, &[]);
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", bytes.clone(), Serve::CutOff)])).await;
+            check(&state).await;
+            assert_eq!(finished(&state).await.phase, "failed");
+            // Still cut off: the job fails, and nothing is left.
+            let mut events = state.events.subscribe();
+            assert_eq!(api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.2.0"}))).await.0, 200);
+            let (phases, error) = job_fails(&mut events).await;
+            assert_eq!(phases, ["downloading", "failed"]);
+            assert!(error.contains("cut off"), "{error}");
+            assert_eq!(app_entries(&state), Vec::<String>::new());
+            // Now it comes through.
+            fake.lock().unwrap().files.values_mut().for_each(|f| f.1 = Serve::Whole);
+            assert_eq!(api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "v0.2.0"}))).await.0, 200);
+            let (phases, error) = job_fails(&mut events).await;
+            assert_eq!(phases, ["downloading", "verifying", "installing", "restarting", "failed"]);
+            assert!(error.ends_with("not in a test"), "{error}");
+            assert_eq!(downloads(&fake), 3);
+            assert_eq!(staging::read(&staging::app_dir(&state)).staged.as_deref(), Some("0.2.0"));
+        });
+    }
+
+    #[test]
+    fn update_refuses_what_it_cant_update_to() {
+        testing::run(async || {
+            let (_, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])).await;
+            let update = async |v: &str| api(&state, "POST", "/api/admin/release/update", Some(json!({"version": v}))).await;
+            // Before a check, nothing is known.
+            assert_eq!(update("0.2.0").await.0, 400);
+            check(&state).await;
+            finished(&state).await;
+            for (v, why) in [("0.1.0", "isn't older"), ("0.0.1", "isn't older"), ("0.9.0", "isn't the latest"), ("nope", "isn't a version")] {
+                let (code, body) = update(v).await;
+                assert_eq!(code, 400, "{v}: {body}");
+                assert!(body["error"].as_str().unwrap().contains(why), "{v}: {body}");
+            }
+            let (code, _) = api(&testing::state(), "POST", "/api/admin/release/update", Some(json!({"version": "0.2.0"}))).await;
+            assert_eq!(code, 400);
+        });
+    }
+
+    #[test]
+    fn rollback_goes_back_to_the_previous_version() {
+        testing::run(async || {
+            let state = host_at(config("http://unused"), Some("0.2.0"), &["0.1.5"]);
+            let app = staging::app_dir(&state);
+            staging::write(&app, &Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), ..Default::default() }).unwrap();
+            assert_eq!(release_status(&state)["rollback_to"], "0.1.5");
+            assert_eq!(release_status(&state)["previous"], "0.1.5");
+            let seen = at_exec(&state);
+            let mut events = state.events.subscribe();
+            assert_eq!(api(&state, "POST", "/api/admin/release/rollback", None).await.0, 200);
+            let (phases, error) = job_fails(&mut events).await;
+            assert_eq!(phases, ["restarting", "failed"]);
+            assert_eq!(error, format!("failed to exec {}: not in a test", app.join("0.1.5/huntaway").display()));
+            let s = seen.lock().unwrap().clone().unwrap();
+            assert_eq!((s.current.as_deref(), s.previous, s.bad), (Some("0.1.5"), None, vec!["0.2.0".to_string()]));
+            // The exec failed, so it's as it was.
+            let s = staging::read(&app);
+            assert_eq!((s.current.as_deref(), s.previous.as_deref(), s.bad.len()), (Some("0.2.0"), Some("0.1.5"), 0));
+        });
+    }
+
+    #[test]
+    fn a_failed_rollback_keeps_what_a_download_staged_meanwhile() {
+        testing::run(async || {
+            let state = host_at(config("http://unused"), Some("0.2.0"), &["0.1.5", "0.2.5", "0.3.0"]);
+            let app = staging::app_dir(&state);
+            let before = Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), staged: Some("0.2.5".into()), bad: vec!["0.0.9".into()], ..Default::default() };
+            staging::write(&app, &before).unwrap();
+            // A download finishes while the rollback waits to exec: it stages 0.3.0 in place of 0.2.5, as stage_into does.
+            let st = state.clone();
+            testing::when("exec", move || {
+                staging::change(&st, |s| s.staged = Some("0.3.0".into())).unwrap();
+                std::fs::remove_dir_all(staging::app_dir(&st).join("0.2.5")).unwrap();
+            });
+            let mut events = state.events.subscribe();
+            assert_eq!(api(&state, "POST", "/api/admin/release/rollback", None).await.0, 200);
+            let (_, error) = job_fails(&mut events).await;
+            assert!(error.ends_with("0.1.5/huntaway: not in a test"), "{error}");
+            // What the rollback changed is put back, and what the download did stands.
+            assert_eq!(staging::read(&app), Installed { staged: Some("0.3.0".into()), ..before });
+            assert_eq!(release_status(&state)["staged"], "0.3.0");
+        });
+    }
+
+    #[test]
+    fn a_bad_staged_version_isnt_offered_and_is_pruned() {
+        testing::run(async || {
+            // An Update onto 0.3.0 didn't start: the desktop app marked it bad and started 0.2.0 again.
+            let state = host_at(config("http://unused"), Some("0.2.0"), &["0.1.5", "0.3.0"]);
+            let app = staging::app_dir(&state);
+            let s = Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), staged: Some("0.3.0".into()), bad: vec!["0.3.0".into()], ..Default::default() };
+            staging::write(&app, &s).unwrap();
+            assert_eq!(release_status(&state)["staged"], Value::Null);
+            assert!(!staging::is_staged(&state, "0.3.0"));
+            staging::settle(&state).unwrap();
+            let s = staging::read(&app);
+            assert_eq!((s.staged, s.bad), (None, vec!["0.3.0".to_string()]));
+            assert_eq!(app_entries(&state), ["0.1.5", "0.2.0", "state.json"]);
+            assert_eq!(release_status(&state)["staged"], Value::Null);
+        });
+    }
+
+    #[test]
+    fn rollback_without_a_previous_version_starts_the_bundled_server() {
+        testing::run(async || {
+            let bundled = temp_dir().join("huntaway");
+            std::fs::write(&bundled, "").unwrap();
+            let mut cfg = config("http://unused");
+            cfg.bundled_server = Some(crate::util::path_str(&bundled));
+            let state = host_at(cfg, Some("0.2.0"), &[]);
+            let app = staging::app_dir(&state);
+            // A previous version that's bad, or missing its files, doesn't count.
+            staging::write(&app, &Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), ..Default::default() }).unwrap();
+            assert_eq!(release_status(&state)["rollback_to"], "bundled");
+            let seen = at_exec(&state);
+            let mut events = state.events.subscribe();
+            assert_eq!(api(&state, "POST", "/api/admin/release/rollback", None).await.0, 200);
+            let (_, error) = job_fails(&mut events).await;
+            assert_eq!(error, format!("failed to exec {}: not in a test", bundled.display()));
+            let s = seen.lock().unwrap().clone().unwrap();
+            assert_eq!((s.current, s.bad), (None, vec!["0.2.0".to_string()]));
+            // Without a bundled server either, there's nothing to roll back to.
+            let state = host_at(Config { bundled_server: None, ..config("http://unused") }, Some("0.2.0"), &[]);
+            assert_eq!(release_status(&state)["rollback_to"], Value::Null);
+            assert_eq!(api(&state, "POST", "/api/admin/release/rollback", None).await.0, 400);
+            // Nor for a server that isn't running from app/.
+            let state = host_at(config("http://unused"), None, &["0.1.5"]);
+            assert_eq!(api(&state, "POST", "/api/admin/release/rollback", None).await.0, 400);
         });
     }
 }

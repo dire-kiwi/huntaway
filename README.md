@@ -270,6 +270,19 @@ with any error, as `release` in `/api/admin/server`. Requests send the last ETag
 nothing changed doesn't count against GitHub's limit of 60 unauthenticated requests an hour.
 `IA_RELEASE_API` points it at another API than `https://api.github.com` (for tests).
 
+A release newer than the running server is downloaded in the background into
+`<data-dir>/app/<v>.partial/`, checked against the sha256 GitHub lists for it, unpacked with the
+system `tar` (refusing entries outside its folder, and links), and smoke-tested with
+`huntaway --version`. It's then renamed to `app/<v>/` and reported as `release.staged`; progress
+and failures are in `release.download`, and a failed download is tried again on the next check.
+`POST /api/admin/release/update {"version": "<v>"}` restarts onto it in place (agents keep running,
+as with a rebuild), downloading it first if it isn't staged yet, and
+`POST /api/admin/release/rollback` marks the running version bad and restarts onto the one before
+it (or the desktop app's own server, `IA_BUNDLED_SERVER`). `app/state.json` records `current`,
+`previous`, `staged`, `trying` and `bad`, and is shared with the desktop app, which picks the version
+to start from it. A server running from `app/<v>/huntaway` makes itself `current` on startup and
+deletes the versions nothing needs (all but current, previous and staged).
+
 ### Network access
 
 Every API call needs the token in `<data-dir>/auth_token` (sent as a bearer token; the

@@ -88,6 +88,12 @@ pub type Shared = Arc<AppState>;
 
 impl AppState {
     pub fn new(db: Connection, data_dir: PathBuf, id: Identity, meta: ServerMeta) -> Shared {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("huntaway"));
+        Self::with_exe(db, data_dir, id, meta, exe)
+    }
+
+    /// `new`, for a server whose binary is `exe` (for tests of what depends on where it runs from).
+    pub fn with_exe(db: Connection, data_dir: PathBuf, id: Identity, meta: ServerMeta, exe: PathBuf) -> Shared {
         let (events, _) = broadcast::channel(1024);
         let (hub_events, _) = broadcast::channel(4096);
         Arc::new_cyclic(|me| Self {
@@ -99,7 +105,7 @@ impl AppState {
             token: id.token,
             hub_token: id.hub_token,
             internal_url: id.internal_url,
-            exe: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("huntaway")),
+            exe,
             events,
             hub_events,
             runs: Mutex::new(HashMap::new()),

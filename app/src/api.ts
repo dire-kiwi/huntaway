@@ -825,7 +825,9 @@ export interface GitCommitShown {
 }
 
 export interface RestartJob {
-  phase: "starting" | "building_ui" | "building_server" | "restarting" | "failed";
+  /** A release update (`POST /admin/release/update`) goes through `downloading`, `verifying` and `installing` when
+   * the version isn't staged yet. */
+  phase: "starting" | "building_ui" | "building_server" | "downloading" | "verifying" | "installing" | "restarting" | "failed";
   log: string;
   error: string | null;
 }
@@ -900,11 +902,27 @@ export interface ReleaseStatus {
   } | null;
   /** The package's own server, to fall back to. */
   bundled_server: string | null;
-  /** Filled in by the background download, Update and rollback (later). */
+  /** A newer version downloaded, checked and unpacked into `<data dir>/app/<v>/`, which Update
+   * (`POST /admin/release/update {version}`) restarts onto. */
   staged: string | null;
-  download: unknown;
+  /** The background download of the latest release while it runs, or the last one's failure (tried again on the
+   * next check); null once it's staged. */
+  download: ReleaseDownload | null;
+  /** The version before the one running from `app/`, kept for a rollback. */
   previous: string | null;
+  /** Versions rolled back from or that didn't start, which aren't offered again. */
   bad: string[];
+  /** What Roll back (`POST /admin/release/rollback`) would start: `previous`, `"bundled"` (the desktop app's own
+   * server), or null when there's nothing to roll back to (or this server isn't running from `app/`). */
+  rollback_to: string | null;
+}
+
+export interface ReleaseDownload {
+  version: string;
+  phase: "downloading" | "verifying" | "installing" | "failed";
+  bytes: number;
+  total: number | null;
+  error: string | null;
 }
 
 export interface DirListing {
