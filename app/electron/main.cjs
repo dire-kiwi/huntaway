@@ -12,8 +12,13 @@
 // server's Rebuild & restart, or Update when it follows a deployment (IA_UPDATE_FROM). The window
 // reloads onto the new UI, and the app relaunches itself if the update changed this directory.
 //
-// A release build (`npm run dist`, attached to each GitHub release by .github/workflows/release.yml) carries the
-// server, ia-shim and the UI in its resources. It has no checkout, so it's updated by installing a newer release.
+// A release build (`npm run dist`, attached to each GitHub release by .github/workflows/release.yml: the AppImage, the
+// pacman package and the mac app) carries the server, ia-shim and the UI in its resources. The server it starts checks
+// GitHub's releases (IA_RELEASE_UPDATES, see releaseEnv in versions.cjs) and downloads each new one's server into
+// `<data dir>/app/<version>/`, per user, so pacman's files in /opt stay as they are. The sidebar's Update restarts the
+// server onto it, and from then on this app starts that version (chooseServer in versions.cjs) rather than its bundled
+// one, unless the package is newer. A version that won't start is marked bad, and the one before it, or the bundled
+// one, runs instead. A release that also changed this shell (Electron and electron/) needs a newer package.
 
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
@@ -21,6 +26,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { shellStamp } = require("./stamp.cjs");
+const versions = require("./versions.cjs");
 
 /** `dir`, or `legacy` from before the rename to Huntaway if only that one exists. */
 function renamed(dir, legacy) {
@@ -110,16 +116,41 @@ function readToken() {
   }
 }
 
-function findServerBinary() {
-  const exe = process.platform === "win32" ? "huntaway.exe" : "huntaway";
-  const candidates = [
-    process.env.IA_SERVER_BIN,
-    config.serverBin,
-    app.isPackaged ? path.join(process.resourcesPath, exe) : null,
-    path.join(__dirname, "..", "..", "server", "target", "release", exe),
-    path.join(__dirname, "..", "..", "server", "target", "debug", exe),
-  ].filter(Boolean);
-  return candidates.find((p) => fs.existsSync(p));
+// A release build's resources: the bundled server, ia-shim and UI. IA_PACKAGED_RESOURCES runs a checkout as a release
+// build with its resources in that dir, to try the release layout (chooseServer, the fallback) without packaging.
+const resourcesDir = process.env.IA_PACKAGED_RESOURCES || (app.isPackaged ? process.resourcesPath : null);
+const EXE = process.platform === "win32" ? "huntaway.exe" : "huntaway";
+
+/** Where the server downloads release versions, and their state.json (see versions.cjs). */
+const releaseDir = () => path.join(defaultDataDir(), "app");
+
+/**
+ * The server to start, as {bin, version, release}: IA_SERVER_BIN or config.serverBin; for a release build, the
+ * installed version chooseServer picks (`version`; versions in `skip` failed just now) or the bundled one (`version`
+ * null); from a checkout, its own build. `release` is whether it's a release build's server, which gets releaseEnv.
+ */
+function findServerBinary(skip = []) {
+  const override = [process.env.IA_SERVER_BIN, config.serverBin].filter(Boolean).find((p) => fs.existsSync(p));
+  if (override) return { bin: override, version: null, release: false };
+  if (resourcesDir) {
+    const bundled = path.join(resourcesDir, EXE);
+    const choice = versions.chooseServer({ appDir: releaseDir(), bundled, minVersion: app.getVersion(), exe: EXE, skip });
+    if (choice.version || fs.existsSync(bundled)) return { ...choice, release: true };
+  }
+  const bin = [
+    path.join(__dirname, "..", "..", "server", "target", "release", EXE),
+    path.join(__dirname, "..", "..", "server", "target", "debug", EXE),
+  ].find((p) => fs.existsSync(p));
+  return bin ? { bin, version: null, release: false } : null;
+}
+
+let installKind;
+/** The environment for a server started here: a release build's turns on release updates (releaseEnv). */
+function serverEnv(choice) {
+  if (!choice.release) return process.env;
+  installKind ??= versions.installKind({ resourcesPath: resourcesDir });
+  const desktop = { version: app.getVersion(), shell: startStamp, install: installKind, bundled: path.join(resourcesDir, EXE) };
+  return { ...process.env, ...versions.releaseEnv(desktop) };
 }
 
 /** Whether `url` is one for a browser (http, https or mailto), rather than a file or another app's scheme. */
@@ -164,16 +195,62 @@ function keepLog(chunk) {
   serverLog.splice(0, serverLog.length - LOG_LINES);
 }
 
-/** Start the server and resolve with its token once it prints IA_READY. `onLost` runs if it exits after that. */
-function startServer(onLost) {
-  const bin = findServerBinary();
-  if (!bin) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
+/** A line about the server's start, in the app's log and the error page's server output. */
+function note(line) {
+  console.error(line);
+  serverLog.push(line);
+  serverLog.splice(0, serverLog.length - LOG_LINES);
+}
+
+/** Mark an installed release version bad in state.json, so that it isn't started again. */
+function badVersion(version, why) {
+  note(`huntaway ${version} ${why}: marking it bad`);
+  try {
+    versions.markBad(releaseDir(), version);
+  } catch (e) {
+    note(`couldn't save that in ${path.join(releaseDir(), "state.json")}: ${e.message}`);
+  }
+}
+
+/**
+ * Start the server and resolve with its token once it prints IA_READY. `onLost` runs if it exits after that.
+ *
+ * Its callers have found nothing on the port, so for a release build, a version an Update was exec'ing into (`trying`)
+ * didn't come up, and is marked bad. An installed version that exits before IA_READY is marked bad too, and the next
+ * one chooseServer picks is started at once: these don't count as the server stopping (serverLost).
+ */
+async function startServer(onLost) {
+  serverLog.length = 0;
+  partial = "";
+  const failed = [];
+  const { trying } = resourcesDir ? versions.readState(releaseDir()) : {};
+  if (typeof trying === "string") {
+    failed.push(trying);
+    badVersion(trying, "didn't come up after an update");
+  }
+  for (;;) {
+    const choice = findServerBinary(failed);
+    if (!choice) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
+    try {
+      return await spawnServer(choice, onLost);
+    } catch (e) {
+      // One stopped by quitting isn't a bad version.
+      if (!choice.version || !e.early || stopping) throw e;
+      failed.push(choice.version);
+      badVersion(choice.version, `didn't start (${e.message})`);
+    }
+  }
+}
+
+/** Start `choice` (findServerBinary's), resolving with its token once it's ready. A rejection's `early` is whether it
+ * exited (or couldn't be run) before then, rather than taking too long. */
+function spawnServer(choice, onLost) {
+  const { bin, version } = choice;
   const args = ["serve", "--port", String(port)];
   if (process.env.IA_DATA_DIR || config.dataDir) args.push("--data-dir", defaultDataDir());
   if (config.host) args.push("--host", config.host);
-  serverLog.length = 0;
-  partial = "";
-  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+  console.log(`starting the huntaway server${version ? ` ${version}` : choice.release ? " bundled with the app" : ""}: ${bin}`);
+  const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: serverEnv(choice) });
   serverProc = proc;
   let ready = false;
   proc.stderr.on("data", (d) => {
@@ -207,11 +284,11 @@ function startServer(onLost) {
     });
     proc.on("error", (e) => {
       clearTimeout(timer);
-      reject(e);
+      reject(Object.assign(e, { early: true }));
     });
     ended.then(({ code, signal }) => {
       clearTimeout(timer);
-      reject(new Error(`Server exited with ${signal ? `signal ${signal}` : `code ${code}`}`));
+      reject(Object.assign(new Error(`Server exited with ${signal ? `signal ${signal}` : `code ${code}`}`), { early: true }));
     });
   });
 }
@@ -328,6 +405,9 @@ async function load(win) {
  * The server started here stopped. The board stays open and reconnects once there's a server again: one that started
  * meanwhile (a restart that runs the new binary from a new process), or one started here again, waiting longer after
  * each that stops at once. After a few of those, the error page says why.
+ *
+ * A release version an Update exec'd into that died before it came up is still `trying`, so startServer marks it bad
+ * and starts the one before it, rather than the same one again.
  */
 let restarts = [];
 async function serverLost(win) {
