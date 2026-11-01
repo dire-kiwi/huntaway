@@ -661,12 +661,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=66; COMMIT;"))?;
     }
+    if version < 67 {
+        // A summary of each task's changes once its review passes (see summary.rs): whether a
+        // project makes them and who writes them, and the task's latest. Added only if they
+        // aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for (table, column, kind) in [("projects", "auto_summary", "INTEGER NOT NULL DEFAULT 1"), ("projects", "summarizer", "TEXT"), ("tasks", "summary", "TEXT")] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=67; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 66;
+pub const VERSION: i64 = 67;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1183,6 +1196,13 @@ pub struct Project {
     /// reviewer with the task's config.
     #[serde(default)]
     pub reviewers: Vec<Reviewer>,
+    /// Summarise each task's changes once its review passes, for the user to read before
+    /// merging (see summary.rs).
+    #[serde(default = "yes")]
+    pub auto_summary: bool,
+    /// Who writes those summaries, in a thread of its own. None is the task's config.
+    #[serde(default)]
+    pub summarizer: Option<Reviewer>,
     /// The project's instructions for the prompts sent when a task's agent starts, when its
     /// work is reviewed and when it's merged; None uses the default (see prompts.rs).
     pub start_prompt: Option<String>,
@@ -1240,6 +1260,8 @@ impl Project {
             done_when_merged: r.get("done_when_merged")?,
             review_rounds: r.get("review_rounds")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+            auto_summary: r.get("auto_summary")?,
+            summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             start_prompt: r.get("start_prompt")?,
             review_prompt: r.get("review_prompt")?,
             merge_prompt: r.get("merge_prompt")?,
@@ -1406,6 +1428,9 @@ pub struct Task {
     pub reminder: Option<String>,
     /// The latest automatic review of the task's work.
     pub review: Option<Review>,
+    /// The latest summary of its changes, written once its review passed (see summary.rs).
+    #[serde(default)]
+    pub summary: Option<ChangeSummary>,
     /// How full its agent's context window is, as of its latest reply (see context.rs).
     #[serde(default)]
     pub context: Option<Context>,
@@ -1565,6 +1590,26 @@ pub struct Review {
     pub reviewers: Vec<ReviewerRun>,
 }
 
+/// A summary of a task's changes (see summary.rs), stored on the task as JSON.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ChangeSummary {
+    /// The summary thread: a `review` task of type `summary` whose parent is this task.
+    pub thread_id: String,
+    /// Who writes it, e.g. "Claude · haiku".
+    #[serde(default)]
+    pub label: String,
+    /// running, done, failed or stopped
+    pub state: String,
+    /// The commit summarised.
+    pub head: Option<String>,
+    /// The summary (Markdown), or why there's none.
+    pub text: Option<String>,
+    /// The thread's last run before this one (empty if it had none), as ReviewerRun::after_run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_run: Option<String>,
+    pub updated_at: String,
+}
+
 /// One reviewer's part of a review.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ReviewerRun {
@@ -1654,6 +1699,7 @@ impl Task {
             remind_at: r.get("remind_at")?,
             reminder: r.get("reminder")?,
             review: r.get::<_, Option<String>>("review")?.and_then(|v| serde_json::from_str(&v).ok()),
+            summary: r.get::<_, Option<String>>("summary")?.and_then(|v| serde_json::from_str(&v).ok()),
             context: r.get::<_, Option<String>>("context")?.and_then(|v| serde_json::from_str(&v).ok()),
             rewind: r.get::<_, Option<String>>("rewind")?.and_then(|v| serde_json::from_str(&v).ok()),
             cost_usd: r.get("cost_usd")?,
@@ -2055,9 +2101,17 @@ pub fn merge_lanes(c: &Connection, project_id: Option<&str>) -> Result<Vec<Optio
     Ok(rows)
 }
 
-/// A task's review threads, oldest first.
+/// A task's review threads, oldest first, its summary threads (see `summary_threads`) included:
+/// they all work in its worktree.
 pub fn review_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' ORDER BY created_at, number")?;
+    let rows = st.query_map([task_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// A task's summary threads (review threads that summarise its changes, see summary.rs), oldest first.
+pub fn summary_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' AND task_type='summary' ORDER BY created_at, number")?;
     let rows = st.query_map([task_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
@@ -2307,7 +2361,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -2364,7 +2418,7 @@ fn normalize_resolution(c: &Connection, id: &str) -> Result<()> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "auto_summary", "summarizer", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
     "copy_files", "link_folders",
 ];
@@ -2670,8 +2724,13 @@ pub fn tool_calls_since(c: &Connection, task_id: &str, since: Option<&str>) -> R
 
 /// The most recent assistant text in a thread (used for summaries in MCP tools).
 pub fn last_assistant_text(c: &Connection, task_id: &str) -> Result<Option<String>> {
-    let mut st = c.prepare("SELECT data FROM messages WHERE task_id=?1 AND kind='claude' ORDER BY id DESC LIMIT 50")?;
-    let mut rows = st.query([task_id])?;
+    last_assistant_text_after(c, task_id, 0)
+}
+
+/// The most recent assistant text in a thread after message `after` (an id).
+pub fn last_assistant_text_after(c: &Connection, task_id: &str, after: i64) -> Result<Option<String>> {
+    let mut st = c.prepare("SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND id > ?2 ORDER BY id DESC LIMIT 50")?;
+    let mut rows = st.query(params![task_id, after])?;
     while let Some(r) = rows.next()? {
         let data: String = r.get(0)?;
         let v: Value = serde_json::from_str(&data).unwrap_or(Value::Null);
@@ -3588,6 +3647,32 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    #[test]
+    fn a_database_at_version_66_gets_the_summary_columns() {
+        // As master's build left it, with copy_files and link_folders (66) and no summaries yet.
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN auto_summary;
+                 ALTER TABLE projects DROP COLUMN summarizer;
+                 ALTER TABLE tasks DROP COLUMN summary;
+                 PRAGMA user_version=66;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert!(p.auto_summary);
+        assert_eq!(p.summarizer, None);
+        let t = insert_task(&c, NewTask { profile_id: "p", project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
+        assert!(t.summary.is_none());
     }
 
     #[test]

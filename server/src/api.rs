@@ -123,6 +123,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/wait-for-limit", post(crate::usage::wait_for_reset))
         .route("/tasks/{id}/review", post(review_task))
+        .route("/tasks/{id}/summary", post(summarise_task))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
@@ -919,7 +920,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
         b,
         &[
             "name", "key", "repo_path", "base_branch", "setup_script", "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model",
-            "worktrees_root", "auto_review", "review_rounds", "reviewers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
+            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
             "done_when_merged",
@@ -1005,7 +1006,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
                 return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
             }
-            "use_worktrees" | "auto_review" | "done_when_merged" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
@@ -1018,6 +1019,13 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
                     .map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
                 let list = list.map(|l| check_reviewers(&s.db(), l)).transpose()?.filter(|l| !l.is_empty() && *l != [db::Reviewer::default()]);
                 *v = json!(list.map(|l| json!(l).to_string()));
+            }
+            // null (or one with the defaults) summarises with the task's config.
+            "summarizer" => {
+                let spec: Option<db::Reviewer> =
+                    serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("summarizer must be null or {claude_config_id, model, effort}"))?;
+                let spec = spec.map(|r| check_reviewers(&s.db(), vec![r])).transpose()?.and_then(|l| l.into_iter().next()).filter(|r| *r != db::Reviewer::default());
+                *v = json!(spec.map(|r| json!(r).to_string()));
             }
             // A script per status; null or a blank script is none.
             "status_scripts" => {
@@ -2145,7 +2153,14 @@ async fn unqueue_message(State(s): State<Shared>, Path(id): Path<String>) -> Api
 async fn stop_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let agent = runner::stop(&s, &id);
     let review = crate::review::stop(&s, &id);
-    Ok(Json(json!({"stopped": agent || review})))
+    let summary = crate::summary::stop(&s, &id);
+    Ok(Json(json!({"stopped": agent || review || summary})))
+}
+
+/// Summarise the task's changes now (see summary.rs).
+async fn summarise_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let t = crate::summary::start(&s, &id, true).await?;
+    Ok(Json(json!(t)))
 }
 
 /// Review the task's work now (see review.rs).

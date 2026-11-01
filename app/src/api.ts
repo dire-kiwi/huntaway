@@ -376,6 +376,10 @@ export interface Project {
   done_when_merged?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
+  /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
+  auto_summary?: boolean;
+  /** Who writes those summaries; null is the task's config with the default model and effort (API 84). */
+  summarizer?: Reviewer | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
   start_prompt?: string | null;
@@ -446,6 +450,22 @@ export interface Review {
   reviewers?: ReviewerRun[];
 }
 
+export type SummaryState = "running" | "done" | "failed" | "stopped";
+
+/** A summary of a task's changes, written once its review passed (API 84). */
+export interface ChangeSummary {
+  /** The summary thread: a task of kind "review" and type "summary" whose parent is the task. */
+  thread_id: string;
+  /** Who writes it, e.g. "Claude · haiku". */
+  label: string;
+  state: SummaryState;
+  /** The commit summarised. */
+  head: string | null;
+  /** The summary (Markdown), or why there's none. */
+  text: string | null;
+  updated_at: string;
+}
+
 /** A message sent to a running agent, until it reads it (API 28). */
 export interface Steer {
   id: string;
@@ -482,6 +502,8 @@ export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
+/** A review thread that summarises its task's changes rather than reviewing them (API 84): its type is "summary". */
+export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "summary";
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
 /** Where the task's agent works, if not where its kind and project say and the folder is one to show: one in the host's
@@ -597,6 +619,8 @@ export interface Task {
   reminder?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
+  /** The latest summary of its changes (API 84). */
+  summary?: ChangeSummary | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
   /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
@@ -1660,6 +1684,7 @@ export const api = {
   waitForLimit: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/wait-for-limit`),
   /** Review the task's work now (API 12). */
   review: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/review`),
+  summarize: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/summary`),
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),

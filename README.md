@@ -867,6 +867,17 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
+- **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
+  to read before merging: what changed and why, the main changes, and how to try it. It reads the
+  pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
+  own (a review thread of type `summary`), and its last message is the summary, kept in the task's
+  `summary` with the commit it describes. While the task waits in *In review* with that summary
+  (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
+  writes one at any time. A summary in progress stops when the task's agent works again, and the
+  next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
+  config, model and effort; the task's config by default), in the project's *Review* settings
+  (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  summarises on demand.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when
   it starts, after the task's title and description (and before any message it was started

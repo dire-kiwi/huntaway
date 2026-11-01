@@ -43,3 +43,20 @@ test("other tasks open on their details until started, then on the thread", () =
   assert.equal(openingTab(task({ task_type: "scratch", labels: [], work_dir: "/chat", status: "todo" })), "details");
   assert.equal(openingTab(undefined), "thread");
 });
+
+// HA-60: once its review passes, a task in review opens on the summary of the changes it passed.
+test("a task whose review passed opens on the summary of its changes", () => {
+  const review = { state: "passed", head: "abc" };
+  const summary = (more) => ({ thread_id: "s", label: "", state: "done", head: "abc", text: "Did it.", updated_at: at, ...more });
+  const t = (more) => task({ review, summary: summary(), ...more });
+  assert.equal(openingTab(t({})), "summary");
+  assert.equal(openingTab(t({ summary: summary({ state: "running", text: null }) })), "summary", "being written");
+  for (const state of ["failed", "stopped"]) assert.equal(openingTab(t({ summary: summary({ state }) })), "thread", `summary ${state}`);
+  assert.equal(openingTab(t({ summary: summary({ head: "old" }) })), "thread", "a summary of an earlier commit");
+  assert.equal(openingTab(t({ summary: null })), "thread", "no summary");
+  for (const state of ["running", "issues", "failed"]) assert.equal(openingTab(t({ review: { state, head: "abc" } })), "thread", `review ${state}`);
+  assert.equal(openingTab(t({ running: true })), "thread", "the agent is working again");
+  for (const status of ["in_progress", "ready_for_merge", "done"]) assert.equal(openingTab(t({ status })), "thread", status);
+  // A labelled task's document comes first.
+  assert.equal(openingTab(t({ labels: ["plan"], document_at: at })), "plan");
+});
