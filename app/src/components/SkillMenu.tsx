@@ -4,14 +4,19 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, hostSupports, type Task, type TaskSkills } from "../api";
 import { useHost } from "../store";
 
-/** Something the composer's `/` menu offers: a skill, or `/compact`, which the board handles itself. */
+/** Something the composer's `/` menu offers: a skill, or `/compact` or `/plan`, which the board handles itself. */
 export interface SkillItem {
   name: string;
   description: string;
   /** How a message calls it: `/name` for Claude Code, `$name` for a Codex skill. */
   prefix: "/" | "$";
   builtin?: boolean;
+  /** What a builtin takes after its name, for the hint. */
+  args?: string;
 }
+
+/** Hosts that handle `/plan` (API 89): it gives the task the plan label and tells its agent how to write the plan. */
+const PLAN_API = 89;
 
 /** Each task's skills (null when the host couldn't say), kept for a minute so typing `/` again doesn't wait for it. */
 const cache = new Map<string, { at: number; data: TaskSkills | null }>();
@@ -22,6 +27,7 @@ const FRESH_MS = 60_000;
 export function useSkillMenu(task: Task, text: string, setText: (t: string) => void) {
   const host = useHost(task.host_id);
   const supported = hostSupports(host, 54);
+  const plans = hostSupports(host, PLAN_API) && task.kind === "task";
   // The task's config decides its skills, and whether they're `/name` or `$name`.
   const key = `${task.host_id}/${task.id}/${task.claude_config_id ?? ""}`;
   const current = useRef(key);
@@ -70,9 +76,18 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
       description: task.session_id ? "Summarise the conversation so far to free up context" : "Nothing to compact until the agent has started",
       prefix: "/",
       builtin: true,
+      args: "[instructions]",
     },
-    ...(data?.skills ?? []).map((s) => ({ ...s, prefix: (agent === "codex" ? "$" : "/") as SkillItem["prefix"] })),
+    ...(plans
+      ? [{ name: "plan", description: "Write a plan in the task's Plan tab and go over it with you before the work", prefix: "/" as const, builtin: true, args: "[what to plan]" }]
+      : []),
   ];
+  // A skill named like a builtin can't be called with `/`: the board takes the message.
+  all.push(
+    ...(data?.skills ?? [])
+      .map((s) => ({ ...s, prefix: (agent === "codex" ? "$" : "/") as SkillItem["prefix"] }))
+      .filter((s) => !all.some((b) => b.prefix === s.prefix && b.name === s.name)),
+  );
   const items =
     query === null
       ? []
@@ -174,7 +189,7 @@ export function SkillHint({ item }: { item: SkillItem }) {
       {item.builtin ? <Layers size={12} className="shrink-0" /> : <Sparkles size={12} className="shrink-0" />}
       <span className="shrink-0 font-mono text-muted">
         {item.prefix}
-        {item.name} {item.builtin ? "[instructions]" : "[arguments]"}
+        {item.name} {item.args ?? "[arguments]"}
       </span>
       <span className="min-w-0 truncate" title={item.description || undefined}>
         {item.description || (item.prefix === "$" ? "Ask the agent to use this skill" : "Run this skill")}

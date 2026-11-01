@@ -100,8 +100,11 @@ fn user_input(id: &str, text: &str) -> String {
 fn write_steers(state: &Shared, task_id: &str) -> Result<Option<Task>> {
     let Some(mut task) = db::get_task(&state.db(), task_id)? else { return Ok(None) };
     let mut wrote = false;
+    // `/plan`: the run may have started without the plan label, so its system prompt may not say how.
+    let plan_file = crate::documents::path(state, &task, "plan").filter(|_| task.kind == "task").map(|p| path_str(&p));
     for s in task.steering.iter_mut().filter(|s| !s.written) {
-        if !runs::write_input(state, &s.run_id, &user_input(&s.id, &s.text))? {
+        let plan = plan_file.as_deref().zip(crate::documents::plan_command(&s.text)).map(|(f, rest)| crate::documents::plan_prompt(f, rest, false));
+        if !runs::write_input(state, &s.run_id, &user_input(&s.id, plan.as_deref().unwrap_or(&s.text)))? {
             break; // keep the order: the rest wait with it
         }
         s.written = true;
@@ -366,7 +369,12 @@ pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Tas
 }
 
 fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: bool, kind: &str) -> ApiResult<Task> {
-    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
+    let mut task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
+    // `/plan` gives the task the plan label now, so it shows the Plan tab whether the message
+    // starts a run, goes to the one going or waits.
+    if kind == "prompt" && task.kind == "task" && crate::documents::plan_command(text).is_some() {
+        task = crate::documents::add_plan(state, &task)?;
+    }
     // The user's prompt may have moved the task on, so its title follows (see title::refresh).
     if kind == "prompt" && !auto && !from_agent && crate::title::worth_asking(text) && !is_compact(text) {
         crate::title::refresh(state, task_id);
@@ -928,6 +936,10 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         crate::relocate::settled(state, pid).await;
     }
     let (mut task, project, profile) = load(state, task_id)?;
+    // `/plan` gives the task the plan label, if it was sent some other way than `send_run`.
+    if task.kind == "task" && run.kind != "compact" && crate::documents::plan_command(text).is_some() {
+        task = crate::documents::add_plan(state, &task)?;
+    }
     // A thread created while its profile had no configs takes the default it has now, and
     // keeps it from here on with its conversation.
     if task.claude_config_id.is_none() && task.session_id.is_none() {
@@ -1006,6 +1018,13 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         _ => None,
     };
 
+    // `/plan`: the system prompt has the plan's instructions, as the task has the label (see above).
+    let plan = crate::documents::plan_command(text).filter(|_| task.kind == "task" && run.kind != "compact");
+    let text = match (plan, documents.iter().find(|(l, _)| *l == "plan")) {
+        (Some(rest), Some((_, file))) => crate::documents::plan_prompt(file, rest, true),
+        _ => text.to_string(),
+    };
+    let text = text.as_str();
     let prompt = if task.session_id.is_none() && task.kind == "task" && run.kind != "compact" {
         start_prompt(&task, project.as_ref(), text)
     } else {
@@ -2761,6 +2780,31 @@ mod tests {
             let t = send(&state, &task.id, "too late").unwrap();
             assert_eq!(t.queued_message.as_deref(), Some("too late"));
             assert!(t.steering.is_empty());
+        });
+    }
+
+    #[test]
+    fn plan_labels_the_task_and_tells_its_agent_how() {
+        crate::testing::run(async || {
+            let (state, task, run) = running(true);
+            let t = send(&state, &task.id, "/plan  the cache ").unwrap();
+            assert_eq!(t.labels, vec!["plan"]);
+            let file = crate::documents::path(&state, &t, "plan").unwrap();
+            assert!(file.parent().unwrap().is_dir());
+            // The run started without the label, so the message says how to write the plan.
+            let sent = input(&state, &run)[0]["message"]["content"].as_str().unwrap().to_string();
+            assert!(sent.contains(&path_str(&file)) && sent.contains("<ia-steps>") && sent.ends_with("What to plan: the cache"), "{sent}");
+            // The thread shows the command, as it was sent.
+            let steer = t.steering[0].clone();
+            output(&state, &run, &[replay(&steer.id, &sent)]);
+            assert_eq!(user_messages(&state, &task.id), vec![json!({"text": "/plan  the cache", "steered": true})]);
+            // Its labels stay as they are, and a command that only starts the same way isn't it.
+            let t = state.update_task(&task.id, &[("labels", json!(["plan", "diagram"]))]).unwrap().unwrap();
+            assert_eq!(send(&state, &t.id, "/plan").unwrap().labels, vec!["plan", "diagram"]);
+            let (state, task, run) = running(true);
+            send(&state, &task.id, "/planner go").unwrap();
+            assert_eq!(input(&state, &run)[0]["message"]["content"], "/planner go");
+            assert!(reload(&state, &task.id).labels.is_empty());
         });
     }
 
