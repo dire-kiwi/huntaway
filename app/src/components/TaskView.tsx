@@ -1095,10 +1095,14 @@ function UsageLimitNote({ task, onError }: { task: Task; onError: (e: string | n
     <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted" data-usage-limit="out">
       <span className="min-w-0 flex-1">
         {name} is out of usage; it {when}.
+        {/* Waiting in In progress would give up its merge slot, so another merge could start alongside it. */}
+        {task.merging && " Its merge keeps its place in the merge queue: message its agent once it has reset to carry on."}
       </span>
-      <Button size="sm" variant="ghost" className="-my-1 shrink-0" disabled={busy} onClick={wait} title="Wait in In progress, and carry on once the limit resets">
-        Carry on then
-      </Button>
+      {!task.merging && (
+        <Button size="sm" variant="ghost" className="-my-1 shrink-0" disabled={busy} onClick={wait} title="Wait in In progress, and carry on once the limit resets">
+          Carry on then
+        </Button>
+      )}
     </div>
   );
 }

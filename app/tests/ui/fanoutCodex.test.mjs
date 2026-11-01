@@ -215,3 +215,57 @@ test("an effort is checked against the model a default-model harness inherits", 
     await server.api("PATCH", `/profiles/${profile.id}`, { default_model: null });
   }
 });
+
+test("family aliases autocomplete and create tasks with the latest model and its effort", async () => {
+  const ids = ["gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-6-luna"];
+  const models = ids.map((id) => ({ ...MODELS[0], id, name: id, is_default: id === ids[0], efforts: ["low", "max"] }));
+  for (const [alias, model] of [["sol", ids[1]], ["astra", ids[2]], ["terra", ids[3]], ["luna", ids[4]]]) {
+    await withBrowser(server, {}, async (ui) => {
+      await ui.page.route(isModels, (route) => route.fulfill(json(models)));
+      await ui.run([
+        `goto /p/${project.id}`, "click New task",
+        `type Alias ${alias} /scratch !${alias}`,
+        `wait latest · ${model}`,
+        // Pick the alias from autocomplete.
+        "press Tab",
+        `assert document.querySelector('textarea').value.includes('!${alias} ')`,
+        "type ^max", "press Escape", "press Control+Enter", "gone Reads as",
+      ]);
+    });
+    const tasks = await tasksIn(`Alias ${alias}`);
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].model, model);
+    assert.equal(tasks[0].effort, "max");
+    assert.equal(tasks[0].claude_config_id, codex.id);
+  }
+});
+
+test("an alias waits for an earlier Codex config that may offer a different latest version", async () => {
+  const [profile] = await server.api("GET", "/profiles");
+  const earlier = await server.api("POST", "/claude-configs", { name: "Earlier", config_dir: `${server.dataDir}/earlier`, agent: "codex" });
+  const original = profile.claude_config_ids;
+  await server.api("PATCH", `/profiles/${profile.id}`, { claude_config_ids: [original[0], earlier.id, codex.id] });
+  try {
+    await withBrowser(server, {}, async (ui) => {
+      let release;
+      const held = new Promise((r) => (release = r));
+      await ui.page.route(isModels, (route) => route.fulfill(json([{ ...MODELS[0], id: "gpt-6.1-sol" }])));
+      await ui.page.route((u) => u.pathname.endsWith(`/claude-configs/${earlier.id}/models`), async (route) => {
+        await held;
+        await route.fulfill(json([{ ...MODELS[0], id: "gpt-6-sol" }]));
+      });
+      await ui.run([
+        `goto /p/${project.id}`, "click New task", "type Alias ordering /scratch !sol",
+        "wait Loading Earlier's models", "press Control+Enter", "wait It's created once they're in",
+      ]);
+      assert.equal((await tasksIn("Alias ordering")).length, 0);
+      release();
+      await ui.run(["gone Reads as"]);
+    });
+    const [task] = await tasksIn("Alias ordering");
+    assert.equal(task.model, "gpt-6-sol");
+    assert.equal(task.claude_config_id, earlier.id);
+  } finally {
+    await server.api("PATCH", `/profiles/${profile.id}`, { claude_config_ids: original });
+  }
+});
