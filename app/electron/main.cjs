@@ -17,10 +17,10 @@
 
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
-const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { shellStamp } = require("./stamp.cjs");
 
 /** `dir`, or `legacy` from before the rename to Huntaway if only that one exists. */
 function renamed(dir, legacy) {
@@ -246,16 +246,18 @@ function errorPage(message, title = "Huntaway couldn't start") {
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
 
-/** This process's own code (this directory) and the Electron that npm installed, to see when an update changed them. */
+/** This process's own code (this directory) and its Electron (the one npm installed, from source), to see when an update
+ * changed them. A release's manifest has the same stamp for its packaged app (stamp.cjs). */
 function mainStamp() {
-  const hash = crypto.createHash("sha256");
-  for (const f of fs.readdirSync(__dirname).sort()) hash.update(f).update(fs.readFileSync(path.join(__dirname, f)));
-  try {
-    hash.update(JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version);
-  } catch {
-    /* packaged, or not installed */
+  let electron = process.versions.electron;
+  if (!app.isPackaged) {
+    try {
+      electron = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version;
+    } catch {
+      electron = undefined; // not installed
+    }
   }
-  return hash.digest("hex");
+  return shellStamp(__dirname, electron);
 }
 const startStamp = mainStamp();
 

@@ -371,6 +371,9 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
 | `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update changes the app itself rather than only the server and the UI |
+
+The server's version is the release's too (`huntaway --version`).
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
