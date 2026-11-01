@@ -281,6 +281,8 @@ export interface ContextStatsReport {
     kind: "turn" | "compact";
     /** A turn's: the context it left. A compaction's: the context before it. */
     tokens: number | null;
+    /** A turn's: what its first request to the model held. */
+    start_tokens: number | null;
     /** A compaction's: the context after it, if the agent says. */
     post_tokens: number | null;
     max_tokens: number | null;

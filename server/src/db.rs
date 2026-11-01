@@ -677,7 +677,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     if version < 68 {
         // How big threads' contexts get and when they're compacted (see context::record_turn),
         // with the compactions threads already show.
-        conn.execute_batch(&format!("BEGIN; {SCHEMA_V68} {BACKFILL_V68} PRAGMA user_version=68; COMMIT;"))?;
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V68} {BACKFILL_V68}"))?;
+        for column in ["turn_start_tokens", "turn_tokens"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column} INTEGER;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=68; COMMIT;")?;
     }
     Ok(conn)
 }
@@ -686,10 +693,12 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 #[cfg(test)]
 pub const VERSION: i64 = 68;
 
-/// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left) and for
+/// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
+/// `start_tokens` what its first request to the model held) and for
 /// each compaction (`compact`: `tokens` before it and `post_tokens` after, and its `source`:
 /// `auto` when the agent compacted by itself as its context filled up, `user` for a `/compact`,
-/// `idle` for the board's after a session sat idle). See context.rs.
+/// `idle` for the board's after a session sat idle). See context.rs. A run's `turn_start_tokens`
+/// and `turn_tokens` follow its current turn's requests to the model, until the turn's row is written.
 const SCHEMA_V68: &str = r#"
 CREATE TABLE IF NOT EXISTS context_stats (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -698,6 +707,7 @@ CREATE TABLE IF NOT EXISTS context_stats (
   kind TEXT NOT NULL,
   at TEXT NOT NULL,
   tokens INTEGER,
+  start_tokens INTEGER,
   post_tokens INTEGER,
   max_tokens INTEGER,
   model TEXT,
@@ -3828,6 +3838,7 @@ mod tests {
             };
             c.execute_batch(&format!(
                 "DROP TABLE context_stats;
+                 ALTER TABLE runs DROP COLUMN turn_start_tokens; ALTER TABLE runs DROP COLUMN turn_tokens;
                  PRAGMA user_version=67;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
                  INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)

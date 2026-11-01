@@ -11,6 +11,8 @@ export interface CTurn {
   taskId: string;
   /** The context the turn left. */
   tokens: number;
+  /** What its first request to the model held: the context it started from. */
+  startTokens: number | null;
   maxTokens: number | null;
   /** What the turn cost, when the agent reports it. */
   cost: number | null;
@@ -97,27 +99,16 @@ export interface LimitRow {
 }
 
 /**
- * For each limit, how often threads went past it, and what the turns that then started past it
- * cost. A turn starts from the context the task's previous turn left.
+ * For each limit, how often threads went past it, and what the turns that started past it
+ * cost: each turn says what its first request held, so a turn's start doesn't depend on the turns
+ * around it in the range, or on whether its session carried on from them.
  */
 export function limitRows(turns: CTurn[], compactions: CCompaction[], limits = LIMITS): LimitRow[] {
-  // A turn starts from what the task's previous turn left, or what a compaction since left.
-  const timeline: { at: number; taskId: string; turn: CTurn | null; after: number }[] = [
-    ...turns.map((t) => ({ at: t.at, taskId: t.taskId, turn: t, after: t.tokens })),
-    ...compactions.map((c) => ({ at: c.at, taskId: c.taskId, turn: null, after: c.postTokens ?? 0 })),
-  ];
-  timeline.sort((a, b) => a.at - b.at);
-  const startedAt = new Map<CTurn, number>();
-  const prev = new Map<string, number>();
-  for (const e of timeline) {
-    if (e.turn) startedAt.set(e.turn, prev.get(e.taskId) ?? 0);
-    prev.set(e.taskId, e.after);
-  }
   const total = turns.length;
   const totalCost = turns.reduce((s, t) => s + (t.cost ?? 0), 0);
   return limits.map((limit) => {
     const past = turns.filter((t) => t.tokens > limit);
-    const cost = turns.filter((t) => (startedAt.get(t) ?? 0) > limit).reduce((s, t) => s + (t.cost ?? 0), 0);
+    const cost = turns.filter((t) => (t.startTokens ?? 0) > limit).reduce((s, t) => s + (t.cost ?? 0), 0);
     return {
       limit,
       turns: past.length,

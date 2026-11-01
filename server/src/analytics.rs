@@ -184,6 +184,8 @@ pub struct ContextStat {
     pub kind: String,
     /// A turn's: the context it left. A compaction's: the context before it.
     pub tokens: Option<i64>,
+    /// A turn's: what its first request to the model held, so a session started afresh starts small.
+    pub start_tokens: Option<i64>,
     /// A compaction's: the context after it, if the agent says.
     pub post_tokens: Option<i64>,
     /// The model's context window, if it was known.
@@ -216,7 +218,7 @@ pub async fn context(State(s): State<Shared>, Path(profile_id): Path<String>, Qu
 pub fn context_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow::Result<ContextReport> {
     // Review threads count as themselves here: their contexts are their own.
     let mut st = c.prepare(
-        "SELECT s.at, s.task_id, s.kind, s.tokens, s.post_tokens, s.max_tokens, s.model, s.source, s.cost_usd, s.duration_ms
+        "SELECT s.at, s.task_id, s.kind, s.tokens, s.post_tokens, s.max_tokens, s.model, s.source, s.cost_usd, s.duration_ms, s.start_tokens
          FROM context_stats s JOIN tasks t ON t.id=s.task_id
          WHERE t.profile_id=?1 AND s.at >= ?2 AND s.at < ?3 ORDER BY s.at",
     )?;
@@ -233,6 +235,7 @@ pub fn context_report(c: &Connection, profile_id: &str, from: &str, to: &str) ->
                 source: r.get(7)?,
                 cost_usd: r.get(8)?,
                 duration_ms: r.get(9)?,
+                start_tokens: r.get(10)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

@@ -15,7 +15,6 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
 use crate::db::{self, Context, Run};
@@ -41,7 +40,7 @@ fn save(state: &Shared, task_id: &str, ctx: &Context, detail: Option<Value>) -> 
 
 /// A Claude Code `assistant` message: its usage is what the session sent the model for it.
 /// Subagents' messages are in their own context, not the thread's.
-pub fn on_assistant(state: &Shared, task_id: &str, v: &Value) -> anyhow::Result<()> {
+pub fn on_assistant(state: &Shared, run: &Run, v: &Value) -> anyhow::Result<()> {
     if !v["parent_tool_use_id"].is_null() {
         return Ok(());
     }
@@ -59,17 +58,30 @@ pub fn on_assistant(state: &Shared, task_id: &str, v: &Value) -> anyhow::Result<
     if tokens == 0 {
         return Ok(());
     }
-    set_tokens(state, task_id, tokens, None)
+    turn_usage(state, run, tokens)?;
+    set_tokens(state, &run.task_id, tokens, None)
+}
+
+/// A request in the run's current turn (see `record_turn`): the first says what the turn started
+/// from, the latest what it's got to.
+fn turn_usage(state: &Shared, run: &Run, tokens: u64) -> anyhow::Result<()> {
+    state.db().execute(
+        "UPDATE runs SET turn_start_tokens=COALESCE(turn_start_tokens, ?1), turn_tokens=?1 WHERE id=?2",
+        rusqlite::params![tokens as i64, run.id],
+    )?;
+    Ok(())
 }
 
 /// Codex's `thread/tokenUsage/updated`, for the thread's own session (not a subagent's).
-pub fn on_codex_usage(state: &Shared, task_id: &str, p: &Value) -> anyhow::Result<()> {
+pub fn on_codex_usage(state: &Shared, run: &Run, p: &Value) -> anyhow::Result<()> {
+    let task_id = run.task_id.as_str();
     let session = db::get_task(&state.db(), task_id)?.and_then(|t| t.session_id);
     if p["threadId"].as_str().is_some_and(|t| session.is_some_and(|s| s != t)) {
         return Ok(());
     }
     let usage = &p["tokenUsage"];
     let Some(tokens) = usage["last"]["totalTokens"].as_u64() else { return Ok(()) };
+    turn_usage(state, run, tokens)?;
     set_tokens(state, task_id, tokens, usage["modelContextWindow"].as_u64())
 }
 
@@ -79,10 +91,10 @@ pub fn on_compacted(state: &Shared, run: &Run, meta: &Value) -> anyhow::Result<(
     let task_id = run.task_id.as_str();
     let before = current(state, task_id)?;
     record_compaction(state, run, meta, before.as_ref())?;
-    match meta["post_tokens"].as_u64() {
-        Some(tokens) => set_tokens(state, task_id, tokens, None),
-        None => Ok(()),
-    }
+    let Some(tokens) = meta["post_tokens"].as_u64() else { return Ok(()) };
+    // A turn the agent compacted in leaves the summary, unless the model goes on after it.
+    state.db().execute("UPDATE runs SET turn_tokens=?1 WHERE id=?2 AND turn_tokens IS NOT NULL", rusqlite::params![tokens as i64, run.id])?;
+    set_tokens(state, task_id, tokens, None)
 }
 
 /// Where a compaction in `run` came from (see db::SCHEMA_V68): the agent's own (`trigger`
@@ -123,26 +135,25 @@ fn record_compaction(state: &Shared, run: &Run, meta: &Value, before: Option<&Co
     Ok(())
 }
 
-/// The end of one of the agent's turns: how big the context it leaves is (what the next prompt
-/// starts from), and what the turn cost, if the agent says. Not for a `/compact`, and not if the
-/// count hasn't changed since the last turn (the turn didn't get a reply from the model).
+/// The end of one of the agent's turns: how big a context it started from (its first request
+/// to the model) and leaves (what the next prompt starts from), and what it cost, if the agent
+/// says. Only for a turn the model answered (not a `/compact`): those are what `turn_usage`
+/// follows, while the task's context also changes with breakdowns and compactions.
 pub fn record_turn(state: &Shared, run: &Run, cost_usd: Option<f64>) -> anyhow::Result<()> {
     if run.kind == "compact" {
         return Ok(());
     }
-    let Some(ctx) = current(state, &run.task_id)? else { return Ok(()) };
-    let c = state.db();
-    let last: Option<(String, i64)> = c
-        .query_row("SELECT at, tokens FROM context_stats WHERE task_id=?1 AND kind='turn' ORDER BY id DESC LIMIT 1", [&run.task_id], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
-        .optional()?;
-    if last.is_some_and(|(at, tokens)| at >= ctx.updated_at && tokens == ctx.tokens as i64) {
-        return Ok(());
-    }
-    c.execute(
-        "INSERT INTO context_stats (task_id, run_id, kind, at, tokens, max_tokens, model, cost_usd) VALUES (?1, ?2, 'turn', ?3, ?4, ?5, ?6, ?7)",
-        rusqlite::params![run.task_id, run.id, now(), ctx.tokens as i64, ctx.max_tokens.map(|m| m as i64), ctx.model, cost_usd],
+    let (start, end): (Option<i64>, Option<i64>) = {
+        let c = state.db();
+        let turn = c.query_row("SELECT turn_start_tokens, turn_tokens FROM runs WHERE id=?1", [&run.id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        c.execute("UPDATE runs SET turn_start_tokens=NULL, turn_tokens=NULL WHERE id=?1", [&run.id])?;
+        turn
+    };
+    let Some(end) = end else { return Ok(()) };
+    let ctx = current(state, &run.task_id)?.unwrap_or_default();
+    state.db().execute(
+        "INSERT INTO context_stats (task_id, run_id, kind, at, tokens, start_tokens, max_tokens, model, cost_usd) VALUES (?1, ?2, 'turn', ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![run.task_id, run.id, now(), end, start, ctx.max_tokens.map(|m| m as i64), ctx.model, cost_usd],
     )?;
     Ok(())
 }

@@ -1296,7 +1296,7 @@ pub fn handle_line(state: &Shared, run: &Run, v: &Value) -> Result<()> {
                 crate::usage::set_limits(state, &config.id, limits(&p["rateLimits"]), p["rateLimits"]["planType"].as_str());
             }
         }
-        "thread/tokenUsage/updated" => crate::context::on_codex_usage(state, task_id, p)?,
+        "thread/tokenUsage/updated" => crate::context::on_codex_usage(state, run, p)?,
         "turn/completed" if !own => {
             if let Some(thread) = p["threadId"].as_str() {
                 let status = match p["turn"]["status"].as_str() {

@@ -158,7 +158,7 @@ export async function loadContext(from: number, to: number): Promise<ContextData
     for (const x of r.report.stats) {
       const at = Date.parse(x.at);
       if (x.kind === "turn" && x.tokens !== null) {
-        out.turns.push({ at, taskId: x.task_id, tokens: x.tokens, maxTokens: x.max_tokens, cost: x.cost_usd });
+        out.turns.push({ at, taskId: x.task_id, tokens: x.tokens, startTokens: x.start_tokens, maxTokens: x.max_tokens, cost: x.cost_usd });
       } else if (x.kind === "compact") {
         out.compactions.push({ at, taskId: x.task_id, source: x.source ?? "user", tokens: x.tokens, postTokens: x.post_tokens, durationMs: x.duration_ms });
       }
