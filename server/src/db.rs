@@ -712,12 +712,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=70; COMMIT;")?;
     }
+    if version < 71 {
+        // Whether a profile's and a project's merges wait for the user's approval, and where a
+        // task's merge is with it (see merge_gate.rs). Added only if they aren't there, in case
+        // another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for (table, column, kind) in [("profiles", "merge_approval", "INTEGER NOT NULL DEFAULT 0"), ("projects", "merge_approval", "INTEGER"), ("tasks", "merge_approval", "TEXT")] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=71; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 70;
+pub const VERSION: i64 = 71;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for
@@ -1168,6 +1181,10 @@ pub struct Profile {
     /// `summarizer_for`). None is the task's config with the default model and effort.
     #[serde(default)]
     pub summarizer: Option<Reviewer>,
+    /// A task moved to "Ready for merge" has its agent summarise what it would merge, and merges
+    /// only once the user approves (API 89, see merge_gate.rs). Its projects can say otherwise.
+    #[serde(default)]
+    pub merge_approval: bool,
     pub created_at: String,
 }
 
@@ -1196,6 +1213,7 @@ impl Profile {
             limit_switch: r.get("limit_switch")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
+            merge_approval: r.get("merge_approval")?,
             created_at: r.get("created_at")?,
         })
     }
@@ -1309,6 +1327,10 @@ pub struct Project {
     /// `summarizer_for`).
     #[serde(default)]
     pub summarizer: Option<Reviewer>,
+    /// Whether its merges wait for the user's approval (see merge_gate.rs). None follows its
+    /// profile's `merge_approval`.
+    #[serde(default)]
+    pub merge_approval: Option<bool>,
     /// The project's instructions for the prompts sent when a task's agent starts, when its
     /// work is reviewed and when it's merged; None uses the default (see prompts.rs).
     pub start_prompt: Option<String>,
@@ -1370,6 +1392,7 @@ impl Project {
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             auto_summary: r.get("auto_summary")?,
             summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
+            merge_approval: r.get("merge_approval")?,
             start_prompt: r.get("start_prompt")?,
             review_prompt: r.get("review_prompt")?,
             merge_prompt: r.get("merge_prompt")?,
@@ -1476,6 +1499,11 @@ pub struct Task {
     /// (bar "Needs attention") drops it.
     #[serde(default)]
     pub remerge: bool,
+    /// Where its merge is with the user's approval, when its project asks for it (see
+    /// merge_gate.rs): `pending` while its agent summarises what it would merge and the user
+    /// decides, `approved` once they have. Cleared when it leaves the merge.
+    #[serde(default)]
+    pub merge_approval: Option<String>,
     pub attention_reason: Option<String>,
     /// Tasks in the same project that have to be merged (done, resolution `done`) before this
     /// task's agent starts.
@@ -1791,6 +1819,7 @@ impl Task {
             run_started_at: r.get("run_started_at")?,
             merging: r.get("merging")?,
             remerge: r.get("remerge")?,
+            merge_approval: r.get("merge_approval")?,
             attention_reason: r.get("attention_reason")?,
             depends_on: json_list(r.get("depends_on")?),
             waiting: r.get("waiting")?,
@@ -2204,6 +2233,7 @@ pub fn tasks_with_open_prs(c: &Connection) -> Result<Vec<Task>> {
 pub fn active_merge(c: &Connection, project_id: Option<&str>, parent_id: Option<&str>) -> Result<Option<Task>> {
     Ok(c.query_row(
         "SELECT * FROM tasks WHERE project_id IS ?1 AND parent_id IS ?2 AND kind='task' AND merging=1 AND (running=1 OR status='needs_attention')
+           AND merge_approval IS NOT 'pending'
          ORDER BY position LIMIT 1",
         params![project_id, parent_id],
         Task::from_row,
@@ -2216,7 +2246,7 @@ pub fn active_merge(c: &Connection, project_id: Option<&str>, parent_id: Option<
 pub fn queued_merges(c: &Connection, project_id: Option<&str>, parent_id: Option<&str>) -> Result<Vec<Task>> {
     let mut st = c.prepare(
         "SELECT * FROM tasks WHERE project_id IS ?1 AND parent_id IS ?2 AND kind='task' AND merging=1 AND running=0 AND status='ready_for_merge'
-           AND (project_id IS NULL OR project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
+           AND merge_approval IS NOT 'pending' AND (project_id IS NULL OR project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
          ORDER BY position, created_at",
     )?;
     let rows = st.query_map(params![project_id, parent_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
@@ -2228,7 +2258,7 @@ pub fn queued_merges(c: &Connection, project_id: Option<&str>, parent_id: Option
 pub fn merge_lanes(c: &Connection, project_id: Option<&str>) -> Result<Vec<Option<String>>> {
     let mut st = c.prepare(
         "SELECT DISTINCT parent_id FROM tasks WHERE project_id IS ?1 AND kind='task' AND merging=1 AND running=0 AND status='ready_for_merge'
-           AND (project_id IS NULL OR project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))",
+           AND merge_approval IS NOT 'pending' AND (project_id IS NULL OR project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))",
     )?;
     let rows = st.query_map([project_id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
@@ -2416,7 +2446,7 @@ pub fn drop_dependency(c: &Connection, id: &str) -> Result<Vec<String>> {
 /// Projects with tasks waiting for their merge slot.
 pub fn projects_with_queued_merges(c: &Connection) -> Result<Vec<Option<String>>> {
     let mut st = c.prepare(
-        "SELECT DISTINCT project_id FROM tasks WHERE kind='task' AND merging=1 AND running=0 AND status='ready_for_merge'",
+        "SELECT DISTINCT project_id FROM tasks WHERE kind='task' AND merging=1 AND running=0 AND status='ready_for_merge' AND merge_approval IS NOT 'pending'",
     )?;
     let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
@@ -2493,7 +2523,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
-    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
+    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "merge_approval", "attention_reason",
     "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
@@ -2519,6 +2549,10 @@ pub fn update_task(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result
         // queue keeps its place to rejoin only while its agent works on it (see Task::remerge).
         if fields.iter().any(|(col, _)| *col == "status") && !fields.iter().any(|(col, _)| *col == "remerge") {
             c.execute("UPDATE tasks SET remerge=0 WHERE id=?1 AND remerge=1 AND status NOT IN ('in_progress','needs_attention')", [id])?;
+        }
+        // A merge's approval goes with the merge, unless it stepped out to rejoin it.
+        if fields.iter().any(|(col, _)| ["status", "merging", "remerge"].contains(col)) {
+            c.execute("UPDATE tasks SET merge_approval=NULL WHERE id=?1 AND merge_approval IS NOT NULL AND merging=0 AND remerge=0", [id])?;
         }
     }
     get_task(c, id)
@@ -2551,7 +2585,7 @@ fn normalize_resolution(c: &Connection, id: &str) -> Result<()> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "auto_summary", "summarizer", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "auto_summary", "summarizer", "merge_approval", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
     "copy_files", "link_folders",
 ];
@@ -2568,7 +2602,7 @@ pub fn preview_project_update(c: &Connection, id: &str, fields: &[(&str, Value)]
     update_project(&tx, id, fields)
 }
 
-const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer"];
+const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer", "merge_approval"];
 
 pub fn update_profile(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Profile>> {
     update_generic(c, "profiles", PROFILE_COLUMNS, id, fields)?;

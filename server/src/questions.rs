@@ -124,7 +124,6 @@ pub fn answer(s: &Shared, task_id: &str, message_id: i64, answer: Answer) -> Api
     if picked > 1 && asked["multi_select"] != true {
         return Err(ApiError::bad("this question takes one answer"));
     }
-    let reply = reply_text(asked["question"].as_str().unwrap_or(""), &choices, text);
     let mut answered = asked.clone();
     answered["status"] = json!("answered");
     answered["answer"] = json!({"choices": choices, "text": text});
@@ -136,7 +135,13 @@ pub fn answer(s: &Shared, task_id: &str, message_id: i64, answer: Answer) -> Api
     if taken == 0 {
         return Err(ApiError::conflict("this question has been answered already"));
     }
-    match crate::runner::send(s, task_id, &reply) {
+    // The board's own question, whether to merge (see merge_gate.rs): the answer is the board's to act on.
+    let sent = if asked["merge_approval"] == true {
+        crate::merge_gate::decide(s, task_id, choices.iter().any(|c| c == crate::merge_gate::APPROVE))
+    } else {
+        crate::runner::send(s, task_id, &reply_text(asked["question"].as_str().unwrap_or(""), &choices, text))
+    };
+    match sent {
         Ok(task) => {
             emit(s, message_id);
             // Any other question it was waiting on is settled by this reply.
@@ -185,7 +190,7 @@ pub fn replied(s: &Shared, task_id: &str) {
     }
 }
 
-fn emit(s: &Shared, message_id: i64) {
+pub(crate) fn emit(s: &Shared, message_id: i64) {
     let m = s.db().query_row("SELECT * FROM messages WHERE id=?1", [message_id], db::Message::from_row);
     if let Ok(m) = m {
         s.emit(json!({"type": "message_updated", "task_id": m.task_id, "message": m}));

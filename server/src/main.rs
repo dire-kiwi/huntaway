@@ -23,6 +23,7 @@ mod git_view;
 mod github;
 mod hub;
 mod mcp;
+mod merge_gate;
 mod merged;
 mod permissions;
 mod pr_watch;

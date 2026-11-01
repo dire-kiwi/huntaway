@@ -1064,8 +1064,57 @@ fn clip(s: &str) -> String {
 
 /// Run a tool call: its output, and whether it failed.
 async fn run(tool: &str, a: &Value) -> Result<(String, bool)> {
+    if merges(tool, a) {
+        if let Some(why) = merge_gate().await? {
+            return Ok((why, true));
+        }
+    }
     let a = if tool == "pr_merge" { resolve_pr(a).await? } else { a.clone() };
     exec(&command(tool, &a)?, &a).await
+}
+
+/// The board's line to the run this server is for, which the commands it runs don't get.
+const BOARD_ENV: [&str; 3] = ["IA_URL", "IA_TOKEN", "IA_RUN_ID"];
+
+/// Whether call `a` to `tool` would merge a pull request: pr_merge, `gh pr merge`, or GitHub's
+/// merge API through `api` (REST, or a GraphQL mutation that merges or turns on auto-merge).
+fn merges(tool: &str, a: &Value) -> bool {
+    match tool {
+        "pr_merge" => true,
+        "gh" => {
+            let args: Vec<&str> = a["args"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let args: Vec<&str> = args.into_iter().skip_while(|a| a.starts_with('-')).collect();
+            match args[..] {
+                ["pr", "merge", ..] => true,
+                ["api", ..] => api_merges(&args.join(" ")),
+                _ => false,
+            }
+        }
+        "api" => api_merges(&a.to_string()),
+        _ => false,
+    }
+}
+
+fn api_merges(call: &str) -> bool {
+    let call = call.to_ascii_lowercase();
+    let rest = call.contains("/pulls/") && call.contains("/merge") && call.contains("put");
+    rest || call.contains("mergepullrequest") || call.contains("enablepullrequestautomerge")
+}
+
+/// Why the board won't let this run merge, if it won't (see merge_gate.rs). A server started
+/// without the board's address (by hand, say) has no say from it.
+async fn merge_gate() -> Result<Option<String>> {
+    let [Ok(url), Ok(token), Ok(run_id)] = BOARD_ENV.map(std::env::var) else { return Ok(None) };
+    let check = async {
+        let res = reqwest::Client::new().get(format!("{url}/api/internal/merge-gate/{run_id}")).bearer_auth(token).send().await?.error_for_status()?;
+        anyhow::Ok(res.json::<Value>().await?)
+    };
+    let v = tokio::time::timeout(std::time::Duration::from_secs(30), check)
+        .await
+        .map_err(|_| anyhow!("timed out"))
+        .and_then(|r| r)
+        .context("couldn't ask the board whether this merge is approved, so it wasn't merged (try again)")?;
+    Ok(v["blocked"].as_str().map(String::from))
 }
 
 /// Run a command where call `a` runs, as the run's account if it has one: its output, and
@@ -1103,6 +1152,9 @@ async fn exec(c: &Command, a: &Value) -> Result<(String, bool)> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    for k in BOARD_ENV {
+        cmd.env_remove(k);
+    }
     // Only the call's own repository, which was checked.
     cmd.env_remove("GH_REPO");
     if let Some(r) = &c.repo {
@@ -1783,6 +1835,21 @@ FLAGS
         }
         assert_eq!(call("Read", "gh pr view"), None);
         assert_eq!(hook_denial(&json!({})), None);
+    }
+
+    // HA-86: a merge waiting for approval could go through the gh tool or the API instead.
+    #[test]
+    fn knows_which_calls_merge() {
+        let gh = |args: &[&str]| merges("gh", &json!({"args": args}));
+        assert!(merges("pr_merge", &json!({"pr": "1"})));
+        assert!(gh(&["pr", "merge", "1", "--squash"]) && gh(&["--help", "pr", "merge"]));
+        assert!(gh(&["api", "-X", "PUT", "repos/o/r/pulls/1/merge"]));
+        assert!(gh(&["api", "graphql", "-f", "query=mutation { mergePullRequest(input: {}) { clientMutationId } }"]));
+        assert!(merges("api", &json!({"endpoint": "repos/o/r/pulls/1/merge", "method": "PUT"})));
+        assert!(merges("api", &json!({"endpoint": "graphql", "fields": {"query": "mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }"}})));
+        // Reading whether it's merged, or anything else, doesn't.
+        assert!(!merges("api", &json!({"endpoint": "repos/o/r/pulls/1/merge"})));
+        assert!(!gh(&["pr", "view", "1"]) && !merges("pr_view", &json!({"pr": "1"})) && !merges("pr_checks", &json!({"pr": "merge"})));
     }
 
     #[test]

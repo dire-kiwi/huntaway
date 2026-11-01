@@ -91,12 +91,12 @@ pub async fn start(state: &Shared, l: Launch) -> Result<()> {
                 }
             },
             // GitHub through gh, outside the agent's sandbox. A server of the project's own by
-            // this name replaces it.
+            // this name replaces it. It asks this server whether the run may merge (see merge_gate.rs).
             crate::gh_mcp::SERVER_NAME: {
                 "type": "stdio",
                 "command": path_str(&state.exe),
                 "args": ["gh-mcp"],
-                "env": {"IA_CWD": l.cwd}
+                "env": {"IA_CWD": l.cwd, "IA_URL": state.internal_url, "IA_TOKEN": state.token, "IA_RUN_ID": l.run_id}
             }
         }
     });
