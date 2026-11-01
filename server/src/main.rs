@@ -40,6 +40,7 @@ mod ssh;
 mod state;
 mod status_script;
 mod summary;
+mod task_tmp;
 mod terminal;
 #[cfg(test)]
 mod testing;
@@ -366,6 +367,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
+    task_tmp::start_sweeper(&state);
     automations::start(&state);
     merged::start(&state);
     relocate::start_recording(&state);

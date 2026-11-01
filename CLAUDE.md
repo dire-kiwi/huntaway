@@ -53,12 +53,16 @@ The live host daemon serves the user's real board on port 7878 from `~/.local/sh
 Task worktrees live inside that data dir, and the agent working in them is run by that daemon.
 Keep test servers fully separate from it:
 
-- Start a test server with `scripts/test-server.sh --seed > /tmp/ia<N>-env` (serve flags such as
+- Your task has a temp folder of its own, `$TMPDIR`, which the board deletes once the task is done
+  (see *Temp folders* in `README.md`). Put env files, logs, screenshots and scratch folders there
+  rather than straight in `/tmp`, which is shared and fills up. `mktemp`, cargo's tests and the test
+  scripts already use it.
+- Start a test server with `scripts/test-server.sh --seed > $TMPDIR/ia<N>-env` (serve flags such as
   `--demo` can follow). It runs this worktree's build on a free port on 127.0.0.1, with a fresh
   `mktemp -d` data dir and no hub. Don't pick a fixed port: other agents' test servers are running
   too. It prints `export IA_TEST_URL=…` lines (`IA_TEST_TOKEN`, `IA_TEST_PID`, `IA_TEST_DATA_DIR`,
   `IA_TEST_ENV`), and writes them to `<data dir>/env` too. Shell variables don't survive between
-  Bash calls, so start each later call with `. /tmp/ia<N>-env` (or `. "$IA_TEST_ENV"`).
+  Bash calls, so start each later call with `. $TMPDIR/ia<N>-env` (or `. "$IA_TEST_ENV"`).
   The server log is `<data dir>/server.log`.
   - `--seed` creates a "test" profile on `~/.claude-personal` with default model haiku, and a
     project "Test" (key `TES`) on a fresh git repo in `<data dir>/repo`, and adds
@@ -134,12 +138,12 @@ fresh `npm run build` (it serves `app/dist`), then drive it with `scripts/ui-che
 there's no other browser tooling to look for.
 
 ```sh
-scripts/test-server.sh --demo > /tmp/ia<N>-env
-node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New task" "type A title" \
-  "press Control+Enter" "gone Create task" "wait A title" "shot /tmp/ia<N>-board.png"
+scripts/test-server.sh --demo > $TMPDIR/ia<N>-env
+node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click New task" "type A title" \
+  "press Control+Enter" "gone Create task" "wait A title" "shot $TMPDIR/ia<N>-board.png"
 ```
 
-- `--env` takes test-server.sh's saved output or its data dir (variables set with `. /tmp/ia<N>-env`
+- `--env` takes test-server.sh's saved output or its data dir (variables set with `. $TMPDIR/ia<N>-env`
   aren't exported, so pass the file). The token is set before the first page loads, so `goto` any
   path: `/p/<project id>`, `/t/<task id>`, `/settings`, `/inbox`, or `?task=<task id>` to open a
   task's panel.
@@ -171,19 +175,19 @@ node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New
   `npm run test:ui` in `app/` (it builds the UI, and each file starts its own `--demo` test server
   with agents switched off, so `cargo build` in `server/` first). They aren't part of `npm test`,
   but CI runs them (`Tests / ui`). Run them when you change the UI they cover, and add one when an interaction found a bug.
-- For a change meant to make the UI faster, measure it: `node scripts/ui-profile.mjs --env /tmp/ia<N>-env
+- For a change meant to make the UI faster, measure it: `node scripts/ui-profile.mjs --env $TMPDIR/ia<N>-env
   --task <id>` opens a task with a long thread and feeds the page streamed tokens, task events and
   messages, then prints the main-thread time each took. Run it on the build with the change set
   aside and with it, on the same machine. Demo data is too small to show much: start the test
   server with `--no-agents` and give it a scrubbed copy of the live board's database with
-  `scripts/copy-live-board.sh /tmp/ia<N>-env` (it only reads the live database).
+  `scripts/copy-live-board.sh $TMPDIR/ia<N>-env` (it only reads the live database).
 
 ## Running tests
 
 - Run server tests with debug `cargo test` in `server/`, not `--release`: a release test build
   compiles a second copy of every dependency.
 - Wrap long runs in `timeout` and write the output to a log file, then read the log:
-  `timeout 900 cargo test > /tmp/test.log 2>&1; tail -30 /tmp/test.log`. Piping through `grep`
+  `timeout 900 cargo test > $TMPDIR/test.log 2>&1; tail -30 $TMPDIR/test.log`. Piping through `grep`
   buffers, so a hang shows nothing.
 - Write async tests as `#[test] fn …() { testing::run(async || { … }) }` (`server/src/testing.rs`)
   rather than `#[tokio::test]`, so a hang fails after 30 seconds instead of running forever.

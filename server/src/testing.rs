@@ -142,7 +142,7 @@ impl TempDir {
     /// A new, empty folder, named after the test.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let dir = temp_root().join(format!("{}-{}", test_name(), &crate::util::new_id()[..8]));
+        let dir = temp_root().join(format!("{}-{}", folder_name(&test_name()), &crate::util::new_id()[..8]));
         std::fs::create_dir(&dir).unwrap();
         TempDir(dir)
     }
@@ -167,6 +167,14 @@ impl Drop for TempDir {
 /// This thread's test, as its folders are named: tests run on threads named after them.
 fn test_name() -> String {
     std::thread::current().name().unwrap_or("test").replace("::", ".")
+}
+
+/// The start of the names of a test's folders: the end of its name, so paths in them stay short
+/// enough (a Claude project folder is named after a whole path) in a task's temp folder too.
+fn folder_name(test: &str) -> &str {
+    const MAX: usize = 40;
+    let start = test.char_indices().map(|(i, _)| i).find(|&i| test.len() - i <= MAX).unwrap_or(test.len());
+    &test[start..]
 }
 
 /// The tests that failed (see `failed`), whose folders `remove_root` keeps with IA_KEEP_TEST_DIRS.
@@ -249,7 +257,7 @@ fn remove_run(root: &Path, keep: bool, failed: &HashSet<String>) {
         for e in std::fs::read_dir(root).into_iter().flatten().flatten() {
             let (path, name) = (e.path(), e.file_name().to_string_lossy().into_owned());
             if name == ".lock" {
-            } else if name.rsplit_once('-').is_some_and(|(test, _)| failed.contains(test)) {
+            } else if name.rsplit_once('-').is_some_and(|(test, _)| failed.iter().any(|f| folder_name(f) == test)) {
                 eprintln!("kept the failing test's folder {}", path.display());
                 any = true;
             } else {
@@ -367,6 +375,13 @@ mod tests {
         };
         remove_run(&root, true, &failed);
         assert_eq!(list(), ["a.fails-12345678", "a.fails-abcdefgh", "a.fails.too-12345678"]);
+        // A long name's folders are named after its end.
+        let long = "module.tests.a_test_whose_name_is_longer_than_forty_characters";
+        assert_eq!((folder_name(long), folder_name("a.fails")), ("ose_name_is_longer_than_forty_characters", "a.fails"));
+        std::fs::create_dir(root.join(format!("{}-12345678", folder_name(long)))).unwrap();
+        remove_run(&root, true, &HashSet::from([long.to_string()]));
+        assert_eq!(list(), [format!("{}-12345678", folder_name(long))]);
+        std::fs::write(root.join(".lock"), "").unwrap();
 
         // Without IA_KEEP_TEST_DIRS, or with nothing failed, it all goes.
         remove_run(&root, false, &failed);

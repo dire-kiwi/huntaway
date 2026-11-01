@@ -187,6 +187,10 @@ impl AppState {
             self.emit_task(&t);
             t
         };
+        // A task done with its agents gives up its temp folder.
+        if fields.iter().any(|(k, _)| ["status", "running"].contains(k)) {
+            self.task_changed(&t);
+        }
         // A subproject follows its tasks' columns (and its own agent's).
         if t.kind == "task" && fields.iter().any(|(k, _)| ["status", "running", "attention_reason", "merging", "subproject"].contains(k)) {
             // The task itself is updated either way, so a failure here is only logged.
@@ -224,6 +228,9 @@ impl AppState {
                 _ => None,
             }
         };
+        if let Some(t) = &moved {
+            self.task_changed(t);
+        }
         Ok(moved)
     }
 
@@ -232,6 +239,13 @@ impl AppState {
     fn status_changed(&self, c: &Connection, t: &Task, old: &str) {
         if let Some(me) = self.me.upgrade() {
             crate::status_script::status_changed(&me, c, t, old);
+        }
+    }
+
+    /// Task `t`'s status or running state changed (see task_tmp::changed), with the database unlocked.
+    fn task_changed(&self, t: &Task) {
+        if let Some(me) = self.me.upgrade() {
+            crate::task_tmp::changed(&me, t);
         }
     }
 
