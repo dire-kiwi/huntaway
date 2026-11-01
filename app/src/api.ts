@@ -374,6 +374,10 @@ export interface Project {
   review_rounds?: number;
   /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
   done_when_merged?: boolean;
+  /** Agents open a pull request for each task's branch when the repository is on GitHub; subprojects follow it too (API 85). */
+  pull_requests?: boolean;
+  /** The same for the tasks in its subprojects, whose pull requests target the subproject's branch (API 85). */
+  subproject_pull_requests?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */

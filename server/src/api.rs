@@ -924,6 +924,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "archived",
             "github_account",
             "done_when_merged",
+            "pull_requests",
+            "subproject_pull_requests",
             "watch_pull_requests",
             "pr_preview_url",
             "copy_files",
@@ -1006,7 +1008,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
                 return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
             }
-            "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" | "pull_requests" | "subproject_pull_requests" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
@@ -3099,6 +3101,26 @@ pub(crate) mod tests {
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             assert!(create_task_inner(&s, &p.id, task("after")).unwrap().use_worktree);
             std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    #[test]
+    fn projects_turn_their_tasks_pull_requests_on_and_off() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let dir = crate::testing::temp_dir().join("x");
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            assert!(p.pull_requests && p.subproject_pull_requests);
+            let set = async |b: Value| update_project_inner(&s, &p.id, b.as_object().unwrap()).await;
+            let p = set(json!({"subproject_pull_requests": false})).await.unwrap();
+            assert!(p.pull_requests && !p.subproject_pull_requests);
+            let p = set(json!({"pull_requests": false, "subproject_pull_requests": true})).await.unwrap();
+            assert!(!p.pull_requests && p.subproject_pull_requests);
+            for bad in [json!("no"), Value::Null, json!(0)] {
+                assert!(set(json!({ "pull_requests": bad })).await.is_err());
+            }
         })
     }
 
