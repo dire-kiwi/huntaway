@@ -1354,6 +1354,13 @@ agent names with `gh pr create --repo … --head …`, since gh would otherwise 
 remotes' fetch URLs (so a fork's PR goes into the fork, not its upstream). Agents in a worktree in other repositories are told not to push unless asked, and
 tasks without a worktree (working in the repository's own checkout) don't open pull requests.
 
+A project's settings can turn pull requests off (API 85), on its *Review* tab: *Open a pull
+request for each task* (`pull_requests`) for its tasks, subprojects included, and *Open a pull
+request for each task in a subproject* (`subproject_pull_requests`) for its subprojects' tasks,
+which are then merged into the subproject's branch without one. Both are on by default. An agent
+whose task has them off is told not to push its branch or open one unless the user asks, even if
+the project's own instructions say to.
+
 A task can carry its pull request's URL, shown on its card as a pull request icon next to the
 branch icon that links to it. Its agent can set it (`pr_url` via `update_task`), or set it under
 Pull request in the task's sidebar. Otherwise, whenever a run of a task with a branch ends and
