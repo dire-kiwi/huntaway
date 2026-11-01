@@ -1182,7 +1182,7 @@ function ProjectGithubAccount({ project, onChange }: { project: Project; onChang
 
 const pickerClass = "h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] text-fg outline-none";
 
-/** Who reviews each task: the profile's reviewers (API 86), or the project's own, at first one with the task's config. */
+/** Who reviews each task: the profile's reviewers (API 87), or the project's own, at first one with the task's config. */
 function ProjectReviewers({ project, host, onChange }: { project: Project; host: Host | undefined; onChange: (v: Reviewer[]) => void }) {
   const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project.host_id)));
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
@@ -1217,7 +1217,7 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
   );
 }
 
-/** Who summarises each task's changes: the profile's summarizer (API 86), or the project's own. */
+/** Who summarises each task's changes: the profile's summarizer (API 87), or the project's own. */
 function ProjectSummarizer({ project, host, onChange }: { project: Project; host: Host | undefined; onChange: (v: Reviewer | null) => void }) {
   const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project.host_id)));
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
@@ -1241,7 +1241,7 @@ function ProjectSummarizer({ project, host, onChange }: { project: Project; host
             configs={configs}
             models={{ project: project.model, profile: profile?.default_model }}
             value={project.summarizer ?? DEFAULT_REVIEWER}
-            // A host from before API 86 saves one with the defaults as none, the task's config;
+            // A host from before API 87 saves one with the defaults as none, the task's config;
             // from then on it's this project's choice, over the profile's.
             onChange={(v) => onChange(inherits ? (v ?? DEFAULT_REVIEWER) : isDefaultReviewer(v) ? null : v)}
             removable={false}

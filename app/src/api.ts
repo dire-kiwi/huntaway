@@ -69,7 +69,7 @@ export const outOfUsage = (t: Task, now = Date.now()) => !t.waiting && !t.runnin
 /** The API that tells when a config is out of usage and holds tasks until it resets. */
 export const LIMITS_API = 81;
 /** Profiles choose reviewers and a summarizer for their projects that don't choose their own. */
-export const PROFILE_REVIEWERS_API = 86;
+export const PROFILE_REVIEWERS_API = 87;
 
 /** Whether a task counts as merged for the tasks that depend on it (server: db::is_merged). */
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
@@ -164,9 +164,9 @@ export interface Profile {
   limit_wait?: boolean;
   /** A task that hasn't started yet starts on the next of its configs with room when its own is out of usage (API 81). */
   limit_switch?: boolean;
-  /** Who reviews the tasks of its projects with no reviewers of their own; empty is one reviewer with the task's config (API 86). */
+  /** Who reviews the tasks of its projects with no reviewers of their own; empty is one reviewer with the task's config (API 87). */
   reviewers?: Reviewer[];
-  /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 86). */
+  /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 87). */
   summarizer?: Reviewer | null;
   created_at: string;
 }
@@ -279,6 +279,29 @@ export interface AnalyticsReport {
   projects: { id: string; name: string; key: string }[];
 }
 
+/** How big a profile's threads' contexts were at each turn's end, and their compactions (API 86). */
+export interface ContextStatsReport {
+  stats: {
+    at: string;
+    task_id: string;
+    kind: "turn" | "compact";
+    /** A turn's: the context it left. A compaction's: the context before it. */
+    tokens: number | null;
+    /** A turn's: what its first request to the model held. */
+    start_tokens: number | null;
+    /** A compaction's: the context after it, if the agent says. */
+    post_tokens: number | null;
+    max_tokens: number | null;
+    model: string | null;
+    /** A compaction's: the agent's own as its context filled up (`auto`), `/compact` (`user`) or the board's after a session sat idle (`idle`). */
+    source: "auto" | "user" | "idle" | null;
+    cost_usd: number | null;
+    duration_ms: number | null;
+  }[];
+  tasks: AnalyticsReport["tasks"];
+  projects: AnalyticsReport["projects"];
+}
+
 /** Bytes on disk and the number of files, as `du` counts them. */
 export interface DiskSize {
   bytes: number;
@@ -384,11 +407,11 @@ export interface Project {
   pull_requests?: boolean;
   /** The same for the tasks in its subprojects, whose pull requests target the subproject's branch (API 85). */
   subproject_pull_requests?: boolean;
-  /** Who reviews each task, each in its own review thread (API 29); empty uses the profile's (API 86), before that one reviewer with the task's config. */
+  /** Who reviews each task, each in its own review thread (API 29); empty uses the profile's (API 87), before that one reviewer with the task's config. */
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
-  /** Who writes those summaries (API 84); null uses the profile's (API 86), before that the task's config with the default model and effort. */
+  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
   summarizer?: Reviewer | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
@@ -1600,6 +1623,10 @@ export const api = {
   /** The profile's prompts and agent runs in [from, to) (API 16). */
   analytics: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<AnalyticsReport>(`/profiles/${enc(profileId)}/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+
+  /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 86). */
+  contextStats: (h: string, profileId: string, from: string, to: string) =>
+    on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
   /** How much space the profile's projects and their worktrees take up (API 35). */
   diskUsage: (h: string, profileId: string) => on(h).get<DiskUsageReport>(`/profiles/${enc(profileId)}/disk-usage`),

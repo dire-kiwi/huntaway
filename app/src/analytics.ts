@@ -1,4 +1,5 @@
-import { api, hostSupports, type Status } from "./api";
+import { api, hostSupports, type AnalyticsReport, type Status } from "./api";
+import type { CCompaction, CTurn } from "./contextStats";
 import { boardHosts, useStore } from "./store";
 
 /**
@@ -76,44 +77,58 @@ export interface Activity {
   errors: string[];
 }
 
-export async function loadActivity(from: number, to: number, rules: Rules): Promise<Activity> {
+/** Asks each host on the board for a report on each of its profiles. Hosts that can't answer go in `errors`. */
+async function fromHosts<T>(minApi: number, errors: string[], ask: (host: string, profile: string) => Promise<T>) {
   const s = useStore.getState();
-  const hosts = boardHosts(s.hosts);
-  const out: Activity = { from, to, events: [], runs: [], tasks: {}, projects: {}, errors: [] };
-  out.projects[SCRATCH] = { id: SCRATCH, name: "No project", key: "No project", color: NEUTRAL };
-  const padded = new Date(from - rules.idleMin * MIN).toISOString();
   const reports = await Promise.all(
-    hosts.flatMap((h) => {
+    boardHosts(s.hosts).flatMap((h) => {
       const profiles = s.profiles.filter((p) => p.host_id === h.id);
       if (!profiles.length) return [];
-      if (!hostSupports(h, 16)) {
-        out.errors.push(`${h.name} needs an update to report analytics`);
+      if (!hostSupports(h, minApi)) {
+        errors.push(`${h.name} needs an update to report ${minApi > 16 ? "context sizes" : "analytics"}`);
         return [];
       }
       return profiles.map(async (profile) => {
         try {
-          return { host: h.id, report: await api.analytics(h.id, profile.id, padded, new Date(to).toISOString()) };
+          return { host: h.id, report: await ask(h.id, profile.id) };
         } catch (e) {
-          out.errors.push(`${h.name}: ${e instanceof Error ? e.message : String(e)}`);
+          errors.push(`${h.name}: ${e instanceof Error ? e.message : String(e)}`);
           return null;
         }
       });
     }),
   );
-  let slot = 0;
+  return reports.filter((r) => r !== null);
+}
+
+type Named = Pick<Activity, "tasks" | "projects">;
+
+function named(): Named {
+  return { tasks: {}, projects: { [SCRATCH]: { id: SCRATCH, name: "No project", key: "No project", color: NEUTRAL } } };
+}
+
+/** Adds a host's report's projects and tasks to `out`. */
+function addNames(out: Named, host: string, report: Pick<AnalyticsReport, "tasks" | "projects">) {
+  let slot = Object.keys(out.projects).length - 1;
+  for (const p of report.projects) {
+    // Colour follows the project, in the order projects were created, whatever is shown.
+    out.projects[p.id] = { ...p, color: PALETTE[slot++] ?? NEUTRAL };
+  }
+  for (const t of report.tasks) {
+    const projectId = t.project_id ?? SCRATCH;
+    const project = out.projects[projectId];
+    const key = t.kind === "scratch" || !project || projectId === SCRATCH ? t.title || "Untitled" : `${project.key}-${t.number}`;
+    out.tasks[t.id] = { id: t.id, hostId: host, projectId, kind: t.kind, number: t.number, title: t.title, status: t.status, key };
+  }
+}
+
+export async function loadActivity(from: number, to: number, rules: Rules): Promise<Activity> {
+  const out: Activity = { from, to, events: [], runs: [], ...named(), errors: [] };
+  const padded = new Date(from - rules.idleMin * MIN).toISOString();
+  const reports = await fromHosts(16, out.errors, (h, profile) => api.analytics(h, profile, padded, new Date(to).toISOString()));
   const now = Date.now();
   for (const r of reports) {
-    if (!r) continue;
-    for (const p of r.report.projects) {
-      // Colour follows the project, in the order projects were created, whatever is shown.
-      out.projects[p.id] = { ...p, color: PALETTE[slot++] ?? NEUTRAL };
-    }
-    for (const t of r.report.tasks) {
-      const projectId = t.project_id ?? SCRATCH;
-      const project = out.projects[projectId];
-      const key = t.kind === "scratch" || !project || projectId === SCRATCH ? t.title || "Untitled" : `${project.key}-${t.number}`;
-      out.tasks[t.id] = { id: t.id, hostId: r.host, projectId, kind: t.kind, number: t.number, title: t.title, status: t.status, key };
-    }
+    addNames(out, r.host, r.report);
     for (const e of r.report.events) out.events.push({ at: Date.parse(e.at), taskId: e.task_id, kind: e.kind, text: e.text });
     for (const run of r.report.runs) {
       if (run.kind === "compact") continue;
@@ -123,6 +138,34 @@ export async function loadActivity(from: number, to: number, rules: Rules): Prom
     }
   }
   out.events.sort((a, b) => a.at - b.at);
+  return out;
+}
+
+/** Context sizes at the end of each turn and compactions, in range (see contextStats.ts). */
+export interface ContextData extends Named {
+  from: number;
+  to: number;
+  turns: CTurn[];
+  compactions: CCompaction[];
+  errors: string[];
+}
+
+export async function loadContext(from: number, to: number): Promise<ContextData> {
+  const out: ContextData = { from, to, turns: [], compactions: [], ...named(), errors: [] };
+  const reports = await fromHosts(86, out.errors, (h, profile) => api.contextStats(h, profile, new Date(from).toISOString(), new Date(to).toISOString()));
+  for (const r of reports) {
+    addNames(out, r.host, r.report);
+    for (const x of r.report.stats) {
+      const at = Date.parse(x.at);
+      if (x.kind === "turn" && x.tokens !== null) {
+        out.turns.push({ at, taskId: x.task_id, tokens: x.tokens, startTokens: x.start_tokens, maxTokens: x.max_tokens, cost: x.cost_usd });
+      } else if (x.kind === "compact") {
+        out.compactions.push({ at, taskId: x.task_id, source: x.source ?? "user", tokens: x.tokens, postTokens: x.post_tokens, durationMs: x.duration_ms });
+      }
+    }
+  }
+  out.turns.sort((a, b) => a.at - b.at);
+  out.compactions.sort((a, b) => a.at - b.at);
   return out;
 }
 

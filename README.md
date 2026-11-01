@@ -903,7 +903,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
-- **A profile's reviewers and summarizer** (API 86): a profile's settings (*Settings → Profiles →
+- **A profile's reviewers and summarizer** (API 87): a profile's settings (*Settings → Profiles →
   Edit*) pick the *Reviewers* and *Summarizer* for its projects, and each project's *Review*
   settings use *The profile's* until you switch to *This project's own*, which starts from the
   profile's and overrides them. A project's own can still be one reviewer with the task's config,

@@ -772,7 +772,8 @@ async fn update_project(s: &Shared, ctx: &Ctx, p: &db::Project, args: &Value, re
     let mut body = Map::new();
     for k in AGENT_FIELDS.iter().chain(APPROVAL_FIELDS) {
         let v = &args[*k];
-        if v.is_null() {
+        // An explicit null summarizer or reviewers goes back to the profile's.
+        if v.is_null() && !(["reviewers", "summarizer"].contains(k) && args.get(*k).is_some()) {
             continue;
         }
         if ["name", "key", "repo_path"].contains(k) && v.as_str().is_none_or(|v| v.trim().is_empty()) {
@@ -2405,6 +2406,14 @@ mod tests {
             assert_eq!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().reviewers.len(), 2);
             assert!(call(&s, &me, "update_project", json!({"reviewers": [{"claude_config_id": "nope"}]})).await.is_err());
             call(&s, &me, "update_project", json!({"reviewers": []})).await.unwrap();
+            // A summarizer of its own, over the profile's, and back to the profile's with null.
+            let v = call(&s, &me, "update_project", json!({"summarizer": {"model": "sonnet"}})).await.unwrap();
+            assert_eq!(v["summarizer"]["model"], "sonnet");
+            let v = call(&s, &me, "update_project", json!({"summarizer": null})).await.unwrap();
+            assert_eq!(v["summarizer"], Value::Null);
+            assert_eq!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().summarizer, None);
+            call(&s, &me, "update_project", json!({"reviewers": [{"model": "opus"}]})).await.unwrap();
+            call(&s, &me, "update_project", json!({"reviewers": null})).await.unwrap();
             assert!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().reviewers.is_empty());
             assert_eq!(call(&s, &me, "update_project", json!({"group_name": "Kiwi"})).await.unwrap()["group_name"], "Kiwi");
             assert_eq!(call(&s, &me, "update_project", json!({"group_name": ""})).await.unwrap()["group_name"], Value::Null);
