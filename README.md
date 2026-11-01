@@ -275,6 +275,8 @@ A release newer than the running server is downloaded in the background into
 system `tar` (refusing entries outside its folder, and links), and smoke-tested with
 `huntaway --version`. It's then renamed to `app/<v>/` and reported as `release.staged`; progress
 and failures are in `release.download`, and a failed download is tried again on the next check.
+A staged version that a later check no longer offers (a prerelease once they're turned off, or a
+release that was taken down) is unstaged and deleted, even while a newer release downloads.
 `POST /api/admin/release/update {"version": "<v>"}` restarts onto it in place (agents keep running,
 as with a rebuild), downloading it first if it isn't staged yet, and
 `POST /api/admin/release/rollback` marks the running version bad and restarts onto the one before
@@ -403,12 +405,76 @@ The server's version is the release's too (`huntaway --version`).
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
-from the Dock or an app launcher. A release build isn't a checkout, so **Rebuild & restart** and
-**Update** don't apply to it: install a newer release to update it. The Mac build is ad-hoc signed,
+from the Dock or an app launcher. A release build isn't a checkout, so it has no **Rebuild &
+restart**: it updates from GitHub's releases instead (see below). The Mac build is ad-hoc signed,
 not signed with a Developer ID, so macOS blocks a downloaded copy until you run
 `xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
 run `npm run dist` in `app/`, which puts them in `app/release/`. To build an existing release
 again, use Actions → Release → Run workflow with its tag, which replaces its files.
+
+### Updating the desktop app
+
+A release build (the AppImage, the pacman package or the Mac app) updates itself from this
+repository's GitHub releases; nothing needs root. The server it starts checks for a newer release 30
+seconds after it starts and every six hours (or with **Check now** in Settings → Server), downloads
+the new server in the background, checks it against the sha256 GitHub lists for it, and unpacks it
+into `<data dir>/app/<version>/` (`~/.local/share/huntaway/app/` on Linux,
+`~/Library/Application Support/huntaway/app/` on a Mac). That's per user, so the pacman package's
+files in `/opt/Huntaway` stay as pacman installed them. Nothing changes until you click
+**v<version> · Update** in the sidebar, which shows the release notes and restarts the server onto
+the new version in place: running agents keep going, as with a rebuild. Downloading the next
+version is all a check does; quitting and starting the app again still runs the one you had.
+
+- **Which version runs.** The app starts the version you last updated to, if it's at least as new
+  as the app's own server, and otherwise its own. So installing a newer package (a `pacman -Syu`,
+  or a new AppImage) takes over from older downloads by itself. `IA_SERVER_BIN` or `serverBin` in
+  the desktop config still win over both.
+- **A version that won't start.** If an Update's version doesn't come up, or a downloaded version
+  exits before it's ready, the app marks it bad and starts the one before it, then its own server.
+  A bad version isn't offered again; the next release is.
+- **Roll back.** Settings → Server → **Roll back** marks the running version bad and restarts onto
+  the one before it, or onto the app's own server when there's none. A newer server may have
+  updated the database; the older one runs on it as it is (the changes so far only add to it).
+- **Prereleases** are offered only with **Include prereleases** on in Settings → Server. Turning it
+  off again withdraws a prerelease that was downloaded but not yet updated to.
+- **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
+  rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
+  each. Deleting `app/` goes back to the app's own server.
+- **The app itself.** Most releases change only the server and the UI. When one also changes the
+  app (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records), Settings → Server
+  says so and how to install it. The AppImage's **Update app** downloads the new AppImage beside the
+  running one, checks it, renames it over the old file and relaunches. The pacman package's
+  **Install** downloads and checks the `.pacman`, then runs `pkexec pacman -U --noconfirm` on it,
+  which asks for your password in polkit's dialog (without a polkit agent, use the `sudo pacman -U`
+  command it shows). On a Mac, download the new dmg from the release page.
+- **When it doesn't apply.** An app that finds a server already running on its port (your own
+  `huntaway serve`, say) or that uses a remote `serverUrl` leaves updates to that server, and never
+  offers releases. A blank `IA_RELEASE_UPDATES` in the app's environment turns release updates off.
+  An install from source (`scripts/install.sh`) updates from its checkout instead, as above.
+
+A host installed from the server tarball can update the same way with
+`huntaway serve --release-updates dire-kiwi/huntaway` (or `IA_RELEASE_UPDATES=dire-kiwi/huntaway`):
+the board it serves shows the same Update, Check now and Roll back, and versions go into
+`<data dir>/app/` as above. Set `IA_BUNDLED_SERVER` to the tarball's `huntaway` so that Roll back
+can go back to it. There's no desktop app to choose the version, so a supervisor that restarts the
+server (after a reboot, say) runs the binary it names, the tarball's, until you click Update again.
+To keep the version you updated to, have it start the current one instead, with a script like this:
+
+```sh
+#!/bin/sh
+# Start the release last updated to, or the installed one. It doesn't compare versions, so after
+# installing a newer tarball, delete <data dir>/app/.
+data=${IA_DATA_DIR:-$HOME/.local/share/huntaway}
+v=$(sed -n 's/^ *"current": *"\([^"]*\)".*/\1/p' "$data/app/state.json" 2>/dev/null)
+[ -n "$v" ] && [ -x "$data/app/$v/huntaway" ] && exec "$data/app/$v/huntaway" "$@"
+exec /opt/huntaway-server/huntaway "$@"
+```
+
+`scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
+checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
+background downloads, Update with an agent running, a broken version, Roll back, prereleases and
+the AppImage replacing itself (`--pacman` adds the Arch package, in a docker container). It needs
+`npm ci` in `app/` and about 2 GB in `~/.cache/huntaway-release-e2e`.
 
 ## Hosts
 
