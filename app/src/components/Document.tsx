@@ -3,6 +3,7 @@ import { ClipboardList, Code, Copy, Download, Eye, ListChecks, Loader2, Messages
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { api, hostSupports, type DocumentType, type Message, type Task, type TaskDocument, type TaskType } from "../api";
 import { frameDoc } from "../htmlFrame";
+import { diagramImage, renderMermaid, svgWidth, withPlanDiagrams } from "../mermaid";
 import { afterSend, answered, answersMessage, loadAnswers, readFields, resetFields, saveAnswers, withTouched, type PlanAnswers, type PlanField } from "../planAnswers";
 import { isWholePage, themedPlan } from "../planTheme";
 import planCss from "../planTheme.css?raw";
@@ -229,6 +230,14 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
     api
       .send(task.host_id, task.id, `The diagram doesn't render. Mermaid says:\n\n\`\`\`\n${error}\n\`\`\`\n\nPlease fix it.`)
       .catch((e) => setErr((e as Error).message));
+  const downloadDocument = async () => {
+    try {
+      const html = themed ? await withPlanDiagrams(page!) : (page ?? content!);
+      download(info.file, html, type === "diagram" ? "text/plain" : "text/html");
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -284,7 +293,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
             <IconButton title="Copy the source" onClick={() => copyText(content)}>
               <Copy size={13} />
             </IconButton>
-            <IconButton title={`Download ${info.file}`} onClick={() => download(info.file, page ?? content, type === "diagram" ? "text/plain" : "text/html")}>
+            <IconButton title={`Download ${info.file}`} onClick={downloadDocument}>
               <Download size={13} />
             </IconButton>
             {type === "diagram" && svg && (
@@ -404,6 +413,14 @@ function HtmlFrame({
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if (e.source !== frame.current?.contentWindow) return;
+      if (form.current && typeof e.data?.iaDiagram === "string" && typeof e.data.source === "string") {
+        const target = frame.current.contentWindow;
+        const id = e.data.iaDiagram;
+        void renderMermaid(e.data.source).then(
+          (svg) => target?.postMessage({ iaDiagram: id, image: diagramImage(svg), width: svgWidth(svg) }, "*"),
+          (error) => target?.postMessage({ iaDiagram: id, error: (error as Error).message }, "*"),
+        );
+      }
       if (typeof e.data?.iaScroll === "number") scroll.current = e.data.iaScroll;
       const fields = readFields(e.data);
       if (!fields || !form.current) return;
@@ -439,20 +456,7 @@ function HtmlFrame({
   );
 }
 
-type Mermaid = (typeof import("mermaid"))["default"];
-let mermaidLoaded: Promise<Mermaid> | null = null;
-// Mermaid is large; it loads with the first diagram.
-const loadMermaid = () =>
-  (mermaidLoaded ??= import("mermaid").then((m) => {
-    m.default.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" });
-    return m.default;
-  }));
-let renders = 0;
-
 const ZOOMS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
-
-/** The width a Mermaid SVG is drawn at, from its viewBox. */
-const svgWidth = (svg: string) => Number(/viewBox="[-\d.]+[ ,]+[-\d.]+[ ,]+([\d.]+)/.exec(svg)?.[1]) || null;
 
 /**
  * A Mermaid diagram, rendered here. While its source doesn't parse, the last one that did stays,
@@ -466,26 +470,17 @@ function MermaidView({ source, inset, onSvg, onFix }: { source: string; inset: n
   const [zoom, setZoom] = useState<number | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const width = svg ? svgWidth(svg) : null;
-  const src = useMemo(() => svg && `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, [svg]);
+  const src = useMemo(() => svg && diagramImage(svg), [svg]);
   useEffect(() => {
     let live = true;
-    loadMermaid()
-      .then(async (mermaid) => {
-        const id = `ia-mermaid-${++renders}`;
-        try {
-          const { svg } = await mermaid.render(id, source);
-          if (!live) return;
-          setSvg(svg);
-          setError(null);
-          onSvg(svg);
-        } catch (e) {
-          // What a failed render leaves behind.
-          document.getElementById(id)?.remove();
-          document.getElementById(`d${id}`)?.remove();
-          if (live) setError((e as Error)?.message ?? String(e));
-        }
+    renderMermaid(source)
+      .then((svg) => {
+        if (!live) return;
+        setSvg(svg);
+        setError(null);
+        onSvg(svg);
       })
-      .catch((e) => live && setError(`Couldn't load Mermaid: ${(e as Error).message}`));
+      .catch((e) => live && setError((e as Error)?.message ?? String(e)));
     return () => {
       live = false;
     };

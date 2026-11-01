@@ -8,7 +8,7 @@ approve tool calls, and review, stage and commit its changes (lazygit-style).
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
-server/broker/ huntaway-broker: public relay that hosts dial out to, to reach them from anywhere
+server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -213,9 +213,10 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `--broker` / `IA_BROKER` | | Broker to dial out to, to be reachable through it (see *Reaching a host from anywhere*) |
 | `--broker-token` / `IA_BROKER_TOKEN` | | Token for `--broker` (the broker's `BROKER_TOKEN`) |
 | `--broker-name` / `IA_BROKER_NAME` | host name, as a slug | Name to reach this host by on the broker |
+| `IA_CLOUDFLARED_BIN` (env only) | `cloudflared` | Connector binary for a broker with managed tunnels |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
-| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 83) |
+| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 85) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
@@ -249,7 +250,7 @@ alive across service restarts.
 
 When the source checkout has commits the running server doesn't (for example, a task branch
 merged to `master`), the sidebar shows **N new commits · Restart**. The same action is under
-Settings → Server. It runs `npm install`, `npm run build` and `cargo build --release` in the
+Settings → Server. It runs `npm install --no-save`, `npm run build` and `cargo build --release` in the
 checkout, streaming the log, then re-execs the new binary with the same arguments, so the PID
 stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
@@ -542,41 +543,74 @@ mode set on a thread or project, takes precedence.
 
 ### Reaching a host from anywhere
 
-Away from home, without Tailscale or a VPN, a host can be reached through a **broker**
-(`huntaway-broker`, in `server/broker`): a small public relay that keeps nothing but the list of
-hosts connected to it. The host dials out to it and keeps one websocket open, and the broker
-passes each request it gets down that websocket. The host answers it from its own server, as if
-the client were on the LAN, so no inbound port is needed:
+Away from home, without Tailscale or a VPN, a host can use a **broker** (`huntaway-broker`, in
+`server/broker`) to set up public access. There are two transports:
+
+- **Managed tunnels**: the broker provisions a Cloudflare Tunnel and DNS hostname for each host.
+  The host runs `cloudflared`, and the broker handles registration and endpoint discovery. Normal
+  traffic follows `browser or hub ↔ Cloudflare Tunnel ↔ host`; it bypasses `huntaway-broker`.
+  This is the same split as [T3 Connect](https://github.com/pingdotgg/t3code/blob/main/docs/internals/t3-connect.md).
+- **Legacy relay** (a broker without tunnel configuration): the host keeps a websocket open to the
+  broker, which carries every HTTP request, response and websocket message for its clients:
+  `browser or hub ↔ broker ↔ host`. There is no handoff to a direct connection.
+
+Connecting to a host's LAN or Tailscale/VPN URL bypasses either public transport. Enabling
+`--broker` doesn't route the host's other network traffic through it: agents still call model
+providers and git remotes themselves.
+
+A **hub** combines linked hosts into one board and forwards requests to them; the **broker** makes
+a host reachable from outside its network. A managed hub's board reaches a linked host via
+`browser ↔ Cloudflare Tunnel ↔ hub ↔ linked host`. The hub uses the link configured in Settings →
+Hosts for the last hop, which may be direct, another tunnel or a legacy relay.
+
+[Configure the broker](server/broker/README.md), then connect a host:
 
 ```sh
 huntaway serve --broker https://broker.example.com --broker-token <broker token>   # or IA_BROKER, IA_BROKER_TOKEN
 ```
 
-Then open `https://broker.example.com/?token=<host token>` from anywhere: the broker serves that
-host's board, API and websockets. Its token (`huntaway token`) still guards the API, so the broker
-signs no one in, and `/api/open-token` (`--open-token`) isn't served through it. Each host is known
-on the broker by a name (`--broker-name`, by default its own name as lowercase letters, digits and
-hyphens), and a request reaches the host:
+For managed tunnels, install `cloudflared` on each host first (`IA_CLOUDFLARED_BIN` overrides its
+path). The broker needs Cloudflare account, DNS zone and API-token configuration; the host receives
+only its tunnel connector token. It starts the connector automatically and restarts it if it exits.
+The connector keeps running across broker disconnects, so existing sessions and direct use of the
+tunnel URL keep working during a broker outage. New discovery needs the broker. Older hosts must
+be updated to use managed tunnels; the broker refuses them rather than silently relaying traffic.
 
-- at `/_broker/h/<name>/…`, for anything that takes a base URL: a hub links a host through the
-  broker with `--hub https://broker.example.com/_broker/h/<hub's name>` (the host dials in to a hub
-  that is behind the broker), or **Add host** with the URL `https://broker.example.com/_broker/h/<name>`;
-- otherwise, named by an `X-Huntaway-Host` header, else by the cookie that opening
-  `/_broker/use/<name>` sets (`/_broker/use/<name>?token=…` signs the board in too), else the
-  broker's default host (`--default-host`), else the only host connected.
+For the basic managed setup, use the DNS zone apex: `--tunnel-domain example.com` gives `desktop.example.com`.
+In a full Cloudflare zone, [Universal SSL covers the apex and first-level subdomains](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/#hostname-coverage).
+Using `hosts.example.com` instead gives `desktop.hosts.example.com`, requiring separate edge certificate coverage,
+such as Advanced Certificate Manager with Total TLS or an appropriate custom certificate. Configure that coverage
+before using nested domains; the broker doesn't provision certificates.
 
-A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
-whose board links the others) on the broker, and its board shows every host it links. Running the
-broker is in `server/broker/README.md`.
+Open `https://broker.example.com/?token=<host token>` from anywhere. With managed tunnels, the broker
+redirects the browser to the host's HTTPS hostname, preserving the path and query. With a legacy
+relay it serves the board through the websocket. The host's token (`huntaway token`) still guards
+its API, and `/api/open-token` (`--open-token`) is blocked on both public transports.
 
-The broker's token lets a host connect under any name that's free, and the browsers and hubs that
-pick that name then send it their requests, host token included. So keep it as secret as a host
-token, and give it only to your own hosts. A name stays with the host that took it: each host keeps
-a secret key in its data dir (`broker_key`), and the broker refuses the name to any other host while
-that one is connected and for an hour after it goes. A second host with the same name (two machines
-with the same host name, say) is refused with a message saying so, and keeps trying until the name
-is free: give it its own `--broker-name`. The broker keeps names in memory only, so after it
-restarts, the first host to connect under a name has it.
+Each host has a broker name (`--broker-name`, by default its host name as lowercase letters, digits
+and hyphens). Select it by:
+
+- `/_broker/h/<name>/…`, for anything taking a base URL: **Add host** with
+  `https://broker.example.com/_broker/h/<name>`, or dial into a hub with
+  `--hub https://broker.example.com/_broker/h/<hub's name>`. Current hosts discover the tunnel endpoint
+  before sending credentials or opening websockets, and discover it again on reconnect. A legacy
+  broker keeps working with the same URLs.
+- Otherwise, an `X-Huntaway-Host` header, the cookie set by opening `/_broker/use/<name>`, the broker's
+  default host (`--default-host`), or the only host connected, in that order.
+
+Managed hosts each have their own site and browser token. For a legacy relay, a browser keeps one
+token per site: put the hub (whose board links the others) on the broker and use its board to reach
+the rest. After moving to tunnels, sign in at the new hostname; browser credentials stored on the
+broker site don't transfer to it. Use the tunnel's URL for webhook deliveries and API clients that
+don't perform discovery: many webhook senders don't follow redirects.
+
+Keep the broker token as secret as a host token and give it only to your own hosts: it authorizes
+a host to take any free name, and clients selecting that name trust where the broker sends them.
+Each host keeps a secret `broker_key` in its data dir. A name stays with that host while connected
+and for an hour after it goes; a second host with the same name is refused and keeps trying. Give
+it its own `--broker-name`. `--state` preserves these reservations across broker restarts and is
+required with managed tunnels. Without it, a legacy broker keeps reservations only in memory.
+Tunnel allocations and DNS records are retained across restarts; see the broker README for cleanup.
 
 ### Codex agents
 
@@ -636,7 +670,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   default model, and `!<model>.<config>` a model that more than one config has (`!opus.work`).
   Code tasks made this way each get their own worktree and branch. They share a `fanout_id`, so
   their cards show which model each ran with, and each one's Details list the others with their
-  state and cost, to compare them.
+  state and cost.
+  **Compare** them (API 83) from a card's model badge or right-click menu (*Compare all N from its
+  prompt*), or *Compare all N* in a task's Details. It opens over the board: each one's model,
+  status, cost, agent time (all of its runs together), review (the verdict and each reviewer's
+  issues) and diff against its base branch, with a table of the files any of them changed (click
+  one's +/− to go to its diff). *Side by side* puts them in columns; *One at a time* shows one with
+  its summary beside it, switched with its tabs, ← → (or `[` `]`) and 1–9, in unified or split
+  diffs. A phone shows them one at a time. A task whose worktree is gone shows the commits on its
+  branch. **Pick this one** keeps that task as it is and completes the others as *Not done*: their
+  agents (and reviewers) are stopped and their worktrees removed. Its dialog lists what each has
+  uncommitted, and asks whether to discard that (unticked, those worktrees are kept with the
+  changes in), to delete their branches (and the pushed copies; unmerged commits on them are lost)
+  and to close their pull requests (with gh, as the task's GitHub account). A worktree whose HEAD
+  has commits on no branch (a detached HEAD's) is always kept, as they'd be lost with it. A branch
+  is deleted after its pushed copy, so it's kept while its worktree is, while a pull request kept
+  open has it, or when its pushed copy can't be deleted. Anything that couldn't be done is listed
+  after, and picking again cleans up what was kept the first time. `GET /tasks/{id}/fanout` gives each one's agent time, uncommitted
+  files and branch, and `POST /tasks/{id}/fanout/pick` (`delete_branches`, `close_prs`,
+  `discard_uncommitted`) picks it.
 - **Agents across profiles** (API 23): each profile has its own board, and agents' board tools
   see their own profile's. A profile can let other profiles' agents use its board too: edit it
   under Settings → Profiles and tick them under *Agents from other profiles* (or *Every
@@ -676,7 +728,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
   limit resets and notes the reset on the task. Usage at 100% alone doesn't count, since a
-  plan with extra usage carries on past it. Until API 81 such a run just failed, and its task
+  plan with extra usage carries on past it, and nor does a `rejected` event on extra usage
+  (`isUsingOverage`, or an `overageStatus` of `allowed`), whose turns go on. Until API 81 such a run just failed, and its task
   needed attention with "Run failed: You've hit your 5-hour limit · resets …". Now the task
   needs attention with that message and offers *Carry on then*: it waits in *In progress*
   (with an hourglass and the countdown on its card), and when the limit resets its agent is
@@ -692,6 +745,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   A waiting task keeps waiting, whatever these settings say: a message sent to it (or *Start*)
   joins its queue. Moved to another config before its agent has started, it stops waiting for
   the old config's reset and starts on the new one (or waits for that one's, if it's out too).
+  A merge that runs out doesn't wait: waiting in *In progress* would give up its place in the
+  merge queue to the next task's merge. It needs attention, keeping its place, and you message
+  its agent once the limit has reset.
   Whether a config is out is kept in memory by the host the config is on, from its own runs,
   so a restart forgets it until a run is refused again; a waiting task keeps its reset time
   in the database and carries on after a restart. Codex doesn't say which limit refused it,
@@ -952,6 +1008,17 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
+- **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
+  to read before merging: what changed and why, the main changes, and how to try it. It reads the
+  pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
+  own (a review thread of type `summary`), and its last message is the summary, kept in the task's
+  `summary` with the commit it describes. While the task waits in *In review* with that summary
+  (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
+  writes one at any time. A summary in progress stops when the task's agent works again, and the
+  next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
+  config, model and effort; the task's config by default), in the project's *Review* settings
+  (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  summarises on demand.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when
   it starts, after the task's title and description (and before any message it was started
@@ -1539,7 +1606,9 @@ reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the 
   tunnel whose ingress rule matches `^/api/hooks/`, Tailscale Funnel on that path, or a reverse
   proxy on a public machine with a `location /api/hooks/` block. The rest of the API still needs
   the board's token, but there's no need to publish it.
-- **The connection broker** (`huntaway-broker`, HA-2), once the host dials out to it: deliveries
+- **Managed tunnels**: deliver to the host’s tunnel hostname, `https://<name>.<tunnel domain>/api/hooks/<id>/<token>`.
+  Use that address directly: webhook senders may not follow the broker’s redirect.
+- **The legacy connection broker relay** (`huntaway-broker`, HA-2), once the host dials out to it: deliveries
   go to `https://<broker>/_broker/h/<host name>/api/hooks/<id>/<token>` (or without
   `/_broker/h/<host name>` for its default host).
 - **A hub** doesn't pass webhooks on to its linked hosts: its links carry the board's API calls,

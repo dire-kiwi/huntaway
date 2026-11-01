@@ -70,13 +70,9 @@ flowchart TD
   </ia-card>
 </ia-cards>
 <ia-diagram>
-  <svg viewBox="0 0 520 90" width="520">
-    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="arrow" d="M0 0L10 5L0 10z"/></marker></defs>
-    <rect class="box" x="4" y="20" width="140" height="50" rx="8"/><text x="74" y="50" text-anchor="middle">System setting</text>
-    <rect class="box" x="190" y="20" width="140" height="50" rx="8"/><text x="260" y="50" text-anchor="middle">Header toggle</text>
-    <rect class="box accent" x="376" y="20" width="140" height="50" rx="8"/><text x="446" y="50" text-anchor="middle">data-theme</text>
-    <path class="edge" d="M144 45H186" marker-end="url(#a)"/><path class="edge accent" d="M330 45H372" marker-end="url(#a)"/>
-  </svg>
+<pre>flowchart LR
+  system["System setting"] --> toggle["Header toggle"] --> theme["data-theme"]
+</pre>
 </ia-diagram>
 
 <h2>Steps</h2>

@@ -450,6 +450,7 @@ fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto
     if kind == "prompt" && task.kind == "task" {
         // The agent is changing the work under review; it's reviewed again when it finishes.
         crate::review::supersede(state, &task);
+        crate::summary::supersede(state, &task);
     }
     Ok(task)
 }
@@ -1068,7 +1069,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             let work = [path_str(&crate::util::expand_tilde(&cwd))].into_iter().chain(git_dir.clone()).collect();
             filesystem = review_filesystem(cache_dirs().into_iter().chain(ignored_dirs(&cwd).await).collect(), work);
             instructions.push_str(
-                " Your sandbox can't change the work: its files are read-only. You can write to the temp directories (/tmp), \
+                "\n\nYour sandbox can't change the work: its files are read-only. You can write to the temp directories (/tmp), \
                  package caches and the working directory's git-ignored directories, such as build output, so you can build it \
                  and run its tests to check what you find. If a build needs to write anywhere else in the working directory, \
                  point it at /tmp instead (e.g. `CARGO_TARGET_DIR`).",
@@ -1339,7 +1340,7 @@ struct Told<'a> {
 fn instructions(mut s: String, task: &Task, to: &Told) -> String {
     if to.codex && to.plan {
         s.push_str(
-            " You are in plan mode: investigate and propose a plan, but don't change any files. The user will \
+            "\n\nYou are in plan mode: investigate and propose a plan, but don't change any files. The user will \
              switch modes once they approve it.",
         );
     }
@@ -1348,7 +1349,7 @@ fn instructions(mut s: String, task: &Task, to: &Told) -> String {
         // codex_apps server's github tools) may not reach the user's repositories. Codex has
         // no hook to turn gh in the shell away, so it's only told.
         s.push_str(&format!(
-            " For GitHub, use the `{0}` MCP server's tools (e.g. `{0}.pr_view`, `{0}.pr_diff`), which run gh with \
+            "\n\nFor GitHub, use the `{0}` MCP server's tools (e.g. `{0}.pr_view`, `{0}.pr_diff`), which run gh with \
              the user's login{1}: don't run `gh` in your shell, which may not reach GitHub{2}, and the codex_apps \
              GitHub tools may not have access to this repository.",
             crate::gh_mcp::SERVER_NAME,
@@ -1456,7 +1457,7 @@ pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> A
 /// `gh_hook_settings`).
 fn gh_note(account: Option<&str>) -> String {
     format!(
-        " For GitHub (pull requests, issues, CI runs, the API), use the `{0}` MCP server's tools (mcp__{0}__pr_view, \
+        "\n\nFor GitHub (pull requests, issues, CI runs, the API), use the `{0}` MCP server's tools (mcp__{0}__pr_view, \
          pr_create, pr_checks and so on; mcp__{0}__gh runs any other gh command) rather than the gh CLI in Bash, which is \
          blocked here. They run gh outside the sandbox{1}.",
         crate::gh_mcp::SERVER_NAME,
@@ -1716,7 +1717,7 @@ fn is_slash_command(text: &str) -> bool {
 fn profiles_note(profiles: &[db::Profile], own: &db::Profile) -> String {
     let (shared, closed): (Vec<&db::Profile>, Vec<&db::Profile>) = profiles.iter().filter(|p| p.id != own.id).partition(|p| p.grants(&own.name));
     let names = |ps: &[&db::Profile]| ps.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ");
-    let mut s = format!(" Your profile on the board is \"{}\".", own.name);
+    let mut s = format!("\n\nYour profile on the board is \"{}\".", own.name);
     if !shared.is_empty() {
         s.push_str(&format!(" Your board tools also reach these profiles' boards: {}.", names(&shared)));
     }
@@ -1730,7 +1731,18 @@ fn profiles_note(profiles: &[db::Profile], own: &db::Profile) -> String {
     s
 }
 
-/// `group`: for a group task, its group's projects. `documents`: the files its labels ask it to
+/// How an agent asks the user for input, then how it finishes: with a summary of `done`.
+fn ask_and_finish(done: &str) -> String {
+    format!(
+        "If you are blocked or need a decision or information from the user, call `request_user_input` with your question \
+         (and its `options`, when the choices are known), then end your turn. The task is flagged \"Needs attention\", and \
+         the user's reply resumes this conversation.\n\n\
+         When you finish, end with a concise summary of {done}; the task then moves to \"In review\"."
+    )
+}
+
+/// What a task's agent is told on top of its agent's own system prompt, in paragraphs separated by blank lines (`instructions`
+/// adds more). `group`: for a group task, its group's projects. `documents`: the files its labels ask it to
 /// write, by label (see documents.rs). `github`: where a task with its own branch opens
 /// its pull request, if its repository is on GitHub.
 fn system_prompt(
@@ -1745,13 +1757,18 @@ fn system_prompt(
     let tools = format!(
         "You have access to the `{MCP_SERVER_NAME}` MCP tools for the Huntaway board \
          (list_projects, list_tasks, get_task, get_task_field, create_task, update_task, send_to_task, request_user_input, wait). \
-         They also reach other profiles' boards that let your agents in: list_projects shows each project's profile. \
+         They also reach other profiles' boards that let your agents in: list_projects shows each project's profile.\n\n\
          When you have nothing to do until something happens (other tasks, CI, reviews, a deploy), call `wait` rather than \
-         sleeping or polling: the board then shows you as waiting rather than working. For CI or reviews on a pull \
-         request, give it the `pull_request` (its number or URL): it ends when the checks fail or pass, someone \
-         comments or reviews, the branch conflicts with its base, or it's merged or closed, and says what happened. For \
-         a deploy, give it a `command` that exits once it's done."
+         sleeping or polling: the board then shows you as waiting rather than working.\n\
+         - For CI or reviews on a pull request, give it the `pull_request` (its number or URL). It ends when the checks fail \
+         or pass, someone comments or reviews, the branch conflicts with its base, or it's merged or closed, and says what \
+         happened.\n\
+         - For a deploy, give it a `command` that exits once it's done."
     );
+    // How a group task or a subproject runs its tasks.
+    let coordinate = "- Follow them with `list_tasks` and `get_task`, and guide their agents with `send_to_task`.\n\
+         - While they work, wait for them with `wait` (listing them in `tasks`) rather than ending your turn.\n\
+         - Run tasks that build on each other one after the other, and independent ones in parallel.";
     let mut s = match (task.kind.as_str(), project) {
         ("task", p) if task.is_scratch() => {
             // One from a scratch chat works in the chat's folder, which may be shared.
@@ -1775,7 +1792,7 @@ fn system_prompt(
                     );
                     if let Some(sp) = sp {
                         s.push_str(&format!(
-                            " It's part of the subproject {key}-{} (\"{}\"), whose branch `{}` collects the work of its tasks{}. \
+                            "\n\nIt's part of the subproject {key}-{} (\"{}\"), whose branch `{}` collects the work of its tasks{}. \
                              Tasks you create are added to the subproject.",
                             sp.number,
                             sp.title,
@@ -1792,22 +1809,25 @@ fn system_prompt(
             };
             format!(
                 "You are an agent working on scratch task {key}-{} (\"{}\", id {}) on the Huntaway board, a kanban board where \
-                 each task is worked by its own Claude agent, grouped into projects. {place} Your working directory is {dir}. {tools} \
-                 Use them to look across projects, create and update tasks, and start agents on \
-                 tasks (create_task with start=true, or send_to_task) when the user asks for that. Tasks you create are \
-                 recorded as this task's. If you are blocked or need a decision or information from the user, call \
-                 `request_user_input` with your question (and its `options`, when the choices are known) and then end your \
-                 turn — the task is flagged \"Needs attention\" \
-                 and the user's reply resumes this conversation. When you finish, end with a concise summary of what you \
-                 did; the task then moves to \"In review\".",
-                task.number, task.title, task.id
+                 each task is worked by its own Claude agent, grouped into projects. Your working directory is {dir}.\n\n\
+                 {place}\n\n\
+                 {tools}\n\n\
+                 Use the board tools to look across projects, create and update tasks, and start agents on tasks (create_task \
+                 with start=true, or send_to_task) when the user asks for that. Tasks you create are recorded as this task's.\n\n\
+                 {}",
+                task.number,
+                task.title,
+                task.id,
+                ask_and_finish("what you did")
             )
         }
         ("review", p) => {
             let key = p.map(|p| p.key.as_str()).unwrap_or("T");
             let (number, title) = parent.map(|t| (t.number, t.title.as_str())).unwrap_or((0, "?"));
+            let summary = crate::summary::is_summary(task);
+            let role = if summary { "You summarise the changes made" } else { "You are the code reviewer" };
             let mut s = format!(
-                "You are the code reviewer for task {key}-{number} (\"{title}\") on the Huntaway board, a kanban \
+                "{role} for task {key}-{number} (\"{title}\") on the Huntaway board, a kanban \
                  board where each task is worked by its own Claude agent."
             );
             if let Some(t) = parent.filter(|t| t.worktree_state == "ready") {
@@ -1817,29 +1837,28 @@ fn system_prompt(
                     t.branch.as_ref().map(|b| format!(" on branch `{b}`")).unwrap_or_default()
                 ));
             }
-            s.push_str(
-                " Review only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the \
+            s.push_str(if summary {
+                "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the \
+                 board. Don't call `request_user_input` or `submit_review`. Your last message is the summary of the changes \
+                 the user reads before merging them."
+            } else {
+                "\n\nReview only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the \
                  board. Don't call `request_user_input`. When the review is complete, call `submit_review` exactly once \
-                 with your verdict, then end your turn with a short summary of the review.",
-            );
+                 with your verdict, then end your turn with a short summary of the review."
+            });
             s
         }
         ("task", p) if crate::documents::documents_only(task) => {
             let key = key_prefix(task, p);
-            let mut s = format!(
+            format!(
                 "You are an agent working on task {key}-{} (\"{}\", id {}) on the Huntaway board, a kanban board where each \
-                 task is worked by its own Claude agent.",
-                task.number, task.title, task.id
-            );
-            s.push_str(&crate::documents::system_prompt(task, documents, p, group));
-            s.push_str(&format!(
-                " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
-                 flagged \"Needs attention\" and the user's reply \
-                 resumes this conversation. When you finish, end with a concise summary of what you made or changed; the \
-                 task then moves to \"In review\"."
-            ));
-            s
+                 task is worked by its own Claude agent.{}\n\n{tools}\n\n{}",
+                task.number,
+                task.title,
+                task.id,
+                crate::documents::system_prompt(task, documents, p, group),
+                ask_and_finish("what you made or changed")
+            )
         }
         ("task", None) if task.group_name.is_some() => {
             let name = task.group_name.as_deref().unwrap_or_default();
@@ -1848,25 +1867,26 @@ fn system_prompt(
                  projects to use."
                     .to_string()
             } else {
-                let list: Vec<String> = group.iter().map(|p| format!("{} (key {}, id {}, repository {})", p.name, p.key, p.id, p.repo_path)).collect();
-                format!(" The group's projects: {}. You can read their repositories.", list.join("; "))
+                let list: Vec<String> = group.iter().map(|p| format!("- {} (key {}, id {}, repository {})", p.name, p.key, p.id, p.repo_path)).collect();
+                format!(" The group's projects, whose repositories you can read:\n{}", list.join("\n"))
             };
             format!(
                 "You are the planning agent for task {}-{} (\"{}\", id {}) on the Huntaway board, a kanban board where each \
-                 task is worked by its own Claude agent. This is a group task: it isn't in a project but plans work across \
-                 the projects of the group \"{name}\".{projects} Your working directory is a scratch folder for notes. \
-                 {tools} Your job is to plan and coordinate, not to change the repositories yourself: break the work into \
-                 tasks in the right projects with `create_task` (always give its project_id; start=true launches an agent \
-                 on one, and depends_on orders tasks within a project), follow them with `list_tasks` and `get_task`, and \
-                 guide their agents with `send_to_task`. While they work, wait for them with `wait` (listing them in `tasks`) \
-                 rather than ending your turn. Tasks you create are recorded as this task's: the board shows how \
-                 many are done, and `get_task` on this task lists them. Run tasks that build on each other one after the other, and independent ones in \
-                 parallel. If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
-                 flagged \"Needs attention\" and the user's reply \
-                 resumes this conversation. When you finish, end with a concise summary of the tasks you created and where \
-                 they stand; the task then moves to \"In review\".",
-                GROUP_TASK_KEY, task.number, task.title, task.id
+                 task is worked by its own Claude agent. Your working directory is a scratch folder for notes.\n\n\
+                 This is a group task: it isn't in a project but plans work across the projects of the group \"{name}\".{projects}\n\n\
+                 {tools}\n\n\
+                 Your job is to plan and coordinate, not to change the repositories yourself:\n\
+                 - Break the work into tasks in the right projects with `create_task` (always give its project_id; start=true \
+                 launches an agent on one, and depends_on orders tasks within a project).\n\
+                 {coordinate}\n\n\
+                 Tasks you create are recorded as this task's: the board shows how many are done, and `get_task` on this task \
+                 lists them.\n\n\
+                 {}",
+                GROUP_TASK_KEY,
+                task.number,
+                task.title,
+                task.id,
+                ask_and_finish("the tasks you created and where they stand")
             )
         }
         (_, p) => {
@@ -1880,7 +1900,7 @@ fn system_prompt(
             }
             if let (Some(wt), Some(br)) = (&task.worktree_path, &task.branch) {
                 s.push_str(&format!(
-                    " You are in a dedicated git worktree at {wt} on branch `{br}`{}. Make all changes here. \
+                    "\n\nYou are in a dedicated git worktree at {wt} on branch `{br}`{}. Make all changes here. \
                      When you complete a meaningful unit of work, commit it to this branch with a clear message. \
                      Do not {} unless asked.",
                     task.base_branch.as_ref().map(|b| format!(" (branched from `{b}`)")).unwrap_or_default(),
@@ -1892,21 +1912,21 @@ fn system_prompt(
                 let br = task.branch.as_deref().unwrap_or("this task's branch");
                 let base = task.base_branch.as_deref().or(p.and_then(|p| p.base_branch.as_deref())).unwrap_or("the base branch");
                 s.push_str(&format!(
-                    " This task is a subproject: it has its own board of tasks, each worked by its own agent in a worktree \
+                    "\n\nThis task is a subproject: it has its own board of tasks, each worked by its own agent in a worktree \
                      branched from `{br}`, and their work is merged back into `{br}` (through pull requests that target it, \
                      if the project uses them). The subproject as a whole is then merged into `{base}`, so its tasks add up \
-                     to a series of small, reviewable changes instead of one big one. Your job is mostly to plan and \
-                     coordinate: break the work into small tasks with `create_task` (they're added to this subproject; \
-                     start=true launches an agent on one), follow them with `list_tasks` and `get_task`, and guide their \
-                     agents with `send_to_task`. While they work, wait for them with `wait` (listing them in `tasks`) \
-                     rather than ending your turn. Run tasks that build on each other one after the other, and independent \
-                     ones in parallel. Their merges land on `{br}` on the remote, so pull before working in your worktree."
+                     to a series of small, reviewable changes instead of one big one. Their merges land on `{br}` on the \
+                     remote, so pull before working in your worktree.\n\n\
+                     Your job is mostly to plan and coordinate:\n\
+                     - Break the work into small tasks with `create_task` (they're added to this subproject; start=true \
+                     launches an agent on one).\n\
+                     {coordinate}"
                 ));
             }
             if let Some(sp) = parent.filter(|t| t.subproject) {
                 let sp_branch = task.base_branch.as_deref().or(sp.branch.as_deref()).unwrap_or("the subproject's branch");
                 s.push_str(&format!(
-                    " This task is part of the subproject {key}-{} (\"{}\"), whose branch `{sp_branch}` collects the work of \
+                    "\n\nThis task is part of the subproject {key}-{} (\"{}\"), whose branch `{sp_branch}` collects the work of \
                      its tasks: your branch starts from `{sp_branch}` and is merged back into it, not into the project's main \
                      branch. If you open a pull request, target `{sp_branch}` (e.g. {}), \
                      pushing `{sp_branch}` first if the remote doesn't have it yet. If you merge without a pull request, \
@@ -1931,22 +1951,22 @@ fn system_prompt(
                     )
                 };
                 s.push_str(&format!(
-                    " The repository is on GitHub ({repo}), so before you finish, open a pull request for this task's work \
-                     unless the project's own instructions (e.g. in CLAUDE.md) say otherwise: commit everything, push the \
-                     branch (`git push -u {} {br}`{}) and open the pull request{} in {repo} ({open}), with a title and a \
-                     body that say what changed and how to try it. If the branch has a pull request already, push to it \
-                     instead. Put the pull request's link in your summary. A task with no changes on its branch doesn't need one.",
+                    "\n\nThe repository is on GitHub ({repo}), so before you finish, open a pull request for this task's work \
+                     unless the project's own instructions (e.g. in CLAUDE.md) say otherwise:\n\
+                     1. Commit everything.\n\
+                     2. Push the branch: `git push -u {} {br}`{}.\n\
+                     3. Open the pull request{} in {repo} ({open}), with a title and a body that say what changed and how to \
+                     try it.\n\
+                     If the branch has a pull request already, push to it instead. Put the pull request's link in your summary. \
+                     A task with no changes on its branch doesn't need one.",
                     gh.remote,
                     if gh_tools { ", or the gh tools' git_push if that fails" } else { "" },
                     base.map(|b| format!(" into `{b}`")).unwrap_or_default(),
                 ));
             }
             s.push_str(&format!(
-                " {tools} If you are blocked or need a decision or information from the user, call `request_user_input` \
-                 with your question (and its `options`, when the choices are known) and then end your turn — the task is \
-                 flagged \"Needs attention\" and the user's reply \
-                 resumes this conversation. When you finish, end with a concise summary of what you did; the task then \
-                 moves to \"In review\". You may create follow-up tasks with `create_task`."
+                "\n\n{tools}\n\n{} You may create follow-up tasks with `create_task`.",
+                ask_and_finish("what you did")
             ));
             s
         }
@@ -2240,7 +2260,7 @@ fn end_run(state: &Shared, task_id: &str, run_id: &str, fields: &[(&str, Value)]
     state.update_task_if(task_id, fields, |c| Ok(!db::later_run(c, task_id, run_id)?))
 }
 
-fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
+pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     let Ok(Some(run)) = db::get_run(&state.db(), run_id) else { return forget(state, run_id) };
     let task_id = run.task_id.as_str();
     let queued = {
@@ -2279,7 +2299,9 @@ fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     crate::documents::turn_ended(state, task_id);
     state.emit(json!({"type": "delta_reset", "task_id": task_id}));
     let Ok(Some(task)) = db::get_task(&state.db(), task_id) else { return };
-    if run.kind == "review" {
+    if run.kind == "review" && crate::summary::is_summary(&task) {
+        crate::summary::finished(state, &task, run_id, &outcome, run.attention.as_deref());
+    } else if run.kind == "review" {
         crate::review::finished(state, &task, run_id, &outcome, run.attention.as_deref());
     }
     if run.kind == "compact" {
@@ -2374,8 +2396,7 @@ mod tests {
 
     #[test]
     fn caches_are_writable_before_their_first_use() {
-        let home = std::env::temp_dir().join(format!("ia-home-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&home).unwrap();
+        let home = crate::testing::temp_dir();
         // A bare home directory: no `~/.cargo` (a system Cargo) or `~/.local/share` yet.
         let found = cache_dirs_in(&home, |_| None);
         assert_eq!(found, [".cache", ".npm", ".cargo/registry", ".cargo/git", ".local/share/pnpm"].map(|d| path_str(&home.join(d))));
@@ -2396,7 +2417,7 @@ mod tests {
     #[test]
     fn many_long_ignored_directories_dont_block_the_launch() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-ignored-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             // More than check-ignore's input and output pipes hold together (64 KiB each): 200
             // paths of ~730 bytes.
             let long = "x".repeat(240);
@@ -2440,7 +2461,7 @@ mod tests {
     #[test]
     fn a_reviewer_may_write_the_directories_git_ignores_whole() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-ignored-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             for d in ["target/debug", "app/node_modules/x", "build", ".claude", "src"] {
                 std::fs::create_dir_all(dir.join(d)).unwrap();
             }
@@ -2456,7 +2477,7 @@ mod tests {
             found.sort();
             // Not `build`, which holds a tracked file, nor the agents' settings.
             assert_eq!(found, vec![path_str(&dir.join("app/node_modules")), path_str(&dir.join("target"))]);
-            assert_eq!(ignored_dirs(&path_str(&std::env::temp_dir().join("ia-no-such-dir"))).await, Vec::<String>::new());
+            assert_eq!(ignored_dirs(&path_str(&crate::testing::temp_dir().join("no-such-dir"))).await, Vec::<String>::new());
             std::fs::remove_dir_all(&dir).unwrap();
         })
     }
@@ -2490,8 +2511,9 @@ mod tests {
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
         let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] };
-        let dir = std::env::temp_dir().join(format!("ia-runner-{}", crate::util::new_id()));
-        let state: Shared = crate::state::AppState::new(c, dir, id, meta);
+        let dir = crate::testing::TempDir::new();
+        let state: Shared = crate::state::AppState::new(c, dir.to_path_buf(), id, meta);
+        let _ = state.test_dir.set(dir);
         runs::TEST_CAN_RUN.set(true);
 
         // B's agent is running; it gets a dependency on A and a message is queued meanwhile.
@@ -3149,6 +3171,13 @@ mod tests {
         assert!(text.starts_with("# X-1: Fix it\n\nIt's broken.\n\nThis task is for:\n- Asana task: Fix signup (https://app.asana.com/0/1/12)\n\n---\n"), "{text}");
     }
 
+    /// A system prompt is in paragraphs, with a blank line between them: none is empty, and no line starts or ends
+    /// with a space (as a sentence joined on to the one before would).
+    fn assert_paragraphs(text: &str) {
+        assert!(text.contains("\n\n") && !text.contains("\n\n\n"), "{text}");
+        assert!(text.lines().all(|l| l.trim() == l) && text.split("\n\n").all(|p| !p.trim().is_empty()), "{text:?}");
+    }
+
     #[test]
     fn a_group_task_is_told_its_groups_projects() {
         let c = db::open(std::path::Path::new(":memory:")).unwrap();
@@ -3161,6 +3190,7 @@ mod tests {
         let group = db::group_projects(&c, &p.id, "Shop").unwrap();
         let text = system_prompt(&task, None, None, &group, &[], None, true);
         assert!(text.contains("task G-1 (\"Plan it\"") && text.contains("Web (key WEB, id pr, repository /src/web)"), "{text}");
+        assert_paragraphs(&text);
         assert!(start_prompt(&task, None, "").starts_with("# G-1: Plan it\n"));
     }
 
@@ -3168,8 +3198,7 @@ mod tests {
     fn previews_what_a_new_thread_in_a_project_is_told() {
         crate::testing::run(async || {
             let state = crate::testing::state();
-            let repo = std::env::temp_dir().join(format!("ia-preview-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
             git(&["init", "-q", "-b", "main"]);
             git(&["remote", "add", "origin", "git@github.com:o/web.git"]);
@@ -3182,7 +3211,13 @@ mod tests {
                 };
                 db::insert_project(&c, np).unwrap()
             };
-            let preview = async |q: Value| preview(&state, &project, &serde_json::from_value(q).unwrap()).await;
+            let preview = async |q: Value| {
+                let p = preview(&state, &project, &serde_json::from_value(q).unwrap()).await;
+                if let Ok((text, ..)) = &p {
+                    assert_paragraphs(text);
+                }
+                p
+            };
 
             // A task as the project's new ones are, numbered as its next.
             let (text, codex, mode) = preview(json!({})).await.unwrap();
@@ -3302,6 +3337,7 @@ mod tests {
         let text = system_prompt(&task, Some(&project), None, &[], &docs, None, true);
         assert!(text.contains("task WEB-1 (\"Plan search\"") && text.contains("a plan (HTML) to /data/documents/t/plan.html"), "{text}");
         assert!(text.contains("Rather than changing code") && text.contains("break it into tasks"), "{text}");
+        assert_paragraphs(&text);
         assert!(text.contains("repository /src/web, which you can read") && !text.contains("worktree"), "{text}");
         assert!(!text.contains("label plan") && !text.contains("carry it out in this task"), "{text}");
         // It's told about the plan theme's components.
@@ -3330,8 +3366,31 @@ mod tests {
         assert!(text.contains("the labels plan, diagram") && text.contains("a plan (HTML) to /d/plan.html and a Mermaid diagram to /d/diagram.mmd"), "{text}");
         assert!(text.contains("don't commit them") && text.contains("The plan comes first") && text.contains("carry it out in this task"), "{text}");
         assert!(text.contains("<ia-steps>") && text.contains("Mermaid source") && !text.contains("Rather than changing code"), "{text}");
+        assert!(text.contains("<ia-diagram><pre>flowchart LR") && text.contains("Always use Mermaid for plan diagrams"), "{text}");
+        assert!(!text.contains("<ia-diagram><svg"), "{text}");
         // And it starts with the project's instructions.
         assert!(start_prompt(&task, Some(&project), "").contains("Write a failing test first."));
+    }
+
+    #[test]
+    fn a_reviewer_is_told_what_it_reviews_and_not_to_change_it() {
+        let c = db::open(std::path::Path::new(":memory:")).unwrap();
+        let p = db::insert_profile(&c, "p", &[], None).unwrap();
+        let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: true };
+        let project = db::insert_project(&c, np).unwrap();
+        let t = |kind, title| db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind, title, description: "", status: "todo", use_worktree: true, model: None, effort: None, claude_config_id: None };
+        let mut parent = db::insert_task(&c, t("task", "Fix it")).unwrap();
+        (parent.worktree_path, parent.branch, parent.worktree_state) = (Some("/w/1".into()), Some("ia/web-1-fix-it".into()), "ready".into());
+        let mut review = db::insert_task(&c, t("review", "Review")).unwrap();
+        review.kind = "review".into();
+        let text = system_prompt(&review, Some(&project), Some(&parent), &[], &[], None, true);
+        assert!(text.starts_with("You are the code reviewer for task WEB-1 (\"Fix it\")") && text.contains("worktree at /w/1 on branch `ia/web-1-fix-it`"), "{text}");
+        assert!(text.contains("\n\nReview only:") && text.contains("call `submit_review` exactly once"), "{text}");
+        assert_paragraphs(&text);
+        review.task_type = Some(crate::summary::SUMMARY.into());
+        let text = system_prompt(&review, Some(&project), Some(&parent), &[], &[], None, true);
+        assert!(text.starts_with("You summarise the changes made for task WEB-1") && text.contains("\n\nRead only:"), "{text}");
+        assert_paragraphs(&text);
     }
 
     #[test]
@@ -3347,6 +3406,7 @@ mod tests {
         task.work_dir = Some("/data/profiles/p/scratch".into());
         let text = system_prompt(&task, None, None, &[], &[], None, true);
         assert!(text.contains("a scratch folder") && !text.contains("write freely"), "{text}");
+        assert_paragraphs(&text);
         assert!(start_prompt(&task, None, "").starts_with("# S-1: Ask"));
     }
 
@@ -3367,6 +3427,7 @@ mod tests {
         // In a subproject, it's told about the subproject's branch and worktree.
         let text = system_prompt(&task, Some(&project), Some(&sp), &[], &[], None, true);
         assert!(text.contains("part of the subproject WEB-1 (\"Search\"), whose branch `ia/web-1-search`") && text.contains("worktree at /w/1, which you can read"), "{text}");
+        assert_paragraphs(&text);
         assert!(start_prompt(&task, Some(&project), "").starts_with("# WEB-2: Ask"));
     }
 
@@ -3483,8 +3544,7 @@ mod tests {
     fn a_reviewer_that_exits_late_doesnt_end_the_next_round() {
         crate::testing::run(async || {
             let (s, thread, run) = running(false);
-            let dir = std::env::temp_dir().join(format!("ia-review-round-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).status().unwrap().success());
             git(&["init", "-q"]);
             git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]);
@@ -4002,7 +4062,7 @@ mod tests {
             let (task, _) = out_of_usage_setup(&state, "claude", false, false, false);
             let (resets, at) = reset_in(2);
             run_out(&state, &task, resets);
-            crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap();
+            let _ = crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap();
             let t = send(&state, &task.id, "x").unwrap();
             assert!(!state.is_running(&task.id));
             assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("x")));
@@ -4052,6 +4112,56 @@ mod tests {
             assert!(!state.is_running(&task.id));
             assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("Go")));
             crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_config_on_extra_usage_isnt_out() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let state = crate::testing::state();
+            let (task, configs) = out_of_usage_setup(&state, "claude", true, true, true);
+            // What a plan with extra usage reports on every turn past its limit, while the turns go on.
+            let (resets, _) = reset_in(2);
+            let info = json!({"status": "rejected", "resetsAt": resets, "rateLimitType": "five_hour", "overageStatus": "allowed", "isUsingOverage": true,
+                "unifiedWindows": {"five_hour": {"utilization": 1, "resetsAt": resets, "status": "rejected"}}});
+            crate::usage::on_rate_limit_event(&state, &configs[0].id, &json!({"type": "rate_limit_event", "rate_limit_info": info}));
+            assert_eq!(crate::usage::out_until(&state, &configs[0].id), None);
+            let t = send(&state, &task.id, "Go").unwrap();
+            assert!(state.is_running(&task.id));
+            assert_eq!((t.waiting, t.claude_config_id.as_deref()), (false, Some(configs[0].id.as_str())), "neither held nor moved");
+            stop(&state, &task.id);
+            crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_merge_out_of_usage_keeps_its_place_in_the_merge_queue() {
+        crate::testing::run(async || {
+            let state = crate::testing::state();
+            let (task, _) = out_of_usage_setup(&state, "claude", false, false, false);
+            let np = db::NewProject { id: "pr", profile_id: &task.profile_id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            db::insert_project(&state.db(), np).unwrap();
+            state.db().execute("UPDATE tasks SET project_id='pr' WHERE id=?1", [&task.id]).unwrap();
+            // Its merge run is refused for the usage limit.
+            let (resets, _) = reset_in(2);
+            let run = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+            state.runs.lock().unwrap().insert(task.id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
+            state.update_task(&task.id, &[("running", json!(true)), ("status", json!("ready_for_merge")), ("merging", json!(true))]).unwrap();
+            for line in refused_lines(resets) {
+                handle_line(&state, &run, &line.to_string()).unwrap();
+            }
+            on_exit(&state, &run.id, Some(0), None, None, "");
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.waiting), ("needs_attention", true, false));
+            assert!(t.limit_reset_at.is_some());
+
+            // It can't wait out of the merge queue, where another merge could take its slot.
+            let err = crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap_err();
+            assert!(err.1.contains("merge"), "{}", err.1);
+            let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.waiting), ("needs_attention", true, false));
+            assert_eq!(db::active_merge(&state.db(), Some("pr"), None).unwrap().map(|m| m.id), Some(task.id.clone()), "it still holds the merge slot");
         })
     }
 }

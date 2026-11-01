@@ -753,7 +753,8 @@ fn project_or_own(s: &Shared, ctx: &Ctx, pid: Option<String>, profile: Option<&s
 /// The settings `update_project` changes without asking: how the project's agents are
 /// prompted and reviewed, and what it's called and where on the board it is.
 const AGENT_FIELDS: &[&str] = &[
-    "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "group_name",
+    "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "auto_summary",
+    "summarizer", "group_name",
 ];
 
 /// The settings it only changes once the user approves: they run commands on the host, decide
@@ -1262,6 +1263,8 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["watch_pull_requests"] = json!(p.watch_pull_requests);
     out["pr_preview_url"] = json!(p.pr_preview_url);
     out["reviewers"] = json!(p.reviewers);
+    out["auto_summary"] = json!(p.auto_summary);
+    out["summarizer"] = json!(p.summarizer);
     out["group_name"] = json!(p.group_name);
     out["archived"] = json!(p.archived_at.is_some());
     let own = [&p.start_prompt, &p.review_prompt, &p.merge_prompt];
@@ -2579,7 +2582,7 @@ mod tests {
         testing::run(async || {
             let s = state();
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-del-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             let repo = dir.join("repo");
             std::fs::create_dir_all(&repo).unwrap();
             let git = |args: &[&str]| {
@@ -2816,7 +2819,7 @@ mod tests {
             s.update_task(&caller.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap();
             let caller = db::get_task(&s.db(), &caller.id).unwrap().unwrap();
             let me = |call_id: &str| Ctx { task: Some(caller.clone()), call_id: Some(call_id.into()), ..ctx(&p) };
-            let root = std::env::temp_dir().join(format!("ia-create-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             std::fs::create_dir_all(root.join("home")).unwrap();
             let root = root.canonicalize().unwrap();
             let home = root.join("home");
@@ -3170,8 +3173,7 @@ mod tests {
             let s = state();
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
-            let repo = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             db::update_project(&s.db(), "kiwicd", &[("repo_path", json!(repo))]).unwrap();
             let planner = task(&s, "kiwicd", "Plan");
             let run = db::insert_run(&s.db(), &planner.id, "prompt").unwrap();
@@ -3211,8 +3213,7 @@ mod tests {
             let s = state();
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
-            let repo = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             db::update_project(&s.db(), "kiwicd", &[("repo_path", json!(repo))]).unwrap();
             let planner = task(&s, "kiwicd", "Plan");
             let launched = |mode: &str, allowed: &str| {
@@ -3294,8 +3295,7 @@ mod tests {
             let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
             project(&s, &p, "kiwicd", "KIW");
             // The project's repository, on GitHub as o/r.
-            let repo = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             for args in [&["init", "-q"][..], &["remote", "add", "origin", "git@github.com:o/r.git"]] {
                 assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
             }

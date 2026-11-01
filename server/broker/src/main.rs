@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "huntaway-broker", about = "Relay for Huntaway hosts: they dial out to it, and browsers and hubs reach them through it")]
+#[command(name = "huntaway-broker", about = "Connection broker for Huntaway hosts: provision Cloudflare endpoints, or use the legacy relay")]
 struct Args {
     /// Address to listen on. Serve it behind a TLS proxy: it speaks plain HTTP.
     #[arg(long, env = "BROKER_HOST", default_value = "0.0.0.0")]
@@ -18,6 +18,21 @@ struct Args {
     /// The host for requests that don't pick one (by cookie, header or path).
     #[arg(long, env = "BROKER_DEFAULT_HOST")]
     default_host: Option<String>,
+    /// A file to keep the names hosts took in, so a restart keeps them for their hosts (see the README).
+    #[arg(long, env = "BROKER_STATE")]
+    state: Option<std::path::PathBuf>,
+    /// Provision endpoints below this Cloudflare DNS domain (e.g. zone apex example.com → desktop.example.com).
+    /// Omit this flag to keep the legacy relay transport. Requires the account, zone and API token too.
+    /// Use the zone apex for Universal SSL; nested domains need separate edge certificate coverage.
+    #[arg(long, env = "BROKER_TUNNEL_DOMAIN", requires_all = ["cloudflare_account", "cloudflare_zone", "cloudflare_token", "state"])]
+    tunnel_domain: Option<String>,
+    #[arg(long, env = "BROKER_CLOUDFLARE_ACCOUNT", requires = "tunnel_domain")]
+    cloudflare_account: Option<String>,
+    #[arg(long, env = "BROKER_CLOUDFLARE_ZONE", requires = "tunnel_domain")]
+    cloudflare_zone: Option<String>,
+    /// Cloudflare API token with Account: Cloudflare Tunnel: Edit and Zone: DNS: Edit.
+    #[arg(long, env = "BROKER_CLOUDFLARE_TOKEN", hide_env_values = true, requires = "tunnel_domain")]
+    cloudflare_token: Option<String>,
 }
 
 #[tokio::main]
@@ -35,9 +50,16 @@ async fn main() -> Result<()> {
     if let Some(h) = default_host.as_deref().filter(|h| !huntaway_broker::proto::valid_name(h)) {
         bail!("bad default host {h:?}: use up to 48 lowercase letters, digits and hyphens");
     }
+    let state = args.state.filter(|p| !p.as_os_str().is_empty());
+    let cloudflare = match args.tunnel_domain {
+        Some(domain) => Some(huntaway_broker::cloudflare::Cloudflare::new(
+            args.cloudflare_account.unwrap(), args.cloudflare_zone.unwrap(), domain, args.cloudflare_token.unwrap())?),
+        None => None,
+    };
+    if cloudflare.is_some() && state.is_none() { bail!("managed tunnels require a nonempty --state path"); }
+    let app = huntaway_broker::router(huntaway_broker::Config { token, default_host, state, cloudflare, ..Default::default() })?;
     let listener = tokio::net::TcpListener::bind((args.host.as_str(), args.port)).await.with_context(|| format!("binding {}:{}", args.host, args.port))?;
     tracing::info!("listening on http://{}", listener.local_addr()?);
-    let app = huntaway_broker::router(huntaway_broker::Config { token, default_host, ..Default::default() });
     axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
     Ok(())
 }

@@ -23,7 +23,7 @@ import {
   asanaLink,
 } from "../api";
 import { effortOptions, inheritedModel, isClaudeModel, modelOptions, useConfigsModels } from "../agents";
-import { harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses";
+import { CODEX_MODEL_ALIASES, harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses";
 import { allValues, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens, type Token, type TokenPrefix, type Vocab } from "../taskTokens";
 import { keyPrefix, useAvailableConfigs, useHost, useStore } from "../store";
 import { ConfigSelect, ConfigUsageNote } from "./ClaudeConfigs";
@@ -519,7 +519,8 @@ export function NewTaskModal({
     tokens.filter((t) => {
       const w = t.prefix === "!" && t.value !== undefined ? harnessVocab.find((x) => x.word === t.value) : undefined;
       const agent = harnessConfigs.find((x) => x.id === w?.harness.config)?.agent;
-      return !!w && !!w.harness.model && w.word.toLowerCase() === w.harness.model.toLowerCase() && agent === agentOf(c) && rank(c.id) < rank(w.harness.config);
+      const plain = w && (w.word.toLowerCase() === w.harness.model.toLowerCase() || CODEX_MODEL_ALIASES.includes(w.word));
+      return !!w && !!w.harness.model && plain && agent === agentOf(c) && rank(c.id) < rank(w.harness.config);
     });
   const effortWaits = (c: ClaudeConfig) => efforts && !!pickedEffort && runs.some((h) => h.config === c.id);
   const waitsFor = (c: ClaudeConfig) => unknownModels.length > 0 || claimable(c).length > 0 || effortWaits(c);

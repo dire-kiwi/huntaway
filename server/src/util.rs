@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn tells_a_repository_with_commits() {
-        let dir = std::env::temp_dir().join(format!("ia-util-{}", new_id()));
+        let dir = crate::testing::temp_dir();
         let repo = dir.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         assert!(!is_git_root(&repo) && !has_commits(&repo));

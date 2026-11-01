@@ -521,7 +521,7 @@ pub fn folder_name(project: &Project, task: &Task) -> String {
 /// What in worktree `wt` isn't committed (`git status --porcelain`, trimmed), whatever the
 /// repository's settings hide: every untracked file, every submodule change, and changes to
 /// tracked files marked assume-unchanged or skip-worktree. Ignored files don't count.
-async fn uncommitted(wt: &Path) -> Result<String> {
+pub(crate) async fn uncommitted(wt: &Path) -> Result<String> {
     let status = git_ok(wt, &["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]).await?;
     let mut lines: Vec<String> = status.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect();
     // git status skips marked files, so they're compared with the index here: content and, with
@@ -1063,6 +1063,11 @@ pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
     if !is_git_repo(&dir).await {
         return Ok(json!({"available": false, "reason": "not a git repository"}));
     }
+    // A task with a worktree of its own that isn't there (not set up yet, or removed): what its branch has, if
+    // anything, rather than the project folder's changes, which aren't its own.
+    if task.use_worktree && task.worktree_state != "ready" {
+        return branch_diff(&dir, &task, &project).await;
+    }
     let (base, merge_base) = changes_base(&dir, &task, &project).await;
     let from = merge_base.clone().unwrap_or_else(|| "HEAD".into());
     // Mark untracked files as intent-to-add would mutate the index; instead diff them separately.
@@ -1092,6 +1097,43 @@ pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
         "stat": tracked,
         "patch": truncate(&format!("{patch}{untracked_patch}"), 2_000_000),
         "untracked": untracked.iter().map(|f| f.to_string_lossy()).collect::<Vec<_>>(),
+    }))
+}
+
+/// The committed work on a task's branch with no worktree (API 81, see `diff`): from where it left its base branch.
+async fn branch_diff(repo: &Path, task: &Task, project: &Project) -> Result<Value> {
+    let Some(branch) = task.branch.clone().filter(|b| !b.is_empty()) else {
+        return Ok(json!({"available": false, "reason": "the task has no worktree or branch"}));
+    };
+    let head = format!("refs/heads/{branch}");
+    if !git(repo, &["rev-parse", "--verify", "--quiet", &head]).await?.ok {
+        return Ok(json!({"available": false, "reason": format!("the task has no worktree, and its branch {branch} is gone")}));
+    }
+    let base = task.base_branch.clone().or(project.base_branch.clone()).filter(|b| !b.is_empty());
+    let merge_base = match &base {
+        Some(b) => {
+            let b = compare_ref(repo, b).await;
+            git(repo, &["merge-base", &b, &head]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string())
+        }
+        None => None,
+    };
+    let from = merge_base.clone().unwrap_or_else(|| head.clone());
+    let stat = git(repo, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from, &head]).await?.stdout;
+    let patch = git(repo, &["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", &from, &head]).await?.stdout;
+    let commits = match &merge_base {
+        Some(mb) => git(repo, &["log", "--oneline", &format!("{mb}..{head}")]).await?.stdout,
+        None => String::new(),
+    };
+    Ok(json!({
+        "available": true,
+        "dir": path_str(repo),
+        "base": base,
+        "merge_base": merge_base,
+        "commits": commits,
+        "stat": stat,
+        "patch": truncate(&patch, 2_000_000),
+        "untracked": [],
+        "branch": branch,
     }))
 }
 
@@ -1139,8 +1181,7 @@ mod tests {
     #[test]
     fn finds_the_github_remote_pull_requests_go_to() {
         crate::testing::run(async || {
-            let repo = std::env::temp_dir().join(format!("ia-gh-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             sh(&repo, &["init", "-q", "-b", "master"]);
             assert_eq!(github(&repo, Some("master")).await, None);
             sh(&repo, &["remote", "add", "history", "git@github.com:o/history.git"]);
@@ -1173,7 +1214,7 @@ mod tests {
     #[test]
     fn an_ssh_host_alias_is_the_host_it_stands_for() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-ssh-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             let repo = dir.join("repo");
             std::fs::create_dir_all(&repo).unwrap();
             std::fs::write(dir.join("ssh_config"), "Host github-work\n  HostName github.com\n  IdentityFile ~/.ssh/work\nHost ghe\n  HostName GHE.acme.com\n").unwrap();
@@ -1199,8 +1240,7 @@ mod tests {
     /// repository, the task and its worktree and branch.
     async fn task_with_work(s: &Shared) -> (PathBuf, Task, PathBuf, String) {
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let repo = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&repo).unwrap();
+        let repo = crate::testing::temp_dir();
         sh(&repo, &["init", "-q", "-b", "master"]);
         std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
         sh(&repo, &["add", "."]);
@@ -1234,6 +1274,28 @@ mod tests {
             for name in ["café.txt", "-n.txt", "plain.txt"] {
                 assert!(patch.contains(&format!("+in {name}\n")), "{name}: {patch}");
             }
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
+    // HA-51: a task whose worktree was removed showed the project folder's changes as its own.
+    #[test]
+    fn without_its_worktree_the_diff_is_its_branchs() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, t, _, branch) = task_with_work(&s).await;
+            std::fs::write(repo.join("main-only"), "not the task's\n").unwrap();
+            teardown(&s, &t.id, false, false).await.unwrap();
+            let d = diff(&s, &t.id).await.unwrap();
+            assert_eq!((&d["available"], d["branch"].as_str()), (&json!(true), Some(branch.as_str())));
+            let patch = d["patch"].as_str().unwrap();
+            assert!(patch.contains("+++ b/a") && !patch.contains("main-only"), "{patch}");
+            assert!(d["commits"].as_str().unwrap().contains(" a\n"), "{d}");
+            assert_eq!(d["untracked"], json!([]));
+            sh(&repo, &["branch", "-D", &branch]);
+            let d = diff(&s, &t.id).await.unwrap();
+            assert_eq!(d["available"], json!(false));
+            assert!(d["reason"].as_str().unwrap().contains("is gone"), "{d}");
             std::fs::remove_dir_all(&repo).ok();
         })
     }
@@ -1295,7 +1357,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let root = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             let (origin, repo, other) = (root.join("origin"), root.join("repo"), root.join("other"));
             std::fs::create_dir_all(&root).unwrap();
             sh(&root, &["init", "-q", "--bare", "-b", "master", &path_str(&origin)]);
@@ -1331,7 +1393,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let root = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             let repo = root.join("repo");
             std::fs::create_dir_all(&repo).unwrap();
             sh(&repo, &["init", "-q", "-b", "master"]);
@@ -1368,8 +1430,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let repo = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             sh(&repo, &["init", "-q", "-b", "master"]);
             sh(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
             let b = CreateProject { name: "x".into(), repo_path: path_str(&repo), key: Some("X".into()), base_branch: Some("master".into()), use_worktrees: None };
@@ -1399,7 +1460,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let root = std::env::temp_dir().join(format!("ia-wt-{}", crate::util::new_id()));
+            let root = crate::testing::temp_dir();
             let (origin, repo, other) = (root.join("origin"), root.join("repo"), root.join("other"));
             std::fs::create_dir_all(&root).unwrap();
             sh(&root, &["init", "-q", "--bare", "-b", "master", &path_str(&origin)]);

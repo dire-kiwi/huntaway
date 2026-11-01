@@ -1246,8 +1246,7 @@ mod tests {
     /// `.gitignore` for `*.log`, reached through `repo_link` (a symlink to it) if given.
     async fn task_repo(s: &Shared, link: bool) -> (Task, PathBuf, PathBuf) {
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let repo = std::env::temp_dir().join(format!("ia-cp-{}", new_id()));
-        std::fs::create_dir_all(&repo).unwrap();
+        let repo = crate::testing::temp_dir();
         sh(&repo, &["init", "-q", "-b", "master"]);
         sh(&repo, &["config", "user.name", "t"]);
         sh(&repo, &["config", "user.email", "t@t"]);
@@ -1257,7 +1256,7 @@ mod tests {
         sh(&repo, &["add", "."]);
         sh(&repo, &["commit", "-qm", "init"]);
         let path = if link {
-            let l = std::env::temp_dir().join(format!("ia-cp-link-{}", new_id()));
+            let l = crate::testing::temp_dir().join("link");
             std::os::unix::fs::symlink(&repo, &l).unwrap();
             l
         } else {
@@ -1444,10 +1443,9 @@ mod tests {
     fn files_git_hides_are_left_alone() {
         crate::testing::run(async || {
             let s = crate::testing::state();
-            let (t, wt, repo) = task_repo(&s, false).await;
+            let (t, wt, _) = task_repo(&s, false).await;
             // A submodule, a file marked skip-worktree and one marked assume-unchanged, each changed locally.
-            let sub = repo.parent().unwrap().join(format!("ia-cp-sub-{}", new_id()));
-            std::fs::create_dir_all(&sub).unwrap();
+            let sub = crate::testing::temp_dir();
             sh(&sub, &["init", "-q", "-b", "master"]);
             sh(&sub, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one"]);
             sh(&wt, &["submodule", "add", "-q", &path_str(&sub), "sub"]);
@@ -1573,7 +1571,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let (t, wt, _) = task_repo(&s, false).await;
-            let outside = std::env::temp_dir().join(format!("ia-cp-out-{}", new_id()));
+            let outside = crate::testing::temp_dir();
             write(&outside, "keep.txt", "keep\n");
             let m = turn(&s, &t.id, "one", || {
                 std::os::unix::fs::symlink(&outside, wt.join("out")).unwrap();

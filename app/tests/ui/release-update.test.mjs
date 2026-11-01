@@ -48,7 +48,15 @@ function release(over = {}) {
  */
 async function fakeReleases(page, state) {
   const calls = { check: 0, update: [], rollback: 0, settings: [] };
-  await page.route("**/api/h/**", async (route) => {
+  await page.route("**/api/h/**", (route) =>
+    answer(route).catch((e) => {
+      // A status poll (or the one after a click) still in flight when the test ends and closes the page.
+      if (!/disposed|closed/i.test(e.message)) throw e;
+    }),
+  );
+  return calls;
+
+  async function answer(route) {
     const req = route.request();
     const path = new URL(req.url()).pathname;
     const status = async () => {
@@ -73,8 +81,7 @@ async function fakeReleases(page, state) {
       return json(route, req.postDataJSON());
     }
     return route.fallback();
-  });
-  return calls;
+  }
 }
 
 // HA-67: a staged release is offered in the sidebar as "v0.2.0 · Update", and its modal shows the notes and restarts

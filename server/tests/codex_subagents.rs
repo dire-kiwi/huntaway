@@ -1,4 +1,6 @@
 //! Exercise the actual codex-run process against a deterministic app-server, without a model.
+mod common;
+
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
@@ -7,13 +9,12 @@ use serde_json::{Value, json};
 
 #[test]
 fn a_child_turn_cannot_finish_the_main_turn_or_acknowledge_its_steered_input() {
-    let dir = std::env::temp_dir().join(format!("ia152-adapter-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = common::TempDir::new("ia152-adapter");
     let fake = dir.join("codex");
     std::fs::write(&fake, include_str!("fixtures/codex-subagents.py")).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
     let log = dir.join("requests.jsonl");
-    std::fs::write(dir.join("codex.json"), json!({"cwd": dir, "input": true, "approval_policy": "untrusted",
+    std::fs::write(dir.join("codex.json"), json!({"cwd": &*dir, "input": true, "approval_policy": "untrusted",
         "approvals_reviewer": "user", "sandbox": "workspace-write"}).to_string()).unwrap();
     std::fs::write(dir.join("mcp.json"), json!({"mcpServers": {"huntaway": {"command": "unused", "env": {
         "IA_URL": "http://127.0.0.1:1", "IA_TOKEN": "test", "IA_RUN_ID": "test"
@@ -41,7 +42,6 @@ fn a_child_turn_cannot_finish_the_main_turn_or_acknowledge_its_steered_input() {
     }
     let status = child.wait().unwrap();
     let requests: Vec<Value> = std::fs::read_to_string(log).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-    std::fs::remove_dir_all(dir).unwrap();
     assert!(status.success(), "adapter exited with {status}");
     assert_eq!(requests.iter().filter(|v| v["method"] == "turn/start").count(), 1);
     assert_eq!(requests.iter().filter(|v| v["method"] == "turn/steer").count(), 1);

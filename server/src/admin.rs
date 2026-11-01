@@ -74,7 +74,7 @@ pub async fn status(state: &Shared) -> Result<Value> {
         "running_agents": running_agents,
         "restart": job,
     });
-    // API 83: with --release-updates, the release this server could update to.
+    // API 85: with --release-updates, the release this server could update to.
     if let Some(release) = crate::release::status(state)? {
         v["release"] = release;
     }
@@ -271,7 +271,9 @@ async fn run(state: &Shared, rebuild: bool) -> Result<()> {
     if rebuild {
         let src = state.meta.source_dir.clone().context("source checkout not found")?;
         set_phase(state, "building_ui", None);
-        step(state, &src.join("app"), "npm", &["install", "--no-audit", "--no-fund"]).await?;
+        // --no-save, so the build never rewrites the tracked package-lock.json: a hub's
+        // Update refuses a checkout with uncommitted changes, so that would stop the next one.
+        step(state, &src.join("app"), "npm", &["install", "--no-save", "--no-audit", "--no-fund"]).await?;
         step(state, &src.join("app"), "npm", &["run", "build"]).await?;
         set_phase(state, "building_server", None);
         step(state, &src.join("server"), "cargo", &["build", "--release"]).await?;
@@ -455,7 +457,7 @@ mod tests {
 
     /// An origin with one commit, cloned as the source checkout: (origin, checkout, commit).
     fn checkout() -> (PathBuf, PathBuf, String) {
-        let root = std::env::temp_dir().join(format!("ia-admin-{}", crate::util::new_id()));
+        let root = crate::testing::temp_dir();
         let origin = root.join("origin");
         std::fs::create_dir_all(&origin).unwrap();
         sh(&origin, &["init", "-q", "-b", "master"]);

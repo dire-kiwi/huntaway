@@ -1,17 +1,20 @@
 //! The broker: a public relay for Huntaway hosts that can't be reached directly (at home, behind
-//! NAT, without Tailscale).
+//! NAT, without Tailscale). Managed Cloudflare endpoints keep this broker outside the application
+//! traffic path; without Cloudflare configuration, the original relay transport stays available.
 //!
 //! A host dials out to `/_broker/connect` (`huntaway serve --broker <url>`) and keeps that
-//! websocket open. Every other request the broker gets is passed down it to a host, which answers
+//! websocket open. In legacy relay mode, every other request is passed down it to a host, which answers
 //! it from its own server: the board's UI, its API and its websockets. The broker keeps nothing
-//! but the list of connected hosts, in memory. It doesn't sign anyone in: the host's own token
+//! but the list of connected hosts and the names they took. It doesn't sign anyone in: the host's own token
 //! still guards its API.
 //!
 //! The broker's token lets a host connect, under the name it asks for. Clients pick a host by its
 //! name, so a name stays with the first host that took it (the `host_id` and secret `key` of its
 //! `Hello`): another host asking for it is refused while that one is connected, and for `HOLD`
-//! after it goes. A broker that restarts forgets them, and the first host to connect again under a
-//! name has it.
+//! after it goes. With a state file (`--state`), the broker keeps these across restarts (the key
+//! as a hash), and a host connected when it stopped has its name kept for `HOLD` from when it
+//! starts again. Without one, a broker that restarts forgets them, and the first host to connect
+//! again under a name has it.
 //!
 //! Which host a request goes to:
 //!
@@ -22,10 +25,13 @@
 //!   (`--default-host`), else the only host connected. A browser opens the board at the root, as
 //!   it would on the host itself.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use anyhow::Context;
 
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -35,10 +41,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use axum::{Json, Router};
 use futures::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 pub mod proto;
+pub mod cloudflare;
 
 use proto::Ctl;
 
@@ -80,11 +89,15 @@ pub struct Config {
     pub stall: Duration,
     /// How long a name is kept for its host after it goes (`HOLD`).
     pub hold: Duration,
+    /// Where the names taken are kept across restarts (`--state`). Without it they're kept in memory only.
+    pub state: Option<PathBuf>,
+    /// Provision Cloudflare endpoints instead of relaying application traffic.
+    pub cloudflare: Option<cloudflare::Cloudflare>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { token: String::new(), default_host: None, max_streams: MAX_STREAMS, stall: STALL, hold: HOLD }
+        Config { token: String::new(), default_host: None, max_streams: MAX_STREAMS, stall: STALL, hold: HOLD, state: None, cloudflare: None }
     }
 }
 
@@ -98,6 +111,99 @@ impl Broker {
     fn host(&self, name: &str) -> Option<Arc<Host>> {
         self.names.lock().unwrap().get(name)?.host.clone()
     }
+
+    /// Write the names taken to the state file, if there is one. Called with `names` locked, so
+    /// writes happen in the order the changes did.
+    fn save(&self, names: &HashMap<String, Name>) -> anyhow::Result<()> {
+        let Some(path) = &self.cfg.state else { return Ok(()) };
+        let now = unix_now();
+        let saved = Saved {
+            names: names
+                .iter()
+                .map(|(name, n)| {
+                    let left = n.host.is_none().then(|| now.saturating_sub(n.left.elapsed().as_secs()));
+                    (name.clone(), SavedName { host_id: n.owner.host_id.clone(), key_sha256: n.owner.key.map(hex), left })
+                })
+                .collect(),
+        };
+        // Written beside it and renamed over it, so a crash meanwhile leaves the old one whole.
+        let tmp = path.with_file_name(format!(".{}.tmp", path.file_name().and_then(|f| f.to_str()).unwrap_or("state")));
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&saved)?).with_context(|| format!("writing {}", tmp.display()))?;
+        std::fs::rename(&tmp, path).with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))?;
+        Ok(())
+    }
+
+    fn save_or_warn(&self, names: &HashMap<String, Name>) {
+        if let Err(e) = self.save(names) {
+            tracing::warn!("saving the names taken: {e:#}");
+        }
+    }
+}
+
+/// The state file (`--state`): the names taken, and who they're kept for.
+#[derive(Serialize, Deserialize, Default)]
+struct Saved {
+    names: BTreeMap<String, SavedName>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedName {
+    host_id: String,
+    /// The SHA-256 of the host's key, in hex: the file doesn't give away what to connect with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_sha256: Option<String>,
+    /// When the host went, in seconds since 1970; none if it was connected when this was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    left: Option<u64>,
+}
+
+/// The names in the state file at `path` (none if there's no file yet), with those whose hold ran
+/// out left out. A host that was connected when it was written has its name kept for `hold` from now.
+fn load(path: &FsPath, hold: Duration) -> anyhow::Result<HashMap<String, Name>> {
+    let saved: Saved = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| format!("reading {}", path.display()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Saved::default(),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    let now = unix_now();
+    let mut names = HashMap::new();
+    for (name, n) in saved.names {
+        let key = match n.key_sha256.as_deref().map(unhex) {
+            Some(None) => anyhow::bail!("reading {}: bad key_sha256 for {name}", path.display()),
+            Some(Some(k)) => Some(k),
+            None => None,
+        };
+        let gone = Duration::from_secs(n.left.map_or(0, |t| now.saturating_sub(t)));
+        if !proto::valid_name(&name) || gone >= hold {
+            continue;
+        }
+        let left = Instant::now().checked_sub(gone).unwrap_or_else(Instant::now);
+        names.insert(name, Name { owner: Owner { host_id: n.host_id, key }, host: None, left });
+    }
+    Ok(names)
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+fn hash(key: &str) -> [u8; 32] {
+    Sha256::digest(key.as_bytes()).into()
+}
+
+fn hex(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex(s: &str) -> Option<[u8; 32]> {
+    let mut out = [0u8; 32];
+    if s.len() != 64 {
+        return None;
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
 }
 
 /// A name taken on the broker: the host it's kept for, and that host's connection while it has one.
@@ -108,17 +214,17 @@ struct Name {
     left: Instant,
 }
 
-/// Who a host says it is.
+/// Who a host says it is: its id, and the hash of its key.
 struct Owner {
     host_id: String,
-    key: Option<String>,
+    key: Option<[u8; 32]>,
 }
 
 impl Owner {
     /// Whether `other` is the host a name is kept for.
     fn admits(&self, other: &Owner) -> bool {
         match (&self.key, &other.key) {
-            (Some(a), Some(b)) => self.host_id == other.host_id && same(a.as_bytes(), b.as_bytes()),
+            (Some(a), Some(b)) => self.host_id == other.host_id && same(a, b),
             (Some(_), None) => false,
             // A host from before keys is known by its id alone, and keeps its name when it comes back with a key.
             (None, _) => self.host_id == other.host_id,
@@ -136,6 +242,9 @@ fn minutes(d: Duration) -> String {
 
 /// A connected host.
 struct Host {
+    host_id: String,
+    managed: bool,
+    endpoint: Mutex<Option<String>>,
     name: String,
     max_streams: usize,
     tx: mpsc::UnboundedSender<Message>,
@@ -373,10 +482,22 @@ impl Drop for Stream {
     }
 }
 
-pub fn router(cfg: Config) -> Router {
-    let b = Arc::new(Broker { cfg, names: Mutex::new(HashMap::new()) });
-    Router::new()
+/// The broker's routes. Err if its state file (`Config::state`) can't be read, or written.
+pub fn router(cfg: Config) -> anyhow::Result<Router> {
+    let names = match &cfg.state {
+        Some(path) => load(path, cfg.hold)?,
+        None => HashMap::new(),
+    };
+    if !names.is_empty() {
+        tracing::info!("keeping {} names for the hosts that had them", names.len());
+    }
+    let b = Arc::new(Broker { cfg, names: Mutex::new(names) });
+    // Written back at once, so a file that can't be written is found now rather than at the first host.
+    b.save(&b.names.lock().unwrap())?;
+    Ok(Router::new()
         .route("/_broker/connect", get(connect))
+        .route("/_broker/resolve/{name}", get(resolve))
+        .route("/_broker/resolve", get(resolve_default))
         .route("/_broker/health", get(|| async { Json(json!({"ok": true})) }))
         .route("/_broker/use/{name}", get(use_host))
         .route("/_broker/h/{name}", any(prefixed))
@@ -384,7 +505,7 @@ pub fn router(cfg: Config) -> Router {
         .route("/_broker/h/{name}/{*rest}", any(prefixed))
         .route("/_broker/{*rest}", any(|req: Request| async move { fail(req.uri().path(), StatusCode::NOT_FOUND, "no such broker route") }))
         .fallback(picked)
-        .with_state(b)
+        .with_state(b))
 }
 
 // ---------- hosts ----------
@@ -409,7 +530,7 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
         _ => None,
     };
     let refuse = |error: String| Message::Text(serde_json::to_string(&Ctl::Refused { error }).unwrap_or_default().into());
-    let (name, owner) = match hello {
+    let (name, owner, origin_port) = match hello {
         Some(Ctl::Hello { protocol, .. }) if protocol != proto::PROTOCOL => {
             let _ = sink.send(refuse(format!("the broker speaks protocol {}, the host {protocol}", proto::PROTOCOL))).await;
             return;
@@ -426,16 +547,53 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             let _ = sink.send(refuse("bad key".into())).await;
             return;
         }
-        Some(Ctl::Hello { name, host_id, key, .. }) => (name, Owner { host_id, key: key.filter(|k| !k.is_empty()) }),
+        Some(Ctl::Hello { origin_port, ref key, .. }) if b.cfg.cloudflare.is_some()
+            && (origin_port.is_none_or(|p| p == 0) || key.as_ref().is_none_or(|k| k.is_empty())) => {
+            let _ = sink.send(refuse("managed tunnels need a current host with a private origin listener and a host key; update Huntaway".into())).await;
+            return;
+        }
+        Some(Ctl::Hello { name, host_id, key, origin_port, .. }) =>
+            (name, Owner { host_id, key: key.filter(|k| !k.is_empty()).map(|k| hash(&k)) }, origin_port),
         _ => return,
     };
     let host_id = owner.host_id.clone();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-    let host = Arc::new(Host { name: name.clone(), max_streams: b.cfg.max_streams, tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1) });
+    // Serialize reconciliation, including taking the name: an older connection mustn't overwrite
+    // the new connection's origin after it was replaced. No database/name lock spans a network call.
+    let provisioning = match &b.cfg.cloudflare {
+        Some(cf) => match tokio::time::timeout(Duration::from_secs(20), cf.provisioning.lock()).await {
+            Ok(guard) => Some(guard),
+            Err(_) => { let _ = sink.send(refuse("the broker is busy provisioning tunnels; try again".into())).await; return; }
+        },
+        None => None,
+    };
+    let owner_key = owner.key.map(hex).unwrap_or_default();
+    let host = Arc::new(Host {
+        host_id: host_id.clone(), managed: b.cfg.cloudflare.is_some(), endpoint: Mutex::new(None), name: name.clone(),
+        max_streams: b.cfg.max_streams, tx, streams: Mutex::new(HashMap::new()), next: AtomicU64::new(1),
+    });
     if let Err(error) = take_name(&b, &name, owner, &host) {
         let _ = sink.send(refuse(error)).await;
         return;
     }
+    let tunnel = if let Some(cf) = &b.cfg.cloudflare {
+        match tokio::time::timeout(Duration::from_secs(90), cf.provision(&name, &format!("{host_id}/{owner_key}"), origin_port.unwrap())).await {
+            Ok(Ok(tunnel)) => {
+                *host.endpoint.lock().unwrap() = Some(tunnel.url.clone());
+                Some(tunnel)
+            }
+            result => {
+                let error = match result { Ok(Err(e)) => format!("couldn't provision a tunnel: {e:#}"), _ => "tunnel provisioning timed out".into() };
+                let _ = sink.send(refuse(error)).await;
+                release_name(&b, &name, &host);
+                return;
+            }
+        }
+    } else { None };
+    drop(provisioning);
+    // The welcome must be first: the writer's immediate heartbeat can otherwise win the race.
+    let welcome = Message::Text(serde_json::to_string(&Ctl::Welcome { name: name.clone(), tunnel }).unwrap().into());
+    if sink.send(welcome).await.is_err() { release_name(&b, &name, &host); return; }
     let writer = tokio::spawn(async move {
         let mut ping = tokio::time::interval(PING);
         loop {
@@ -462,7 +620,6 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             }
         })
     };
-    host.send(&Ctl::Welcome { name: name.clone() });
     tracing::info!("host {name} ({host_id}) connected");
     loop {
         let msg = match tokio::time::timeout(SILENCE, stream.next()).await {
@@ -495,11 +652,7 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
             _ => {}
         }
     }
-    // The name is kept for the host a while, unless it connected again meanwhile.
-    if let Some(n) = b.names.lock().unwrap().get_mut(&name).filter(|n| n.host.as_ref().is_some_and(|h| Arc::ptr_eq(h, &host))) {
-        n.host = None;
-        n.left = Instant::now();
-    }
+    release_name(&b, &name, &host);
     // The requests in flight end (with what the host sent of them).
     for (_, e) in host.streams.lock().unwrap().drain() {
         e.queue.end(false);
@@ -510,8 +663,19 @@ async fn serve_host(b: Arc<Broker>, ws: WebSocket) {
     tracing::info!("host {name} disconnected");
 }
 
+fn release_name(b: &Broker, name: &str, host: &Arc<Host>) {
+    let mut names = b.names.lock().unwrap();
+    if let Some(n) = names.get_mut(name).filter(|n| n.host.as_ref().is_some_and(|h| Arc::ptr_eq(h, host))) {
+        n.host = None;
+        n.left = Instant::now();
+        b.save_or_warn(&names);
+    }
+}
+
 /// Take `name` for `host`, unless it's kept for another. A host that connects again (its old
-/// connection not yet seen to drop) takes its name back, and the old connection is closed.
+/// connection not yet seen to drop) takes its name back, and the old connection is closed. With a
+/// state file, a name that can't be saved isn't taken: a host welcomed without it on disk could
+/// lose its name to another when the broker restarts.
 fn take_name(b: &Broker, name: &str, owner: Owner, host: &Arc<Host>) -> Result<(), String> {
     let mut names = b.names.lock().unwrap();
     let hold = b.cfg.hold;
@@ -525,6 +689,14 @@ fn take_name(b: &Broker, name: &str, owner: Owner, host: &Arc<Host>) -> Result<(
         return Err(format!("the name {name} is taken: {why}. Give this host another name (--broker-name)"));
     }
     let old = names.insert(name.into(), Name { owner, host: Some(host.clone()), left: Instant::now() });
+    if let Err(e) = b.save(&names) {
+        tracing::warn!("host {name}: refused, as the name couldn't be saved: {e:#}");
+        match old {
+            Some(old) => names.insert(name.into(), old),
+            None => names.remove(name),
+        };
+        return Err(format!("the broker couldn't save the name {name} for this host (see its log), so it can't take it now. It will try again"));
+    }
     if let Some(old) = old.and_then(|n| n.host) {
         let _ = old.tx.send(Message::Close(Some(CloseFrame { code: 4000, reason: "replaced by a newer connection".into() })));
     }
@@ -545,6 +717,33 @@ fn to_stream(host: &Host, id: u64, ev: Event, last: bool) {
 }
 
 // ---------- clients ----------
+
+/// Discovery carries no host token and never redirects. Hubs resolve before authenticating or
+/// opening a websocket (which cannot follow the browser's redirect). Old relay brokers answer 404.
+async fn resolve(State(b): State<Arc<Broker>>, Path(name): Path<String>) -> Response {
+    discovery_response(b.host(&name).ok_or_else(|| "host isn't connected to the broker".into()))
+}
+
+async fn resolve_default(State(b): State<Arc<Broker>>, headers: HeaderMap) -> Response {
+    discovery_response(selected(&b, &headers))
+}
+
+fn discovery_response(host: Result<Arc<Host>, String>) -> Response {
+    let mut response = match host {
+        Err(e) => fail("/api/resolve", StatusCode::BAD_GATEWAY, &e),
+        Ok(host) => {
+            let endpoint = host.endpoint.lock().unwrap().clone();
+            match endpoint {
+                Some(url) => Json(json!({"host_id": host.host_id, "url": url})).into_response(),
+                None if !host.managed => StatusCode::NOT_FOUND.into_response(),
+                None => fail("/api/resolve", StatusCode::SERVICE_UNAVAILABLE, "host tunnel is being provisioned"),
+            }
+        }
+    };
+    response.headers_mut().insert("x-huntaway-broker", HeaderValue::from_static("1"));
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
 
 /// `/_broker/use/<name>`: send this browser to that host from now on.
 async fn use_host(Path(name): Path<String>, req: Request) -> Response {
@@ -583,14 +782,21 @@ async fn prefixed(State(b): State<Arc<Broker>>, Path(params): Path<HashMap<Strin
 /// Any other path: on the host the request picks (see the module's comment).
 async fn picked(State(b): State<Arc<Broker>>, req: Request) -> Response {
     let path = req.uri().path_and_query().map(|p| p.to_string()).unwrap_or_else(|| "/".into());
-    let wanted = req
-        .headers()
+    let host = selected(&b, req.headers());
+    match host {
+        Ok(h) => forward(h, path, req).await,
+        Err(e) => fail(req.uri().path(), StatusCode::BAD_GATEWAY, &e),
+    }
+}
+
+fn selected(b: &Broker, headers: &HeaderMap) -> Result<Arc<Host>, String> {
+    let wanted = headers
         .get(HOST_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(String::from)
-        .or_else(|| cookie(req.headers(), COOKIE))
+        .or_else(|| cookie(headers, COOKIE))
         .or_else(|| b.cfg.default_host.clone());
-    let host = match &wanted {
+    match &wanted {
         Some(name) => b.host(name).ok_or_else(|| format!("host {name} isn't connected to the broker")),
         None => {
             let names = b.names.lock().unwrap();
@@ -601,10 +807,6 @@ async fn picked(State(b): State<Arc<Broker>>, req: Request) -> Response {
                 (Some(_), Some(_)) => Err("several hosts are connected to the broker: open /_broker/use/<name> to pick one".into()),
             }
         }
-    };
-    match host {
-        Ok(h) => forward(h, path, req).await,
-        Err(e) => fail(req.uri().path(), StatusCode::BAD_GATEWAY, &e),
     }
 }
 
@@ -634,6 +836,15 @@ fn is_websocket(req: &Request) -> bool {
 
 /// Pass a request to `host` and its answer back.
 async fn forward(host: Arc<Host>, path: String, req: Request) -> Response {
+    if host.managed {
+        let endpoint = host.endpoint.lock().unwrap().clone();
+        return match endpoint {
+            Some(url) => (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, format!("{url}{path}")),
+                (header::CACHE_CONTROL, "no-store".into()), (header::REFERRER_POLICY, "no-referrer".into())]).into_response(),
+            None => fail(&path, StatusCode::SERVICE_UNAVAILABLE, "host tunnel is being provisioned"),
+        };
+    }
+
     let ws = is_websocket(&req);
     let (mut parts, body) = req.into_parts();
     let upgrade = if ws {
@@ -820,9 +1031,68 @@ mod tests {
         LIVE.lock().unwrap().iter().filter(|h| *h == host).count()
     }
 
+    #[test]
+    fn managed_hosts_are_discovered_and_redirected_without_relaying_requests() {
+        run(async {
+            let (cf, api) = cloudflare::tests::fake().await;
+            let b = broker_with(Config { cloudflare: Some(cf), ..Default::default() }).await;
+            let mut req = format!("ws://{b}/_broker/connect").into_client_request().unwrap();
+            req.headers_mut().insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
+            let (mut host, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+            let hello = Ctl::Hello { name: "desktop".into(), host_id: "host-1".into(), key: Some("key".into()),
+                version: "test".into(), protocol: proto::PROTOCOL, origin_port: Some(12345) };
+            host.send(TMessage::Text(serde_json::to_string(&hello).unwrap().into())).await.unwrap();
+            loop {
+                if let TMessage::Text(t) = host.next().await.unwrap().unwrap() {
+                    match serde_json::from_str::<Ctl>(&t).unwrap() {
+                        Ctl::Welcome { tunnel: Some(tunnel), .. } => { assert_eq!(tunnel.token, "connector-secret"); break; },
+                        Ctl::Ping => {},
+                        other => panic!("unexpected handshake {other:?}"),
+                    }
+                }
+            }
+            let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+            let resolve = client.get(format!("http://{b}/_broker/resolve/desktop")).send().await.unwrap();
+            assert_eq!(resolve.headers()["cache-control"], "no-store");
+            let info: serde_json::Value = resolve.json().await.unwrap();
+            assert_eq!(info, json!({"host_id": "host-1", "url": "https://desktop.example.com"}));
+            assert!(!info.to_string().contains("connector-secret"));
+            let default: serde_json::Value = client.get(format!("http://{b}/_broker/resolve")).send().await.unwrap().json().await.unwrap();
+            assert_eq!(default, info);
+            let request = client.post(format!("http://{b}/_broker/h/desktop/api/tasks/a%2Fb?token=host-token"))
+                .body("upload body").send().await.unwrap();
+            assert_eq!(request.status(), 307);
+            assert_eq!(request.headers()["location"], "https://desktop.example.com/api/tasks/a%2Fb?token=host-token");
+            assert_eq!(request.headers()["referrer-policy"], "no-referrer");
+            assert_eq!(client.get(format!("http://{b}/")).send().await.unwrap().headers()["location"], "https://desktop.example.com/");
+            assert_eq!(api.lock().unwrap().calls.len(), 6);
+            // Application requests never become Req frames on the registration channel.
+            while let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_millis(50), host.next()).await {
+                if let TMessage::Text(t) = msg { assert!(matches!(serde_json::from_str::<Ctl>(&t).unwrap(), Ctl::Ping)); }
+            }
+            host.close(None).await.unwrap();
+            for _ in 0..100 {
+                if client.get(format!("http://{b}/_broker/resolve/desktop")).send().await.unwrap().status() == 502 { return; }
+                tokio::task::yield_now().await;
+            }
+            panic!("offline endpoint was still discoverable");
+        });
+    }
+
+    #[test]
+    fn managed_brokers_refuse_legacy_hosts_instead_of_silently_relaying() {
+        run(async {
+            let (cf, api) = cloudflare::tests::fake().await;
+            let b = broker_with(Config { cloudflare: Some(cf), ..Default::default() }).await;
+            let err = named_host(&b, "desktop", "old-host", Some("key")).await.unwrap_err();
+            assert!(err.contains("update Huntaway"), "{err}");
+            assert!(api.lock().unwrap().calls.is_empty());
+        });
+    }
+
     const TOKEN: &str = "broker-token-0123456789";
 
-    fn run(body: impl Future<Output = ()>) {
+    pub(crate) fn run(body: impl Future<Output = ()>) {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async { tokio::time::timeout(Duration::from_secs(30), body).await.expect("test still running after 30s") });
     }
@@ -834,7 +1104,7 @@ mod tests {
     async fn broker_with(cfg: Config) -> String {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = l.local_addr().unwrap();
-        let app = router(Config { token: TOKEN.into(), ..cfg });
+        let app = router(Config { token: TOKEN.into(), ..cfg }).unwrap();
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
         addr.to_string()
     }
@@ -847,7 +1117,7 @@ mod tests {
         req.headers_mut().insert("Authorization", format!("Bearer {TOKEN}").parse().unwrap());
         let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
         let (mut sink, mut source) = ws.split();
-        let hello = Ctl::Hello { name: name.into(), host_id: name.into(), version: "0".into(), protocol: proto::PROTOCOL, key: Some(format!("{name}-key")) };
+        let hello = Ctl::Hello { name: name.into(), host_id: name.into(), version: "0".into(), protocol: proto::PROTOCOL, key: Some(format!("{name}-key")), origin_port: None };
         sink.send(TMessage::Text(serde_json::to_string(&hello).unwrap().into())).await.unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel::<Ctl>();
         let (sent, ws_id) = (Arc::new(Mutex::new(Instant::now())), Arc::new(AtomicU64::new(0)));
@@ -937,7 +1207,7 @@ mod tests {
         let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
         let (mut sink, mut source) = ws.split();
         let text = |c: &Ctl| TMessage::Text(serde_json::to_string(c).unwrap().into());
-        let hello = Ctl::Hello { name: name.into(), host_id: host_id.into(), version: "0".into(), protocol: proto::PROTOCOL, key: key.map(String::from) };
+        let hello = Ctl::Hello { name: name.into(), host_id: host_id.into(), version: "0".into(), protocol: proto::PROTOCOL, key: key.map(String::from), origin_port: None };
         sink.send(text(&hello)).await.unwrap();
         match source.next().await {
             Some(Ok(TMessage::Text(t))) => match serde_json::from_str::<Ctl>(&t).unwrap() {
@@ -1053,5 +1323,131 @@ mod tests {
             assert_eq!(who(&b, "desktop").await, "desktop-id");
             named_host(&b, "desktop", "desktop-id", None).await.unwrap_err();
         })
+    }
+
+    /// A state file in a new directory of its own, which is removed when it's dropped (when the test ends, panics included).
+    fn state_file(test: &str) -> StateFile {
+        let dir = std::env::temp_dir().join(format!("huntaway-broker-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        StateFile(dir.join("state.json"))
+    }
+
+    struct StateFile(PathBuf);
+
+    impl std::ops::Deref for StateFile {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for StateFile {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for StateFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn a_broker_with_a_state_file_keeps_names_across_a_restart() {
+        run(async {
+            let state = state_file("restart");
+            let b = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
+            let desktop = named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap();
+            let laptop = named_host(&b, "laptop", "laptop-id", Some("laptop-key")).await.unwrap();
+            laptop.abort();
+            until_who(&b, "laptop", "isn't connected").await;
+            let saved = std::fs::read_to_string(&state).unwrap();
+            assert!(!saved.contains("desktop-key") && saved.contains(&hex(hash("desktop-key"))), "{saved}");
+            // Another broker on the same file, as the broker would be after a restart: desktop was
+            // connected when it stopped, and laptop had gone.
+            let b2 = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
+            for name in ["desktop", "laptop"] {
+                let error = named_host(&b2, name, "other-id", Some("other-key")).await.unwrap_err();
+                assert!(error.contains("it's kept for the host that had it for 60 minutes more"), "{name}: {error}");
+                named_host(&b2, name, &format!("{name}-id"), Some("other-key")).await.unwrap_err();
+            }
+            let _desktop = named_host(&b2, "desktop", "desktop-id", Some("desktop-key")).await.unwrap();
+            assert_eq!(who(&b2, "desktop").await, "desktop-id");
+            let _laptop = named_host(&b2, "laptop", "laptop-id", Some("laptop-key")).await.unwrap();
+            assert_eq!(who(&b2, "laptop").await, "laptop-id");
+            drop(desktop);
+        })
+    }
+
+    #[test]
+    fn names_kept_in_the_state_file_run_out_after_the_hold() {
+        run(async {
+            let state = state_file("hold");
+            let now = unix_now();
+            let names = json!({"names": {
+                // Gone half an hour ago, two hours ago, and connected when the broker stopped.
+                "recent": {"host_id": "recent-id", "key_sha256": hex(hash("recent-key")), "left": now - 30 * 60},
+                "old": {"host_id": "old-id", "key_sha256": hex(hash("old-key")), "left": now - 2 * 60 * 60},
+                "connected": {"host_id": "connected-id", "key_sha256": hex(hash("connected-key"))},
+                // From a host from before keys.
+                "keyless": {"host_id": "keyless-id", "left": now - 60},
+            }});
+            std::fs::write(&state, names.to_string()).unwrap();
+            let b = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
+            let error = named_host(&b, "recent", "other-id", Some("other-key")).await.unwrap_err();
+            assert!(error.contains("for 30 minutes more"), "{error}");
+            let error = named_host(&b, "connected", "other-id", Some("other-key")).await.unwrap_err();
+            assert!(error.contains("for 60 minutes more"), "{error}");
+            named_host(&b, "keyless", "other-id", Some("other-key")).await.unwrap_err();
+            let _other = named_host(&b, "old", "other-id", Some("other-key")).await.unwrap();
+            assert_eq!(who(&b, "old").await, "other-id");
+            let _keyless = named_host(&b, "keyless", "keyless-id", Some("keyless-key")).await.unwrap();
+            // The old one's hold ran out, and it's gone from the file; the keyless host is now held to its key.
+            let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+            assert_eq!(saved["names"]["old"]["host_id"], "other-id");
+            assert_eq!(saved["names"]["keyless"]["key_sha256"], hex(hash("keyless-key")));
+        })
+    }
+
+    #[test]
+    fn a_name_that_cant_be_saved_isnt_taken() {
+        run(async {
+            let state = state_file("unsaved");
+            let b = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
+            let _desktop = named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap();
+            // The file can't be written from now on (as on a full disk): its temporary file's name is taken by a directory.
+            let tmp = state.with_file_name(".state.json.tmp");
+            std::fs::create_dir(&tmp).unwrap();
+            let error = named_host(&b, "laptop", "laptop-id", Some("laptop-key")).await.unwrap_err();
+            assert!(error.contains("couldn't save the name laptop"), "{error}");
+            assert!(who(&b, "laptop").await.contains("isn't connected"));
+            // A host connecting again is refused too, and its connection carries on.
+            named_host(&b, "desktop", "desktop-id", Some("desktop-key")).await.unwrap_err();
+            assert_eq!(who(&b, "desktop").await, "desktop-id");
+            // After a restart, desktop is still kept for its host, and laptop was never taken.
+            std::fs::remove_dir(&tmp).unwrap();
+            let b2 = broker_with(Config { state: Some(state.clone()), ..Default::default() }).await;
+            named_host(&b2, "desktop", "other-id", Some("other-key")).await.unwrap_err();
+            let _laptop = named_host(&b2, "laptop", "other-id", Some("other-key")).await.unwrap();
+        })
+    }
+
+    #[test]
+    fn a_state_file_that_cant_be_read_or_written_stops_the_broker() {
+        let state = state_file("bad");
+        std::fs::write(&state, "{not json").unwrap();
+        let error = router(Config { token: TOKEN.into(), state: Some(state.clone()), ..Default::default() }).err().unwrap();
+        assert!(format!("{error:#}").contains("reading"), "{error:#}");
+        std::fs::write(&state, r#"{"names": {"desktop": {"host_id": "d", "key_sha256": "zz"}}}"#).unwrap();
+        assert!(router(Config { token: TOKEN.into(), state: Some(state.clone()), ..Default::default() }).is_err());
+        let missing = state.parent().unwrap().join("no-such-dir").join("state.json");
+        let error = router(Config { token: TOKEN.into(), state: Some(missing), ..Default::default() }).err().unwrap();
+        assert!(format!("{error:#}").contains("writing"), "{error:#}");
+        // No file yet is a broker with no names taken.
+        std::fs::remove_file(&state).unwrap();
+        let _ = router(Config { token: TOKEN.into(), state: Some(state.clone()), ..Default::default() }).unwrap();
+        assert!(std::fs::read_to_string(&state).unwrap().contains("\"names\""));
     }
 }
