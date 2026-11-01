@@ -459,24 +459,23 @@ version is all a check does; quitting and starting the app again still runs the 
 A host installed from the server tarball can update the same way with
 `huntaway serve --release-updates dire-kiwi/huntaway` (or `IA_RELEASE_UPDATES=dire-kiwi/huntaway`):
 the board it serves shows the same Update, Check now and Roll back, and versions go into
-`<data dir>/app/` as above. Set `IA_BUNDLED_SERVER` to the tarball's `huntaway` so that Roll back
-can go back to it. There's no desktop app to choose the version, so a supervisor that restarts the
-server (after a reboot, say) runs the binary it names, the tarball's, until you click Update again.
-To keep the version you updated to, have it start the current one instead, with a script like this
-(`scripts/install-release-host.sh` downloads the latest release's tarball, checks its sha256, unpacks
-it into `~/.local/share/huntaway-server/<v>/` and writes such a launcher, `huntaway-host`, with
-`IA_RELEASE_UPDATES` and `IA_BUNDLED_SERVER` set; for a host a hub starts over SSH, point the forced
-command at the launcher: `command="…/huntaway-host ssh-host --port 7878"`):
+`<data dir>/app/` as above. So does its page in a hub's Settings → Hosts, through the hub. There's
+no desktop app to choose the version when a supervisor starts the tarball's `huntaway` again (after
+a reboot, say), so the server chooses as the app would: it execs the version you last updated to
+(`current` in `app/state.json`, else `previous`), when that's newer than itself and isn't bad, and
+otherwise carries on itself. So a newer tarball takes over from older downloads, as a newer package
+does. A version it starts this way that exits before it's listening is marked bad on the next start,
+which starts the one before it, or the tarball's own server: a broken version is tried once, not on
+every restart (a server killed while it's starting counts as one that didn't start). Roll back can go
+back to the tarball's own server, from the first Update on: the tarball's server passes itself as
+`IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
+Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
-```sh
-#!/bin/sh
-# Start the release last updated to, or the installed one. It doesn't compare versions, so after
-# installing a newer tarball, delete <data dir>/app/.
-data=${IA_DATA_DIR:-$HOME/.local/share/huntaway}
-v=$(sed -n 's/^ *"current": *"\([^"]*\)".*/\1/p' "$data/app/state.json" 2>/dev/null)
-[ -n "$v" ] && [ -x "$data/app/$v/huntaway" ] && exec "$data/app/$v/huntaway" "$@"
-exec /opt/huntaway-server/huntaway "$@"
-```
+`scripts/install-release-host.sh` installs a host this way: it downloads the latest release's tarball
+(or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
+`~/.local/share/huntaway-server/current` at it, and prints the command to start it with
+`IA_RELEASE_UPDATES` set, and the forced command for a host a hub starts over SSH
+(`command="IA_RELEASE_UPDATES=dire-kiwi/huntaway …/current/huntaway ssh-host --port 7878"`).
 
 `scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through

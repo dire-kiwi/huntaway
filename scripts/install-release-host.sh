@@ -4,10 +4,9 @@
 #   scripts/install-release-host.sh [--version <v>] [--dir <dir>] [--data-dir <dir>] [--repo <OWNER/REPO>]
 #
 # Downloads huntaway-server-<v>-linux-<arch>.tar.gz (the latest release by default), checks it against the sha256
-# GitHub lists for it, unpacks it into <dir>/<v>/ (default ~/.local/share/huntaway-server) and checks that it runs.
-# Then writes <dir>/huntaway-host, a launcher that starts the release the server last updated to
-# (<data dir>/app/<current>/huntaway), or else this one, with --release-updates on. It changes nothing else: it
-# prints how to point a hub's SSH forced command at the launcher, and how to start the host with it.
+# GitHub lists for it, unpacks it into <dir>/<v>/ (default ~/.local/share/huntaway-server), checks that it runs, and
+# points <dir>/current at it. It changes nothing else: it prints how to start the host with release updates on, and
+# the forced command for a hub that starts it over SSH.
 set -eu
 
 repo=dire-kiwi/huntaway
@@ -67,30 +66,20 @@ else
   mv "$unpacked" "$target"
 fi
 
-launcher=$dir/huntaway-host
-cat > "$launcher.new" <<EOF
-#!/bin/sh
-# Written by scripts/install-release-host.sh. Starts the release this host last updated to, or else $version.
-# It doesn't compare versions: after installing a newer tarball, delete $data_dir/app/.
-export IA_RELEASE_UPDATES=$repo
-export IA_BUNDLED_SERVER='$target/huntaway'
-v=\$(sed -n 's/^ *"current": *"\([^"]*\)".*/\1/p' '$data_dir/app/state.json' 2>/dev/null)
-[ -n "\$v" ] && [ -x '$data_dir/app/'"\$v/huntaway" ] && exec '$data_dir/app/'"\$v/huntaway" "\$@"
-exec '$target/huntaway' "\$@"
-EOF
-chmod 755 "$launcher.new"
-mv "$launcher.new" "$launcher"
+# A path that stays the same when a newer tarball is installed. The server itself starts the release it last updated to
+# (in <data dir>/app/), when that's newer than its own.
+ln -sfn "$version" "$dir/current"
+server=$dir/current/huntaway
 
 cat <<EOF
 
-Installed $version in $target, and the launcher $launcher.
+Installed $version in $target, and pointed $dir/current at it.
 
+Start it with release updates on (agents of a host running now keep running when you stop it):
+  IA_RELEASE_UPDATES=$repo $server serve --data-dir '$data_dir' …
 For a host a hub starts over SSH, change the command in the hub's line in ~/.ssh/authorized_keys to
-  command="$launcher ssh-host --port 7878"
-(with your port). Then stop the host that's running now (agents keep running), and start it with
-  $launcher ssh-host --port 7878
-or let the hub start it when it reconnects. A host you start yourself:
-  $launcher serve --data-dir '$data_dir' …
-Its board then shows new releases under Settings → Server, and a hub's Settings → Hosts offers
-Update to the release the hub runs.
+  command="IA_RELEASE_UPDATES=$repo $server ssh-host --port 7878"
+(with your port), stop the host that's running now, and let the hub start it when it reconnects (or
+run that command yourself). Its board then shows new releases under Settings → Server, and a hub's
+Settings → Hosts offers Update to the release the hub runs.
 EOF

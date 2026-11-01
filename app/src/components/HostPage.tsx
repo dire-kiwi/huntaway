@@ -1,12 +1,12 @@
 import clsx from "clsx";
-import { ChevronLeft, Copy, Loader2, Plus, RotateCw, Server, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, Copy, Download, Loader2, Plus, RotateCw, Server, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, canRunAgents, hostSupports, type Profile, type ServerStatus } from "../api";
 import { navigate } from "../router";
 import { profileConfigLabel, useStore } from "../store";
 import { HostClaudeConfigs } from "./ClaudeConfigs";
 import { AgentDefaultsRow, CopyLoginModal, HostVersion, ProfileForm, TerminalToolsRow } from "./Hosts";
-import { RestartModal, ServerPanel } from "./Server";
+import { installName, PHASES, Releases, RestartModal, ServerPanel, ShellNotice, stagedRelease } from "./Server";
 import { Button, IconButton, MenuButton, Modal, timeAgo, useConfirm } from "./ui";
 
 const MODE: Record<string, string> = { local: "this hub's own host", outbound: "linked by URL", inbound: "dials in", ssh: "over SSH" };
@@ -169,21 +169,18 @@ function HostProfiles({ hostId, canCopy }: { hostId: string; canCopy: boolean })
   );
 }
 
-const PHASES: Record<string, string> = {
-  starting: "Starting…",
-  building_ui: "Building the UI…",
-  building_server: "Building the server…",
-  restarting: "Restarting…",
-  failed: "Restart failed",
-};
-
-/** Rebuild & restart a linked host, following its progress by polling it. */
+/**
+ * A linked host's server, followed by polling it: Rebuild & restart, and for a host with release updates
+ * (`--release-updates`, API 88) its version, the release checks and download, Update, Check now and Roll back.
+ */
 function RemoteServer({ hostId }: { hostId: string }) {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [watching, setWatching] = useState<string | null>(null); // boot id before the restart
   const [down, setDown] = useState(false);
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<"restart" | "release" | "rollback" | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
+  // A background download's progress is worth following more closely.
+  const downloading = !!status?.release?.download && status.release.download.phase !== "failed";
 
   useEffect(() => {
     let alive = true;
@@ -200,12 +197,13 @@ function RemoteServer({ hostId }: { hostId: string }) {
       }
     };
     poll();
-    const id = setInterval(poll, watching ? 1500 : 10000);
+    const id = setInterval(poll, watching ? 1500 : downloading ? 3000 : 10000);
     return () => {
       alive = false;
       clearInterval(id);
     };
-  }, [hostId, watching]);
+  }, [hostId, watching, downloading]);
+  const refresh = useCallback(() => api.serverStatus(hostId).then(setStatus, () => {}), [hostId]);
 
   useEffect(() => {
     const el = logRef.current;
@@ -214,22 +212,46 @@ function RemoteServer({ hostId }: { hostId: string }) {
 
   const job = status?.restart;
   const busy = !!watching;
+  const release = status?.release;
+  const staged = stagedRelease(status);
   const short = (c?: string | null) => (c ? c.slice(0, 7) : "unknown");
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[13px] font-semibold">Server</h2>
-        {/* Asks first, as this board's own Rebuild & restart does: it says what the restart takes in and what's running. */}
-        <Button size="sm" disabled={!status || busy} onClick={() => setAsking(true)}>
-          <RotateCw size={13} /> {status?.source_dir ? <>Rebuild &amp; restart</> : "Restart"}
-        </Button>
+        <div className="flex gap-2">
+          {staged && (
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => setAsking("release")}>
+              <Download size={13} /> Update to v{staged}
+            </Button>
+          )}
+          {/* Asks first, as this board's own Rebuild & restart does: it says what the restart takes in and what's running. */}
+          <Button size="sm" disabled={!status || busy} onClick={() => setAsking("restart")}>
+            <RotateCw size={13} /> {status?.source_dir ? <>Rebuild &amp; restart</> : "Restart"}
+          </Button>
+        </div>
       </div>
       <div className="space-y-2 rounded-xl border border-line p-4 text-[12.5px] text-muted">
         {status ? (
           <>
             <div>
-              Running <span className="font-mono text-fg">{short(status.running_commit)}</span>, started {timeAgo(status.started_at)}
+              Running{" "}
+              {release ? (
+                <>
+                  <span className="font-mono text-fg">v{release.running}</span>
+                  {status.running_commit && <span className="font-mono"> ({short(status.running_commit)})</span>}
+                </>
+              ) : (
+                <span className="font-mono text-fg">{short(status.running_commit)}</span>
+              )}
+              , started {timeAgo(status.started_at)}
             </div>
+            {release?.exe && (
+              <div>
+                From <span className="font-mono break-all">{release.exe}</span>
+              </div>
+            )}
+            {release?.shell && <div>Started by the desktop app{release.shell.version && ` v${release.shell.version}`} ({installName(release.shell)})</div>}
             {status.source_dir ? (
               <div>
                 Builds from <span className="font-mono">{status.source_dir}</span>
@@ -242,7 +264,7 @@ function RemoteServer({ hostId }: { hostId: string }) {
                 {status.new_commits?.length ? <span className="text-accent">, {status.new_commits.length} new commit(s) there</span> : null}
               </div>
             ) : (
-              <div>Not running from a source checkout, so it can restart but not rebuild.</div>
+              !release && <div>Not running from a source checkout, so it can restart but not rebuild.</div>
             )}
             <div>Agents keep running through a restart.</div>
           </>
@@ -262,7 +284,17 @@ function RemoteServer({ hostId }: { hostId: string }) {
           </pre>
         )}
       </div>
-      {asking && status && <RestartModal status={status} hostId={hostId} onStarted={() => setWatching(status.boot_id)} onClose={() => setAsking(false)} />}
+      {status && release && <Releases hostId={hostId} release={release} onStatus={setStatus} refresh={refresh} onRollback={() => setAsking("rollback")} />}
+      {release?.shell?.outdated && <ShellNotice release={release} remote />}
+      {asking && status && (
+        <RestartModal
+          status={status}
+          hostId={hostId}
+          release={asking === "release" ? "update" : asking === "rollback" ? "rollback" : undefined}
+          onStarted={() => setWatching(status.boot_id)}
+          onClose={() => setAsking(null)}
+        />
+      )}
     </section>
   );
 }

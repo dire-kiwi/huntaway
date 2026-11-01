@@ -291,31 +291,33 @@ async fn run(state: &Shared, rebuild: bool) -> Result<()> {
         step(state, &src.join("server"), "cargo", &["build", "--release"]).await?;
         exe = src.join("server/target/release/huntaway");
     }
-    Err(restart_into(state, &exe).await)
+    Err(restart_into(state, &exe, &[]).await)
 }
 
-/// Replace this process with `exe`, run with this one's arguments, in the `restarting` phase. Only returns on failure.
-pub(crate) async fn restart_into(state: &Shared, exe: &Path) -> anyhow::Error {
+/// Replace this process with `exe`, run with this one's arguments and environment (and `env` on top), in the
+/// `restarting` phase. Only returns on failure.
+pub(crate) async fn restart_into(state: &Shared, exe: &Path, env: &[(&str, OsString)]) -> anyhow::Error {
     // Agents keep running under ia-shim; the new process resumes following them.
     set_phase(state, "restarting", None);
     // Give the websocket a moment to deliver the final events.
     tokio::time::sleep(Duration::from_millis(300)).await;
     tracing::info!("re-executing {}", exe.display());
-    exec(exe, &state.meta.args)
+    exec(exe, &state.meta.args, env)
 }
 
 /// Replace this process with a fresh server. Only returns on failure.
 #[cfg(all(unix, not(test)))]
-fn exec(exe: &Path, args: &[OsString]) -> anyhow::Error {
+fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
     use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(exe).args(args).exec();
+    let err = std::process::Command::new(exe).args(args).envs(env.iter().map(|(k, v)| (k, v))).exec();
     anyhow!("failed to exec {}: {}", exe.display(), truncate(&err.to_string(), 500))
 }
 
-/// Tests don't replace themselves: they can see what would have been exec'd at `testing::reached("exec")`, and
-/// then it fails.
+/// Tests don't replace themselves: they can see what would have been exec'd at `testing::reached("exec")` (and
+/// the environment it would have added in `exec_env`), and then it fails.
 #[cfg(test)]
-fn exec(exe: &Path, _args: &[OsString]) -> anyhow::Error {
+fn exec(exe: &Path, _args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
+    EXEC_ENV.with_borrow_mut(|e| *e = Some(env.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()));
     crate::testing::reached("exec");
     anyhow!("failed to exec {}: not in a test", exe.display())
 }
@@ -345,9 +347,20 @@ pub fn reap_inherited() {
     });
 }
 
+#[cfg(test)]
+thread_local! {
+    static EXEC_ENV: std::cell::RefCell<Option<Vec<(String, OsString)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The environment the last exec on this thread would have added (see `exec`).
+#[cfg(test)]
+pub(crate) fn exec_env() -> Option<Vec<(String, OsString)>> {
+    EXEC_ENV.with_borrow(|e| e.clone())
+}
+
 #[cfg(all(not(unix), not(test)))]
-fn exec(exe: &Path, args: &[OsString]) -> anyhow::Error {
-    match std::process::Command::new(exe).args(args).spawn() {
+fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
+    match std::process::Command::new(exe).args(args).envs(env.iter().map(|(k, v)| (k, v))).spawn() {
         Ok(_) => std::process::exit(0),
         Err(e) => anyhow!("failed to start {}: {e}", exe.display()),
     }

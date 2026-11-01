@@ -147,11 +147,15 @@ export function HostVersion({ host }: { host: Host }) {
   const behind = !!host.commit && !!local?.commit && host.commit !== local.commit;
   const differs = !!host.commit && !!target && host.commit !== target;
   // A host installed from a release (API 89) goes by version instead: Update takes it to the release this board runs.
+  // (Its page also has its own release updates.)
   const release = host.updates_from === "releases";
   const releaseTarget = release && local?.version && host.version && compareVersions(local.version, host.version) > 0 ? local.version : null;
-  // API 3+ hosts can update from their own origin, so any hub that knows its commit can update them.
+  // API 3+ hosts can update from their own origin, so any hub that knows its commit can update them. One that doesn't
+  // report a commit has no checkout to update.
   const canUpdate =
-    !host.local && host.connected && (release ? !!releaseTarget : !!target && hostSupports(host, 3) && (differs || compat !== "ok"));
+    !host.local &&
+    host.connected &&
+    (release ? !!releaseTarget : !!host.commit && !!target && hostSupports(host, 3) && (differs || compat !== "ok"));
 
   // While the host rebuilds, show its progress; done when it comes back (a new boot) or reconnects on the new commit.
   useEffect(() => {

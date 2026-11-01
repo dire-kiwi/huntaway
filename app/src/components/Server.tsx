@@ -9,7 +9,7 @@ import { compareVersions } from "../versions";
 import { Markdown } from "./Thread";
 import { Button, copyText, Modal, ModalFooter, timeAgo, Toggle } from "./ui";
 
-const PHASES: Record<string, string> = {
+export const PHASES: Record<string, string> = {
   starting: "Starting…",
   building_ui: "Building the UI…",
   building_server: "Building the server…",
@@ -42,7 +42,7 @@ function useServerStatus(pollMs: number) {
 const short = (sha?: string | null) => (sha ? sha.slice(0, 7) : "unknown");
 
 /** The release Update restarts onto: the staged one, once it's newer than the one running. */
-function stagedRelease(status: ServerStatus | null): string | null {
+export function stagedRelease(status: ServerStatus | null): string | null {
   const r = status?.release;
   return r?.staged && compareVersions(r.staged, r.running) > 0 ? r.staged : null;
 }
@@ -103,6 +103,7 @@ export function ReloadButton() {
 
 /** Server section on the Settings page. */
 export function ServerPanel() {
+  const host = useStore((s) => s.localHostId);
   const { status, setStatus, refresh } = useServerStatus(15_000);
   const [open, setOpen] = useState<"restart" | "update" | "release" | "rollback" | null>(null);
   const deployed = status?.deployed;
@@ -191,7 +192,7 @@ export function ServerPanel() {
           <div>Loading…</div>
         )}
       </div>
-      {status && release && <Releases release={release} onStatus={setStatus} refresh={refresh} onRollback={() => setOpen("rollback")} />}
+      {status && release && host && <Releases hostId={host} release={release} onStatus={setStatus} refresh={refresh} onRollback={() => setOpen("rollback")} />}
       {release?.shell?.outdated && <ShellNotice release={release} />}
       {open && status && (
         <RestartModal
@@ -205,31 +206,35 @@ export function ServerPanel() {
   );
 }
 
-function installName(shell: NonNullable<ReleaseStatus["shell"]>) {
+export function installName(shell: NonNullable<ReleaseStatus["shell"]>) {
   const kind = { pacman: "pacman package", appimage: "AppImage", mac: "macOS app" }[shell.install as string] ?? "installed by hand";
   return shell.path ? `${kind}, ${shell.path}` : kind;
 }
 
-/** The release checks (`--release-updates`): what they found, the background download, Check now, prereleases and Roll back. */
-function Releases({
+/**
+ * The release checks (`--release-updates`) of host `hostId`'s server: what they found, the background download, Check
+ * now, prereleases and Roll back.
+ */
+export function Releases({
+  hostId: host,
   release,
   onStatus,
   refresh,
   onRollback,
 }: {
+  hostId: string;
   release: ReleaseStatus;
   onStatus: (s: ServerStatus) => void;
-  refresh: () => Promise<void> | undefined;
+  refresh: () => Promise<unknown> | undefined;
   onRollback: () => void;
 }) {
-  const host = useStore((s) => s.localHostId);
   const [checking, setChecking] = useState(false);
   // The toggle's new value until the server's status has it.
   const [prereleases, setPrereleases] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const latest = release.latest;
   const check = async () => {
-    if (!host || checking) return;
+    if (checking) return;
     setChecking(true);
     setErr(null);
     try {
@@ -241,7 +246,6 @@ function Releases({
     }
   };
   const togglePrereleases = async (on: boolean) => {
-    if (!host) return;
     setPrereleases(on);
     setErr(null);
     try {
@@ -347,9 +351,10 @@ function DownloadLine({ download: d }: { download: ReleaseDownload }) {
 
 /**
  * The latest release comes with a new desktop app, which the server can't install: how to get it, or (where the app
- * can install it itself, HA-68) a button.
+ * can install it itself, HA-68) a button. With `remote`, the app is a linked host's, which only that host's app can
+ * update: it says how.
  */
-function ShellNotice({ release }: { release: ReleaseStatus }) {
+export function ShellNotice({ release, remote }: { release: ReleaseStatus; remote?: boolean }) {
   const shell = release.shell!;
   const pkg = shell.package;
   const latest = release.latest;
@@ -357,7 +362,7 @@ function ShellNotice({ release }: { release: ReleaseStatus }) {
   // The app installs its own package where its install is one it can replace (an AppImage, the pacman package) and is
   // the one this server reports on.
   const [kind] = useState(() => desktop?.shellUpdateKind?.() ?? null);
-  const updateShell = kind && kind === shell.install && pkg ? desktop?.updateShell : undefined;
+  const updateShell = !remote && kind && kind === shell.install && pkg ? desktop?.updateShell : undefined;
   const [progress, setProgress] = useState<ShellUpdateProgress | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -371,10 +376,10 @@ function ShellNotice({ release }: { release: ReleaseStatus }) {
     <div className="mt-3 space-y-2 rounded-xl border border-accent/30 bg-accent/[0.06] p-4 text-[12.5px] text-muted">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="font-medium text-fg">The desktop app has an update</div>
+          <div className="font-medium text-fg">The desktop app {remote ? "on this host " : ""}has an update</div>
           <div>
             {latest ? `v${latest.version}` : "The latest release"} comes with a new version of the app itself{shell.version && ` (this one is v${shell.version})`}, which
-            {updateShell ? " the app can install itself." : " the board can't install."}
+            {updateShell ? " the app can install itself." : remote ? " that host's app installs from its own Settings → Server." : " the board can't install."}
           </div>
         </div>
         {updateShell && (
@@ -461,8 +466,8 @@ function ShellProgress({ progress: p, kind }: { progress: ShellUpdateProgress; k
 /**
  * Rebuild and restart, or with `update` first fast-forward the checkout to the commit its `--update-from` deployment runs.
  * With `release`, restart onto the staged release (`"update"`) or the one before this one (`"rollback"`) instead.
- * With a `hostId`, a linked host's server: it asks the same way, then closes once the restart has started, calling
- * `onStarted`, and the host's page follows its progress.
+ * With a `hostId`, a linked host's server: it asks the same way, then closes once the restart (or release update or
+ * rollback) has started, calling `onStarted`, and the host's page follows its progress.
  */
 export function RestartModal({
   status,
@@ -541,7 +546,9 @@ export function RestartModal({
     if (remote) {
       setStarting(true);
       try {
-        await api.restartServer(hostId, { rebuild });
+        if (release === "update") await api.updateRelease(hostId, version!);
+        else if (release === "rollback") await api.rollbackRelease(hostId);
+        else await api.restartServer(hostId, { rebuild });
         onStarted?.();
         onClose();
       } catch (e) {
@@ -576,7 +583,7 @@ export function RestartModal({
   return (
     <Modal title={title} onClose={inProgress ? () => {} : onClose} width="max-w-2xl">
       <div className="space-y-4 text-[13px]">
-        {!job && release === "update" && version && <ReleaseUpdate release={status.release!} version={version} />}
+        {!job && release === "update" && version && <ReleaseUpdate release={status.release!} version={version} remote={remote} />}
         {!job && release === "rollback" && (
           <>
             <p className="text-muted">
@@ -588,7 +595,8 @@ export function RestartModal({
                   <span className="font-mono text-fg">v{version}</span>, the version before this one
                 </>
               )}
-              , and doesn't offer <span className="font-mono text-fg">v{running}</span> again. The board reloads once it's back.
+              , and doesn't offer <span className="font-mono text-fg">v{running}</span> again.{" "}
+              {remote ? "This page follows it until it's back." : "The board reloads once it's back."}
             </p>
             <Warning>
               v{running} may have migrated the database, and an older version might not work with it. Roll back only when v{running} doesn't work.
@@ -697,7 +705,7 @@ export function RestartModal({
 }
 
 /** What a release update does: the versions, the release's notes and what happens to the server, agents and board. */
-function ReleaseUpdate({ release, version }: { release: ReleaseStatus; version: string }) {
+function ReleaseUpdate({ release, version, remote }: { release: ReleaseStatus; version: string; remote?: boolean }) {
   // The notes are the latest release's, which is the staged one unless a newer one came out meanwhile.
   const latest = release.latest?.version === version ? release.latest : null;
   return (
@@ -722,11 +730,14 @@ function ReleaseUpdate({ release, version }: { release: ReleaseStatus; version: 
         </div>
       )}
       <p className="text-muted">
-        Restarts the server on <span className="font-mono text-fg">v{version}</span>, which is downloaded and checked already, and the board reloads once
-        it's back. If the restart fails, this server keeps running v{release.running}.
+        Restarts the server on <span className="font-mono text-fg">v{version}</span>, which is downloaded and checked already, and{" "}
+        {remote ? "this page follows it until it's back" : "the board reloads once it's back"}. If the restart fails, this server keeps running v
+        {release.running}.
       </p>
       {release.shell?.outdated && (
-        <p className="text-[12px] text-faint">The desktop app itself has an update too: Settings → Server says how to install it.</p>
+        <p className="text-[12px] text-faint">
+          The desktop app itself has an update too: {remote ? "this host's page" : "Settings → Server"} says how to install it.
+        </p>
       )}
     </>
   );
