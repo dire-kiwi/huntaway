@@ -1267,6 +1267,9 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["reviewers"] = json!(p.reviewers);
     out["auto_summary"] = json!(p.auto_summary);
     out["summarizer"] = json!(p.summarizer);
+    // What the project's empty reviewers and null summarizer use.
+    out["profile_reviewers"] = json!(board.reviewers);
+    out["profile_summarizer"] = json!(board.summarizer);
     out["group_name"] = json!(p.group_name);
     out["archived"] = json!(p.archived_at.is_some());
     let own = [&p.start_prompt, &p.review_prompt, &p.merge_prompt];
@@ -2776,9 +2779,9 @@ mod tests {
             assert_eq!((&res.unwrap()["permission_mode"], &db::get_project(&s.db(), "kiwicd").unwrap().unwrap().setup_script), (&json!("default"), &"npm install".to_string()));
 
             // Settings given in another form than they're kept in, but that come to what they are
-            // (a blank column script is none, one default reviewer is the task's own), aren't
-            // changes, so nothing is asked.
-            let same = json!({"status_scripts": {"done": "  "}, "reviewers": [{}], "use_worktrees": false, "repo_path": "/x"});
+            // (a blank column script is none, no reviewers is the profile's), aren't changes, so
+            // nothing is asked.
+            let same = json!({"status_scripts": {"done": "  "}, "reviewers": [], "use_worktrees": false, "repo_path": "/x"});
             let v = call(&s, &me("c6"), "update_project", same).await.unwrap();
             assert_eq!((&v["status_scripts"], &v["reviewers"]), (&json!({}), &json!([])));
             assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());

@@ -256,6 +256,12 @@ struct CreateProfile {
     /// See `db::Profile::limit_switch` (API 81).
     #[serde(default)]
     limit_switch: bool,
+    /// See `db::Profile::reviewers` (API 86).
+    #[serde(default)]
+    reviewers: Value,
+    /// See `db::Profile::summarizer` (API 86).
+    #[serde(default)]
+    summarizer: Value,
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -269,9 +275,10 @@ async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -
     let access = b.agent_access.as_ref().map(|v| check_agent_access(name, v)).transpose()?;
     let github_account = check_github_account(&b.github_account)?;
     let clone_dir = check_clone_dir(&b.clone_dir)?;
+    let (reviewers, summarizer) = (reviewers_value(&c, &b.reviewers, true)?, summarizer_value(&c, &b.summarizer, true)?);
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
-    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch))]);
+    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -323,6 +330,12 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
         if let Some(v) = b.get(key) {
             fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
         }
+    }
+    if let Some(v) = b.get("reviewers") {
+        fields.push(("reviewers", reviewers_value(&c, v, true)?));
+    }
+    if let Some(v) = b.get("summarizer") {
+        fields.push(("summarizer", summarizer_value(&c, v, true)?));
     }
     if let Some(v) = b.get("claude_config_ids") {
         let ids: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("claude_config_ids must be a list of config ids"))?;
@@ -484,10 +497,10 @@ fn check_config_ids(c: &rusqlite::Connection, ids: Vec<String>) -> ApiResult<Vec
     Ok(out)
 }
 
-/// A project's reviewers, with blank fields as None and each config checked.
+/// Reviewers, with blank fields as None and each config checked.
 fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>) -> ApiResult<Vec<db::Reviewer>> {
     if list.len() > crate::review::MAX_REVIEWERS {
-        return Err(ApiError::bad(format!("a project can have at most {} reviewers", crate::review::MAX_REVIEWERS)));
+        return Err(ApiError::bad(format!("there can be at most {} reviewers", crate::review::MAX_REVIEWERS)));
     }
     let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let mut out = Vec::new();
@@ -501,6 +514,26 @@ fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>) -> ApiResu
         out.push(r);
     }
     Ok(out)
+}
+
+/// A project's or profile's `reviewers` as saved: checked, and null when it's empty. With
+/// `defaults_too`, just one reviewer with the defaults is null too (a profile's, which is the same);
+/// a project's is kept, so it reviews with the task's config rather than the profile's reviewers.
+fn reviewers_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool) -> ApiResult<Value> {
+    let list: Option<Vec<db::Reviewer>> =
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
+    let list = list.map(|l| check_reviewers(c, l)).transpose()?.filter(|l| !l.is_empty() && !(defaults_too && *l == [db::Reviewer::default()]));
+    Ok(json!(list.map(|l| json!(l).to_string())))
+}
+
+/// A project's or profile's `summarizer` as saved, checked. With `defaults_too`, one with the
+/// defaults is null (a profile's); a project's is kept, so it summarises with the task's config
+/// rather than the profile's summarizer.
+fn summarizer_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool) -> ApiResult<Value> {
+    let spec: Option<db::Reviewer> =
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("summarizer must be null or {claude_config_id, model, effort}"))?;
+    let spec = spec.map(|r| check_reviewers(c, vec![r])).transpose()?.and_then(|l| l.into_iter().next()).filter(|r| !(defaults_too && *r == db::Reviewer::default()));
+    Ok(json!(spec.map(|r| json!(r).to_string())))
 }
 
 // ---------- Claude configs ----------
@@ -1014,21 +1047,10 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
                 return Err(ApiError::bad("review_rounds must be a whole number from 0 to 20"));
             }
-            // null (or an empty list, or just one reviewer with the defaults) is one reviewer
-            // with the task's config.
-            "reviewers" => {
-                let list: Option<Vec<db::Reviewer>> = serde_json::from_value(v.clone())
-                    .map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
-                let list = list.map(|l| check_reviewers(&s.db(), l)).transpose()?.filter(|l| !l.is_empty() && *l != [db::Reviewer::default()]);
-                *v = json!(list.map(|l| json!(l).to_string()));
-            }
-            // null (or one with the defaults) summarises with the task's config.
-            "summarizer" => {
-                let spec: Option<db::Reviewer> =
-                    serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("summarizer must be null or {claude_config_id, model, effort}"))?;
-                let spec = spec.map(|r| check_reviewers(&s.db(), vec![r])).transpose()?.and_then(|l| l.into_iter().next()).filter(|r| *r != db::Reviewer::default());
-                *v = json!(spec.map(|r| json!(r).to_string()));
-            }
+            // null (or an empty list) uses the profile's reviewers.
+            "reviewers" => *v = reviewers_value(&s.db(), v, false)?,
+            // null uses the profile's summarizer.
+            "summarizer" => *v = summarizer_value(&s.db(), v, false)?,
             // A script per status; null or a blank script is none.
             "status_scripts" => {
                 let scripts: Option<BTreeMap<String, String>> =
@@ -2843,6 +2865,56 @@ pub(crate) mod tests {
             let update = |b: Value| update_profile(State(s.clone()), Path(id.clone()), Json(b.as_object().unwrap().clone()));
             assert_eq!(update(json!({"github_account": "ghe.example.com/me"})).await.unwrap().0["github_account"], "ghe.example.com/me");
             assert_eq!(update(json!({"github_account": ""})).await.unwrap().0["github_account"], Value::Null);
+        })
+    }
+
+    #[test]
+    fn profiles_choose_reviewers_and_a_summarizer_that_projects_can_override() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let codex = db::insert_claude_config(&s.db(), "Codex", "", "codex").unwrap();
+            let create = |b: Value| create_profile(State(s.clone()), Json(serde_json::from_value(b).unwrap()));
+            let Json(p) = create(json!({"name": "work", "reviewers": [{"claude_config_id": codex.id, "model": " "}], "summarizer": {"model": "haiku"}})).await.unwrap();
+            assert_eq!(p["reviewers"], json!([{"claude_config_id": codex.id, "model": null, "effort": null}]));
+            assert_eq!(p["summarizer"], json!({"claude_config_id": null, "model": "haiku", "effort": null}));
+            assert_eq!(create(json!({"name": "home"})).await.unwrap().0["reviewers"], json!([]));
+            assert!(create(json!({"name": "bad", "reviewers": [{"claude_config_id": "nope"}]})).await.is_err());
+            assert!(create(json!({"name": "bad", "summarizer": "haiku"})).await.is_err());
+            let id = p["id"].as_str().unwrap().to_string();
+            let np = db::NewProject { id: "pr", profile_id: &id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            db::insert_project(&s.db(), np).unwrap();
+            let project = || db::get_project(&s.db(), "pr").unwrap().unwrap();
+            let reviewers = || {
+                let p = project();
+                db::reviewers_for(&s.db(), &p).unwrap()
+            };
+            let summarizer = || {
+                let p = project();
+                db::summarizer_for(&s.db(), &p).unwrap()
+            };
+            let codex_reviewer = db::Reviewer { claude_config_id: Some(codex.id.clone()), ..Default::default() };
+            let haiku = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
+            // A project with none of its own uses the profile's.
+            assert_eq!(reviewers(), [codex_reviewer.clone()]);
+            assert_eq!(summarizer(), haiku);
+            // One with the defaults is a project's own choice, the task's config, over the profile's.
+            let body = json!({"reviewers": [{}], "summarizer": {"claude_config_id": "", "model": null}});
+            update_project_inner(&s, "pr", body.as_object().unwrap()).await.unwrap();
+            assert_eq!(reviewers(), [db::Reviewer::default()]);
+            assert_eq!(summarizer(), db::Reviewer::default());
+            // Back to the profile's.
+            update_project_inner(&s, "pr", json!({"reviewers": [], "summarizer": null}).as_object().unwrap()).await.unwrap();
+            assert_eq!((project().reviewers, project().summarizer), (vec![], None));
+            assert_eq!(reviewers(), [codex_reviewer]);
+            // A profile's with just the defaults is none, which is the same.
+            let update = |b: Value| update_profile(State(s.clone()), Path(id.clone()), Json(b.as_object().unwrap().clone()));
+            let Json(p) = update(json!({"reviewers": [{"model": ""}], "summarizer": {}})).await.unwrap();
+            assert_eq!((&p["reviewers"], &p["summarizer"]), (&json!([]), &Value::Null));
+            assert_eq!(reviewers(), [db::Reviewer::default()]);
+            assert_eq!(summarizer(), db::Reviewer::default());
+            assert_eq!(update(json!({"summarizer": {"effort": "low"}})).await.unwrap().0["reviewers"], json!([]), "kept when other fields change");
+            let seven = vec![json!({}); crate::review::MAX_REVIEWERS + 1];
+            assert!(update(json!({"reviewers": seven})).await.is_err());
         })
     }
 

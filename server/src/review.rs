@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::db::{self, ClaudeConfig, NewTask, Review, Reviewer, ReviewerRun, Task};
+use crate::db::{self, ClaudeConfig, NewTask, Review, ReviewerRun, Task};
 use crate::runner::{self, Outcome};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::now;
@@ -137,7 +137,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     }
 
     // Each reviewer reviews in its own thread, kept from one review to the next.
-    let specs = if project.reviewers.is_empty() { vec![Reviewer::default()] } else { project.reviewers.clone() };
+    let specs = db::reviewers_for(&state.db(), &project)?;
     let task_config = db::task_claude_config(&state.db(), &task)?;
     let mut threads = db::review_threads(&state.db(), &task.id)?;
     threads.retain(|t| !crate::summary::is_summary(t));

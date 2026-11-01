@@ -1,5 +1,5 @@
 //! Summaries of a task's changes. Once a task's review passes (see review.rs), an agent of the
-//! project's choosing (its `summarizer`, or the task's own config) reads the work and writes a
+//! project's choosing (its `summarizer`, or else its profile's, or the task's own config) reads the work and writes a
 //! summary of what changed for the user to read before merging it. It works read-only in the
 //! task's worktree, in a thread of its own: a `review` task of type `summary` whose `parent_id`
 //! is the task, so it's run like a reviewer (see runner.rs) but isn't one of its reviewers. Its
@@ -102,7 +102,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
 
     // The summarizer writes in a thread of its own, kept from one summary to the next while
     // its config, model and effort stay the same.
-    let spec = project.summarizer.clone().unwrap_or_default();
+    let spec = db::summarizer_for(&state.db(), &project)?;
     let task_config = db::task_claude_config(&state.db(), &task)?;
     let config = match spec.claude_config_id.as_deref() {
         // A summarizer whose config was deleted writes with the task's.
@@ -394,6 +394,28 @@ mod tests {
             reply(&s, thread, None);
             let sum = summary_of(&s, &task).unwrap();
             assert_eq!(sum.state, "failed", "{:?}", sum.text);
+            crate::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_project_without_a_summarizer_uses_its_profiles() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let task = passed(&s);
+            let haiku = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
+            db::update_profile(&s.db(), &task.profile_id, &[("summarizer", json!(json!(haiku).to_string()))]).unwrap();
+            start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().expect("it starts");
+            assert_eq!(summary_of(&s, &task).unwrap().label, "Claude · haiku");
+            let thread = db::summary_threads(&s.db(), &task.id).unwrap().remove(0);
+            reply(&s, &thread, Some("A summary."));
+            // The project's own is used over it, in a thread of its own.
+            let sonnet = db::Reviewer { model: Some("sonnet".into()), ..Default::default() };
+            db::update_project(&s.db(), "pr", &[("summarizer", json!(json!(sonnet).to_string()))]).unwrap();
+            start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().unwrap();
+            assert_eq!(summary_of(&s, &task).unwrap().label, "Claude · sonnet");
+            assert_eq!(db::summary_threads(&s.db(), &task.id).unwrap().len(), 2);
             crate::runs::TEST_CAN_RUN.set(false);
         })
     }

@@ -687,12 +687,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=68; COMMIT;")?;
     }
+    if version < 69 {
+        // Who reviews and summarises the tasks of a profile's projects that don't choose their own
+        // (see Profile::reviewers). Added only if they aren't there, in case another migration
+        // takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for col in ["reviewers", "summarizer"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('profiles') WHERE name=?1", [col], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} TEXT;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=69; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 68;
+pub const VERSION: i64 = 69;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1086,6 +1099,14 @@ pub struct Profile {
     /// usage, when theirs is (API 81).
     #[serde(default)]
     pub limit_switch: bool,
+    /// Who reviews the tasks of its projects that have no reviewers of their own (API 86, see
+    /// `reviewers_for`). Empty is one reviewer with the task's config.
+    #[serde(default)]
+    pub reviewers: Vec<Reviewer>,
+    /// Who summarises them, for its projects with no summarizer of their own (API 86, see
+    /// `summarizer_for`). None is the task's config with the default model and effort.
+    #[serde(default)]
+    pub summarizer: Option<Reviewer>,
     pub created_at: String,
 }
 
@@ -1112,6 +1133,8 @@ impl Profile {
             asana_enabled: r.get("asana_enabled")?,
             limit_wait: r.get("limit_wait")?,
             limit_switch: r.get("limit_switch")?,
+            reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+            summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             created_at: r.get("created_at")?,
         })
     }
@@ -1213,15 +1236,16 @@ pub struct Project {
     /// How many times in a row a review's serious issues go back to the agent to fix before
     /// the task is left for the user.
     pub review_rounds: u32,
-    /// Who reviews each task's work, each in a review thread of its own. Empty means one
-    /// reviewer with the task's config.
+    /// Who reviews each task's work, each in a review thread of its own. Empty uses the
+    /// profile's (see `reviewers_for`).
     #[serde(default)]
     pub reviewers: Vec<Reviewer>,
     /// Summarise each task's changes once its review passes, for the user to read before
     /// merging (see summary.rs).
     #[serde(default = "yes")]
     pub auto_summary: bool,
-    /// Who writes those summaries, in a thread of its own. None is the task's config.
+    /// Who writes those summaries, in a thread of its own. None uses the profile's (see
+    /// `summarizer_for`).
     #[serde(default)]
     pub summarizer: Option<Reviewer>,
     /// The project's instructions for the prompts sent when a task's agent starts, when its
@@ -1790,6 +1814,25 @@ pub fn list_profiles(c: &Connection) -> Result<Vec<Profile>> {
 
 pub fn get_profile(c: &Connection, id: &str) -> Result<Option<Profile>> {
     Ok(c.query_row(&format!("{PROFILE_SELECT} WHERE p.id=?1"), [id], Profile::from_row).optional()?)
+}
+
+/// Who reviews `project`'s tasks: its own reviewers, or else its profile's, or else one reviewer
+/// with the task's config.
+pub fn reviewers_for(c: &Connection, project: &Project) -> Result<Vec<Reviewer>> {
+    if !project.reviewers.is_empty() {
+        return Ok(project.reviewers.clone());
+    }
+    let profile = get_profile(c, &project.profile_id)?.map(|p| p.reviewers).unwrap_or_default();
+    Ok(if profile.is_empty() { vec![Reviewer::default()] } else { profile })
+}
+
+/// Who summarises `project`'s tasks: its own summarizer, or else its profile's, or else the
+/// task's config with the defaults.
+pub fn summarizer_for(c: &Connection, project: &Project) -> Result<Reviewer> {
+    if let Some(r) = &project.summarizer {
+        return Ok(r.clone());
+    }
+    Ok(get_profile(c, &project.profile_id)?.and_then(|p| p.summarizer).unwrap_or_default())
 }
 
 pub fn insert_profile(c: &Connection, name: &str, config_ids: &[String], model: Option<&str>) -> Result<Profile> {
@@ -2464,7 +2507,7 @@ pub fn preview_project_update(c: &Connection, id: &str, fields: &[(&str, Value)]
     update_project(&tx, id, fields)
 }
 
-const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch"];
+const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer"];
 
 pub fn update_profile(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Profile>> {
     update_generic(c, "profiles", PROFILE_COLUMNS, id, fields)?;
@@ -3726,6 +3769,29 @@ mod tests {
         assert!(p.pull_requests && p.subproject_pull_requests);
         let p = update_project(&c, "pr", &[("pull_requests", json!(false))]).unwrap().unwrap();
         assert!(!p.pull_requests && p.subproject_pull_requests);
+    }
+
+    #[test]
+    fn a_database_at_version_68_gets_profiles_reviewers_and_summarizer() {
+        // As master's build left it, with pull request settings (68) and no profile reviewers yet.
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE profiles DROP COLUMN reviewers;
+                 ALTER TABLE profiles DROP COLUMN summarizer;
+                 PRAGMA user_version=68;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_profile(&c, "p").unwrap().unwrap();
+        assert_eq!((p.reviewers, p.summarizer), (vec![], None));
+        let haiku = Reviewer { model: Some("haiku".into()), ..Default::default() };
+        let p = update_profile(&c, "p", &[("summarizer", json!(json!(haiku).to_string()))]).unwrap().unwrap();
+        assert_eq!(p.summarizer, Some(haiku));
     }
 
     #[test]
