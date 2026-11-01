@@ -9,7 +9,7 @@ import { afterEach, test } from "node:test";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { assetPlatform, packageName, updateKind, updateShell } = require("../electron/shellupdate.cjs");
+const { assetPlatform, download, packageName, updateKind, updateShell } = require("../electron/shellupdate.cjs");
 
 const cleanups = [];
 afterEach(async () => {
@@ -130,6 +130,37 @@ test("a download that doesn't match its digest leaves the AppImage as it was", a
   await assert.rejects(promise, /doesn't match its sha256 digest/);
   assert.equal(fs.readFileSync(appimage, "utf8"), "old");
   assert.deepEqual(fs.readdirSync(dir), ["Huntaway.AppImage"]);
+});
+
+// HA-68 review: the AppImage was downloaded to a predictable `.<name>.update-<pid>` beside it, through any symlink planted
+// there, so a correctly hashed download overwrote the link's target, and the AppImage became the link.
+test("a file planted at the old staging name beside the AppImage isn't written through", async () => {
+  const f = await fake();
+  const dir = tmp();
+  const appimage = path.join(dir, "Huntaway.AppImage");
+  fs.writeFileSync(appimage, "old", { mode: 0o755 });
+  const doc = path.join(tmp(), "document.txt");
+  fs.writeFileSync(doc, "precious");
+  fs.symlinkSync(doc, path.join(dir, `.Huntaway.AppImage.update-${process.pid}`));
+  assert.deepEqual(await (await run(f, { kind: "appimage", appimage })).promise, { version: "0.3.0" });
+  assert.equal(fs.readFileSync(doc, "utf8"), "precious");
+  assert.ok(fs.lstatSync(appimage).isFile(), "the AppImage is a regular file, not the link");
+  assert.equal(sha256(fs.readFileSync(appimage)), sha256(PACKAGE));
+  // The planted link is left alone, and nothing of the update's is left.
+  assert.deepEqual(fs.readdirSync(dir).sort(), [`.Huntaway.AppImage.update-${process.pid}`, "Huntaway.AppImage"]);
+});
+
+test("a download never writes through something already at its path", async () => {
+  const f = await fake();
+  const doc = path.join(tmp(), "document.txt");
+  fs.writeFileSync(doc, "precious");
+  const file = path.join(tmp(), "package");
+  fs.symlinkSync(doc, file);
+  const url = `${f.base}/download/huntaway-0.3.0-${PLATFORM}.pacman`;
+  await assert.rejects(download({ url, file, sha256: sha256(PACKAGE) }), /Couldn't save the download in .*EEXIST/);
+  assert.equal(fs.readFileSync(doc, "utf8"), "precious");
+  assert.ok(fs.lstatSync(file).isSymbolicLink(), "and what's there is left alone");
+  assert.ok(!f.requests.some((r) => r.startsWith("/download/")));
 });
 
 test("a download cut off halfway leaves the AppImage as it was", async () => {

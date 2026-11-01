@@ -112,6 +112,14 @@ async function findPackage({ api, repo, version, kind, platform = assetPlatform(
  */
 async function download({ url, file, sha256, size = 0, onProgress = () => {}, fetch = globalThis.fetch }) {
   const hash = crypto.createHash("sha256");
+  // Created here, never through something already at `file` (a link would have its target overwritten).
+  let fd;
+  try {
+    fd = fs.openSync(file, "wx", 0o644);
+  } catch (e) {
+    throw fail(`Couldn't save the download in ${path.dirname(file)}: ${e.message}`);
+  }
+  let out;
   try {
     let res;
     try {
@@ -131,10 +139,13 @@ async function download({ url, file, sha256, size = 0, onProgress = () => {}, fe
         done(null, chunk);
       },
     });
-    await pipeline(Readable.fromWeb(res.body), count, fs.createWriteStream(file, { mode: 0o644 }));
+    out = fs.createWriteStream(null, { fd });
+    await pipeline(Readable.fromWeb(res.body), count, out);
     const got = hash.digest("hex");
     if (got !== sha256) throw fail(`The download of ${path.basename(url)} doesn't match its sha256 digest (got ${got}, expected ${sha256}).`);
   } catch (e) {
+    // Once the stream has it, the stream closes it.
+    if (!out) fs.closeSync(fd);
     fs.rmSync(file, { force: true });
     if (e.code && e.syscall) throw fail(`Couldn't save the download in ${path.dirname(file)}: ${e.message}`);
     if (e.userMessage) throw e;
@@ -158,21 +169,32 @@ function writable(dir) {
  */
 async function updateAppImage({ appimage, pkg, onProgress, fetch }) {
   const dir = path.dirname(appimage);
-  if (!writable(dir)) throw fail(`The app can't replace itself: ${dir} isn't writable by you. Download the new AppImage and put it in place yourself.`);
-  const tmp = path.join(dir, `.${path.basename(appimage)}.update-${process.pid}`);
-  await download({ url: pkg.url, file: tmp, sha256: pkg.sha256, size: pkg.size, onProgress, fetch });
+  const yourself = "Download the new AppImage and put it in place yourself.";
+  if (!writable(dir)) throw fail(`The app can't replace itself: ${dir} isn't writable by you. ${yourself}`);
+  // A new private dir beside it (the same filesystem, for the rename), so no name in a shared dir is written through.
+  let stage;
   try {
-    let mode = 0o755;
-    try {
-      mode = fs.statSync(appimage).mode & 0o7777;
-    } catch {
-      // It was moved away meanwhile: it's written anew.
-    }
-    fs.chmodSync(tmp, mode | 0o111);
-    fs.renameSync(tmp, appimage);
+    stage = fs.mkdtempSync(path.join(dir, `.${path.basename(appimage)}.update-`));
   } catch (e) {
-    fs.rmSync(tmp, { force: true });
-    throw fail(`The app couldn't replace ${appimage}: ${e.message}. Download the new AppImage and put it in place yourself.`);
+    throw fail(`The app can't replace itself: ${e.message}. ${yourself}`);
+  }
+  try {
+    const tmp = path.join(stage, path.basename(appimage));
+    await download({ url: pkg.url, file: tmp, sha256: pkg.sha256, size: pkg.size, onProgress, fetch });
+    try {
+      let mode = 0o755;
+      try {
+        mode = fs.statSync(appimage).mode & 0o7777;
+      } catch {
+        // It was moved away meanwhile: it's written anew.
+      }
+      fs.chmodSync(tmp, mode | 0o111);
+      fs.renameSync(tmp, appimage);
+    } catch (e) {
+      throw fail(`The app couldn't replace ${appimage}: ${e.message}. ${yourself}`);
+    }
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
   }
 }
 
