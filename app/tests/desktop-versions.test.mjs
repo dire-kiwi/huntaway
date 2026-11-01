@@ -237,3 +237,77 @@ test("with no server left to try, the failures are forgotten", async () => {
   await assert.rejects(f, /no server/);
   assert.equal(failed.size, 0);
 });
+
+/** A start that times out, with the `ready` that main.cjs's spawnServer gives it; `comeUp()` is its late IA_READY. */
+function slowStart() {
+  let comeUp;
+  const ready = new Promise((resolve) => (comeUp = resolve));
+  return { error: Object.assign(new Error("Server did not start within 15s"), { ready }), comeUp };
+}
+
+test("versions that exited, then a server that's ready only after the timeout: they're marked bad then, and skipped next time", async () => {
+  const dir = appDir({ current: "0.3.0", previous: "0.2.0", bad: [], extra: 42 }, ["0.3.0", "0.2.0"]);
+  const failed = new Set();
+  const slow = slowStart();
+  const started = [];
+  const run = startWithFallback({
+    choose: (skip) => chooseServer({ appDir: dir, bundled: BUNDLED, minVersion: "0.1.0", skip }),
+    start: async ({ version }) => {
+      started.push(version);
+      if (version) throw Object.assign(new Error("exited"), { early: true });
+      throw slow.error;
+    },
+    portTaken: async () => false,
+    failed,
+    saveBad: (v) => markBad(dir, v),
+  });
+  await assert.rejects(run, /within 15s/);
+  assert.deepEqual(started, ["0.3.0", "0.2.0", null]);
+  assert.deepEqual(readState(dir).bad, [], "nothing is saved while the bundled server is only slow");
+  slow.comeUp();
+  await slow.error.ready;
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(readState(dir), { current: "0.3.0", previous: "0.2.0", bad: ["0.3.0", "0.2.0"], extra: 42 });
+  assert.equal(failed.size, 0);
+  // The next launch goes straight to the bundled server.
+  assert.deepEqual(choose(dir), { bin: BUNDLED, version: null });
+});
+
+test("a slow installed version that comes up late isn't blamed, and nothing is saved if the app is quitting", async () => {
+  const slow = slowStart();
+  let quitting = false;
+  const saved = [];
+  const failed = new Set(["0.4.0"]);
+  const run = startWithFallback({
+    choose: (skip) => ({ version: ["0.4.0", "0.3.0"].find((v) => !skip.includes(v)) ?? null }),
+    start: async () => {
+      throw slow.error;
+    },
+    portTaken: async () => false,
+    failed,
+    saveBad: (v) => saved.push(v),
+    stopping: () => quitting,
+  });
+  await assert.rejects(run, /within 15s/);
+  quitting = true;
+  slow.comeUp();
+  await slow.error.ready;
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(saved, []);
+  // Not quitting: the trying version is saved, the slow 0.3.0 isn't.
+  const slow2 = slowStart();
+  const run2 = startWithFallback({
+    choose: (skip) => ({ version: ["0.4.0", "0.3.0"].find((v) => !skip.includes(v)) ?? null }),
+    start: async () => {
+      throw slow2.error;
+    },
+    portTaken: async () => false,
+    failed: new Set(["0.4.0"]),
+    saveBad: (v) => saved.push(v),
+  });
+  await assert.rejects(run2, /within 15s/);
+  slow2.comeUp();
+  await slow2.error.ready;
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(saved, ["0.4.0"]);
+});

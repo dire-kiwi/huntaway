@@ -112,17 +112,26 @@ function chooseServer({ appDir, bundled, minVersion, exe = "huntaway", skip = []
  * Start a server: the one `choose(skip)` picks, and if that's an installed version (`choice.version`) that exits before
  * it's ready (`start` rejects with `early`), the next one, at once. Resolves with {token, choice}.
  *
- * `failed` holds the versions that failed (the caller keeps it, for `trying` and for one that exits after `start` gave
- * up waiting): they're skipped, and saved with `saveBad` only once a server has come up. A failure that every server
- * has (a wrong host, the port taken by another launch's server) isn't the version's, so if none comes up, or something
- * answers on the port after a failure (`portTaken`), it rejects and `failed` is forgotten. So is a failure while the
- * app quits (`stopping`). A timeout (a rejection without `early`) keeps them: that server is still starting, and if it
- * exits too, the caller adds it and starts the next one.
+ * `failed` holds the versions that failed this way (the caller keeps it, and adds `trying` and any version that exits
+ * after `start` gave up waiting on it). They're skipped, and saved with `saveBad` once a server has come up, which
+ * shows the failure was theirs. It's cleared, without saving, when it can't be told whose the failure was:
+ *   - no server is left to try (choose throws), or the bundled or an override server fails too: every server fails
+ *     the same way, a wrong host say;
+ *   - something answers on the port after a failure (`portTaken`): another launch's server took it;
+ *   - the app is quitting (`stopping`).
+ *
+ * A timeout (a rejection without `early`) keeps `failed`, as that server is still starting and only slow, which isn't
+ * held against it. If it exits, the caller adds it and starts again. If it comes up (the rejection's `ready` resolves,
+ * for the same child while it's still the latest start), the failures are saved then.
  */
 async function startWithFallback({ choose, start, portTaken, failed, saveBad, stopping = () => false }) {
   const giveUp = (e) => {
     failed.clear();
     throw e;
+  };
+  const save = () => {
+    for (const v of failed) saveBad(v);
+    failed.clear();
   };
   for (;;) {
     let choice;
@@ -135,13 +144,15 @@ async function startWithFallback({ choose, start, portTaken, failed, saveBad, st
     try {
       token = await start(choice);
     } catch (e) {
-      if (!e.early) throw e;
+      if (!e.early) {
+        e.ready?.then(() => stopping() || save());
+        throw e;
+      }
       if (!choice.version || stopping() || (await portTaken())) giveUp(e);
       failed.add(choice.version);
       continue;
     }
-    for (const v of failed) saveBad(v);
-    failed.clear();
+    save();
     return { token, choice };
   }
 }

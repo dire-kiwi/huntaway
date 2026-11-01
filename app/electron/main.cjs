@@ -233,7 +233,7 @@ async function startServer(win) {
     note(`huntaway ${trying} didn't come up after an update`);
     failedVersions.add(trying);
   }
-  const { token } = await versions.startWithFallback({
+  const started = versions.startWithFallback({
     choose: (skip) => {
       const choice = findServerBinary(skip);
       if (!choice) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
@@ -253,7 +253,15 @@ async function startServer(win) {
     saveBad: badVersion,
     stopping: () => stopping,
   });
-  return token;
+  try {
+    return (await started).token;
+  } catch (e) {
+    // It timed out, then came up after all (startWithFallback has saved the failures before it): show the board.
+    e.ready?.then(() => {
+      if (!stopping && !win.isDestroyed()) void load(win);
+    });
+    throw e;
+  }
 }
 
 /** An installed version exited before it was ready, but after startServer stopped waiting: start the next one. */
@@ -267,7 +275,8 @@ function lateExit(win, version) {
 /**
  * Start `choice` (findServerBinary's), resolving with its token once it's ready. A rejection's `early` is whether it
  * exited (or couldn't be run) before then, rather than taking too long. `onLost` runs if it exits after it's ready, and
- * `onLate` if it exits before that but after the wait timed out, unless another server has been started since.
+ * `onLate` if it exits before that but after the wait timed out, unless another server has been started since. A
+ * timeout's `ready` resolves if it's ready after all, on the same terms.
  */
 function spawnServer(choice, { onLost, onLate }) {
   const { bin, version } = choice;
@@ -279,6 +288,8 @@ function spawnServer(choice, { onLost, onLate }) {
   serverProc = proc;
   let ready = false;
   let timedOut = false;
+  let lateReady;
+  const readyLate = new Promise((resolve) => (lateReady = resolve));
   proc.stderr.on("data", (d) => {
     process.stderr.write(d);
     keepLog(d);
@@ -302,16 +313,17 @@ function spawnServer(choice, { onLost, onLate }) {
     let buf = "";
     const timer = setTimeout(() => {
       timedOut = true;
-      reject(new Error("Server did not start within 15s"));
+      reject(Object.assign(new Error("Server did not start within 15s"), { ready: readyLate }));
     }, 15000);
     proc.stdout.on("data", (d) => {
       process.stdout.write(d);
       buf += d.toString();
       const m = buf.match(/IA_READY (\{.*\})/);
-      if (m) {
+      if (m && !ready) {
         clearTimeout(timer);
         ready = true;
         resolve(JSON.parse(m[1]).token);
+        if (timedOut && serverProc === proc && !stopping) lateReady();
       }
     });
     proc.on("error", (e) => {
