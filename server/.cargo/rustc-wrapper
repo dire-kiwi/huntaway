@@ -11,8 +11,20 @@ sccache=$(command -v sccache) && [[ -z ${SCCACHE_DISABLE:-} ]] || exec "$@"
 [[ -n ${SCCACHE_SERVER_UDS:-} ]] && exec "$sccache" "$@"
 
 up() { (exec 3<>"/dev/tcp/127.0.0.1/${SCCACHE_SERVER_PORT:-4226}") 2>/dev/null; }
+# The server outlives the build that starts it and compiles for every worktree, so it doesn't get this build's $TMPDIR,
+# which may be a task's temp folder (deleted once the task is done) or a script's: once that's gone, every build fails
+# with "Failed to create temp dir". It gets the first of $XDG_RUNTIME_DIR, /tmp and $TMPDIR (a sandbox's own, say) that
+# it can write to.
+server_tmp() {
+    local d t
+    for d in ${XDG_RUNTIME_DIR:+"$XDG_RUNTIME_DIR"} /tmp ${TMPDIR:+"$TMPDIR"}; do
+        t=$(mktemp -d "$d/sccache-probe-XXXXXX" 2>/dev/null) && rmdir "$t" 2>/dev/null && echo "$d" && return
+    done
+    echo "${TMPDIR:-/tmp}"
+}
+start() { TMPDIR=$(server_tmp) "$sccache" --start-server >/dev/null 2>&1; }
 # Several wrappers can start the server at once: the ones that lose see the winner's.
-if up || { "$sccache" --start-server >/dev/null 2>&1; up; }; then
+if up || { start; up; }; then
     exec "$sccache" "$@"
 fi
 exec "$@"
