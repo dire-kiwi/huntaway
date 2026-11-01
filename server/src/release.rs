@@ -230,8 +230,23 @@ pub async fn check(state: &Shared) {
         }
     }
     *state.release.last.lock().unwrap() = next;
+    unstage_unpicked(state);
     state.emit(json!({"type": "release_checked"}));
     stage_latest(state);
+}
+
+/// Once a check has succeeded, unstage a staged version above the release it picked, which it would no longer offer: a
+/// prerelease after "Include prereleases" is turned off, or a release that was taken down. One below it stays offered
+/// until the newer one's download replaces it.
+fn unstage_unpicked(state: &Shared) {
+    let latest = {
+        let last = state.release.last.lock().unwrap();
+        if last.checked_at.is_none() || last.error.is_some() {
+            return;
+        }
+        last.latest.as_ref().map(|l| l.version.clone())
+    };
+    staging::unstage_above(state, latest.as_ref());
 }
 
 /// The version this server runs.
@@ -256,6 +271,8 @@ fn stage_latest(state: &Shared) {
 /// After a download of `version`: if a check found a newer release meanwhile, download that one now rather than
 /// after the next check.
 pub fn downloaded(state: &Shared, version: &str) {
+    // A check while it downloaded may have stopped picking it (prereleases turned off).
+    unstage_unpicked(state);
     let latest = state.release.last.lock().unwrap().latest.as_ref().map(|l| l.version.to_string());
     if latest.is_some_and(|l| l != version) {
         stage_latest(state);
@@ -1298,6 +1315,52 @@ mod tests {
             }
             assert_eq!(release_status(&state)["staged"], "0.3.0");
             assert_eq!(app_entries(&state), ["0.3.0", "state.json"]);
+        });
+    }
+
+    // HA-69: a prerelease staged while they were included stayed offered, and installable, after they were turned off.
+    #[test]
+    fn a_staged_prerelease_is_unstaged_once_prereleases_are_off() {
+        testing::run(async || {
+            let (_, state) = setup_with(|f| {
+                let mut rc = served(f, "v0.3.0-rc.1", tarball("0.3.0-rc.1", None, &[]), Serve::Whole);
+                rc["prerelease"] = json!(true);
+                json!([rc, served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])
+            })
+            .await;
+            crate::db::set_setting(&state.db(), PRERELEASES, Some("true")).unwrap();
+            check(&state).await;
+            assert_eq!(finished(&state).await.version, "0.3.0-rc.1");
+            assert_eq!(release_status(&state)["staged"], "0.3.0-rc.1");
+            crate::db::set_setting(&state.db(), PRERELEASES, None).unwrap();
+            check(&state).await;
+            let r = release_status(&state);
+            assert_eq!((r["latest"]["version"].as_str(), r["staged"].as_str()), (Some("0.2.0"), None));
+            assert!(!staging::app_dir(&state).join("0.3.0-rc.1").exists());
+            // The release it does pick is downloaded instead.
+            let mut rx = state.release.download.subscribe();
+            while rx.borrow_and_update().as_ref().is_none_or(|d| d.version != "0.2.0" || d.running()) {
+                rx.changed().await.unwrap();
+            }
+            assert_eq!(release_status(&state)["staged"], "0.2.0");
+            assert_eq!(app_entries(&state), ["0.2.0", "state.json"]);
+        });
+    }
+
+    #[test]
+    fn a_staged_release_taken_down_is_unstaged_but_not_on_a_failed_check() {
+        testing::run(async || {
+            let (fake, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])).await;
+            check(&state).await;
+            assert_eq!(finished(&state).await.phase, "staged");
+            fake.lock().unwrap().fail = Some((500, vec![]));
+            check(&state).await;
+            assert_eq!(release_status(&state)["staged"], "0.2.0", "a failed check says nothing about the release");
+            fake.lock().unwrap().fail = None;
+            relist(&fake, json!([]));
+            check(&state).await;
+            assert_eq!(release_status(&state)["staged"], Value::Null);
+            assert_eq!(app_entries(&state), ["state.json"]);
         });
     }
 
