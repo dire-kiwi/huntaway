@@ -125,10 +125,16 @@ pub fn running_from_app(data_dir: &Path, exe: &Path) -> Option<String> {
     semver::Version::parse(v).is_ok().then(|| v.to_string())
 }
 
-/// Whether `v` is staged: `staged` in state.json, with all its files.
+/// Whether `v` is staged: `staged` in state.json, with all its files, and not bad.
 pub fn is_staged(state: &Shared, v: &str) -> bool {
     let app = app_dir(state);
-    read(&app).staged.as_deref() == Some(v) && version_dir(&app, v).is_some_and(|d| complete(&d))
+    staged(&app, &read(&app)).as_deref() == Some(v)
+}
+
+/// The staged version in `s`, if it has all its files and isn't bad (an Update onto it that didn't start, which the
+/// desktop app marks bad but leaves staged).
+pub fn staged(app: &Path, s: &Installed) -> Option<String> {
+    s.staged.clone().filter(|v| !s.is_bad(v) && version_dir(app, v).is_some_and(|d| complete(&d)))
 }
 
 /// For a server running from `app/<v>/huntaway`: make `v` current (and the one it replaced previous, after an
@@ -151,9 +157,9 @@ fn settled(s: &mut Installed, v: &str) {
         s.trying = None;
     }
     s.current = Some(v.to_string());
-    // Staged is for a newer version.
+    // Staged is for a newer version, and one that's bad isn't offered again (so its dir is pruned).
     let running = semver::Version::parse(v).ok();
-    if s.staged.as_deref().is_some_and(|st| semver::Version::parse(st).ok() <= running) {
+    if s.staged.as_deref().is_some_and(|st| semver::Version::parse(st).ok() <= running || s.is_bad(st)) {
         s.staged = None;
     }
 }

@@ -387,7 +387,7 @@ pub fn status(state: &Shared) -> Result<Option<Value>> {
         "shell": shell(cfg, last.latest.as_ref()),
         "bundled_server": cfg.bundled_server,
         // A version downloaded and checked, for Update to restart onto.
-        "staged": installed.staged.filter(|v| staging::version_dir(&app, v).is_some_and(|d| staging::complete(&d))),
+        "staged": staging::staged(&app, &installed),
         "download": download.as_ref().and_then(Download::reported),
         "previous": installed.previous,
         "bad": installed.bad,
@@ -537,9 +537,27 @@ pub fn rollback(state: &Shared) -> ApiResult<()> {
         admin::log_line(&st, &format!("Rolling back from {current} to {}", previous.as_deref().unwrap_or("the app's own server")));
         let old = staging::change(&st, |s| rolled_back(s, &current, previous.as_deref()))?;
         let err = admin::restart_into(&st, &exe).await;
-        staging::change(&st, |s| *s = Installed { other: std::mem::take(&mut s.other), ..old })?;
+        // Only what the rollback changed is put back: a download may have staged a version meanwhile.
+        staging::change(&st, |s| not_rolled_back(s, &old, &current, previous.as_deref()))?;
         Err(err)
     })
+}
+
+/// Undo `rolled_back(s, current, previous)` on `s`, which was `old` before it, for the fields it changed and nothing
+/// has changed since.
+fn not_rolled_back(s: &mut Installed, old: &Installed, current: &str, previous: Option<&str>) {
+    if !old.is_bad(current) {
+        s.bad.retain(|b| b != current);
+    }
+    if s.current.as_deref() == previous {
+        s.current = old.current.clone();
+    }
+    if s.previous.is_none() {
+        s.previous = old.previous.clone();
+    }
+    if old.trying.as_deref() == Some(current) && s.trying.is_none() {
+        s.trying = old.trying.clone();
+    }
 }
 
 /// `s` once `current` is rolled back from to `previous` (none for the bundled server, which the desktop app starts
@@ -1509,6 +1527,47 @@ mod tests {
             // The exec failed, so it's as it was.
             let s = staging::read(&app);
             assert_eq!((s.current.as_deref(), s.previous.as_deref(), s.bad.len()), (Some("0.2.0"), Some("0.1.5"), 0));
+        });
+    }
+
+    #[test]
+    fn a_failed_rollback_keeps_what_a_download_staged_meanwhile() {
+        testing::run(async || {
+            let state = host_at(config("http://unused"), Some("0.2.0"), &["0.1.5", "0.2.5", "0.3.0"]);
+            let app = staging::app_dir(&state);
+            let before = Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), staged: Some("0.2.5".into()), bad: vec!["0.0.9".into()], ..Default::default() };
+            staging::write(&app, &before).unwrap();
+            // A download finishes while the rollback waits to exec: it stages 0.3.0 in place of 0.2.5, as stage_into does.
+            let st = state.clone();
+            testing::when("exec", move || {
+                staging::change(&st, |s| s.staged = Some("0.3.0".into())).unwrap();
+                std::fs::remove_dir_all(staging::app_dir(&st).join("0.2.5")).unwrap();
+            });
+            let mut events = state.events.subscribe();
+            assert_eq!(api(&state, "POST", "/api/admin/release/rollback", None).await.0, 200);
+            let (_, error) = job_fails(&mut events).await;
+            assert!(error.ends_with("0.1.5/huntaway: not in a test"), "{error}");
+            // What the rollback changed is put back, and what the download did stands.
+            assert_eq!(staging::read(&app), Installed { staged: Some("0.3.0".into()), ..before });
+            assert_eq!(release_status(&state)["staged"], "0.3.0");
+        });
+    }
+
+    #[test]
+    fn a_bad_staged_version_isnt_offered_and_is_pruned() {
+        testing::run(async || {
+            // An Update onto 0.3.0 didn't start: the desktop app marked it bad and started 0.2.0 again.
+            let state = host_at(config("http://unused"), Some("0.2.0"), &["0.1.5", "0.3.0"]);
+            let app = staging::app_dir(&state);
+            let s = Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), staged: Some("0.3.0".into()), bad: vec!["0.3.0".into()], ..Default::default() };
+            staging::write(&app, &s).unwrap();
+            assert_eq!(release_status(&state)["staged"], Value::Null);
+            assert!(!staging::is_staged(&state, "0.3.0"));
+            staging::settle(&state).unwrap();
+            let s = staging::read(&app);
+            assert_eq!((s.staged, s.bad), (None, vec!["0.3.0".to_string()]));
+            assert_eq!(app_entries(&state), ["0.1.5", "0.2.0", "state.json"]);
+            assert_eq!(release_status(&state)["staged"], Value::Null);
         });
     }
 
