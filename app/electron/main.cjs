@@ -18,13 +18,15 @@
 // `<data dir>/app/<version>/`, per user, so pacman's files in /opt stay as they are. The sidebar's Update restarts the
 // server onto it, and from then on this app starts that version (chooseServer in versions.cjs) rather than its bundled
 // one, unless the package is newer. A version that won't start is marked bad, and the one before it, or the bundled
-// one, runs instead. A release that also changed this shell (Electron and electron/) needs a newer package.
+// one, runs instead. A release that also changed this shell (Electron and electron/) needs a newer package: an AppImage
+// or the pacman package installs it from the board's Settings → Server (updateShell in shellupdate.cjs) and relaunches.
 
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const shellUpdate = require("./shellupdate.cjs");
 const { shellStamp } = require("./stamp.cjs");
 const versions = require("./versions.cjs");
 
@@ -144,12 +146,17 @@ function findServerBinary(skip = []) {
   return bin ? { bin, version: null } : null;
 }
 
-let installKind;
+let installKindCache;
+/** How this release build was installed (versions.installKind). */
+function installKind() {
+  installKindCache ??= versions.installKind({ resourcesPath: resourcesDir });
+  return installKindCache;
+}
+
 /** The environment for a server started here: a release build's, whichever binary it runs, turns on release updates. */
 function serverEnv() {
   if (!resourcesDir) return process.env;
-  installKind ??= versions.installKind({ resourcesPath: resourcesDir });
-  const desktop = { version: app.getVersion(), shell: startStamp, install: installKind, bundled: path.join(resourcesDir, EXE) };
+  const desktop = { version: app.getVersion(), shell: startStamp, install: installKind(), bundled: path.join(resourcesDir, EXE) };
   return { ...process.env, ...versions.releaseEnv(desktop) };
 }
 
@@ -433,10 +440,12 @@ async function createWindow() {
 
 /** The board's origin once it has loaded, the one navigation the window takes. */
 let boardOrigin = null;
+/** The server the board is on, {base, token}, once it's resolved. */
+let target = null;
 
 async function load(win) {
   try {
-    const { base, token } = await resolveTarget(win);
+    const { base, token } = (target = await resolveTarget(win));
     const ui = process.env.IA_DEV_URL || base;
     boardOrigin = new URL(ui).origin;
     await win.loadURL(`${ui}/${token ? `?token=${encodeURIComponent(token)}` : ""}`);
@@ -486,6 +495,69 @@ ipcMain.on("huntaway:focus", (e) => {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+});
+
+/**
+ * What the app can install of its own package (HA-68): "appimage", "pacman", or null for a mac app (which keeps the
+ * instruction), one run from a checkout, or one on a remote server (whose release status is that machine's).
+ */
+function shellUpdateKind() {
+  if (!resourcesDir || config.serverUrl || process.env.IA_RELEASE_UPDATES?.trim() === "") return null;
+  return shellUpdate.updateKind(installKind());
+}
+
+ipcMain.on("huntaway:shell-update-kind", (e) => {
+  e.returnValue = shellUpdateKind();
+});
+
+/** The package update under way, so that a second click doesn't start another. */
+let updatingShell = false;
+
+/**
+ * Install the latest release's package and relaunch. It takes nothing from the page: the version is the server's latest
+ * release, and the package and its digest are GitHub's (shellupdate.cjs). Progress goes back as huntaway:update-shell-progress.
+ */
+ipcMain.handle("huntaway:update-shell", async (e) => {
+  const kind = shellUpdateKind();
+  if (!kind || !target) return { error: "This app can't install its own package." };
+  let origin = null;
+  try {
+    origin = new URL(e.senderFrame?.url ?? "").origin;
+  } catch {
+    // not the board
+  }
+  if (origin !== boardOrigin) return { error: "Only the board can update the app." };
+  if (updatingShell) return { error: "The app is already being updated." };
+  updatingShell = true;
+  const sender = e.sender;
+  let sent = 0;
+  const progress = (p) => {
+    // Downloads report every chunk: a few a second is enough for the page.
+    if (p.phase === "downloading" && p.bytes && p.bytes !== p.total && Date.now() - sent < 200) return;
+    sent = Date.now();
+    if (!sender.isDestroyed()) sender.send("huntaway:update-shell-progress", p);
+  };
+  try {
+    const { version } = await shellUpdate.updateShell({
+      kind,
+      appimage: process.env.APPIMAGE,
+      base: target.base,
+      token: target.token,
+      api: (process.env.IA_RELEASE_API?.trim() || "https://api.github.com").replace(/\/+$/, ""),
+      repo: process.env.IA_RELEASE_UPDATES?.trim() || "dire-kiwi/huntaway",
+      onProgress: progress,
+    });
+    console.log(`installed the desktop app v${version}; relaunching`);
+    progress({ phase: "restarting", version });
+    // The AppImage's new file is at the same path, and so is the package's app in /opt.
+    app.relaunch(kind === "appimage" ? { execPath: process.env.APPIMAGE, args: process.argv.slice(1) } : undefined);
+    app.quit();
+    return { version };
+  } catch (err) {
+    console.error(`updating the desktop app failed: ${err.message}`);
+    updatingShell = false;
+    return { error: err.message };
+  }
 });
 
 app.whenReady().then(createWindow);

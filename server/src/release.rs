@@ -575,6 +575,21 @@ fn rolled_back(s: &mut Installed, current: &str, previous: Option<&str>) {
     }
 }
 
+/// The desktop package for an install `kind` (`pacman`, `appimage`) in release `version`, as
+/// electron-builder names it: the pacman package with `platform`'s arch, and the AppImage with
+/// AppImage's own (`x86_64`, `arm64`).
+fn package_name(kind: &str, version: &str, platform: &str) -> Option<String> {
+    match kind {
+        "pacman" => Some(format!("huntaway-{version}-{platform}.pacman")),
+        "appimage" => {
+            let (os, arch) = platform.split_once('-')?;
+            let arch = if arch == "x64" { "x86_64" } else { arch };
+            Some(format!("huntaway-{version}-{os}-{arch}.AppImage"))
+        }
+        _ => None,
+    }
+}
+
 /// The desktop app this server was started by, and whether the latest release has a newer shell
 /// (null when no app started it).
 fn shell(cfg: &Config, latest: Option<&Latest>) -> Value {
@@ -590,14 +605,8 @@ fn shell(cfg: &Config, latest: Option<&Latest>) -> Value {
         (Some(theirs), Some(ours)) => theirs != ours,
         _ => false,
     };
-    let ext = match kind {
-        "pacman" => Some(".pacman"),
-        "appimage" => Some(".AppImage"),
-        _ => None,
-    };
-    let package = ext.and_then(|ext| {
-        let l = latest?;
-        let name = format!("huntaway-{}-{}{ext}", tag_version(&l.release.tag_name), cfg.platform);
+    let package = latest.and_then(|l| {
+        let name = package_name(kind, tag_version(&l.release.tag_name), &cfg.platform)?;
         l.release.assets.iter().find(|a| a.name == name)
     });
     json!({
@@ -749,7 +758,7 @@ mod tests {
                 asset(&format!("huntaway-server-{v}-linux-x64.tar.gz"), Some(DIGEST)),
                 asset(&format!("huntaway-server-{v}-mac-arm64.tar.gz"), Some(DIGEST)),
                 asset(&format!("huntaway-{v}-linux-x64.pacman"), Some(DIGEST)),
-                asset(&format!("huntaway-{v}-linux-x64.AppImage"), Some(DIGEST)),
+                asset(&format!("huntaway-{v}-linux-x86_64.AppImage"), Some(DIGEST)),
                 asset(&format!("huntaway-{v}-release.json"), Some(DIGEST)),
             ],
         })
@@ -1036,7 +1045,9 @@ mod tests {
         };
         let s = shell(&cfg, Some(&latest));
         assert_eq!((s["install"].as_str(), s["path"].as_str()), (Some("appimage"), Some("/home/me/Huntaway.AppImage")));
-        assert_eq!(s["package"]["name"], "huntaway-0.2.0-linux-x64.AppImage");
+        assert_eq!(s["package"]["name"], "huntaway-0.2.0-linux-x86_64.AppImage");
+        assert_eq!(package_name("appimage", "0.2.0", "linux-arm64").as_deref(), Some("huntaway-0.2.0-linux-arm64.AppImage"));
+        assert_eq!(package_name("pacman", "0.2.0", "linux-x64").as_deref(), Some("huntaway-0.2.0-linux-x64.pacman"));
         cfg.desktop_install = Some("mac:/Applications/Huntaway.app".into());
         let s = shell(&cfg, Some(&latest));
         assert_eq!((s["install"].as_str(), s["package"].clone()), (Some("mac"), Value::Null));
