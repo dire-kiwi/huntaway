@@ -2074,6 +2074,7 @@ pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) ->
     };
     s.db().execute("DELETE FROM tasks WHERE id=?1", [&t.id])?;
     crate::runs::remove_finished(s, &runs);
+    crate::task_tmp::deleted(s, &t.id).await;
     // Any agent asking to delete it is told it's gone (see tools::delete_task), so after that.
     permissions::expire_deletions_of(s, &t.id);
     crate::documents::remove(s, &t.id);

@@ -1023,7 +1023,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   logs, browsers' profiles) doesn't pile up in `/tmp`. They're told to use it, Claude gets it as an
   `--add-dir` and Codex as a writable root. Review threads share the folder of the task they
   review. It's deleted as soon as the task is done and no agent (its own or a reviewer) is running
-  in it, or once the last one stops if the task went to *Done* while it ran; a sweep every ten
+  in it, or once the last one stops if the task went to *Done* while it ran, and when the task is
+  deleted; a sweep every ten
   minutes (and at start) deletes those of tasks that are done or deleted (while the server was
   down, say). It's made again if the task's agent runs again; a run that starts while its folder
   is being deleted gets a new one. Each data dir has its own folder of them, so a server never

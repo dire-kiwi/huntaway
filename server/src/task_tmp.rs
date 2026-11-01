@@ -4,10 +4,11 @@
 //! thread uses the folder of the task it reviews, as it works in that task's worktree.
 //!
 //! A task's folder is removed as soon as the task is done and no agent works in it (its own or a
-//! reviewer), or when its run ends if the task went to *Done* while it ran; and every `SWEEP`, the
-//! folders of tasks that are done or deleted (e.g. while the server was down). It's set up again
-//! if the task's agent runs again. Each data dir has its own root, so a server only ever removes
-//! its own tasks' folders, not those of another server (such as a test server) on the same machine.
+//! reviewer), or when its run ends if the task went to *Done* while it ran, and when the task is
+//! deleted; and every `SWEEP`, the folders of tasks that are done or deleted (e.g. while the server
+//! was down). It's set up again if the task's agent runs again. Each data dir has its own root, so
+//! a server only ever removes its own tasks' folders, not those of another server (such as a test
+//! server) on the same machine.
 //!
 //! Nothing is removed unless the root is a folder (not a link) of this user's that nobody else can
 //! write to, and only folders in it named like a task id (or being removed) are. Whether a folder
@@ -120,6 +121,11 @@ pub fn changed(state: &Shared, t: &Task) {
     rt.spawn(async move {
         remove(&s, &id).await;
     });
+}
+
+/// Call once task `id` has been deleted (with its agents stopped): its folder goes.
+pub async fn deleted(state: &Shared, id: &str) {
+    remove(state, id).await;
 }
 
 /// Whether task `id`'s folder can go: the task is done (or deleted) and no agent works in it.
@@ -409,6 +415,19 @@ mod tests {
             // And with it running, the folder stays.
             assert_eq!(sweep(&s).await, 0);
             assert!(dir(&s, &t).join("work").exists());
+        })
+    }
+
+    #[test]
+    fn deleting_a_task_takes_its_folder() {
+        testing::run(async || {
+            let s = testing::state();
+            let (kept, gone) = (task(&s), task(&s));
+            let (kept_dir, gone_dir) = (ensure(&s, &kept).unwrap(), ensure(&s, &gone).unwrap());
+            std::fs::write(gone_dir.join("x"), "x").unwrap();
+            crate::api::delete_one(&s, &gone, false).await.unwrap();
+            assert!(kept_dir.exists() && !gone_dir.exists());
+            assert_eq!(std::fs::read_dir(root(&s)).unwrap().count(), 1);
         })
     }
 
