@@ -1443,7 +1443,7 @@ mod tests {
     fn files_git_hides_are_left_alone() {
         crate::testing::run(async || {
             let s = crate::testing::state();
-            let (t, wt, repo) = task_repo(&s, false).await;
+            let (t, wt, _) = task_repo(&s, false).await;
             // A submodule, a file marked skip-worktree and one marked assume-unchanged, each changed locally.
             let sub = crate::testing::temp_dir();
             sh(&sub, &["init", "-q", "-b", "master"]);

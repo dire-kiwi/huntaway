@@ -373,12 +373,16 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "db() locked twice on this thread: drop the first guard before calling db() again")]
     fn locking_db_twice_on_a_thread_panics_instead_of_hanging() {
         testing::run(async || {
             let s = testing::state();
-            // Both guards live until the end of the statement.
-            let _ = (s.db().is_autocommit(), s.db().is_autocommit());
+            // Both guards live until the end of the statement. Caught here rather than with `should_panic`, so that
+            // IA_KEEP_TEST_DIRS doesn't count the test as failed.
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = (s.db().is_autocommit(), s.db().is_autocommit());
+            }))
+            .unwrap_err();
+            assert_eq!(panic.downcast_ref::<&str>(), Some(&"db() locked twice on this thread: drop the first guard before calling db() again"));
         });
     }
 }

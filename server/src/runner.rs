@@ -4011,7 +4011,7 @@ mod tests {
             let (task, _) = out_of_usage_setup(&state, "claude", false, false, false);
             let (resets, at) = reset_in(2);
             run_out(&state, &task, resets);
-            crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap();
+            let _ = crate::usage::wait_for_reset(axum::extract::State(state.clone()), axum::extract::Path(task.id.clone())).await.unwrap();
             let t = send(&state, &task.id, "x").unwrap();
             assert!(!state.is_running(&task.id));
             assert_eq!((t.waiting, t.limit_reset_at.as_deref(), t.queued_message.as_deref()), (true, Some(at.as_str()), Some("x")));

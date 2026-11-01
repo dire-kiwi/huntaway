@@ -92,7 +92,17 @@ let browserTmp;
 function browserTmpDir() {
   if (!browserTmp) {
     browserTmp = fs.mkdtempSync(path.join(os.tmpdir(), "ia-ui-check-"));
-    process.on("exit", () => fs.rmSync(browserTmp, { recursive: true, force: true }));
+    const remove = () => fs.rmSync(browserTmp, { recursive: true, force: true });
+    process.on("exit", remove);
+    // A signal ends the process without "exit". With a browser open, Playwright handles it and the process exits;
+    // otherwise remove the folder, then die of the signal as without this handler.
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+      process.on(signal, function onSignal() {
+        if (process.listeners(signal).some((l) => l !== onSignal)) return;
+        remove();
+        process.off(signal, onSignal);
+        process.kill(process.pid, signal);
+      });
   }
   return browserTmp;
 }
