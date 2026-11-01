@@ -847,6 +847,64 @@ export interface ServerStatus {
   deployed?: { commit: string | null; checked_at: string; error: string | null } | null;
   /** `<short sha> <subject>` for the deployed commits this server isn't running (when it's ahead of it). */
   deployed_commits?: string[];
+  /** API 83, with `--release-updates`: the GitHub release this server could update to. */
+  release?: ReleaseStatus;
+}
+
+/** A release asset (a server tarball or a desktop package), with its sha256 from GitHub's digest. */
+export interface ReleaseAsset {
+  name: string;
+  /** Its `browser_download_url`. */
+  url: string;
+  size: number;
+  sha256: string | null;
+}
+
+/** What the release checks found (API 83). Checked 30s after start, every 6 hours and on `POST /admin/release/check`. */
+export interface ReleaseStatus {
+  /** `OWNER/REPO` on GitHub. */
+  repo: string;
+  /** The version this server runs. */
+  running: string;
+  /** The highest release with a server for this platform (prereleases only when `prereleases`), or null if none. */
+  latest: {
+    version: string;
+    prerelease: boolean;
+    published_at: string | null;
+    /** The release's notes, in markdown. */
+    notes: string | null;
+    /** The release's page on GitHub. */
+    url: string;
+    /** Its server tarball for this platform. */
+    asset: ReleaseAsset;
+    /** Whether it's newer than `running`. */
+    newer: boolean;
+  } | null;
+  /** The *Include prereleases* setting (`release_prereleases` in `/settings`). */
+  prereleases: boolean;
+  checked_at: string | null;
+  /** Why the last check failed (what it found before is kept). */
+  error: string | null;
+  /** When GitHub's rate limit resets, if the last check ran into it. */
+  rate_limit_reset: string | null;
+  /** The desktop app that started this server, or null when none did (a server installed from the tarball). */
+  shell: {
+    version: string | null;
+    install: "pacman" | "appimage" | "mac" | "other" | (string & {});
+    /** The AppImage, or the .app on a mac. */
+    path: string | null;
+    /** Whether the latest release was built with another shell, which needs the new package. */
+    outdated: boolean;
+    /** The latest release's package for this install (the .pacman or the .AppImage), or null. */
+    package: ReleaseAsset | null;
+  } | null;
+  /** The package's own server, to fall back to. */
+  bundled_server: string | null;
+  /** Filled in by the background download, Update and rollback (later). */
+  staged: string | null;
+  download: unknown;
+  previous: string | null;
+  bad: string[];
 }
 
 export interface DirListing {
@@ -1224,6 +1282,8 @@ export interface HostSettings {
   terminal_tools?: TerminalTool[];
   /** Where the host is reached from outside, which its webhook URLs are shown with (API 63). */
   public_url?: string | null;
+  /** Whether release checks include prereleases (API 83). Changing it checks again. */
+  release_prereleases?: boolean;
 }
 
 /** A program run in its own tmux session in a task's directory, e.g. `lazygit` (API 13). */
