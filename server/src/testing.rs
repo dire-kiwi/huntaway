@@ -486,6 +486,25 @@ flock -n "$TMPDIR/.lock" true && exit 4; echo ok"#.replace("$1", &parent.display
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn the_test_runner_removes_ended_runs_folders_before_making_its_own() {
+        // A full disk: making a folder fails until a killed run's folder is gone.
+        let parent = temp_dir();
+        std::fs::create_dir(parent.join("ia-cargo-test-ended")).unwrap();
+        std::fs::write(parent.join("ia-cargo-test-ended/.lock"), "").unwrap();
+        let bin = temp_dir();
+        let mktemp = bin.join("mktemp");
+        let full = format!("#!/bin/sh\n[ -e '{}/ia-cargo-test-ended' ] && {{ echo 'No space left on device' >&2; exit 1; }}\nexec /usr/bin/mktemp \"$@\"\n", parent.display());
+        std::fs::write(&mktemp, full).unwrap();
+        std::fs::set_permissions(&mktemp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+        let out = test_runner(&parent, r#"echo "$TMPDIR""#).env("PATH", path).env("TMPDIR", parent.join("gone")).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with(&format!("{}/ia-cargo-test-", parent.display())), "{out:?}");
+        assert!(runs_in(&parent).is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn the_test_runner_removes_only_ended_runs_folders() {
         let parent = temp_dir();
         for d in ["ia-cargo-test-ended", "ia-cargo-test-running", "ia-cargo-test-new"] {

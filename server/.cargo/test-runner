@@ -15,18 +15,22 @@
 [[ $1 == */deps/* && -z ${IA_KEEP_TEST_DIRS:-} ]] && command -v flock > /dev/null || exec "$@"
 set -uo pipefail
 
+# A run holds a lock on its folder's `.lock` while it lasts (the test binary too, which inherits it), so one that was
+# killed before it could remove its folder leaves it unlocked, and later runs remove it: before making their own, as the
+# space they took may be what it needs. Only real folders of this user's: the parent may be shared with others
+# (/var/tmp, /tmp), where an entry could be a symlink to somewhere else. A folder without a `.lock` is one being made.
+sweep() {
+  local d
+  for d in "$1"/ia-cargo-test-*; do
+    [[ -d $d && ! -L $d && -O $d && -f $d/.lock && ! -L $d/.lock ]] && flock -n "$d/.lock" true 2> /dev/null && rm -rf -- "$d"
+  done
+}
+
 for parent in "${IA_CARGO_TEST_TMPDIR:-/var/tmp}" "${TMPDIR:-/tmp}"; do
+  sweep "$parent"
   tmp=$(mktemp -d "$parent/ia-cargo-test-XXXXXX" 2> /dev/null) && break
 done
 [[ -n $tmp ]] || tmp=$(mktemp -d "$parent/ia-cargo-test-XXXXXX") || exit
-
-# A run holds a lock on its folder's `.lock` while it lasts (the test binary too, which inherits it), so one that was
-# killed before it could remove its folder leaves it unlocked, and later runs remove it. Only real folders of this
-# user's: $parent may be shared with others (/var/tmp, /tmp), where an entry could be a symlink to somewhere else. A
-# folder without a `.lock` is one being made (this run's too).
-for d in "$parent"/ia-cargo-test-*; do
-  [[ -d $d && ! -L $d && -O $d && -f $d/.lock && ! -L $d/.lock ]] && flock -n "$d/.lock" true 2> /dev/null && rm -rf -- "$d"
-done
 
 # Locked before it's named `.lock`, so no other run's sweep sees it unlocked.
 exec 9> "$tmp/.lock-new" && flock -n 9 && mv "$tmp/.lock-new" "$tmp/.lock" || { rm -rf -- "$tmp"; exit 1; }
