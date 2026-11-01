@@ -15,6 +15,8 @@ Set these in the server's environment (before test-server.sh, which keeps them f
   IA_FAKE_CLAUDE_TITLE   the title that title generation prints (default "Fake title")
   IA_FAKE_CLAUDE_LIMIT   seconds until the usage limit resets (default 7200) for a prompt containing
                          "out-of-usage", which is refused for the usage limit as Claude Code does
+  IA_FAKE_CLAUDE_USAGE   "out" refuses every run that way; "extra" (or a prompt containing
+                         "on-extra-usage") reports the limit as used up but carries on, on extra usage
 """
 import json
 import os
@@ -69,7 +71,14 @@ session = opt("--resume") or str(uuid.uuid4())
 model = opt("--model") or "fake"
 emit({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": os.getcwd(), "tools": []})
 time.sleep(float(os.environ.get("IA_FAKE_CLAUDE_SLEEP", "0")))
-if "out-of-usage" in prompt:
+usage = os.environ.get("IA_FAKE_CLAUDE_USAGE") or ("extra" if "on-extra-usage" in prompt else "out" if "out-of-usage" in prompt else "")
+if usage == "extra":
+    # What a plan with extra usage reports on each turn past its limit, which goes on.
+    resets = int(time.time() + float(os.environ.get("IA_FAKE_CLAUDE_LIMIT", "7200")))
+    info = {"status": "rejected", "resetsAt": resets, "rateLimitType": "five_hour", "overageStatus": "allowed", "isUsingOverage": True,
+            "unifiedWindows": {"five_hour": {"utilization": 1, "resetsAt": resets, "status": "rejected"}}}
+    emit({"type": "rate_limit_event", "rate_limit_info": info, "session_id": session})
+if usage == "out":
     # What Claude Code prints when the plan's 5-hour limit refuses a turn.
     resets = int(time.time() + float(os.environ.get("IA_FAKE_CLAUDE_LIMIT", "7200")))
     info = {"status": "rejected", "resetsAt": resets, "rateLimitType": "five_hour", "overageStatus": "rejected", "isUsingOverage": False}

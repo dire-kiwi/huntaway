@@ -221,8 +221,11 @@ fn parse_limits(v: &Value) -> Vec<Limit> {
 /// and whether it's out of usage.
 pub fn on_rate_limit_event(s: &Shared, config_id: &str, v: &Value) {
     let info = &v["rate_limit_info"];
+    // A plan with extra usage reports its used-up limit as rejected while its turns go on, on
+    // the extra usage (as Claude Code works out `isUsingOverage`).
+    let overage = info["isUsingOverage"] == true || matches!(info["overageStatus"].as_str(), Some("allowed" | "allowed_warning"));
     match info["status"].as_str() {
-        Some("rejected") => set_out(s, config_id, info["resetsAt"].as_i64().and_then(timestamp)),
+        Some("rejected") if !overage => set_out(s, config_id, info["resetsAt"].as_i64().and_then(timestamp)),
         // Allowed again (or on extra usage), whatever said it was out before.
         Some(_) => set_out(s, config_id, None),
         None => {}
@@ -350,6 +353,10 @@ pub async fn wait_for_reset(State(s): State<Shared>, Path(id): Path<String>) -> 
     if task.kind != "task" {
         return Err(ApiError::bad("only tasks can wait for a usage limit to reset"));
     }
+    // Out of the merge queue's slot while it waited, another merge could start alongside it.
+    if task.merging {
+        return Err(ApiError::conflict("a merge can't wait for a usage limit to reset, as it would give up its place in the merge queue; message its agent once the limit has reset"));
+    }
     let Some(until) = task.limit_reset_at.clone().filter(|t| !reset_due(t)) else {
         return Err(ApiError::conflict("its agent isn't out of usage (or the limit has reset already)"));
     };
@@ -469,6 +476,15 @@ mod tests {
             // Allowed again (extra usage bought, say).
             on_rate_limit_event(&s, "c", &event("allowed"));
             assert_eq!(out_until(&s, "c"), None);
+            // Rejected, but carrying on with extra usage (as a plan with it enabled reports every turn).
+            on_rate_limit_event(&s, "c", &event("rejected"));
+            let overage = json!({"rate_limit_info": {"status": "rejected", "resetsAt": soon, "overageStatus": "allowed", "isUsingOverage": true}});
+            on_rate_limit_event(&s, "c", &overage);
+            assert_eq!(out_until(&s, "c"), None, "extra usage clears it");
+            on_rate_limit_event(&s, "d", &overage);
+            assert_eq!(out_until(&s, "d"), None);
+            on_rate_limit_event(&s, "d", &json!({"rate_limit_info": {"status": "rejected", "resetsAt": soon, "overageStatus": "allowed_warning"}}));
+            assert_eq!(out_until(&s, "d"), None);
             // A reset that's past isn't out.
             on_rate_limit_event(&s, "c", &json!({"rate_limit_info": {"status": "rejected", "resetsAt": soon - 1200}}));
             assert_eq!(out_until(&s, "c"), None);
