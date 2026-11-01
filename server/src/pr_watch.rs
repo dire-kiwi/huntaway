@@ -1515,7 +1515,7 @@ fn fix_message(pr: &Pr, logs: &[Option<Result<String, String>>]) -> String {
     )
 }
 
-/// *Fix broken checks* (API 81): read `task_id`'s pull request now, as its GitHub account (see
+/// *Fix broken checks* (API 89): read `task_id`'s pull request now, as its GitHub account (see
 /// `watcher_for`), and send its agent its head commit's failed checks with the ends of their logs
 /// (see `Watcher::failed_logs`), as the user's message (it goes to the agent while it works, or
 /// starts its turn). Those failures count as told, so watching the task in review doesn't wake the

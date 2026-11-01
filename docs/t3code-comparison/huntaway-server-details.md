@@ -292,8 +292,8 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 
 - Plans are written as HTML fragments using board components that the README doesn't list:
   `<ia-lede>`, `<ia-callout kind="note|tip|info|warn|risk|question|decision">`, `<ia-steps>`/`<ia-step size>`,
-  `<ia-cards>`/`<ia-card kind="chosen|rejected">`, `<ia-columns>`, `<ia-badge>`, `<ia-diagram>` (inline SVG
-  with themed `box`/`edge`/`arrow` classes), `<ia-question>` (README), and list classes `pros`, `cons`,
+  `<ia-cards>`/`<ia-card kind="chosen|rejected">`, `<ia-columns>`, `<ia-badge>`, `<ia-diagram>` (Mermaid
+  source inside a `<pre>`, rendered by the board), `<ia-question>` (README), and list classes `pros`, `cons`,
   `checklist`, `files`. The board's dark theme styles plain HTML; a whole page (with `<html>`) is shown
   as is.
 - A document file is capped at 5 MB (`MAX_SIZE`); a version stays `open` while the turn that writes it

@@ -85,6 +85,7 @@ fn host_routes() -> Router<Shared> {
         .route("/profiles/{id}/scratch", get(list_profile_scratch))
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))
+        .route("/profiles/{id}/context-stats", get(crate::analytics::context))
         .route("/profiles/{id}/disk-usage", get(crate::disk::get))
         .route("/profiles/{id}/asana/tasks", get(asana_tasks))
         .route("/projects/{id}", get(get_project).patch(update_project).delete(delete_project))
@@ -123,11 +124,14 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/wait-for-limit", post(crate::usage::wait_for_reset))
         .route("/tasks/{id}/review", post(review_task))
+        .route("/tasks/{id}/summary", post(summarise_task))
         .route("/tasks/{id}/fix_checks", post(fix_checks))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))
         .route("/tasks/{id}/unmerged", get(task_unmerged))
+        .route("/tasks/{id}/fanout", get(crate::fanout::get))
+        .route("/tasks/{id}/fanout/pick", post(crate::fanout::pick))
         .route("/tasks/{id}/git", get(git_view::status))
         .route("/tasks/{id}/git/diff", get(git_view::diff))
         .route("/tasks/{id}/git/show", get(git_view::show))
@@ -172,6 +176,9 @@ fn host_routes() -> Router<Shared> {
         .route("/admin/server", get(server_status))
         .route("/admin/restart", post(restart_server))
         .route("/admin/update", post(update_from_hub))
+        .route("/admin/release/check", post(check_releases))
+        .route("/admin/release/update", post(update_to_release))
+        .route("/admin/release/rollback", post(roll_back_release))
         .route("/host/ws", get(ws))
 }
 
@@ -254,6 +261,12 @@ struct CreateProfile {
     /// See `db::Profile::limit_switch` (API 81).
     #[serde(default)]
     limit_switch: bool,
+    /// See `db::Profile::reviewers` (API 87).
+    #[serde(default)]
+    reviewers: Value,
+    /// See `db::Profile::summarizer` (API 87).
+    #[serde(default)]
+    summarizer: Value,
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -267,9 +280,10 @@ async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -
     let access = b.agent_access.as_ref().map(|v| check_agent_access(name, v)).transpose()?;
     let github_account = check_github_account(&b.github_account)?;
     let clone_dir = check_clone_dir(&b.clone_dir)?;
+    let (reviewers, summarizer) = (reviewers_value(&c, &b.reviewers, true, &[])?, summarizer_value(&c, &b.summarizer, true, &[])?);
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
-    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch))]);
+    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -321,6 +335,14 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
         if let Some(v) = b.get(key) {
             fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
         }
+    }
+    // Either may name a config deleted since it was saved, as both are sent with every save.
+    let saved: Vec<&db::Reviewer> = current.reviewers.iter().chain(&current.summarizer).collect();
+    if let Some(v) = b.get("reviewers") {
+        fields.push(("reviewers", reviewers_value(&c, v, true, &saved)?));
+    }
+    if let Some(v) = b.get("summarizer") {
+        fields.push(("summarizer", summarizer_value(&c, v, true, &saved)?));
     }
     if let Some(v) = b.get("claude_config_ids") {
         let ids: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("claude_config_ids must be a list of config ids"))?;
@@ -482,23 +504,45 @@ fn check_config_ids(c: &rusqlite::Connection, ids: Vec<String>) -> ApiResult<Vec
     Ok(out)
 }
 
-/// A project's reviewers, with blank fields as None and each config checked.
-fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>) -> ApiResult<Vec<db::Reviewer>> {
+/// Reviewers, with blank fields as None and each config checked, except those in `saved` (the
+/// ones already saved), which may have been deleted since: their reviews fall back to the task's
+/// config, and saving other changes keeps them.
+fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>, saved: &[&db::Reviewer]) -> ApiResult<Vec<db::Reviewer>> {
     if list.len() > crate::review::MAX_REVIEWERS {
-        return Err(ApiError::bad(format!("a project can have at most {} reviewers", crate::review::MAX_REVIEWERS)));
+        return Err(ApiError::bad(format!("there can be at most {} reviewers", crate::review::MAX_REVIEWERS)));
     }
     let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let mut out = Vec::new();
     for r in list {
         let r = db::Reviewer { claude_config_id: blank(r.claude_config_id), model: blank(r.model), effort: blank(r.effort) };
         if let Some(id) = &r.claude_config_id {
-            if db::get_claude_config(c, id)?.is_none() {
+            if !saved.iter().any(|s| s.claude_config_id.as_ref() == Some(id)) && db::get_claude_config(c, id)?.is_none() {
                 return Err(ApiError::bad(format!("no Claude config {id}")));
             }
         }
         out.push(r);
     }
     Ok(out)
+}
+
+/// A project's or profile's `reviewers` as saved: checked, and null when it's empty. With
+/// `defaults_too`, just one reviewer with the defaults is null too (a profile's, which is the same);
+/// a project's is kept, so it reviews with the task's config rather than the profile's reviewers.
+fn reviewers_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
+    let list: Option<Vec<db::Reviewer>> =
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
+    let list = list.map(|l| check_reviewers(c, l, saved)).transpose()?.filter(|l| !l.is_empty() && !(defaults_too && *l == [db::Reviewer::default()]));
+    Ok(json!(list.map(|l| json!(l).to_string())))
+}
+
+/// A project's or profile's `summarizer` as saved, checked. With `defaults_too`, one with the
+/// defaults is null (a profile's); a project's is kept, so it summarises with the task's config
+/// rather than the profile's summarizer.
+fn summarizer_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
+    let spec: Option<db::Reviewer> =
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("summarizer must be null or {claude_config_id, model, effort}"))?;
+    let spec = spec.map(|r| check_reviewers(c, vec![r], saved)).transpose()?.and_then(|l| l.into_iter().next()).filter(|r| !(defaults_too && *r == db::Reviewer::default()));
+    Ok(json!(spec.map(|r| json!(r).to_string())))
 }
 
 // ---------- Claude configs ----------
@@ -918,16 +962,23 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
         b,
         &[
             "name", "key", "repo_path", "base_branch", "setup_script", "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model",
-            "worktrees_root", "auto_review", "review_rounds", "reviewers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
+            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "github_account",
             "done_when_merged",
+            "pull_requests",
+            "subproject_pull_requests",
             "watch_pull_requests",
             "pr_preview_url",
             "copy_files",
             "link_folders",
         ],
     );
+    // Configs deleted since they were saved, here or in the profile's (which the project's
+    // settings start from when it takes its own), are kept (see check_reviewers).
+    let profile = db::get_profile(&s.db(), &before.profile_id)?;
+    let from_profile = profile.iter().flat_map(|p| p.reviewers.iter().chain(&p.summarizer));
+    let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizer).chain(from_profile).collect();
     for (k, v) in fields.iter_mut() {
         match *k {
             // null (or blank) uses the default (see prompts.rs).
@@ -1004,20 +1055,16 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
                 return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
             }
-            "use_worktrees" | "auto_review" | "done_when_merged" if !v.is_boolean() => {
+            "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" | "pull_requests" | "subproject_pull_requests" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
             "review_rounds" if !v.as_u64().is_some_and(|n| n <= 20) => {
                 return Err(ApiError::bad("review_rounds must be a whole number from 0 to 20"));
             }
-            // null (or an empty list, or just one reviewer with the defaults) is one reviewer
-            // with the task's config.
-            "reviewers" => {
-                let list: Option<Vec<db::Reviewer>> = serde_json::from_value(v.clone())
-                    .map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
-                let list = list.map(|l| check_reviewers(&s.db(), l)).transpose()?.filter(|l| !l.is_empty() && *l != [db::Reviewer::default()]);
-                *v = json!(list.map(|l| json!(l).to_string()));
-            }
+            // null (or an empty list) uses the profile's reviewers.
+            "reviewers" => *v = reviewers_value(&s.db(), v, false, &saved_reviewers)?,
+            // null uses the profile's summarizer.
+            "summarizer" => *v = summarizer_value(&s.db(), v, false, &saved_reviewers)?,
             // A script per status; null or a blank script is none.
             "status_scripts" => {
                 let scripts: Option<BTreeMap<String, String>> =
@@ -2062,6 +2109,7 @@ pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) ->
     };
     s.db().execute("DELETE FROM tasks WHERE id=?1", [&t.id])?;
     crate::runs::remove_finished(s, &runs);
+    crate::task_tmp::deleted(s, &t.id).await;
     // Any agent asking to delete it is told it's gone (see tools::delete_task), so after that.
     permissions::expire_deletions_of(s, &t.id);
     crate::documents::remove(s, &t.id);
@@ -2144,7 +2192,14 @@ async fn unqueue_message(State(s): State<Shared>, Path(id): Path<String>) -> Api
 async fn stop_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let agent = runner::stop(&s, &id);
     let review = crate::review::stop(&s, &id);
-    Ok(Json(json!({"stopped": agent || review})))
+    let summary = crate::summary::stop(&s, &id);
+    Ok(Json(json!({"stopped": agent || review || summary})))
+}
+
+/// Summarise the task's changes now (see summary.rs).
+async fn summarise_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let t = crate::summary::start(&s, &id, true).await?;
+    Ok(Json(json!(t)))
 }
 
 /// Review the task's work now (see review.rs).
@@ -2153,7 +2208,7 @@ async fn review_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResu
     Ok(Json(json!(t)))
 }
 
-/// Send the agent its pull request's failed checks, with the ends of their logs (API 81, see
+/// Send the agent its pull request's failed checks, with the ends of their logs (API 89, see
 /// pr_watch::fix_checks).
 async fn fix_checks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(crate::pr_watch::fix_checks(&s, &id).await?)))
@@ -2398,6 +2453,7 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
         "scratch_host": db::get_setting(&c, "scratch_host")?,
         "terminal_tools": terminal::tools(&c),
         "public_url": db::get_setting(&c, "public_url")?,
+        "release_prereleases": db::get_setting(&c, crate::release::PRERELEASES)?.as_deref() == Some("true"),
     })))
 }
 
@@ -2406,7 +2462,8 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 /// workspace scratch chats go to (`scratch_host`, a link id). And the TUI programs offered as
 /// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`). And the
 /// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
-/// URLs are shown with.
+/// URLs are shown with. And whether release checks include prereleases (`release_prereleases`,
+/// API 88), which checks again when it changes.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.
     for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
@@ -2438,6 +2495,11 @@ async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Valu
         let url = url.to_string();
         b.insert("public_url".into(), json!(url));
     }
+    let prereleases = match b.get(crate::release::PRERELEASES) {
+        Some(v) if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("release_prereleases must be true, false or null")),
+        Some(v) => Some(v.as_bool() == Some(true)),
+        None => None,
+    };
     let tools = match b.get("terminal_tools").filter(|v| !v.is_null()) {
         Some(v) => Some(terminal::parse_tools(v).map_err(ApiError::bad)?),
         None => None,
@@ -2450,6 +2512,12 @@ async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Valu
     if let Some(tools) = tools {
         let v = (!tools.is_empty()).then(|| json!(tools).to_string());
         db::set_setting(&s.db(), "terminal_tools", v.as_deref())?;
+    }
+    if let Some(on) = prereleases {
+        if crate::release::prereleases(&s)? != on {
+            db::set_setting(&s.db(), crate::release::PRERELEASES, on.then_some("true"))?;
+            crate::release::check_soon(&s);
+        }
     }
     s.emit(json!({"type": "settings_changed"}));
     get_settings(State(s)).await
@@ -2637,6 +2705,32 @@ fn yes() -> bool {
 
 async fn restart_server(State(s): State<Shared>, Json(b): Json<RestartBody>) -> ApiResult<Json<Value>> {
     admin::start(&s, b.rebuild)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+/// Check for releases now (with `--release-updates`), and return the server's status after.
+async fn check_releases(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+    if s.meta.release.is_none() {
+        return Err(ApiError::bad("this server doesn't check for releases (start it with --release-updates OWNER/REPO)"));
+    }
+    crate::release::check(&s).await;
+    Ok(Json(admin::status(&s).await?))
+}
+
+#[derive(Deserialize)]
+struct ReleaseUpdateBody {
+    version: String,
+}
+
+/// Restart onto a release (staged, or downloaded first), as a restart job.
+async fn update_to_release(State(s): State<Shared>, Json(b): Json<ReleaseUpdateBody>) -> ApiResult<Json<Value>> {
+    crate::release::update(&s, &b.version)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+/// Mark the running release bad and restart onto the one before it, as a restart job.
+async fn roll_back_release(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+    crate::release::rollback(&s)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -2835,6 +2929,92 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn profiles_choose_reviewers_and_a_summarizer_that_projects_can_override() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let codex = db::insert_claude_config(&s.db(), "Codex", "", "codex").unwrap();
+            let create = |b: Value| create_profile(State(s.clone()), Json(serde_json::from_value(b).unwrap()));
+            let Json(p) = create(json!({"name": "work", "reviewers": [{"claude_config_id": codex.id, "model": " "}], "summarizer": {"model": "haiku"}})).await.unwrap();
+            assert_eq!(p["reviewers"], json!([{"claude_config_id": codex.id, "model": null, "effort": null}]));
+            assert_eq!(p["summarizer"], json!({"claude_config_id": null, "model": "haiku", "effort": null}));
+            assert_eq!(create(json!({"name": "home"})).await.unwrap().0["reviewers"], json!([]));
+            assert!(create(json!({"name": "bad", "reviewers": [{"claude_config_id": "nope"}]})).await.is_err());
+            assert!(create(json!({"name": "bad", "summarizer": "haiku"})).await.is_err());
+            let id = p["id"].as_str().unwrap().to_string();
+            let np = db::NewProject { id: "pr", profile_id: &id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            db::insert_project(&s.db(), np).unwrap();
+            let project = || db::get_project(&s.db(), "pr").unwrap().unwrap();
+            let reviewers = || {
+                let p = project();
+                db::reviewers_for(&s.db(), &p).unwrap()
+            };
+            let summarizer = || {
+                let p = project();
+                db::summarizer_for(&s.db(), &p).unwrap()
+            };
+            let codex_reviewer = db::Reviewer { claude_config_id: Some(codex.id.clone()), ..Default::default() };
+            let haiku = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
+            // A project with none of its own uses the profile's.
+            assert_eq!(reviewers(), [codex_reviewer.clone()]);
+            assert_eq!(summarizer(), haiku);
+            // One with the defaults is a project's own choice, the task's config, over the profile's.
+            let body = json!({"reviewers": [{}], "summarizer": {"claude_config_id": "", "model": null}});
+            update_project_inner(&s, "pr", body.as_object().unwrap()).await.unwrap();
+            assert_eq!(reviewers(), [db::Reviewer::default()]);
+            assert_eq!(summarizer(), db::Reviewer::default());
+            // Back to the profile's.
+            update_project_inner(&s, "pr", json!({"reviewers": [], "summarizer": null}).as_object().unwrap()).await.unwrap();
+            assert_eq!((project().reviewers, project().summarizer), (vec![], None));
+            assert_eq!(reviewers(), [codex_reviewer]);
+            // A profile's with just the defaults is none, which is the same.
+            let update = |b: Value| update_profile(State(s.clone()), Path(id.clone()), Json(b.as_object().unwrap().clone()));
+            let Json(p) = update(json!({"reviewers": [{"model": ""}], "summarizer": {}})).await.unwrap();
+            assert_eq!((&p["reviewers"], &p["summarizer"]), (&json!([]), &Value::Null));
+            assert_eq!(reviewers(), [db::Reviewer::default()]);
+            assert_eq!(summarizer(), db::Reviewer::default());
+            assert_eq!(update(json!({"summarizer": {"effort": "low"}})).await.unwrap().0["reviewers"], json!([]), "kept when other fields change");
+            let seven = vec![json!({}); crate::review::MAX_REVIEWERS + 1];
+            assert!(update(json!({"reviewers": seven})).await.is_err());
+        })
+    }
+
+    #[test]
+    fn a_deleted_reviewer_config_doesnt_stop_saving_other_settings() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let gone = db::insert_claude_config(&s.db(), "Gone", "", "claude").unwrap();
+            let other = db::insert_claude_config(&s.db(), "Other", "", "claude").unwrap();
+            let spec = json!({"claude_config_id": gone.id, "model": "haiku", "effort": null});
+            let both = json!({"name": "work", "reviewers": [spec], "summarizer": spec});
+            let Json(p) = create_profile(State(s.clone()), Json(serde_json::from_value(both).unwrap())).await.unwrap();
+            let id = p["id"].as_str().unwrap().to_string();
+            let np = db::NewProject { id: "pr", profile_id: &id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            db::insert_project(&s.db(), np).unwrap();
+            update_project_inner(&s, "pr", json!({"reviewers": [spec], "summarizer": spec}).as_object().unwrap()).await.unwrap();
+            db::delete_claude_config(&s.db(), &gone.id).unwrap();
+            // The forms send them unchanged with every save, as they were saved.
+            let update = |b: Value| update_profile(State(s.clone()), Path(id.clone()), Json(b.as_object().unwrap().clone()));
+            let Json(p) = update(json!({"name": "job", "reviewers": [spec], "summarizer": spec})).await.unwrap();
+            assert_eq!((&p["name"], &p["reviewers"], &p["summarizer"]), (&json!("job"), &json!([spec]), &spec));
+            let body = json!({"name": "y", "reviewers": [spec, {"claude_config_id": other.id}], "summarizer": spec});
+            let project = update_project_inner(&s, "pr", body.as_object().unwrap()).await.unwrap();
+            assert_eq!((project.name.as_str(), project.reviewers.len()), ("y", 2));
+            // A project taking its own, starting from the profile's, keeps the profile's too.
+            update_project_inner(&s, "pr", json!({"reviewers": [], "summarizer": null}).as_object().unwrap()).await.unwrap();
+            let edited = json!({"claude_config_id": gone.id, "model": "sonnet", "effort": "low"});
+            let project = update_project_inner(&s, "pr", json!({"reviewers": [edited]}).as_object().unwrap()).await.unwrap();
+            assert_eq!(project.reviewers[0].model.as_deref(), Some("sonnet"));
+            let project = update_project_inner(&s, "pr", json!({"summarizer": edited}).as_object().unwrap()).await.unwrap();
+            assert_eq!(project.summarizer.unwrap().claude_config_id, Some(gone.id.clone()));
+            // A config that was never saved there still has to exist.
+            let unknown = json!({"claude_config_id": "nope"});
+            assert!(update(json!({"summarizer": unknown})).await.is_err());
+            assert!(update(json!({"reviewers": [unknown]})).await.is_err());
+            assert!(update_project_inner(&s, "pr", json!({"summarizer": unknown}).as_object().unwrap()).await.is_err());
+        })
+    }
+
+    #[test]
     fn profiles_keep_their_clone_folder() {
         crate::testing::run(async || {
             let s = crate::testing::state();
@@ -3001,7 +3181,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-clone-{}", new_id()));
+            let dir = crate::testing::temp_dir();
             let clone = |b: Value| clone_project(State(s.clone()), Path(profile.id.clone()), Json(serde_json::from_value(b).unwrap()));
             let path = |name: &str| path_str(&dir.join(name));
             let message = |r: ApiResult<Json<Value>>| r.unwrap_err().1;
@@ -3079,7 +3259,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert!(p.use_worktrees && !p.is_git);
@@ -3093,11 +3273,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn projects_turn_their_tasks_pull_requests_on_and_off() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let dir = crate::testing::temp_dir().join("x");
+            let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile.id, b).await.unwrap();
+            assert!(p.pull_requests && p.subproject_pull_requests);
+            let set = async |b: Value| update_project_inner(&s, &p.id, b.as_object().unwrap()).await;
+            let p = set(json!({"subproject_pull_requests": false})).await.unwrap();
+            assert!(p.pull_requests && !p.subproject_pull_requests);
+            let p = set(json!({"pull_requests": false, "subproject_pull_requests": true})).await.unwrap();
+            assert!(!p.pull_requests && p.subproject_pull_requests);
+            for bad in [json!("no"), Value::Null, json!(0)] {
+                assert!(set(json!({ "pull_requests": bad })).await.is_err());
+            }
+        })
+    }
+
+    #[test]
     fn projects_watch_pull_requests_in_review_once_asked_to() {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert_eq!(p.watch_pull_requests, "off");
@@ -3115,8 +3315,7 @@ pub(crate) mod tests {
     /// A git repository with a commit on master, and a project on it: (folder, project).
     async fn git_project(s: &Shared) -> (PathBuf, db::Project) {
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).status().unwrap().success());
         git(&["init", "-q", "-b", "master"]);
         git(&["commit", "-q", "--allow-empty", "-m", "first"]);
@@ -3212,7 +3411,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert!(!p.is_git && !p.has_commits && p.setup_task_id.is_none());
@@ -3307,7 +3506,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert_eq!(p.group_name, None);
@@ -3354,7 +3553,7 @@ pub(crate) mod tests {
             assert_eq!((done.status.as_str(), done.merging), ("done", false));
 
             // No project can take the key its tasks use.
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = |key: Option<&str>| CreateProject { name: "Shop".into(), repo_path: path_str(&dir), key: key.map(String::from), base_branch: None, use_worktrees: None };
             let err = create_project_inner(&s, &profile.id, b(Some("s"))).await.unwrap_err();
             assert!(format!("{err:?}").contains("scratch tasks"), "{err:?}");
@@ -3370,7 +3569,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir();
             let new = |name: &str| CreateProject { name: name.into(), repo_path: path_str(&dir.join(name)), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, new("x")).await.unwrap();
             let other = create_project_inner(&s, &profile.id, new("y")).await.unwrap();
@@ -3441,8 +3640,7 @@ pub(crate) mod tests {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
@@ -3528,8 +3726,7 @@ pub(crate) mod tests {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("WEB".into()), base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             let fanned = |id: &str| CreateTask { title: "Look".into(), fanout_id: Some(id.into()), ..Default::default() };
@@ -3560,8 +3757,7 @@ pub(crate) mod tests {
             crate::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: Some("WEB".into()), base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
@@ -3605,7 +3801,7 @@ pub(crate) mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let dir = crate::testing::temp_dir().join("x");
             let b = CreateProject { name: "x".into(), repo_path: path_str(&dir), key: None, base_branch: None, use_worktrees: None };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();
             assert!(p.status_scripts.is_empty());
@@ -3778,7 +3974,7 @@ pub(crate) mod tests {
     fn a_folder_is_kept_for_a_path_in_it_through_a_symlink() {
         crate::testing::run(async || {
             let s = crate::testing::state();
-            let tmp = std::env::temp_dir().join(format!("ia-api-{}", new_id()));
+            let tmp = crate::testing::temp_dir();
             std::fs::create_dir_all(tmp.join("real/projects/x")).unwrap();
             std::os::unix::fs::symlink(tmp.join("real"), tmp.join("link")).unwrap();
             let dir = tmp.join("link/projects/x");

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Cargo's runner (config.toml), which `cargo test`, `cargo bench` and `cargo run` start binaries with. A test binary runs
+# with TMPDIR set to a folder of its own, $TMPDIR/ia-cargo-test-XXXXXX, which is removed when it exits, so tests can't
+# fill /tmp with what they leave there (they used to, by the thousand). If it left anything in it, that's listed and the
+# run fails, as it would in CI. Other binaries, and test binaries run with IA_KEEP_TEST_DIRS (to keep failing tests'
+# folders) or where there is no flock, run as they are.
+#
+# Called as `test-runner <binary> <args>...`.
+
+[[ $1 == */deps/* && -z ${IA_KEEP_TEST_DIRS:-} ]] && command -v flock > /dev/null || exec "$@"
+set -uo pipefail
+
+parent=${TMPDIR:-/tmp}
+# A run holds a lock on its folder's `.lock` while it lasts (the test binary too, which inherits it), so one that was
+# killed before it could remove its folder leaves it unlocked, and later runs remove it. Only real folders of this
+# user's: $parent may be a /tmp shared with others, where an entry could be a symlink to somewhere else. A folder without
+# a `.lock` is one being made.
+for d in "$parent"/ia-cargo-test-*; do
+  [[ -d $d && ! -L $d && -O $d && -f $d/.lock && ! -L $d/.lock ]] && flock -n "$d/.lock" true 2> /dev/null && rm -rf -- "$d"
+done
+
+tmp=$(mktemp -d "$parent/ia-cargo-test-XXXXXX") || exit
+# Locked before it's named `.lock`, so no other run's sweep sees it unlocked.
+exec 9> "$tmp/.lock-new" && flock -n 9 && mv "$tmp/.lock-new" "$tmp/.lock" || { rm -rf -- "$tmp"; exit 1; }
+# A signal while the binary runs is handled once it has exited (Ctrl-C reaches it too), so its folder goes after it.
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+TMPDIR=$tmp "$@"
+status=$?
+
+left=$(cd "$tmp" && find . -mindepth 1 -maxdepth 3 ! -name .lock | sort)
+if [[ -n $left ]]; then
+  echo "$(basename "$1") left $(grep -c . <<< "$left") files and folders in its TMPDIR (use testing::temp_dir()):" >&2
+  head -30 <<< "$left" | sed 's/^\./  /' >&2
+  [[ $status -ne 0 ]] || status=1
+fi
+exit "$status"

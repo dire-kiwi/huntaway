@@ -36,7 +36,6 @@ c.commit()
     await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('/code-review')", "wait Show in thread"]);
     await ui.run(["wait Review PR 139 for correctness bugs.", "wait git diff main...HEAD", "wait Permission for Bash", "wait No runtime bugs found."]);
     await ui.run(["click git diff main...HEAD", "wait The reviewed diff.", "gone Review follow-up 120."]);
-    await page.screenshot({ path: "/tmp/ia173-forked-skill.png" });
     await ui.run(["click Show in thread"]);
     await ui.run(["gone Show in thread", "wait Review follow-up 120.", "wait No runtime bugs found."]);
     await page.getByRole("button", { name: "Open subagent thread", exact: true }).waitFor();

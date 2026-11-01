@@ -11,6 +11,7 @@ import { DependencyBadge } from "./Dependencies";
 import { FanoutBadge } from "./Fanout";
 import { TaskMarks } from "./Reminders";
 import { TaskTypeBadge } from "./Document";
+import { AgentIcon } from "./AgentIcon";
 import { ActivityTime, BranchIcon, CARD_BADGE, CardState, ChecksMark, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "./ui";
 import { useNarrow, useTouch } from "../narrow";
 import { resetsIn, resetTime } from "../usageConfigs";
@@ -293,7 +294,8 @@ export const TaskCard = memo(function TaskCard({
     >
       {/* One line that never wraps: the key and the state stay whole, and badges that don't fit are cut off. */}
       <div className="mb-1 flex items-center gap-2 text-[11px] text-faint">
-        <span className="shrink-0 font-mono">
+        <span className="flex shrink-0 items-center gap-1 font-mono">
+          <AgentIcon task={task} size={11} />
           {keyPrefix(task, project)}-{task.number}
         </span>
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
@@ -373,6 +375,7 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         <ChecksMark task={task} />
         {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
+        <AgentIcon task={task} />
         {cost(task.cost_usd) && <span>{cost(task.cost_usd)}</span>}
         <span className="w-14 text-right narrow:ml-auto narrow:w-auto narrow:shrink-0">
           <ActivityTime task={task} />

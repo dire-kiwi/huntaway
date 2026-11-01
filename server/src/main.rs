@@ -17,6 +17,7 @@ mod db;
 mod demo;
 mod disk;
 mod documents;
+mod fanout;
 mod gh_mcp;
 mod git_view;
 mod github;
@@ -31,13 +32,17 @@ mod proto;
 mod pty;
 mod push;
 mod relay;
+mod release;
 mod relocate;
 mod review;
 mod runner;
 mod runs;
 mod ssh;
+mod staging;
 mod state;
 mod status_script;
+mod summary;
+mod task_tmp;
 mod terminal;
 #[cfg(test)]
 mod testing;
@@ -57,7 +62,7 @@ use clap::{Parser, Subcommand};
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Parser)]
-#[command(name = "huntaway", about = "Kanban board that orchestrates Claude Code and Codex agents")]
+#[command(name = "huntaway", version, about = "Kanban board that orchestrates Claude Code and Codex agents")]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -138,6 +143,10 @@ struct ServeArgs {
     /// than this server, the UI offers to update to it (fetched from the source checkout's origin).
     #[arg(long, env = "IA_UPDATE_FROM")]
     update_from: Option<String>,
+    /// A GitHub repository (OWNER/REPO) whose releases this server checks for a newer version of
+    /// itself, for release installs (the desktop app's packages and the server tarball).
+    #[arg(long, env = "IA_RELEASE_UPDATES")]
+    release_updates: Option<String>,
     /// Name shown for this host on boards (defaults to the hostname).
     #[arg(long, env = "IA_NAME")]
     name: Option<String>,
@@ -147,8 +156,8 @@ struct ServeArgs {
     /// Token for --hub (from that hub's Settings → Hosts).
     #[arg(long, env = "IA_HUB_TOKEN")]
     hub_token: Option<String>,
-    /// Broker to dial out to (`huntaway-broker`), so this host can be reached through it from
-    /// anywhere: the board in a browser, and the API from hubs.
+    /// Register with huntaway-broker for public access: managed Cloudflare tunnels or its legacy
+    /// relay, depending on the broker's configuration.
     #[arg(long, env = "IA_BROKER")]
     broker: Option<String>,
     /// Token for --broker (the broker's BROKER_TOKEN). Prefer the environment variable over the flag.
@@ -321,6 +330,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         source_dir,
         running_commit,
         update_from: args.update_from.clone().map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty()),
+        // A blank IA_RELEASE_UPDATES is none.
+        release: args.release_updates.as_deref().filter(|r| !r.trim().is_empty()).map(release::Config::from_env).transpose()?,
         args: std::env::args_os().skip(1).collect(),
     };
     let identity = state::Identity { host_id, host_name, token: token.clone(), hub_token, internal_url };
@@ -364,12 +375,15 @@ async fn serve(args: ServeArgs) -> Result<()> {
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
+    task_tmp::start_sweeper(&state);
     automations::start(&state);
     merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);
-    hub::start(&state)?;
+    release::start(&state);
+    // Subscribe before outbound links can announce their initial snapshots.
     push::start(&state);
+    hub::start(&state)?;
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
             for h in &args.hubs {
@@ -388,7 +402,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
             (Some(t), name) => {
                 let name = name.unwrap_or_else(|| huntaway_broker::proto::slug(&state.host_name));
-                broker::dial_out(&state, url.to_string(), t.to_string(), name, load_or_create_token(&data_dir, "broker_key")?);
+                let origin_port = broker::origin(app.clone()).await.context("starting the private tunnel origin")?;
+                broker::dial_with_origin(&state, url.to_string(), t.to_string(), name, load_or_create_token(&data_dir, "broker_key")?, Some(origin_port));
             }
         }
     }
@@ -400,6 +415,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tracing::info!("listening on http://{}:{port}/ (token from IA_TOKEN)", args.host);
     } else {
         tracing::info!("listening on http://{}:{port}/?token={}", args.host, token);
+    }
+    // A release installed in <data dir>/app/ is current once it's up (and an Update onto it done).
+    if let Err(e) = staging::settle(&state) {
+        tracing::warn!("settling the release in {}: {e:#}", staging::app_dir(&state).display());
     }
     // Machine-readable line for the Electron shell.
     let ready_token = if token_from_env { None } else { Some(&token) };
@@ -430,8 +449,7 @@ async fn shutdown_signal() {
 mod tests {
     #[test]
     fn db_path_keeps_the_database_from_before_the_rename() {
-        let dir = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         assert_eq!(super::db_path(&dir), dir.join("huntaway.db"));
         std::fs::write(dir.join("issue-agent.db"), "").unwrap();
         assert_eq!(super::db_path(&dir), dir.join("issue-agent.db"));

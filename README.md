@@ -8,7 +8,7 @@ approve tool calls, and review, stage and commit its changes (lazygit-style).
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
-server/broker/ huntaway-broker: public relay that hosts dial out to, to reach them from anywhere
+server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -52,9 +52,10 @@ Faster Rust builds: install [sccache](https://github.com/mozilla/sccache) (`carg
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
 them again. Without sccache, or where it can't start its server (a sandbox with no network), cargo
-runs rustc directly. `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s`
-shows the hit rate. Debug builds also leave dependencies' debuginfo out, which keeps each
-worktree's `target/` smaller.
+runs rustc directly. The server is started with `$XDG_RUNTIME_DIR` (or `/tmp`) as its `TMPDIR`
+rather than the build's, which may be a task's temp folder that goes when the task is done.
+`RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s` shows the hit rate.
+Debug builds also leave dependencies' debuginfo out, which keeps each worktree's `target/` smaller.
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
 of how many of its tasks are in progress (blue), need attention (amber), in review (purple) and
@@ -213,8 +214,10 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `--broker` / `IA_BROKER` | | Broker to dial out to, to be reachable through it (see *Reaching a host from anywhere*) |
 | `--broker-token` / `IA_BROKER_TOKEN` | | Token for `--broker` (the broker's `BROKER_TOKEN`) |
 | `--broker-name` / `IA_BROKER_NAME` | host name, as a slug | Name to reach this host by on the broker |
+| `IA_CLOUDFLARED_BIN` (env only) | `cloudflared` | Connector binary for a broker with managed tunnels |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
+| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
@@ -248,7 +251,7 @@ alive across service restarts.
 
 When the source checkout has commits the running server doesn't (for example, a task branch
 merged to `master`), the sidebar shows **N new commits · Restart**. The same action is under
-Settings → Server. It runs `npm install`, `npm run build` and `cargo build --release` in the
+Settings → Server. It runs `npm install --no-save`, `npm run build` and `cargo build --release` in the
 checkout, streaming the log, then re-execs the new binary with the same arguments, so the PID
 stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
@@ -259,6 +262,43 @@ it, API 65) and fetches it from the checkout's `origin`. When that commit is ahe
 one, the sidebar shows **N new commits · Update**. Update fast-forwards the checkout to the commit
 (it refuses if the checkout is dirty, or has diverged from the commit), then rebuilds and restarts
 as above. Settings → Server shows the commit the deployment runs and when it was last checked.
+
+With `--release-updates <OWNER/REPO>`, for a server installed from a release rather than a
+checkout, the server checks that repository's GitHub releases 30 seconds after it starts, every six
+hours, and on `POST /api/admin/release/check`. It picks the highest semver release (not drafts,
+and prereleases only with `release_prereleases` on in `/api/settings`) that has a
+`huntaway-server-<v>-<os>-<arch>.tar.gz` for this machine with a sha256 digest, and reports it,
+with any error, as `release` in `/api/admin/server`. Requests send the last ETag, so a check when
+nothing changed doesn't count against GitHub's limit of 60 unauthenticated requests an hour.
+`IA_RELEASE_API` points it at another API than `https://api.github.com` (for tests).
+
+A release newer than the running server is downloaded in the background into
+`<data-dir>/app/<v>.partial/`, checked against the sha256 GitHub lists for it, unpacked with the
+system `tar` (refusing entries outside its folder, and links), and smoke-tested with
+`huntaway --version`. It's then renamed to `app/<v>/` and reported as `release.staged`; progress
+and failures are in `release.download`, and a failed download is tried again on the next check.
+A staged version that a later check no longer offers (a prerelease once they're turned off, or a
+release that was taken down) is unstaged and deleted, even while a newer release downloads.
+`POST /api/admin/release/update {"version": "<v>"}` restarts onto it in place (agents keep running,
+as with a rebuild), downloading it first if it isn't staged yet, and
+`POST /api/admin/release/rollback` marks the running version bad and restarts onto the one before
+it (or the desktop app's own server, `IA_BUNDLED_SERVER`). `app/state.json` records `current`,
+`previous`, `staged`, `trying` and `bad`, and is shared with the desktop app, which picks the version
+to start from it. A server running from `app/<v>/huntaway` makes itself `current` on startup and
+deletes the versions nothing needs (all but current, previous and staged).
+
+On the board, a staged release shows in the sidebar as **v<version> · Update**, which opens its
+release notes and restarts onto it (a download still running, or one that failed, shows only in
+Settings). Settings → Server shows the version running and where from, the latest release and when
+it was checked, the background download, **Check now**, **Include prereleases** and **Roll back**.
+When the latest release needs a new desktop app too (`release.shell.outdated`), it says how to
+install it: the `sudo pacman -U` command, the AppImage's link, or the dmg on the release page. The
+AppImage and the pacman package can also do it themselves: **Update app** downloads the new AppImage
+beside the running one, checks its sha256 against GitHub's digest and renames it over the old file;
+**Install** downloads and checks the `.pacman` the same way and runs `pkexec pacman -U --noconfirm`
+on it, which asks for your password in polkit's dialog. Either then relaunches the app. The app
+takes the version from its server's release check and the package from GitHub's API
+(`IA_RELEASE_API`), never from the page.
 
 ### Network access
 
@@ -361,15 +401,84 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
 | `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update changes the app itself rather than only the server and the UI |
+
+The server's version is the release's too (`huntaway --version`).
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
-from the Dock or an app launcher. A release build isn't a checkout, so **Rebuild & restart** and
-**Update** don't apply to it: install a newer release to update it. The Mac build is ad-hoc signed,
+from the Dock or an app launcher. A release build isn't a checkout, so it has no **Rebuild &
+restart**: it updates from GitHub's releases instead (see below). The Mac build is ad-hoc signed,
 not signed with a Developer ID, so macOS blocks a downloaded copy until you run
 `xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
 run `npm run dist` in `app/`, which puts them in `app/release/`. To build an existing release
 again, use Actions → Release → Run workflow with its tag, which replaces its files.
+
+### Updating the desktop app
+
+A release build (the AppImage, the pacman package or the Mac app) updates itself from this
+repository's GitHub releases; nothing needs root. The server it starts checks for a newer release 30
+seconds after it starts and every six hours (or with **Check now** in Settings → Server), downloads
+the new server in the background, checks it against the sha256 GitHub lists for it, and unpacks it
+into `<data dir>/app/<version>/` (`~/.local/share/huntaway/app/` on Linux,
+`~/Library/Application Support/huntaway/app/` on a Mac). That's per user, so the pacman package's
+files in `/opt/Huntaway` stay as pacman installed them. Nothing changes until you click
+**v<version> · Update** in the sidebar, which shows the release notes and restarts the server onto
+the new version in place: running agents keep going, as with a rebuild. Downloading the next
+version is all a check does; quitting and starting the app again still runs the one you had.
+
+- **Which version runs.** The app starts the version you last updated to, if it's at least as new
+  as the app's own server, and otherwise its own. So installing a newer package (a `pacman -Syu`,
+  or a new AppImage) takes over from older downloads by itself. `IA_SERVER_BIN` or `serverBin` in
+  the desktop config still win over both.
+- **A version that won't start.** If an Update's version doesn't come up, or a downloaded version
+  exits before it's ready, the app marks it bad and starts the one before it, then its own server.
+  A bad version isn't offered again; the next release is.
+- **Roll back.** Settings → Server → **Roll back** marks the running version bad and restarts onto
+  the one before it, or onto the app's own server when there's none (or the one before it is older
+  than the app's own server, which a newer package's takes over from). A newer server may have
+  updated the database; the older one runs on it as it is (the changes so far only add to it).
+- **Prereleases** are offered only with **Include prereleases** on in Settings → Server. Turning it
+  off again withdraws a prerelease that was downloaded but not yet updated to.
+- **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
+  rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
+  each. Deleting `app/` goes back to the app's own server.
+- **The app itself.** Most releases change only the server and the UI. When a release newer than the
+  app also changes it (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records),
+  Settings → Server says so and how to install it. An app installed from a prerelease isn't offered
+  an older release's package while prereleases are off. The AppImage's **Update app** downloads the new AppImage beside the
+  running one, checks it, renames it over the old file and relaunches. The pacman package's
+  **Install** downloads and checks the `.pacman`, then runs `pkexec pacman -U --noconfirm` on it,
+  which asks for your password in polkit's dialog (without a polkit agent, use the `sudo pacman -U`
+  command it shows). On a Mac, download the new dmg from the release page.
+- **When it doesn't apply.** An app that finds a server already running on its port (your own
+  `huntaway serve`, say) or that uses a remote `serverUrl` leaves updates to that server, and never
+  offers releases. A blank `IA_RELEASE_UPDATES` in the app's environment turns release updates off.
+  An install from source (`scripts/install.sh`) updates from its checkout instead, as above.
+
+A host installed from the server tarball can update the same way with
+`huntaway serve --release-updates dire-kiwi/huntaway` (or `IA_RELEASE_UPDATES=dire-kiwi/huntaway`):
+the board it serves shows the same Update, Check now and Roll back, and versions go into
+`<data dir>/app/` as above. Set `IA_BUNDLED_SERVER` to the tarball's `huntaway` so that Roll back
+can go back to it. There's no desktop app to choose the version, so a supervisor that restarts the
+server (after a reboot, say) runs the binary it names, the tarball's, until you click Update again.
+To keep the version you updated to, have it start the current one instead, with a script like this:
+
+```sh
+#!/bin/sh
+# Start the release last updated to, or the installed one. It doesn't compare versions, so after
+# installing a newer tarball, delete <data dir>/app/.
+data=${IA_DATA_DIR:-$HOME/.local/share/huntaway}
+v=$(sed -n 's/^ *"current": *"\([^"]*\)".*/\1/p' "$data/app/state.json" 2>/dev/null)
+[ -n "$v" ] && [ -x "$data/app/$v/huntaway" ] && exec "$data/app/$v/huntaway" "$@"
+exec /opt/huntaway-server/huntaway "$@"
+```
+
+`scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
+checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
+background downloads, Update with an agent running, a broken version, Roll back, prereleases and
+the AppImage replacing itself (`--pacman` adds the Arch package, in a docker container). It needs
+`npm ci` in `app/` and about 2 GB in `~/.cache/huntaway-release-e2e`.
 
 ## Hosts
 
@@ -437,41 +546,74 @@ mode set on a thread or project, takes precedence.
 
 ### Reaching a host from anywhere
 
-Away from home, without Tailscale or a VPN, a host can be reached through a **broker**
-(`huntaway-broker`, in `server/broker`): a small public relay that keeps nothing but the list of
-hosts connected to it. The host dials out to it and keeps one websocket open, and the broker
-passes each request it gets down that websocket. The host answers it from its own server, as if
-the client were on the LAN, so no inbound port is needed:
+Away from home, without Tailscale or a VPN, a host can use a **broker** (`huntaway-broker`, in
+`server/broker`) to set up public access. There are two transports:
+
+- **Managed tunnels**: the broker provisions a Cloudflare Tunnel and DNS hostname for each host.
+  The host runs `cloudflared`, and the broker handles registration and endpoint discovery. Normal
+  traffic follows `browser or hub ↔ Cloudflare Tunnel ↔ host`; it bypasses `huntaway-broker`.
+  This is the same split as [T3 Connect](https://github.com/pingdotgg/t3code/blob/main/docs/internals/t3-connect.md).
+- **Legacy relay** (a broker without tunnel configuration): the host keeps a websocket open to the
+  broker, which carries every HTTP request, response and websocket message for its clients:
+  `browser or hub ↔ broker ↔ host`. There is no handoff to a direct connection.
+
+Connecting to a host's LAN or Tailscale/VPN URL bypasses either public transport. Enabling
+`--broker` doesn't route the host's other network traffic through it: agents still call model
+providers and git remotes themselves.
+
+A **hub** combines linked hosts into one board and forwards requests to them; the **broker** makes
+a host reachable from outside its network. A managed hub's board reaches a linked host via
+`browser ↔ Cloudflare Tunnel ↔ hub ↔ linked host`. The hub uses the link configured in Settings →
+Hosts for the last hop, which may be direct, another tunnel or a legacy relay.
+
+[Configure the broker](server/broker/README.md), then connect a host:
 
 ```sh
 huntaway serve --broker https://broker.example.com --broker-token <broker token>   # or IA_BROKER, IA_BROKER_TOKEN
 ```
 
-Then open `https://broker.example.com/?token=<host token>` from anywhere: the broker serves that
-host's board, API and websockets. Its token (`huntaway token`) still guards the API, so the broker
-signs no one in, and `/api/open-token` (`--open-token`) isn't served through it. Each host is known
-on the broker by a name (`--broker-name`, by default its own name as lowercase letters, digits and
-hyphens), and a request reaches the host:
+For managed tunnels, install `cloudflared` on each host first (`IA_CLOUDFLARED_BIN` overrides its
+path). The broker needs Cloudflare account, DNS zone and API-token configuration; the host receives
+only its tunnel connector token. It starts the connector automatically and restarts it if it exits.
+The connector keeps running across broker disconnects, so existing sessions and direct use of the
+tunnel URL keep working during a broker outage. New discovery needs the broker. Older hosts must
+be updated to use managed tunnels; the broker refuses them rather than silently relaying traffic.
 
-- at `/_broker/h/<name>/…`, for anything that takes a base URL: a hub links a host through the
-  broker with `--hub https://broker.example.com/_broker/h/<hub's name>` (the host dials in to a hub
-  that is behind the broker), or **Add host** with the URL `https://broker.example.com/_broker/h/<name>`;
-- otherwise, named by an `X-Huntaway-Host` header, else by the cookie that opening
-  `/_broker/use/<name>` sets (`/_broker/use/<name>?token=…` signs the board in too), else the
-  broker's default host (`--default-host`), else the only host connected.
+For the basic managed setup, use the DNS zone apex: `--tunnel-domain example.com` gives `desktop.example.com`.
+In a full Cloudflare zone, [Universal SSL covers the apex and first-level subdomains](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/#hostname-coverage).
+Using `hosts.example.com` instead gives `desktop.hosts.example.com`, requiring separate edge certificate coverage,
+such as Advanced Certificate Manager with Total TLS or an appropriate custom certificate. Configure that coverage
+before using nested domains; the broker doesn't provision certificates.
 
-A browser keeps one token per site, so use one host per broker in a browser: put the hub (the host
-whose board links the others) on the broker, and its board shows every host it links. Running the
-broker is in `server/broker/README.md`.
+Open `https://broker.example.com/?token=<host token>` from anywhere. With managed tunnels, the broker
+redirects the browser to the host's HTTPS hostname, preserving the path and query. With a legacy
+relay it serves the board through the websocket. The host's token (`huntaway token`) still guards
+its API, and `/api/open-token` (`--open-token`) is blocked on both public transports.
 
-The broker's token lets a host connect under any name that's free, and the browsers and hubs that
-pick that name then send it their requests, host token included. So keep it as secret as a host
-token, and give it only to your own hosts. A name stays with the host that took it: each host keeps
-a secret key in its data dir (`broker_key`), and the broker refuses the name to any other host while
-that one is connected and for an hour after it goes. A second host with the same name (two machines
-with the same host name, say) is refused with a message saying so, and keeps trying until the name
-is free: give it its own `--broker-name`. The broker keeps names in memory only, so after it
-restarts, the first host to connect under a name has it.
+Each host has a broker name (`--broker-name`, by default its host name as lowercase letters, digits
+and hyphens). Select it by:
+
+- `/_broker/h/<name>/…`, for anything taking a base URL: **Add host** with
+  `https://broker.example.com/_broker/h/<name>`, or dial into a hub with
+  `--hub https://broker.example.com/_broker/h/<hub's name>`. Current hosts discover the tunnel endpoint
+  before sending credentials or opening websockets, and discover it again on reconnect. A legacy
+  broker keeps working with the same URLs.
+- Otherwise, an `X-Huntaway-Host` header, the cookie set by opening `/_broker/use/<name>`, the broker's
+  default host (`--default-host`), or the only host connected, in that order.
+
+Managed hosts each have their own site and browser token. For a legacy relay, a browser keeps one
+token per site: put the hub (whose board links the others) on the broker and use its board to reach
+the rest. After moving to tunnels, sign in at the new hostname; browser credentials stored on the
+broker site don't transfer to it. Use the tunnel's URL for webhook deliveries and API clients that
+don't perform discovery: many webhook senders don't follow redirects.
+
+Keep the broker token as secret as a host token and give it only to your own hosts: it authorizes
+a host to take any free name, and clients selecting that name trust where the broker sends them.
+Each host keeps a secret `broker_key` in its data dir. A name stays with that host while connected
+and for an hour after it goes; a second host with the same name is refused and keeps trying. Give
+it its own `--broker-name`. `--state` preserves these reservations across broker restarts and is
+required with managed tunnels. Without it, a legacy broker keeps reservations only in memory.
+Tunnel allocations and DNS records are retained across restarts; see the broker README for cleanup.
 
 ### Codex agents
 
@@ -531,7 +673,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   default model, and `!<model>.<config>` a model that more than one config has (`!opus.work`).
   Code tasks made this way each get their own worktree and branch. They share a `fanout_id`, so
   their cards show which model each ran with, and each one's Details list the others with their
-  state and cost, to compare them.
+  state and cost.
+  **Compare** them (API 83) from a card's model badge or right-click menu (*Compare all N from its
+  prompt*), or *Compare all N* in a task's Details. It opens over the board: each one's model,
+  status, cost, agent time (all of its runs together), review (the verdict and each reviewer's
+  issues) and diff against its base branch, with a table of the files any of them changed (click
+  one's +/− to go to its diff). *Side by side* puts them in columns; *One at a time* shows one with
+  its summary beside it, switched with its tabs, ← → (or `[` `]`) and 1–9, in unified or split
+  diffs. A phone shows them one at a time. A task whose worktree is gone shows the commits on its
+  branch. **Pick this one** keeps that task as it is and completes the others as *Not done*: their
+  agents (and reviewers) are stopped and their worktrees removed. Its dialog lists what each has
+  uncommitted, and asks whether to discard that (unticked, those worktrees are kept with the
+  changes in), to delete their branches (and the pushed copies; unmerged commits on them are lost)
+  and to close their pull requests (with gh, as the task's GitHub account). A worktree whose HEAD
+  has commits on no branch (a detached HEAD's) is always kept, as they'd be lost with it. A branch
+  is deleted after its pushed copy, so it's kept while its worktree is, while a pull request kept
+  open has it, or when its pushed copy can't be deleted. Anything that couldn't be done is listed
+  after, and picking again cleans up what was kept the first time. `GET /tasks/{id}/fanout` gives each one's agent time, uncommitted
+  files and branch, and `POST /tasks/{id}/fanout/pick` (`delete_branches`, `close_prs`,
+  `discard_uncommitted`) picks it.
 - **Agents across profiles** (API 23): each profile has its own board, and agents' board tools
   see their own profile's. A profile can let other profiles' agents use its board too: edit it
   under Settings → Profiles and tick them under *Agents from other profiles* (or *Every
@@ -571,7 +731,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
   limit resets and notes the reset on the task. Usage at 100% alone doesn't count, since a
-  plan with extra usage carries on past it. Until API 81 such a run just failed, and its task
+  plan with extra usage carries on past it, and nor does a `rejected` event on extra usage
+  (`isUsingOverage`, or an `overageStatus` of `allowed`), whose turns go on. Until API 81 such a run just failed, and its task
   needed attention with "Run failed: You've hit your 5-hour limit · resets …". Now the task
   needs attention with that message and offers *Carry on then*: it waits in *In progress*
   (with an hourglass and the countdown on its card), and when the limit resets its agent is
@@ -587,6 +748,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   A waiting task keeps waiting, whatever these settings say: a message sent to it (or *Start*)
   joins its queue. Moved to another config before its agent has started, it stops waiting for
   the old config's reset and starts on the new one (or waits for that one's, if it's out too).
+  A merge that runs out doesn't wait: waiting in *In progress* would give up its place in the
+  merge queue to the next task's merge. It needs attention, keeping its place, and you message
+  its agent once the limit has reset.
   Whether a config is out is kept in memory by the host the config is on, from its own runs,
   so a restart forgets it until a run is refused again; a waiting task keeps its reset time
   in the database and carries on after a restart. Codex doesn't say which limit refused it,
@@ -847,6 +1011,24 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
+- **A profile's reviewers and summarizer** (API 87): a profile's settings (*Settings → Profiles →
+  Edit*) pick the *Reviewers* and *Summarizer* for its projects, and each project's *Review*
+  settings use *The profile's* until you switch to *This project's own*, which starts from the
+  profile's and overrides them. A project's own can still be one reviewer with the task's config,
+  over a profile's that differ. Through the API a project's `reviewers: []` and `summarizer: null`
+  use the profile's (`reviewers` and `summarizer` on `PATCH /profiles/{id}`), and `get_project`
+  shows the profile's as `profile_reviewers` and `profile_summarizer`.
+- **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
+  to read before merging: what changed and why, the main changes, and how to try it. It reads the
+  pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
+  own (a review thread of type `summary`), and its last message is the summary, kept in the task's
+  `summary` with the commit it describes. While the task waits in *In review* with that summary
+  (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
+  writes one at any time. A summary in progress stops when the task's agent works again, and the
+  next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
+  config, model and effort; the profile's, and otherwise the task's config, by default), in the
+  project's *Review* settings (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  summarises on demand.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when
   it starts, after the task's title and description (and before any message it was started
@@ -950,6 +1132,21 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
+- **Temp folders:** each task's agents get a temp folder of their own,
+  `<system temp>/ha-<hash of the data dir>/<first 12 hex digits of the task id>` (kept short, as
+  sockets in it can't have paths over 107 bytes), as `$TMPDIR` for its runs (Claude and
+  Codex) and its terminals, so what they leave there (test servers' data, build and test output,
+  logs, browsers' profiles) doesn't pile up in `/tmp`. They're told to use it, Claude gets it as an
+  `--add-dir` and Codex as a writable root. Review threads share the folder of the task they
+  review. It's deleted as soon as the task is done and no agent (its own or a reviewer) is running
+  in it, or once the last one stops if the task went to *Done* while it ran, and when the task is
+  deleted; a sweep every ten
+  minutes (and at start) deletes those of tasks that are done or deleted (while the server was
+  down, say). It's made again if the task's agent runs again; a run that starts while its folder
+  is being deleted gets a new one. Each data dir has its own folder of them, so a server never
+  deletes another's (a test server's, say). Nothing is deleted unless that folder is a real
+  folder (not a link) of the server's user that no one else can write to, and only folders in it
+  named after a task are. Files written straight to `/tmp` by name don't go with it.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that
@@ -1287,6 +1484,13 @@ agent names with `gh pr create --repo … --head …`, since gh would otherwise 
 remotes' fetch URLs (so a fork's PR goes into the fork, not its upstream). Agents in a worktree in other repositories are told not to push unless asked, and
 tasks without a worktree (working in the repository's own checkout) don't open pull requests.
 
+A project's settings can turn pull requests off (API 85), on its *Review* tab: *Open a pull
+request for each task* (`pull_requests`) for its tasks, subprojects included, and *Open a pull
+request for each task in a subproject* (`subproject_pull_requests`) for its subprojects' tasks,
+which are then merged into the subproject's branch without one. Both are on by default. An agent
+whose task has them off is told not to push its branch or open one unless the user asks, even if
+the project's own instructions say to.
+
 A task can carry its pull request's URL, shown on its card as a pull request icon next to the
 branch icon that links to it. Its agent can set it (`pr_url` via `update_task`), or set it under
 Pull request in the task's sidebar. Otherwise, whenever a run of a task with a branch ends and
@@ -1320,7 +1524,7 @@ or with comments and reviews from people who can push to the repository too (`al
 
 The reads above (a `wait` on a pull request, watching it in review, and the reads for *Done when
 merged*, which also ask for the head commit's checks) keep how the task's pull request's checks
-stood on the task (`pr_checks`, API 83, DB 67): the head commit, the outcome (`failed`, `passed`,
+stood on the task (`pr_checks`, API 89, DB 71): the head commit, the outcome (`failed`, `passed`,
 `pending` or `none`), the failed checks' names, conclusions and links, and how many passed and are
 still running. It's only written when that changes. No reads are added for it, so a task whose
 pull request isn't read by any of them (in *In progress* without a `wait`, or in a project with
@@ -1462,7 +1666,9 @@ reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the 
   tunnel whose ingress rule matches `^/api/hooks/`, Tailscale Funnel on that path, or a reverse
   proxy on a public machine with a `location /api/hooks/` block. The rest of the API still needs
   the board's token, but there's no need to publish it.
-- **The connection broker** (`huntaway-broker`, HA-2), once the host dials out to it: deliveries
+- **Managed tunnels**: deliver to the host’s tunnel hostname, `https://<name>.<tunnel domain>/api/hooks/<id>/<token>`.
+  Use that address directly: webhook senders may not follow the broker’s redirect.
+- **The legacy connection broker relay** (`huntaway-broker`, HA-2), once the host dials out to it: deliveries
   go to `https://<broker>/_broker/h/<host name>/api/hooks/<id>/<token>` (or without
   `/_broker/h/<host name>` for its default host).
 - **A hub** doesn't pass webhooks on to its linked hosts: its links carry the board's API calls,

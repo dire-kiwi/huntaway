@@ -13,7 +13,9 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::state::{ApiError, ApiResult, Shared};
-use crate::util::{path_str, truncate};
+use crate::util::path_str;
+#[cfg(not(test))]
+use crate::util::truncate;
 use crate::worktree::git;
 
 /// Facts about this server process, captured at startup.
@@ -26,6 +28,8 @@ pub struct ServerMeta {
     pub running_commit: Option<String>,
     /// `--update-from`: a deployment of the board whose commit this host offers to update to.
     pub update_from: Option<String>,
+    /// `--release-updates`: the GitHub repository whose releases this server updates from (see release.rs).
+    pub release: Option<crate::release::Config>,
     /// Arguments to re-exec with.
     pub args: Vec<OsString>,
 }
@@ -70,6 +74,10 @@ pub async fn status(state: &Shared) -> Result<Value> {
         "running_agents": running_agents,
         "restart": job,
     });
+    // API 88: with --release-updates, the release this server could update to.
+    if let Some(release) = crate::release::status(state)? {
+        v["release"] = release;
+    }
     let Some(src) = &meta.source_dir else { return Ok(v) };
     let deployed = state.deployed.lock().unwrap().clone();
     let head = head_commit(src).await;
@@ -175,6 +183,13 @@ pub fn start(state: &Shared, rebuild: bool) -> ApiResult<()> {
     if rebuild && state.meta.source_dir.is_none() {
         return Err(ApiError::bad("source checkout not found; start the server with --source-dir"));
     }
+    begin(state, move |st| async move { run(&st, rebuild).await })
+}
+
+/// Start a restart job that runs `job` in the background, unless one is running. `job` only returns on failure,
+/// which the job then shows (the restart log has whatever it logged). Release updates use it too (see release.rs),
+/// with the phases `downloading`, `verifying` and `installing` before `restarting`.
+pub fn begin<F: Future<Output = Result<()>> + Send + 'static>(state: &Shared, job: impl FnOnce(Shared) -> F + Send + 'static) -> ApiResult<()> {
     {
         let mut job = state.restart.lock().unwrap();
         if job.as_ref().is_some_and(|j| j.active()) {
@@ -184,7 +199,7 @@ pub fn start(state: &Shared, rebuild: bool) -> ApiResult<()> {
     }
     let st = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = run(&st, rebuild).await {
+        if let Err(e) = job(st.clone()).await {
             let msg = format!("{e:#}");
             tracing::error!("restart failed: {msg}");
             set_phase(&st, "failed", Some(msg));
@@ -193,7 +208,7 @@ pub fn start(state: &Shared, rebuild: bool) -> ApiResult<()> {
     Ok(())
 }
 
-fn set_phase(state: &Shared, phase: &str, error: Option<String>) {
+pub(crate) fn set_phase(state: &Shared, phase: &str, error: Option<String>) {
     if let Some(job) = state.restart.lock().unwrap().as_mut() {
         job.phase = phase.into();
         job.error = error.clone();
@@ -201,7 +216,7 @@ fn set_phase(state: &Shared, phase: &str, error: Option<String>) {
     state.emit(json!({"type": "restart", "phase": phase, "error": error}));
 }
 
-fn log_line(state: &Shared, line: &str) {
+pub(crate) fn log_line(state: &Shared, line: &str) {
     if let Some(job) = state.restart.lock().unwrap().as_mut() {
         job.log.push_str(line);
         job.log.push('\n');
@@ -256,26 +271,41 @@ async fn run(state: &Shared, rebuild: bool) -> Result<()> {
     if rebuild {
         let src = state.meta.source_dir.clone().context("source checkout not found")?;
         set_phase(state, "building_ui", None);
-        step(state, &src.join("app"), "npm", &["install", "--no-audit", "--no-fund"]).await?;
+        // --no-save, so the build never rewrites the tracked package-lock.json: a hub's
+        // Update refuses a checkout with uncommitted changes, so that would stop the next one.
+        step(state, &src.join("app"), "npm", &["install", "--no-save", "--no-audit", "--no-fund"]).await?;
         step(state, &src.join("app"), "npm", &["run", "build"]).await?;
         set_phase(state, "building_server", None);
         step(state, &src.join("server"), "cargo", &["build", "--release"]).await?;
         exe = src.join("server/target/release/huntaway");
     }
+    Err(restart_into(state, &exe).await)
+}
+
+/// Replace this process with `exe`, run with this one's arguments, in the `restarting` phase. Only returns on failure.
+pub(crate) async fn restart_into(state: &Shared, exe: &Path) -> anyhow::Error {
     // Agents keep running under ia-shim; the new process resumes following them.
     set_phase(state, "restarting", None);
     // Give the websocket a moment to deliver the final events.
     tokio::time::sleep(Duration::from_millis(300)).await;
     tracing::info!("re-executing {}", exe.display());
-    Err(exec(&exe, &state.meta.args))
+    exec(exe, &state.meta.args)
 }
 
 /// Replace this process with a fresh server. Only returns on failure.
-#[cfg(unix)]
+#[cfg(all(unix, not(test)))]
 fn exec(exe: &Path, args: &[OsString]) -> anyhow::Error {
     use std::os::unix::process::CommandExt;
     let err = std::process::Command::new(exe).args(args).exec();
     anyhow!("failed to exec {}: {}", exe.display(), truncate(&err.to_string(), 500))
+}
+
+/// Tests don't replace themselves: they can see what would have been exec'd at `testing::reached("exec")`, and
+/// then it fails.
+#[cfg(test)]
+fn exec(exe: &Path, _args: &[OsString]) -> anyhow::Error {
+    crate::testing::reached("exec");
+    anyhow!("failed to exec {}: not in a test", exe.display())
 }
 
 /// Reap the children this process inherited from the server it replaced (see `exec`), such as
@@ -303,7 +333,7 @@ pub fn reap_inherited() {
     });
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(test)))]
 fn exec(exe: &Path, args: &[OsString]) -> anyhow::Error {
     match std::process::Command::new(exe).args(args).spawn() {
         Ok(_) => std::process::exit(0),
@@ -427,7 +457,7 @@ mod tests {
 
     /// An origin with one commit, cloned as the source checkout: (origin, checkout, commit).
     fn checkout() -> (PathBuf, PathBuf, String) {
-        let root = std::env::temp_dir().join(format!("ia-admin-{}", crate::util::new_id()));
+        let root = crate::testing::temp_dir();
         let origin = root.join("origin");
         std::fs::create_dir_all(&origin).unwrap();
         sh(&origin, &["init", "-q", "-b", "master"]);
@@ -463,6 +493,7 @@ mod tests {
             source_dir: Some(src.to_path_buf()),
             running_commit: Some(head),
             update_from: Some(url.into()),
+            release: None,
             args: vec![],
         })
     }

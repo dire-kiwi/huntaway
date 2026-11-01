@@ -76,3 +76,44 @@ test("a model is named with its config too when another config of its agent may 
   // The only Claude config: its models need no qualifying.
   assert.equal(word(words, "opus.claude"), undefined);
 });
+
+const listed = (id) => ({ id, label: id });
+test("Codex family aliases use the newest numbered release, regardless of catalog order", () => {
+  const models = [
+    "gpt-6-sol", "gpt-6.2-sol", "gpt-6.10-sol", "gpt-6.1-sol", "gpt-7-sol-preview",
+    "gpt-6-astra", "gpt-6.1-terra", "gpt-6-luna", "gpt-6.1-sol-mini",
+  ].map(listed);
+  const words = harnessWords([{ ...codex, models }], "cx", "default");
+  for (const [alias, model] of [["sol", "gpt-6.10-sol"], ["astra", "gpt-6-astra"], ["terra", "gpt-6.1-terra"], ["luna", "gpt-6-luna"]]) {
+    assert.deepEqual(word(words, alias), { config: "cx", model });
+    assert.ok(words.find((w) => w.word === alias).label.includes(model));
+  }
+  assert.deepEqual(harnessesOf(words, ["SOL", "gpt-6.10-sol"]), [{ config: "cx", model: "gpt-6.10-sol" }]);
+  assert.deepEqual(word(words, "gpt-6-sol"), { config: "cx", model: "gpt-6-sol" });
+  const newer = harnessWords([{ ...codex, models: [...models, listed("gpt-7-sol")] }], "cx", "default");
+  assert.equal(word(newer, "sol").model, "gpt-7-sol");
+});
+
+test("aliases only exist for available Codex families", () => {
+  for (const config of [
+    { ...codex, models: [] },
+    { ...codex, models: ["gpt-7-sol-preview", "gpt-7-sol-mini"].map(listed) },
+    { ...claude("a", "Claude"), models: [listed("gpt-6-sol")] },
+  ]) {
+    const words = harnessWords([config], config.id, "default");
+    assert.equal(word(words, "sol"), undefined);
+    assert.equal(word(words, "luna"), undefined);
+  }
+});
+
+test("aliases select and qualify configs just like full model ids", () => {
+  const work = { ...codex, id: "w", name: "Work", models: [listed("gpt-6-sol")] };
+  const personal = { ...codex, id: "p", name: "Personal", models: [listed("gpt-6.1-sol")] };
+  const words = harnessWords([work, personal], "w", "default");
+  assert.deepEqual(word(words, "sol"), { config: "w", model: "gpt-6-sol" });
+  assert.deepEqual(word(words, "sol.personal"), { config: "p", model: "gpt-6.1-sol" });
+  assert.deepEqual(word(words, "sol.work"), { config: "w", model: "gpt-6-sol" });
+  assert.deepEqual(word(harnessWords([work, personal], "p", "default"), "sol"), { config: "p", model: "gpt-6.1-sol" });
+  assert.deepEqual(word(harnessWords([work, { ...personal, models: [] }], "p", "default"), "sol.work"),
+    { config: "w", model: "gpt-6-sol" });
+});

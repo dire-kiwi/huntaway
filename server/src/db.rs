@@ -662,17 +662,117 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=66; COMMIT;"))?;
     }
     if version < 67 {
+        // A summary of each task's changes once its review passes (see summary.rs): whether a
+        // project makes them and who writes them, and the task's latest. Added only if they
+        // aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for (table, column, kind) in [("projects", "auto_summary", "INTEGER NOT NULL DEFAULT 1"), ("projects", "summarizer", "TEXT"), ("tasks", "summary", "TEXT")] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=67; COMMIT;")?;
+    }
+    if version < 68 {
+        // Whether a project's agents open pull requests for their tasks, and for its subprojects'
+        // tasks (see Project::pull_requests), on until they're turned off. Added only if they
+        // aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for col in ["pull_requests", "subproject_pull_requests"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name=?1", [col], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE projects ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=68; COMMIT;")?;
+    }
+    if version < 69 {
+        // How big threads' contexts get and when they're compacted (see context::record_turn),
+        // with the compactions threads already show.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V69} {BACKFILL_V69}"))?;
+        for column in ["turn_start_tokens", "turn_tokens"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column} INTEGER;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=69; COMMIT;")?;
+    }
+    if version < 70 {
+        // Who reviews and summarises the tasks of a profile's projects that don't choose their own
+        // (see Profile::reviewers). Added only if they aren't there, in case another migration
+        // takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for col in ["reviewers", "summarizer"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('profiles') WHERE name=?1", [col], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} TEXT;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=70; COMMIT;")?;
+    }
+    if version < 71 {
         // How a task's pull request's checks stood at the latest read (see Task::pr_checks).
         let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='pr_checks'", [], |r| r.get(0))?;
         let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN pr_checks TEXT;" };
-        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=67; COMMIT;"))?;
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=71; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 67;
+pub const VERSION: i64 = 71;
+
+/// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
+/// `start_tokens` what its first request to the model held) and for
+/// each compaction (`compact`: `tokens` before it and `post_tokens` after, and its `source`:
+/// `auto` when the agent compacted by itself as its context filled up, `user` for a `/compact`,
+/// `idle` for the board's after a session sat idle). See context.rs. A run's `turn_start_tokens`
+/// and `turn_tokens` follow its current turn's requests to the model, until the turn's row is written.
+const SCHEMA_V69: &str = r#"
+CREATE TABLE IF NOT EXISTS context_stats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  run_id TEXT,
+  kind TEXT NOT NULL,
+  at TEXT NOT NULL,
+  tokens INTEGER,
+  start_tokens INTEGER,
+  post_tokens INTEGER,
+  max_tokens INTEGER,
+  model TEXT,
+  source TEXT,
+  cost_usd REAL,
+  duration_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS context_stats_time ON context_stats(at);
+CREATE INDEX IF NOT EXISTS context_stats_task ON context_stats(task_id, at);
+"#;
+
+/// The compactions in threads from before `context_stats`, each with the run it was in (the
+/// task's latest to start before it). Its source is worked out as context::compaction_source does.
+const BACKFILL_V69: &str = r#"
+INSERT INTO context_stats (task_id, run_id, kind, at, tokens, post_tokens, source, duration_ms)
+SELECT b.task_id, b.run_id, 'compact', b.at,
+  json_extract(b.meta, '$.pre_tokens'), json_extract(b.meta, '$.post_tokens'),
+  CASE
+    WHEN json_extract(b.meta, '$.trigger') = 'auto' THEN 'auto'
+    WHEN r.kind = 'compact' AND NOT EXISTS (
+      SELECT 1 FROM messages u WHERE u.task_id = b.task_id AND u.kind = 'user' AND u.created_at >= r.created_at AND u.created_at <= b.at
+    ) THEN 'idle'
+    ELSE 'user'
+  END,
+  json_extract(b.meta, '$.duration_ms')
+FROM (
+  SELECT m.task_id, m.created_at AS at, json_extract(m.data, '$.compact_metadata') AS meta,
+    (SELECT id FROM runs WHERE task_id = m.task_id AND created_at <= m.created_at ORDER BY created_at DESC LIMIT 1) AS run_id
+  FROM messages m
+  WHERE m.kind = 'claude' AND m.data LIKE '%"compact_boundary"%' AND json_extract(m.data, '$.subtype') = 'compact_boundary'
+    AND json_extract(m.data, '$.parent_tool_use_id') IS NULL
+) b LEFT JOIN runs r ON r.id = b.run_id;
+"#;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1066,6 +1166,14 @@ pub struct Profile {
     /// usage, when theirs is (API 81).
     #[serde(default)]
     pub limit_switch: bool,
+    /// Who reviews the tasks of its projects that have no reviewers of their own (API 87, see
+    /// `reviewers_for`). Empty is one reviewer with the task's config.
+    #[serde(default)]
+    pub reviewers: Vec<Reviewer>,
+    /// Who summarises them, for its projects with no summarizer of their own (API 87, see
+    /// `summarizer_for`). None is the task's config with the default model and effort.
+    #[serde(default)]
+    pub summarizer: Option<Reviewer>,
     pub created_at: String,
 }
 
@@ -1092,6 +1200,8 @@ impl Profile {
             asana_enabled: r.get("asana_enabled")?,
             limit_wait: r.get("limit_wait")?,
             limit_switch: r.get("limit_switch")?,
+            reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+            summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             created_at: r.get("created_at")?,
         })
     }
@@ -1182,13 +1292,29 @@ pub struct Project {
     /// Move a task to Done when its pull request is merged on GitHub (see merged.rs).
     #[serde(default = "yes")]
     pub done_when_merged: bool,
+    /// Agents open a pull request for their task's branch when the repository is on GitHub
+    /// (see runner::system_prompt). Subprojects themselves follow it too.
+    #[serde(default = "yes")]
+    pub pull_requests: bool,
+    /// The same for the tasks in the project's subprojects, whose pull requests target the
+    /// subproject's branch.
+    #[serde(default = "yes")]
+    pub subproject_pull_requests: bool,
     /// How many times in a row a review's serious issues go back to the agent to fix before
     /// the task is left for the user.
     pub review_rounds: u32,
-    /// Who reviews each task's work, each in a review thread of its own. Empty means one
-    /// reviewer with the task's config.
+    /// Who reviews each task's work, each in a review thread of its own. Empty uses the
+    /// profile's (see `reviewers_for`).
     #[serde(default)]
     pub reviewers: Vec<Reviewer>,
+    /// Summarise each task's changes once its review passes, for the user to read before
+    /// merging (see summary.rs).
+    #[serde(default = "yes")]
+    pub auto_summary: bool,
+    /// Who writes those summaries, in a thread of its own. None uses the profile's (see
+    /// `summarizer_for`).
+    #[serde(default)]
+    pub summarizer: Option<Reviewer>,
     /// The project's instructions for the prompts sent when a task's agent starts, when its
     /// work is reviewed and when it's merged; None uses the default (see prompts.rs).
     pub start_prompt: Option<String>,
@@ -1244,8 +1370,12 @@ impl Project {
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
             auto_review: r.get("auto_review")?,
             done_when_merged: r.get("done_when_merged")?,
+            pull_requests: r.get("pull_requests")?,
+            subproject_pull_requests: r.get("subproject_pull_requests")?,
             review_rounds: r.get("review_rounds")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+            auto_summary: r.get("auto_summary")?,
+            summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             start_prompt: r.get("start_prompt")?,
             review_prompt: r.get("review_prompt")?,
             merge_prompt: r.get("merge_prompt")?,
@@ -1256,6 +1386,12 @@ impl Project {
             pr_preview_url: r.get("pr_preview_url")?,
             created_at: r.get("created_at")?,
         })
+    }
+
+    /// Whether agents open pull requests for the project's tasks (`in_subproject`: for a
+    /// subproject's tasks, while a subproject itself is one of the project's).
+    pub fn pull_requests(&self, in_subproject: bool) -> bool {
+        if in_subproject { self.subproject_pull_requests } else { self.pull_requests }
     }
 
     /// Where pull request `pr_url` is previewed (see `pr_preview_url`): None if the project
@@ -1415,6 +1551,9 @@ pub struct Task {
     pub reminder: Option<String>,
     /// The latest automatic review of the task's work.
     pub review: Option<Review>,
+    /// The latest summary of its changes, written once its review passed (see summary.rs).
+    #[serde(default)]
+    pub summary: Option<ChangeSummary>,
     /// How full its agent's context window is, as of its latest reply (see context.rs).
     #[serde(default)]
     pub context: Option<Context>,
@@ -1608,6 +1747,26 @@ pub struct Review {
     pub reviewers: Vec<ReviewerRun>,
 }
 
+/// A summary of a task's changes (see summary.rs), stored on the task as JSON.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ChangeSummary {
+    /// The summary thread: a `review` task of type `summary` whose parent is this task.
+    pub thread_id: String,
+    /// Who writes it, e.g. "Claude · haiku".
+    #[serde(default)]
+    pub label: String,
+    /// running, done, failed or stopped
+    pub state: String,
+    /// The commit summarised.
+    pub head: Option<String>,
+    /// The summary (Markdown), or why there's none.
+    pub text: Option<String>,
+    /// The thread's last run before this one (empty if it had none), as ReviewerRun::after_run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_run: Option<String>,
+    pub updated_at: String,
+}
+
 /// One reviewer's part of a review.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ReviewerRun {
@@ -1698,6 +1857,7 @@ impl Task {
             remind_at: r.get("remind_at")?,
             reminder: r.get("reminder")?,
             review: r.get::<_, Option<String>>("review")?.and_then(|v| serde_json::from_str(&v).ok()),
+            summary: r.get::<_, Option<String>>("summary")?.and_then(|v| serde_json::from_str(&v).ok()),
             context: r.get::<_, Option<String>>("context")?.and_then(|v| serde_json::from_str(&v).ok()),
             rewind: r.get::<_, Option<String>>("rewind")?.and_then(|v| serde_json::from_str(&v).ok()),
             cost_usd: r.get("cost_usd")?,
@@ -1759,6 +1919,25 @@ pub fn list_profiles(c: &Connection) -> Result<Vec<Profile>> {
 
 pub fn get_profile(c: &Connection, id: &str) -> Result<Option<Profile>> {
     Ok(c.query_row(&format!("{PROFILE_SELECT} WHERE p.id=?1"), [id], Profile::from_row).optional()?)
+}
+
+/// Who reviews `project`'s tasks: its own reviewers, or else its profile's, or else one reviewer
+/// with the task's config.
+pub fn reviewers_for(c: &Connection, project: &Project) -> Result<Vec<Reviewer>> {
+    if !project.reviewers.is_empty() {
+        return Ok(project.reviewers.clone());
+    }
+    let profile = get_profile(c, &project.profile_id)?.map(|p| p.reviewers).unwrap_or_default();
+    Ok(if profile.is_empty() { vec![Reviewer::default()] } else { profile })
+}
+
+/// Who summarises `project`'s tasks: its own summarizer, or else its profile's, or else the
+/// task's config with the defaults.
+pub fn summarizer_for(c: &Connection, project: &Project) -> Result<Reviewer> {
+    if let Some(r) = &project.summarizer {
+        return Ok(r.clone());
+    }
+    Ok(get_profile(c, &project.profile_id)?.and_then(|p| p.summarizer).unwrap_or_default())
 }
 
 pub fn insert_profile(c: &Connection, name: &str, config_ids: &[String], model: Option<&str>) -> Result<Profile> {
@@ -2099,11 +2278,36 @@ pub fn merge_lanes(c: &Connection, project_id: Option<&str>) -> Result<Vec<Optio
     Ok(rows)
 }
 
-/// A task's review threads, oldest first.
+/// A task's review threads, oldest first, its summary threads (see `summary_threads`) included:
+/// they all work in its worktree.
 pub fn review_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' ORDER BY created_at, number")?;
     let rows = st.query_map([task_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
+}
+
+/// A task's summary threads (review threads that summarise its changes, see summary.rs), oldest first.
+pub fn summary_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' AND task_type='summary' ORDER BY created_at, number")?;
+    let rows = st.query_map([task_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// The tasks made together from one prompt (`fanout_id`, see api::CreateTask) in a profile, in the order they were made.
+pub fn fanout_tasks(c: &Connection, profile_id: &str, fanout_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE profile_id=?1 AND fanout_id=?2 AND kind='task' ORDER BY created_at, number")?;
+    let rows = st.query_map([profile_id, fanout_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// How long a task's agent has run, in seconds, over all of its runs (one still going counts up to `now`), and how many
+/// runs it has had.
+pub fn run_time(c: &Connection, task_id: &str, now: &str) -> Result<(f64, i64)> {
+    Ok(c.query_row(
+        "SELECT COALESCE(SUM(MAX(0, julianday(COALESCE(ended_at, ?2)) - julianday(created_at))), 0) * 86400, COUNT(*) FROM runs WHERE task_id=?1",
+        [task_id, now],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
 }
 
 /// A subproject's tasks, in board order.
@@ -2334,7 +2538,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
@@ -2391,7 +2595,7 @@ fn normalize_resolution(c: &Connection, id: &str) -> Result<()> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "auto_summary", "summarizer", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
     "copy_files", "link_folders",
 ];
@@ -2408,7 +2612,7 @@ pub fn preview_project_update(c: &Connection, id: &str, fields: &[(&str, Value)]
     update_project(&tx, id, fields)
 }
 
-const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch"];
+const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer"];
 
 pub fn update_profile(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Profile>> {
     update_generic(c, "profiles", PROFILE_COLUMNS, id, fields)?;
@@ -2697,8 +2901,13 @@ pub fn tool_calls_since(c: &Connection, task_id: &str, since: Option<&str>) -> R
 
 /// The most recent assistant text in a thread (used for summaries in MCP tools).
 pub fn last_assistant_text(c: &Connection, task_id: &str) -> Result<Option<String>> {
-    let mut st = c.prepare("SELECT data FROM messages WHERE task_id=?1 AND kind='claude' ORDER BY id DESC LIMIT 50")?;
-    let mut rows = st.query([task_id])?;
+    last_assistant_text_after(c, task_id, 0)
+}
+
+/// The most recent assistant text in a thread after message `after` (an id).
+pub fn last_assistant_text_after(c: &Connection, task_id: &str, after: i64) -> Result<Option<String>> {
+    let mut st = c.prepare("SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND id > ?2 ORDER BY id DESC LIMIT 50")?;
+    let mut rows = st.query(params![task_id, after])?;
     while let Some(r) = rows.next()? {
         let data: String = r.get(0)?;
         let v: Value = serde_json::from_str(&data).unwrap_or(Value::Null);
@@ -2997,8 +3206,7 @@ mod tests {
 
     #[test]
     fn commits_dont_sync_to_disk_one_by_one() {
-        let dir = std::env::temp_dir().join(format!("ia-test-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         let c = open(&dir.join("huntaway.db")).unwrap();
         let mode: String = c.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
         assert_eq!(mode, "wal");
@@ -3272,7 +3480,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled() {
-        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3319,7 +3527,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_54_gets_automations() {
-        let path = std::env::temp_dir().join(format!("huntaway-v54-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch("DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version=54;").unwrap();
@@ -3337,7 +3545,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_60_gets_setup_threads() {
-        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3363,7 +3571,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_48_has_its_done_tasks_done_since_they_last_changed() {
-        let path = std::env::temp_dir().join(format!("huntaway-v48-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3388,7 +3596,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_49_gets_profiles_cloning_into_their_own_folder() {
-        let path = std::env::temp_dir().join(format!("huntaway-v49-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3412,7 +3620,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_50_gets_external_links_and_asana_tokens() {
-        let path = std::env::temp_dir().join(format!("huntaway-v50-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3439,7 +3647,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_51_keeps_asana_on_for_its_profiles() {
-        let path = std::env::temp_dir().join(format!("huntaway-v51-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3465,7 +3673,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_56_gets_remerge() {
-        let path = std::env::temp_dir().join(format!("huntaway-v58-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3492,7 +3700,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_52_gets_fanout_ids() {
-        let path = std::env::temp_dir().join(format!("huntaway-v52-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3517,7 +3725,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_61_gets_push_subscriptions() {
-        let path = std::env::temp_dir().join(format!("huntaway-v61-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch("DROP TABLE push_subscriptions; PRAGMA user_version=61;").unwrap();
@@ -3535,7 +3743,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_53_gets_pull_request_watches() {
-        let path = std::env::temp_dir().join(format!("huntaway-v53-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3573,7 +3781,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_47_gets_show_usage_off() {
-        let path = std::env::temp_dir().join(format!("huntaway-v47-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3596,7 +3804,7 @@ mod tests {
     #[test]
     fn a_database_at_version_59_gets_projects_watch_pull_requests() {
         // As master's build left it, with labels (59) and no watch_pull_requests yet.
-        let path = std::env::temp_dir().join(format!("huntaway-v59-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3619,9 +3827,82 @@ mod tests {
     }
 
     #[test]
+    fn a_database_at_version_66_gets_the_summary_columns() {
+        // As master's build left it, with copy_files and link_folders (66) and no summaries yet.
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN auto_summary;
+                 ALTER TABLE projects DROP COLUMN summarizer;
+                 ALTER TABLE tasks DROP COLUMN summary;
+                 PRAGMA user_version=66;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert!(p.auto_summary);
+        assert_eq!(p.summarizer, None);
+        let t = insert_task(&c, NewTask { profile_id: "p", project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
+        assert!(t.summary.is_none());
+    }
+
+    #[test]
+    fn a_database_at_version_67_gets_projects_pull_request_settings() {
+        // As master's build left it, with summaries (67) and no pull request settings yet: its projects keep opening them.
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN pull_requests;
+                 ALTER TABLE projects DROP COLUMN subproject_pull_requests;
+                 PRAGMA user_version=67;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert!(p.pull_requests && p.subproject_pull_requests);
+        let p = update_project(&c, "pr", &[("pull_requests", json!(false))]).unwrap().unwrap();
+        assert!(!p.pull_requests && p.subproject_pull_requests);
+    }
+
+    #[test]
+    fn a_database_at_version_69_gets_profiles_reviewers_and_summarizer() {
+        // As master's build left it, with context stats (69) and no profile reviewers yet.
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE profiles DROP COLUMN reviewers;
+                 ALTER TABLE profiles DROP COLUMN summarizer;
+                 PRAGMA user_version=69;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_profile(&c, "p").unwrap().unwrap();
+        assert_eq!((p.reviewers, p.summarizer), (vec![], None));
+        let haiku = Reviewer { model: Some("haiku".into()), ..Default::default() };
+        let p = update_profile(&c, "p", &[("summarizer", json!(json!(haiku).to_string()))]).unwrap().unwrap();
+        assert_eq!(p.summarizer, Some(haiku));
+    }
+
+    #[test]
     fn a_database_at_version_62_gets_projects_pr_preview_url() {
         // As master's build left it, with push_subscriptions (62) and no pr_preview_url yet.
-        let path = std::env::temp_dir().join(format!("huntaway-v62-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3650,7 +3931,7 @@ mod tests {
 
     #[test]
     fn a_database_at_version_65_gets_projects_copy_files_and_link_folders() {
-        let path = std::env::temp_dir().join(format!("huntaway-v65-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             c.execute_batch(
@@ -3676,7 +3957,7 @@ mod tests {
     }
 
     #[test]
-    fn a_database_at_version_66_gets_tasks_pr_checks() {
+    fn a_database_at_version_70_gets_tasks_pr_checks() {
         // As master's build left it, with ignored files to copy (66) and no pr_checks yet.
         let path = std::env::temp_dir().join(format!("huntaway-v66-{}.db", crate::util::new_id()));
         let id = {
@@ -3684,7 +3965,7 @@ mod tests {
             let p = insert_profile(&c, "p", &[], None).unwrap();
             let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
             let t = insert_task(&c, t).unwrap();
-            c.execute_batch("ALTER TABLE tasks DROP COLUMN pr_checks; PRAGMA user_version=66;").unwrap();
+            c.execute_batch("ALTER TABLE tasks DROP COLUMN pr_checks; PRAGMA user_version=70;").unwrap();
             t.id
         };
         let c = open(&path).unwrap();
@@ -3710,7 +3991,7 @@ mod tests {
             (44, format!("ALTER TABLE tasks DROP COLUMN starred; ALTER TABLE tasks DROP COLUMN remind_at; ALTER TABLE tasks DROP COLUMN reminder; {newer}")),
             (45, newer.to_string()),
         ] {
-            let path = std::env::temp_dir().join(format!("huntaway-gh{version}-{}.db", crate::util::new_id()));
+            let path = crate::testing::temp_dir().join("huntaway.db");
             {
                 let c = open(&path).unwrap();
                 c.execute_batch(&format!(
@@ -3735,8 +4016,57 @@ mod tests {
 
 
     #[test]
+    fn version_69_collects_the_compactions_threads_show() {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            let boundary = |trigger: &str, extra: &str| {
+                format!(r#"{{"type":"system","subtype":"compact_boundary","compact_metadata":{{"trigger":"{trigger}","pre_tokens":900,"post_tokens":90,"duration_ms":5}}{extra}}}"#)
+            };
+            c.execute_batch(&format!(
+                "DROP TABLE context_stats;
+                 ALTER TABLE runs DROP COLUMN turn_start_tokens; ALTER TABLE runs DROP COLUMN turn_tokens;
+                 PRAGMA user_version=68;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'One','in_progress','1','1','1');
+                 INSERT INTO runs (id,task_id,kind,status,created_at) VALUES
+                   ('prompt','t','prompt','done','2026-10-01T10:00:00.000Z'),
+                   ('idle','t','compact','done','2026-10-01T11:00:00.000Z'),
+                   ('user','t','compact','done','2026-10-01T12:00:00.000Z');
+                 INSERT INTO messages (task_id,kind,data,created_at) VALUES
+                   ('t','user','{{\"text\":\"go\"}}','2026-10-01T10:00:00.000Z'),
+                   ('t','claude','{auto}','2026-10-01T10:30:00.000Z'),
+                   ('t','event','{{\"text\":\"Compacting the conversation after 50 minutes idle\"}}','2026-10-01T11:00:00.000Z'),
+                   ('t','claude','{idle}','2026-10-01T11:01:00.000Z'),
+                   ('t','user','{{\"text\":\"/compact\"}}','2026-10-01T12:00:00.000Z'),
+                   ('t','claude','{user}','2026-10-01T12:01:00.000Z'),
+                   ('t','claude','{sub}','2026-10-01T12:02:00.000Z');",
+                auto = boundary("auto", ""),
+                idle = boundary("manual", ""),
+                user = boundary("manual", ""),
+                sub = boundary("auto", r#","parent_tool_use_id":"agent-1""#),
+            ))
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let mut st = c.prepare("SELECT run_id, kind, source, tokens, post_tokens, duration_ms FROM context_stats ORDER BY at").unwrap();
+        let rows: Vec<(String, String, String, i64, i64, i64)> =
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).unwrap().map(|r| r.unwrap()).collect();
+        let row = |run: &str, source: &str| (run.to_string(), "compact".to_string(), source.to_string(), 900, 90, 5);
+        // A subagent's compaction isn't the thread's.
+        assert_eq!(rows, vec![row("prompt", "auto"), row("idle", "idle"), row("user", "user")]);
+        drop(st);
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
     fn a_database_where_scratch_tasks_were_version_42_gets_archived_projects() {
-        let path = std::env::temp_dir().join(format!("huntaway-v42-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             // As a build of scratch tasks from before archived projects took version 42 left it.
@@ -3771,7 +4101,7 @@ mod tests {
 
     #[test]
     fn a_database_where_stars_and_reminders_were_version_42_keeps_them() {
-        let path = std::env::temp_dir().join(format!("huntaway-v42-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             // As a build of stars and reminders from before archived projects and scratch tasks
@@ -3805,8 +4135,7 @@ mod tests {
 
     #[test]
     fn scratch_chats_become_scratch_tasks() {
-        let dir = std::env::temp_dir().join(format!("huntaway-v41-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         let path = dir.join("huntaway.db");
         {
             let c = open(&path).unwrap();
@@ -3864,7 +4193,7 @@ mod tests {
 
     #[test]
     fn a_database_from_version_38_gets_permission_request_kinds() {
-        let path = std::env::temp_dir().join(format!("huntaway-v38-{}.db", crate::util::new_id()));
+        let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
             // As version 38 (task documents) left it, before permission requests had a kind (and

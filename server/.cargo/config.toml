@@ -14,3 +14,8 @@ debug = false
 # server, ia-shim and each test binary). Debuggers and backtraces read it from there.
 [profile.dev]
 split-debuginfo = "unpacked"
+
+# Test binaries run in a TMPDIR of their own, removed when they exit, and fail if they leave anything in it (see
+# test-runner).
+[target.'cfg(all())']
+runner = ".cargo/test-runner"
