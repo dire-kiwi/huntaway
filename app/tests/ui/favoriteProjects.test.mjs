@@ -19,9 +19,9 @@ after(() => server?.stop());
 const rows = (page) =>
   page.locator("aside").evaluate((aside) => {
     const names = [];
-    const walker = aside.ownerDocument.createTreeWalker(aside, NodeFilter.SHOW_ELEMENT);
-    for (let el = walker.currentNode; el; el = walker.nextNode()) {
-      const text = el.childElementCount === 0 ? el.textContent.trim() : "";
+    const walker = aside.ownerDocument.createTreeWalker(aside, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.textContent.trim();
       if (["alpha", "Beta", "Demo", "Gamma", "Middle", "zeta", "Favorites", "Projects"].includes(text)) names.push(text);
     }
     return names;
