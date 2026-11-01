@@ -149,8 +149,8 @@ struct ServeArgs {
     /// Token for --hub (from that hub's Settings → Hosts).
     #[arg(long, env = "IA_HUB_TOKEN")]
     hub_token: Option<String>,
-    /// Broker to dial out to (`huntaway-broker`), so this host can be reached through it from
-    /// anywhere: the board in a browser, and the API from hubs.
+    /// Register with huntaway-broker for public access: managed Cloudflare tunnels or its legacy
+    /// relay, depending on the broker's configuration.
     #[arg(long, env = "IA_BROKER")]
     broker: Option<String>,
     /// Token for --broker (the broker's BROKER_TOKEN). Prefer the environment variable over the flag.
@@ -370,8 +370,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);
-    hub::start(&state)?;
+    // Subscribe before outbound links can announce their initial snapshots.
     push::start(&state);
+    hub::start(&state)?;
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
             for h in &args.hubs {
@@ -390,7 +391,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
             }
             (Some(t), name) => {
                 let name = name.unwrap_or_else(|| huntaway_broker::proto::slug(&state.host_name));
-                broker::dial_out(&state, url.to_string(), t.to_string(), name, load_or_create_token(&data_dir, "broker_key")?);
+                let origin_port = broker::origin(app.clone()).await.context("starting the private tunnel origin")?;
+                broker::dial_with_origin(&state, url.to_string(), t.to_string(), name, load_or_create_token(&data_dir, "broker_key")?, Some(origin_port));
             }
         }
     }

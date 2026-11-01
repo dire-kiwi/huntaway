@@ -9,7 +9,7 @@
 //! the task (app/public/sw.js).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Mutex, Weak, atomic::{AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -437,6 +437,9 @@ fn local_project_key(s: &Shared, id: &str) -> Option<String> {
 
 /// What the board keeps for push while it runs.
 pub struct PushState {
+    /// A link is presented as connected after its initial task snapshot has been processed.
+    watching: AtomicBool,
+    ready: Mutex<HashMap<String, Weak<crate::hub::LinkConn>>>,
     client: reqwest::Client,
     /// The latest state of every task on the board, by `<host>:<id>`, to tell what changed.
     tasks: Mutex<HashMap<String, Value>>,
@@ -449,6 +452,8 @@ pub struct PushState {
 impl Default for PushState {
     fn default() -> Self {
         Self {
+            watching: AtomicBool::new(false),
+            ready: Default::default(),
             client: reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default(),
             tasks: Default::default(),
             pending: Default::default(),
@@ -458,6 +463,11 @@ impl Default for PushState {
 }
 
 impl PushState {
+    pub(crate) fn link_ready(&self, link: &crate::hub::LinkHandle) -> bool {
+        !self.watching.load(Ordering::Relaxed) || self.ready.lock().unwrap().get(&link.id)
+            .and_then(Weak::upgrade).is_some_and(|old| std::sync::Arc::ptr_eq(&old, link))
+    }
+
     /// The user moved task `id` on `host_id` to `status` themselves (from the UI), so that doesn't notify them.
     pub fn note_move(&self, host_id: &str, id: &str, status: &str) {
         let mut moves = self.moves.lock().unwrap();
@@ -472,6 +482,7 @@ impl PushState {
 
 /// Watches the task events of every host on the board and pushes the ones devices want.
 pub fn start(s: &Shared) {
+    s.push.watching.store(true, Ordering::Relaxed);
     let st = s.clone();
     let mut rx = s.hub_events.subscribe();
     tokio::spawn(async move {
@@ -488,7 +499,7 @@ pub fn start(s: &Shared) {
                     known.insert(st.host_id.clone());
                     load_host(&st, &st.host_id.clone()).await;
                     for h in linked(&st) {
-                        load_host(&st, &h).await;
+                        sync_host(&st, &h).await;
                         known.insert(h);
                     }
                     continue;
@@ -503,9 +514,10 @@ pub fn start(s: &Shared) {
                         st.push.tasks.lock().unwrap().remove(&format!("{host}:{id}"));
                     }
                 }
-                Some("resync") => load_host(&st, &host).await,
+                Some("resync") => sync_host(&st, &host).await,
                 Some("hosts_changed") => {
                     let now = linked(&st);
+                    st.push.ready.lock().unwrap().retain(|id, _| now.contains(id));
                     // Gone hosts are loaded again when they're back.
                     known.retain(|h| *h == st.host_id || now.contains(h));
                     for h in now {
@@ -518,6 +530,18 @@ pub fn start(s: &Shared) {
             }
         }
     });
+}
+
+/// Both kinds of link announce an initial resync after hosts_changed. Publishing connected before
+/// that snapshot completed let a first change be swallowed into the baseline, rather than pushed.
+async fn sync_host(s: &Shared, host: &str) {
+    let link = crate::hub::find_link(s, host);
+    load_host(s, host).await;
+    if let Some(link) = link.filter(|link| crate::hub::find_link(s, host).is_some_and(|now| std::sync::Arc::ptr_eq(link, &now))) {
+        let was_ready = s.push.link_ready(&link);
+        s.push.ready.lock().unwrap().insert(host.into(), std::sync::Arc::downgrade(&link));
+        if !was_ready { let _ = s.hub_events.send(json!({"type": "hosts_changed"})); }
+    }
 }
 
 /// The linked hosts that are connected.
@@ -924,6 +948,53 @@ mod tests {
     /// The board's task event for task `t` on this host.
     fn emit(s: &Shared, t: &Value) {
         let _ = s.hub_events.send(json!({"type": "task", "task": t, "host_id": s.host_id}));
+    }
+
+    #[test]
+    fn a_link_is_connected_only_after_its_initial_push_snapshot() {
+        testing::run(async || {
+            let s = testing::state();
+            let (url, mut got) = push_service(Arc::new(AtomicU16::new(201))).await;
+            let (ua, keys) = device();
+            api(&s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": url, "keys": keys}))).await;
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let (began, gate, count) = (entered.clone(), release.clone(), reads.clone());
+            let remote = axum::Router::new()
+                .route("/api/profiles", axum::routing::get(|| async { Json(json!([{"id": "p"}])) }))
+                .route("/api/profiles/p/tasks", axum::routing::get(move || {
+                    let (began, gate, count) = (began.clone(), gate.clone(), count.clone());
+                    async move {
+                        // The second snapshot, from the initial resync, used to swallow a change
+                        // made after /api/hosts had already advertised the link as connected.
+                        if count.fetch_add(1, Ordering::SeqCst) == 1 { began.notify_one(); gate.notified().await; }
+                        Json(json!([task("in_progress")]))
+                    }
+                }));
+            crate::hub::link_http(&s, "remote", remote, crate::proto::API_VERSION).await;
+            db::upsert_link(&s.db(), "remote", "remote", "outbound", None, None).unwrap();
+            start(&s);
+            s.hub_events.send(json!({"type": "hosts_changed"})).unwrap();
+            s.hub_events.send(json!({"type": "resync", "host_id": "remote"})).unwrap();
+            entered.notified().await;
+            let connected = async || {
+                let hosts = crate::hub::list_hosts(State(s.clone())).await.unwrap().0;
+                hosts.as_array().unwrap().iter().find(|h| h["id"] == "remote").unwrap()["connected"] == true
+            };
+            assert!(!connected().await, "link advertised before its task snapshot was ready");
+            release.notify_one();
+            while !connected().await { tokio::time::sleep(Duration::from_millis(10)).await; }
+            assert_eq!(reads.load(Ordering::SeqCst), 2);
+            s.hub_events.send(json!({"type": "task", "host_id": "remote", "task": task("needs_attention")})).unwrap();
+            let (_, body) = got.recv().await.unwrap();
+            let msg: Value = serde_json::from_slice(&decrypt(&ua, &[9u8; 16], &body)).unwrap();
+            assert_eq!(msg["event"], "attention");
+            assert_eq!(msg["tag"], "remote:t1");
+            // Readiness belongs to this connection, not just the host id reused on reconnect.
+            crate::hub::link_http(&s, "remote", axum::Router::new(), crate::proto::API_VERSION).await;
+            assert!(!connected().await);
+        });
     }
 
     #[test]
