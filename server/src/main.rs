@@ -369,8 +369,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);
-    hub::start(&state)?;
+    // Subscribe before outbound links can announce their initial snapshots.
     push::start(&state);
+    hub::start(&state)?;
     match (&args.hub_token, args.hubs.is_empty()) {
         (Some(t), false) => {
             for h in &args.hubs {

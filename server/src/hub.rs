@@ -811,7 +811,7 @@ pub async fn list_hosts(State(s): State<Shared>) -> ApiResult<Json<Value>> {
         let live = s.links.lock().unwrap().get(&l.id).cloned();
         let mut v = serde_json::to_value(&l).unwrap();
         v["local"] = json!(false);
-        v["connected"] = json!(live.is_some());
+        v["connected"] = json!(live.as_ref().is_some_and(|link| s.push.link_ready(link)));
         if let Some(c) = live {
             v["mode"] = json!(c.mode);
             let ver = c.version.lock().unwrap().clone();
