@@ -249,6 +249,23 @@ test("nothing is installed when the server has no newer shell, or GitHub can't v
   assert.equal(fs.readFileSync(appimage, "utf8"), "old");
 });
 
+test("an app newer than the release isn't downgraded to it, even if the server says its shell is outdated", async () => {
+  // Installed from 0.4.0-rc.1, with prereleases off: the check picks 0.3.0. A server from before it compared versions
+  // would still call its shell outdated.
+  const appimage = path.join(tmp(), "Huntaway.AppImage");
+  fs.writeFileSync(appimage, "old");
+  for (const current of ["0.4.0-rc.1", "0.3.0"]) {
+    const f = await fake();
+    await assert.rejects((await run(f, { kind: "appimage", appimage, current })).promise, new RegExp(`v${current.replace(/\./g, "\\.")}\\) isn't older than v0\\.3\\.0`));
+    assert.ok(!f.requests.some((r) => r.startsWith("/repos/") || r.startsWith("/download/")), "nothing is fetched from GitHub");
+  }
+  assert.equal(fs.readFileSync(appimage, "utf8"), "old");
+  // An older app is updated.
+  const f = await fake();
+  await (await run(f, { kind: "appimage", appimage, current: "0.3.0-rc.2" })).promise;
+  assert.equal(fs.readFileSync(appimage).equals(PACKAGE), true);
+});
+
 test("a release tagged without a v is found too", async () => {
   const f = await fake({ tag: "0.3.0" });
   const appimage = path.join(tmp(), "Huntaway.AppImage");

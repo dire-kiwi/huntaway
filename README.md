@@ -216,7 +216,7 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `IA_CLOUDFLARED_BIN` (env only) | `cloudflared` | Connector binary for a broker with managed tunnels |
 | `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
 | `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
-| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 85) |
+| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 87) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
@@ -434,16 +434,18 @@ version is all a check does; quitting and starting the app again still runs the 
   exits before it's ready, the app marks it bad and starts the one before it, then its own server.
   A bad version isn't offered again; the next release is.
 - **Roll back.** Settings → Server → **Roll back** marks the running version bad and restarts onto
-  the one before it, or onto the app's own server when there's none. A newer server may have
+  the one before it, or onto the app's own server when there's none (or the one before it is older
+  than the app's own server, which a newer package's takes over from). A newer server may have
   updated the database; the older one runs on it as it is (the changes so far only add to it).
 - **Prereleases** are offered only with **Include prereleases** on in Settings → Server. Turning it
   off again withdraws a prerelease that was downloaded but not yet updated to.
 - **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
   rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
   each. Deleting `app/` goes back to the app's own server.
-- **The app itself.** Most releases change only the server and the UI. When one also changes the
-  app (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records), Settings → Server
-  says so and how to install it. The AppImage's **Update app** downloads the new AppImage beside the
+- **The app itself.** Most releases change only the server and the UI. When a release newer than the
+  app also changes it (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records),
+  Settings → Server says so and how to install it. An app installed from a prerelease isn't offered
+  an older release's package while prereleases are off. The AppImage's **Update app** downloads the new AppImage beside the
   running one, checks it, renames it over the old file and relaunches. The pacman package's
   **Install** downloads and checks the `.pacman`, then runs `pkexec pacman -U --noconfirm` on it,
   which asks for your password in polkit's dialog (without a polkit agent, use the `sudo pacman -U`
@@ -1454,6 +1456,13 @@ only remote), by its push URL. The PR goes in the repository the branch is pushe
 agent names with `gh pr create --repo … --head …`, since gh would otherwise pick one from the
 remotes' fetch URLs (so a fork's PR goes into the fork, not its upstream). Agents in a worktree in other repositories are told not to push unless asked, and
 tasks without a worktree (working in the repository's own checkout) don't open pull requests.
+
+A project's settings can turn pull requests off (API 85), on its *Review* tab: *Open a pull
+request for each task* (`pull_requests`) for its tasks, subprojects included, and *Open a pull
+request for each task in a subproject* (`subproject_pull_requests`) for its subprojects' tasks,
+which are then merged into the subproject's branch without one. Both are on by default. An agent
+whose task has them off is told not to push its branch or open one unless the user asks, even if
+the project's own instructions say to.
 
 A task can carry its pull request's URL, shown on its card as a pull request icon next to the
 branch icon that links to it. Its agent can set it (`pr_url` via `update_task`), or set it under

@@ -273,6 +273,29 @@ export interface AnalyticsReport {
   projects: { id: string; name: string; key: string }[];
 }
 
+/** How big a profile's threads' contexts were at each turn's end, and their compactions (API 86). */
+export interface ContextStatsReport {
+  stats: {
+    at: string;
+    task_id: string;
+    kind: "turn" | "compact";
+    /** A turn's: the context it left. A compaction's: the context before it. */
+    tokens: number | null;
+    /** A turn's: what its first request to the model held. */
+    start_tokens: number | null;
+    /** A compaction's: the context after it, if the agent says. */
+    post_tokens: number | null;
+    max_tokens: number | null;
+    model: string | null;
+    /** A compaction's: the agent's own as its context filled up (`auto`), `/compact` (`user`) or the board's after a session sat idle (`idle`). */
+    source: "auto" | "user" | "idle" | null;
+    cost_usd: number | null;
+    duration_ms: number | null;
+  }[];
+  tasks: AnalyticsReport["tasks"];
+  projects: AnalyticsReport["projects"];
+}
+
 /** Bytes on disk and the number of files, as `du` counts them. */
 export interface DiskSize {
   bytes: number;
@@ -374,6 +397,10 @@ export interface Project {
   review_rounds?: number;
   /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
   done_when_merged?: boolean;
+  /** Agents open a pull request for each task's branch when the repository is on GitHub; subprojects follow it too (API 85). */
+  pull_requests?: boolean;
+  /** The same for the tasks in its subprojects, whose pull requests target the subproject's branch (API 85). */
+  subproject_pull_requests?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
@@ -909,7 +936,7 @@ export interface ServerStatus {
   deployed?: { commit: string | null; checked_at: string; error: string | null } | null;
   /** `<short sha> <subject>` for the deployed commits this server isn't running (when it's ahead of it). */
   deployed_commits?: string[];
-  /** API 85, with `--release-updates`: the GitHub release this server could update to. */
+  /** API 87, with `--release-updates`: the GitHub release this server could update to. */
   release?: ReleaseStatus;
 }
 
@@ -922,7 +949,7 @@ export interface ReleaseAsset {
   sha256: string | null;
 }
 
-/** What the release checks found (API 85). Checked 30s after start, every 6 hours and on `POST /admin/release/check`. */
+/** What the release checks found (API 87). Checked 30s after start, every 6 hours and on `POST /admin/release/check`. */
 export interface ReleaseStatus {
   /** `OWNER/REPO` on GitHub. */
   repo: string;
@@ -1362,7 +1389,7 @@ export interface HostSettings {
   terminal_tools?: TerminalTool[];
   /** Where the host is reached from outside, which its webhook URLs are shown with (API 63). */
   public_url?: string | null;
-  /** Whether release checks include prereleases (API 85). Changing it checks again. */
+  /** Whether release checks include prereleases (API 87). Changing it checks again. */
   release_prereleases?: boolean;
 }
 
@@ -1669,6 +1696,10 @@ export const api = {
   analytics: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<AnalyticsReport>(`/profiles/${enc(profileId)}/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
+  /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 86). */
+  contextStats: (h: string, profileId: string, from: string, to: string) =>
+    on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+
   /** How much space the profile's projects and their worktrees take up (API 35). */
   diskUsage: (h: string, profileId: string) => on(h).get<DiskUsageReport>(`/profiles/${enc(profileId)}/disk-usage`),
 
@@ -1840,7 +1871,7 @@ export const api = {
   updateSettings: (h: string, b: Partial<HostSettings>) => on(h).patch<HostSettings>("/settings", b),
   serverStatus: (h: string) => on(h).get<ServerStatus>("/admin/server"),
   restartServer: (h: string, b: { rebuild: boolean }) => on(h).post(`/admin/restart`, b),
-  /** API 85, with `--release-updates`: check now, and get the server's status after. */
+  /** API 87, with `--release-updates`: check now, and get the server's status after. */
   checkReleases: (h: string) => on(h).post<ServerStatus>("/admin/release/check"),
   /** Restart onto a release (staged, or downloaded first), as a restart job. */
   updateRelease: (h: string, version: string) => on(h).post<{ ok: boolean }>("/admin/release/update", { version }),

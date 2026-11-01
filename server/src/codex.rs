@@ -1238,7 +1238,11 @@ pub fn handle_line(state: &Shared, run: &Run, v: &Value) -> Result<()> {
                     }
                 }
                 "contextCompaction" => {
-                    thread_message(state, task_id, parent.as_deref(), json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": if run.kind == "compact" { "manual" } else { "auto" }}}))?;
+                    let meta = json!({"trigger": if run.kind == "compact" { "manual" } else { "auto" }});
+                    thread_message(state, task_id, parent.as_deref(), json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": meta}))?;
+                    if parent.is_none() {
+                        crate::context::on_compacted(state, run, &meta)?;
+                    }
                 }
                 _ => {
                     let Some((name, input)) = tool_use(item) else { return Ok(()) };
@@ -1292,7 +1296,7 @@ pub fn handle_line(state: &Shared, run: &Run, v: &Value) -> Result<()> {
                 crate::usage::set_limits(state, &config.id, limits(&p["rateLimits"]), p["rateLimits"]["planType"].as_str());
             }
         }
-        "thread/tokenUsage/updated" => crate::context::on_codex_usage(state, task_id, p)?,
+        "thread/tokenUsage/updated" => crate::context::on_codex_usage(state, run, p)?,
         "turn/completed" if !own => {
             if let Some(thread) = p["threadId"].as_str() {
                 let status = match p["turn"]["status"].as_str() {

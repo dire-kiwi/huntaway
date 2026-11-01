@@ -408,8 +408,20 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "review",
     label: "Review",
     icon: <ScanSearch size={14} />,
-    description: "Reviewer agents that check each task's changes before it's merged, a summary of the changes once they pass, where its pull request is previewed, and what happens once it's merged.",
-    fields: ["auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "done_when_merged", "watch_pull_requests", "pr_preview_url"],
+    description:
+      "Reviewer agents that check each task's changes before it's merged, a summary of the changes once they pass, whether it gets a pull request, where that's previewed, and what happens once it's merged.",
+    fields: [
+      "auto_review",
+      "review_rounds",
+      "reviewers",
+      "auto_summary",
+      "summarizer",
+      "pull_requests",
+      "subproject_pull_requests",
+      "done_when_merged",
+      "watch_pull_requests",
+      "pr_preview_url",
+    ],
   },
   {
     id: "prompts",
@@ -773,6 +785,30 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
                     removable={false}
                   />
                 </Field>
+              </>
+            )}
+
+            {current.id === "review" && form.pull_requests !== undefined && (
+              <>
+                <div className="space-y-1.5">
+                  <Toggle checked={form.pull_requests} onChange={(v) => set("pull_requests", v)} label="Open a pull request for each task" />
+                  <div className="text-[12px] text-faint">
+                    When the repository is on GitHub, a task's agent pushes its branch and opens a pull request before it finishes. Turned off,
+                    agents are told not to push or open one unless you ask, even if the project's own instructions (in CLAUDE.md, say) say to.
+                    Subprojects follow this setting too.
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Toggle
+                    checked={form.subproject_pull_requests ?? true}
+                    onChange={(v) => set("subproject_pull_requests", v)}
+                    label="Open a pull request for each task in a subproject"
+                  />
+                  <div className="text-[12px] text-faint">
+                    The same for the tasks in the project's subprojects, whose pull requests target the subproject's branch. Turned off, their
+                    work is merged into the subproject's branch without one.
+                  </div>
+                </div>
               </>
             )}
 

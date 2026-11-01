@@ -545,6 +545,7 @@ ipcMain.handle("huntaway:update-shell", async (e) => {
       appimage: process.env.APPIMAGE,
       base: target.base,
       token: target.token,
+      current: app.getVersion(),
       api: (process.env.IA_RELEASE_API?.trim() || "https://api.github.com").replace(/\/+$/, ""),
       repo: process.env.IA_RELEASE_UPDATES?.trim() || "dire-kiwi/huntaway",
       onProgress: progress,
