@@ -175,7 +175,7 @@ fn tasks_and_projects<'a>(c: &Connection, profile_id: &str, ids: impl Iterator<I
     Ok((tasks, projects))
 }
 
-/// A turn's end or a compaction (see db::SCHEMA_V68).
+/// A turn's end or a compaction (see db::SCHEMA_V69).
 #[derive(Serialize, Debug)]
 pub struct ContextStat {
     pub at: String,

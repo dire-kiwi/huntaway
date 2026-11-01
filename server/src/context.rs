@@ -97,7 +97,7 @@ pub fn on_compacted(state: &Shared, run: &Run, meta: &Value) -> anyhow::Result<(
     set_tokens(state, task_id, tokens, None)
 }
 
-/// Where a compaction in `run` came from (see db::SCHEMA_V68): the agent's own (`trigger`
+/// Where a compaction in `run` came from (see db::SCHEMA_V69): the agent's own (`trigger`
 /// `auto`), the board's after a session sat idle (a `/compact` run that no user message
 /// started, see runner::compact) or the user's.
 fn compaction_source(c: &rusqlite::Connection, run: &Run, trigger: &str) -> anyhow::Result<&'static str> {

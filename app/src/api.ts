@@ -273,7 +273,7 @@ export interface AnalyticsReport {
   projects: { id: string; name: string; key: string }[];
 }
 
-/** How big a profile's threads' contexts were at each turn's end, and their compactions (API 85). */
+/** How big a profile's threads' contexts were at each turn's end, and their compactions (API 86). */
 export interface ContextStatsReport {
   stats: {
     at: string;
@@ -397,6 +397,10 @@ export interface Project {
   review_rounds?: number;
   /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
   done_when_merged?: boolean;
+  /** Agents open a pull request for each task's branch when the repository is on GitHub; subprojects follow it too (API 85). */
+  pull_requests?: boolean;
+  /** The same for the tasks in its subprojects, whose pull requests target the subproject's branch (API 85). */
+  subproject_pull_requests?: boolean;
   /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
@@ -1612,7 +1616,7 @@ export const api = {
   analytics: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<AnalyticsReport>(`/profiles/${enc(profileId)}/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
-  /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 85). */
+  /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 86). */
   contextStats: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 

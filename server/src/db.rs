@@ -675,23 +675,36 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=67; COMMIT;")?;
     }
     if version < 68 {
+        // Whether a project's agents open pull requests for their tasks, and for its subprojects'
+        // tasks (see Project::pull_requests), on until they're turned off. Added only if they
+        // aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for col in ["pull_requests", "subproject_pull_requests"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name=?1", [col], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE projects ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=68; COMMIT;")?;
+    }
+    if version < 69 {
         // How big threads' contexts get and when they're compacted (see context::record_turn),
         // with the compactions threads already show.
-        conn.execute_batch(&format!("BEGIN; {SCHEMA_V68} {BACKFILL_V68}"))?;
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V69} {BACKFILL_V69}"))?;
         for column in ["turn_start_tokens", "turn_tokens"] {
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [column], |r| r.get(0))?;
             if !has {
                 conn.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column} INTEGER;"))?;
             }
         }
-        conn.execute_batch("PRAGMA user_version=68; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=69; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 68;
+pub const VERSION: i64 = 69;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for
@@ -699,7 +712,7 @@ pub const VERSION: i64 = 68;
 /// `auto` when the agent compacted by itself as its context filled up, `user` for a `/compact`,
 /// `idle` for the board's after a session sat idle). See context.rs. A run's `turn_start_tokens`
 /// and `turn_tokens` follow its current turn's requests to the model, until the turn's row is written.
-const SCHEMA_V68: &str = r#"
+const SCHEMA_V69: &str = r#"
 CREATE TABLE IF NOT EXISTS context_stats (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -721,7 +734,7 @@ CREATE INDEX IF NOT EXISTS context_stats_task ON context_stats(task_id, at);
 
 /// The compactions in threads from before `context_stats`, each with the run it was in (the
 /// task's latest to start before it). Its source is worked out as context::compaction_source does.
-const BACKFILL_V68: &str = r#"
+const BACKFILL_V69: &str = r#"
 INSERT INTO context_stats (task_id, run_id, kind, at, tokens, post_tokens, source, duration_ms)
 SELECT b.task_id, b.run_id, 'compact', b.at,
   json_extract(b.meta, '$.pre_tokens'), json_extract(b.meta, '$.post_tokens'),
@@ -1250,6 +1263,14 @@ pub struct Project {
     /// Move a task to Done when its pull request is merged on GitHub (see merged.rs).
     #[serde(default = "yes")]
     pub done_when_merged: bool,
+    /// Agents open a pull request for their task's branch when the repository is on GitHub
+    /// (see runner::system_prompt). Subprojects themselves follow it too.
+    #[serde(default = "yes")]
+    pub pull_requests: bool,
+    /// The same for the tasks in the project's subprojects, whose pull requests target the
+    /// subproject's branch.
+    #[serde(default = "yes")]
+    pub subproject_pull_requests: bool,
     /// How many times in a row a review's serious issues go back to the agent to fix before
     /// the task is left for the user.
     pub review_rounds: u32,
@@ -1319,6 +1340,8 @@ impl Project {
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
             auto_review: r.get("auto_review")?,
             done_when_merged: r.get("done_when_merged")?,
+            pull_requests: r.get("pull_requests")?,
+            subproject_pull_requests: r.get("subproject_pull_requests")?,
             review_rounds: r.get("review_rounds")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             auto_summary: r.get("auto_summary")?,
@@ -1333,6 +1356,12 @@ impl Project {
             pr_preview_url: r.get("pr_preview_url")?,
             created_at: r.get("created_at")?,
         })
+    }
+
+    /// Whether agents open pull requests for the project's tasks (`in_subproject`: for a
+    /// subproject's tasks, while a subproject itself is one of the project's).
+    pub fn pull_requests(&self, in_subproject: bool) -> bool {
+        if in_subproject { self.subproject_pull_requests } else { self.pull_requests }
     }
 
     /// Where pull request `pr_url` is previewed (see `pr_preview_url`): None if the project
@@ -2479,7 +2508,7 @@ fn normalize_resolution(c: &Connection, id: &str) -> Result<()> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "auto_summary", "summarizer", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "auto_summary", "summarizer", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
     "copy_files", "link_folders",
 ];
@@ -3737,6 +3766,30 @@ mod tests {
     }
 
     #[test]
+    fn a_database_at_version_67_gets_projects_pull_request_settings() {
+        // As master's build left it, with summaries (67) and no pull request settings yet: its projects keep opening them.
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN pull_requests;
+                 ALTER TABLE projects DROP COLUMN subproject_pull_requests;
+                 PRAGMA user_version=67;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert!(p.pull_requests && p.subproject_pull_requests);
+        let p = update_project(&c, "pr", &[("pull_requests", json!(false))]).unwrap().unwrap();
+        assert!(!p.pull_requests && p.subproject_pull_requests);
+    }
+
+    #[test]
     fn a_database_at_version_62_gets_projects_pr_preview_url() {
         // As master's build left it, with push_subscriptions (62) and no pr_preview_url yet.
         let path = crate::testing::temp_dir().join("huntaway.db");
@@ -3829,7 +3882,7 @@ mod tests {
 
 
     #[test]
-    fn version_68_collects_the_compactions_threads_show() {
+    fn version_69_collects_the_compactions_threads_show() {
         let path = crate::testing::temp_dir().join("huntaway.db");
         {
             let c = open(&path).unwrap();
@@ -3839,7 +3892,7 @@ mod tests {
             c.execute_batch(&format!(
                 "DROP TABLE context_stats;
                  ALTER TABLE runs DROP COLUMN turn_start_tokens; ALTER TABLE runs DROP COLUMN turn_tokens;
-                 PRAGMA user_version=67;
+                 PRAGMA user_version=68;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
                  INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
                    VALUES ('t','p','task',1,'One','in_progress','1','1','1');

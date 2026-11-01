@@ -1891,6 +1891,10 @@ fn system_prompt(
         }
         (_, p) => {
             let key = p.map(|p| p.key.as_str()).unwrap_or("T");
+            let subproject = parent.filter(|t| t.subproject);
+            // Whether it opens a pull request, as its project's settings say (a subproject's tasks have one of their own).
+            let prs = p.is_none_or(|p| p.pull_requests(subproject.is_some()));
+            let github = github.filter(|_| prs);
             let mut s = format!(
                 "You are an agent working on task {key}-{} (\"{}\") on the Huntaway board.",
                 task.number, task.title
@@ -1911,10 +1915,14 @@ fn system_prompt(
             if task.subproject {
                 let br = task.branch.as_deref().unwrap_or("this task's branch");
                 let base = task.base_branch.as_deref().or(p.and_then(|p| p.base_branch.as_deref())).unwrap_or("the base branch");
+                let how = if p.is_none_or(|p| p.subproject_pull_requests) {
+                    "through pull requests that target it, if the project uses them"
+                } else {
+                    "without pull requests, which the project's settings turn off for subprojects' tasks"
+                };
                 s.push_str(&format!(
                     "\n\nThis task is a subproject: it has its own board of tasks, each worked by its own agent in a worktree \
-                     branched from `{br}`, and their work is merged back into `{br}` (through pull requests that target it, \
-                     if the project uses them). The subproject as a whole is then merged into `{base}`, so its tasks add up \
+                     branched from `{br}`, and their work is merged back into `{br}` ({how}). The subproject as a whole is then merged into `{base}`, so its tasks add up \
                      to a series of small, reviewable changes instead of one big one. Their merges land on `{br}` on the \
                      remote, so pull before working in your worktree.\n\n\
                      Your job is mostly to plan and coordinate:\n\
@@ -1923,17 +1931,23 @@ fn system_prompt(
                      {coordinate}"
                 ));
             }
-            if let Some(sp) = parent.filter(|t| t.subproject) {
+            if let Some(sp) = subproject {
                 let sp_branch = task.base_branch.as_deref().or(sp.branch.as_deref()).unwrap_or("the subproject's branch");
+                let merge = if prs {
+                    let open = if gh_tools { format!("pr_create with base `{sp_branch}`") } else { format!("`gh pr create --base {sp_branch}`") };
+                    format!(
+                        "If you open a pull request, target `{sp_branch}` (e.g. {open}), pushing `{sp_branch}` first if the remote doesn't \
+                         have it yet. If you merge without a pull request, merge"
+                    )
+                } else {
+                    "When you merge, merge".to_string()
+                };
                 s.push_str(&format!(
                     "\n\nThis task is part of the subproject {key}-{} (\"{}\"), whose branch `{sp_branch}` collects the work of \
                      its tasks: your branch starts from `{sp_branch}` and is merged back into it, not into the project's main \
-                     branch. If you open a pull request, target `{sp_branch}` (e.g. {}), \
-                     pushing `{sp_branch}` first if the remote doesn't have it yet. If you merge without a pull request, \
-                     merge into `{sp_branch}`{}. Tasks you create are added to the subproject too.",
+                     branch. {merge} into `{sp_branch}`{}. Tasks you create are added to the subproject too.",
                     sp.number,
                     sp.title,
-                    if gh_tools { format!("pr_create with base `{sp_branch}`") } else { format!("`gh pr create --base {sp_branch}`") },
                     sp.worktree_path.as_ref().map(|w| format!(", which is checked out in the subproject's worktree at {w}")).unwrap_or_default()
                 ));
             }
@@ -1962,6 +1976,13 @@ fn system_prompt(
                     gh.remote,
                     if gh_tools { ", or the gh tools' git_push if that fails" } else { "" },
                     base.map(|b| format!(" into `{b}`")).unwrap_or_default(),
+                ));
+            } else if !prs && task.branch.is_some() {
+                // Turned off: project instructions that say to open one don't apply.
+                s.push_str(&format!(
+                    "\n\nThis project's settings turn off pull requests for its {}, so don't push this task's branch or open a \
+                     pull request for it unless the user asks, even if the project's own instructions (e.g. in CLAUDE.md) say to.",
+                    if subproject.is_some() { "subprojects' tasks" } else { "tasks" }
                 ));
             }
             s.push_str(&format!(
@@ -3362,6 +3383,51 @@ mod tests {
         assert!(!system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), false).contains("open a pull request"));
         // Every agent is told it can wait on one, though.
         assert!(text.contains("For CI or reviews on a pull request, give it the `pull_request`"), "{text}");
+    }
+
+    #[test]
+    fn projects_and_their_subprojects_can_turn_pull_requests_off() {
+        let c = db::open(std::path::Path::new(":memory:")).unwrap();
+        let p = db::insert_profile(&c, "p", &[], None).unwrap();
+        let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: Some("main"), use_worktrees: true };
+        let mut project = db::insert_project(&c, np).unwrap();
+        let t = db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title: "Big", description: "", status: "todo", use_worktree: true, model: None, effort: None, claude_config_id: None };
+        let mut sp = db::insert_task(&c, t).unwrap();
+        (sp.subproject, sp.worktree_path, sp.branch, sp.base_branch) = (true, Some("/w/1-big".into()), Some("ia/web-1-big".into()), Some("main".into()));
+        let t = db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title: "Part", description: "", status: "todo", use_worktree: true, model: None, effort: None, claude_config_id: None };
+        let mut part = db::insert_task(&c, t).unwrap();
+        (part.parent_id, part.worktree_path, part.branch, part.base_branch) = (Some(sp.id.clone()), Some("/w/2-part".into()), Some("ia/web-2-part".into()), Some("ia/web-1-big".into()));
+        let gh = worktree::Github { remote: "origin".into(), repo: "o/web".into() };
+        let opens = |text: &str| text.contains("so before you finish, open a pull request") && text.contains("Do not merge or switch branches unless asked.");
+        let off = "This project's settings turn off pull requests";
+
+        // On by default, for both.
+        let text = system_prompt(&sp, Some(&project), None, &[], &[], Some(&gh), true);
+        assert!(opens(&text) && text.contains("(through pull requests that target it, if the project uses them)") && !text.contains(off), "{text}");
+        let text = system_prompt(&part, Some(&project), Some(&sp), &[], &[], Some(&gh), true);
+        assert!(opens(&text) && text.contains("If you open a pull request, target `ia/web-1-big` (e.g. pr_create with base `ia/web-1-big`)"), "{text}");
+        assert!(text.contains("head `ia/web-2-part` and base `ia/web-1-big`") && !text.contains(off), "{text}");
+
+        // Off for the subproject's tasks: the subproject itself still opens one.
+        project.subproject_pull_requests = false;
+        let text = system_prompt(&sp, Some(&project), None, &[], &[], Some(&gh), true);
+        assert!(opens(&text) && text.contains("(without pull requests, which the project's settings turn off for subprojects' tasks)"), "{text}");
+        let text = system_prompt(&part, Some(&project), Some(&sp), &[], &[], Some(&gh), true);
+        assert!(!opens(&text) && !text.contains("pr_create with") && text.contains("Do not push, merge, or switch branches unless asked."), "{text}");
+        assert!(text.contains("When you merge, merge into `ia/web-1-big`, which is checked out in the subproject's worktree at /w/1-big."), "{text}");
+        assert!(text.contains(&format!("{off} for its subprojects' tasks, so don't push this task's branch")), "{text}");
+
+        // Off for the project's tasks: its subprojects' tasks follow their own setting.
+        (project.pull_requests, project.subproject_pull_requests) = (false, true);
+        let text = system_prompt(&sp, Some(&project), None, &[], &[], Some(&gh), true);
+        assert!(!opens(&text) && text.contains(&format!("{off} for its tasks, so don't push")), "{text}");
+        assert!(text.contains("(through pull requests that target it, if the project uses them)"), "{text}");
+        let text = system_prompt(&part, Some(&project), Some(&sp), &[], &[], Some(&gh), true);
+        assert!(opens(&text) && !text.contains(off), "{text}");
+        // A task without a branch of its own isn't told about them.
+        let mut plain = part.clone();
+        (plain.parent_id, plain.worktree_path, plain.branch) = (None, None, None);
+        assert!(!system_prompt(&plain, Some(&project), None, &[], &[], Some(&gh), true).contains(off));
     }
 
     #[test]
