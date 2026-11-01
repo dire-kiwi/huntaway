@@ -172,6 +172,8 @@ fn host_routes() -> Router<Shared> {
         .route("/admin/restart", post(restart_server))
         .route("/admin/update", post(update_from_hub))
         .route("/admin/release/check", post(check_releases))
+        .route("/admin/release/update", post(update_to_release))
+        .route("/admin/release/rollback", post(roll_back_release))
         .route("/host/ws", get(ws))
 }
 
@@ -2654,6 +2656,23 @@ async fn check_releases(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     }
     crate::release::check(&s).await;
     Ok(Json(admin::status(&s).await?))
+}
+
+#[derive(Deserialize)]
+struct ReleaseUpdateBody {
+    version: String,
+}
+
+/// Restart onto a release (staged, or downloaded first), as a restart job.
+async fn update_to_release(State(s): State<Shared>, Json(b): Json<ReleaseUpdateBody>) -> ApiResult<Json<Value>> {
+    crate::release::update(&s, &b.version)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+/// Mark the running release bad and restart onto the one before it, as a restart job.
+async fn roll_back_release(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+    crate::release::rollback(&s)?;
+    Ok(Json(json!({"ok": true})))
 }
 
 #[derive(Deserialize)]

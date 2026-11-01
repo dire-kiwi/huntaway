@@ -37,6 +37,7 @@ mod review;
 mod runner;
 mod runs;
 mod ssh;
+mod staging;
 mod state;
 mod status_script;
 mod terminal;
@@ -408,6 +409,10 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tracing::info!("listening on http://{}:{port}/ (token from IA_TOKEN)", args.host);
     } else {
         tracing::info!("listening on http://{}:{port}/?token={}", args.host, token);
+    }
+    // A release installed in <data dir>/app/ is current once it's up (and an Update onto it done).
+    if let Err(e) = staging::settle(&state) {
+        tracing::warn!("settling the release in {}: {e:#}", staging::app_dir(&state).display());
     }
     // Machine-readable line for the Electron shell.
     let ready_token = if token_from_env { None } else { Some(&token) };
