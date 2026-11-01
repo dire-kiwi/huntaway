@@ -8,8 +8,15 @@
 //! folders of tasks that are done or deleted (e.g. while the server was down). It's set up again
 //! if the task's agent runs again. Each data dir has its own root, so a server only ever removes
 //! its own tasks' folders, not those of another server (such as a test server) on the same machine.
+//!
+//! Nothing is removed unless the root is a folder (not a link) of this user's that nobody else can
+//! write to, and only folders in it named like a task id (or being removed) are. Whether a folder
+//! can go is decided, and the folder renamed away, under `LOCK`, which `ensure` takes too: as a run
+//! is registered (`AppState::runs`) before it sets up its folder, a run starting meanwhile either
+//! keeps the folder or gets a new one.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::db::{self, Task};
@@ -20,6 +27,13 @@ const SWEEP: Duration = Duration::from_secs(600);
 
 /// Prefix of a folder being removed: renamed first, so a run starting meanwhile gets a new one.
 const REMOVING: &str = ".removing-";
+
+/// Held while a folder is set up, and while one is checked and renamed away (see the module's doc).
+static LOCK: Mutex<()> = Mutex::new(());
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// The folder all of this server's tasks' temp folders are in.
 pub fn root(state: &AppState) -> PathBuf {
@@ -53,6 +67,7 @@ pub fn dir(state: &AppState, task: &Task) -> PathBuf {
 /// logged, if it can't be: the agent then uses the system's temp folder, as it did before.
 pub fn ensure(state: &AppState, task: &Task) -> Option<PathBuf> {
     let dir = dir(state, task);
+    let _lock = lock();
     match make(&root(state), &dir) {
         Ok(()) => Some(dir),
         Err(e) => {
@@ -67,13 +82,27 @@ fn make(root: &Path, dir: &Path) -> anyhow::Result<()> {
     let mut b = std::fs::DirBuilder::new();
     b.recursive(true).mode(0o700);
     b.create(root)?;
-    // In a temp folder others can write to, the root must be our own folder, not someone's link.
-    let m = std::fs::symlink_metadata(root)?;
-    if !m.is_dir() || m.uid() != unsafe { libc::geteuid() } {
-        anyhow::bail!("{} isn't a folder of this user's", root.display());
-    }
+    check_root(root)?;
     b.create(dir)?;
     Ok(())
+}
+
+/// In a temp folder others can write to, the root must be a folder of this user's, not a link
+/// someone left there (to make us write to or empty another folder), and no one else may write to it.
+fn check_root(root: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(root)?;
+    if !m.is_dir() || m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o022 != 0 {
+        anyhow::bail!("{} isn't a folder of this user's that only they can write to", root.display());
+    }
+    Ok(())
+}
+
+/// Whether an entry of the root is one of our folders: a folder (not a link), named after a task
+/// (a UUID, see util::new_id) or being removed.
+fn ours(e: &std::fs::DirEntry) -> bool {
+    let name = e.file_name().to_string_lossy().into_owned();
+    e.file_type().is_ok_and(|t| t.is_dir()) && (name.starts_with(REMOVING) || uuid::Uuid::try_parse(&name).is_ok())
 }
 
 /// Call when task `t`'s status or running state changed: once it's done and its agents have
@@ -89,9 +118,7 @@ pub fn changed(state: &Shared, t: &Task) {
         return;
     }
     rt.spawn(async move {
-        if removable(&s, &id) {
-            remove(&s, &id).await;
-        }
+        remove(&s, &id).await;
     });
 }
 
@@ -109,20 +136,37 @@ fn removable(state: &Shared, id: &str) -> bool {
     }
 }
 
-/// Remove task `id`'s folder.
-async fn remove(state: &Shared, id: &str) {
-    let root = root(state);
-    let away = root.join(format!("{REMOVING}{id}-{}", crate::util::new_id()));
-    // Gone already (another removal got there first)?
-    if std::fs::rename(root.join(id), &away).is_err() {
-        return;
-    }
+/// Remove task `id`'s folder if it can go (see `removable`). Returns whether it went.
+async fn remove(state: &Shared, id: &str) -> bool {
+    let Some(away) = take(state, id) else { return false };
     let id = id.to_string();
     match tokio::task::spawn_blocking(move || remove_all(&away)).await {
         Ok(Ok(())) => tracing::info!(task = id, "removed the task's temp folder"),
         Ok(Err(e)) => tracing::warn!(task = id, "removing the task's temp folder: {e:#}"),
         Err(e) => tracing::warn!(task = id, "removing the task's temp folder: {e}"),
     }
+    true
+}
+
+/// Rename task `id`'s folder away, if it can go, under `LOCK`: a run that starts later sets up a
+/// new one. Returns where it went.
+fn take(state: &Shared, id: &str) -> Option<PathBuf> {
+    let _lock = lock();
+    let root = root(state);
+    if let Err(e) = check_root(&root) {
+        tracing::warn!("not removing anything from the tasks' temp folders: {e:#}");
+        return None;
+    }
+    let from = root.join(id);
+    // Gone already (another removal got there first), or not one of ours?
+    if !std::fs::symlink_metadata(&from).is_ok_and(|m| m.is_dir()) || !removable(state, id) {
+        return None;
+    }
+    #[cfg(test)]
+    crate::testing::reached("task_tmp:removable");
+    let away = root.join(format!("{REMOVING}{id}-{}", crate::util::new_id()));
+    std::fs::rename(&from, &away).ok()?;
+    Some(away)
 }
 
 /// `remove_dir_all`, also when something in it took away its folders' write permission (as
@@ -150,15 +194,21 @@ fn writable(dir: &Path) {
 /// that a removal didn't finish. Returns how many went.
 pub async fn sweep(state: &Shared) -> usize {
     let root = root(state);
+    if !root.exists() {
+        return 0;
+    }
+    if let Err(e) = check_root(&root) {
+        tracing::warn!("not sweeping the tasks' temp folders: {e:#}");
+        return 0;
+    }
     let Ok(entries) = std::fs::read_dir(&root) else { return 0 };
     let mut n = 0;
-    for e in entries.flatten() {
+    for e in entries.flatten().filter(ours) {
         let name = e.file_name().to_string_lossy().into_owned();
         if name.starts_with(REMOVING) {
             let path = e.path();
             let _ = tokio::task::spawn_blocking(move || remove_all(&path)).await;
-        } else if removable(state, &name) {
-            remove(state, &name).await;
+        } else if remove(state, &name).await {
             n += 1;
         }
     }
@@ -269,12 +319,96 @@ mod tests {
             let (open_dir, done_dir) = (ensure(&s, &open).unwrap(), ensure(&s, &done).unwrap());
             // Done while the server was down, so nothing saw it change.
             db::update_task(&s.db(), &done.id, &[("status", json!("done"))]).unwrap();
-            let deleted = root(&s).join("0123456789abcdef");
+            let deleted = root(&s).join(crate::util::new_id());
             std::fs::create_dir_all(&deleted).unwrap();
             let unfinished = root(&s).join(format!("{REMOVING}x-1"));
             std::fs::create_dir_all(unfinished.join("y")).unwrap();
             assert_eq!(sweep(&s).await, 2);
             assert!(open_dir.exists() && !done_dir.exists() && !deleted.exists() && !unfinished.exists());
+        })
+    }
+
+    #[test]
+    fn only_folders_named_like_tasks_are_swept() {
+        testing::run(async || {
+            let s = testing::state();
+            ensure(&s, &task(&s)).unwrap();
+            let elsewhere = testing::temp_dir();
+            std::fs::create_dir_all(elsewhere.join("docs")).unwrap();
+            std::fs::write(elsewhere.join("docs/important.txt"), "x").unwrap();
+            let r = root(&s);
+            std::fs::create_dir(r.join("notes")).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, r.join(crate::util::new_id())).unwrap();
+            assert_eq!(sweep(&s).await, 0);
+            assert!(r.join("notes").is_dir() && elsewhere.join("docs/important.txt").exists());
+        })
+    }
+
+    #[test]
+    fn nothing_is_removed_through_a_root_that_isnt_ours_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        testing::run(async || {
+            let s = testing::state();
+            let t = task(&s);
+            db::update_task(&s.db(), &t.id, &[("status", json!("done"))]).unwrap();
+            // Someone left a link where the root goes, to a folder with a done task's name in it.
+            let elsewhere = testing::temp_dir();
+            for d in [t.id.clone(), crate::util::new_id(), format!("{REMOVING}x"), "docs".into()] {
+                std::fs::create_dir_all(elsewhere.join(&d)).unwrap();
+                std::fs::write(elsewhere.join(&d).join("important.txt"), "x").unwrap();
+            }
+            let count = || std::fs::read_dir(&elsewhere).unwrap().count();
+            std::fs::create_dir_all(root(&s).parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, root(&s)).unwrap();
+            assert_eq!(sweep(&s).await, 0);
+            assert!(!remove(&s, &t.id).await);
+            assert_eq!(count(), 4);
+            assert_eq!(ensure(&s, &task(&s)), None);
+            // Nor through a root others can write to.
+            std::fs::remove_file(root(&s)).unwrap();
+            std::fs::rename(&elsewhere, root(&s)).unwrap();
+            std::fs::set_permissions(root(&s), std::fs::Permissions::from_mode(0o777)).unwrap();
+            assert_eq!(sweep(&s).await, 0);
+            assert_eq!(std::fs::read_dir(root(&s)).unwrap().count(), 4);
+            assert_eq!(ensure(&s, &task(&s)), None);
+            // Once it's ours alone, the done task's folder goes.
+            std::fs::set_permissions(root(&s), std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert_eq!(sweep(&s).await, 2);
+            assert!(root(&s).join("docs/important.txt").exists());
+        })
+    }
+
+    #[test]
+    fn a_run_starting_as_the_folder_goes_keeps_its_own() {
+        testing::run(async || {
+            let s = testing::state();
+            let t = task(&s);
+            ensure(&s, &t).unwrap();
+            db::update_task(&s.db(), &t.id, &[("status", json!("done"))]).unwrap();
+            // Once the removal has found the task idle, a run starts: it's registered, then sets
+            // up its folder and writes in it.
+            let start = {
+                let (s, t) = (s.clone(), t.clone());
+                move || {
+                    s.runs.lock().unwrap().insert(t.id.clone(), crate::state::RunHandle { run_id: "r".into(), cancel: None });
+                    let d = ensure(&s, &t).unwrap();
+                    std::fs::write(d.join("work"), "x").unwrap();
+                }
+            };
+            let started = std::sync::Arc::new(Mutex::new(None));
+            let handle = started.clone();
+            testing::when("task_tmp:removable", move || {
+                *handle.lock().unwrap() = Some(std::thread::spawn(start));
+                // Time for it to get as far as it can before the folder is renamed away.
+                std::thread::sleep(Duration::from_millis(200));
+            });
+            assert_eq!(sweep(&s).await, 1);
+            let thread = started.lock().unwrap().take().unwrap();
+            thread.join().unwrap();
+            assert!(dir(&s, &t).join("work").exists());
+            // And with it running, the folder stays.
+            assert_eq!(sweep(&s).await, 0);
+            assert!(dir(&s, &t).join("work").exists());
         })
     }
 

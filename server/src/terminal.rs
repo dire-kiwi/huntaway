@@ -174,8 +174,8 @@ async fn ensure_session(s: &Shared, task: &Task, tool: Option<&Tool>, cols: u16,
     if let Some(d) = config_dir {
         env.push(format!("{}={}", if codex { "CODEX_HOME" } else { "CLAUDE_CONFIG_DIR" }, path_str(&expand_tilde(&d))));
     }
-    // The temp folder the task's agents use (see task_tmp.rs).
-    if let Some(d) = crate::task_tmp::ensure(s, task) {
+    // The temp folder the task's agents use (see task_tmp.rs), until it's done and the folder goes.
+    if let Some(d) = (task.status != "done").then(|| crate::task_tmp::ensure(s, task)).flatten() {
         env.push(format!("TMPDIR={}", path_str(&d)));
     }
     if let Some(t) = tool {

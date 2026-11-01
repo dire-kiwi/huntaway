@@ -1025,9 +1025,11 @@ skipped. Auto-compacting idle sessions is Claude-only.
   review. It's deleted as soon as the task is done and no agent (its own or a reviewer) is running
   in it, or once the last one stops if the task went to *Done* while it ran; a sweep every ten
   minutes (and at start) deletes those of tasks that are done or deleted (while the server was
-  down, say). It's made again if the task's agent runs again. Each data dir has its own folder of
-  them, so a server never deletes another's (a test server's, say). Files written straight to
-  `/tmp` by name don't go with it.
+  down, say). It's made again if the task's agent runs again; a run that starts while its folder
+  is being deleted gets a new one. Each data dir has its own folder of them, so a server never
+  deletes another's (a test server's, say). Nothing is deleted unless that folder is a real
+  folder (not a link) of the server's user that no one else can write to, and only folders in it
+  named after a task are. Files written straight to `/tmp` by name don't go with it.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that
