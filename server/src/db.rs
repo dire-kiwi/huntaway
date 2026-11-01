@@ -687,12 +687,73 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=68; COMMIT;")?;
     }
+    if version < 69 {
+        // How big threads' contexts get and when they're compacted (see context::record_turn),
+        // with the compactions threads already show.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V69} {BACKFILL_V69}"))?;
+        for column in ["turn_start_tokens", "turn_tokens"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column} INTEGER;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=69; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 68;
+pub const VERSION: i64 = 69;
+
+/// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
+/// `start_tokens` what its first request to the model held) and for
+/// each compaction (`compact`: `tokens` before it and `post_tokens` after, and its `source`:
+/// `auto` when the agent compacted by itself as its context filled up, `user` for a `/compact`,
+/// `idle` for the board's after a session sat idle). See context.rs. A run's `turn_start_tokens`
+/// and `turn_tokens` follow its current turn's requests to the model, until the turn's row is written.
+const SCHEMA_V69: &str = r#"
+CREATE TABLE IF NOT EXISTS context_stats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  run_id TEXT,
+  kind TEXT NOT NULL,
+  at TEXT NOT NULL,
+  tokens INTEGER,
+  start_tokens INTEGER,
+  post_tokens INTEGER,
+  max_tokens INTEGER,
+  model TEXT,
+  source TEXT,
+  cost_usd REAL,
+  duration_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS context_stats_time ON context_stats(at);
+CREATE INDEX IF NOT EXISTS context_stats_task ON context_stats(task_id, at);
+"#;
+
+/// The compactions in threads from before `context_stats`, each with the run it was in (the
+/// task's latest to start before it). Its source is worked out as context::compaction_source does.
+const BACKFILL_V69: &str = r#"
+INSERT INTO context_stats (task_id, run_id, kind, at, tokens, post_tokens, source, duration_ms)
+SELECT b.task_id, b.run_id, 'compact', b.at,
+  json_extract(b.meta, '$.pre_tokens'), json_extract(b.meta, '$.post_tokens'),
+  CASE
+    WHEN json_extract(b.meta, '$.trigger') = 'auto' THEN 'auto'
+    WHEN r.kind = 'compact' AND NOT EXISTS (
+      SELECT 1 FROM messages u WHERE u.task_id = b.task_id AND u.kind = 'user' AND u.created_at >= r.created_at AND u.created_at <= b.at
+    ) THEN 'idle'
+    ELSE 'user'
+  END,
+  json_extract(b.meta, '$.duration_ms')
+FROM (
+  SELECT m.task_id, m.created_at AS at, json_extract(m.data, '$.compact_metadata') AS meta,
+    (SELECT id FROM runs WHERE task_id = m.task_id AND created_at <= m.created_at ORDER BY created_at DESC LIMIT 1) AS run_id
+  FROM messages m
+  WHERE m.kind = 'claude' AND m.data LIKE '%"compact_boundary"%' AND json_extract(m.data, '$.subtype') = 'compact_boundary'
+    AND json_extract(m.data, '$.parent_tool_use_id') IS NULL
+) b LEFT JOIN runs r ON r.id = b.run_id;
+"#;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -3819,6 +3880,55 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn version_69_collects_the_compactions_threads_show() {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            let boundary = |trigger: &str, extra: &str| {
+                format!(r#"{{"type":"system","subtype":"compact_boundary","compact_metadata":{{"trigger":"{trigger}","pre_tokens":900,"post_tokens":90,"duration_ms":5}}{extra}}}"#)
+            };
+            c.execute_batch(&format!(
+                "DROP TABLE context_stats;
+                 ALTER TABLE runs DROP COLUMN turn_start_tokens; ALTER TABLE runs DROP COLUMN turn_tokens;
+                 PRAGMA user_version=68;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','work','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'One','in_progress','1','1','1');
+                 INSERT INTO runs (id,task_id,kind,status,created_at) VALUES
+                   ('prompt','t','prompt','done','2026-10-01T10:00:00.000Z'),
+                   ('idle','t','compact','done','2026-10-01T11:00:00.000Z'),
+                   ('user','t','compact','done','2026-10-01T12:00:00.000Z');
+                 INSERT INTO messages (task_id,kind,data,created_at) VALUES
+                   ('t','user','{{\"text\":\"go\"}}','2026-10-01T10:00:00.000Z'),
+                   ('t','claude','{auto}','2026-10-01T10:30:00.000Z'),
+                   ('t','event','{{\"text\":\"Compacting the conversation after 50 minutes idle\"}}','2026-10-01T11:00:00.000Z'),
+                   ('t','claude','{idle}','2026-10-01T11:01:00.000Z'),
+                   ('t','user','{{\"text\":\"/compact\"}}','2026-10-01T12:00:00.000Z'),
+                   ('t','claude','{user}','2026-10-01T12:01:00.000Z'),
+                   ('t','claude','{sub}','2026-10-01T12:02:00.000Z');",
+                auto = boundary("auto", ""),
+                idle = boundary("manual", ""),
+                user = boundary("manual", ""),
+                sub = boundary("auto", r#","parent_tool_use_id":"agent-1""#),
+            ))
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let mut st = c.prepare("SELECT run_id, kind, source, tokens, post_tokens, duration_ms FROM context_stats ORDER BY at").unwrap();
+        let rows: Vec<(String, String, String, i64, i64, i64)> =
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).unwrap().map(|r| r.unwrap()).collect();
+        let row = |run: &str, source: &str| (run.to_string(), "compact".to_string(), source.to_string(), 900, 90, 5);
+        // A subagent's compaction isn't the thread's.
+        assert_eq!(rows, vec![row("prompt", "auto"), row("idle", "idle"), row("user", "user")]);
+        drop(st);
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
 
     #[test]
     fn a_database_where_scratch_tasks_were_version_42_gets_archived_projects() {
