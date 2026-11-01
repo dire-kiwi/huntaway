@@ -1078,8 +1078,10 @@ async fn run(tool: &str, a: &Value) -> Result<(String, bool)> {
 /// The board's line to the run this server is for, which the commands it runs don't get.
 const BOARD_ENV: [&str; 3] = ["IA_URL", "IA_TOKEN", "IA_RUN_ID"];
 
-/// Whether call `a` to `tool` would merge a pull request: pr_merge, `gh pr merge`, or GitHub's
-/// merge API through `api` (REST, or a GraphQL mutation that merges or turns on auto-merge).
+/// Whether call `a` to `tool` may merge a pull request: pr_merge, `gh pr merge`, or GitHub's API
+/// (REST or GraphQL) with "merge" anywhere in the call, or with a request read from a file, which
+/// can't be seen. It errs on the side of asking the board: a call that only reads (a PR's
+/// mergeability, say) is refused too while a merge waits for approval, and pr_view has that.
 fn merges(tool: &str, a: &Value) -> bool {
     match tool {
         "pr_merge" => true,
@@ -1088,17 +1090,18 @@ fn merges(tool: &str, a: &Value) -> bool {
         "gh" => {
             let args: Vec<&str> = a["args"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
             let has = |w: &str| args.iter().any(|a| a.eq_ignore_ascii_case(w));
-            (has("pr") && has("merge")) || (has("api") && api_merges(&args.join(" ")))
+            // `--input FILE` (or `-`) is the request body, and `-F key=@FILE` a field's value.
+            let from_file = args.iter().any(|a| a.starts_with("--input") || a.starts_with('@') || a.contains("=@"));
+            (has("pr") && has("merge")) || (has("api") && (from_file || mentions_merge(&args.join(" "))))
         }
-        "api" => api_merges(&a.to_string()),
+        // Its string fields are sent as they are (--raw-field), never read from files.
+        "api" => mentions_merge(&a.to_string()),
         _ => false,
     }
 }
 
-fn api_merges(call: &str) -> bool {
-    let call = call.to_ascii_lowercase();
-    let rest = call.contains("/pulls/") && call.contains("/merge") && call.contains("put");
-    rest || call.contains("mergepullrequest") || call.contains("enablepullrequestautomerge")
+fn mentions_merge(call: &str) -> bool {
+    call.to_ascii_lowercase().contains("merge")
 }
 
 /// Why the board won't let this run merge, if it won't (see merge_gate.rs). A server started
@@ -1853,8 +1856,14 @@ FLAGS
         assert!(gh(&["api", "graphql", "-f", "query=mutation { mergePullRequest(input: {}) { clientMutationId } }"]));
         assert!(merges("api", &json!({"endpoint": "repos/o/r/pulls/1/merge", "method": "PUT"})));
         assert!(merges("api", &json!({"endpoint": "graphql", "fields": {"query": "mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }"}})));
-        // Reading whether it's merged, or anything else, doesn't.
-        assert!(!merges("api", &json!({"endpoint": "repos/o/r/pulls/1/merge"})));
+        // A request read from a file could be anything (HA-86 review).
+        assert!(gh(&["api", "graphql", "--method", "POST", "--input", "/x/payload.json"]) && gh(&["api", "graphql", "--input=/x/p.json"]));
+        assert!(gh(&["api", "graphql", "-F", "query=@/x/query.graphql"]) && gh(&["api", "graphql", "--field=query=@q"]));
+        // As could one that mentions merging, so it waits too, even if it only reads.
+        assert!(merges("api", &json!({"endpoint": "repos/o/r/pulls/1/merge"})));
+        // Anything else doesn't.
+        assert!(!gh(&["api", "repos/o/r/pulls/1"]) && !gh(&["api", "graphql", "-f", "query={ viewer { login } }", "-F", "n=1"]));
+        assert!(!merges("api", &json!({"endpoint": "repos/o/r/issues", "fields": {"body": "@someone"}})));
         assert!(!gh(&["pr", "view", "1"]) && !merges("pr_view", &json!({"pr": "1"})) && !merges("pr_checks", &json!({"pr": "merge"})));
     }
 
@@ -1879,6 +1888,8 @@ FLAGS
                 ("gh", json!({"args": ["pr", "-R", "o/r", "merge", "1"]})),
                 ("gh", json!({"args": ["pr", "merge", "1", "--repo", "o/r"]})),
                 ("api", json!({"endpoint": "repos/o/r/pulls/1/merge", "method": "PUT"})),
+                ("gh", json!({"args": ["api", "graphql", "--method", "POST", "--input", "/x/payload.json"]})),
+                ("gh", json!({"args": ["api", "graphql", "-F", "query=@/x/query.graphql"]})),
                 ("pr_merge", json!({"pr": "https://github.com/o/r/pull/1"})),
             ];
             for (tool, a) in calls {
