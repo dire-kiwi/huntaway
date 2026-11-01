@@ -202,3 +202,40 @@ test("an earlier failed restart doesn't stand in for Update's or Roll back's con
     assert.deepEqual([calls.update, calls.rollback], [[{ version: "0.3.0" }], 1]);
   });
 });
+
+// HA-67 review: hiding failures from before the dialog opened hid the failure of a restart it was showing too (one
+// begun before a reload, or in another tab). Those show, and their button goes back to the dialog's own confirm.
+test("a restart the dialog is showing still shows its failure, and doesn't skip Roll back's confirm", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const latest = { ...release().latest, version: "0.3.0", url: "https://github.com/dire-kiwi/huntaway/releases/tag/v0.3.0" };
+    const r = release({ running: "0.2.0", staged: "0.3.0", latest, previous: "0.1.0", rollback_to: "0.1.0" });
+    // An update under way when the page loads.
+    const calls = await fakeReleases(page, () => ({ release: r, restart: { phase: "installing", log: "Downloading 0.3.0", error: null } }));
+    let socket;
+    await page.routeWebSocket(/\/api\/ws/, (ws) => {
+      socket = ws;
+      ws.connectToServer();
+    });
+    const dialog = page.getByRole("dialog");
+    await ui.run(["goto /settings", "click Update to v0.3.0", "wait Installing the release…"]);
+    socket.send(JSON.stringify({ type: "restart", phase: "failed", error: "sha256 mismatch" }));
+    await ui.run(["wait Restart failed", "wait sha256 mismatch", "wait The server is still running v0.2.0.", "gone Release notes"]);
+    // Its button shows this dialog's confirm rather than retrying.
+    await dialog.getByRole("button", { name: "Update & restart…" }).click();
+    await ui.run(["wait Release notes", "gone sha256 mismatch"]);
+    await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
+    // Roll back opens on its confirm; a restart begun elsewhere meanwhile shows, and so does its failure.
+    await ui.run(["click Roll back to v0.1.0", "wait v0.2.0 may have migrated the database"]);
+    socket.send(JSON.stringify({ type: "restart", phase: "starting", error: null }));
+    await ui.run(["wait Starting…", "gone v0.2.0 may have migrated the database"]);
+    socket.send(JSON.stringify({ type: "restart", phase: "failed", error: "exec failed: Permission denied" }));
+    await ui.run(["wait exec failed: Permission denied", "gone Try again"]);
+    await dialog.getByRole("button", { name: "Roll back to v0.1.0…" }).click();
+    await ui.run(["wait v0.2.0 may have migrated the database", "gone exec failed"]);
+    assert.equal(calls.rollback, 0);
+    await dialog.getByRole("button", { name: "Roll back to v0.1.0", exact: true }).click();
+    await ui.run(["wait Starting…"]);
+    assert.deepEqual([calls.update, calls.rollback], [[], 1]);
+  });
+});

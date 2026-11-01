@@ -462,10 +462,16 @@ export function RestartModal({
   const logRef = useRef<HTMLPreElement>(null);
   // Seed with the server's view in case the restart began elsewhere.
   const current = remote ? null : (live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null));
-  // Whether this dialog has started a restart. A failed one from before it opened (another action, or one from before
-  // a reload) isn't shown: Try again would run this dialog's action, not that one, and it would hide what this one does.
+  // Whether this dialog started a restart, or saw one running (begun before it opened, or elsewhere). A restart that had
+  // failed before then isn't shown: it would stand in for what this dialog does (Roll back's warning, say).
   const [started, setStarted] = useState(false);
-  const job = current && (current.phase !== "failed" || started) ? current : null;
+  const [watched, setWatched] = useState(!!current && current.phase !== "failed");
+  useEffect(() => {
+    if (current && current.phase !== "failed") setWatched(true);
+  }, [current?.phase]);
+  const job = current && (current.phase !== "failed" || started || watched) ? current : null;
+  // A failed restart this dialog didn't start: its button goes back to this dialog's confirm rather than retrying.
+  const inherited = job?.phase === "failed" && !started;
   const inProgress = !!job && job.phase !== "failed";
 
   // Once the server goes down for the restart, wait for the new process, then reload for the new UI.
@@ -531,6 +537,8 @@ export function RestartModal({
 
   const commits = (release ? [] : target ? status.deployed_commits : status.new_commits) ?? [];
   const rollbackTo = version === "bundled" ? "the bundled version" : `v${version}`;
+  const action =
+    release === "rollback" ? `Roll back to ${rollbackTo}` : release || target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart";
   const title = release === "update" ? "Update Huntaway" : release === "rollback" ? "Roll back Huntaway" : target ? "Update server" : "Rebuild & restart server";
   return (
     <Modal title={title} onClose={inProgress ? () => {} : onClose} width="max-w-2xl">
@@ -639,17 +647,13 @@ export function RestartModal({
               </Button>
             )}
             {(!job || job.phase === "failed") && (
-              <Button variant={release === "rollback" ? "danger" : "primary"} disabled={starting || (!!release && !version)} onClick={start}>
+              <Button
+                variant={release === "rollback" && !inherited ? "danger" : "primary"}
+                disabled={starting || (!!release && !version)}
+                onClick={inherited ? () => setWatched(false) : start}
+              >
                 {starting ? <Loader2 size={13} className="animate-spin" /> : release === "rollback" ? <Undo2 size={13} /> : <RotateCw size={13} />}{" "}
-                {job
-                  ? "Try again"
-                  : release === "rollback"
-                    ? `Roll back to ${rollbackTo}`
-                    : release || target
-                      ? "Update & restart"
-                      : rebuild
-                        ? "Rebuild & restart"
-                        : "Restart"}
+                {inherited ? `${action}…` : job ? "Try again" : action}
               </Button>
             )}
           </div>
