@@ -34,7 +34,9 @@ isn't already the host's proxied tunnel CNAME: choose an unused hostname or remo
 On each host, [install cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)
 and run the usual `huntaway serve --broker https://broker.example.com --broker-token <broker token>`.
 `IA_CLOUDFLARED_BIN` can name another connector binary. Huntaway starts it with a per-tunnel token in its environment,
-not its arguments, and restarts it after an exit. Its origin is a separate loopback listener that blocks
+not its arguments, and restarts it after an exit. A pipe watchdog stops the connector group when the host exits,
+crashes or replaces itself with a new version; a broker disconnect leaves it running. Its origin is a separate
+loopback listener that blocks
 `/api/open-token`, even if the LAN listener uses `--open-token`.
 
 A host called `desktop` gets `https://desktop.hosts.example.com`. Opening the broker's URL selects a host and sends

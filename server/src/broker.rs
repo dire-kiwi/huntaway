@@ -158,15 +158,10 @@ async fn connect_tunnel(mut updates: watch::Receiver<Option<proto::Tunnel>>, bin
             if updates.changed().await.is_err() { return; }
             continue;
         };
-        let child = tokio::process::Command::new(&bin)
-            .args(["tunnel", "--no-autoupdate", "run"])
-            .env("TUNNEL_TOKEN", &tunnel.token)
-            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-            .kill_on_drop(true).spawn();
-        match child {
-            Ok(mut child) => tokio::select! {
+        match spawn_connector(&bin, &tunnel.token) {
+            Ok((mut child, _alive)) => tokio::select! {
                 _ = updates.changed() => { let _ = child.kill().await; if updates.has_changed().is_err() { return; } },
-                result = child.wait() => tracing::warn!("cloudflared exited ({result:?}); restarting in five seconds"),
+                result = child.wait() => tracing::warn!("cloudflared exited ({result:?}); check its installation/connectivity; restarting in five seconds"),
             },
             Err(e) => tracing::warn!("couldn't start cloudflared: {e}; install it on this host or set IA_CLOUDFLARED_BIN"),
         }
@@ -175,6 +170,20 @@ async fn connect_tunnel(mut updates: watch::Receiver<Option<proto::Tunnel>>, bin
             _ = tokio::time::sleep(Duration::from_secs(5)) => {},
         }
     }
+}
+
+/// The watchdog owns the connector's process group and watches a pipe held only by this server
+/// (close-on-exec). It kills the group on exec, forced exit or a crash, where kill_on_drop cannot
+/// run. Arguments are positional, never interpreted as shell code (same pattern as wait::LAUNCH).
+fn spawn_connector(bin: &std::ffi::OsStr, token: &str) -> Result<(tokio::process::Child, std::io::PipeWriter)> {
+    const LAUNCH: &str = r#"exec 3<&0 </dev/null; (read -r _ <&3; kill -KILL 0) & exec 3<&-; exec "$@""#;
+    let (watched, alive) = std::io::pipe().context("creating the tunnel watchdog")?;
+    let child = tokio::process::Command::new("bash")
+        .args(["-c", LAUNCH, "huntaway-tunnel"]).arg(bin).args(["tunnel", "--no-autoupdate", "run"])
+        .env("TUNNEL_TOKEN", token).stdin(watched)
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .process_group(0).kill_on_drop(true).spawn().context("starting the tunnel connector")?;
+    Ok((child, alive))
 }
 
 async fn session(s: &Shared, url: &str, token: &str, name: &str, key: &str, origin_port: Option<u16>, connector: &watch::Sender<Option<proto::Tunnel>>) -> Result<()> {
@@ -642,6 +651,31 @@ mod tests {
             let error = session(&s, &broker, "broker-token", "desktop", "host-key", Some(12345), &tx).await.unwrap_err();
             assert!(error.to_string().contains("tried to relay application traffic"));
             assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connector_watchdog_stops_the_group_when_the_servers_pipe_closes() {
+        testing::run(async || {
+            use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
+            let dir = std::env::temp_dir().join(format!("ha70-{}", crate::util::new_id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            // Spaces and shell metacharacters must be a literal executable name.
+            let bin = dir.join("fake connector $literal");
+            std::fs::write(&bin, format!("#!/bin/sh\nprintf ready > {}/ready\nexec sleep 600\n", dir.display())).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let (mut child, alive) = spawn_connector(bin.as_os_str(), "connector-token").unwrap();
+            for _ in 0..100 {
+                if dir.join("ready").is_file() { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(dir.join("ready").is_file(), "literal connector path wasn't executed");
+            // Models the kernel closing the server's descriptors on exec or forced exit.
+            drop(alive);
+            let status = tokio::time::timeout(Duration::from_secs(3), child.wait()).await.expect("orphaned connector").unwrap();
+            assert_eq!(status.signal(), Some(libc::SIGKILL));
+            std::fs::remove_dir_all(dir).unwrap();
         });
     }
 
