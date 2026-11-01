@@ -171,7 +171,7 @@ function HostProfiles({ hostId, canCopy }: { hostId: string; canCopy: boolean })
 
 /**
  * A linked host's server, followed by polling it: Rebuild & restart, and for a host with release updates
- * (`--release-updates`, API 83) its version, the release checks and download, Update, Check now and Roll back.
+ * (`--release-updates`, API 88) its version, the release checks and download, Update, Check now and Roll back.
  */
 function RemoteServer({ hostId }: { hostId: string }) {
   const [status, setStatus] = useState<ServerStatus | null>(null);

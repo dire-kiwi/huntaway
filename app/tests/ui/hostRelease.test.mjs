@@ -42,7 +42,7 @@ function release(over = {}) {
 }
 
 /**
- * Adds linked host `rem` to the board (by default on API 85, without a commit, as a release install has none),
+ * Adds linked host `rem` to the board (by default on API 88, without a commit, as a release install has none),
  * answering its `GET /admin/server` with `server()` and its release endpoints, and its other requests with nothing.
  * Returns the calls the release endpoints and `PATCH /settings` got.
  */
@@ -51,7 +51,7 @@ async function linkedHost(page, host, server) {
   await page.route("**/api/hosts", async (route) => {
     const hosts = await (await route.fetch()).json();
     const linked = { id: "rem", name: "remote", local: false, connected: true, mode: "outbound", agents: true, version: "0.1.0", commit: null };
-    json(route, [...hosts, { ...linked, api_version: 85, api_compat: 1, ...host }]);
+    json(route, [...hosts, { ...linked, api_version: 88, api_compat: 1, ...host }]);
   });
   const status = () => ({ boot_id: "b1", started_at: ago(3600), source_dir: null, running_commit: null, running_agents: 1, restart: null, ...server() });
   await page.route("**/api/h/rem/**", (route) => {
@@ -152,7 +152,7 @@ test("older linked hosts show no release updates", async () => {
   await withBrowser(server, {}, async (ui) => {
     const remote = "a".repeat(40);
     let s = { source_dir: "/src", source_branch: "master", running_commit: remote };
-    await linkedHost(ui.page, { api_version: 82, commit: remote }, () => s);
+    await linkedHost(ui.page, { api_version: 87, commit: remote }, () => s);
     await ui.run(["goto /hosts/rem", "wait Running aaaaaaa", "wait Builds from /src", "wait Rebuild & restart", "gone Check now", "gone Latest release"]);
     assert.equal(await ui.page.getByText(/^Update to [0-9a-f]{7}$/).count(), 1);
     s = {};

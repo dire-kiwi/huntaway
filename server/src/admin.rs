@@ -74,7 +74,7 @@ pub async fn status(state: &Shared) -> Result<Value> {
         "running_agents": running_agents,
         "restart": job,
     });
-    // API 87: with --release-updates, the release this server could update to.
+    // API 88: with --release-updates, the release this server could update to.
     if let Some(release) = crate::release::status(state)? {
         v["release"] = release;
     }
