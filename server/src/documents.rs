@@ -306,7 +306,7 @@ pub fn system_prompt(task: &Task, files: &[(&str, String)], project: Option<&Pro
         (None, None) => String::new(),
     };
     s.push_str(&format!(
-        " Rather than changing code, this task makes documents: you write {}. Your working directory is the task's own folder, where you can write \
+        "\n\nRather than changing code, this task makes documents: you write {}. Your working directory is the task's own folder, where you can write \
          freely. The board shows {} in the task as it changes, and keeps a version from each turn. Don't change the \
          repositories, commit, push or open pull requests.",
         if files.is_empty() { "none at the moment, as it has no labels: ask the user what to make".to_string() } else { what(files) },
@@ -372,7 +372,7 @@ fn what(files: &[(&str, String)]) -> String {
 fn guide(label: &str, only: bool) -> String {
     match label {
         "plan" => format!(
-            " The plan is HTML that the user reads and iterates on with you. {PLAN_FEEDBACK} {}\n\n{PLAN_FORMAT}",
+            "\n\nThe plan is HTML that the user reads and iterates on with you. {PLAN_FEEDBACK} {}\n\n{PLAN_FORMAT}",
             if only {
                 "When the user approves the plan and asks you to, break it into tasks with `create_task`: they're recorded \
                  as this task's, and the board shows how many are done."
@@ -381,8 +381,8 @@ fn guide(label: &str, only: bool) -> String {
                  tasks with `create_task` (they're recorded as this task's, and the board shows how many are done)."
             }
         ),
-        "artifact" => ARTIFACT.to_string(),
-        _ => DIAGRAM.to_string(),
+        "artifact" => format!("\n\n{ARTIFACT}"),
+        _ => format!("\n\n{DIAGRAM}"),
     }
 }
 
@@ -392,7 +392,7 @@ const PLAN_FEEDBACK: &str = "Investigate before you write, so it's \
     so it's easy to review: the goal and what's out of scope, how things work today, the approach (with the \
     alternatives you weighed and why not), the steps in order, each small enough to be one task for an agent, then \
     risks and open questions. Keep it easy to scan: clear headings, tables and lists where they help, and a \
-    diagram where a picture says it better. Until the user approves it, each message from them is feedback on the \
+    diagram where a picture says it better.\n\nUntil the user approves it, each message from them is feedback on the \
     plan: update the file in place (edit it rather than rewriting it whole) and say briefly what changed. Put the questions you \
     need answered in the plan as <ia-question>s (below), with choices to pick from where you can suggest \
     them, and mention them at the end of your turn. The user answers them in the plan and sends the answers \
@@ -435,7 +435,7 @@ const PLAN_FORMAT: &str = "The board shows the plan in its own theme (dark) with
     --ok, --warn, --danger, --info, --font-sans, --font-mono.";
 
 /// How to make an artifact.
-const ARTIFACT: &str = " The artifact is a single self-contained HTML page, the kind you'd make as an artifact on claude.ai: a \
+const ARTIFACT: &str = "The artifact is a single self-contained HTML page, the kind you'd make as an artifact on claude.ai: a \
     document, a visual explainer, a dashboard, an interactive tool or a prototype. Before you write it, load the \
     `artifact-design` skill if you have it and follow its design guidance (and the `dataviz` skill for charts), \
     but don't publish with the Artifact tool or upload it anywhere: this board stores and shows the page. Without \
@@ -446,7 +446,7 @@ const ARTIFACT: &str = " The artifact is a single self-contained HTML page, the 
     feedback on it, update the page in place (edit it rather than rewriting it whole) and say briefly what changed.";
 
 /// How to make a diagram.
-const DIAGRAM: &str = " The file holds just the diagram's Mermaid source, without Markdown fences, and the board renders it. Pick \
+const DIAGRAM: &str = "The file holds just the diagram's Mermaid source, without Markdown fences, and the board renders it. Pick \
     the diagram type that fits what it shows (flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, \
     erDiagram, gantt, mindmap, timeline, …), and ground it in the real thing: read the code and use the actual \
     names of components, calls and data. Keep it legible: a title (in `---\\ntitle: …\\n---` front matter), short \
