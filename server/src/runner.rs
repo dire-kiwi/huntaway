@@ -348,6 +348,12 @@ pub fn send_as(state: &Shared, task_id: &str, text: &str, auto: bool) -> ApiResu
     send_run(state, task_id, text, auto, false, "prompt")
 }
 
+/// Like `send`, for a message the board wrote at the user's asking (Fix broken checks, see
+/// pr_watch::fix_checks): it isn't in the user's words, so the task isn't re-titled from it.
+pub fn send_for_user(state: &Shared, task_id: &str, text: &str) -> ApiResult<Task> {
+    send_message(state, task_id, Some(db::Queued::new(text, false)), false, "prompt", None)
+}
+
 /// Send a review's issues back to the task's agent to fix: round `round` of fixes, which the
 /// message is marked with (`review_round`, see checkpoints.rs).
 pub fn send_fixes(state: &Shared, task_id: &str, text: &str, round: u32) -> ApiResult<Task> {

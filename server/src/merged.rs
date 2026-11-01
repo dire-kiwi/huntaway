@@ -141,10 +141,14 @@ pub async fn check(s: &Shared, failing: &mut HashMap<(Option<String>, String), S
                     break;
                 }
             };
-            for ((target, tasks), state) in chunk.iter().zip(states) {
-                let Some(state) = state else { continue };
+            for ((target, tasks), read) in chunk.iter().zip(states) {
+                let Some(read) = read else { continue };
                 for t in tasks {
-                    if let Err(e) = changed(s, t, target, &state).await {
+                    // The board shows how its checks stand (see pr_watch::record_checks).
+                    if read.state == "open" {
+                        crate::pr_watch::record_checks(s, &t.id, target, &read.head, &read.checks);
+                    }
+                    if let Err(e) = changed(s, t, target, &read.state).await {
                         tracing::error!(task = %t.id, pr = %target.label(), "acting on its pull request's state: {e:#}");
                     }
                 }
@@ -153,9 +157,18 @@ pub async fn check(s: &Shared, failing: &mut HashMap<(Option<String>, String), S
     }
 }
 
-/// Each of `targets`' states (`open`, `merged` or `closed`), or None for one GitHub didn't return
-/// (gone, or out of the account's reach), read in one query as `account` on `host`.
-async fn read(account: Option<&str>, env: &mut Option<crate::gh_mcp::GhEnv>, host: &str, targets: &[&Target]) -> Result<Vec<Option<String>>, String> {
+/// A pull request as a read found it.
+struct Read {
+    /// `open`, `merged` or `closed`.
+    state: String,
+    /// Its head commit, and that commit's checks.
+    head: String,
+    checks: Vec<crate::pr_watch::Check>,
+}
+
+/// Each of `targets`' states and checks, or None for one GitHub didn't return (gone, or out of
+/// the account's reach), read in one query as `account` on `host`.
+async fn read(account: Option<&str>, env: &mut Option<crate::gh_mcp::GhEnv>, host: &str, targets: &[&Target]) -> Result<Vec<Option<Read>>, String> {
     #[cfg(test)]
     let v = match FAKE.with_borrow(|f| f.as_ref().map(|f| f(account, host, targets))) {
         Some(r) => r?,
@@ -178,21 +191,26 @@ fn query(targets: &[&Target]) -> (String, Vec<(String, String)>, Vec<(String, u6
     let (mut params, mut fields, mut vars, mut numbers) = (Vec::new(), String::new(), Vec::new(), Vec::new());
     for (i, t) in targets.iter().enumerate() {
         params.push(format!("$o{i}: String!, $n{i}: String!, $p{i}: Int!"));
-        fields.push_str(&format!("  pr{i}: repository(owner: $o{i}, name: $n{i}) {{ pullRequest(number: $p{i}) {{ state }} }}\n"));
+        let checks = crate::pr_watch::CHECKS.replace("$number", &format!("$p{i}"));
+        fields.push_str(&format!("  pr{i}: repository(owner: $o{i}, name: $n{i}) {{ pullRequest(number: $p{i}) {{ state {checks} }} }}\n"));
         vars.extend([(format!("o{i}"), t.owner.clone()), (format!("n{i}"), t.name.clone())]);
         numbers.push((format!("p{i}"), t.number));
     }
     (format!("query({}) {{\n{fields}}}", params.join(", ")), vars, numbers)
 }
 
-/// The states in a response to `query` for `n` pull requests. GitHub answers the others when one
+/// The pull requests in a response to `query` for `n` of them. GitHub answers the others when one
 /// can't be read (with an error and a null for it); none at all is an error.
-fn states(v: &Value, n: usize) -> Result<Vec<Option<String>>, String> {
+fn states(v: &Value, n: usize) -> Result<Vec<Option<Read>>, String> {
     if !v["data"].is_object() {
         let errors: Vec<&str> = v["errors"].as_array().into_iter().flatten().filter_map(|e| e["message"].as_str()).collect();
         return Err(if errors.is_empty() { "GitHub didn't return the pull requests".into() } else { errors.join("; ") });
     }
-    Ok((0..n).map(|i| v["data"][format!("pr{i}")]["pullRequest"]["state"].as_str().map(str::to_ascii_lowercase)).collect())
+    let read = |pr: &Value| {
+        let state = pr["state"].as_str()?.to_ascii_lowercase();
+        Some(Read { state, head: pr["headRefOid"].as_str().unwrap_or_default().into(), checks: crate::pr_watch::checks_of(pr) })
+    };
+    Ok((0..n).map(|i| read(&v["data"][format!("pr{i}")]["pullRequest"])).collect())
 }
 
 /// What the last read found for `t`'s pull request `url`.
@@ -515,12 +533,20 @@ mod tests {
         let (a, b) = (t("o", 1), t("x", 2));
         let (q, vars, numbers) = query(&[&a, &b]);
         assert!(q.starts_with("query($o0: String!, $n0: String!, $p0: Int!, $o1: String!, $n1: String!, $p1: Int!) {"), "{q}");
-        assert!(q.contains("pr1: repository(owner: $o1, name: $n1) { pullRequest(number: $p1) { state } }"), "{q}");
+        assert!(q.contains("pr1: repository(owner: $o1, name: $n1) { pullRequest(number: $p1) { state headRefOid commits(last: 1)"), "{q}");
+        // Each pull request's checks are asked of its own number.
+        assert!(q.contains("isRequired(pullRequestNumber: $p1)") && !q.contains("$number"), "{q}");
         assert_eq!(vars, [("o0".to_string(), "o".to_string()), ("n0".into(), "r".into()), ("o1".into(), "x".into()), ("n1".into(), "r".into())]);
         assert_eq!(numbers, [("p0".to_string(), 1), ("p1".into(), 2)]);
         // One it can't read is null, with an error, and the others are still read.
         let v = json!({"data": {"pr0": null, "pr1": {"pullRequest": {"state": "MERGED"}}}, "errors": [{"message": "Could not resolve"}]});
-        assert_eq!(states(&v, 2), Ok(vec![None, Some("merged".into())]));
-        assert_eq!(states(&json!({"errors": [{"message": "Bad credentials"}]}), 2), Err("Bad credentials".into()));
+        let read = states(&v, 2).unwrap();
+        assert!(read[0].is_none());
+        assert_eq!(read[1].as_ref().map(|r| r.state.as_str()), Some("merged"));
+        assert_eq!(states(&json!({"errors": [{"message": "Bad credentials"}]}), 2).err(), Some("Bad credentials".into()));
+        // With its head commit's checks.
+        let pr = crate::pr_watch::response("me", "c3", &[("test", "COMPLETED", "FAILURE", false)], &[])["data"]["repository"].clone();
+        let read = states(&json!({"data": {"pr0": pr}}), 1).unwrap().pop().flatten().unwrap();
+        assert_eq!((read.state.as_str(), read.head.as_str(), read.checks.len()), ("open", "c3", 1));
     }
 }
