@@ -26,10 +26,10 @@ import {
   asanaLink,
 } from "../api";
 import { effortOptions, inheritedModel, isClaudeModel, modelOptions, useConfigsModels } from "../agents";
-import { harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses";
+import { CODEX_MODEL_ALIASES, harnessesOf, harnessWords, newFanoutId, sameHarness, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses";
 import { allValues, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens, type Token, type TokenPrefix, type Vocab } from "../taskTokens";
 import { keyPrefix, useAvailableConfigs, useHost, useStore } from "../store";
-import { ConfigSelect } from "./ClaudeConfigs";
+import { ConfigSelect, ConfigUsageNote } from "./ClaudeConfigs";
 import { withAttachments, type AttachmentRef } from "../attachments";
 import { AttachButton, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { AsanaIcon, AsanaPicker, LinkList, LINKS_API, usesAsana } from "./ExternalLinks";
@@ -399,7 +399,7 @@ export function NewTaskModal({
     ),
   );
   const depKey = (t: Task) => `${depProject?.key}-${t.number}`;
-  // What its worktree starts from (API 81), as `from:` and another task's key (to stack it on that task's branch), a
+  // What its worktree starts from (API 89), as `from:` and another task's key (to stack it on that task's branch), a
   // branch, a pull request (`#12` or its URL) or a commit, which the host makes out. Not a subproject's task, which
   // starts from the subproject's branch. A key of the project's that isn't one of its tasks to stack on isn't known.
   const fromOk = deps && hostSupports(host, START_FROM_API) && !subproject;
@@ -547,7 +547,8 @@ export function NewTaskModal({
     tokens.filter((t) => {
       const w = t.prefix === "!" && t.value !== undefined ? harnessVocab.find((x) => x.word === t.value) : undefined;
       const agent = harnessConfigs.find((x) => x.id === w?.harness.config)?.agent;
-      return !!w && !!w.harness.model && w.word.toLowerCase() === w.harness.model.toLowerCase() && agent === agentOf(c) && rank(c.id) < rank(w.harness.config);
+      const plain = w && (w.word.toLowerCase() === w.harness.model.toLowerCase() || CODEX_MODEL_ALIASES.includes(w.word));
+      return !!w && !!w.harness.model && plain && agent === agentOf(c) && rank(c.id) < rank(w.harness.config);
     });
   const effortWaits = (c: ClaudeConfig) => efforts && !!pickedEffort && runs.some((h) => h.config === c.id);
   const waitsFor = (c: ClaudeConfig) => unknownModels.length > 0 || claimable(c).length > 0 || effortWaits(c);
@@ -1179,6 +1180,7 @@ export function NewTaskModal({
           {!subproject && inProject && codeTask && !asSubproject && !fanout && startFrom === undefined && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
           {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
           {pickConfig && <ConfigSelect className={pickerClass} configs={configs} value={config} onChange={setConfig} />}
+          <ConfigUsageNote config={configObj} />
           <div className="-my-1 ml-auto flex items-center gap-1">
             {linking && (
               <button

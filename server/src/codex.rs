@@ -1238,7 +1238,11 @@ pub fn handle_line(state: &Shared, run: &Run, v: &Value) -> Result<()> {
                     }
                 }
                 "contextCompaction" => {
-                    thread_message(state, task_id, parent.as_deref(), json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": if run.kind == "compact" { "manual" } else { "auto" }}}))?;
+                    let meta = json!({"trigger": if run.kind == "compact" { "manual" } else { "auto" }});
+                    thread_message(state, task_id, parent.as_deref(), json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": meta}))?;
+                    if parent.is_none() {
+                        crate::context::on_compacted(state, run, &meta)?;
+                    }
                 }
                 _ => {
                     let Some((name, input)) = tool_use(item) else { return Ok(()) };
@@ -1292,7 +1296,7 @@ pub fn handle_line(state: &Shared, run: &Run, v: &Value) -> Result<()> {
                 crate::usage::set_limits(state, &config.id, limits(&p["rateLimits"]), p["rateLimits"]["planType"].as_str());
             }
         }
-        "thread/tokenUsage/updated" => crate::context::on_codex_usage(state, task_id, p)?,
+        "thread/tokenUsage/updated" => crate::context::on_codex_usage(state, run, p)?,
         "turn/completed" if !own => {
             if let Some(thread) = p["threadId"].as_str() {
                 let status = match p["turn"]["status"].as_str() {
@@ -1328,6 +1332,17 @@ fn finish_turn(state: &Shared, run: &Run, turn: &Value) -> Result<()> {
         "interrupted" => Some("The turn was interrupted".to_string()),
         _ => Some(turn["error"]["message"].as_str().map(String::from).unwrap_or_else(|| format!("the turn ended as {status}"))),
     };
+    // Refused for the account's usage limit (see usage.rs).
+    if turn["error"]["codexErrorInfo"] == "usageLimitExceeded" {
+        let config = {
+            let c = state.db();
+            db::get_task(&c, &run.task_id)?.map(|t| db::task_claude_config(&c, &t)).transpose()?.flatten()
+        };
+        if let Some(config) = config {
+            crate::usage::codex_refused(state, &config.id);
+            crate::usage::ran_out(state, &run.task_id, &config.id);
+        }
+    }
     // `/compact` may report its end twice (see handle_line); other runs can go several turns.
     let saw: bool = state.db().query_row("SELECT saw_result FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
     if saw && run.kind == "compact" {

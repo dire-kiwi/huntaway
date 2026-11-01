@@ -1059,7 +1059,7 @@ mod tests {
 
     #[test]
     fn syncs_the_skills_dir() {
-        let dir = std::env::temp_dir().join(format!("ia-skills-{}", new_id()));
+        let dir = crate::testing::temp_dir().join("skills");
         let skill = |name: &str, content: &str| Skill {
             id: name.into(),
             project_id: Some("p".into()),
@@ -1082,7 +1082,7 @@ mod tests {
 
     #[test]
     fn lists_a_claude_tasks_skills() {
-        let root = std::env::temp_dir().join(format!("ia-task-skills-{}", new_id()));
+        let root = crate::testing::temp_dir();
         let (config, repo) = (root.join("config"), root.join("repo"));
         let skill = |dir: PathBuf, name: &str, description: &str, extra: &str| {
             std::fs::create_dir_all(&dir).unwrap();

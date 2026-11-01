@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::db::{self, ClaudeConfig, NewTask, Review, Reviewer, ReviewerRun, Task};
+use crate::db::{self, ClaudeConfig, NewTask, Review, ReviewerRun, Task};
 use crate::runner::{self, Outcome};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::now;
@@ -144,9 +144,10 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     }
 
     // Each reviewer reviews in its own thread, kept from one review to the next.
-    let specs = if project.reviewers.is_empty() { vec![Reviewer::default()] } else { project.reviewers.clone() };
+    let specs = db::reviewers_for(&state.db(), &project)?;
     let task_config = db::task_claude_config(&state.db(), &task)?;
     let mut threads = db::review_threads(&state.db(), &task.id)?;
+    threads.retain(|t| !crate::summary::is_summary(t));
     let key = format!("{}-{}", project.key, task.number);
     let mut parts: Vec<ReviewerRun> = Vec::new();
     for spec in &specs {
@@ -269,7 +270,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
 }
 
 /// How a reviewer reads on the board: its config, model and effort.
-fn label(config: Option<&ClaudeConfig>, model: Option<&str>, effort: Option<&str>) -> String {
+pub fn label(config: Option<&ClaudeConfig>, model: Option<&str>, effort: Option<&str>) -> String {
     let name = config.map(|c| c.name.clone()).unwrap_or_else(|| "Claude".into());
     [Some(name.as_str()), model, effort].into_iter().flatten().collect::<Vec<_>>().join(" · ")
 }
@@ -637,7 +638,10 @@ fn act(state: &Shared, parent: Task, review: Review) {
         }
     };
     match review.state.as_str() {
-        "passed" => state.add_event(&parent.id, "info", "Review passed", review.summary.clone()),
+        "passed" => {
+            state.add_event(&parent.id, "info", "Review passed", review.summary.clone());
+            crate::summary::on_review_passed(state, &parent.id);
+        }
         "issues" => {
             let rounds = parent.project_id.as_deref().and_then(|p| db::get_project(&state.db(), p).ok().flatten()).map(|p| p.review_rounds);
             send_issues(state, &parent, review, rounds.unwrap_or(0), save)
@@ -767,8 +771,7 @@ mod tests {
             let s = crate::testing::state();
             let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
             let task = db::insert_task(&s.db(), new_task(&p.id, "task")).unwrap();
-            let dir = std::env::temp_dir().join(format!("ia-review-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             assert!(std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap().success());
             let n = std::cell::Cell::new(0);
             // A tool call, and its result unless `result` is None (declined or cut short).
@@ -943,8 +946,7 @@ mod tests {
         let np = db::NewProject { id: "pr", profile_id: &p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: true };
         db::insert_project(&s.db(), np).unwrap();
         let task = db::insert_task(&s.db(), NewTask { project_id: Some("pr"), ..new_task(&p.id, "task") }).unwrap();
-        let dir = std::env::temp_dir().join(format!("ia-review-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testing::temp_dir();
         commit(&dir, &["init", "-q"]);
         commit(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]);
         let fields = [("worktree_path", json!(crate::util::path_str(&dir))), ("worktree_state", json!("ready")), ("branch", json!("ia/x"))];

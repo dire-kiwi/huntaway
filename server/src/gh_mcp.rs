@@ -956,7 +956,7 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
                 bail!("bad remote or branch");
             }
             // A branch name, not a refspec: `+HEAD:refs/heads/master` would force-push master.
-            if branch.contains([':', '+', '^', '~', '*', '?', '[', '\\']) || branch.contains("..") || branch.contains(char::is_whitespace) {
+            if !branch_name(branch) {
                 bail!("branch must be a branch name");
             }
             // HEAD pushes the current branch under its own name, and -u makes it the upstream.
@@ -966,6 +966,19 @@ fn command(tool: &str, a: &Value) -> Result<Command> {
         _ => bail!("unknown tool {tool}"),
     }
     Ok(Command { program: "gh", args, ok_codes, repo: s("repo").map(String::from) })
+}
+
+/// Whether git_push's `branch` is a branch name git would take (`git check-ref-format --branch`)
+/// rather than a refspec: a leading `+` forces the push and a `:` names another ref to push to.
+/// A `+` further in is part of the name (`feature/c++`).
+fn branch_name(branch: &str) -> bool {
+    !branch.is_empty()
+        && !branch.starts_with(['-', '+', '/'])
+        && !branch.ends_with(['/', '.'])
+        && branch != "@"
+        && !["..", "//", "@{"].iter().any(|s| branch.contains(s))
+        && !branch.contains(|c: char| c.is_whitespace() || c.is_control() || [':', '^', '~', '*', '?', '[', '\\'].contains(&c))
+        && branch.split('/').all(|part| !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
 /// Fails for gh commands no agent gets, whatever its permission mode (the gh tool's approval
@@ -1257,8 +1270,11 @@ mod tests {
         assert_eq!((push.program, push.args), ("git", vec!["push".to_string(), "-u".into(), "origin".into(), "HEAD".into()]));
         assert_eq!(command("git_push", &json!({"branch": "ia/x-1_fix.it"})).unwrap().args, ["push", "-u", "origin", "ia/x-1_fix.it"]);
         // A branch name, not a refspec that would push (or force-push) another ref.
-        for bad in ["+HEAD:refs/heads/master", "HEAD:master", ":master", "-f", "a b", "a..b", "x^", "*"] {
-            assert!(command("git_push", &json!({"branch": bad})).is_err(), "{bad}");
+        for bad in ["+HEAD:refs/heads/master", "HEAD:master", ":master", "-f", "a b", "a..b", "x^", "*", "+master", "a[b", "@", "a@{1}", "a/.b", "a.lock", "a/", "a.", "a//b", "a\tb"] {
+            assert!(command("git_push", &json!({"branch": bad})).is_err(), "{bad:?}");
+        }
+        for good in ["feature/c++", "HEAD", "v1.2", "a@b", "x+"] {
+            assert_eq!(command("git_push", &json!({"branch": good})).unwrap().args, ["push", "-u", "origin", good]);
         }
     }
 
@@ -1572,7 +1588,7 @@ FLAGS
 
     #[test]
     fn a_waits_shell_gets_gh_through_gh_run_and_no_token() {
-        let shim_dir = std::env::temp_dir().join(format!("ia-gh-shim-{}", crate::util::new_id()));
+        let shim_dir = crate::testing::temp_dir().join("shim");
         let env = Account::parse("ghe.example.com/me").unwrap().env("tok").unwrap();
         let vars = match env.shell_env(std::path::Path::new("/opt/it's/huntaway"), &shim_dir) {
             Ok(vars) => vars,
@@ -1595,8 +1611,7 @@ FLAGS
     #[test]
     fn pushes_are_checked_at_every_url_git_would_push_to() {
         crate::testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-gh-push-urls-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let git = |args: &[&str]| {
                 let ok = std::process::Command::new("git").args(args).current_dir(&dir).env("GIT_CONFIG_NOSYSTEM", "1").status().unwrap().success();
                 assert!(ok, "git {args:?}");
@@ -1657,8 +1672,7 @@ FLAGS
                     let _ = conn.write_all(reply.as_bytes()).await;
                 }
             });
-            let dir = std::env::temp_dir().join(format!("ia-gh-headers-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let url = format!("http://127.0.0.1:{port}/o/r.git");
             let other = "Authorization: Basic b3RoZXI6b3RoZXItdG9rZW4="; // other:other-token
             let git = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(&dir).status().unwrap();
@@ -1690,8 +1704,7 @@ FLAGS
     fn fetches_use_only_the_selected_accounts_https_credentials() {
         crate::testing::run(async || {
             use std::os::unix::fs::PermissionsExt;
-            let dir = std::env::temp_dir().join(format!("ia-gh-fetch-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let gh = dir.join("gh");
             std::fs::write(&gh, "#!/bin/sh\n[ \"$*\" = 'auth token --hostname=ghe.example.com --user=chosen' ] || exit 1\nprintf test-token\n").unwrap();
             std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1740,8 +1753,7 @@ FLAGS
         crate::testing::run(async || {
             // What credentials git would use: only ours for the account's host, whatever helper
             // the user has (here a global one, as `gh auth setup-git` adds), and theirs elsewhere.
-            let home = std::env::temp_dir().join(format!("ia-gh-push-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&home).unwrap();
+            let home = crate::testing::temp_dir();
             let fill = async |host: &str, extra: &[String]| {
                 let mut c = tokio::process::Command::new("git");
                 c.env("HOME", &home).env("XDG_CONFIG_HOME", &home).env("GIT_CONFIG_NOSYSTEM", "1").env("IA_GH_GIT_TOKEN", "tok123");

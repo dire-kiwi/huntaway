@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, Loader2, MessageSquareText, ScanSearch } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, FileText, Loader2, MessageSquareText, ScanSearch } from "lucide-react";
 import { lazy, Suspense, useMemo, useState, type MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, type Review, type ReviewerRun, type ReviewState, type Task, type Turn, type TurnDiff } from "../api";
@@ -167,6 +167,28 @@ function ReviewerPart({ part, thread, current }: { part: ReviewerRun; thread: Ta
   );
 }
 
+/** What a task's latest review found, as the compare view shows it (HA-51): its verdict, and each reviewer's. */
+export function ReviewVerdict({ task }: { task: Task }) {
+  const r = task.review;
+  const threads = useThreads(r);
+  if (!r) return <div className="text-faint">Not reviewed yet</div>;
+  const d = describeReview(r, threads);
+  const parts = reviewParts(r);
+  return (
+    <div className="space-y-1.5">
+      <button className={clsx("flex items-center gap-1.5 hover:underline", TONE_TEXT[d.tone])} title={`${d.title}\n\nClick to open the review thread.`} onClick={() => openTask(threadToOpen(r))}>
+        {r.state === "running" ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />}
+        {d.headline}
+      </button>
+      {parts.length > 1 ? (
+        parts.map((p, i) => <ReviewerPart key={p.thread_id} part={p} thread={threads[i]} current={false} />)
+      ) : (
+        <Findings summary={r.summary} issues={r.issues} running={r.state === "running"} />
+      )}
+    </div>
+  );
+}
+
 /** A task's review tab: the latest review and a way to run one. `threadId` is
  * the review thread it's shown beside, if any. */
 export function ReviewSummary({ task, threadId }: { task: Task; threadId?: string }) {
@@ -234,6 +256,86 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
       </div>
       {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
       {!threadId && task.kind === "task" && <FixRounds task={task} />}
+    </div>
+  );
+}
+
+/** A task's summary tab: the summary of its changes written once its review passed (API 84), and a way to write one. */
+export function ChangeSummaryView({ task }: { task: Task }) {
+  const s = task.summary;
+  const auto = useProject(task.project_id)?.auto_summary;
+  const thread = useStore((st) => (s ? st.tasks[s.thread_id] : undefined));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const summarize = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.summarize(task.host_id, task.id);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Of an earlier commit than the one reviewed last (the agent has worked on it since).
+  const stale = !!s?.head && !!task.review?.head && s.head !== task.review.head;
+  const waiting = s?.state === "running" && thread?.running && thread.attention_reason;
+  return (
+    <div className="space-y-2.5 text-[12.5px]">
+      {!s ? (
+        <div className="text-muted">
+          No summary yet.{" "}
+          {auto === false
+            ? "This project doesn't summarise changes automatically (Settings → Review)."
+            : "An agent summarises the changes here once the task's review passes."}
+        </div>
+      ) : (
+        <>
+          <div
+            className={clsx(
+              "flex items-center gap-1.5",
+              s.state === "running" && "text-st-review",
+              s.state === "done" && "text-muted",
+              (s.state === "failed" || s.state === "stopped") && "text-faint",
+            )}
+          >
+            {s.state === "running" ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+            <span>
+              {s.state === "running"
+                ? waiting
+                  ? "The summarizer is waiting for you"
+                  : "Summarising the changes…"
+                : s.state === "done"
+                  ? "Summary of the changes"
+                  : s.state === "failed"
+                    ? "Summary failed"
+                    : "Summary stopped"}
+            </span>
+            {s.label && <span className="text-faint">· {s.label}</span>}
+            {s.head && <span className="ml-auto font-mono text-[11px] text-faint">{s.head.slice(0, 7)}</span>}
+          </div>
+          {stale && <div className="text-[11.5px] text-st-attention">The agent has changed the work since this summary was written.</div>}
+          {s.text && s.state !== "running" && (
+            <div className={clsx(s.state === "done" ? "text-fg" : "text-muted")}>
+              <Markdown text={s.text} />
+            </div>
+          )}
+        </>
+      )}
+      <div className="flex flex-wrap gap-2 pt-1">
+        {s && (
+          <Button size="sm" variant="ghost" onClick={() => openTask(s.thread_id)}>
+            <MessageSquareText size={12} /> Summary thread
+          </Button>
+        )}
+        {s?.state !== "running" && task.kind === "task" && (
+          <Button size="sm" disabled={busy || task.running} onClick={summarize} title={task.running ? "Wait for the agent to finish" : undefined}>
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />} {s ? "Summarise again" : "Summarise now"}
+          </Button>
+        )}
+      </div>
+      {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
     </div>
   );
 }

@@ -139,7 +139,7 @@ class Api:
                 t["id"]
                 for p in profiles
                 for t in self.call("get", f"/profiles/{p}/tasks")
-                if not t.get("project_id") and t["number"] == number and (bool(t.get("group_name")) if prefix == "G" else t.get("task_type") == "scratch")
+                if not t.get("project_id") and t["number"] == number and (bool(t.get("group_name")) if prefix == "G" else t.get("task_type") == "scratch" and not t.get("group_name"))
             ]
             if len(found) > 1:
                 die(f"{ref} is in more than one profile: set IA_TEST_PROFILE, or use the task id")

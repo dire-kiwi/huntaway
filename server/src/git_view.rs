@@ -726,8 +726,7 @@ mod tests {
     /// master has `f.txt` (20 numbered lines) and `gone.txt`: the task and its worktree.
     async fn task_repo(s: &Shared) -> (String, PathBuf) {
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let repo = std::env::temp_dir().join(format!("ia-gv-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&repo).unwrap();
+        let repo = crate::testing::temp_dir();
         sh(&repo, &["init", "-q", "-b", "master"]);
         sh(&repo, &["config", "user.name", "t"]);
         sh(&repo, &["config", "user.email", "t@t"]);
@@ -891,7 +890,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let home = std::env::temp_dir().join(format!("ia-gv-{}", crate::util::new_id()));
+            let home = crate::testing::temp_dir();
             let proj = home.join("proj");
             std::fs::create_dir_all(&proj).unwrap();
             sh(&home, &["init", "-q", "-b", "master"]);
@@ -954,8 +953,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-            let repo = std::env::temp_dir().join(format!("ia-gv-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             sh(&repo, &["init", "-q", "-b", "master"]);
             let b = CreateProject { name: "x".into(), repo_path: path_str(&repo), key: Some("X".into()), base_branch: None, use_worktrees: Some(false) };
             let p = create_project_inner(&s, &profile.id, b).await.unwrap();

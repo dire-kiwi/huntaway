@@ -23,9 +23,26 @@ import { liveTaskChanges, taskKey, useStore } from "./store";
 declare global {
   interface Window {
     /** What the desktop app adds (electron/preload.cjs). */
-    huntawayDesktop?: { setBadgeCount: (n: number) => void; focus: () => void };
+    huntawayDesktop?: {
+      setBadgeCount: (n: number) => void;
+      focus: () => void;
+      /** How the app can install its own package (HA-68): "appimage", "pacman", or null where it can't. Older apps lack it. */
+      shellUpdateKind?: () => ShellUpdateKind | null;
+      /** Installs the latest release's app package and relaunches, reporting progress. Rejects with why not. */
+      updateShell?: (onProgress?: (p: ShellUpdateProgress) => void) => Promise<unknown>;
+    };
   }
 }
+
+export type ShellUpdateKind = "appimage" | "pacman";
+
+/** Where the desktop app's own update is (electron/shellupdate.cjs). */
+export type ShellUpdateProgress = {
+  phase: "checking" | "downloading" | "installing" | "restarting";
+  version?: string;
+  bytes?: number;
+  total?: number;
+};
 
 /** Why system notifications can or can't be shown here. */
 export type NotifyPermission = NotificationPermission | "insecure" | "unsupported" | "preview";

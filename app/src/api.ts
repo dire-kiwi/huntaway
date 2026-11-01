@@ -58,7 +58,18 @@ export const rejoinsMerge = (t: Task) => !!t.remerge && (t.status === "in_progre
 export const agentWaiting = (t: Task) => (t.running && t.agent_wait) || null;
 
 /** Queued in "In progress" until the tasks it depends on are merged. */
-export const dependencyQueued = (t: Task) => !!t.waiting && t.status === "in_progress" && !t.running;
+export const dependencyQueued = (t: Task) => !!t.waiting && t.status === "in_progress" && !t.running && !t.limit_reset_at;
+
+/** Queued in "In progress" until its config's usage limit resets (API 81), when its agent carries on. */
+export const limitQueued = (t: Task) => !!t.waiting && t.status === "in_progress" && !t.running && !!t.limit_reset_at;
+
+/** Its agent stopped because its config ran out of usage, which hasn't reset yet: it can wait for the reset (API 81). */
+export const outOfUsage = (t: Task, now = Date.now()) => !t.waiting && !t.running && !!t.limit_reset_at && new Date(t.limit_reset_at).getTime() > now;
+
+/** The API that tells when a config is out of usage and holds tasks until it resets. */
+export const LIMITS_API = 81;
+/** Profiles choose reviewers and a summarizer for their projects that don't choose their own. */
+export const PROFILE_REVIEWERS_API = 87;
 
 /** Whether a task counts as merged for the tasks that depend on it (server: db::is_merged). */
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
@@ -149,6 +160,14 @@ export interface Profile {
   asana_user?: string | null;
   /** Whether it uses Asana (API 60; missing is on): off, the board leaves Asana out and the host won't search it. The token is kept. */
   asana_enabled?: boolean;
+  /** A task whose config runs out of usage waits for the limit to reset and then carries on (API 81). */
+  limit_wait?: boolean;
+  /** A task that hasn't started yet starts on the next of its configs with room when its own is out of usage (API 81). */
+  limit_switch?: boolean;
+  /** Who reviews the tasks of its projects with no reviewers of their own; empty is one reviewer with the task's config (API 87). */
+  reviewers?: Reviewer[];
+  /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 87). */
+  summarizer?: Reviewer | null;
   created_at: string;
 }
 
@@ -260,6 +279,29 @@ export interface AnalyticsReport {
   projects: { id: string; name: string; key: string }[];
 }
 
+/** How big a profile's threads' contexts were at each turn's end, and their compactions (API 86). */
+export interface ContextStatsReport {
+  stats: {
+    at: string;
+    task_id: string;
+    kind: "turn" | "compact";
+    /** A turn's: the context it left. A compaction's: the context before it. */
+    tokens: number | null;
+    /** A turn's: what its first request to the model held. */
+    start_tokens: number | null;
+    /** A compaction's: the context after it, if the agent says. */
+    post_tokens: number | null;
+    max_tokens: number | null;
+    model: string | null;
+    /** A compaction's: the agent's own as its context filled up (`auto`), `/compact` (`user`) or the board's after a session sat idle (`idle`). */
+    source: "auto" | "user" | "idle" | null;
+    cost_usd: number | null;
+    duration_ms: number | null;
+  }[];
+  tasks: AnalyticsReport["tasks"];
+  projects: AnalyticsReport["projects"];
+}
+
 /** Bytes on disk and the number of files, as `du` counts them. */
 export interface DiskSize {
   bytes: number;
@@ -307,6 +349,8 @@ export interface Usage {
   updated_at: string | null;
   /** Why the last check failed; `limits` may still hold older numbers. */
   error: string | null;
+  /** Until when it's out of usage: a run on it was refused for its limit, which resets then (API 81). */
+  out_until?: string | null;
 }
 
 /** What removing merged worktrees did with a done task's worktree: removed, or kept and why. */
@@ -318,7 +362,7 @@ export interface MergedWorktreeResult {
   detail: string;
 }
 
-/** What a task's worktree starts from (API 81): its base branch, which its pull request targets, comes from it. */
+/** What a task's worktree starts from (API 89): its base branch, which its pull request targets, comes from it. */
 export type StartFrom =
   | { type: "branch"; branch: string }
   | { type: "task"; task_id: string }
@@ -326,7 +370,7 @@ export type StartFrom =
   | { type: "commit"; commit: string };
 
 /** The API that takes a task's start_from, and lists a project's branches. */
-export const START_FROM_API = 81;
+export const START_FROM_API = 89;
 
 export interface Project {
   host_id: string;
@@ -342,6 +386,10 @@ export interface Project {
   base_branch: string | null;
   setup_script: string;
   teardown_script: string;
+  /** Ignored files copied into each new worktree from the repository, as .gitignore-style patterns, one per line (API 82). */
+  copy_files?: string;
+  /** Ignored folders of the repository symlinked into each new worktree, one per line (API 82). */
+  link_folders?: string;
   /** Runs whenever one of the project's tasks changes status (API 37). */
   status_script?: string;
   /** A script per status, run when a task moves into it (API 38). */
@@ -365,8 +413,16 @@ export interface Project {
   review_rounds?: number;
   /** Move a task in In review or Needs attention to Done when its pull request is merged on GitHub (API 68). */
   done_when_merged?: boolean;
-  /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
+  /** Agents open a pull request for each task's branch when the repository is on GitHub; subprojects follow it too (API 85). */
+  pull_requests?: boolean;
+  /** The same for the tasks in its subprojects, whose pull requests target the subproject's branch (API 85). */
+  subproject_pull_requests?: boolean;
+  /** Who reviews each task, each in its own review thread (API 29); empty uses the profile's (API 87), before that one reviewer with the task's config. */
   reviewers?: Reviewer[];
+  /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
+  auto_summary?: boolean;
+  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
+  summarizer?: Reviewer | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
   start_prompt?: string | null;
@@ -437,6 +493,22 @@ export interface Review {
   reviewers?: ReviewerRun[];
 }
 
+export type SummaryState = "running" | "done" | "failed" | "stopped";
+
+/** A summary of a task's changes, written once its review passed (API 84). */
+export interface ChangeSummary {
+  /** The summary thread: a task of kind "review" and type "summary" whose parent is the task. */
+  thread_id: string;
+  /** Who writes it, e.g. "Claude · haiku". */
+  label: string;
+  state: SummaryState;
+  /** The commit summarised. */
+  head: string | null;
+  /** The summary (Markdown), or why there's none. */
+  text: string | null;
+  updated_at: string;
+}
+
 /** A message sent to a running agent, until it reads it (API 28). */
 export interface Steer {
   id: string;
@@ -473,6 +545,8 @@ export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
+/** A review thread that summarises its task's changes rather than reviewing them (API 84): its type is "summary". */
+export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "summary";
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
 /** Where the task's agent works, if not where its kind and project say and the folder is one to show: one in the host's
@@ -539,7 +613,7 @@ export interface Task {
   worktree_path: string | null;
   branch: string | null;
   base_branch: string | null;
-  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 81). */
+  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 89). */
   start_from?: StartFrom | null;
   worktree_state: "none" | "setting_up" | "ready" | "tearing_down" | "error";
   worktree_error: string | null;
@@ -554,8 +628,10 @@ export interface Task {
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
   depends_on?: string[];
-  /** Queued in "In progress": its agent starts once every task in `depends_on` is merged (API 24). */
+  /** Queued in "In progress": its agent starts once every task in `depends_on` is merged (API 24), or once `limit_reset_at` has passed. */
   waiting?: boolean;
+  /** When the usage limit its agent last ran out of resets; cleared when it runs again (API 81). See `limitQueued`, `outOfUsage`. */
+  limit_reset_at?: string | null;
   /** Its running agent is waiting (the `wait` tool) rather than working; it stays in its column (API 36). Not `waiting`. */
   agent_wait?: AgentWait | null;
   /** Sent while the agent was running; goes out when the run ends or is stopped (API 10). */
@@ -588,6 +664,8 @@ export interface Task {
   reminder?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
+  /** The latest summary of its changes (API 84). */
+  summary?: ChangeSummary | null;
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
   /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
@@ -673,6 +751,42 @@ export interface DiffResult {
   stat?: string;
   patch?: string;
   untracked?: string[];
+  /** Set when the task has no worktree (API 81): the diff is of the commits on this branch of its. */
+  branch?: string;
+}
+
+/** What the compare view shows of a task made from one prompt with others, besides the task (API 81). */
+export interface FanoutFacts {
+  id: string;
+  /** How long its agent has run, all of its runs together, and how many runs. */
+  run_secs: number;
+  runs: number;
+  /** Its agent, or one of its reviewers, is at work. */
+  working: boolean;
+  /** Its worktree's uncommitted changes as `git status --porcelain` lists them (the first 20), and how many. */
+  uncommitted: string[];
+  uncommitted_count: number;
+  uncommitted_error: string | null;
+  /** Commits in its worktree that no branch, remote branch or tag has (a detached HEAD's): picking keeps the worktree. */
+  stray_commits?: number;
+  /** Its branch, if the repository has it, and where it's pushed (`origin/ia/x-1`). */
+  branch: string | null;
+  pushed: string | null;
+}
+
+/** What picking one of them did with another (API 81). */
+export interface PickOutcome {
+  id: string;
+  key: string;
+  stopped: boolean;
+  /** Completed as not done (rather than done already). */
+  completed: boolean;
+  worktree: "removed" | "kept" | "none";
+  branch: "deleted" | "kept" | "none";
+  pushed_branch: "deleted" | "kept" | "none";
+  pr: "closed" | "kept" | "none";
+  /** What didn't go as asked, and why. */
+  notes: string[];
 }
 
 /** A file with changes, as in `git status --short`: its index (`x`) and working tree (`y`) state (API 62). */
@@ -816,7 +930,9 @@ export interface GitCommitShown {
 }
 
 export interface RestartJob {
-  phase: "starting" | "building_ui" | "building_server" | "restarting" | "failed";
+  /** A release update (`POST /admin/release/update`) goes through `downloading`, `verifying` and `installing` when
+   * the version isn't staged yet. */
+  phase: "starting" | "building_ui" | "building_server" | "downloading" | "verifying" | "installing" | "restarting" | "failed";
   log: string;
   error: string | null;
 }
@@ -838,6 +954,82 @@ export interface ServerStatus {
   deployed?: { commit: string | null; checked_at: string; error: string | null } | null;
   /** `<short sha> <subject>` for the deployed commits this server isn't running (when it's ahead of it). */
   deployed_commits?: string[];
+  /** API 88, with `--release-updates`: the GitHub release this server could update to. */
+  release?: ReleaseStatus;
+}
+
+/** A release asset (a server tarball or a desktop package), with its sha256 from GitHub's digest. */
+export interface ReleaseAsset {
+  name: string;
+  /** Its `browser_download_url`. */
+  url: string;
+  size: number;
+  sha256: string | null;
+}
+
+/** What the release checks found (API 88). Checked 30s after start, every 6 hours and on `POST /admin/release/check`. */
+export interface ReleaseStatus {
+  /** `OWNER/REPO` on GitHub. */
+  repo: string;
+  /** The version this server runs. */
+  running: string;
+  /** Where it runs from: `<data dir>/app/<v>/huntaway`, the desktop app's own server, or a tarball's. */
+  exe?: string;
+  /** The highest release with a server for this platform (prereleases only when `prereleases`), or null if none. */
+  latest: {
+    version: string;
+    prerelease: boolean;
+    published_at: string | null;
+    /** The release's notes, in markdown. */
+    notes: string | null;
+    /** The release's page on GitHub. */
+    url: string;
+    /** Its server tarball for this platform. */
+    asset: ReleaseAsset;
+    /** Whether it's newer than `running`. */
+    newer: boolean;
+  } | null;
+  /** The *Include prereleases* setting (`release_prereleases` in `/settings`). */
+  prereleases: boolean;
+  checked_at: string | null;
+  /** Why the last check failed (what it found before is kept). */
+  error: string | null;
+  /** When GitHub's rate limit resets, if the last check ran into it. */
+  rate_limit_reset: string | null;
+  /** The desktop app that started this server, or null when none did (a server installed from the tarball). */
+  shell: {
+    version: string | null;
+    install: "pacman" | "appimage" | "mac" | "other" | (string & {});
+    /** The AppImage, or the .app on a mac. */
+    path: string | null;
+    /** Whether the latest release was built with another shell, which needs the new package. */
+    outdated: boolean;
+    /** The latest release's package for this install (the .pacman or the .AppImage), or null. */
+    package: ReleaseAsset | null;
+  } | null;
+  /** The package's own server, to fall back to. */
+  bundled_server: string | null;
+  /** A newer version downloaded, checked and unpacked into `<data dir>/app/<v>/`, which Update
+   * (`POST /admin/release/update {version}`) restarts onto. */
+  staged: string | null;
+  /** The background download of the latest release while it runs, or the last one's failure (tried again on the
+   * next check); null once it's staged. */
+  download: ReleaseDownload | null;
+  /** The version before the one running from `app/`, kept for a rollback. */
+  previous: string | null;
+  /** Versions rolled back from or that didn't start, which aren't offered again. */
+  bad: string[];
+  /** What Roll back (`POST /admin/release/rollback`) would start: `previous`, `"bundled"` (the desktop app's own
+   * server), or null when there's nothing to roll back to (or this server isn't running from `app/`). */
+  rollback_to: string | null;
+}
+
+export interface ReleaseDownload {
+  version: string;
+  phase: "downloading" | "verifying" | "installing" | "failed";
+  bytes: number;
+  total: number | null;
+  error: string | null;
 }
 
 export interface DirListing {
@@ -971,20 +1163,13 @@ export class ApiError extends Error {
   }
 }
 
-/** Called when the server turns down a request, with the token it was made with and the request's path (see unauthorizedHere). */
-let onUnauthorized: (token: string, path: string) => void = () => {};
-export function setUnauthorizedHandler(fn: (token: string, path: string) => void) {
-  onUnauthorized = fn;
-}
-
 /**
- * Whether a 401 for `path` means this board's token is wrong: a request to this hub, or to its own host
- * through it. A linked host answers 401 when the link's token no longer matches its own (its data dir
- * was made again, say), which is that host's trouble, not a reason to sign the user out of the board.
+ * Called when the server turns down a request, with the token it was made with. Only this board's token being wrong is
+ * a 401: the hub answers a linked host turning down the link's token (its own changed since it was linked) with a 502.
  */
-export function unauthorizedHere(path: string, localHostId: string | null): boolean {
-  const m = /^\/h\/([^/?#]+)/.exec(path);
-  return !m || (localHostId !== null && decodeURIComponent(m[1]) === localHostId);
+let onUnauthorized: (token: string) => void = () => {};
+export function setUnauthorizedHandler(fn: (token: string) => void) {
+  onUnauthorized = fn;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -998,7 +1183,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
-    onUnauthorized(token, path);
+    onUnauthorized(token);
     throw new ApiError(401, "Unauthorized");
   }
   const data = await res.json().catch(() => null);
@@ -1222,6 +1407,8 @@ export interface HostSettings {
   terminal_tools?: TerminalTool[];
   /** Where the host is reached from outside, which its webhook URLs are shown with (API 63). */
   public_url?: string | null;
+  /** Whether release checks include prereleases (API 88). Changing it checks again. */
+  release_prereleases?: boolean;
 }
 
 /** A program run in its own tmux session in a task's directory, e.g. `lazygit` (API 13). */
@@ -1440,6 +1627,10 @@ export const api = {
       github_account?: string | null;
       clone_dir?: string | null;
       asana_enabled?: boolean;
+      limit_wait?: boolean;
+      limit_switch?: boolean;
+      reviewers?: Reviewer[];
+      summarizer?: Reviewer | null;
     },
   ) =>
     on(h).post<Profile>("/profiles", b),
@@ -1489,7 +1680,7 @@ export const api = {
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
-  /** The branches of the project's repository, latest first; those only on a remote named with it (API 81). */
+  /** The branches of the project's repository, latest first; those only on a remote named with it (API 89). */
   projectBranches: (h: string, id: string) => on(h).get<{ branches: { name: string; remote: boolean }[] }>(`/projects/${enc(id)}/branches`),
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
   systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>
@@ -1526,6 +1717,10 @@ export const api = {
   /** The profile's prompts and agent runs in [from, to) (API 16). */
   analytics: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<AnalyticsReport>(`/profiles/${enc(profileId)}/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+
+  /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 86). */
+  contextStats: (h: string, profileId: string, from: string, to: string) =>
+    on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
   /** How much space the profile's projects and their worktrees take up (API 35). */
   diskUsage: (h: string, profileId: string) => on(h).get<DiskUsageReport>(`/profiles/${enc(profileId)}/disk-usage`),
@@ -1594,7 +1789,7 @@ export const api = {
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
-      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 81). */
+      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 89). */
       start_from?: string;
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
@@ -1620,11 +1815,19 @@ export const api = {
     on(h).get<{ name: string; size: number; mime: string; data: string }>(`/attachments/${enc(id)}/${encodeURIComponent(name)}`),
   /** Drops the queued message; returns the task as it was, so the text can be edited again. */
   unqueue: (h: string, id: string) => on(h).del<Task>(`/tasks/${enc(id)}/queue`),
+  /** A task whose agent ran out of usage waits for the limit to reset, and then its agent carries on (API 81). */
+  waitForLimit: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/wait-for-limit`),
   /** Review the task's work now (API 12). */
   review: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/review`),
+  summarize: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/summary`),
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
+  /** The tasks made from the same prompt as this one, it among them (API 81). */
+  fanout: (h: string, id: string) => on(h).get<{ tasks: FanoutFacts[] }>(`/tasks/${enc(id)}/fanout`),
+  /** Keeps this task, and completes the others made from the same prompt as not done, cleaning up after them (API 81). */
+  pickFanout: (h: string, id: string, b: { delete_branches: boolean; close_prs: boolean; discard_uncommitted: boolean }) =>
+    on(h).post<{ task: Task; results: PickOutcome[] }>(`/tasks/${enc(id)}/fanout/pick`, b),
   /** Whether moving the task to Done would leave its work unmerged (API 75). */
   unmerged: (h: string, id: string) => on(h).get<{ unmerged: boolean }>(`/tasks/${enc(id)}/unmerged`),
   /**
@@ -1692,6 +1895,12 @@ export const api = {
   updateSettings: (h: string, b: Partial<HostSettings>) => on(h).patch<HostSettings>("/settings", b),
   serverStatus: (h: string) => on(h).get<ServerStatus>("/admin/server"),
   restartServer: (h: string, b: { rebuild: boolean }) => on(h).post(`/admin/restart`, b),
+  /** API 88, with `--release-updates`: check now, and get the server's status after. */
+  checkReleases: (h: string) => on(h).post<ServerStatus>("/admin/release/check"),
+  /** Restart onto a release (staged, or downloaded first), as a restart job. */
+  updateRelease: (h: string, version: string) => on(h).post<{ ok: boolean }>("/admin/release/update", { version }),
+  /** Restart onto `release.rollback_to`, marking the running version bad, as a restart job. */
+  rollbackRelease: (h: string) => on(h).post<{ ok: boolean }>("/admin/release/rollback"),
   /** Fetch `commit` from the host's origin, fast-forward its checkout to it, then rebuild and restart. */
   updateServer: (h: string, commit: string) => on(h).post<{ ok: boolean; up_to_date?: boolean }>(`/admin/update`, { commit }),
 };

@@ -9,14 +9,17 @@ import {
   EFFORTS,
   hostCompat,
   hostSupports,
+  LIMITS_API,
   MODEL_ALIASES,
   PERMISSION_MODES,
+  PROFILE_REVIEWERS_API,
   type ClaudeConfig,
   type Compat,
   type GithubAccount,
   type Host,
   type HostSettings,
   type Profile,
+  type Reviewer,
   type TerminalTool,
 } from "../api";
 import { useShallow } from "zustand/react/shallow";
@@ -25,6 +28,7 @@ import { navigate } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../store";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "./ExternalLinks";
+import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow } from "./Reviewers";
 import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle, useAsyncAction, useConfirm } from "./ui";
 
 const MODE_LABEL: Record<Host["mode"], string> = {
@@ -573,6 +577,10 @@ export function ProfileForm({
   const [github, setGithub] = useState(initial?.github_account ?? "");
   const [cloneDir, setCloneDir] = useState(initial?.clone_dir ?? "");
   const [asana, setAsana] = useState(usesAsana(initial));
+  const [limitWait, setLimitWait] = useState(!!initial?.limit_wait);
+  const [limitSwitch, setLimitSwitch] = useState(!!initial?.limit_switch);
+  const [reviewers, setReviewers] = useState<Reviewer[]>(initial?.reviewers ?? []);
+  const [summarizer, setSummarizer] = useState<Reviewer>(initial?.summarizer ?? DEFAULT_REVIEWER);
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
   const { busy, error: err, run } = useAsyncAction();
@@ -582,6 +590,8 @@ export function ProfileForm({
   const cloning = hostSupports(hosts.find((h) => h.id === host), 55);
   const linking = hostSupports(hosts.find((h) => h.id === host), LINKS_API);
   const asanaToggle = hostSupports(hosts.find((h) => h.id === host), ASANA_TOGGLE_API);
+  const limits = hostSupports(hosts.find((h) => h.id === host), LIMITS_API);
+  const reviewing = hostSupports(hosts.find((h) => h.id === host), PROFILE_REVIEWERS_API);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
@@ -596,6 +606,9 @@ export function ProfileForm({
         ...(accounts ? { github_account: github || null } : {}),
         ...(cloning ? { clone_dir: cloneDir.trim() || null } : {}),
         ...(asanaToggle ? { asana_enabled: asana } : {}),
+        ...(limits ? { limit_wait: limitWait, limit_switch: limitSwitch } : {}),
+        // The host saves just the defaults as none, which is the same.
+        ...(reviewing ? { reviewers, summarizer } : {}),
       };
       if (initial) await api.updateProfile(initial.host_id, initial.id, body);
       else {
@@ -662,6 +675,31 @@ export function ProfileForm({
                 : "Finds the Asana tasks you link tasks to. Connect it with a personal access token once the profile is created."}
           </span>
         </div>
+      )}
+      {limits && (
+        <div className="space-y-1.5">
+          <span className="block text-xs font-medium text-muted">When a config runs out of usage</span>
+          <Toggle checked={limitWait} onChange={setLimitWait} label="Wait for the limit to reset, then carry on" />
+          <Toggle checked={limitSwitch} onChange={setLimitSwitch} label="Start new tasks on the next config with room" />
+          <span className="block text-xs text-faint">
+            {limitWait
+              ? "A task whose agent runs out waits in In progress until the limit resets and then carries on, and a task started on a config that's out waits for it too."
+              : "Off, a task whose agent runs out needs your attention, and offers to carry on once the limit resets."}{" "}
+            {limitSwitch
+              ? "A task that hasn't started yet starts on the next of its configs (of the same agent) that isn't out, instead of its own."
+              : ""}
+          </span>
+        </div>
+      )}
+      {reviewing && (
+        <>
+          <Field label="Reviewers" hint="Who reviews the tasks of its projects, each in a thread of its own. A project can choose its own in its Review settings.">
+            <ReviewerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={reviewers} onChange={setReviewers} />
+          </Field>
+          <Field label="Summarizer" hint="Who summarises a task's changes once its review passes, unless its project chooses its own. A quick, cheap model is usually enough.">
+            <ReviewerRow hostId={host} configs={hostConfigs} models={{ profile: model }} value={summarizer} onChange={(v) => setSummarizer(v ?? DEFAULT_REVIEWER)} removable={false} />
+          </Field>
+        </>
       )}
       {sharing && (
         <Field

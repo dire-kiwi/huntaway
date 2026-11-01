@@ -1,9 +1,10 @@
 //! Dialling out to a broker (`serve --broker <url>`, see `server/broker`), so this host can be
 //! reached through it from anywhere: its board in a browser, and its API from hubs.
 //!
-//! The broker passes each client's request down our websocket, and we make it against our own
-//! server over loopback, with the client's own headers. The broker is no more trusted than the
-//! client: requests need our token as they would anywhere else.
+//! A managed broker sends a connector token and public endpoint; cloudflared carries application
+//! traffic to our private origin listener, independently of the broker connection. A legacy broker
+//! sends requests down our websocket instead, answered over loopback with the client's headers.
+//! Both public transports still require our token and must never expose --open-token.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -13,7 +14,7 @@ use anyhow::{Context, Result, bail};
 use huntaway_broker::proto::{self, Ctl};
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message as TMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
@@ -68,19 +69,74 @@ impl Entry {
     }
 }
 
+/// Resolve an explicit broker host URL before sending a host/hub token or opening a websocket.
+/// 404 means an older relay broker. Discovery itself carries no credential and follows no redirects.
+pub async fn resolve(url: &str, expected_host: Option<&str>) -> Result<String> {
+    let base = reqwest::Url::parse(url).context("bad host URL")?;
+    let path = base.path().trim_end_matches('/');
+    let explicit = path.strip_prefix("/_broker/h/").filter(|n| proto::valid_name(n));
+    if explicit.is_none() && !path.is_empty() { return Ok(url.to_string()); }
+    let mut discovery = base.clone();
+    discovery.set_path(&explicit.map(|name| format!("/_broker/resolve/{name}")).unwrap_or_else(|| "/_broker/resolve".into()));
+    discovery.set_query(None);
+    discovery.set_fragment(None);
+    static DISCOVERY: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    // Never reuse a discovery socket: the last one may belong to the network that just died.
+    let client = DISCOVERY.get_or_init(|| reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none())
+        .pool_max_idle_per_host(0).timeout(Duration::from_secs(10)).build().expect("discovery client"));
+    let res = client.get(discovery).send().await.context("discovering the host endpoint")?;
+    // A normal host serves its UI fallback here. Only a broker identifies its default discovery route.
+    if explicit.is_none() && !res.headers().contains_key("x-huntaway-broker") { return Ok(url.to_string()); }
+    if res.status() == reqwest::StatusCode::NOT_FOUND { return Ok(url.to_string()); }
+    let res = res.error_for_status().context("broker couldn't resolve the host endpoint")?;
+    let info: serde_json::Value = res.json().await.context("bad broker discovery response")?;
+    let host_id = info["host_id"].as_str().filter(|id| !id.is_empty()).context("broker discovery has no host id")?;
+    if expected_host.is_some_and(|id| id != host_id) { bail!("broker name now belongs to a different host; link it again"); }
+    let endpoint = reqwest::Url::parse(info["url"].as_str().context("broker discovery has no endpoint")?).context("invalid broker endpoint")?;
+    let loopback = matches!(endpoint.host_str(), Some("127.0.0.1" | "[::1]" | "localhost"));
+    if !(endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback)) || endpoint.host().is_none()
+        || !endpoint.username().is_empty() || endpoint.password().is_some() || endpoint.query().is_some() || endpoint.fragment().is_some()
+        || endpoint.path() != "/" {
+        bail!("broker returned an unsafe endpoint (expected a plain HTTPS origin)");
+    }
+    Ok(endpoint.to_string().trim_end_matches('/').into())
+}
+
 /// Our streams by id.
 type Streams = Arc<Mutex<HashMap<u64, Entry>>>;
 
 /// Keep a connection to the broker at `url`, as `name`. `key` is our secret on the broker: it keeps
 /// `name` for whoever took it first with theirs.
+#[cfg(test)]
 pub fn dial_out(s: &Shared, url: String, token: String, name: String, key: String) {
+    dial_with_origin(s, url, token, name, key, None);
+}
+
+/// A tunnel must reach this listener, rather than the LAN listener: --open-token must stay private.
+pub async fn origin(app: axum::Router) -> Result<u16> {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let port = listener.local_addr()?.port();
+    let app = app.layer(axum::middleware::from_fn(|mut req: axum::extract::Request, next: axum::middleware::Next| async move {
+        req.headers_mut().insert(VIA_BROKER, axum::http::HeaderValue::from_static("1"));
+        next.run(req).await
+    }));
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await { tracing::warn!("tunnel origin: {e}"); }
+    });
+    Ok(port)
+}
+
+pub fn dial_with_origin(s: &Shared, url: String, token: String, name: String, key: String, origin_port: Option<u16>) {
     let _ = s.broker_url.set(format!("{}/_broker/h/{name}", url.trim_end_matches('/')));
     let s = s.clone();
+    let (connector, updates) = watch::channel(None);
+    let connector_bin = std::env::var_os("IA_CLOUDFLARED_BIN").unwrap_or_else(|| "cloudflared".into());
+    tokio::spawn(connect_tunnel(updates, connector_bin));
     tokio::spawn(async move {
         let mut backoff = 1;
         loop {
             let started = std::time::Instant::now();
-            if let Err(e) = session(&s, &url, &token, &name, &key).await {
+            if let Err(e) = session(&s, &url, &token, &name, &key, origin_port, &connector).await {
                 tracing::warn!("broker {url}: {e:#}");
             }
             // A connection that lasted a while starts over at a quick retry.
@@ -93,22 +149,65 @@ pub fn dial_out(s: &Shared, url: String, token: String, name: String, key: Strin
     });
 }
 
-async fn session(s: &Shared, url: &str, token: &str, name: &str, key: &str) -> Result<()> {
+/// The connector outlives broker sessions. A broker outage must not interrupt board traffic.
+/// Tokens use the environment, never command arguments or logs; cloudflared owns its own retries.
+async fn connect_tunnel(mut updates: watch::Receiver<Option<proto::Tunnel>>, bin: std::ffi::OsString) {
+    loop {
+        let tunnel = updates.borrow_and_update().clone();
+        let Some(tunnel) = tunnel else {
+            if updates.changed().await.is_err() { return; }
+            continue;
+        };
+        match spawn_connector(&bin, &tunnel.token) {
+            Ok((mut child, _alive)) => tokio::select! {
+                _ = updates.changed() => { let _ = child.kill().await; if updates.has_changed().is_err() { return; } },
+                result = child.wait() => tracing::warn!("cloudflared exited ({result:?}); check its installation/connectivity; restarting in five seconds"),
+            },
+            Err(e) => tracing::warn!("couldn't start cloudflared: {e}; install it on this host or set IA_CLOUDFLARED_BIN"),
+        }
+        tokio::select! {
+            _ = updates.changed() => { if updates.has_changed().is_err() { return; } },
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+        }
+    }
+}
+
+/// The watchdog owns the connector's process group and watches a pipe held only by this server
+/// (close-on-exec). It kills the group on exec, forced exit or a crash, where kill_on_drop cannot
+/// run. Arguments are positional, never interpreted as shell code (same pattern as wait::LAUNCH).
+fn spawn_connector(bin: &std::ffi::OsStr, token: &str) -> Result<(tokio::process::Child, std::io::PipeWriter)> {
+    const LAUNCH: &str = r#"exec 3<&0 </dev/null; (read -r _ <&3; kill -KILL 0) & exec 3<&-; exec "$@""#;
+    let (watched, alive) = std::io::pipe().context("creating the tunnel watchdog")?;
+    let child = tokio::process::Command::new("bash")
+        .args(["-c", LAUNCH, "huntaway-tunnel"]).arg(bin).args(["tunnel", "--no-autoupdate", "run"])
+        .env("TUNNEL_TOKEN", token).stdin(watched)
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .process_group(0).kill_on_drop(true).spawn().context("starting the tunnel connector")?;
+    Ok((child, alive))
+}
+
+async fn session(s: &Shared, url: &str, token: &str, name: &str, key: &str, origin_port: Option<u16>, connector: &watch::Sender<Option<proto::Tunnel>>) -> Result<()> {
     let ws_url = format!("{}/_broker/connect", url.trim_end_matches('/').replacen("http", "ws", 1));
     let mut req = ws_url.into_client_request()?;
     req.headers_mut().insert("Authorization", format!("Bearer {token}").parse()?);
     let (ws, _) = tokio_tungstenite::connect_async(req).await.context("connecting")?;
     let (mut sink, mut stream) = ws.split();
-    let hello = Ctl::Hello { name: name.into(), host_id: s.host_id.clone(), version: env!("CARGO_PKG_VERSION").into(), protocol: proto::PROTOCOL, key: Some(key.into()) };
+    let hello = Ctl::Hello { name: name.into(), host_id: s.host_id.clone(), version: env!("CARGO_PKG_VERSION").into(), protocol: proto::PROTOCOL, key: Some(key.into()), origin_port };
     sink.send(TMessage::Text(serde_json::to_string(&hello)?.into())).await?;
-    match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
+    let relaying = match tokio::time::timeout(Duration::from_secs(120), stream.next()).await {
         Ok(Some(Ok(TMessage::Text(t)))) => match serde_json::from_str::<Ctl>(&t)? {
-            Ctl::Welcome { name } => tracing::info!("reachable through the broker {url} as {name}"),
+            Ctl::Welcome { name, tunnel } => {
+                if let Some(t) = &tunnel { tracing::info!("host {name} tunnel endpoint {} (broker handles setup only)", t.url); }
+                else { tracing::info!("reachable through the broker {url} as {name}"); }
+                let relaying = tunnel.is_none();
+                connector.send_if_modified(|old| { if *old == tunnel { false } else { *old = tunnel; true } });
+                relaying
+            }
             Ctl::Refused { error } => bail!("refused: {error}"),
             other => bail!("expected a welcome, got {other:?}"),
         },
         _ => bail!("no welcome"),
-    }
+    };
     let (tx, mut rx) = mpsc::unbounded_channel::<TMessage>();
     let writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
@@ -127,6 +226,7 @@ async fn session(s: &Shared, url: &str, token: &str, name: &str, key: &str) -> R
             };
             match msg {
                 TMessage::Text(t) => match serde_json::from_str::<Ctl>(&t) {
+                    Ok(Ctl::Req { .. }) if !relaying => bail!("the broker tried to relay application traffic in managed tunnel mode"),
                     Ok(Ctl::Req { id, method, path, headers, body, ws }) => {
                         let (in_tx, in_rx) = mpsc::unbounded_channel();
                         let window = proto::Window::default();
@@ -481,6 +581,205 @@ mod tests {
     use crate::testing;
     use serde_json::Value;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn connector_lives_across_broker_disconnects_and_is_stopped_when_its_owner_goes() {
+        testing::run(async || {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = testing::temp_dir();
+            let bin = dir.join("cloudflared");
+            // The fake connector records the credential from its environment and blocks like cloudflared.
+            std::fs::write(&bin, "#!/bin/sh\nd=$(dirname \"$0\")\nprintf '%s' \"$TUNNEL_TOKEN\" > \"$d/token\"\nprintf '%s' \"$$\" > \"$d/pid\"\nexec sleep 600\n").unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let tunnel = proto::Tunnel { url: "https://desktop.example.com".into(), token: "connector-secret".into() };
+            let welcome = Ctl::Welcome { name: "desktop".into(), tunnel: Some(tunnel.clone()) };
+            let app = axum::Router::new().route("/_broker/connect", axum::routing::get(move |ws: axum::extract::WebSocketUpgrade| {
+                let welcome = welcome.clone();
+                async move { ws.on_upgrade(move |mut ws| async move {
+                    let _ = ws.recv().await;
+                    ws.send(axum::extract::ws::Message::Text(serde_json::to_string(&welcome).unwrap().into())).await.unwrap();
+                    ws.close().await.unwrap();
+                }) }
+            }));
+            let (broker, _) = http_server(app).await;
+            let (tx, rx) = watch::channel(None);
+            let connector = tokio::spawn(connect_tunnel(rx, bin.into_os_string()));
+            let s = testing::state();
+            let _ = session(&s, &broker, "broker-token", "desktop", "host-key", Some(12345), &tx).await;
+            assert_eq!(*tx.borrow(), Some(tunnel));
+            for _ in 0..100 {
+                if dir.join("pid").is_file() { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let pid: u32 = std::fs::read_to_string(dir.join("pid")).unwrap().parse().unwrap();
+            let process = std::path::PathBuf::from(format!("/proc/{pid}"));
+            assert!(process.exists(), "broker disconnected and the connector died");
+            assert_eq!(std::fs::read_to_string(dir.join("token")).unwrap(), "connector-secret");
+            assert!(!String::from_utf8_lossy(&std::fs::read(process.join("cmdline")).unwrap()).contains("connector-secret"));
+            drop(tx);
+            connector.await.unwrap();
+            assert!(!process.exists(), "connector wasn't reaped");
+        });
+    }
+
+    #[test]
+    fn managed_registration_channels_refuse_application_requests() {
+        testing::run(async || {
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counter = calls.clone();
+            let (internal, _) = http_server(axum::Router::new().route("/test", axum::routing::get(move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { "shouldn't be called" }
+            }))).await;
+            let s = testing::state_as(Identity { internal_url: internal, host_id: "desktop".into(), host_name: "desktop".into(),
+                token: "host-token".into(), hub_token: String::new() });
+            let app = axum::Router::new().route("/_broker/connect", axum::routing::get(|ws: axum::extract::WebSocketUpgrade| async {
+                ws.on_upgrade(|mut ws| async move {
+                    let _ = ws.recv().await;
+                    for msg in [Ctl::Welcome { name: "desktop".into(), tunnel: Some(proto::Tunnel {
+                        url: "https://desktop.example.com".into(), token: "connector-token".into() }) },
+                        Ctl::Req { id: 1, method: "GET".into(), path: "/test".into(), headers: vec![], body: false, ws: false }] {
+                        ws.send(axum::extract::ws::Message::Text(serde_json::to_string(&msg).unwrap().into())).await.unwrap();
+                    }
+                    let _ = ws.recv().await;
+                })
+            }));
+            let (broker, _) = http_server(app).await;
+            let (tx, _rx) = watch::channel(None);
+            let error = session(&s, &broker, "broker-token", "desktop", "host-key", Some(12345), &tx).await.unwrap_err();
+            assert!(error.to_string().contains("tried to relay application traffic"));
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connector_watchdog_stops_the_group_when_the_servers_pipe_closes() {
+        testing::run(async || {
+            use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
+            let dir = testing::temp_dir();
+            // Spaces and shell metacharacters must be a literal executable name.
+            let bin = dir.join("fake connector $literal");
+            std::fs::write(&bin, "#!/bin/sh\nprintf ready > \"$(dirname \"$0\")/ready\"\nexec sleep 600\n").unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let (mut child, alive) = spawn_connector(bin.as_os_str(), "connector-token").unwrap();
+            for _ in 0..100 {
+                if dir.join("ready").is_file() { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(dir.join("ready").is_file(), "literal connector path wasn't executed");
+            // Models the kernel closing the server's descriptors on exec or forced exit.
+            drop(alive);
+            let status = tokio::time::timeout(Duration::from_secs(3), child.wait()).await.expect("orphaned connector").unwrap();
+            assert_eq!(status.signal(), Some(libc::SIGKILL));
+        });
+    }
+
+    async fn http_server(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, task)
+    }
+
+    #[test]
+    fn private_tunnel_origin_never_exposes_open_token() {
+        testing::run(async || {
+            let app = axum::Router::new().route("/api/open-token", axum::routing::get(crate::open_token("secret".into())));
+            let port = origin(app).await.unwrap();
+            let client = reqwest::Client::new();
+            for path in ["/api/open-token", "/api/%6fpen-token", "/api/open-token?token=x"] {
+                let response = client.get(format!("http://127.0.0.1:{port}{path}")).send().await.unwrap();
+                assert!(!response.status().is_success(), "{path}");
+                assert!(!response.text().await.unwrap().contains("secret"));
+            }
+        });
+    }
+
+    #[test]
+    fn discovery_checks_identity_and_rejects_unsafe_or_redirected_endpoints() {
+        testing::run(async || {
+            let app = axum::Router::new().route("/_broker/resolve/{name}", axum::routing::get(
+                |axum::extract::Path(name): axum::extract::Path<String>, headers: axum::http::HeaderMap| async move {
+                    assert!(!headers.contains_key("authorization"));
+                    if name == "legacy" { return axum::http::StatusCode::NOT_FOUND.into_response(); }
+                    if name == "redirect" { return axum::response::Redirect::temporary("https://evil.example.com").into_response(); }
+                    let url = match name.as_str() {
+                        "plain" => "http://public.example.com",
+                        "credentials" => "https://user:secret@public.example.com",
+                        "query" => "https://public.example.com/?token=secret",
+                        "path" => "https://public.example.com/other",
+                        "missing" => "",
+                        _ => "https://desktop.example.com",
+                    };
+                    axum::Json(json!({"host_id": "desktop", "url": url})).into_response()
+                }));
+            let (broker, _) = http_server(app).await;
+            let address = |name| format!("{broker}/_broker/h/{name}");
+            assert_eq!(resolve(&address("desktop"), Some("desktop")).await.unwrap(), "https://desktop.example.com");
+            assert_eq!(resolve(&address("legacy"), Some("desktop")).await.unwrap(), address("legacy"));
+            assert!(resolve(&address("desktop"), Some("different-host")).await.unwrap_err().to_string().contains("different host"));
+            for name in ["plain", "credentials", "query", "path", "missing", "redirect"] {
+                assert!(resolve(&address(name), None).await.is_err(), "{name}");
+            }
+            let (direct, _) = http_server(axum::Router::new().fallback(|| async { "<html>host UI</html>" })).await;
+            assert_eq!(resolve(&direct, None).await.unwrap(), direct);
+        });
+    }
+
+    #[test]
+    fn hub_links_resolve_before_authenticating_and_survive_a_broker_outage() {
+        testing::run(async || {
+            let remote = testing::state_as(Identity { host_id: "remote".into(), host_name: "remote".into(), token: "remote-tok".into(),
+                hub_token: "remote-hub".into(), internal_url: String::new() });
+            let (endpoint, _) = http_server(crate::api::router(remote.clone())).await;
+            let hub = testing::state_as(Identity { host_id: "hub".into(), host_name: "hub".into(), token: "hub-tok".into(),
+                hub_token: "hub-join".into(), internal_url: String::new() });
+            let (hub_url, _) = http_server(crate::api::router(hub.clone())).await;
+            let direct_hub = hub_url.clone();
+            let default_hub = hub_url.clone();
+            let app = axum::Router::new().route("/_broker/resolve", axum::routing::get(move || {
+                let url = default_hub.clone();
+                async move { ([("x-huntaway-broker", "1")], axum::Json(json!({"host_id": "hub", "url": url}))) }
+            })).route("/_broker/resolve/{name}", axum::routing::get(
+                move |axum::extract::Path(name): axum::extract::Path<String>, headers: axum::http::HeaderMap| {
+                    let endpoint = if name == "hub" { direct_hub.clone() } else { endpoint.clone() };
+                    async move {
+                        assert!(!headers.contains_key("authorization"), "discovery received a host token");
+                        axum::Json(json!({"host_id": name, "url": endpoint}))
+                    }
+                }));
+            let (broker, broker_task) = http_server(app).await;
+            let client = reqwest::Client::new();
+            let res = client.post(format!("{hub_url}/api/hosts")).bearer_auth("hub-tok")
+                .json(&json!({"url": format!("{broker}/_broker/h/remote"), "token": "remote-tok"})).send().await.unwrap();
+            assert_eq!(res.status(), 200, "{}", res.text().await.unwrap());
+            // The saved URL remains the broker URL, so a future reconnect resolves the current endpoint.
+            assert!(crate::db::list_links(&hub.db()).unwrap()[0].url.as_ref().unwrap().starts_with(&broker));
+            let caller = testing::state_as(Identity { host_id: "caller".into(), host_name: "caller".into(), token: "caller-tok".into(),
+                hub_token: String::new(), internal_url: String::new() });
+            let _ = crate::api::router(caller.clone());
+            crate::hub::dial_out(&caller, broker.clone(), "hub-join".into());
+            for _ in 0..100 {
+                if crate::hub::find_link(&hub, "remote").is_some() && crate::hub::find_link(&hub, "caller").is_some() { break; }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let link = crate::hub::find_link(&hub, "remote").expect("outbound link never connected");
+            let inbound = crate::hub::find_link(&hub, "caller").expect("dial-in link never connected");
+            let (_tx, mut events) = link.open_ws("/api/host/ws").await.unwrap();
+            assert!(events.recv().await.is_some());
+            broker_task.abort();
+            let _ = broker_task.await;
+            assert_eq!(link.request("GET", "/api/info", None).await.unwrap().1["host_id"], "remote");
+            assert_eq!(inbound.request("GET", "/api/info", None).await.unwrap().1["host_id"], "caller");
+            remote.events.send(json!({"type": "after_broker_stopped"})).unwrap();
+            let event = events.recv().await.unwrap();
+            assert!(matches!(event, crate::relay::Frame::Text(t) if t.contains("after_broker_stopped")));
+        });
+    }
+
+    use axum::response::IntoResponse;
+
     const BROKER_TOKEN: &str = "broker-token-0123456789";
 
     /// The websockets the host is relaying to its own server, by path, so a test can see one end.
@@ -610,7 +909,7 @@ mod tests {
     async fn broker_with(cfg: huntaway_broker::Config) -> String {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
-        let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..cfg });
+        let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..cfg }).unwrap();
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
         url
     }

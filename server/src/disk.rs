@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn sizes_skip_nested_folders_and_count_hard_links_once() {
-        let tmp = tempdir();
+        let tmp = crate::testing::temp_dir();
         let root = tmp.join("r");
         write(&root.join("a"), 10_000);
         write(&root.join("sub/b"), 10_000);
@@ -487,7 +487,7 @@ mod tests {
     fn reports_repos_worktrees_and_stray_folders() {
         crate::testing::run(async || {
             let s = crate::testing::state();
-            let tmp = tempdir();
+            let tmp = crate::testing::temp_dir();
             let repo = tmp.join("repo");
             write(&repo.join("src/main.rs"), 8_000);
             write(&repo.join(".git/objects/pack"), 40_000);
@@ -576,7 +576,7 @@ mod tests {
     fn shared_worktrees_folders_only_count_unowned_worktrees_of_the_repo_as_stray() {
         crate::testing::run(async || {
             let s = crate::testing::state();
-            let tmp = tempdir();
+            let tmp = crate::testing::temp_dir();
             // One folder holds both repos and both projects' worktrees.
             let shared = tmp.join("code");
             let (repo_a, repo_b) = (shared.join("a"), shared.join("b"));
@@ -622,11 +622,5 @@ mod tests {
             assert_eq!(wts, vec![(None, path_str(&shared.join("a-old"))), (Some("ta".into()), path_str(&shared.join("a-1")))]);
             std::fs::remove_dir_all(&tmp).unwrap();
         })
-    }
-
-    fn tempdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!("ia-disk-{}", crate::util::new_id()));
-        std::fs::create_dir_all(&p).unwrap();
-        p
     }
 }

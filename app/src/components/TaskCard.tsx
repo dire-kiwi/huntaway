@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Kanban, Layers } from "lucide-react";
+import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Hourglass, Kanban, Layers } from "lucide-react";
 import { memo, type KeyboardEvent, type MouseEvent } from "react";
-import { agentWaiting, isScratch, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../api";
+import { agentWaiting, isScratch, limitQueued, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../api";
 import { inGroupTaskGroup } from "../projectGroups";
 import { navigate, openTask, usePanelOpen } from "../router";
 import { isGroupTask, keyPrefix, useStore } from "../store";
@@ -11,8 +11,10 @@ import { DependencyBadge } from "./Dependencies";
 import { FanoutBadge } from "./Fanout";
 import { TaskMarks } from "./Reminders";
 import { TaskTypeBadge } from "./Document";
+import { AgentIcon } from "./AgentIcon";
 import { ActivityTime, BranchIcon, CARD_BADGE, CardState, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "./ui";
 import { useNarrow, useTouch } from "../narrow";
+import { resetsIn, resetTime } from "../usageConfigs";
 
 
 /** How many of a subproject's tasks are done. */
@@ -202,6 +204,11 @@ function TaskBadges({ task, project, progress, compact }: { task: Task; project?
           <GitMerge size={11} /> {words("rejoins merge queue")}
         </span>
       )}
+      {limitQueued(task) && (
+        <span className={badge} title={`Waiting for its config's usage limit to reset (${resetTime(task.limit_reset_at!)}); its agent carries on then`}>
+          <Hourglass size={11} /> {words("usage resets")} {resetsIn(task.limit_reset_at!, Date.now())}
+        </span>
+      )}
       <DependencyBadge task={task} project={project} compact={compact} />
       {task.fanout_id && <FanoutBadge task={task} />}
       <ReviewBadge task={task} compact={compact} />
@@ -287,7 +294,8 @@ export const TaskCard = memo(function TaskCard({
     >
       {/* One line that never wraps: the key and the state stay whole, and badges that don't fit are cut off. */}
       <div className="mb-1 flex items-center gap-2 text-[11px] text-faint">
-        <span className="shrink-0 font-mono">
+        <span className="flex shrink-0 items-center gap-1 font-mono">
+          <AgentIcon task={task} size={11} />
           {keyPrefix(task, project)}-{task.number}
         </span>
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
@@ -365,6 +373,7 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
+        <AgentIcon task={task} />
         {cost(task.cost_usd) && <span>{cost(task.cost_usd)}</span>}
         <span className="w-14 text-right narrow:ml-auto narrow:w-auto narrow:shrink-0">
           <ActivityTime task={task} />

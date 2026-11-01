@@ -65,7 +65,6 @@ impl Ctx {
     }
 }
 
-
 /// Sent with `initialize`; Claude Code adds it to the agent's system prompt.
 const INSTRUCTIONS: &str = "Tools for the Huntaway board, a kanban board where each task is worked by its own Claude agent. \
 The board has a profile for each Claude login (e.g. work, personal), each with its own projects and tasks. Besides your own \
@@ -157,6 +156,8 @@ fn board_tools() -> Value {
         "description": "Remind the user of the task later: it's listed under Reminders in the board's sidebar, and shows as due from this time on. A delay from now (30m, 2h, 1d 12h, 1w), a time like 2026-05-01T09:00:00Z, or a date and time in the host's time zone (2026-05-01 09:00; a date alone means 9:00). Replaces any reminder it has; an empty string clears it."
     });
     let reminder = json!({"type": "string", "description": "What the reminder is for, shown with it (with remind_at, or to change the note of the reminder the task has)"});
+    let copy_files = json!({"type": "string", "description": "Needs approval. Git-ignored files copied into each new worktree from the repository folder before the setup script, as .gitignore-style patterns, one per line (.env, /config/local.json, !*.bak), like a .worktreeinclude file (which is read too). Only files git ignores are copied, and none the worktree already has."});
+    let link_folders = json!({"type": "string", "description": "Needs approval. Git-ignored folders of the repository (paths relative to it, one per line, e.g. models/cache) symlinked into each new worktree instead of copied, so changes in them change the original"});
     let project_ref = "Project id, key or name (<profile>:<key> for another profile's board), or 'all'";
     let project_one = "Project id, key or name (<profile>:<key> for another profile's board); defaults to the current project";
     let mut tools = json!([
@@ -337,11 +338,13 @@ fn board_tools() -> Value {
                 "auto_review": {"type": "boolean", "description": "Review each task's changes when it moves to in_review"},
                 "review_rounds": {"type": "integer", "minimum": 0, "maximum": 20, "description": "How many times in a row a review's serious issues go back to the agent to fix before the task is left for the user"},
                 "group_name": {"type": "string", "description": "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group"},
-                "reviewers": {"type": "array", "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list is one reviewer with the task's own config. claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults.",
+                "reviewers": {"type": ["array", "null"], "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list uses the profile's reviewers (by default one reviewer with the task's own config). claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults.",
                     "items": {"type": "object", "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}}}},
                 "permission_mode": {"type": "string", "enum": permission_modes, "description": "Needs approval. What the project's agents may do without asking the user, over the host's default"},
                 "setup_script": {"type": "string", "description": "Needs approval. Runs in a task's new worktree"},
                 "teardown_script": {"type": "string", "description": "Needs approval. Runs in a task's worktree before it's removed"},
+                "copy_files": copy_files,
+                "link_folders": link_folders,
                 "status_script": {"type": "string", "description": "Needs approval. Runs whenever one of the project's tasks changes status"},
                 "status_scripts": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Needs approval. A script per status (the keys), run when a task moves into it; replaces them all, and a blank script is none"},
                 "repo_path": {"type": "string", "description": "Needs approval. The project's repository folder, e.g. after the folder was moved or renamed: it must be the same repository (or, with move_repo, a path that doesn't exist yet). Task worktrees are reconnected to it."},
@@ -363,6 +366,18 @@ fn board_tools() -> Value {
             }, "required": ["repo_path"]}
         }
     ]);
+    // (Added here: the list above is as long as `json!` can take.)
+    if let Some(props) = tools.as_array_mut().unwrap().iter_mut().find(|t| t["name"] == "update_project").and_then(|t| t["inputSchema"]["properties"].as_object_mut()) {
+        props.insert(
+            "auto_summary".into(),
+            json!({"type": "boolean", "description": "Once a task's review passes, have an agent summarise its changes for the user to read before merging"}),
+        );
+        props.insert("summarizer".into(), json!({
+            "type": ["object", "null"],
+            "description": "Who writes those summaries: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; {} is the task's config with the defaults, and null uses the profile's summarizer.",
+            "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}},
+        }));
+    }
     tools.as_array_mut().unwrap().extend(automation_tools(&profile, project_one));
     tools
 }

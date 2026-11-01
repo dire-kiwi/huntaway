@@ -23,6 +23,22 @@ export interface HarnessWord {
   label: string;
 }
 
+export const CODEX_MODEL_ALIASES = ["sol", "astra", "terra", "luna"];
+
+/** Only numbered releases of the exact family count; variants and previews keep their full ids. */
+function modelWords(c: HarnessConfig) {
+  const models = c.models.map((m) => ({ ...m, word: m.id }));
+  if (c.agent !== "codex") return models;
+  for (const alias of CODEX_MODEL_ALIASES) {
+    const releases = c.models.filter((m) => new RegExp(`^gpt-\\d+(?:\\.\\d+)*-${alias}$`, "i").test(m.id));
+    const latest = releases.sort((a, b) => b.id.localeCompare(a.id, "en", { numeric: true }))[0];
+    if (latest && !models.some((m) => m.word.toLowerCase() === alias)) {
+      models.push({ id: latest.id, word: alias, label: `${alias[0].toUpperCase() + alias.slice(1)} (latest · ${latest.id})` });
+    }
+  }
+  return models;
+}
+
 const slug = (s: string) =>
   s
     .toLowerCase()
@@ -33,7 +49,8 @@ const slug = (s: string) =>
  * The words `!` takes, in the order they're offered: `default` (`defaultWord`) for the default model in the `selected`
  * config; the selected config's models by their ids; the other configs' models by their ids too, where no config
  * before them has the id; and, for a model more than one config has (or may have: another config of the same agent),
- * `<model>.<config>` for each (`opus.work`). A
+ * `<model>.<config>` for each (`opus.work`).
+ * Codex's family aliases (sol, astra, terra, luna) name its latest listed numbered release. A
  * config's name alone (`!codex`) names it with its default model, unless a model has that id.
  */
 export function harnessWords(configs: HarnessConfig[], selected: string, defaultWord: string): HarnessWord[] {
@@ -54,13 +71,13 @@ export function harnessWords(configs: HarnessConfig[], selected: string, default
     if (!taken(word)) out.push({ word, harness, label });
   };
   add(defaultWord, { config: sel.id, model: "" }, named(sel, "Default model"));
-  for (const c of order) for (const m of c.models) add(m.id, { config: c.id, model: m.id }, named(c, m.label));
+  for (const c of order) for (const m of modelWords(c)) add(m.word, { config: c.id, model: m.id }, named(c, m.label));
   if (many) {
     for (const c of order) {
-      for (const m of c.models) {
+      for (const m of modelWords(c)) {
         // Another config has it too, or may have (another of the same agent, whose models may not be known yet).
         if (configs.some((o) => o !== c && (o.agent === c.agent || o.models.some((x) => x.id.toLowerCase() === m.id.toLowerCase())))) {
-          add(`${m.id}.${configWord(c)}`, { config: c.id, model: m.id }, named(c, m.label));
+          add(`${m.word}.${configWord(c)}`, { config: c.id, model: m.id }, named(c, m.label));
         }
       }
     }

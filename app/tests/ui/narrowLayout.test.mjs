@@ -15,14 +15,19 @@ const ATTENTION = "A task waiting on an answer";
 const REVIEW = "Finished work to look over";
 const ARCHIVED = "Shipped last week";
 
-/** Whether the element with `text` is on screen (not in a column scrolled off to the side, say). */
-const onScreen = (page, text) =>
-  page.evaluate((text) => {
-    const el = [...document.querySelectorAll("[data-task]")].find((e) => e.textContent.includes(text));
-    if (!el) return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.left >= 0 && r.right <= innerWidth && r.top < innerHeight;
-  }, text);
+/** Whether the card with `text` is on screen (not in a column scrolled off to the side, say), and on a phone its column
+ * has finished scrolling into place. Runs in the page. */
+function cardOnScreen(text) {
+  const el = [...document.querySelectorAll("[data-task]")].find((e) => e.textContent.includes(text));
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  if (!(r.width > 0 && r.left >= 0 && r.right <= innerWidth && r.top < innerHeight)) return false;
+  const column = el.closest("[role=tabpanel]");
+  return !column || Math.abs(column.getBoundingClientRect().left - column.parentElement.getBoundingClientRect().left) < 1;
+}
+const onScreen = (page, text) => page.evaluate(cardOnScreen, text);
+/** Waits for the card with `text` to be on screen, as a column scrolls to it. */
+const untilOnScreen = (page, text) => page.waitForFunction(cardOnScreen, text, { timeout: 5000 });
 
 // HA-13: on a phone the sidebar is a drawer, opened from the page's header and closed once it's taken you somewhere.
 test("on a phone the sidebar is a drawer", async () => {
@@ -51,8 +56,8 @@ test("on a phone the board shows one column at a time", async () => {
     assert.ok(await onScreen(page, ATTENTION));
     assert.equal(await onScreen(page, TODO), false);
 
-    await ui.run(["click role=tab[name=/^To do/]", "sleep 800"]);
-    assert.ok(await onScreen(page, TODO));
+    await ui.run(["click role=tab[name=/^To do/]"]);
+    await untilOnScreen(page, TODO);
     assert.equal(await onScreen(page, ATTENTION), false);
 
     // Swiping sideways picks the next column.
@@ -63,8 +68,8 @@ test("on a phone the board shows one column at a time", async () => {
     await ui.run(["wait role=tab[name=/^In progress/][selected=true]"]);
 
     // The column picked last is the one shown next time.
-    await ui.run([`goto /p/${project.id}`, "wait role=tab[name=/^In progress/][selected=true]", "sleep 300"]);
-    assert.ok(await onScreen(page, "Something being worked on"));
+    await ui.run([`goto /p/${project.id}`, "wait role=tab[name=/^In progress/][selected=true]"]);
+    await untilOnScreen(page, "Something being worked on");
 
     // HA-30: each board remembers its own: another board opens on what needs attention, and its pick doesn't move this one's.
     await ui.run(["goto /profile/Default", "wait role=tab[name=/^Needs attention/][selected=true]", "click role=tab[name=/^Backlog/]"]);
@@ -76,7 +81,9 @@ test("on a phone the board shows one column at a time", async () => {
 test("on a phone a card's menu moves it to another column", async () => {
   await withBrowser(server, PHONE, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^To do/]", "sleep 600", `click [aria-label="Move ${TODO} to…"]`, "wait role=menu"]);
+    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^To do/]"]);
+    await untilOnScreen(page, TODO);
+    await ui.run([`click [aria-label="Move ${TODO} to…"]`, "wait role=menu"]);
     assert.match(await page.getByRole("menu").textContent(), /^Move DEMO-2 to/);
     // Within the screen.
     const box = await page.getByRole("menu").boundingBox();
@@ -84,9 +91,9 @@ test("on a phone a card's menu moves it to another column", async () => {
     await ui.run(["click role=menuitemradio[name='In review']", "gone role=menu", "wait role=tab[name=/^In review\\s*5$/]"]);
     const tasks = await server.api("GET", `/projects/${project.id}/tasks`);
     assert.equal(tasks.find((t) => t.title === TODO).status, "in_review");
-    await ui.run(["click role=tab[name=/^In review/]", "sleep 600"]);
-    assert.ok(await onScreen(page, TODO));
-    assert.ok(await onScreen(page, REVIEW));
+    await ui.run(["click role=tab[name=/^In review/]"]);
+    await untilOnScreen(page, TODO);
+    await untilOnScreen(page, REVIEW);
   });
 });
 
@@ -94,7 +101,9 @@ test("on a phone a card's menu moves it to another column", async () => {
 test("on a phone a task opens full screen with a back button", async () => {
   await withBrowser(server, PHONE, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^Needs attention/]", "sleep 600", `click ${ATTENTION}`, "wait role=button[name='Back']"]);
+    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^Needs attention/]"]);
+    await untilOnScreen(page, ATTENTION);
+    await ui.run([`click ${ATTENTION}`, "wait role=button[name='Back']"]);
     assert.ok(new URL(page.url()).searchParams.get("task"));
     const panel = await page.locator("main").first().boundingBox();
     assert.equal(Math.round(panel.width), 390);

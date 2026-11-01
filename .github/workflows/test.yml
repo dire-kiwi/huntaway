@@ -42,6 +42,7 @@ jobs:
         working-directory: server
         run: cargo build --locked
 
+      # Each test binary runs in a TMPDIR of its own and fails if it leaves anything in it (server/.cargo/test-runner).
       - name: cargo test
         working-directory: server
         run: cargo test --locked
@@ -61,6 +62,12 @@ jobs:
       - name: npm ci
         working-directory: app
         run: npm ci --no-audit --no-fund
+
+      # npm ci doesn't mind a package-lock.json that's behind package.json, but npm install
+      # rewrites it, which leaves the checkout of a host that builds it with uncommitted changes.
+      - name: package-lock.json is up to date
+        working-directory: app
+        run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
 
       - name: Typecheck
         working-directory: app

@@ -9,16 +9,23 @@
 //! Only configs with `show_usage` turned on are fetched and listed. The endpoint's rate limit is
 //! per account, and every host with a copy of the login (PR previews, test servers) would
 //! otherwise poll it too.
+//!
+//! A config is *out* when a run on it was refused for its usage limit (Claude Code's
+//! `rate_limit_event` with status `rejected`, Codex's `usageLimitExceeded`), until that limit
+//! resets. Usage at 100% alone doesn't make it out: a plan with extra usage carries on past it.
+//! A run that stops on its limit leaves the reset on its task (`Task::limit_reset_at`), and its
+//! profile's `limit_wait` and `limit_switch` say what the board does about it (see `before_run`
+//! and `resume_loop`).
 
 use std::time::{Duration, Instant};
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::db;
-use crate::state::{ApiResult, Shared};
+use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::expand_tilde;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -48,6 +55,9 @@ pub struct Usage {
     pub updated_at: Option<String>,
     /// Why the last fetch didn't work; `limits` may still hold older numbers.
     pub error: Option<String>,
+    /// Until when the config is out of usage (API 81): when the limit a run on it was refused
+    /// for resets. Kept in memory, so a restart forgets it until a run is refused again.
+    pub out_until: Option<String>,
     #[serde(skip)]
     fetched: Option<Instant>,
 }
@@ -207,9 +217,20 @@ fn parse_limits(v: &Value) -> Vec<Limit> {
         .collect()
 }
 
-/// A `rate_limit_event` from an agent run with `config_id`: update its session and weekly limits.
+/// A `rate_limit_event` from an agent run with `config_id`: update its session and weekly limits,
+/// and whether it's out of usage.
 pub fn on_rate_limit_event(s: &Shared, config_id: &str, v: &Value) {
-    let windows = &v["rate_limit_info"]["unifiedWindows"];
+    let info = &v["rate_limit_info"];
+    // A plan with extra usage reports its used-up limit as rejected while its turns go on, on
+    // the extra usage (as Claude Code works out `isUsingOverage`).
+    let overage = info["isUsingOverage"] == true || matches!(info["overageStatus"].as_str(), Some("allowed" | "allowed_warning"));
+    match info["status"].as_str() {
+        Some("rejected") if !overage => set_out(s, config_id, info["resetsAt"].as_i64().and_then(timestamp)),
+        // Allowed again (or on extra usage), whatever said it was out before.
+        Some(_) => set_out(s, config_id, None),
+        None => {}
+    }
+    let windows = &info["unifiedWindows"];
     let mut limits = vec![];
     for (key, id, label) in [("five_hour", "session", "Session"), ("seven_day", "weekly", "Weekly")] {
         let w = &windows[key];
@@ -218,6 +239,153 @@ pub fn on_rate_limit_event(s: &Shared, config_id: &str, v: &Value) {
         limits.push(Limit { id: id.into(), label: label.into(), percent: (util * 1000.0).round() / 10.0, resets_at });
     }
     set_limits(s, config_id, limits, None);
+}
+
+/// A Unix time, as the board writes times that are compared as text (`limit_reset_at`).
+fn timestamp(t: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(t, 0).map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+}
+
+fn parse_time(t: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(t).ok().map(|t| t.with_timezone(&chrono::Utc))
+}
+
+/// Mark `config_id` out of usage until `until` (None: not out), telling the board if that changes.
+fn set_out(s: &Shared, config_id: &str, until: Option<String>) {
+    let usage = {
+        let mut cache = s.usage.lock().unwrap();
+        if until.is_none() && cache.get(config_id).is_none_or(|u| u.out_until.is_none()) {
+            return;
+        }
+        let u = cache.entry(config_id.to_string()).or_insert_with(|| Usage { config_id: config_id.to_string(), ..Default::default() });
+        if u.out_until == until {
+            return;
+        }
+        u.out_until = until;
+        u.clone()
+    };
+    s.emit(json!({"type": "usage", "usage": usage}));
+}
+
+/// When `config_id` is out of usage until, if it is now.
+pub fn out_until(s: &Shared, config_id: &str) -> Option<String> {
+    let cache = s.usage.lock().unwrap();
+    let until = cache.get(config_id)?.out_until.clone()?;
+    parse_time(&until).is_some_and(|t| t > chrono::Utc::now()).then_some(until)
+}
+
+/// A Codex turn on `config_id` failed with `usageLimitExceeded`. Codex doesn't say which limit,
+/// so it's out until the latest reset of the limits it last reported as used up.
+pub fn codex_refused(s: &Shared, config_id: &str) {
+    let until = {
+        let cache = s.usage.lock().unwrap();
+        let limits = cache.get(config_id).map(|u| u.limits.clone()).unwrap_or_default();
+        limits.iter().filter(|l| l.percent >= 100.0).filter_map(|l| parse_time(l.resets_at.as_deref()?)).max()
+    };
+    if let Some(t) = until {
+        set_out(s, config_id, Some(t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)));
+    }
+}
+
+/// A run of `task_id` on `config_id` stopped because the config is out of usage: note on the
+/// task when the limit resets, for `finish` to act on as the run ends (see runner::finish).
+/// Nothing is noted when the reset isn't known (or is past), and the run just fails.
+pub fn ran_out(s: &Shared, task_id: &str, config_id: &str) {
+    if let Some(until) = out_until(s, config_id) {
+        let _ = s.update_task(task_id, &[("limit_reset_at", json!(until))]);
+    }
+}
+
+/// Whether a reset noted as `limit_reset_at` has come. A minute late, for clocks that disagree.
+pub fn reset_due(limit_reset_at: &str) -> bool {
+    parse_time(limit_reset_at).is_none_or(|t| t + chrono::Duration::minutes(1) <= chrono::Utc::now())
+}
+
+/// Before a run of `task` (not running) starts with `message`: if its config is out of usage,
+/// start a task that hasn't run yet on the next config with room (`limit_switch`), or queue it
+/// until the limit resets (`limit_wait`). Returns the task if it's been queued.
+pub fn before_run(s: &Shared, task: &db::Task, message: Option<db::Queued>) -> ApiResult<Option<db::Task>> {
+    // Already waiting for a reset (by itself or when asked, see `wait_for_reset`): a message
+    // joins the queue, whatever the profile's settings and even if a restart has forgotten
+    // that the config is out.
+    if let Some(until) = task.limit_reset_at.as_deref().filter(|t| task.waiting && !reset_due(t)) {
+        let config = db::task_claude_config(&s.db(), task)?.map(|c| c.name).unwrap_or_else(|| "its config".into());
+        return Ok(Some(crate::runner::wait_for_limit(s, task, &config, until, message)?));
+    }
+    let (profile, config, project) = {
+        let c = s.db();
+        let Some(profile) = db::get_profile(&c, &task.profile_id)? else { return Ok(None) };
+        if !profile.limit_wait && !profile.limit_switch {
+            return Ok(None);
+        }
+        let Some(config) = db::task_claude_config(&c, task)? else { return Ok(None) };
+        let project = task.project_id.as_deref().map(|p| db::get_project(&c, p)).transpose()?.flatten();
+        (profile, config, project)
+    };
+    let Some(until) = out_until(s, &config.id) else { return Ok(None) };
+    if profile.limit_switch && task.session_id.is_none() {
+        // Another of its configs with the same agent, so its model and effort still apply.
+        let others = db::available_configs(&s.db(), &task.profile_id, project.as_ref())?;
+        let agent = if config.is_codex() { "codex" } else { "claude" };
+        let next = others.into_iter().find(|c| c.id != config.id && c.is_codex() == config.is_codex() && out_until(s, &c.id).is_none());
+        if let Some(next) = next.filter(|_| crate::runs::has_agent(agent)) {
+            // Only while it still hasn't started: its conversation stays in the config it starts in.
+            let moved = s.update_task_if(&task.id, &[("claude_config_id", json!(next.id))], |c| {
+                Ok(db::get_task(c, &task.id)?.is_some_and(|t| t.session_id.is_none()) && !db::has_active_run(c, &task.id)?)
+            })?;
+            if moved.is_some() {
+                s.add_event(&task.id, "info", format!("Starting on {} instead: {} is out of usage", next.name, config.name), Some(format!("{} resets at {until}", config.name)));
+                return Ok(None);
+            }
+        }
+    }
+    if !profile.limit_wait {
+        return Ok(None);
+    }
+    let t = crate::runner::wait_for_limit(s, task, &config.name, &until, message)?;
+    Ok(Some(t))
+}
+
+/// `POST /tasks/{id}/wait-for-limit` (API 81): a task whose agent stopped because its config ran
+/// out of usage waits in "In progress" for the limit to reset, and its agent carries on then.
+pub async fn wait_for_reset(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    if task.kind != "task" {
+        return Err(ApiError::bad("only tasks can wait for a usage limit to reset"));
+    }
+    // Out of the merge queue's slot while it waited, another merge could start alongside it.
+    if task.merging {
+        return Err(ApiError::conflict("a merge can't wait for a usage limit to reset, as it would give up its place in the merge queue; message its agent once the limit has reset"));
+    }
+    let Some(until) = task.limit_reset_at.clone().filter(|t| !reset_due(t)) else {
+        return Err(ApiError::conflict("its agent isn't out of usage (or the limit has reset already)"));
+    };
+    if s.is_running(&id) {
+        return Err(ApiError::conflict("its agent is running"));
+    }
+    let config = db::task_claude_config(&s.db(), &task)?.map(|c| c.name).unwrap_or_else(|| "its config".into());
+    Ok(Json(json!(crate::runner::wait_for_limit(&s, &task, &config, &until, None)?)))
+}
+
+/// Background loop: carry on with the tasks waiting for a usage limit to reset, once it has.
+pub fn resume_loop(s: &Shared) {
+    let s = s.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            let due = {
+                let c = s.db();
+                let held: rusqlite::Result<Vec<String>> = c
+                    .prepare("SELECT limit_reset_at FROM tasks WHERE waiting=1 AND limit_reset_at IS NOT NULL")
+                    .and_then(|mut st| st.query_map([], |r| r.get(0))?.collect());
+                held.unwrap_or_default().iter().any(|t| reset_due(t))
+            };
+            if due {
+                crate::runner::start_unblocked(&s, None);
+            }
+        }
+    });
 }
 
 /// Limits an agent run reported for `config_id` (and its plan, if it said).
@@ -276,7 +444,7 @@ mod tests {
         crate::testing::run(async || {
             let s = crate::testing::state();
             // Neither has a login, so the one that's fetched fails without going to the network.
-            let dir = std::env::temp_dir().join(format!("ia-usage-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir().join("claude");
             let (off, on) = {
                 let c = s.db();
                 let off = db::insert_claude_config(&c, "off", &dir.to_string_lossy(), "claude").unwrap();
@@ -292,6 +460,53 @@ mod tests {
             assert!(list[0]["error"].as_str().unwrap().starts_with("No Claude login"));
             assert!(!s.usage.lock().unwrap().contains_key(&off.id));
         })
+    }
+
+    #[test]
+    fn a_refused_run_marks_its_config_out_until_the_reset() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let soon = chrono::Utc::now().timestamp() + 600;
+            let event = |status: &str| json!({"type": "rate_limit_event", "rate_limit_info": {"status": status, "resetsAt": soon, "unifiedWindows": {"five_hour": {"utilization": 1, "resetsAt": soon}}}});
+            on_rate_limit_event(&s, "c", &event("allowed_warning"));
+            assert_eq!(out_until(&s, "c"), None, "at 100% on extra usage, it isn't out");
+            on_rate_limit_event(&s, "c", &event("rejected"));
+            assert_eq!(out_until(&s, "c"), timestamp(soon));
+            assert_eq!(s.usage.lock().unwrap()["c"].limits[0].percent, 100.0);
+            // Allowed again (extra usage bought, say).
+            on_rate_limit_event(&s, "c", &event("allowed"));
+            assert_eq!(out_until(&s, "c"), None);
+            // Rejected, but carrying on with extra usage (as a plan with it enabled reports every turn).
+            on_rate_limit_event(&s, "c", &event("rejected"));
+            let overage = json!({"rate_limit_info": {"status": "rejected", "resetsAt": soon, "overageStatus": "allowed", "isUsingOverage": true}});
+            on_rate_limit_event(&s, "c", &overage);
+            assert_eq!(out_until(&s, "c"), None, "extra usage clears it");
+            on_rate_limit_event(&s, "d", &overage);
+            assert_eq!(out_until(&s, "d"), None);
+            on_rate_limit_event(&s, "d", &json!({"rate_limit_info": {"status": "rejected", "resetsAt": soon, "overageStatus": "allowed_warning"}}));
+            assert_eq!(out_until(&s, "d"), None);
+            // A reset that's past isn't out.
+            on_rate_limit_event(&s, "c", &json!({"rate_limit_info": {"status": "rejected", "resetsAt": soon - 1200}}));
+            assert_eq!(out_until(&s, "c"), None);
+
+            // Codex doesn't say which limit: the latest reset of those used up.
+            let at = |t: i64| chrono::DateTime::from_timestamp(t, 0).unwrap().to_rfc3339();
+            let lim = |id: &str, p: f64, t: i64| Limit { id: id.into(), label: id.into(), percent: p, resets_at: Some(at(t)) };
+            set_limits(&s, "x", vec![lim("session", 100.0, soon), lim("weekly", 100.0, soon + 60), lim("weekly:x", 50.0, soon + 999)], None);
+            codex_refused(&s, "x");
+            assert_eq!(out_until(&s, "x"), timestamp(soon + 60));
+            set_limits(&s, "y", vec![lim("session", 50.0, soon)], None);
+            codex_refused(&s, "y");
+            assert_eq!(out_until(&s, "y"), None, "no reset known");
+        })
+    }
+
+    #[test]
+    fn a_reset_is_due_a_minute_after() {
+        let at = |secs: i64| (chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339();
+        assert!(!reset_due(&at(60)));
+        assert!(!reset_due(&at(-30)));
+        assert!(reset_due(&at(-61)));
     }
 
     #[test]
