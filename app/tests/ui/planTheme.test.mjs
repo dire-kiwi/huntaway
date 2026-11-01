@@ -243,6 +243,11 @@ test("a plan's questions become form fields, and the frame reports each named fi
   // Sent as they are: those aren't touched any more, until the next change; the others still are. Reset: back to the plan's own.
   await post({ iaFormSent: ["db", "pages", "size", "cache"] });
   await frame.locator("input[name=owner]").fill("someone");
+  // The report comes by postMessage too: wait for the one with both (a slower runner read the one from before them).
+  await page.waitForFunction(() => {
+    const fields = window.forms.at(-1).iaForm;
+    return fields.find((f) => f.name === "owner").touched && !fields.find((f) => f.name === "db").touched;
+  });
   assert.deepEqual((await last()).iaForm.filter((f) => f.touched).map((f) => f.name), ["notes", "owner"]);
   await post({ iaFormReset: true });
   await page.waitForFunction(() => window.forms.at(-1).iaFormUser === false);
