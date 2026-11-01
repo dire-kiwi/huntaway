@@ -1,9 +1,10 @@
 //! Test helpers.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
@@ -33,6 +34,7 @@ pub fn run_within(limit: Duration, body: impl AsyncFnOnce() + Send + 'static) {
     let worker = std::thread::Builder::new()
         .name(name)
         .spawn(move || {
+            IN_RUN.set(true);
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
             rt.block_on(body());
             let _ = done.send(());
@@ -42,6 +44,8 @@ pub fn run_within(limit: Duration, body: impl AsyncFnOnce() + Send + 'static) {
         // Finished, or panicked (dropping `done`): pass the panic on.
         Ok(()) | Err(RecvTimeoutError::Disconnected) => {
             if let Err(panic) = worker.join() {
+                // The test fails with it: note that, as `resume_unwind` doesn't call the panic hook.
+                failed();
                 std::panic::resume_unwind(panic);
             }
         }
@@ -102,7 +106,8 @@ fn state_of(id: Identity, meta: crate::admin::ServerMeta) -> Shared {
     s
 }
 
-/// Set (to anything but `0`) to keep the folders of tests that fail, rather than remove them.
+/// Set (to anything but `0`) to keep the folders of tests that fail, rather than remove them (see
+/// `remove_run`).
 const KEEP: &str = "IA_KEEP_TEST_DIRS";
 
 fn keep() -> bool {
@@ -113,7 +118,7 @@ fn keep() -> bool {
 /// made in it (repositories, worktrees, runs) when the test ends, panics included: when the
 /// thread that asked for it exits. Use it rather than `std::env::temp_dir()`, which test runs
 /// used to fill. With `IA_KEEP_TEST_DIRS=1`, a failing test's folders are kept, and their paths
-/// printed.
+/// printed, as the run ends.
 pub fn temp_dir() -> PathBuf {
     let dir = TempDir::new();
     let path = dir.to_path_buf();
@@ -124,20 +129,20 @@ pub fn temp_dir() -> PathBuf {
 thread_local! {
     /// The folders this thread's test made (see `temp_dir`).
     static DIRS: std::cell::RefCell<Vec<TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// Whether this thread has panicked (see `temp_root`).
-    static PANICKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether this thread runs a `run` body, whose panics fail the test only if `run` passes them on.
+    static IN_RUN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// A folder in this run's `temp_root()`, removed when it's dropped. Tests get one from
-/// `temp_dir`, which drops it when the test ends; an `AppState` from `state()` owns its own.
+/// A folder in this run's `temp_root()`, removed when it's dropped (or as the run ends, with
+/// IA_KEEP_TEST_DIRS). Tests get one from `temp_dir`, which drops it when the test ends; an
+/// `AppState` from `state()` owns its own.
 pub struct TempDir(PathBuf);
 
 impl TempDir {
     /// A new, empty folder, named after the test.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let test = std::thread::current().name().unwrap_or("test").replace("::", ".");
-        let dir = temp_root().join(format!("{test}-{}", &crate::util::new_id()[..8]));
+        let dir = temp_root().join(format!("{}-{}", test_name(), &crate::util::new_id()[..8]));
         std::fs::create_dir(&dir).unwrap();
         TempDir(dir)
     }
@@ -152,13 +157,31 @@ impl std::ops::Deref for TempDir {
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        // By the time a thread's `temp_dir`s go, it has finished unwinding.
-        let failed = std::thread::panicking() || PANICKED.try_with(|p| p.get()).unwrap_or(false);
-        if failed && keep() {
-            eprintln!("kept the failing test's folder {}", self.0.display());
-        } else {
+        // Whether its test failed is known for sure only once they've all ended.
+        if !keep() {
             remove(&self.0);
         }
+    }
+}
+
+/// This thread's test, as its folders are named: tests run on threads named after them.
+fn test_name() -> String {
+    std::thread::current().name().unwrap_or("test").replace("::", ".")
+}
+
+/// The tests that failed (see `failed`), whose folders `remove_root` keeps with IA_KEEP_TEST_DIRS.
+static FAILED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Notes that this thread's test failed: it panicked outside a `run` body, or `run` passed on its
+/// body's panic. A test that panics on purpose (`should_panic`) counts too; a panic a `run` body
+/// catches (to fake a crash, say) doesn't.
+fn failed() {
+    if !IN_RUN.try_with(|r| r.get()).unwrap_or(false) {
+        locked(&FAILED).get_or_insert_default().insert(test_name());
     }
 }
 
@@ -200,10 +223,9 @@ fn temp_root() -> &'static Path {
             assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0, "locking {}", root.display());
             std::fs::rename(root.join(".lock-new"), root.join(".lock")).unwrap();
             unsafe { libc::atexit(remove_root) };
-            // Notes which threads panicked, for `TempDir` to keep their folders with IA_KEEP_TEST_DIRS.
             let hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
-                let _ = PANICKED.try_with(|p| p.set(true));
+                failed();
                 hook(info)
             }));
             (root, lock)
@@ -211,15 +233,35 @@ fn temp_root() -> &'static Path {
         .0
 }
 
-/// Removes this run's folder as the process exits. With `IA_KEEP_TEST_DIRS` it keeps the folder
-/// if failing tests' folders are in it, without its `.lock`, so later runs leave it alone.
+/// Removes this run's folder as the process exits.
 extern "C" fn remove_root() {
     let Some((root, _)) = ROOT.get() else { return };
-    if keep() && std::fs::read_dir(root).is_ok_and(|d| d.flatten().any(|e| e.file_name() != ".lock")) {
-        let _ = std::fs::remove_file(root.join(".lock"));
-    } else {
-        remove(root);
+    let failed = locked(&FAILED).clone().unwrap_or_default();
+    remove_run(root, keep(), &failed);
+}
+
+/// Removes a run's folder. With `keep` (IA_KEEP_TEST_DIRS), where `TempDir`s leave their folders
+/// to it, it keeps those of the tests in `failed`, which are named after them. If there are any,
+/// it removes everything else and the `.lock`, so later runs leave the folder alone.
+fn remove_run(root: &Path, keep: bool, failed: &HashSet<String>) {
+    if keep {
+        let mut any = false;
+        for e in std::fs::read_dir(root).into_iter().flatten().flatten() {
+            let (path, name) = (e.path(), e.file_name().to_string_lossy().into_owned());
+            if name == ".lock" {
+            } else if name.rsplit_once('-').is_some_and(|(test, _)| failed.contains(test)) {
+                eprintln!("kept the failing test's folder {}", path.display());
+                any = true;
+            } else {
+                remove(&path);
+            }
+        }
+        if any {
+            let _ = std::fs::remove_file(root.join(".lock"));
+            return;
+        }
     }
+    remove(root);
 }
 
 /// Removes the folders of earlier test runs that were killed before they could remove their own:
@@ -278,17 +320,61 @@ mod tests {
         })
         .join()
         .unwrap();
-        assert!(dir.starts_with(temp_root()) && !dir.exists(), "{}", dir.display());
+        // With IA_KEEP_TEST_DIRS they all wait for the run to end.
+        assert!(dir.starts_with(temp_root()) && dir.exists() == keep(), "{}", dir.display());
 
         let (tx, rx) = mpsc::channel();
-        let failed = std::thread::spawn(move || {
-            tx.send(temp_dir()).unwrap();
-            panic!("failed");
-        })
-        .join();
+        let failed = std::thread::Builder::new()
+            .name("testing.fails".into())
+            .spawn(move || {
+                tx.send(temp_dir()).unwrap();
+                panic!("failed");
+            })
+            .unwrap()
+            .join();
         assert!(failed.is_err());
         let dir = rx.recv().unwrap();
         assert_eq!(dir.exists(), keep(), "{}", dir.display());
+        assert!(locked(&FAILED).as_ref().is_some_and(|f| f.contains("testing.fails")));
+        // This test passes, so it doesn't keep it.
+        remove(&dir);
+    }
+
+    #[test]
+    fn a_test_fails_with_a_panic_its_run_passes_on() {
+        let test = |name: &str, body: fn()| {
+            let _ = std::thread::Builder::new().name(name.into()).spawn(body).unwrap().join();
+            locked(&FAILED).as_ref().is_some_and(|f| f.contains(name))
+        };
+        // Passed on without the panic hook.
+        assert!(test("testing.run_fails", || run(async || panic!("failed"))));
+        // Caught, as tests that fake a crash do.
+        assert!(!test("testing.run_catches", || run(async || assert!(std::panic::catch_unwind(|| panic!("crash")).is_err()))));
+    }
+
+    #[test]
+    fn keeps_only_failing_tests_folders() {
+        let root = temp_dir();
+        for d in ["a.passes-12345678", "a.fails-12345678", "a.fails-abcdefgh", "a.fails.too-12345678", "a.fail-12345678"] {
+            std::fs::create_dir(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join(".lock"), "").unwrap();
+        let failed = HashSet::from(["a.fails".to_string(), "a.fails.too".to_string()]);
+        let list = || {
+            let mut left: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+            left.sort();
+            left
+        };
+        remove_run(&root, true, &failed);
+        assert_eq!(list(), ["a.fails-12345678", "a.fails-abcdefgh", "a.fails.too-12345678"]);
+
+        // Without IA_KEEP_TEST_DIRS, or with nothing failed, it all goes.
+        remove_run(&root, false, &failed);
+        assert!(!root.exists());
+        std::fs::create_dir_all(root.join("a.passes-12345678")).unwrap();
+        std::fs::write(root.join(".lock"), "").unwrap();
+        remove_run(&root, true, &HashSet::new());
+        assert!(!root.exists());
     }
 
     #[test]
@@ -298,7 +384,7 @@ mod tests {
         // Not with the thread that made it: tests carry a state over to another `run`.
         assert!(dir.is_dir(), "{}", dir.display());
         drop(s);
-        assert!(!dir.exists(), "{}", dir.display());
+        assert_eq!(dir.exists(), keep(), "{}", dir.display());
     }
 
     #[test]
