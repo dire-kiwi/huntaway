@@ -174,8 +174,7 @@ mod tests {
     fn runs_the_script_for_each_status_change_in_order() {
         testing::run(async || {
             let s = testing::state();
-            let repo = std::env::temp_dir().join(format!("ia-status-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             let log = repo.join("log");
             let (project, task) = project_and_task(&s, &path_str(&repo));
             let script = format!("echo \"$IA_TASK_KEY $IA_OLD_STATUS $IA_NEW_STATUS $PWD\" >> {}\necho moved", path_str(&log));
@@ -219,8 +218,7 @@ mod tests {
     fn a_column_script_runs_when_a_task_moves_into_its_column() {
         testing::run(async || {
             let s = testing::state();
-            let repo = std::env::temp_dir().join(format!("ia-status-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             let log = path_str(&repo.join("log"));
             let (project, task) = project_and_task(&s, &path_str(&repo));
             let scripts = json!({ "done": format!("echo \"done $IA_OLD_STATUS\" >> {log}"), "in_review": format!("echo review >> {log}") });
@@ -263,8 +261,7 @@ mod tests {
     fn changes_made_at_once_run_in_the_order_they_were_made() {
         testing::run(async || {
             let s = testing::state();
-            let repo = std::env::temp_dir().join(format!("ia-status-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&repo).unwrap();
+            let repo = crate::testing::temp_dir();
             let log = repo.join("log");
             let (project, task) = project_and_task(&s, &path_str(&repo));
             let script = format!("echo \"$IA_OLD_STATUS $IA_NEW_STATUS\" >> {}", path_str(&log));
@@ -305,8 +302,7 @@ mod tests {
     #[test]
     fn a_script_that_runs_over_is_stopped_with_what_it_started() {
         testing::run(async || {
-            let dir = std::env::temp_dir().join(format!("ia-status-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = crate::testing::temp_dir();
             let pid_file = dir.join("pid");
             let script = format!("sleep 600 & echo $! > {}; echo started; wait", path_str(&pid_file));
             let err = crate::worktree::run_script(&script, &dir, &[], Some(Duration::from_millis(500))).await.unwrap_err();

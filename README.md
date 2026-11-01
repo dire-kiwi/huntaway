@@ -470,8 +470,10 @@ token, and give it only to your own hosts. A name stays with the host that took 
 a secret key in its data dir (`broker_key`), and the broker refuses the name to any other host while
 that one is connected and for an hour after it goes. A second host with the same name (two machines
 with the same host name, say) is refused with a message saying so, and keeps trying until the name
-is free: give it its own `--broker-name`. The broker keeps names in memory only, so after it
-restarts, the first host to connect under a name has it.
+is free: give it its own `--broker-name`. Give the broker a state file (`--state`) to keep names
+across its restarts: without one, they're kept in memory only, and after it restarts the first host
+to connect under a name has it (hosts reconnect within 30 seconds, so someone else with the broker's
+token would have to win that race).
 
 ### Codex agents
 
@@ -531,7 +533,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   default model, and `!<model>.<config>` a model that more than one config has (`!opus.work`).
   Code tasks made this way each get their own worktree and branch. They share a `fanout_id`, so
   their cards show which model each ran with, and each one's Details list the others with their
-  state and cost, to compare them.
+  state and cost.
+  **Compare** them (API 83) from a card's model badge or right-click menu (*Compare all N from its
+  prompt*), or *Compare all N* in a task's Details. It opens over the board: each one's model,
+  status, cost, agent time (all of its runs together), review (the verdict and each reviewer's
+  issues) and diff against its base branch, with a table of the files any of them changed (click
+  one's +/− to go to its diff). *Side by side* puts them in columns; *One at a time* shows one with
+  its summary beside it, switched with its tabs, ← → (or `[` `]`) and 1–9, in unified or split
+  diffs. A phone shows them one at a time. A task whose worktree is gone shows the commits on its
+  branch. **Pick this one** keeps that task as it is and completes the others as *Not done*: their
+  agents (and reviewers) are stopped and their worktrees removed. Its dialog lists what each has
+  uncommitted, and asks whether to discard that (unticked, those worktrees are kept with the
+  changes in), to delete their branches (and the pushed copies; unmerged commits on them are lost)
+  and to close their pull requests (with gh, as the task's GitHub account). A worktree whose HEAD
+  has commits on no branch (a detached HEAD's) is always kept, as they'd be lost with it. A branch
+  is deleted after its pushed copy, so it's kept while its worktree is, while a pull request kept
+  open has it, or when its pushed copy can't be deleted. Anything that couldn't be done is listed
+  after, and picking again cleans up what was kept the first time. `GET /tasks/{id}/fanout` gives each one's agent time, uncommitted
+  files and branch, and `POST /tasks/{id}/fanout/pick` (`delete_branches`, `close_prs`,
+  `discard_uncommitted`) picks it.
 - **Agents across profiles** (API 23): each profile has its own board, and agents' board tools
   see their own profile's. A profile can let other profiles' agents use its board too: edit it
   under Settings → Profiles and tick them under *Agents from other profiles* (or *Every
@@ -851,6 +871,17 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
+- **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
+  to read before merging: what changed and why, the main changes, and how to try it. It reads the
+  pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
+  own (a review thread of type `summary`), and its last message is the summary, kept in the task's
+  `summary` with the commit it describes. While the task waits in *In review* with that summary
+  (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
+  writes one at any time. A summary in progress stops when the task's agent works again, and the
+  next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
+  config, model and effort; the task's config by default), in the project's *Review* settings
+  (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  summarises on demand.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when
   it starts, after the task's title and description (and before any message it was started

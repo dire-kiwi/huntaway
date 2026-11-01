@@ -88,6 +88,46 @@ function iaHtml(fit: string) {
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
+/** Ask the board to render Mermaid with its bundled library, outside this opaque-origin sandbox.
+ *  Only images come back; the plan doesn't need a CDN or access to the board's origin. Runs as source. */
+function iaDiagrams() {
+  const pending = new Map<string, { host: Element; pre: HTMLElement; status: HTMLElement }>();
+  addEventListener("message", (e) => {
+    if (e.source !== parent || typeof e.data?.iaDiagram !== "string") return;
+    const entry = pending.get(e.data.iaDiagram);
+    if (!entry) return;
+    const { host, pre, status } = entry;
+    if (typeof e.data.image === "string" && e.data.image.startsWith("data:image/svg+xml;")) {
+      const img = document.createElement("img");
+      img.alt = host.getAttribute("title") || "Diagram";
+      img.src = e.data.image;
+      img.style.width = "100%";
+      if (typeof e.data.width === "number" && e.data.width > 0) img.style.maxWidth = `${e.data.width}px`;
+      status.replaceWith(img);
+    } else if (typeof e.data.error === "string") {
+      status.className = "ia-diagram-error";
+      status.setAttribute("role", "alert");
+      status.textContent = `Mermaid: ${e.data.error}`;
+      pre.hidden = false;
+    } else return;
+    host.removeAttribute("aria-busy");
+    pending.delete(e.data.iaDiagram);
+  });
+  const prefix = `${Date.now()}-${Math.random()}-`;
+  for (const [i, pre] of [...document.querySelectorAll<HTMLElement>("ia-diagram > pre")].entries()) {
+    const host = pre.parentElement!;
+    const id = prefix + i;
+    const status = document.createElement("p");
+    status.textContent = "Drawing diagram…";
+    status.setAttribute("role", "status");
+    host.setAttribute("aria-busy", "true");
+    pre.hidden = true;
+    host.append(status);
+    pending.set(id, { host, pre, status });
+    parent.postMessage({ iaDiagram: id, source: pre.textContent ?? "" }, "*");
+  }
+}
+
 /**
  * A plan's questions: turns each <ia-question> into its form fields, and reports every named field
  * in the plan (with its question and answer) to the board (iaForm, see planAnswers.ts) when the plan
@@ -313,6 +353,7 @@ export function themedPlan(
   const answers = JSON.stringify(form.answers ?? {}).replace(/</g, "\\u003c");
   return (
     `<!doctype html><meta charset="utf-8"><style>${css}\n${colors}</style>\n${html}\n` +
-    `<script>(${iaForm})(${answers}, ${!!form.readOnly}, ${JSON.stringify(form.key ?? null).replace(/</g, "\\u003c")})</script>\n<script>(${iaHtml})(${JSON.stringify(`(${fitFrame})()`)})</script>`
+    `<script>(${iaForm})(${answers}, ${!!form.readOnly}, ${JSON.stringify(form.key ?? null).replace(/</g, "\\u003c")})</script>\n` +
+    `<script>(${iaHtml})(${JSON.stringify(`(${fitFrame})()`)})</script>\n<script>(${iaDiagrams})()</script>`
   );
 }

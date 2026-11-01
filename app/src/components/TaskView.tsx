@@ -1,12 +1,12 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Copy, Folder, GitBranch, GitCompareArrows, Hourglass, Kanban, Layers, Loader2, Maximize2, Minimize2, Pin, Play, Square, Trash2, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, ApiError, canRunAgents, dependencyQueued, limitQueued, outOfUsage, documentsOnly, hostStatuses, isScratch, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
-import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
+import { api, ApiError, canRunAgents, dependencyQueued, limitQueued, outOfUsage, documentsOnly, hostStatuses, isScratch, isSummaryThread, LABELS, LABELS_API, ownWorkDir, taskLabels, type DocumentType, hostSupports, mergeQueued, rejoinsMerge, runningAgentSteers, stopTitle, worktreesOn, type Effort, type Resolution, type Status, type Task, type TerminalTool } from "../api";
+import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, openCompare, openTask, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../router";
 import { isGroupTask, keyPrefix, profileNameOf, taskKey, useAvailableConfigs, useHost, useProfileName, useProject, useStore } from "../store";
 import { AgentBadge, ConfigSelect, ConfigUsageNote, configDir } from "./ClaudeConfigs";
-import { harnessLabels, useConfigsOf, useFanout } from "./Fanout";
+import { COMPARE_API, harnessLabels, useConfigsOf, useFanout } from "./Fanout";
 import { effortOptions, inheritedModel, useAgentModels } from "../agents";
 import { useNarrow } from "../narrow";
 import { resetsPhrase, resetTime } from "../usageConfigs";
@@ -18,7 +18,7 @@ import { ContextPill } from "./Context";
 import { inGroupTaskGroup } from "../projectGroups";
 import { GroupTaskBadge, openSubprojectBoard, SubprojectBadge, useCreatedProgress, useSubprojectProgress } from "./TaskCard";
 import { documentInfo, DocumentView, LABEL_INFO, TaskTypeBadge } from "./Document";
-import { ReviewDot, reviewParts, ReviewSummary } from "./Review";
+import { ChangeSummaryView, ReviewDot, reviewParts, ReviewSummary } from "./Review";
 import { Dependencies } from "./Dependencies";
 import { useConfirmDone } from "./ConfirmDone";
 import { ReminderButton, saveMarks, StarButton, useCanMark } from "./Reminders";
@@ -42,9 +42,10 @@ const NOT_STARTED = (
   </div>
 );
 const NO_REVIEW = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">No review has run yet.</div>;
+const NO_SUMMARY = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">No summary has been written yet.</div>;
 
 /**
- * "thread", "changes", "review", "terminal", "details" (when too narrow for them beside the thread),
+ * "thread", "changes", "review", "summary", "terminal", "details" (when too narrow for them beside the thread),
  * `tool:<id>` for a terminal tool, or for a plan, artifact or diagram task its type, for its document.
  */
 type Tab = string;
@@ -225,11 +226,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const tabs: Tab[] = [...labels, ...(group || scratch || docsOnly ? ["thread"] : ["thread", "changes"])];
   const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch;
   if (reviews) tabs.push("review");
+  // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
+  const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
+  if (summaries) tabs.push("summary");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
   // Until the effect above drops it, a details tab while wide shows the thread beside the column.
   // A label taken off shows the thread instead.
-  const shown = (wide && tab === "details") || (tab === "review" && !reviews) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
+  const shown = (wide && tab === "details") || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
   const docShown = labels.find((l) => l === shown);
   const key = `${keyPrefix(task, project)}-${task.number}`;
   // Stopping the task also stops its review (API 33), so it can be stopped while only that runs.
@@ -457,6 +461,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
                 <ReviewSummary task={task} />
               </div>
             </div>
+          ) : shown === "summary" ? (
+            <div className="h-full overflow-y-auto">
+              <div className="mx-auto max-w-3xl px-5 py-5">
+                <ChangeSummaryView task={task} />
+              </div>
+            </div>
           ) : shown === "details" ? (
             <Details key={task.id} task={task} mode={mode} className="h-full overflow-y-auto" />
           ) : null}
@@ -484,8 +494,9 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
   const project = useProject(thread.project_id);
   const [rootRef, wide] = useWide();
   const key = parent && `${project?.key ?? "T"}-${parent.number}`;
-  // Which of the task's reviewers this is, when it has several.
+  // Which of the task's reviewers this is, when it has several. A summary thread summarises its changes instead (API 84).
   const reviewer = parent?.review && reviewParts(parent.review).find((p) => p.thread_id === thread.id)?.label;
+  const summary = isSummaryThread(thread);
   const back = () => (parent ? openTask(parent.id) : project ? navigate({ name: "board", projectId: project.id }) : history.back());
   const [stopErr, setStopErr] = useState<string | null>(null);
   useEffect(() => setStopErr(null), [thread.id]);
@@ -512,7 +523,11 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
           </>
         )}
         <h1 className="min-w-0 truncate text-[13.5px] font-medium">
-          Review{reviewer && parent?.review?.reviewers && parent.review.reviewers.length > 1 && <span className="font-normal text-muted"> · {reviewer}</span>}
+          {summary ? (
+            "Summary"
+          ) : (
+            <>Review{reviewer && parent?.review?.reviewers && parent.review.reviewers.length > 1 && <span className="font-normal text-muted"> · {reviewer}</span>}</>
+          )}
         </h1>
         <div className="no-drag ml-auto flex items-center gap-2">
           <AgentsPill task={thread} />
@@ -539,13 +554,13 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
             key={`${thread.host_id}:${thread.id}`}
             task={thread}
             cwd={parent?.worktree_path ?? project?.repo_path}
-            placeholder="Ask the reviewer about its findings…"
-            empty={NO_REVIEW}
+            placeholder={summary ? "Ask about the changes…" : "Ask the reviewer about its findings…"}
+            empty={summary ? NO_SUMMARY : NO_REVIEW}
           />
         </main>
         {parent && wide && (
           <aside className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40">
-            <Section title="Reviewing">
+            <Section title={summary ? "Summarising" : "Reviewing"}>
               <button className="text-left text-[13px] text-fg hover:underline" onClick={back}>
                 <span className="mr-1.5 font-mono text-[12px] text-faint">{key}</span>
                 {parent.title}
@@ -557,10 +572,16 @@ function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
                 </div>
               )}
             </Section>
-            <Section title="Latest review">
-              <ReviewSummary task={parent} threadId={thread.id} />
-            </Section>
-            <Section title="Reviewer">
+            {summary ? (
+              <Section title="Latest summary">
+                <ChangeSummaryView task={parent} />
+              </Section>
+            ) : (
+              <Section title="Latest review">
+                <ReviewSummary task={parent} threadId={thread.id} />
+              </Section>
+            )}
+            <Section title={summary ? "Summarizer" : "Reviewer"}>
               <Row label="Cost">{cost(thread.cost_usd) ?? "—"}</Row>
               <Row label="Session">{thread.session_id ? <span className="font-mono text-[11px]">{thread.session_id}</span> : "—"}</Row>
             </Section>
@@ -1133,10 +1154,20 @@ function FanoutSection({ task }: { task: Task }) {
   const tasks = useFanout(task);
   const projects = useStore((s) => s.projects);
   const configs = useConfigsOf(tasks);
+  const compares = hostSupports(useHost(task.host_id), COMPARE_API);
   if (tasks.length < 2) return null;
   const labels = harnessLabels(tasks, configs);
   return (
-    <Section title="Same prompt">
+    <Section
+      title="Same prompt"
+      right={
+        compares && (
+          <button className="flex items-center gap-1 text-[11.5px] text-faint hover:text-fg" onClick={() => openCompare(task.id)} title="Compare their work side by side, and pick one">
+            <GitCompareArrows size={12} /> Compare all {tasks.length}
+          </button>
+        )
+      }
+    >
       <div className="-mx-1 space-y-0.5">
         {tasks.map((t, i) => (
           <button

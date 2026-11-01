@@ -610,7 +610,7 @@ mod tests {
     async fn broker_with(cfg: huntaway_broker::Config) -> String {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
-        let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..cfg });
+        let app = huntaway_broker::router(huntaway_broker::Config { token: BROKER_TOKEN.into(), ..cfg }).unwrap();
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
         url
     }
