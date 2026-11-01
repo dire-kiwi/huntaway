@@ -172,6 +172,47 @@ test("Roll back asks first, and the app's own update shows its command", async (
   });
 });
 
+// HA-68: where the desktop app can install its own package (its preload's shellUpdateKind), the notice has a button that
+// shows the update's progress, and its failure in place, keeping the command.
+test("the desktop app's own Install shows its progress and its failure", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await page.addInitScript(() => {
+      window.__updates = [];
+      window.huntawayDesktop = {
+        setBadgeCount() {},
+        focus() {},
+        shellUpdateKind: () => localStorage.getItem("test.shellKind") ?? "pacman",
+        updateShell: (onProgress) =>
+          new Promise((resolve, reject) => {
+            window.__updates.push(1);
+            window.__progress = onProgress;
+            window.__fail = (m) => reject(new Error(m));
+          }),
+      };
+    });
+    const shell = { version: "0.1.0", install: "pacman", path: null, outdated: true, package: { name: "p", url: PACKAGE, size: 1, sha256: "ab" } };
+    await fakeReleases(page, () => ({ release: release({ shell }) }));
+    await ui.run(["goto /settings", "wait The desktop app has an update", "wait which the app can install itself", "wait Or install its package with"]);
+    const install = page.getByRole("button", { name: "Install", exact: true });
+    await install.click();
+    await ui.run(["wait Looking up the latest release…"]);
+    assert.ok(await install.isDisabled());
+    await page.evaluate(() => window.__progress({ phase: "downloading", version: "0.2.0", bytes: 50e6, total: 100e6 }));
+    await ui.run(["wait Downloading v0.2.0: 50.0 MB of 100.0 MB"]);
+    await page.evaluate(() => window.__progress({ phase: "installing", version: "0.2.0" }));
+    await ui.run(["wait Installing v0.2.0: enter your password"]);
+    await page.evaluate(() => window.__fail("The password prompt was cancelled, so nothing was installed. Install it with the sudo pacman command instead."));
+    await ui.run(["wait The password prompt was cancelled", "gone Installing v0.2.0", `wait sudo pacman -U ${PACKAGE}`]);
+    assert.ok(await install.isEnabled());
+    assert.deepEqual(await page.evaluate(() => window.__updates), [1]);
+    // An app whose install isn't the one the server reports on (another app's server) gets the command only.
+    await page.evaluate(() => localStorage.setItem("test.shellKind", "appimage"));
+    await ui.run(["goto /settings", "wait The desktop app has an update"]);
+    assert.equal(await page.getByRole("button", { name: /^(Install|Update app)$/ }).count(), 0);
+  });
+});
+
 // HA-67 review: the dialog showed the restart job the server had kept, failed or not, in place of its confirm. After a
 // failed Update, Roll back showed that failure and "Try again", which then rolled back without the migration warning.
 test("an earlier failed restart doesn't stand in for Update's or Roll back's confirm", async () => {

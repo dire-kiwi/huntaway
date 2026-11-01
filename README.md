@@ -288,7 +288,13 @@ release notes and restarts onto it (a download still running, or one that failed
 Settings). Settings → Server shows the version running and where from, the latest release and when
 it was checked, the background download, **Check now**, **Include prereleases** and **Roll back**.
 When the latest release needs a new desktop app too (`release.shell.outdated`), it says how to
-install it: the `sudo pacman -U` command, the AppImage's link, or the dmg on the release page.
+install it: the `sudo pacman -U` command, the AppImage's link, or the dmg on the release page. The
+AppImage and the pacman package can also do it themselves: **Update app** downloads the new AppImage
+beside the running one, checks its sha256 against GitHub's digest and renames it over the old file;
+**Install** downloads and checks the `.pacman` the same way and runs `pkexec pacman -U --noconfirm`
+on it, which asks for your password in polkit's dialog. Either then relaunches the app. The app
+takes the version from its server's release check and the package from GitHub's API
+(`IA_RELEASE_API`), never from the page.
 
 ### Network access
 

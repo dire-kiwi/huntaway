@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { CircleAlert, Copy, Download, ExternalLink, GitCommitHorizontal, Loader2, RefreshCw, RotateCw, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type ReleaseDownload, type ReleaseStatus, type ServerStatus } from "../api";
+import type { ShellUpdateKind, ShellUpdateProgress } from "../notifier";
 import { useStore } from "../store";
 import { useNewUiBuild } from "../uiVersion";
 import { compareVersions } from "../versions";
@@ -352,8 +353,12 @@ function ShellNotice({ release }: { release: ReleaseStatus }) {
   const shell = release.shell!;
   const pkg = shell.package;
   const latest = release.latest;
-  const updateShell = window.huntawayDesktop?.updateShell;
-  const [busy, setBusy] = useState(false);
+  const desktop = window.huntawayDesktop;
+  // The app installs its own package where its install is one it can replace (an AppImage, the pacman package) and is
+  // the one this server reports on.
+  const [kind] = useState(() => desktop?.shellUpdateKind?.() ?? null);
+  const updateShell = kind && kind === shell.install && pkg ? desktop?.updateShell : undefined;
+  const [progress, setProgress] = useState<ShellUpdateProgress | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const command = shell.install === "pacman" && pkg ? `sudo pacman -U ${pkg.url}` : null;
@@ -369,29 +374,32 @@ function ShellNotice({ release }: { release: ReleaseStatus }) {
           <div className="font-medium text-fg">The desktop app has an update</div>
           <div>
             {latest ? `v${latest.version}` : "The latest release"} comes with a new version of the app itself{shell.version && ` (this one is v${shell.version})`}, which
-            the board can't install.
+            {updateShell ? " the app can install itself." : " the board can't install."}
           </div>
         </div>
         {updateShell && (
           <Button
             size="sm"
             variant="primary"
-            disabled={busy}
+            disabled={!!progress}
             onClick={() => {
-              setBusy(true);
+              setProgress({ phase: "checking" });
               setErr(null);
-              updateShell()
-                .catch((e) => setErr((e as Error).message ?? String(e)))
-                .finally(() => setBusy(false));
+              // On success the app quits and relaunches, so the progress stays.
+              updateShell(setProgress).catch((e) => {
+                setProgress(null);
+                setErr((e as Error).message ?? String(e));
+              });
             }}
           >
-            {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} {shell.install === "pacman" ? "Install" : "Update app"}
+            {progress ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} {kind === "pacman" ? "Install" : "Update app"}
           </Button>
         )}
       </div>
+      {progress && <ShellProgress progress={progress} kind={kind} />}
       {command ? (
         <div>
-          <div className="mb-1">Install its package with:</div>
+          <div className="mb-1">{updateShell ? "Or install" : "Install"} its package with:</div>
           <div className="flex items-center gap-2 rounded-md border border-line bg-[#0c0c10] py-1.5 pr-1.5 pl-2.5">
             <code className="min-w-0 flex-1 font-mono text-[11.5px] break-all text-[#b9b9c8]">{command}</code>
             <Button
@@ -410,8 +418,9 @@ function ShellNotice({ release }: { release: ReleaseStatus }) {
         </div>
       ) : shell.install === "appimage" && pkg ? (
         <div>
+          {updateShell && "Or "}
           <a href={pkg.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-            Download the new AppImage
+            {updateShell ? "download" : "Download"} the new AppImage
           </a>{" "}
           and put it in place of <span className="font-mono">{shell.path ?? "this one"}</span>.
         </div>
@@ -420,7 +429,31 @@ function ShellNotice({ release }: { release: ReleaseStatus }) {
       ) : (
         <div>Download it from {page ?? "the latest release"}.</div>
       )}
-      {err && <div className="text-red-400">{err}</div>}
+      {err && <div className="whitespace-pre-wrap text-red-400">{err}</div>}
+    </div>
+  );
+}
+
+function ShellProgress({ progress: p, kind }: { progress: ShellUpdateProgress; kind: ShellUpdateKind | null }) {
+  const v = p.version ? `v${p.version}` : "the new app";
+  const share = p.phase === "downloading" && p.total ? Math.min(1, (p.bytes ?? 0) / p.total) : null;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <Loader2 size={12} className="animate-spin text-accent" />
+        {p.phase === "checking"
+          ? "Looking up the latest release…"
+          : p.phase === "downloading"
+            ? `Downloading ${v}: ${mb(p.bytes ?? 0)}${p.total ? ` of ${mb(p.total)}` : ""}`
+            : p.phase === "installing"
+              ? `Installing ${v}: enter your password when the system asks for it`
+              : `${kind === "appimage" ? "Replaced the AppImage" : `Installed ${v}`}. Restarting the app…`}
+      </div>
+      {share !== null && (
+        <div className="h-1 w-full max-w-sm overflow-hidden rounded-full bg-line">
+          <div className="h-full rounded-full bg-accent" style={{ width: `${share * 100}%` }} />
+        </div>
+      )}
     </div>
   );
 }
