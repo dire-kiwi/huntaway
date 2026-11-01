@@ -12,12 +12,14 @@ import {
   LIMITS_API,
   MODEL_ALIASES,
   PERMISSION_MODES,
+  PROFILE_REVIEWERS_API,
   type ClaudeConfig,
   type Compat,
   type GithubAccount,
   type Host,
   type HostSettings,
   type Profile,
+  type Reviewer,
   type TerminalTool,
 } from "../api";
 import { useShallow } from "zustand/react/shallow";
@@ -26,6 +28,7 @@ import { navigate } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../store";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "./ExternalLinks";
+import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow } from "./Reviewers";
 import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle, useAsyncAction, useConfirm } from "./ui";
 
 const MODE_LABEL: Record<Host["mode"], string> = {
@@ -576,6 +579,8 @@ export function ProfileForm({
   const [asana, setAsana] = useState(usesAsana(initial));
   const [limitWait, setLimitWait] = useState(!!initial?.limit_wait);
   const [limitSwitch, setLimitSwitch] = useState(!!initial?.limit_switch);
+  const [reviewers, setReviewers] = useState<Reviewer[]>(initial?.reviewers ?? []);
+  const [summarizer, setSummarizer] = useState<Reviewer>(initial?.summarizer ?? DEFAULT_REVIEWER);
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
   const { busy, error: err, run } = useAsyncAction();
@@ -586,6 +591,7 @@ export function ProfileForm({
   const linking = hostSupports(hosts.find((h) => h.id === host), LINKS_API);
   const asanaToggle = hostSupports(hosts.find((h) => h.id === host), ASANA_TOGGLE_API);
   const limits = hostSupports(hosts.find((h) => h.id === host), LIMITS_API);
+  const reviewing = hostSupports(hosts.find((h) => h.id === host), PROFILE_REVIEWERS_API);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
@@ -601,6 +607,8 @@ export function ProfileForm({
         ...(cloning ? { clone_dir: cloneDir.trim() || null } : {}),
         ...(asanaToggle ? { asana_enabled: asana } : {}),
         ...(limits ? { limit_wait: limitWait, limit_switch: limitSwitch } : {}),
+        // The host saves just the defaults as none, which is the same.
+        ...(reviewing ? { reviewers, summarizer } : {}),
       };
       if (initial) await api.updateProfile(initial.host_id, initial.id, body);
       else {
@@ -682,6 +690,16 @@ export function ProfileForm({
               : ""}
           </span>
         </div>
+      )}
+      {reviewing && (
+        <>
+          <Field label="Reviewers" hint="Who reviews the tasks of its projects, each in a thread of its own. A project can choose its own in its Review settings.">
+            <ReviewerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={reviewers} onChange={setReviewers} />
+          </Field>
+          <Field label="Summarizer" hint="Who summarises a task's changes once its review passes, unless its project chooses its own. A quick, cheap model is usually enough.">
+            <ReviewerRow hostId={host} configs={hostConfigs} models={{ profile: model }} value={summarizer} onChange={(v) => setSummarizer(v ?? DEFAULT_REVIEWER)} removable={false} />
+          </Field>
+        </>
       )}
       {sharing && (
         <Field
