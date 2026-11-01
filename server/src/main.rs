@@ -57,7 +57,7 @@ use clap::{Parser, Subcommand};
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Parser)]
-#[command(name = "huntaway", about = "Kanban board that orchestrates Claude Code and Codex agents")]
+#[command(name = "huntaway", version, about = "Kanban board that orchestrates Claude Code and Codex agents")]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
