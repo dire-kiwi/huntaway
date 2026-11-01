@@ -42,6 +42,9 @@ while (($#)); do
 done
 mkdir -p "$work"
 work="$(cd "$work" && pwd)"
+# electron-builder and fpm stage packages in $TMPDIR, a few hundred MB each: keep them out of a small /tmp too.
+export TMPDIR="$work/tmp"
+mkdir -p "$TMPDIR"
 assets="$work/assets"
 
 [[ -x $root/app/node_modules/electron/dist/electron ]] || { echo "run npm ci in app/ (with Electron's install script) first" >&2; exit 1; }

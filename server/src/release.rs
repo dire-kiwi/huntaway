@@ -239,18 +239,33 @@ pub async fn check(state: &Shared) {
 /// prereleases" is turned off, or a release that was taken down. One it still offers stays, even below the latest, until
 /// the latest's download replaces it.
 fn unstage_unpicked(state: &Shared) {
-    let Some(cfg) = &state.meta.release else { return };
+    if let Some(still) = offered_now(state) {
+        staging::unstage_unless(state, |v| still.contains(v));
+    }
+}
+
+/// The versions the last check would offer under the settings as they are now, or none until a check has succeeded.
+fn offered_now(state: &Shared) -> Option<Vec<semver::Version>> {
+    let cfg = state.meta.release.as_ref()?;
     let releases = {
         let last = state.release.last.lock().unwrap();
         if last.checked_at.is_none() || last.error.is_some() {
-            return;
+            return None;
         }
         last.releases.clone().unwrap_or_default()
     };
-    let Ok(prereleases) = prereleases(state) else { return };
+    let prereleases = prereleases(state).ok()?;
     let bad = staging::read(&staging::app_dir(state)).bad;
-    let still: Vec<semver::Version> = offered(&releases, &cfg.platform, prereleases, &bad).map(|(v, ..)| v).collect();
-    staging::unstage_unless(state, |v| still.contains(v));
+    Some(offered(&releases, &cfg.platform, prereleases, &bad).map(|(v, ..)| v).collect())
+}
+
+/// An error if a check since has withdrawn `v` (prereleases turned off, or the release taken down).
+fn still_offered(state: &Shared, v: &str) -> Result<()> {
+    let version = semver::Version::parse(v)?;
+    if offered_now(state).is_some_and(|o| !o.contains(&version)) {
+        bail!("{v} isn't offered any more (prereleases were turned off, or the release was taken down)");
+    }
+    Ok(())
 }
 
 /// The version this server runs.
@@ -475,6 +490,8 @@ async fn wait_for_staging(st: &Shared, v: &str, asset: Option<Asset>) -> Result<
             Some(d) if started => bail!("{}", d.error.unwrap_or_else(|| format!("{v} wasn't staged"))),
             _ => {}
         }
+        // Its download finished but was unstaged, or it's about to be downloaded again: only while it's still offered.
+        still_offered(st, v)?;
         let asset = asset.clone().with_context(|| format!("{v} isn't staged any more; check for releases again"))?;
         match staging::start(st, v, asset) {
             Start::Started => started = true,
@@ -1411,6 +1428,46 @@ mod tests {
             let d = finished(&state).await;
             assert_eq!((d.version.as_str(), d.phase.as_str()), ("0.3.0", "staged"));
             assert_eq!(app_entries(&state), ["0.3.0", "state.json"]);
+        });
+    }
+
+    // HA-69 review: an Update waiting for a prerelease's download that was then withdrawn downloaded it, and the stable
+    // release, over and over, and its job never ended, so no other restart could start.
+    #[test]
+    fn an_update_waiting_for_a_withdrawn_prerelease_fails() {
+        testing::run(async || {
+            let go = Arc::new(tokio::sync::Notify::new());
+            let (fake, state) = setup_with(|f| {
+                let mut rc = served(f, "v0.3.0-rc.1", tarball("0.3.0-rc.1", None, &[]), Serve::Held(go.clone()));
+                rc["prerelease"] = json!(true);
+                json!([rc, served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])
+            })
+            .await;
+            crate::db::set_setting(&state.db(), PRERELEASES, Some("true")).unwrap();
+            check(&state).await;
+            let mut events = state.events.subscribe();
+            assert_eq!(api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.3.0-rc.1"}))).await.0, 200);
+            tokio::task::yield_now().await;
+            crate::db::set_setting(&state.db(), PRERELEASES, None).unwrap();
+            check(&state).await;
+            fake.lock().unwrap().files.values_mut().for_each(|f| f.1 = Serve::Whole);
+            go.notify_one();
+            let (_, error) = tokio::time::timeout(Duration::from_secs(10), job_fails(&mut events)).await.expect("the Update ends");
+            assert!(error.contains("0.3.0-rc.1 isn't offered any more"), "{error}");
+            // The release still offered is downloaded, once, and the withdrawn one isn't again.
+            let mut rx = state.release.download.subscribe();
+            while rx.borrow_and_update().as_ref().is_none_or(|d| d.version != "0.2.0" || d.running()) {
+                rx.changed().await.unwrap();
+            }
+            assert_eq!(downloads(&fake), 2, "the prerelease and 0.2.0, each once");
+            assert_eq!(release_status(&state)["staged"], "0.2.0");
+            assert_eq!(app_entries(&state), ["0.2.0", "state.json"]);
+            // The job is over, so another can start.
+            let (code, body) = api(&state, "POST", "/api/admin/release/update", Some(json!({"version": "0.2.0"}))).await;
+            assert_eq!(code, 200, "{body}");
+            let (phases, _) = job_fails(&mut events).await;
+            assert_eq!(phases.last().map(String::as_str), Some("failed"), "not in a test, so its exec fails");
+            assert_eq!(downloads(&fake), 2);
         });
     }
 
