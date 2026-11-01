@@ -23,7 +23,12 @@ import { liveTaskChanges, taskKey, useStore } from "./store";
 declare global {
   interface Window {
     /** What the desktop app adds (electron/preload.cjs). */
-    huntawayDesktop?: { setBadgeCount: (n: number) => void; focus: () => void };
+    huntawayDesktop?: {
+      setBadgeCount: (n: number) => void;
+      focus: () => void;
+      /** Installs the latest release's app package and relaunches, where the app can (HA-68). Rejects with why not. */
+      updateShell?: () => Promise<unknown>;
+    };
   }
 }
 
