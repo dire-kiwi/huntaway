@@ -216,8 +216,8 @@ pub async fn request(s: &Shared, task: &Task, pr: &Value, events: &Value) -> Res
 /// The host and `OWNER/REPO` of the repository `task`'s branch is pushed to, if it has one.
 async fn task_repo(s: &Shared, task: &Task) -> Option<(String, String)> {
     let project = db::get_project(&s.db(), task.project_id.as_deref()?).ok().flatten()?;
-    let base = task.base_branch.as_deref().or(project.base_branch.as_deref()).filter(|b| !b.is_empty());
-    let (host, repo) = crate::worktree::push_repo(&crate::util::expand_tilde(&project.repo_path), base).await?;
+    let base = db::task_base(&s.db(), task, Some(&project));
+    let (host, repo) = crate::worktree::push_repo(&crate::util::expand_tilde(&project.repo_path), base.as_deref()).await?;
     Some((if crate::worktree::is_github_com(&host) { "github.com".into() } else { host }, repo))
 }
 

@@ -621,6 +621,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
                 labels: Some(args["labels"].clone()),
                 external_links: None,
                 fanout_id: None,
+                start_from: Some(args["start_from"].clone()).filter(|v| !v.is_null()),
             };
             let marks = new_task_marks(args)?;
             let t = api::create_task_inner(s, &project.id, body)?;
@@ -629,7 +630,7 @@ async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> ToolResult {
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;
             let mut body = Map::new();
-            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge", "labels"] {
+            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge", "labels", "start_from"] {
                 if !args[k].is_null() {
                     body.insert(k.into(), args[k].clone());
                 }
@@ -1466,6 +1467,14 @@ fn summarize(s: &Shared, t: &Task) -> Value {
             v["depends_on"] = json!(deps);
         }
     }
+    if let Some(sf) = &t.start_from {
+        let key = project_key(s, t);
+        v["start_from"] = json!(sf.describe(&s.db(), &key));
+        // Where that took it, once its worktree is made: what its pull request targets.
+        if t.branch.is_some() {
+            v["base_branch"] = json!(t.base_branch);
+        }
+    }
     if t.waiting {
         v["queued_for_dependencies"] = json!(true);
     }
@@ -1683,8 +1692,32 @@ mod tests {
             labels: None,
             external_links: None,
             fanout_id: None,
+            start_from: None,
         };
         api::create_task_inner(s, project, body).map_err(|e| e.1).unwrap()
+    }
+
+    #[test]
+    fn agents_say_what_a_task_starts_from() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "web", "WEB");
+            let me = ctx(&p);
+            let first = call(&s, &me, "create_task", json!({"title": "First", "project_id": "WEB", "use_worktree": true})).await.unwrap();
+            assert!(first.get("start_from").is_none());
+            let t = call(&s, &me, "create_task", json!({"title": "On top", "project_id": "WEB", "use_worktree": true, "start_from": "web-1"})).await.unwrap();
+            assert_eq!(t["start_from"], "task WEB-1");
+            let task = db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap();
+            assert_eq!(task.start_from, Some(db::StartFrom::Task { task_id: first["id"].as_str().unwrap().into() }));
+            let t = call(&s, &me, "update_task", json!({"task_id": "WEB-2", "start_from": "https://github.com/o/web/pull/7"})).await.unwrap();
+            assert_eq!(t["start_from"], "pull request o/web#7");
+            let t = call(&s, &me, "update_task", json!({"task_id": "WEB-2", "start_from": ""})).await.unwrap();
+            assert!(t.get("start_from").is_none());
+            // Not for a task without a worktree.
+            let err = call(&s, &me, "create_task", json!({"title": "Here", "project_id": "WEB", "start_from": "dev"})).await.unwrap_err();
+            assert!(err.contains("start_from is for a task with a worktree"), "{err}");
+        });
     }
 
     fn grant(s: &Shared, p: &db::Profile, names: &[&str]) {

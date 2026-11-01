@@ -1,15 +1,18 @@
 import clsx from "clsx";
-import { Cpu, Folder, FolderGit2, Gauge, Layers, Link2, NotebookPen, X } from "lucide-react";
+import { Cpu, Folder, FolderGit2, Gauge, GitBranch, Layers, Link2, NotebookPen, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   agentOf,
   api,
   canRunAgents,
+  documentsOnly,
   hostSupports,
   isMerged,
+  isScratch,
   LABELS,
   LABELS_API,
+  START_FROM_API,
   worktreesOn,
   type ClaudeConfig,
   type DocumentType,
@@ -196,6 +199,7 @@ const TOKEN_HELP: { prefix: TokenPrefix; what: string; asks: string }[] = [
   { prefix: "!", what: "model", asks: "a model (or several, for a task each)" },
   { prefix: "^", what: "effort", asks: "effort" },
   { prefix: "#", what: "waits for", asks: "a task to wait for" },
+  { prefix: "from:", what: "starts from", asks: "what its worktree starts from" },
 ];
 
 // The editor's text and the highlighting behind it are laid out alike, so the highlights line up with what's typed.
@@ -395,6 +399,26 @@ export function NewTaskModal({
     ),
   );
   const depKey = (t: Task) => `${depProject?.key}-${t.number}`;
+  // What its worktree starts from (API 89), as `from:` and another task's key (to stack it on that task's branch), a
+  // branch, a pull request (`#12` or its URL) or a commit, which the host makes out. Not a subproject's task, which
+  // starts from the subproject's branch. A key of the project's that isn't one of its tasks to stack on isn't known.
+  const fromOk = deps && hostSupports(host, START_FROM_API) && !subproject;
+  const fromTasks = fromOk ? depTasks.filter((t) => (t.use_worktree || !!t.branch) && !isScratch(t) && !documentsOnly(t)) : [];
+  const fromKeys = fromTasks.map(depKey);
+  const keyLike = (w: string) => new RegExp(`^${inProject?.key}-\\d+$`, "i").test(w);
+  const fromWords = fromOk ? [...fromKeys, ...found.filter((t) => t.prefix === "from:" && !keyLike(t.word)).map((t) => t.word)] : [];
+  // The project's branches, for the list, once a `from:` is typed.
+  const [branches, setBranches] = useState<{ project: string; list: { name: string; remote: boolean }[] } | null>(null);
+  const fromTyped = fromOk && (found.some((t) => t.prefix === "from:") || typing?.prefix === "from:");
+  useEffect(() => {
+    if (!fromTyped || !inProject || branches?.project === inProject.id) return;
+    const id = inProject.id;
+    setBranches({ project: id, list: [] });
+    api
+      .projectBranches(inProject.host_id, id)
+      .then((r) => setBranches((b) => (b?.project === id ? { project: id, list: r.branches } : b)))
+      .catch(() => {});
+  }, [fromTyped, inProject?.host_id, inProject?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // What `!` names: a model of any of the configs, or one's default model (see harnesses.ts). With no configs to pick
   // from, Claude's own config.
@@ -451,10 +475,13 @@ export function NewTaskModal({
     "!": modelVocab,
     ...(efforts ? { "^": [DEFAULT_WORD, ...effortList] } : {}),
     ...(deps ? { "#": depTasks.map(depKey) } : {}),
+    ...(fromOk ? { "from:": fromWords } : {}),
   });
   const effortAsked = lastValue(tokens, "^");
   const pickedEffort = (effortAsked === undefined ? effort : effortAsked === DEFAULT_WORD ? "" : effortAsked) as Effort | "";
   const dependsOn = allValues(tokens, "#").flatMap((k) => depTasks.filter((t) => depKey(t) === k).map((t) => t.id));
+  const startFrom = lastValue(tokens, "from:");
+  const fromTask = startFrom === undefined ? undefined : fromTasks.find((t) => depKey(t) === startFrom);
   // What its agent is given: the description without its tokens.
   const text = stripTokens(description, tokens);
 
@@ -494,7 +521,8 @@ export function NewTaskModal({
   const [worktreeChoice, setWorktree] = useState<boolean | null>(null);
   const worktreePref = worktreeChoice ?? (!!inProject && worktreesOn(inProject));
   // Tasks made from one prompt each get a worktree too, so their agents don't change the same checkout (as in t3code).
-  const worktree = !!inProject && codeTask && (worktreePref || fanout || asSubproject || !!subproject);
+  // And so does one that starts from somewhere.
+  const worktree = !!inProject && codeTask && (worktreePref || fanout || asSubproject || !!subproject || startFrom !== undefined);
   // What can't be made a task for each of several harnesses. A group task coordinates its group's work, so it takes one,
   // unless it has labels: then they write documents to compare.
   const fanoutBlock = !fanout
@@ -629,7 +657,7 @@ export function NewTaskModal({
   // A legend's prefix, typed at the caret, to pick its value from the list.
   const typePrefix = (prefix: TokenPrefix) => {
     const space = caret > 0 && !/\s/.test(description[caret - 1]) ? " " : "";
-    edit(description.slice(0, caret) + space + prefix + description.slice(caret), caret + space.length + 1);
+    edit(description.slice(0, caret) + space + prefix + description.slice(caret), caret + space.length + prefix.length);
   };
 
   // Ctrl+Enter in an `@` being typed takes it as it is first (and what it brings, from the next render on), so what's
@@ -677,6 +705,7 @@ export function NewTaskModal({
                     // Sent as the flag, which hosts before API 51 take too.
                     ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : docType ? { task_type: docType } : {}),
                     ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
+                    ...(startFrom !== undefined && codeTask ? { start_from: fromTask ? `task:${fromTask.id}` : startFrom } : {}),
                   }),
           );
         } catch (e) {
@@ -778,6 +807,15 @@ export function NewTaskModal({
         ]
       : [],
     "#": depTasks.map((t) => ({ value: depKey(t), label: t.title })),
+    "from:": fromOk
+      ? [
+          ...fromTasks.map((t) => ({ value: depKey(t), label: t.title, hint: "Stacks it on this task's branch, which its pull request targets" })),
+          // Not the tasks' own branches, which their keys stand for.
+          ...(branches?.project === inProject?.id ? branches!.list : [])
+            .filter((b) => !fromTasks.some((t) => t.branch === b.name))
+            .map((b) => ({ value: b.name, label: b.remote ? "remote branch" : "branch" })),
+        ]
+      : [],
   };
   // The one that's what's typed comes first, then those starting with it, then those whose name has it.
   const query = completing?.query.toLowerCase() ?? "";
@@ -883,6 +921,19 @@ export function NewTaskModal({
     highlighted.push(description.slice(at));
   }
 
+  // What starting from it means, under the editor.
+  const pr = startFrom?.match(/^#(\d+)$|\/pull\/(\d+)/);
+  const fromNote =
+    startFrom === undefined || !codeTask
+      ? null
+      : fromTask
+        ? `Stacked on ${startFrom}: its worktree starts from ${startFrom}'s branch${fromTask.branch ? ` ${fromTask.branch}` : " (set up first if it has none yet)"}, which its pull request targets and its changes are compared with. Once ${startFrom} is merged, it merges where that went.`
+        : pr
+          ? `Its worktree starts from pull request #${pr[1] ?? pr[2]}'s branch, which its pull request targets and its changes are compared with.`
+          : /^(commit:)?[0-9a-f]{7,40}$/i.test(startFrom)
+            ? `Its worktree starts from commit ${startFrom.replace(/^commit:/, "")}, and it merges into the base branch.`
+            : `Its worktree starts from ${startFrom.replace(/^branch:/, "")}, which its pull request targets and its changes are compared with.`;
+
   // The prefixes that can set something here, for the legend and the placeholder, with an example of each.
   const example: Partial<Record<TokenPrefix, string>> = {
     ...(labelWords.length ? { "/": "plan" } : typeTabs.length > 1 ? { "/": typeWord(typeTabs.find((t) => t.id !== offered[0])?.id ?? null) } : {}),
@@ -890,6 +941,7 @@ export function NewTaskModal({
     "!": modelList[0]?.id ?? DEFAULT_WORD,
     ...(efforts ? { "^": effortList.includes("high") ? "high" : (effortList[0] ?? DEFAULT_WORD) } : {}),
     ...(deps ? { "#": depTasks[0] ? depKey(depTasks[0]) : `${depProject!.key}-1` } : {}),
+    ...(fromOk ? { "from:": fromKeys[0] ?? "feature-x" } : {}),
   };
   const help = TOKEN_HELP.filter((h) => example[h.prefix]);
   const tokenHint = `Type ${help.map((h, i) => `${i === help.length - 1 && i > 0 ? "or " : ""}${h.prefix} for ${h.asks}`).join(", ")}.`;
@@ -1003,7 +1055,7 @@ export function NewTaskModal({
               onMouseDown={(e) => e.preventDefault()}
             >
               <div className="px-2 pt-1 pb-1 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
-                {{ "/": "Type or label", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
+                {{ "/": "Type or label", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on", "from:": "Starts from" }[completing!.prefix]}
               </div>
               {matches.map((s, i) => (
                 <button
@@ -1090,6 +1142,15 @@ export function NewTaskModal({
                 onRemove={setBy("^") ? removeKind("^") : undefined}
               />
             ))}
+          {startFrom !== undefined && codeTask && (
+            <ReadsChip
+              icon={<GitBranch size={12} />}
+              label={`from ${startFrom}`}
+              title={fromTask ? `Its worktree starts from ${startFrom}'s branch (${fromTask.title}), which its pull request targets` : `Its worktree starts from ${startFrom}`}
+              onRemove={removeKind("from:")}
+              removeTitle="Start from the base branch"
+            />
+          )}
           {dependsOn.map((id) => {
             const t = depTasks.find((x) => x.id === id)!;
             return (
@@ -1116,7 +1177,7 @@ export function NewTaskModal({
         </div>
         <DraftAttachments draft={attach} hostId={target.host_id} />
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pt-1">
-          {!subproject && inProject && codeTask && !asSubproject && !fanout && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
+          {!subproject && inProject && codeTask && !asSubproject && !fanout && startFrom === undefined && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
           {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
           {pickConfig && <ConfigSelect className={pickerClass} configs={configs} value={config} onChange={setConfig} />}
           <ConfigUsageNote config={configObj} />
@@ -1175,6 +1236,7 @@ export function NewTaskModal({
               : "It gets its own worktree and thread, and a board of tasks: each branches from the subproject's branch and merges back into it, and the subproject is merged as a whole through its own pull request."}
           </div>
         )}
+        {fromNote && <div className="text-[12px] text-muted">{fromNote}</div>}
         {labelBlock && <div className="text-[12px] text-amber-300">{labelBlock}</div>}
         {fanout && (
           <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>

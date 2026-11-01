@@ -1129,6 +1129,49 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
+- **Starting from elsewhere** (API 89): a task's worktree can start from something other than the
+  project's base branch, picked before it's made: type `from:` in the new task dialog's
+  description (it suggests the project's open tasks and its branches), fill in *Starts from* in
+  the task's *Worktree* details before its first run (or after a setup that failed before making
+  its branch), or give `start_from` to the API and the agents' `create_task`/`update_task`. It
+  takes another task's key (`from:IA-12`), a branch (`from:feature-x`, or `from:origin/feature-x`
+  for one only on a remote), a pull request (`from:#12` or its URL) or a commit (`from:0123abc`, 7
+  to 40 hex digits); `task:`, `branch:`, `pr:` or `commit:` after `from:` says which when it could
+  be read as another. It's kept on the task as `start_from` (`{type: "branch", branch}`, `{type:
+  "task", task_id}`, `{type: "pull_request", number, repo?}` or `{type: "commit", commit}`), and
+  it's worked out as the worktree is first made, which sets the task's base branch:
+  - **Another task** stacks it on that task's branch, which becomes its base: its pull request
+    targets that branch, and its *Changes* tab, reviews and merged checks compare with it, so the
+    other task's changes aren't counted as its own. A task to stack on with no branch yet has its
+    worktree set up first (as a subproject's is for its tasks), and one that's merged already has
+    the task start from where it was merged. Merging a stacked task while the other is open puts
+    its work on the other's branch, as stacked pull requests do, so it reaches the base branch
+    with the other's merge. Once the other is merged, the stacked task goes where that went
+    instead, as GitHub retargets a pull request whose base branch is deleted: its agent is told
+    to merge, and open its pull request, there (retargeting one it has first), its merged checks
+    look there, and its *Changes* and reviews start from the later of its merge bases with that
+    and with where it started, so a squashed parent's work isn't counted as its own before
+    it's rebased, nor after, even once the parent's branch is deleted. Where it started is kept
+    as `refs/huntaway/start/<task id>` in the repository (moved on to the parent's branch as the
+    task takes in more of it), and goes when the task does. *Remove merged worktrees* counts a stacked task merged into the
+    project's base branch as merged too. Stacking doesn't make it wait for the other task: add a
+    dependency for that. A task can't start from one that (by way of others, or a subproject it's
+    in) starts from it.
+  - **A branch** becomes its base branch, fetched first as the project's is. A remote's branch
+    (`upstream/feature`) is that remote's, fetched even if it never was before, unless it's the
+    remote the branch's name alone follows (usually `origin`), where it's the branch of that name.
+  - **A pull request** in the project's GitHub repository (looked up with gh, as the task's GitHub
+    account) is its branch, as for a task. A merged one is where it was merged; one from a fork,
+    or closed, starts from its head commit, fetched by its SHA, with the pull request's base as the
+    task's (so its pull request has the other's commits too).
+  - **A commit** is where its branch starts, fetched by its full SHA if the repository doesn't have
+    it; its base branch stays the project's, and its *Changes* and reviews start after the commit
+    when the base branch doesn't have it.
+  The task's log says where it started. Its branch, base branch and worktree folder are saved as
+  soon as git makes them, so a setup script that fails doesn't lose them. It can't change once the
+  task's branch exists (it's set up again from that branch), a subproject's tasks start from the subproject's branch, and a task
+  that doesn't use a worktree has nothing to start. `base_branch` and `start_from` replace each
+  other. `GET /projects/{id}/branches` lists the branches of a project's repository, latest first.
 - **Temp folders:** each task's agents get a temp folder of their own,
   `<system temp>/ha-<hash of the data dir>/<first 12 hex digits of the task id>` (kept short, as
   sockets in it can't have paths over 107 bytes), as `$TMPDIR` for its runs (Claude and
@@ -1387,7 +1430,8 @@ Each run gets the `huntaway` MCP server (`huntaway mcp`, configured per run):
 *Waiting*), plus the internal `permission_prompt`. Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
-`list_tasks` takes `subproject`.
+`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 89, see
+*Starting from elsewhere*), and task summaries say what a task started from.
 
 From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:
 small fields stay inline, `field_lengths` lists every available field's length, and
