@@ -26,6 +26,8 @@ pub struct ServerMeta {
     pub running_commit: Option<String>,
     /// `--update-from`: a deployment of the board whose commit this host offers to update to.
     pub update_from: Option<String>,
+    /// `--release-updates`: the GitHub repository whose releases this server updates from (see release.rs).
+    pub release: Option<crate::release::Config>,
     /// Arguments to re-exec with.
     pub args: Vec<OsString>,
 }
@@ -70,6 +72,10 @@ pub async fn status(state: &Shared) -> Result<Value> {
         "running_agents": running_agents,
         "restart": job,
     });
+    // API 83: with --release-updates, the release this server could update to.
+    if let Some(release) = crate::release::status(state)? {
+        v["release"] = release;
+    }
     let Some(src) = &meta.source_dir else { return Ok(v) };
     let deployed = state.deployed.lock().unwrap().clone();
     let head = head_commit(src).await;
@@ -463,6 +469,7 @@ mod tests {
             source_dir: Some(src.to_path_buf()),
             running_commit: Some(head),
             update_from: Some(url.into()),
+            release: None,
             args: vec![],
         })
     }

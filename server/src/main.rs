@@ -31,6 +31,7 @@ mod proto;
 mod pty;
 mod push;
 mod relay;
+mod release;
 mod relocate;
 mod review;
 mod runner;
@@ -138,6 +139,10 @@ struct ServeArgs {
     /// than this server, the UI offers to update to it (fetched from the source checkout's origin).
     #[arg(long, env = "IA_UPDATE_FROM")]
     update_from: Option<String>,
+    /// A GitHub repository (OWNER/REPO) whose releases this server checks for a newer version of
+    /// itself, for release installs (the desktop app's packages and the server tarball).
+    #[arg(long, env = "IA_RELEASE_UPDATES")]
+    release_updates: Option<String>,
     /// Name shown for this host on boards (defaults to the hostname).
     #[arg(long, env = "IA_NAME")]
     name: Option<String>,
@@ -321,6 +326,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
         source_dir,
         running_commit,
         update_from: args.update_from.clone().map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty()),
+        // A blank IA_RELEASE_UPDATES is none.
+        release: args.release_updates.as_deref().filter(|r| !r.trim().is_empty()).map(release::Config::from_env).transpose()?,
         args: std::env::args_os().skip(1).collect(),
     };
     let identity = state::Identity { host_id, host_name, token: token.clone(), hub_token, internal_url };
@@ -368,6 +375,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);
+    release::start(&state);
     hub::start(&state)?;
     push::start(&state);
     match (&args.hub_token, args.hubs.is_empty()) {

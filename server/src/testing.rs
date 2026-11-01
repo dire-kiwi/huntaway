@@ -71,8 +71,8 @@ pub fn state() -> Shared {
     state_with(meta())
 }
 
-fn meta() -> crate::admin::ServerMeta {
-    crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] }
+pub fn meta() -> crate::admin::ServerMeta {
+    crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] }
 }
 
 fn identity() -> Identity {

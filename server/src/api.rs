@@ -171,6 +171,7 @@ fn host_routes() -> Router<Shared> {
         .route("/admin/server", get(server_status))
         .route("/admin/restart", post(restart_server))
         .route("/admin/update", post(update_from_hub))
+        .route("/admin/release/check", post(check_releases))
         .route("/host/ws", get(ws))
 }
 
@@ -2391,6 +2392,7 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
         "scratch_host": db::get_setting(&c, "scratch_host")?,
         "terminal_tools": terminal::tools(&c),
         "public_url": db::get_setting(&c, "public_url")?,
+        "release_prereleases": db::get_setting(&c, crate::release::PRERELEASES)?.as_deref() == Some("true"),
     })))
 }
 
@@ -2399,7 +2401,8 @@ async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 /// workspace scratch chats go to (`scratch_host`, a link id). And the TUI programs offered as
 /// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`). And the
 /// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
-/// URLs are shown with.
+/// URLs are shown with. And whether release checks include prereleases (`release_prereleases`,
+/// API 83), which checks again when it changes.
 async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.
     for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
@@ -2431,6 +2434,11 @@ async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Valu
         let url = url.to_string();
         b.insert("public_url".into(), json!(url));
     }
+    let prereleases = match b.get(crate::release::PRERELEASES) {
+        Some(v) if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("release_prereleases must be true, false or null")),
+        Some(v) => Some(v.as_bool() == Some(true)),
+        None => None,
+    };
     let tools = match b.get("terminal_tools").filter(|v| !v.is_null()) {
         Some(v) => Some(terminal::parse_tools(v).map_err(ApiError::bad)?),
         None => None,
@@ -2443,6 +2451,12 @@ async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Valu
     if let Some(tools) = tools {
         let v = (!tools.is_empty()).then(|| json!(tools).to_string());
         db::set_setting(&s.db(), "terminal_tools", v.as_deref())?;
+    }
+    if let Some(on) = prereleases {
+        if crate::release::prereleases(&s)? != on {
+            db::set_setting(&s.db(), crate::release::PRERELEASES, on.then_some("true"))?;
+            crate::release::check_soon(&s);
+        }
     }
     s.emit(json!({"type": "settings_changed"}));
     get_settings(State(s)).await
@@ -2631,6 +2645,15 @@ fn yes() -> bool {
 async fn restart_server(State(s): State<Shared>, Json(b): Json<RestartBody>) -> ApiResult<Json<Value>> {
     admin::start(&s, b.rebuild)?;
     Ok(Json(json!({"ok": true})))
+}
+
+/// Check for releases now (with `--release-updates`), and return the server's status after.
+async fn check_releases(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+    if s.meta.release.is_none() {
+        return Err(ApiError::bad("this server doesn't check for releases (start it with --release-updates OWNER/REPO)"));
+    }
+    crate::release::check(&s).await;
+    Ok(Json(admin::status(&s).await?))
 }
 
 #[derive(Deserialize)]
