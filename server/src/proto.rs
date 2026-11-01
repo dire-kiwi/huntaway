@@ -11,7 +11,7 @@ pub const PROTOCOL: u32 = 1;
 
 /// Version of the host API (endpoints, fields and events the UI relies on). Bump it with
 /// every API change; changes should be additive (new endpoints, optional fields).
-pub const API_VERSION: u32 = 84;
+pub const API_VERSION: u32 = 85;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.

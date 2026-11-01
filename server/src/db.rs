@@ -674,12 +674,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=67; COMMIT;")?;
     }
+    if version < 68 {
+        // Whether a project's agents open pull requests for their tasks, and for its subprojects'
+        // tasks (see Project::pull_requests), on until they're turned off. Added only if they
+        // aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for col in ["pull_requests", "subproject_pull_requests"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name=?1", [col], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE projects ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=68; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 67;
+pub const VERSION: i64 = 68;
 
 /// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
@@ -1189,6 +1202,14 @@ pub struct Project {
     /// Move a task to Done when its pull request is merged on GitHub (see merged.rs).
     #[serde(default = "yes")]
     pub done_when_merged: bool,
+    /// Agents open a pull request for their task's branch when the repository is on GitHub
+    /// (see runner::system_prompt). Subprojects themselves follow it too.
+    #[serde(default = "yes")]
+    pub pull_requests: bool,
+    /// The same for the tasks in the project's subprojects, whose pull requests target the
+    /// subproject's branch.
+    #[serde(default = "yes")]
+    pub subproject_pull_requests: bool,
     /// How many times in a row a review's serious issues go back to the agent to fix before
     /// the task is left for the user.
     pub review_rounds: u32,
@@ -1258,6 +1279,8 @@ impl Project {
             claude_config_ids: r.get::<_, Option<String>>("claude_config_ids")?.map(json_list),
             auto_review: r.get("auto_review")?,
             done_when_merged: r.get("done_when_merged")?,
+            pull_requests: r.get("pull_requests")?,
+            subproject_pull_requests: r.get("subproject_pull_requests")?,
             review_rounds: r.get("review_rounds")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             auto_summary: r.get("auto_summary")?,
@@ -1272,6 +1295,12 @@ impl Project {
             pr_preview_url: r.get("pr_preview_url")?,
             created_at: r.get("created_at")?,
         })
+    }
+
+    /// Whether agents open pull requests for the project's tasks (`in_subproject`: for a
+    /// subproject's tasks, while a subproject itself is one of the project's).
+    pub fn pull_requests(&self, in_subproject: bool) -> bool {
+        if in_subproject { self.subproject_pull_requests } else { self.pull_requests }
     }
 
     /// Where pull request `pr_url` is previewed (see `pr_preview_url`): None if the project
@@ -2418,7 +2447,7 @@ fn normalize_resolution(c: &Connection, id: &str) -> Result<()> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "auto_summary", "summarizer", "done_when_merged", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "auto_summary", "summarizer", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
     "copy_files", "link_folders",
 ];
@@ -3673,6 +3702,30 @@ mod tests {
         assert_eq!(p.summarizer, None);
         let t = insert_task(&c, NewTask { profile_id: "p", project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
         assert!(t.summary.is_none());
+    }
+
+    #[test]
+    fn a_database_at_version_67_gets_projects_pull_request_settings() {
+        // As master's build left it, with summaries (67) and no pull request settings yet: its projects keep opening them.
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE projects DROP COLUMN pull_requests;
+                 ALTER TABLE projects DROP COLUMN subproject_pull_requests;
+                 PRAGMA user_version=67;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1');",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let p = get_project(&c, "pr").unwrap().unwrap();
+        assert!(p.pull_requests && p.subproject_pull_requests);
+        let p = update_project(&c, "pr", &[("pull_requests", json!(false))]).unwrap().unwrap();
+        assert!(!p.pull_requests && p.subproject_pull_requests);
     }
 
     #[test]
