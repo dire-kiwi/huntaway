@@ -332,7 +332,7 @@ fn board_tools() -> Value {
                 "auto_review": {"type": "boolean", "description": "Review each task's changes when it moves to in_review"},
                 "review_rounds": {"type": "integer", "minimum": 0, "maximum": 20, "description": "How many times in a row a review's serious issues go back to the agent to fix before the task is left for the user"},
                 "group_name": {"type": "string", "description": "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group"},
-                "reviewers": {"type": "array", "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list is one reviewer with the task's own config. claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults.",
+                "reviewers": {"type": ["array", "null"], "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list uses the profile's reviewers (by default one reviewer with the task's own config). claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults.",
                     "items": {"type": "object", "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}}}},
                 "permission_mode": {"type": "string", "enum": permission_modes, "description": "Needs approval. What the project's agents may do without asking the user, over the host's default"},
                 "setup_script": {"type": "string", "description": "Needs approval. Runs in a task's new worktree"},
@@ -367,8 +367,8 @@ fn board_tools() -> Value {
             json!({"type": "boolean", "description": "Once a task's review passes, have an agent summarise its changes for the user to read before merging"}),
         );
         props.insert("summarizer".into(), json!({
-            "type": "object",
-            "description": "Who writes those summaries: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; {} is the task's config with the defaults.",
+            "type": ["object", "null"],
+            "description": "Who writes those summaries: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; {} is the task's config with the defaults, and null uses the profile's summarizer.",
             "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}},
         }));
     }

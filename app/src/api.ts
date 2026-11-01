@@ -68,6 +68,8 @@ export const outOfUsage = (t: Task, now = Date.now()) => !t.waiting && !t.runnin
 
 /** The API that tells when a config is out of usage and holds tasks until it resets. */
 export const LIMITS_API = 81;
+/** Profiles choose reviewers and a summarizer for their projects that don't choose their own. */
+export const PROFILE_REVIEWERS_API = 87;
 
 /** Whether a task counts as merged for the tasks that depend on it (server: db::is_merged). */
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
@@ -162,6 +164,10 @@ export interface Profile {
   limit_wait?: boolean;
   /** A task that hasn't started yet starts on the next of its configs with room when its own is out of usage (API 81). */
   limit_switch?: boolean;
+  /** Who reviews the tasks of its projects with no reviewers of their own; empty is one reviewer with the task's config (API 87). */
+  reviewers?: Reviewer[];
+  /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 87). */
+  summarizer?: Reviewer | null;
   created_at: string;
 }
 
@@ -401,11 +407,11 @@ export interface Project {
   pull_requests?: boolean;
   /** The same for the tasks in its subprojects, whose pull requests target the subproject's branch (API 85). */
   subproject_pull_requests?: boolean;
-  /** Who reviews each task, each in its own review thread; empty is one reviewer with the task's config (API 29). */
+  /** Who reviews each task, each in its own review thread (API 29); empty uses the profile's (API 87), before that one reviewer with the task's config. */
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
-  /** Who writes those summaries; null is the task's config with the default model and effort (API 84). */
+  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
   summarizer?: Reviewer | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
@@ -1611,6 +1617,8 @@ export const api = {
       asana_enabled?: boolean;
       limit_wait?: boolean;
       limit_switch?: boolean;
+      reviewers?: Reviewer[];
+      summarizer?: Reviewer | null;
     },
   ) =>
     on(h).post<Profile>("/profiles", b),
