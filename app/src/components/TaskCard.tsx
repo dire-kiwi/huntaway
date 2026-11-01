@@ -294,8 +294,8 @@ export const TaskCard = memo(function TaskCard({
     >
       {/* One line that never wraps: the key and the state stay whole, and badges that don't fit are cut off. */}
       <div className="mb-1 flex items-center gap-2 text-[11px] text-faint">
-        <AgentIcon task={task} size={11} className="-mr-1" />
-        <span className="shrink-0 font-mono">
+        <span className="flex shrink-0 items-center gap-1 font-mono">
+          <AgentIcon task={task} size={11} />
           {keyPrefix(task, project)}-{task.number}
         </span>
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
