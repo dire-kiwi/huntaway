@@ -583,13 +583,26 @@ async fn restart_onto(st: &Shared, v: &str) -> Result<()> {
     let app = staging::app_dir(st);
     let exe = staging::version_dir(&app, v).context("not a version")?.join("huntaway");
     let old = staging::change(st, |s| s.trying = Some(v.to_string()))?;
-    let err = admin::restart_into(st, &exe).await;
+    let err = admin::restart_into(st, &exe, &bundled_env(st)).await;
     staging::change(st, |s| {
         if s.trying.as_deref() == Some(v) {
             s.trying = old.trying;
         }
     })?;
     Err(err)
+}
+
+/// What an Update adds to the environment of the version it execs: a server that isn't running from `app/` (a
+/// tarball's) and has no `IA_BUNDLED_SERVER` passes itself as that, so that Roll back can come back to it straight
+/// away, as it can after a supervisor's restart (`exec_installed`). One set already (by the desktop app or by hand)
+/// carries over as it is.
+fn bundled_env(st: &Shared) -> Vec<(&'static str, std::ffi::OsString)> {
+    let unset = st.meta.release.as_ref().is_some_and(|c| c.bundled_server.is_none());
+    if unset && staging::running_from_app(&st.data_dir, &st.exe).is_none() {
+        vec![("IA_BUNDLED_SERVER", st.exe.clone().into_os_string())]
+    } else {
+        vec![]
+    }
 }
 
 /// What Roll back would exec, and its version (none for the desktop app's own server): the version before this one,
@@ -628,7 +641,7 @@ pub fn rollback(state: &Shared) -> ApiResult<()> {
         let (exe, previous) = rollback_target(&st).context("there's no earlier version to roll back to")?;
         admin::log_line(&st, &format!("Rolling back from {current} to {}", previous.as_deref().unwrap_or("the app's own server")));
         let old = staging::change(&st, |s| rolled_back(s, &current, previous.as_deref()))?;
-        let err = admin::restart_into(&st, &exe).await;
+        let err = admin::restart_into(&st, &exe, &[]).await;
         // Only what the rollback changed is put back: a download may have staged a version meanwhile.
         staging::change(&st, |s| not_rolled_back(s, &old, &current, previous.as_deref()))?;
         Err(err)
@@ -1761,6 +1774,31 @@ mod tests {
             // It failed, so this server carries on as it was.
             let s = staging::read(&staging::app_dir(&state));
             assert_eq!((s.trying, s.staged.as_deref()), (None, Some("0.2.0")));
+        });
+    }
+
+    /// HA-74 review: a tarball's server (not in `app/`, no IA_BUNDLED_SERVER) updated onto a release, which then had no
+    /// previous version and no bundled server, so it offered no Roll back until a supervisor restarted it. It passes
+    /// itself as IA_BUNDLED_SERVER; one that has it already, or runs from `app/`, adds nothing.
+    #[test]
+    fn a_tarball_servers_update_passes_itself_for_roll_back() {
+        testing::run(async || {
+            let update = async |cfg: Config, running: Option<&str>, staged: &str| {
+                let state = host_at(cfg, running, &[staged]);
+                staging::change(&state, |s| s.staged = Some(staged.into())).unwrap();
+                let mut events = state.events.subscribe();
+                let (code, v) = api(&state, "POST", "/api/admin/release/update", Some(json!({"version": staged}))).await;
+                assert_eq!(code, 200, "{v}");
+                job_fails(&mut events).await;
+                (admin::exec_env().unwrap(), state.exe.clone())
+            };
+            let tarball = Config { bundled_server: None, ..config("http://unused") };
+            let (env, exe) = update(tarball.clone(), None, "0.2.0").await;
+            assert_eq!(env, [("IA_BUNDLED_SERVER".to_string(), exe.into_os_string())]);
+            // The desktop app's server, or one given IA_BUNDLED_SERVER: it carries over as it is.
+            assert_eq!(update(config("http://unused"), None, "0.2.0").await.0, []);
+            // A release from app/: its Roll back goes to the version before it (or the bundled server it was given).
+            assert_eq!(update(tarball, Some("0.2.0"), "0.3.0").await.0, []);
         });
     }
 

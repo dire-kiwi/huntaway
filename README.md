@@ -466,8 +466,9 @@ otherwise carries on itself. So a newer tarball takes over from older downloads,
 does. A version it starts this way that exits before it's listening is marked bad on the next start,
 which starts the one before it, or the tarball's own server: a broken version is tried once, not on
 every restart (a server killed while it's starting counts as one that didn't start). Roll back can go
-back to the tarball's own server, which the server it execs gets as `IA_BUNDLED_SERVER` unless you
-set that yourself. Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
+back to the tarball's own server, from the first Update on: the tarball's server passes itself as
+`IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
+Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
 `scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
