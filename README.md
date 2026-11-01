@@ -52,9 +52,10 @@ Faster Rust builds: install [sccache](https://github.com/mozilla/sccache) (`carg
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
 them again. Without sccache, or where it can't start its server (a sandbox with no network), cargo
-runs rustc directly. `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s`
-shows the hit rate. Debug builds also leave dependencies' debuginfo out, which keeps each
-worktree's `target/` smaller.
+runs rustc directly. The server is started with `$XDG_RUNTIME_DIR` (or `/tmp`) as its `TMPDIR`
+rather than the build's, which may be a task's temp folder that goes when the task is done.
+`RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s` shows the hit rate.
+Debug builds also leave dependencies' debuginfo out, which keeps each worktree's `target/` smaller.
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
 of how many of its tasks are in progress (blue), need attention (amber), in review (purple) and
@@ -1128,6 +1129,21 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
+- **Temp folders:** each task's agents get a temp folder of their own,
+  `<system temp>/ha-<hash of the data dir>/<first 12 hex digits of the task id>` (kept short, as
+  sockets in it can't have paths over 107 bytes), as `$TMPDIR` for its runs (Claude and
+  Codex) and its terminals, so what they leave there (test servers' data, build and test output,
+  logs, browsers' profiles) doesn't pile up in `/tmp`. They're told to use it, Claude gets it as an
+  `--add-dir` and Codex as a writable root. Review threads share the folder of the task they
+  review. It's deleted as soon as the task is done and no agent (its own or a reviewer) is running
+  in it, or once the last one stops if the task went to *Done* while it ran, and when the task is
+  deleted; a sweep every ten
+  minutes (and at start) deletes those of tasks that are done or deleted (while the server was
+  down, say). It's made again if the task's agent runs again; a run that starts while its folder
+  is being deleted gets a new one. Each data dir has its own folder of them, so a server never
+  deletes another's (a test server's, say). Nothing is deleted unless that folder is a real
+  folder (not a link) of the server's user that no one else can write to, and only folders in it
+  named after a task are. Files written straight to `/tmp` by name don't go with it.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that

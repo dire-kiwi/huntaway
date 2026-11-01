@@ -148,7 +148,7 @@ impl TempDir {
     /// A new, empty folder, named after the test.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let dir = temp_root().join(format!("{}-{}", test_name(), &crate::util::new_id()[..8]));
+        let dir = temp_root().join(format!("{}-{}", folder_name(&test_name()), &crate::util::new_id()[..8]));
         std::fs::create_dir(&dir).unwrap();
         TempDir(dir)
     }
@@ -173,6 +173,14 @@ impl Drop for TempDir {
 /// This thread's test, as its folders are named: tests run on threads named after them.
 fn test_name() -> String {
     std::thread::current().name().unwrap_or("test").replace("::", ".")
+}
+
+/// The start of the names of a test's folders: the end of its name, so paths in them stay short
+/// enough (a Claude project folder is named after a whole path) in a task's temp folder too.
+fn folder_name(test: &str) -> &str {
+    const MAX: usize = 40;
+    let start = test.char_indices().map(|(i, _)| i).find(|&i| test.len() - i <= MAX).unwrap_or(test.len());
+    &test[start..]
 }
 
 /// The tests that failed (see `failed`), whose folders `remove_root` keeps with IA_KEEP_TEST_DIRS.
@@ -255,7 +263,7 @@ fn remove_run(root: &Path, keep: bool, failed: &HashSet<String>) {
         for e in std::fs::read_dir(root).into_iter().flatten().flatten() {
             let (path, name) = (e.path(), e.file_name().to_string_lossy().into_owned());
             if name == ".lock" {
-            } else if name.rsplit_once('-').is_some_and(|(test, _)| failed.contains(test)) {
+            } else if name.rsplit_once('-').is_some_and(|(test, _)| failed.iter().any(|f| folder_name(f) == test)) {
                 eprintln!("kept the failing test's folder {}", path.display());
                 any = true;
             } else {
@@ -373,6 +381,13 @@ mod tests {
         };
         remove_run(&root, true, &failed);
         assert_eq!(list(), ["a.fails-12345678", "a.fails-abcdefgh", "a.fails.too-12345678"]);
+        // A long name's folders are named after its end.
+        let long = "module.tests.a_test_whose_name_is_longer_than_forty_characters";
+        assert_eq!((folder_name(long), folder_name("a.fails")), ("ose_name_is_longer_than_forty_characters", "a.fails"));
+        std::fs::create_dir(root.join(format!("{}-12345678", folder_name(long)))).unwrap();
+        remove_run(&root, true, &HashSet::from([long.to_string()]));
+        assert_eq!(list(), [format!("{}-12345678", folder_name(long))]);
+        std::fs::write(root.join(".lock"), "").unwrap();
 
         // Without IA_KEEP_TEST_DIRS, or with nothing failed, it all goes.
         remove_run(&root, false, &failed);
@@ -412,5 +427,115 @@ mod tests {
         // This run's own is locked.
         remove_ended_runs(temp_root().parent().unwrap());
         assert!(temp_root().join(".lock").exists());
+    }
+
+    /// Runs a fake test binary, `script`, with `.cargo/test-runner` (cargo's runner for them) and `parent` as TMPDIR.
+    #[cfg(target_os = "linux")]
+    fn test_runner(parent: &Path, script: &str) -> std::process::Command {
+        let bin = temp_dir().join("deps/fake-test");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        std::fs::write(&bin, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let mut cmd = std::process::Command::new(Path::new(env!("CARGO_MANIFEST_DIR")).join(".cargo/test-runner"));
+        cmd.arg(bin).env("TMPDIR", parent).env_remove("IA_KEEP_TEST_DIRS");
+        cmd
+    }
+
+    #[cfg(target_os = "linux")]
+    fn runs_in(parent: &Path) -> Vec<String> {
+        let mut runs: Vec<_> = std::fs::read_dir(parent).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        runs.retain(|r| r.starts_with("ia-cargo-test-"));
+        runs.sort();
+        runs
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_test_runner_removes_a_binarys_tmpdir_and_fails_it_if_it_left_anything() {
+        let parent = temp_dir();
+        // Its own TMPDIR, locked while it runs.
+        let out = test_runner(&parent, r#"case $TMPDIR in "$1"/ia-cargo-test-*) ;; *) exit 3;; esac
+flock -n "$TMPDIR/.lock" true && exit 4; echo ok"#.replace("$1", &parent.display().to_string()).as_str()).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "ok\n");
+        assert!(runs_in(&parent).is_empty());
+
+        let out = test_runner(&parent, r#"mkdir -p "$TMPDIR/left/behind""#).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("/left/behind"), "{out:?}");
+        assert!(runs_in(&parent).is_empty());
+        // A binary's own failure is passed on.
+        assert_eq!(test_runner(&parent, "exit 7").status().unwrap().code(), Some(7));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_test_runner_removes_only_ended_runs_folders() {
+        let parent = temp_dir();
+        for d in ["ia-cargo-test-ended", "ia-cargo-test-running", "ia-cargo-test-new"] {
+            std::fs::create_dir(parent.join(d)).unwrap();
+        }
+        std::fs::write(parent.join("ia-cargo-test-ended/.lock"), "").unwrap();
+        let running = File::create(parent.join("ia-cargo-test-running/.lock")).unwrap();
+        assert_eq!(unsafe { libc::flock(running.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        // Being made: locked under another name until it's renamed `.lock`.
+        std::fs::write(parent.join("ia-cargo-test-new/.lock-new"), "").unwrap();
+        // A symlink to somewhere else that looks like an ended run's folder.
+        let victim = temp_dir();
+        std::fs::write(victim.join(".lock"), "").unwrap();
+        std::fs::write(victim.join("precious"), "").unwrap();
+        std::os::unix::fs::symlink(&victim, parent.join("ia-cargo-test-link")).unwrap();
+
+        assert!(test_runner(&parent, "true").status().unwrap().success());
+        assert_eq!(runs_in(&parent), ["ia-cargo-test-link", "ia-cargo-test-new", "ia-cargo-test-running"]);
+        assert!(victim.join("precious").exists() && victim.join(".lock").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_test_runner_leaves_a_running_binarys_folder_alone() {
+        let parent = temp_dir();
+        let signals = temp_dir();
+        let script = format!("touch '{0}/started'; while [ ! -e '{0}/go' ]; do sleep 0.05; done; echo \"$TMPDIR\"", signals.display());
+        let first = test_runner(&parent, &script).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        let start = std::time::Instant::now();
+        while !signals.join("started").exists() {
+            assert!(start.elapsed() < Duration::from_secs(10), "the first binary didn't start");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Another run starts while it runs (another worktree's, say).
+        assert!(test_runner(&parent, r#"[ -d "$TMPDIR" ]"#).status().unwrap().success());
+        assert_eq!(runs_in(&parent).len(), 1);
+        std::fs::write(signals.join("go"), "").unwrap();
+        let out = first.wait_with_output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("/ia-cargo-test-"));
+        assert!(runs_in(&parent).is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_test_runner_leaves_a_folder_being_made_alone() {
+        let parent = temp_dir();
+        let signals = temp_dir();
+        // The first run stops just before it locks its folder's lock, while another run sweeps.
+        let real = std::process::Command::new("sh").args(["-c", "command -v flock"]).output().unwrap();
+        let real = String::from_utf8(real.stdout).unwrap();
+        let stub = temp_dir();
+        std::fs::write(stub.join("flock"), format!("#!/bin/sh\nif [ \"$1 $2\" = '-n 9' ]; then touch '{0}/paused'; while [ ! -e '{0}/go' ]; do sleep 0.05; done; fi\nexec {1} \"$@\"\n", signals.display(), real.trim())).unwrap();
+        std::fs::set_permissions(stub.join("flock"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let path = format!("{}:{}", stub.display(), std::env::var("PATH").unwrap());
+        let first = test_runner(&parent, r#"[ -d "$TMPDIR" ]"#).env("PATH", path).spawn().unwrap();
+        let start = std::time::Instant::now();
+        while !signals.join("paused").exists() {
+            assert!(start.elapsed() < Duration::from_secs(10), "the first run didn't get to its lock");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(test_runner(&parent, "true").status().unwrap().success());
+        assert_eq!(runs_in(&parent).len(), 1, "the other run removed the folder being made");
+        std::fs::write(signals.join("go"), "").unwrap();
+        let out = first.wait_with_output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert!(runs_in(&parent).is_empty());
     }
 }

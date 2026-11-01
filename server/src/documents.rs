@@ -418,8 +418,9 @@ const PLAN_FORMAT: &str = "The board shows the plan in its own theme (dark) with
     - <ia-diagram><pre>flowchart LR\nA[\"Start\"] --&gt; B[\"Finish\"]</pre></ia-diagram>: a Mermaid diagram, \
     rendered by the board in its dark theme. Always use Mermaid for plan diagrams, never hand-written SVG. \
     Put only Mermaid source inside the <pre>, without Markdown fences, scripts or a CDN. HTML-escape & and < \
-    in the source (&amp; and &lt;); keep labels short and quote those with punctuation. Use the diagram type \
-    that fits (flowchart, sequenceDiagram, stateDiagram-v2, etc.).\n\
+    in the source (&amp; and &lt;); keep labels short and quote those with punctuation. Mermaid drops \
+    anything in a label that looks like an HTML tag, so write a placeholder such as <env> as #lt;env#gt;. Use \
+    the diagram type that fits (flowchart, sequenceDiagram, stateDiagram-v2, etc.).\n\
     - <ia-question name=\"id\" type=\"radio|checkbox|select|text|textarea\" title=\"The question?\">…</ia-question>: \
     a question the user answers in the plan. Give each a unique name. Radio (one choice), checkbox (any \
     number, also for a checklist to tick) and select (a dropdown) take the choices as children, \
@@ -452,7 +453,8 @@ const DIAGRAM: &str = "The file holds just the diagram's Mermaid source, without
     names of components, calls and data. Keep it legible: a title (in `---\\ntitle: …\\n---` front matter), short \
     labels, subgraphs to group related parts, and no more than about 30 nodes; if there's more to show, say \
     which further diagrams would help rather than cramming them in. Make sure it parses: quote labels that \
-    contain punctuation such as parentheses, brackets, colons or quotes. When the user gives feedback on it, \
+    contain punctuation such as parentheses, brackets, colons or quotes, and write < and > in labels as #lt; \
+    and #gt; (Mermaid drops anything that looks like an HTML tag, such as <env>). When the user gives feedback on it, \
     update the diagram in place and say briefly what changed.";
 
 #[cfg(test)]
