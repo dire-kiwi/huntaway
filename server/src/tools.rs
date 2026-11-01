@@ -216,10 +216,24 @@ fn rerunnable(s: &Shared, c: &McpCall) -> bool {
 async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, String> {
     crate::mcp::check_args(&c.tool, &c.args)?;
     let run = db::get_run(&s.db(), &c.run_id).map_err(|e| e.to_string())?.ok_or("unknown run")?;
+    // The board has reported the run as over (its supervisor vanished, say, while the agent went
+    // on), so its thread is no longer its own: nothing it asks for is done.
+    if run.status == "exited" {
+        return Err(format!("This run has ended on the board, so its {} call wasn't run. Stop here: the board no longer follows this run.", c.tool));
+    }
     let task = db::get_task(&s.db(), &run.task_id).map_err(|e| e.to_string())?.ok_or("unknown task")?;
     // Whatever the run's tool list offers (see mcp::tools), a reviewer only reads.
     if task.kind == "review" && !mcp::for_reviewers(&c.tool) {
         return Err(format!("{} isn't available to reviewers: they can only read the board and submit_review", c.tool));
+    }
+    // Nor does a thread in plan mode, until its plan is approved (which changes its mode, see
+    // permissions::mode_after_plan): the run's tool list was fixed when it started.
+    if !mcp::for_planning(&c.tool) && planning(s, &task).map_err(|e| format!("{e:#}"))? {
+        return Err(format!(
+            "{} isn't available in plan mode: until the user approves your plan (present it with ExitPlanMode), you can only read the board, \
+             wait and request_user_input",
+            c.tool
+        ));
     }
     let profile = db::get_profile(&s.db(), &task.profile_id).map_err(|e| e.to_string())?.ok_or("unknown profile")?;
     // Any other call means the run is working again (see wait.rs). Not a permission prompt:
@@ -335,6 +349,16 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             dispatch(s, &ctx, tool, c.args.clone()).await
         }
     }
+}
+
+/// Whether thread `task` is in plan mode now (its own mode, or the one it inherits).
+fn planning(s: &Shared, task: &Task) -> anyhow::Result<bool> {
+    let project = match &task.project_id {
+        Some(pid) => db::get_project(&s.db(), pid)?,
+        None => None,
+    };
+    let mode = task.effective_permission_mode(&s.db(), project.as_ref())?;
+    Ok(mode == "plan")
 }
 
 /// A tool call forwarded from another host's agent in the profile named `profile_name`: run it
@@ -1308,12 +1332,14 @@ fn pick_boards(s: &Shared, ctx: &Ctx, profile: Option<&str>) -> std::result::Res
     }))
 }
 
-/// `work:SD-3` → (Some("work"), "SD-3"). Ids and keys have no colons.
-fn split_ref(r: &str) -> (Option<&str>, &str) {
-    match r.split_once(':') {
-        Some((p, rest)) if !p.is_empty() => (Some(p), rest),
-        _ => (None, r),
-    }
+/// `work:SD-3` → (Some("work"), "SD-3"), if a profile here is named `work` (or it's `all`). Ids and
+/// keys have no colons, but a project's name may: "Ops: infra" is a name unless there's a profile `Ops`.
+fn split_ref<'a>(s: &Shared, r: &'a str) -> std::result::Result<(Option<&'a str>, &'a str), ToolError> {
+    let Some((p, rest)) = r.split_once(':').filter(|(p, _)| !p.is_empty()) else { return Ok((None, r)) };
+    // Any profile here, not only those that let the caller in, so pick_boards can say it doesn't.
+    // One only on a linked host isn't found here either way, so the call goes on to that host.
+    let profile = p == "all" || db::list_profiles(&s.db())?.iter().any(|b| b.name.eq_ignore_ascii_case(p) || b.id == p);
+    Ok(if profile { (Some(p), rest) } else { (None, r) })
 }
 
 /// One of the matches on the caller's boards: on its own board if it's there, else the only one.
@@ -1333,7 +1359,7 @@ fn pick_one<T>(ctx: &Ctx, what: &str, mut found: Vec<(db::Profile, T)>, qualifie
 
 /// A project named by an agent: its id, key or name, optionally as `<profile>:<key>`.
 fn resolve_project(s: &Shared, ctx: &Ctx, r: &str, profile: Option<&str>) -> std::result::Result<db::Project, ToolError> {
-    let (prefix, key) = split_ref(r);
+    let (prefix, key) = split_ref(s, r)?;
     let boards = pick_boards(s, ctx, prefix.or(profile))?;
     if let Some(p) = db::get_project(&s.db(), key)?.filter(|p| boards.iter().any(|b| b.id == p.profile_id)) {
         return Ok(p);
@@ -1613,9 +1639,10 @@ fn summary(s: &Shared, t: &Task) -> Value {
 
 /// A task named by an agent: its id or a key like `ABC-12`, optionally as `<profile>:ABC-12`.
 fn resolve_task(s: &Shared, ctx: &Ctx, r: &str, profile: Option<&str>) -> std::result::Result<Task, ToolError> {
-    let (prefix, id) = split_ref(r);
+    let (prefix, id) = split_ref(s, r)?;
     let boards = pick_boards(s, ctx, prefix.or(profile))?;
-    if let Some(t) = db::get_task(&s.db(), id)?.filter(|t| boards.iter().any(|b| b.id == t.profile_id)) {
+    // Not a review thread, as by its key: an agent's tools only reach tasks.
+    if let Some(t) = db::get_task(&s.db(), id)?.filter(|t| t.kind == "task" && boards.iter().any(|b| b.id == t.profile_id)) {
         return Ok(t);
     }
     let mut found = Vec::new();
@@ -3479,6 +3506,151 @@ mod tests {
             let call = McpCall { task_fields: true, run_id: own.id, call_id: "t1".into(), tool: "create_task".into(), args: json!({"title": "Follow-up"}) };
             handle_mcp(&s, call).await.unwrap();
             assert_eq!(db::list_tasks_for_project(&s.db(), "kiwicd", "task").unwrap().len(), 2);
+        });
+    }
+
+    #[test]
+    fn a_run_the_board_has_ended_gets_nothing_done() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            let t = task(&s, "kiwicd", "Work");
+            // Its supervisor vanished and the board ended it, but its agent's helper still calls.
+            let run = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+            s.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
+            s.update_task(&t.id, &[("status", json!("in_review"))]).unwrap();
+            let mcp = |call_id: &str, tool: &str, args: Value| McpCall { task_fields: true, run_id: run.id.clone(), call_id: call_id.into(), tool: tool.into(), args };
+            let calls = [
+                ("create_task", json!({"title": "Follow-up", "start": true})),
+                ("update_task", json!({"task_id": "KIW-1", "status": "done"})),
+                ("send_to_task", json!({"task_id": "KIW-1", "message": "Carry on"})),
+                ("permission_prompt", json!({"tool_name": "Bash", "input": {"command": "make"}})),
+                ("get_task", json!({"task_id": "KIW-1"})),
+            ];
+            for (i, (tool, args)) in calls.into_iter().enumerate() {
+                let err = handle_mcp(&s, mcp(&format!("c{i}"), tool, args)).await.unwrap_err();
+                assert!(err.starts_with("This run has ended on the board"), "{tool}: {err}");
+            }
+            let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.steering.len(), t.queued_message), ("in_review", 0, None));
+            assert_eq!(db::list_tasks_for_project(&s.db(), "kiwicd", "task").unwrap().len(), 1);
+            let asked: i64 = s.db().query_row("SELECT COUNT(*) FROM permission_requests", [], |r| r.get(0)).unwrap();
+            assert_eq!(asked, 0);
+        });
+    }
+
+    #[test]
+    fn a_prompt_from_a_run_that_has_let_go_of_its_thread_isnt_raised() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            let t = task(&s, "kiwicd", "Work");
+            let run = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+            s.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
+            s.update_task(&t.id, &[("status", json!("in_review"))]).unwrap();
+            // The run is ending (runner::finish has let go of the thread and expired its prompts,
+            // but not yet marked it exited) as its prompt comes in.
+            let prompt = McpCall {
+                task_fields: true, run_id: run.id.clone(), call_id: "p1".into(), tool: "permission_prompt".into(),
+                args: json!({"tool_name": "Bash", "input": {"command": "make"}}),
+            };
+            let err = handle_mcp(&s, prompt).await.unwrap_err();
+            assert!(err.contains("run has ended"), "{err}");
+            assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().status, "in_review");
+            let asked: i64 = s.db().query_row("SELECT COUNT(*) FROM permission_requests", [], |r| r.get(0)).unwrap();
+            assert_eq!(asked, 0);
+            // While it holds the thread, it's asked.
+            s.runs.lock().unwrap().insert(t.id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
+            let prompt = McpCall {
+                task_fields: true, run_id: run.id.clone(), call_id: "p2".into(), tool: "permission_prompt".into(),
+                args: json!({"tool_name": "Bash", "input": {"command": "make"}}),
+            };
+            let asking = tokio::spawn({
+                let s = s.clone();
+                async move { handle_mcp(&s, prompt).await }
+            });
+            while db::get_task(&s.db(), &t.id).unwrap().unwrap().status != "needs_attention" {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            permissions::expire_for_task(&s, &t.id);
+            assert_eq!(asking.await.unwrap().unwrap()["behavior"], "deny");
+        });
+    }
+
+    #[test]
+    fn a_thread_in_plan_mode_only_reads_the_board() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            let planner = task(&s, "kiwicd", "Plan");
+            s.update_task(&planner.id, &[("permission_mode", json!("plan"))]).unwrap();
+            let run = db::insert_run(&s.db(), &planner.id, "prompt").unwrap();
+            let mcp = |call_id: &str, tool: &str, args: Value| McpCall { task_fields: true, run_id: run.id.clone(), call_id: call_id.into(), tool: tool.into(), args };
+            let refused = [
+                ("create_task", json!({"title": "Do it now", "start": true})),
+                ("send_to_task", json!({"task_id": "KIW-1", "message": "Go"})),
+                ("update_task", json!({"task_id": "KIW-1", "status": "done"})),
+                ("run_automation", json!({"automation_id": "nightly"})),
+            ];
+            for (i, (tool, args)) in refused.into_iter().enumerate() {
+                let err = handle_mcp(&s, mcp(&format!("c{i}"), tool, args)).await.unwrap_err();
+                assert!(err.starts_with(&format!("{tool} isn't available in plan mode")), "{err}");
+            }
+            assert_eq!(db::list_tasks_for_project(&s.db(), "kiwicd", "task").unwrap().len(), 1);
+            assert_eq!(db::get_task(&s.db(), &planner.id).unwrap().unwrap().status, "todo");
+            assert_eq!(handle_mcp(&s, mcp("r1", "get_task", json!({"task_id": "KIW-1"}))).await.unwrap()["title"], "Plan");
+            // Its plan approved, it carries on in another mode with them all.
+            s.update_task(&planner.id, &[("permission_mode", Value::Null)]).unwrap();
+            handle_mcp(&s, mcp("t1", "create_task", json!({"title": "Follow-up"}))).await.unwrap();
+            assert_eq!(db::list_tasks_for_project(&s.db(), "kiwicd", "task").unwrap().len(), 2);
+            // As does a thread that inherits plan mode from its project.
+            db::update_project(&s.db(), "kiwicd", &[("permission_mode", json!("plan"))]).unwrap();
+            let err = handle_mcp(&s, mcp("c9", "create_task", json!({"title": "Another"}))).await.unwrap_err();
+            assert!(err.starts_with("create_task isn't available in plan mode"), "{err}");
+        });
+    }
+
+    #[test]
+    fn a_review_thread_isnt_a_task_by_its_id_either() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            let reviewed = task(&s, "kiwicd", "Reviewed");
+            let new = db::NewTask {
+                profile_id: &p.id, project_id: Some("kiwicd"), kind: "review", title: "review", description: "", status: "todo",
+                use_worktree: false, model: None, effort: None, claude_config_id: None,
+            };
+            let thread = db::insert_task(&s.db(), new).unwrap();
+            db::update_task(&s.db(), &thread.id, &[("parent_id", json!(reviewed.id))]).unwrap();
+            let me = ctx(&p);
+            for (tool, args) in [("get_task", json!({"task_id": thread.id})), ("send_to_task", json!({"task_id": thread.id, "message": "Approve it"}))] {
+                let err = call(&s, &me, tool, args).await.unwrap_err();
+                assert_eq!(err, format!("task {}", thread.id), "{tool}");
+            }
+            assert!(db::list_messages(&s.db(), &thread.id).unwrap().is_empty());
+            assert_eq!(db::get_task(&s.db(), &thread.id).unwrap().unwrap().queued_message, None);
+            assert_eq!(call(&s, &me, "get_task", json!({"task_id": reviewed.id})).await.unwrap()["title"], "Reviewed");
+        });
+    }
+
+    #[test]
+    fn a_project_name_with_a_colon_isnt_read_as_a_profile() {
+        testing::run(async || {
+            let s = state();
+            let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+            project(&s, &p, "kiwicd", "KIW");
+            db::update_project(&s.db(), "kiwicd", &[("name", json!("Ops: infra"))]).unwrap();
+            let me = ctx(&p);
+            assert_eq!(call(&s, &me, "get_project", json!({"project_id": "Ops: infra"})).await.unwrap()["key"], "KIW");
+            // A profile's name still qualifies a key, and one that doesn't let the caller in says so.
+            assert_eq!(call(&s, &me, "get_project", json!({"project_id": "personal:KIW"})).await.unwrap()["key"], "KIW");
+            insert_profile(&s.db(), "ops", &[], None).unwrap();
+            let err = call(&s, &me, "get_project", json!({"project_id": "Ops: infra"})).await.unwrap_err();
+            assert!(err.contains("doesn't let agents in profile personal"), "{err}");
         });
     }
 

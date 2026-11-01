@@ -1604,7 +1604,9 @@ pub fn load_active(state: &Shared) -> Result<()> {
     for run in active {
         state.runs.lock().unwrap().insert(run.task_id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
         if runs::exists(state, &run.id) && runs::format(state, &run.id) > runs::RUN_FORMAT {
-            // Written by a newer build (a downgrade); we can't follow it safely.
+            // Written by a newer build (a downgrade); we can't follow it safely, so its agent is
+            // stopped rather than left working (and calling the board's tools) unfollowed.
+            runs::reap(state, &run.id);
             finish(state, &run.id, Outcome::Failed("This run was started by a newer huntaway; update this host to follow it".into()));
         } else if runs::exists(state, &run.id) {
             if run.status == "preparing" {
@@ -1627,10 +1629,21 @@ pub fn load_active(state: &Shared) -> Result<()> {
             if stopping == 1 && takes_input {
                 stop_unless_interrupted(state, &run.id, stop_id.as_deref().unwrap_or(""));
             }
-            // Its turn ended with messages it has been sent waiting to start the next one.
+            // Its turn ended, maybe before the end was seen to (see `turn_ended`): the messages it has been
+            // sent start the next one, written now if they weren't, or else its input is closed so it exits.
             if between_turns && takes_input {
-                let waiting: Vec<String> = task.into_iter().flat_map(|t| t.steering).filter(|s| s.run_id == run.id && s.written).map(|s| s.id).collect();
-                if !waiting.is_empty() {
+                let waiting: Vec<String> = {
+                    let _runs = state.runs.lock().unwrap();
+                    // Those it can't be sent are taken back once it doesn't take them in (see `finish`).
+                    let task = write_steers(state, &run.task_id).unwrap_or_else(|e| {
+                        tracing::error!(run = %run.id, "sending the agent the messages it was sent: {e:#}");
+                        task
+                    });
+                    task.into_iter().flat_map(|t| t.steering).filter(|s| s.run_id == run.id).map(|s| s.id).collect()
+                };
+                if waiting.is_empty() {
+                    runs::close_input(state, &run.id);
+                } else {
                     close_unless_taken_in(state, &run, waiting);
                 }
             }
@@ -2281,7 +2294,15 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
 /// The end of one of the agent's turns (Claude Code's `result`, or a Codex turn completing):
 /// record its outcome and add `result` (shaped like Claude Code's) to the thread. The last
 /// turn's outcome is the run's.
-pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut result: Value) -> Result<()> {
+pub fn record_result(state: &Shared, run: &Run, error: Option<String>, result: Value) -> Result<()> {
+    let recorded = record_turn_end(state, run, error, result);
+    // Even if that failed (the disk is full, say): the result's line has been read, so it isn't
+    // seen again, and an input left open would keep the agent (and the run) waiting for good.
+    turn_ended(state, run);
+    recorded
+}
+
+fn record_turn_end(state: &Shared, run: &Run, error: Option<String>, mut result: Value) -> Result<()> {
     let stopping: i64 = state.db().query_row("SELECT stop_requested FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
     if stopping == 1 {
         // The turn a stop interrupted: from here, a message it takes in starts a new one.
@@ -2298,7 +2319,6 @@ pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut resul
     crate::documents::turn_ended(state, &run.task_id);
     crate::context::record_turn(state, run, result["total_cost_usd"].as_f64())?;
     state.add_message(&run.task_id, "claude", result)?;
-    turn_ended(state, run);
     Ok(())
 }
 
@@ -2982,6 +3002,68 @@ mod tests {
             assert!(!input_closed(&state, &run));
             tokio::time::sleep(STEER_GRACE).await;
             assert!(input_closed(&state, &run));
+        });
+    }
+
+    #[test]
+    fn after_a_restart_a_turn_that_ended_with_nothing_waiting_ends_the_run() {
+        crate::testing::run(async || {
+            let (state, task, run) = running(true);
+            // The server stopped after the turn's end was recorded, before its input was closed.
+            state.db().execute("UPDATE runs SET saw_result=1, between_turns=1 WHERE id=?1", [&run.id]).unwrap();
+            restart(&state, &task);
+            assert!(input_closed(&state, &run));
+        });
+    }
+
+    #[test]
+    fn after_a_restart_messages_the_agent_wasnt_sent_are_sent() {
+        crate::testing::run(async || {
+            let (state, task, run) = running(true);
+            // Sent as the turn ended, and kept, before the server stopped, to be written to its input.
+            let steer = db::Steer { id: "s1".into(), text: "one more thing".into(), from_agent: false, run_id: run.id.clone(), written: false };
+            state.update_task(&task.id, &[("steering", json!([steer]))]).unwrap();
+            state.db().execute("UPDATE runs SET saw_result=1, between_turns=1 WHERE id=?1", [&run.id]).unwrap();
+            restart(&state, &task);
+            assert_eq!(input(&state, &run).last().unwrap()["message"]["content"], "one more thing");
+            assert!(reload(&state, &task.id).steering[0].written);
+            // It starts the next turn, or the run ends and it goes to the next.
+            assert!(!input_closed(&state, &run));
+            tokio::time::sleep(STEER_GRACE * 3 / 2).await;
+            assert!(input_closed(&state, &run));
+        });
+    }
+
+    #[test]
+    fn a_turns_end_closes_the_input_even_if_it_cant_be_recorded() {
+        crate::testing::run(async || {
+            let (state, _task, run) = running(true);
+            // The disk is full, say.
+            state.db().execute_batch("CREATE TRIGGER full BEFORE INSERT ON messages BEGIN SELECT RAISE(FAIL, 'database or disk is full'); END;").unwrap();
+            output(&state, &run, &[result("success", 0.1)]);
+            assert!(input_closed(&state, &run));
+        });
+    }
+
+    #[test]
+    fn a_run_from_a_newer_build_is_stopped_rather_than_left_unfollowed() {
+        crate::testing::run(async || {
+            use std::os::unix::process::CommandExt;
+            let (state, task, run) = running(true);
+            let dir = runs::run_dir(&state, &run.id);
+            std::fs::write(dir.join("run.json"), r#"{"format": 99}"#).unwrap();
+            std::fs::write(dir.join("spec.json"), "{}").unwrap();
+            // Its agent, in a process group of its own as ia-shim starts it.
+            let mut agent = std::process::Command::new("sleep").arg("60").process_group(0).spawn().unwrap();
+            std::fs::write(dir.join("pid"), agent.id().to_string()).unwrap();
+            restart(&state, &task);
+            assert_eq!(db::get_run(&state.db(), &run.id).unwrap().unwrap().status, "exited");
+            assert!(input_closed(&state, &run));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while agent.try_wait().unwrap().is_none() {
+                assert!(std::time::Instant::now() < deadline, "the agent is still running");
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
         });
     }
 
