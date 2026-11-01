@@ -1010,6 +1010,13 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
+- **A profile's reviewers and summarizer** (API 87): a profile's settings (*Settings → Profiles →
+  Edit*) pick the *Reviewers* and *Summarizer* for its projects, and each project's *Review*
+  settings use *The profile's* until you switch to *This project's own*, which starts from the
+  profile's and overrides them. A project's own can still be one reviewer with the task's config,
+  over a profile's that differ. Through the API a project's `reviewers: []` and `summarizer: null`
+  use the profile's (`reviewers` and `summarizer` on `PATCH /profiles/{id}`), and `get_project`
+  shows the profile's as `profile_reviewers` and `profile_summarizer`.
 - **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
   to read before merging: what changed and why, the main changes, and how to try it. It reads the
   pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
@@ -1018,8 +1025,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
   writes one at any time. A summary in progress stops when the task's agent works again, and the
   next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
-  config, model and effort; the task's config by default), in the project's *Review* settings
-  (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  config, model and effort; the profile's, and otherwise the task's config, by default), in the
+  project's *Review* settings (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
   summarises on demand.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when
