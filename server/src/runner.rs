@@ -1029,6 +1029,9 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     };
 
     let github_account = github_account(project.as_ref(), &profile);
+    // The task's own temp folder, its TMPDIR, which goes once it's done (see task_tmp.rs).
+    let tmp = crate::task_tmp::ensure(state, &task).map(|d| path_str(&d));
+    let tmp_env: Vec<(String, String)> = tmp.iter().map(|d| ("TMPDIR".to_string(), d.clone())).collect();
 
     let config = db::task_claude_config(&state.db(), &task)?;
     let codex = config.as_ref().is_some_and(|c| c.is_codex());
@@ -1053,7 +1056,15 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         let gh_tools = uses_gh_server(&tools);
         let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
         let profiles = db::list_profiles(&state.db())?;
-        let to = Told { codex: true, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
+        let to = Told {
+            codex: true,
+            plan: permission_mode == "plan",
+            gh_tools,
+            github_account: github_account.as_deref(),
+            profiles: &profiles,
+            profile: &profile,
+            tmp: tmp.as_deref(),
+        };
         let mut instructions = instructions(base, &task, &to);
         let own_gh = tools.mcp_servers.contains_key(crate::gh_mcp::SERVER_NAME);
         // Reviewers read and report (see the Claude arguments below).
@@ -1078,6 +1089,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         let mut writable_roots: Vec<String> = git_dir.into_iter().collect();
         writable_roots.extend(cache_dirs());
         writable_roots.extend(own_dir.clone());
+        writable_roots.extend(tmp.clone());
         let spec = crate::codex::Spec {
             cwd: cwd.clone(),
             thread_id: task.session_id.clone(),
@@ -1102,7 +1114,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
             run_id: run.id.clone(),
             cwd: cwd.clone(),
             args: vec![],
-            env: vec![],
+            env: tmp_env,
             config_dir: db::task_config_dir(&state.db(), &task)?,
             prompt,
             input,
@@ -1134,7 +1146,15 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
     let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
     let profiles = db::list_profiles(&state.db())?;
-    let to = Told { codex: false, plan: permission_mode == "plan", gh_tools, github_account: github_account.as_deref(), profiles: &profiles, profile: &profile };
+    let to = Told {
+        codex: false,
+        plan: permission_mode == "plan",
+        gh_tools,
+        github_account: github_account.as_deref(),
+        profiles: &profiles,
+        profile: &profile,
+        tmp: tmp.as_deref(),
+    };
     push("--append-system-prompt", &instructions(base, &task, &to));
     push("--permission-mode", &permission_mode);
     if permission_mode != "bypassPermissions" {
@@ -1188,6 +1208,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     if attachments.is_dir() {
         add_dirs.push(path_str(&attachments));
     }
+    add_dirs.extend(tmp.clone());
     for d in &add_dirs {
         push("--add-dir", d);
     }
@@ -1196,7 +1217,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         cwd: cwd.clone(),
         args,
         // Permission prompts block until the user answers in the UI.
-        env: vec![("MCP_TOOL_TIMEOUT".into(), "86400000".into())],
+        env: [("MCP_TOOL_TIMEOUT".to_string(), "86400000".to_string())].into_iter().chain(tmp_env).collect(),
         config_dir: db::task_config_dir(&state.db(), &task)?,
         prompt,
         input,
@@ -1333,6 +1354,8 @@ struct Told<'a> {
     /// The host's profiles, and the run's own.
     profiles: &'a [Profile],
     profile: &'a Profile,
+    /// Its temp folder (see task_tmp.rs), if it has one.
+    tmp: Option<&'a str>,
 }
 
 /// What a run is told on top of its agent's own system prompt: Claude Code's `--append-system-prompt`, or Codex's
@@ -1358,6 +1381,13 @@ fn instructions(mut s: String, task: &Task, to: &Told) -> String {
         ));
     } else if to.gh_tools {
         s.push_str(&gh_note(to.github_account));
+    }
+    if let Some(d) = to.tmp {
+        s.push_str(&format!(
+            "\n\nYour temp folder is {d} (`$TMPDIR` in your shell{}). Put scratch files, logs and test data there rather \
+             than directly in /tmp. It's deleted once the task is done, so don't keep anything there that's needed after that.",
+            if task.kind == "review" { ", shared with the task's agent" } else { "" }
+        ));
     }
     // Which profiles' boards it can't use, so it asks rather than make a project that may be there.
     if task.kind != "review" {
@@ -1449,7 +1479,8 @@ pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> A
     let gh_tools = uses_gh_server(&tools);
     let account = github_account(Some(project), &profile);
     let base = system_prompt(&task, Some(project), None, &[], &documents, github.as_ref(), gh_tools);
-    let to = Told { codex, plan: permission_mode == "plan", gh_tools, github_account: account.as_deref(), profiles: &profiles, profile: &profile };
+    let tmp = path_str(&crate::task_tmp::dir(state, &task));
+    let to = Told { codex, plan: permission_mode == "plan", gh_tools, github_account: account.as_deref(), profiles: &profiles, profile: &profile, tmp: Some(&tmp) };
     Ok((instructions(base, &task, &to), codex, permission_mode))
 }
 
@@ -2532,7 +2563,7 @@ mod tests {
         };
         let (a, b) = (task("a"), task("b"));
         let id = crate::state::Identity { host_id: "h".into(), host_name: "h".into(), token: String::new(), hub_token: String::new(), internal_url: String::new() };
-        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, args: vec![] };
+        let meta = crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] };
         let dir = crate::testing::TempDir::new();
         let state: Shared = crate::state::AppState::new(c, dir.to_path_buf(), id, meta);
         let _ = state.test_dir.set(dir);

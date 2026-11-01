@@ -66,6 +66,8 @@ pub struct AppState {
     pub restart: Mutex<Option<RestartJob>>,
     /// What `--update-from` last reported (see admin::start_update_check).
     pub deployed: Mutex<Option<crate::admin::Deployed>>,
+    /// What the release checks found (see release.rs).
+    pub release: crate::release::Releases,
     /// Claude usage limits by Claude config id.
     pub usage: Mutex<HashMap<String, crate::usage::Usage>>,
     /// Held while a project is created or changed, so a key is checked against the keys as they
@@ -89,6 +91,12 @@ pub type Shared = Arc<AppState>;
 
 impl AppState {
     pub fn new(db: Connection, data_dir: PathBuf, id: Identity, meta: ServerMeta) -> Shared {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("huntaway"));
+        Self::with_exe(db, data_dir, id, meta, exe)
+    }
+
+    /// `new`, for a server whose binary is `exe` (for tests of what depends on where it runs from).
+    pub fn with_exe(db: Connection, data_dir: PathBuf, id: Identity, meta: ServerMeta, exe: PathBuf) -> Shared {
         let (events, _) = broadcast::channel(1024);
         let (hub_events, _) = broadcast::channel(4096);
         Arc::new_cyclic(|me| Self {
@@ -100,7 +108,7 @@ impl AppState {
             token: id.token,
             hub_token: id.hub_token,
             internal_url: id.internal_url,
-            exe: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("huntaway")),
+            exe,
             events,
             hub_events,
             runs: Mutex::new(HashMap::new()),
@@ -113,6 +121,7 @@ impl AppState {
             meta,
             restart: Mutex::new(None),
             deployed: Mutex::new(None),
+            release: Default::default(),
             usage: Mutex::new(HashMap::new()),
             project_changes: tokio::sync::Mutex::new(()),
             relocating: Mutex::new(Default::default()),
@@ -187,6 +196,10 @@ impl AppState {
             self.emit_task(&t);
             t
         };
+        // A task done with its agents gives up its temp folder.
+        if fields.iter().any(|(k, _)| ["status", "running"].contains(k)) {
+            self.task_changed(&t);
+        }
         // A subproject follows its tasks' columns (and its own agent's).
         if t.kind == "task" && fields.iter().any(|(k, _)| ["status", "running", "attention_reason", "merging", "subproject"].contains(k)) {
             // The task itself is updated either way, so a failure here is only logged.
@@ -224,6 +237,9 @@ impl AppState {
                 _ => None,
             }
         };
+        if let Some(t) = &moved {
+            self.task_changed(t);
+        }
         Ok(moved)
     }
 
@@ -232,6 +248,13 @@ impl AppState {
     fn status_changed(&self, c: &Connection, t: &Task, old: &str) {
         if let Some(me) = self.me.upgrade() {
             crate::status_script::status_changed(&me, c, t, old);
+        }
+    }
+
+    /// Task `t`'s status or running state changed (see task_tmp::changed), with the database unlocked.
+    fn task_changed(&self, t: &Task) {
+        if let Some(me) = self.me.upgrade() {
+            crate::task_tmp::changed(&me, t);
         }
     }
 

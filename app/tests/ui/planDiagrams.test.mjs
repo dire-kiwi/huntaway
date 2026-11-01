@@ -54,7 +54,7 @@ test("plan diagrams render Mermaid locally, including multiple types and escaped
     });
     const content = `<h1>Diagrams</h1>
 <ia-diagram title="Update flow"><pre>flowchart LR
-  A["Version &lt; 2 &amp; stable"] --&gt; B["Restart (server)"]
+  A["Version &lt; 2 &amp; stable"] --&gt; B["Restart (server)"] --&gt; C["Two&lt;br/&gt;lines"]
 </pre></ia-diagram>
 <ia-diagram><pre>sequenceDiagram
   Board-&gt;&gt;Server: Check releases
@@ -69,6 +69,8 @@ test("plan diagrams render Mermaid locally, including multiple types and escaped
     const svg = await frame.locator("ia-diagram > img").first().getAttribute("src");
     assert.match(decodeURIComponent(svg), /Version &lt; 2 &amp; stable/);
     assert.match(decodeURIComponent(svg), /Restart \(server\)/);
+    // Mermaid writes a label's line break as HTML (<br>), which an SVG image can't load (HA-80).
+    assert.match(decodeURIComponent(svg), /Two<br \/>lines/);
     assert.equal(await frame.locator("input[name=notes]").inputValue(), "Keep this answer");
     assert.ok(await frame.locator("ia-diagram > pre").first().isHidden());
     await page.screenshot({ path: "/tmp/ha62-plan-diagrams.png" });
@@ -124,5 +126,22 @@ test("the demo plan uses Mermaid, and the standalone diagram viewer still render
     await ui.run([`goto /p/${project.id}?task=${diagram.id}`, "wait css=img[alt=Diagram]", "click Zoom in"]);
     assert.ok(await ui.page.getByTitle("Download the rendered diagram", { exact: true }).isVisible());
     assert.match(await ui.page.getByTitle("Fit to the width", { exact: true }).innerText(), /^\d+%$/);
+  });
+});
+
+test("a standalone diagram with line breaks in its labels loads as an image", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const tasks = await server.api("GET", `/projects/${project.id}/tasks`);
+    const diagram = tasks.find((t) => t.labels.includes("diagram"));
+    const content = 'flowchart LR\n  A["One<br/>two"] --> B["Three<br>four"]\n';
+    const at = new Date().toISOString();
+    await ui.page.route(new RegExp(`/tasks/${diagram.id}/document(\\?.*)?$`), (route) => route.fulfill({ json: {
+      task_type: "diagram", file: "diagram.mmd", versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }], version: 1, content,
+    } }));
+    await ui.run([`goto /p/${project.id}?task=${diagram.id}`, "wait css=img[alt=Diagram]"]);
+    await ui.page.waitForFunction(() => {
+      const img = document.querySelector("img[alt=Diagram]");
+      return img.complete && img.naturalWidth > 0;
+    }, null, { timeout: 10000 });
   });
 });

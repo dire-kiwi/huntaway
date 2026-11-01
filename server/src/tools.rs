@@ -772,7 +772,8 @@ async fn update_project(s: &Shared, ctx: &Ctx, p: &db::Project, args: &Value, re
     let mut body = Map::new();
     for k in AGENT_FIELDS.iter().chain(APPROVAL_FIELDS) {
         let v = &args[*k];
-        if v.is_null() {
+        // An explicit null summarizer or reviewers goes back to the profile's.
+        if v.is_null() && !(["reviewers", "summarizer"].contains(k) && args.get(*k).is_some()) {
             continue;
         }
         if ["name", "key", "repo_path"].contains(k) && v.as_str().is_none_or(|v| v.trim().is_empty()) {
@@ -1267,6 +1268,9 @@ fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Profile) -> Va
     out["reviewers"] = json!(p.reviewers);
     out["auto_summary"] = json!(p.auto_summary);
     out["summarizer"] = json!(p.summarizer);
+    // What the project's empty reviewers and null summarizer use.
+    out["profile_reviewers"] = json!(board.reviewers);
+    out["profile_summarizer"] = json!(board.summarizer);
     out["group_name"] = json!(p.group_name);
     out["archived"] = json!(p.archived_at.is_some());
     let own = [&p.start_prompt, &p.review_prompt, &p.merge_prompt];
@@ -2402,6 +2406,14 @@ mod tests {
             assert_eq!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().reviewers.len(), 2);
             assert!(call(&s, &me, "update_project", json!({"reviewers": [{"claude_config_id": "nope"}]})).await.is_err());
             call(&s, &me, "update_project", json!({"reviewers": []})).await.unwrap();
+            // A summarizer of its own, over the profile's, and back to the profile's with null.
+            let v = call(&s, &me, "update_project", json!({"summarizer": {"model": "sonnet"}})).await.unwrap();
+            assert_eq!(v["summarizer"]["model"], "sonnet");
+            let v = call(&s, &me, "update_project", json!({"summarizer": null})).await.unwrap();
+            assert_eq!(v["summarizer"], Value::Null);
+            assert_eq!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().summarizer, None);
+            call(&s, &me, "update_project", json!({"reviewers": [{"model": "opus"}]})).await.unwrap();
+            call(&s, &me, "update_project", json!({"reviewers": null})).await.unwrap();
             assert!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().reviewers.is_empty());
             assert_eq!(call(&s, &me, "update_project", json!({"group_name": "Kiwi"})).await.unwrap()["group_name"], "Kiwi");
             assert_eq!(call(&s, &me, "update_project", json!({"group_name": ""})).await.unwrap()["group_name"], Value::Null);
@@ -2776,9 +2788,9 @@ mod tests {
             assert_eq!((&res.unwrap()["permission_mode"], &db::get_project(&s.db(), "kiwicd").unwrap().unwrap().setup_script), (&json!("default"), &"npm install".to_string()));
 
             // Settings given in another form than they're kept in, but that come to what they are
-            // (a blank column script is none, one default reviewer is the task's own), aren't
-            // changes, so nothing is asked.
-            let same = json!({"status_scripts": {"done": "  "}, "reviewers": [{}], "use_worktrees": false, "repo_path": "/x"});
+            // (a blank column script is none, no reviewers is the profile's), aren't changes, so
+            // nothing is asked.
+            let same = json!({"status_scripts": {"done": "  "}, "reviewers": [], "use_worktrees": false, "repo_path": "/x"});
             let v = call(&s, &me("c6"), "update_project", same).await.unwrap();
             assert_eq!((&v["status_scripts"], &v["reviewers"]), (&json!({}), &json!([])));
             assert!(permissions::pending_approvals(&s, true, true).unwrap().is_empty());

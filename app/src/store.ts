@@ -623,6 +623,18 @@ export function availableConfigs(s: Pick<State, "profiles" | "claudeConfigs">, h
   return ids.map((id) => s.claudeConfigs.find((c) => c.host_id === hostId && c.id === id)).filter((c): c is ClaudeConfig => !!c);
 }
 
+/**
+ * The config a task's agent runs with: its own, or else the first its project (or profile) offers. A config deleted
+ * since falls back to that too. None for one that started with none (its profile had no configs then), which stays in
+ * Claude's default config.
+ */
+export function taskConfig(s: Pick<State, "profiles" | "claudeConfigs" | "projects">, task: Task): ClaudeConfig | undefined {
+  const own = s.claudeConfigs.find((c) => c.host_id === task.host_id && c.id === task.claude_config_id);
+  if (own) return own;
+  if (!task.claude_config_id && task.session_id) return undefined;
+  return availableConfigs(s, task.host_id, task.profile_id, s.projects.find((p) => p.host_id === task.host_id && p.id === task.project_id))[0];
+}
+
 export function useAvailableConfigs(hostId: string, profileId: string, project?: Project | null) {
   const profiles = useStore((s) => s.profiles);
   const claudeConfigs = useStore((s) => s.claudeConfigs);

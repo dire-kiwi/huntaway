@@ -67,8 +67,13 @@ launch() {
   . "$dir/launch"
   # Nothing from an agent's or the live daemon's environment (hubs, brokers, tokens, profiles, the
   # checkout to rebuild from) carries over: every variable `huntaway serve` reads, save the binaries.
-  env -u IA_HUB -u IA_HUB_TOKEN -u IA_TOKEN -u IA_OPEN_TOKEN -u IA_DEMO -u IA_UI_DIR \
-    -u IA_CLOUDFLARED_BIN -u IA_BROKER -u IA_BROKER_TOKEN -u IA_BROKER_NAME -u IA_PROFILES -u IA_SOURCE_DIR -u IA_UPDATE_FROM -u IA_NAME -u IA_HOST -u IA_PORT -u IA_DATA_DIR \
+  # IA_RELEASE_API and the desktop app's IA_DESKTOP_* and IA_BUNDLED_SERVER are left for a test to
+  # set: they only count with --release-updates, which IA_RELEASE_UPDATES can't turn on here.
+  # Its temp folder, with its tasks' (see task_tmp.rs), goes with the data dir.
+  mkdir -p "$dir/tmp"
+  TMPDIR="$dir/tmp" env -u IA_HUB -u IA_HUB_TOKEN -u IA_TOKEN -u IA_OPEN_TOKEN -u IA_DEMO -u IA_UI_DIR \
+    -u IA_CLOUDFLARED_BIN -u IA_BROKER -u IA_BROKER_TOKEN -u IA_BROKER_NAME -u IA_PROFILES -u IA_SOURCE_DIR -u IA_UPDATE_FROM -u IA_RELEASE_UPDATES \
+    -u IA_NAME -u IA_HOST -u IA_PORT -u IA_DATA_DIR \
     setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!
