@@ -26,6 +26,7 @@ import { useShallow } from "zustand/react/shallow";
 import { defaultCloneDir } from "../githubRepos";
 import { navigate } from "../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../store";
+import { compareVersions } from "../versions";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "./ExternalLinks";
 import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow } from "./Reviewers";
@@ -145,8 +146,12 @@ export function HostVersion({ host }: { host: Host }) {
   const short = (c?: string | null) => (c ? c.slice(0, 7) : null);
   const behind = !!host.commit && !!local?.commit && host.commit !== local.commit;
   const differs = !!host.commit && !!target && host.commit !== target;
+  // A host installed from a release (API 89) goes by version instead: Update takes it to the release this board runs.
+  const release = host.updates_from === "releases";
+  const releaseTarget = release && local?.version && host.version && compareVersions(local.version, host.version) > 0 ? local.version : null;
   // API 3+ hosts can update from their own origin, so any hub that knows its commit can update them.
-  const canUpdate = !host.local && host.connected && !!target && hostSupports(host, 3) && (differs || compat !== "ok");
+  const canUpdate =
+    !host.local && host.connected && (release ? !!releaseTarget : !!target && hostSupports(host, 3) && (differs || compat !== "ok"));
 
   // While the host rebuilds, show its progress; done when it comes back (a new boot) or reconnects on the new commit.
   useEffect(() => {
@@ -168,8 +173,8 @@ export function HostVersion({ host }: { host: Host }) {
     return () => clearInterval(id);
   }, [phase, boot, host.id]);
   useEffect(() => {
-    if (phase && target && host.commit === target) setPhase(null);
-  }, [host.commit, target, phase]);
+    if (phase && (release ? host.version === local?.version : target && host.commit === target)) setPhase(null);
+  }, [host.commit, host.version, local?.version, release, target, phase]);
 
   const update = async () => {
     setErr(null);
@@ -198,8 +203,16 @@ export function HostVersion({ host }: { host: Host }) {
       )}
       {behind && compat === "ok" && <span className="text-muted">differs from this board ({short(local?.commit)})</span>}
       {canUpdate && !phase && (
-        <button className="text-accent hover:underline" onClick={update} title="Send this board's code to the host, which rebuilds and restarts. Agents keep running.">
-          Update to {short(target)}
+        <button
+          className="text-accent hover:underline"
+          onClick={update}
+          title={
+            release
+              ? "The host downloads this release from GitHub and restarts onto it. Agents keep running."
+              : "Send this board's code to the host, which rebuilds and restarts. Agents keep running."
+          }
+        >
+          Update to {release ? `v${releaseTarget}` : short(target)}
         </button>
       )}
       {!host.local && host.connected && !hostSupports(host, 3) && (behind || compat !== "ok") && (
