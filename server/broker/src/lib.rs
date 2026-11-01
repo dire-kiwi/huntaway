@@ -1055,16 +1055,16 @@ mod tests {
             let resolve = client.get(format!("http://{b}/_broker/resolve/desktop")).send().await.unwrap();
             assert_eq!(resolve.headers()["cache-control"], "no-store");
             let info: serde_json::Value = resolve.json().await.unwrap();
-            assert_eq!(info, json!({"host_id": "host-1", "url": "https://desktop.hosts.example.com"}));
+            assert_eq!(info, json!({"host_id": "host-1", "url": "https://desktop.example.com"}));
             assert!(!info.to_string().contains("connector-secret"));
             let default: serde_json::Value = client.get(format!("http://{b}/_broker/resolve")).send().await.unwrap().json().await.unwrap();
             assert_eq!(default, info);
             let request = client.post(format!("http://{b}/_broker/h/desktop/api/tasks/a%2Fb?token=host-token"))
                 .body("upload body").send().await.unwrap();
             assert_eq!(request.status(), 307);
-            assert_eq!(request.headers()["location"], "https://desktop.hosts.example.com/api/tasks/a%2Fb?token=host-token");
+            assert_eq!(request.headers()["location"], "https://desktop.example.com/api/tasks/a%2Fb?token=host-token");
             assert_eq!(request.headers()["referrer-policy"], "no-referrer");
-            assert_eq!(client.get(format!("http://{b}/")).send().await.unwrap().headers()["location"], "https://desktop.hosts.example.com/");
+            assert_eq!(client.get(format!("http://{b}/")).send().await.unwrap().headers()["location"], "https://desktop.example.com/");
             assert_eq!(api.lock().unwrap().calls.len(), 6);
             // Application requests never become Req frames on the registration channel.
             while let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_millis(50), host.next()).await {

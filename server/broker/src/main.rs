@@ -21,8 +21,9 @@ struct Args {
     /// A file to keep the names hosts took in, so a restart keeps them for their hosts (see the README).
     #[arg(long, env = "BROKER_STATE")]
     state: Option<std::path::PathBuf>,
-    /// Provision endpoints below this Cloudflare DNS domain (e.g. hosts.example.com). Without it,
-    /// keep the legacy relay transport. Requires the account, zone and API token too.
+    /// Provision endpoints below this Cloudflare DNS domain (e.g. zone apex example.com → desktop.example.com).
+    /// Omit this flag to keep the legacy relay transport. Requires the account, zone and API token too.
+    /// Use the zone apex for Universal SSL; nested domains need separate edge certificate coverage.
     #[arg(long, env = "BROKER_TUNNEL_DOMAIN", requires_all = ["cloudflare_account", "cloudflare_zone", "cloudflare_token", "state"])]
     tunnel_domain: Option<String>,
     #[arg(long, env = "BROKER_CLOUDFLARE_ACCOUNT", requires = "tunnel_domain")]

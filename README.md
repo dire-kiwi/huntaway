@@ -471,6 +471,12 @@ The connector keeps running across broker disconnects, so existing sessions and 
 tunnel URL keep working during a broker outage. New discovery needs the broker. Older hosts must
 be updated to use managed tunnels; the broker refuses them rather than silently relaying traffic.
 
+For the basic managed setup, use the DNS zone apex: `--tunnel-domain example.com` gives `desktop.example.com`.
+In a full Cloudflare zone, [Universal SSL covers the apex and first-level subdomains](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/#hostname-coverage).
+Using `hosts.example.com` instead gives `desktop.hosts.example.com`, requiring separate edge certificate coverage,
+such as Advanced Certificate Manager with Total TLS or an appropriate custom certificate. Configure that coverage
+before using nested domains; the broker doesn't provision certificates.
+
 Open `https://broker.example.com/?token=<host token>` from anywhere. With managed tunnels, the broker
 redirects the browser to the host's HTTPS hostname, preserving the path and query. With a legacy
 relay it serves the board through the websocket. The host's token (`huntaway token`) still guards

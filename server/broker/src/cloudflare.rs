@@ -33,7 +33,7 @@ impl Cloudflare {
         }
         if domain.len() > 200 || !domain.contains('.') || !domain.split('.').all(|p| (1..=63).contains(&p.len())
             && !p.starts_with('-') && !p.ends_with('-') && p.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')) {
-            bail!("the tunnel domain must be a DNS name, such as hosts.example.com");
+            bail!("the tunnel domain must be a DNS name, such as example.com");
         }
         if token.trim().is_empty() { bail!("the Cloudflare API token is empty"); }
         Ok(Self {
@@ -136,7 +136,7 @@ pub(crate) mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let mut cf = Cloudflare::new("a".repeat(32), "b".repeat(32), "hosts.example.com".into(), "api-secret".into()).unwrap();
+        let mut cf = Cloudflare::new("a".repeat(32), "b".repeat(32), "example.com".into(), "api-secret".into()).unwrap();
         cf.api = format!("http://{addr}");
         (cf, state)
     }
@@ -151,7 +151,7 @@ pub(crate) mod tests {
             assert!(err.contains("403") && !err.contains("api-secret"));
             state.lock().unwrap().fail = None;
             let tunnel = cf.provision("desktop", "owner", 23456).await.unwrap();
-            assert_eq!(tunnel.url, "https://desktop.hosts.example.com");
+            assert_eq!(tunnel.url, "https://desktop.example.com");
             assert_eq!(tunnel.token, "connector-secret");
             assert!(!format!("{tunnel:?} {cf:?}").contains("secret"));
             let state = state.lock().unwrap();

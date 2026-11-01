@@ -23,13 +23,20 @@ export BROKER_CLOUDFLARE_ACCOUNT='<32-character Cloudflare account id>'
 export BROKER_CLOUDFLARE_ZONE='<32-character DNS zone id>'
 export BROKER_CLOUDFLARE_TOKEN='<Cloudflare API token>'
 target/release/huntaway-broker --port 8080 --state /var/lib/huntaway-broker/state.json \
-  --tunnel-domain hosts.example.com --default-host desktop
+  --tunnel-domain example.com --default-host desktop
 ```
 
 The domain must be in the configured Cloudflare DNS zone. The API token needs **Account → Cloudflare Tunnel → Edit**
 on that account and **Zone → DNS → Edit** on that zone. It stays on the broker; it isn't sent to hosts or browsers.
 The state file preserves name ownership, so it is required. The broker never replaces an existing DNS record that
 isn't already the host's proxied tunnel CNAME: choose an unused hostname or remove the conflicting record yourself.
+
+**Edge certificates:** use the zone apex (`--tunnel-domain example.com`) for the basic setup, producing
+`desktop.example.com`. In a normal full Cloudflare zone, [Universal SSL covers the apex and first-level subdomains](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/#hostname-coverage).
+A nested domain such as `--tunnel-domain hosts.example.com` produces `desktop.hosts.example.com`, which needs
+separately configured coverage, such as Advanced Certificate Manager with Total TLS or an appropriate custom
+certificate. Ensure coverage is active before using these endpoints. The broker provisions tunnels and DNS, not
+edge certificates; successful registration or restarting `cloudflared` cannot fix missing certificate coverage.
 
 On each host, [install cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)
 and run the usual `huntaway serve --broker https://broker.example.com --broker-token <broker token>`.
@@ -39,11 +46,11 @@ crashes or replaces itself with a new version; a broker disconnect leaves it run
 loopback listener that blocks
 `/api/open-token`, even if the LAN listener uses `--open-token`.
 
-A host called `desktop` gets `https://desktop.hosts.example.com`. Opening the broker's URL selects a host and sends
+A host called `desktop` gets `https://desktop.example.com`. Opening the broker's URL selects a host and sends
 an uncached 307 redirect, preserving the path and query (including `?token=`). The board loads, authenticates and
 opens websockets at the host's hostname, so board traffic doesn't pass through this process. Current hubs use
 `GET /_broker/resolve/<name>` (or `/_broker/resolve` for the default host) before authenticating or opening a
-websocket. It returns `{"host_id":"…","url":"https://desktop.hosts.example.com"}` with `Cache-Control: no-store`;
+websocket. It returns `{"host_id":"…","url":"https://desktop.example.com"}` with `Cache-Control: no-store`;
 it never returns the connector token. Saved links resolve again on reconnect, and reject a changed host id.
 
 Upgrade hosts and hubs before switching the broker to managed tunnels. Old host registrations are refused with
