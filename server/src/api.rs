@@ -970,8 +970,11 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "link_folders",
         ],
     );
-    // Configs deleted since they were saved are kept (see check_reviewers).
-    let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizer).collect();
+    // Configs deleted since they were saved, here or in the profile's (which the project's
+    // settings start from when it takes its own), are kept (see check_reviewers).
+    let profile = db::get_profile(&s.db(), &before.profile_id)?;
+    let from_profile = profile.iter().flat_map(|p| p.reviewers.iter().chain(&p.summarizer));
+    let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizer).chain(from_profile).collect();
     for (k, v) in fields.iter_mut() {
         match *k {
             // null (or blank) uses the default (see prompts.rs).
@@ -2946,6 +2949,13 @@ pub(crate) mod tests {
             let body = json!({"name": "y", "reviewers": [spec, {"claude_config_id": other.id}], "summarizer": spec});
             let project = update_project_inner(&s, "pr", body.as_object().unwrap()).await.unwrap();
             assert_eq!((project.name.as_str(), project.reviewers.len()), ("y", 2));
+            // A project taking its own, starting from the profile's, keeps the profile's too.
+            update_project_inner(&s, "pr", json!({"reviewers": [], "summarizer": null}).as_object().unwrap()).await.unwrap();
+            let edited = json!({"claude_config_id": gone.id, "model": "sonnet", "effort": "low"});
+            let project = update_project_inner(&s, "pr", json!({"reviewers": [edited]}).as_object().unwrap()).await.unwrap();
+            assert_eq!(project.reviewers[0].model.as_deref(), Some("sonnet"));
+            let project = update_project_inner(&s, "pr", json!({"summarizer": edited}).as_object().unwrap()).await.unwrap();
+            assert_eq!(project.summarizer.unwrap().claude_config_id, Some(gone.id.clone()));
             // A config that was never saved there still has to exist.
             let unknown = json!({"claude_config_id": "nope"});
             assert!(update(json!({"summarizer": unknown})).await.is_err());
