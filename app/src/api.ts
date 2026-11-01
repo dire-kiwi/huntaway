@@ -273,6 +273,27 @@ export interface AnalyticsReport {
   projects: { id: string; name: string; key: string }[];
 }
 
+/** How big a profile's threads' contexts were at each turn's end, and their compactions (API 85). */
+export interface ContextStatsReport {
+  stats: {
+    at: string;
+    task_id: string;
+    kind: "turn" | "compact";
+    /** A turn's: the context it left. A compaction's: the context before it. */
+    tokens: number | null;
+    /** A compaction's: the context after it, if the agent says. */
+    post_tokens: number | null;
+    max_tokens: number | null;
+    model: string | null;
+    /** A compaction's: the agent's own as its context filled up (`auto`), `/compact` (`user`) or the board's after a session sat idle (`idle`). */
+    source: "auto" | "user" | "idle" | null;
+    cost_usd: number | null;
+    duration_ms: number | null;
+  }[];
+  tasks: AnalyticsReport["tasks"];
+  projects: AnalyticsReport["projects"];
+}
+
 /** Bytes on disk and the number of files, as `du` counts them. */
 export interface DiskSize {
   bytes: number;
@@ -1588,6 +1609,10 @@ export const api = {
   /** The profile's prompts and agent runs in [from, to) (API 16). */
   analytics: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<AnalyticsReport>(`/profiles/${enc(profileId)}/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+
+  /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 85). */
+  contextStats: (h: string, profileId: string, from: string, to: string) =>
+    on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
   /** How much space the profile's projects and their worktrees take up (API 35). */
   diskUsage: (h: string, profileId: string) => on(h).get<DiskUsageReport>(`/profiles/${enc(profileId)}/disk-usage`),

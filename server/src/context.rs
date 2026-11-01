@@ -8,9 +8,14 @@
 //! reply's usage and the parts are estimated locally. The full one counts each part with
 //! Anthropic's token-counting API, which would be more requests every turn, and Claude Code waits
 //! for it before exiting (up to 5 minutes), keeping a finished run going.
+//!
+//! For statistics (`GET /profiles/{id}/context-stats`, see analytics.rs), it also keeps a row
+//! for the end of each turn with the context it leaves, and one for each compaction, in
+//! `context_stats`, which outlive the session.
 
 use axum::Json;
 use axum::extract::{Path, State};
+use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
 use crate::db::{self, Context, Run};
@@ -68,12 +73,78 @@ pub fn on_codex_usage(state: &Shared, task_id: &str, p: &Value) -> anyhow::Resul
     set_tokens(state, task_id, tokens, usage["modelContextWindow"].as_u64())
 }
 
-/// After compacting, the session starts again from the summary.
-pub fn on_compacted(state: &Shared, task_id: &str, meta: &Value) -> anyhow::Result<()> {
+/// After compacting, the session starts again from the summary. `meta` is Claude Code's
+/// `compact_metadata` (Codex's has just the `trigger`).
+pub fn on_compacted(state: &Shared, run: &Run, meta: &Value) -> anyhow::Result<()> {
+    let task_id = run.task_id.as_str();
+    let before = current(state, task_id)?;
+    record_compaction(state, run, meta, before.as_ref())?;
     match meta["post_tokens"].as_u64() {
         Some(tokens) => set_tokens(state, task_id, tokens, None),
         None => Ok(()),
     }
+}
+
+/// Where a compaction in `run` came from (see db::SCHEMA_V68): the agent's own (`trigger`
+/// `auto`), the board's after a session sat idle (a `/compact` run that no user message
+/// started, see runner::compact) or the user's.
+fn compaction_source(c: &rusqlite::Connection, run: &Run, trigger: &str) -> anyhow::Result<&'static str> {
+    if trigger == "auto" {
+        return Ok("auto");
+    }
+    let prompted: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND created_at>=?2)",
+        rusqlite::params![run.task_id, run.created_at],
+        |r| r.get(0),
+    )?;
+    Ok(if run.kind == "compact" && !prompted { "idle" } else { "user" })
+}
+
+fn record_compaction(state: &Shared, run: &Run, meta: &Value, before: Option<&Context>) -> anyhow::Result<()> {
+    let c = state.db();
+    let source = compaction_source(&c, run, meta["trigger"].as_str().unwrap_or(""))?;
+    // Codex doesn't say how big the context was: it's the latest count.
+    let tokens = meta["pre_tokens"].as_i64().or(before.map(|b| b.tokens as i64));
+    c.execute(
+        "INSERT INTO context_stats (task_id, run_id, kind, at, tokens, post_tokens, max_tokens, model, source, duration_ms)
+         VALUES (?1, ?2, 'compact', ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            run.task_id,
+            run.id,
+            now(),
+            tokens,
+            meta["post_tokens"].as_i64(),
+            before.and_then(|b| b.max_tokens).map(|m| m as i64),
+            before.and_then(|b| b.model.as_deref()),
+            source,
+            meta["duration_ms"].as_i64(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// The end of one of the agent's turns: how big the context it leaves is (what the next prompt
+/// starts from), and what the turn cost, if the agent says. Not for a `/compact`, and not if the
+/// count hasn't changed since the last turn (the turn didn't get a reply from the model).
+pub fn record_turn(state: &Shared, run: &Run, cost_usd: Option<f64>) -> anyhow::Result<()> {
+    if run.kind == "compact" {
+        return Ok(());
+    }
+    let Some(ctx) = current(state, &run.task_id)? else { return Ok(()) };
+    let c = state.db();
+    let last: Option<(String, i64)> = c
+        .query_row("SELECT at, tokens FROM context_stats WHERE task_id=?1 AND kind='turn' ORDER BY id DESC LIMIT 1", [&run.task_id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .optional()?;
+    if last.is_some_and(|(at, tokens)| at >= ctx.updated_at && tokens == ctx.tokens as i64) {
+        return Ok(());
+    }
+    c.execute(
+        "INSERT INTO context_stats (task_id, run_id, kind, at, tokens, max_tokens, model, cost_usd) VALUES (?1, ?2, 'turn', ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![run.task_id, run.id, now(), ctx.tokens as i64, ctx.max_tokens.map(|m| m as i64), ctx.model, cost_usd],
+    )?;
+    Ok(())
 }
 
 fn set_tokens(state: &Shared, task_id: &str, tokens: u64, max_tokens: Option<u64>) -> anyhow::Result<()> {

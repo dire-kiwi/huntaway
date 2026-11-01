@@ -140,7 +140,14 @@ pub fn report(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow:
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    let mut ids: Vec<&str> = events.iter().map(|e| e.task_id.as_str()).chain(runs.iter().map(|r| r.task_id.as_str())).collect();
+    let ids = events.iter().map(|e| e.task_id.as_str()).chain(runs.iter().map(|r| r.task_id.as_str()));
+    let (tasks, projects) = tasks_and_projects(c, profile_id, ids)?;
+    Ok(Report { events, runs, tasks, projects })
+}
+
+/// The tasks `ids` refer to, and the profile's projects.
+fn tasks_and_projects<'a>(c: &Connection, profile_id: &str, ids: impl Iterator<Item = &'a str>) -> anyhow::Result<(Vec<TaskInfo>, Vec<ProjectInfo>)> {
+    let mut ids: Vec<&str> = ids.collect();
     ids.sort_unstable();
     ids.dedup();
     let mut tasks = Vec::new();
@@ -165,8 +172,72 @@ pub fn report(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow:
     let projects = st
         .query_map([profile_id], |r| Ok(ProjectInfo { id: r.get(0)?, name: r.get(1)?, key: r.get(2)? }))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok((tasks, projects))
+}
 
-    Ok(Report { events, runs, tasks, projects })
+/// A turn's end or a compaction (see db::SCHEMA_V68).
+#[derive(Serialize, Debug)]
+pub struct ContextStat {
+    pub at: String,
+    pub task_id: String,
+    /// `turn` or `compact`.
+    pub kind: String,
+    /// A turn's: the context it left. A compaction's: the context before it.
+    pub tokens: Option<i64>,
+    /// A compaction's: the context after it, if the agent says.
+    pub post_tokens: Option<i64>,
+    /// The model's context window, if it was known.
+    pub max_tokens: Option<i64>,
+    pub model: Option<String>,
+    /// A compaction's: `auto` (the agent's own, as its context filled up), `user` (`/compact`)
+    /// or `idle` (the board's, after the session sat idle).
+    pub source: Option<String>,
+    /// A turn's cost, if the agent reports it (Claude Code does).
+    pub cost_usd: Option<f64>,
+    /// How long a compaction took, if the agent says.
+    pub duration_ms: Option<i64>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct ContextReport {
+    pub stats: Vec<ContextStat>,
+    pub tasks: Vec<TaskInfo>,
+    pub projects: Vec<ProjectInfo>,
+}
+
+/// `GET /profiles/{id}/context-stats?from=&to=`: how big the profile's threads' contexts were
+/// at the end of each turn in `[from, to)`, and the compactions then.
+pub async fn context(State(s): State<Shared>, Path(profile_id): Path<String>, Query(q): Query<RangeQuery>) -> ApiResult<Json<ContextReport>> {
+    let from = parse_ts(&q.from, "from")?;
+    let to = parse_ts(&q.to, "to")?;
+    Ok(Json(context_report(&s.db(), &profile_id, &from, &to)?))
+}
+
+pub fn context_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow::Result<ContextReport> {
+    // Review threads count as themselves here: their contexts are their own.
+    let mut st = c.prepare(
+        "SELECT s.at, s.task_id, s.kind, s.tokens, s.post_tokens, s.max_tokens, s.model, s.source, s.cost_usd, s.duration_ms
+         FROM context_stats s JOIN tasks t ON t.id=s.task_id
+         WHERE t.profile_id=?1 AND s.at >= ?2 AND s.at < ?3 ORDER BY s.at",
+    )?;
+    let stats = st
+        .query_map(params![profile_id, from, to], |r| {
+            Ok(ContextStat {
+                at: r.get(0)?,
+                task_id: r.get(1)?,
+                kind: r.get(2)?,
+                tokens: r.get(3)?,
+                post_tokens: r.get(4)?,
+                max_tokens: r.get(5)?,
+                model: r.get(6)?,
+                source: r.get(7)?,
+                cost_usd: r.get(8)?,
+                duration_ms: r.get(9)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let (tasks, projects) = tasks_and_projects(c, profile_id, stats.iter().map(|s| s.task_id.as_str()))?;
+    Ok(ContextReport { stats, tasks, projects })
 }
 
 #[cfg(test)]

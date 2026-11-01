@@ -2107,7 +2107,7 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
         // From `/compact`, or Claude Code compacting by itself when the context fills up.
         "system" if v["subtype"] == "compact_boundary" => {
             state.add_message(task_id, "claude", json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": v["compact_metadata"]}))?;
-            crate::context::on_compacted(state, task_id, &v["compact_metadata"])?;
+            crate::context::on_compacted(state, run, &v["compact_metadata"])?;
         }
         // Subagent lifecycle (Agent/Task tool), keyed by the launching `tool_use_id`.
         "system" if v["subtype"].as_str().is_some_and(|s| SUBAGENT_EVENTS.contains(&s)) => {
@@ -2244,6 +2244,7 @@ pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut resul
     // A turn that ended isn't waiting any more, even if the agent gave up on the call.
     crate::wait::ended(state, &run.task_id, &run.id);
     crate::documents::turn_ended(state, &run.task_id);
+    crate::context::record_turn(state, run, result["total_cost_usd"].as_f64())?;
     state.add_message(&run.task_id, "claude", result)?;
     turn_ended(state, run);
     Ok(())
@@ -2993,6 +2994,59 @@ mod tests {
             // Compacting starts again from the summary.
             output(&state, &run, &[json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "auto", "pre_tokens": 1600, "post_tokens": 300}})]);
             assert_eq!((context().tokens, context().max_tokens), (300, Some(1_000_000)));
+        });
+    }
+
+    #[test]
+    fn records_context_sizes_and_compactions() {
+        crate::testing::run(async || {
+            let (state, task, run) = running(true);
+            let stats = || -> Vec<(String, String, Option<i64>, Option<i64>, Option<String>, Option<f64>)> {
+                let c = state.db();
+                let mut st = c.prepare("SELECT run_id, kind, tokens, post_tokens, source, cost_usd FROM context_stats ORDER BY id").unwrap();
+                st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).unwrap().map(|r| r.unwrap()).collect()
+            };
+            let reply = |written: u64| {
+                let usage = json!({"input_tokens": 2, "cache_creation_input_tokens": written, "cache_read_input_tokens": 1000});
+                json!({"type": "assistant", "parent_tool_use_id": null, "message": {"model": "claude-x", "content": [{"type": "text", "text": "hi"}], "usage": usage}})
+            };
+            // Each turn's end records the context it leaves, and what it cost.
+            output(&state, &run, &[reply(500), result("success", 0.25)]);
+            let turn = (run.id.clone(), "turn".to_string(), Some(1502), None, None, Some(0.25));
+            assert_eq!(stats(), vec![turn.clone()]);
+            // A turn the model didn't answer leaves the context as it was.
+            output(&state, &run, &[result("success", 0.25)]);
+            assert_eq!(stats().len(), 1);
+
+            // The agent compacting by itself mid-turn.
+            output(&state, &run, &[json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "auto", "pre_tokens": 1600, "post_tokens": 300}})]);
+            let auto = (run.id.clone(), "compact".to_string(), Some(1600), Some(300), Some("auto".to_string()), None);
+            assert_eq!(stats()[1], auto);
+            state.db().execute("UPDATE runs SET status='done' WHERE id=?1", [&run.id]).unwrap();
+
+            // The board's `/compact` after the session sat idle, and the user's.
+            let manual = json!({"trigger": "manual", "pre_tokens": 300, "post_tokens": 100});
+            let idle = db::insert_run(&state.db(), &task.id, "compact").unwrap();
+            crate::context::on_compacted(&state, &idle, &manual).unwrap();
+            let user = db::insert_run(&state.db(), &task.id, "compact").unwrap();
+            db::insert_message(&state.db(), &task.id, "user", &json!({"text": "/compact"})).unwrap();
+            crate::context::on_compacted(&state, &user, &manual).unwrap();
+            // Without `pre_tokens` (Codex), it's the latest count.
+            crate::context::on_compacted(&state, &user, &json!({"trigger": "manual"})).unwrap();
+            let sources: Vec<_> = stats()[2..].iter().map(|s| (s.0.clone(), s.2, s.4.clone().unwrap())).collect();
+            assert_eq!(sources, vec![(idle.id.clone(), Some(300), "idle".into()), (user.id.clone(), Some(300), "user".into()), (user.id.clone(), Some(100), "user".into())]);
+            // A `/compact`'s turn isn't one of the agent's.
+            crate::context::record_turn(&state, &user, Some(0.01)).unwrap();
+            assert_eq!(stats().len(), 5);
+
+            // The report has the profile's, in range.
+            let all = crate::analytics::context_report(&state.db(), &task.profile_id, "2000-01-01T00:00:00.000Z", "2100-01-01T00:00:00.000Z").unwrap();
+            assert_eq!((all.stats.len(), all.tasks.len()), (5, 1));
+            assert_eq!((all.stats[0].kind.as_str(), all.stats[0].tokens, all.stats[0].cost_usd), ("turn", Some(1502), Some(0.25)));
+            let none = crate::analytics::context_report(&state.db(), "someone-else", "2000-01-01T00:00:00.000Z", "2100-01-01T00:00:00.000Z").unwrap();
+            assert!(none.stats.is_empty());
+            let later = crate::analytics::context_report(&state.db(), &task.profile_id, "2100-01-01T00:00:00.000Z", "2100-01-02T00:00:00.000Z").unwrap();
+            assert!(later.stats.is_empty());
         });
     }
 

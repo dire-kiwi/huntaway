@@ -1238,7 +1238,11 @@ pub fn handle_line(state: &Shared, run: &Run, v: &Value) -> Result<()> {
                     }
                 }
                 "contextCompaction" => {
-                    thread_message(state, task_id, parent.as_deref(), json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": if run.kind == "compact" { "manual" } else { "auto" }}}))?;
+                    let meta = json!({"trigger": if run.kind == "compact" { "manual" } else { "auto" }});
+                    thread_message(state, task_id, parent.as_deref(), json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": meta}))?;
+                    if parent.is_none() {
+                        crate::context::on_compacted(state, run, &meta)?;
+                    }
                 }
                 _ => {
                     let Some((name, input)) = tool_use(item) else { return Ok(()) };
