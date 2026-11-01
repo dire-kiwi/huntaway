@@ -379,6 +379,8 @@ pub fn status(state: &Shared) -> Result<Option<Value>> {
     Ok(Some(json!({
         "repo": cfg.repo,
         "running": running,
+        // Where it runs from: `<data dir>/app/<v>/huntaway`, the desktop app's own server, or a tarball's.
+        "exe": crate::util::path_str(&state.exe),
         "latest": latest,
         "prereleases": prereleases,
         "checked_at": last.checked_at,
@@ -1514,6 +1516,7 @@ mod tests {
             let state = host_at(config("http://unused"), Some("0.2.0"), &["0.1.5"]);
             let app = staging::app_dir(&state);
             staging::write(&app, &Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), ..Default::default() }).unwrap();
+            assert_eq!(release_status(&state)["exe"], crate::util::path_str(&app.join("0.2.0").join("huntaway")));
             assert_eq!(release_status(&state)["rollback_to"], "0.1.5");
             assert_eq!(release_status(&state)["previous"], "0.1.5");
             let seen = at_exec(&state);

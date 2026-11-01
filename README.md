@@ -283,6 +283,13 @@ it (or the desktop app's own server, `IA_BUNDLED_SERVER`). `app/state.json` reco
 to start from it. A server running from `app/<v>/huntaway` makes itself `current` on startup and
 deletes the versions nothing needs (all but current, previous and staged).
 
+On the board, a staged release shows in the sidebar as **v<version> · Update**, which opens its
+release notes and restarts onto it (a download still running, or one that failed, shows only in
+Settings). Settings → Server shows the version running and where from, the latest release and when
+it was checked, the background download, **Check now**, **Include prereleases** and **Roll back**.
+When the latest release needs a new desktop app too (`release.shell.outdated`), it says how to
+install it: the `sudo pacman -U` command, the AppImage's link, or the dmg on the release page.
+
 ### Network access
 
 Every API call needs the token in `<data-dir>/auth_token` (sent as a bearer token; the

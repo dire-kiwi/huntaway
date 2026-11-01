@@ -868,6 +868,8 @@ export interface ReleaseStatus {
   repo: string;
   /** The version this server runs. */
   running: string;
+  /** Where it runs from: `<data dir>/app/<v>/huntaway`, the desktop app's own server, or a tarball's. */
+  exe?: string;
   /** The highest release with a server for this platform (prereleases only when `prereleases`), or null if none. */
   latest: {
     version: string;
@@ -1772,6 +1774,12 @@ export const api = {
   updateSettings: (h: string, b: Partial<HostSettings>) => on(h).patch<HostSettings>("/settings", b),
   serverStatus: (h: string) => on(h).get<ServerStatus>("/admin/server"),
   restartServer: (h: string, b: { rebuild: boolean }) => on(h).post(`/admin/restart`, b),
+  /** API 83, with `--release-updates`: check now, and get the server's status after. */
+  checkReleases: (h: string) => on(h).post<ServerStatus>("/admin/release/check"),
+  /** Restart onto a release (staged, or downloaded first), as a restart job. */
+  updateRelease: (h: string, version: string) => on(h).post<{ ok: boolean }>("/admin/release/update", { version }),
+  /** Restart onto `release.rollback_to`, marking the running version bad, as a restart job. */
+  rollbackRelease: (h: string) => on(h).post<{ ok: boolean }>("/admin/release/rollback"),
   /** Fetch `commit` from the host's origin, fast-forward its checkout to it, then rebuild and restart. */
   updateServer: (h: string, commit: string) => on(h).post<{ ok: boolean; up_to_date?: boolean }>(`/admin/update`, { commit }),
 };
