@@ -167,12 +167,39 @@ pub fn unstage_unless(state: &Shared, keep: impl Fn(&semver::Version) -> bool) {
 /// Update), and delete what nothing needs: leftover downloads, and every version but current, previous and staged.
 /// Runs on startup, before the desktop app is told the server is up.
 pub fn settle(state: &Shared) -> Result<Option<String>> {
-    let Some(v) = running_from_app(&state.data_dir, &state.exe) else { return Ok(None) };
+    let Some(v) = running_from_app(&state.data_dir, &state.exe) else {
+        // The desktop app's own server: maybe from a newer package than the versions downloaded before it.
+        if state.meta.release.is_some() {
+            let running = semver::Version::parse(env!("CARGO_PKG_VERSION"))?;
+            let mut forgot = false;
+            change(state, |s| forgot = superseded(s, &running))?;
+            if forgot {
+                tracing::info!("this server ({running}) is newer than the releases installed in app/ before it; forgetting them");
+            }
+        }
+        return Ok(None);
+    };
     let mut now = change(state, |s| settled(s, &v))?;
     settled(&mut now, &v);
     tracing::info!("running release {v} (previous {})", now.previous.as_deref().unwrap_or("none"));
     prune(&app_dir(state), &now);
     Ok(Some(v))
+}
+
+/// For a server that isn't running from `app/` (the desktop app's own, from a package installed after the versions
+/// there were downloaded): forget `current` and `previous` where they're older than it. The desktop app doesn't start
+/// those any more, so an Update from this server mustn't make one previous, and Roll back mustn't go back to it.
+/// Whether it changed anything.
+fn superseded(s: &mut Installed, running: &semver::Version) -> bool {
+    let older = |v: &Option<String>| v.as_deref().is_some_and(|v| semver::Version::parse(v).is_ok_and(|v| v < *running));
+    let mut changed = false;
+    for k in [&mut s.current, &mut s.previous] {
+        if older(k) {
+            *k = None;
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn settled(s: &mut Installed, v: &str) {

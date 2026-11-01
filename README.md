@@ -434,16 +434,18 @@ version is all a check does; quitting and starting the app again still runs the 
   exits before it's ready, the app marks it bad and starts the one before it, then its own server.
   A bad version isn't offered again; the next release is.
 - **Roll back.** Settings → Server → **Roll back** marks the running version bad and restarts onto
-  the one before it, or onto the app's own server when there's none. A newer server may have
+  the one before it, or onto the app's own server when there's none (or the one before it is older
+  than the app's own server, which a newer package's takes over from). A newer server may have
   updated the database; the older one runs on it as it is (the changes so far only add to it).
 - **Prereleases** are offered only with **Include prereleases** on in Settings → Server. Turning it
   off again withdraws a prerelease that was downloaded but not yet updated to.
 - **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
   rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
   each. Deleting `app/` goes back to the app's own server.
-- **The app itself.** Most releases change only the server and the UI. When one also changes the
-  app (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records), Settings → Server
-  says so and how to install it. The AppImage's **Update app** downloads the new AppImage beside the
+- **The app itself.** Most releases change only the server and the UI. When a release newer than the
+  app also changes it (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records),
+  Settings → Server says so and how to install it. An app installed from a prerelease isn't offered
+  an older release's package while prereleases are off. The AppImage's **Update app** downloads the new AppImage beside the
   running one, checks it, renames it over the old file and relaunches. The pacman package's
   **Install** downloads and checks the `.pacman`, then runs `pkexec pacman -U --noconfirm` on it,
   which asks for your password in polkit's dialog (without a polkit agent, use the `sudo pacman -U`

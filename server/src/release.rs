@@ -554,18 +554,22 @@ async fn restart_onto(st: &Shared, v: &str) -> Result<()> {
 }
 
 /// What Roll back would exec, and its version (none for the desktop app's own server): the version before this one,
-/// or else the bundled server. Only for a server running from `app/`.
+/// or else the bundled server. Only for a server running from `app/`. As the desktop app does, it doesn't go back to a
+/// version older than the app's own server (whose version is the app's): a newer package's server takes over from it.
 fn rollback_target(state: &Shared) -> Option<(PathBuf, Option<String>)> {
     let current = staging::running_from_app(&state.data_dir, &state.exe)?;
     let app = staging::app_dir(state);
     let installed = staging::read(&app);
-    let previous = installed.previous.clone().filter(|p| *p != current && !installed.is_bad(p));
+    let cfg = state.meta.release.as_ref()?;
+    let desktop = cfg.desktop_version.as_deref().and_then(|d| semver::Version::parse(d.trim().trim_start_matches('v')).ok());
+    let at_least_the_apps = |p: &str| desktop.as_ref().is_none_or(|d| semver::Version::parse(p).is_ok_and(|p| p >= *d));
+    let previous = installed.previous.clone().filter(|p| *p != current && !installed.is_bad(p) && at_least_the_apps(p));
     if let Some(p) = previous {
         if let Some(dir) = staging::version_dir(&app, &p).filter(|d| staging::complete(d)) {
             return Some((dir.join("huntaway"), Some(p)));
         }
     }
-    let bundled = PathBuf::from(state.meta.release.as_ref()?.bundled_server.as_ref()?);
+    let bundled = PathBuf::from(cfg.bundled_server.as_ref()?);
     bundled.is_file().then_some((bundled, None))
 }
 
@@ -648,7 +652,10 @@ fn shell(cfg: &Config, latest: Option<&Latest>) -> Value {
         Some((kind, path)) => (kind, Some(path)),
         None => (install, None),
     };
-    let outdated = match (latest.and_then(|l| Some(l.manifest.as_ref()?.shell.as_str())), cfg.desktop_shell.as_deref()) {
+    // Only a newer release's: an app installed from a release the checks don't pick (a prerelease, with them off) would
+    // otherwise be offered an older package, which would start its older server on a database the newer one migrated.
+    let newer = |l: &Latest| cfg.desktop_version.as_deref().is_none_or(|d| semver::Version::parse(d.trim().trim_start_matches('v')).is_ok_and(|d| l.version > d));
+    let outdated = match (latest.filter(|l| newer(l)).and_then(|l| Some(l.manifest.as_ref()?.shell.as_str())), cfg.desktop_shell.as_deref()) {
         (Some(theirs), Some(ours)) => theirs != ours,
         _ => false,
     };
@@ -989,6 +996,27 @@ mod tests {
             check(&state).await;
             let r = release_status(&state);
             assert_eq!((r["latest"]["version"].as_str(), r["shell"]["outdated"].as_bool()), (Some("0.4.0"), Some(false)));
+        });
+    }
+
+    #[test]
+    fn an_app_newer_than_the_latest_release_isnt_offered_its_package() {
+        testing::run(async || {
+            // The app was installed from 0.3.0-rc.1, and prereleases are off (as they are by default), so the checks pick
+            // 0.2.0, whose shell differs: installing its package would downgrade the app.
+            let fake = Arc::new(Mutex::new(Fake { releases: json!([release("v0.2.0", false)]), etag: "\"one\"".into(), ..Default::default() }));
+            let base = github(fake.clone()).await;
+            let cfg = |v: &str| Config { desktop_version: Some(v.into()), desktop_shell: Some("shell-0.3.0-rc.1".into()), ..config(&base) };
+            for (desktop, outdated) in [("0.3.0-rc.1", false), ("0.2.0", false), ("0.2.0-rc.1", true), ("0.1.0", true), ("not a version", false)] {
+                let state = host(cfg(desktop));
+                check(&state).await;
+                let r = release_status(&state);
+                assert_eq!((r["latest"]["version"].as_str(), r["shell"]["outdated"].as_bool()), (Some("0.2.0"), Some(outdated)), "app {desktop}");
+            }
+            // Without the app's version (a server started by hand with the IA_DESKTOP_* it was given), the stamps decide.
+            let state = host(Config { desktop_version: None, ..cfg("") });
+            check(&state).await;
+            assert_eq!(release_status(&state)["shell"]["outdated"], true);
         });
     }
 
@@ -1786,6 +1814,55 @@ mod tests {
             assert_eq!((s.staged, s.bad), (None, vec!["0.3.0".to_string()]));
             assert_eq!(app_entries(&state), ["0.1.5", "0.2.0", "state.json"]);
             assert_eq!(release_status(&state)["staged"], Value::Null);
+        });
+    }
+
+    #[test]
+    fn a_newer_packages_server_takes_over_from_the_versions_downloaded_before_it() {
+        testing::run(async || {
+            let bundled = temp_dir().join("huntaway");
+            std::fs::write(&bundled, "").unwrap();
+            // This server is the app's own, from a package newer than what was downloaded before it: package 0.0.0-a
+            // updated to 0.0.0-old, then this package was installed, so the desktop app starts its own server.
+            let cfg = Config { desktop_version: Some(env!("CARGO_PKG_VERSION").into()), bundled_server: Some(crate::util::path_str(&bundled)), ..config("http://unused") };
+            let state = host_at(cfg.clone(), None, &["0.0.0-a", "0.0.0-old"]);
+            let app = staging::app_dir(&state);
+            let bad = vec!["0.0.0-b".to_string()];
+            staging::write(&app, &Installed { current: Some("0.0.0-old".into()), previous: Some("0.0.0-a".into()), bad: bad.clone(), ..Default::default() }).unwrap();
+            staging::settle(&state).unwrap();
+            let s = staging::read(&app);
+            assert_eq!((s.current, s.previous, s.bad), (None, None, bad));
+            // So an Update from it to 9.0.0 rolls back to this server, not to the download it took over from.
+            server_files(&app.join("9.0.0"), "echo huntaway 9.0.0");
+            staging::change(&state, |s| s.trying = Some("9.0.0".into())).unwrap();
+            let mut meta = testing::meta();
+            meta.release = Some(cfg);
+            let updated = testing::state_at(meta, state.data_dir.clone(), app.join("9.0.0/huntaway"));
+            staging::settle(&updated).unwrap();
+            let s = staging::read(&app);
+            assert_eq!((s.current.as_deref(), s.previous.as_deref(), s.trying), (Some("9.0.0"), None, None));
+            assert_eq!(release_status(&updated)["rollback_to"], "bundled");
+        });
+    }
+
+    #[test]
+    fn rollback_doesnt_go_back_past_the_apps_own_server() {
+        testing::run(async || {
+            // app/state.json says 0.2.0 was before 0.5.0, but the app is 0.4.0: it starts its own server over 0.2.0.
+            let bundled = temp_dir().join("huntaway");
+            std::fs::write(&bundled, "").unwrap();
+            let cfg = Config { desktop_version: Some("0.4.0".into()), bundled_server: Some(crate::util::path_str(&bundled)), ..config("http://unused") };
+            let state = host_at(cfg.clone(), Some("0.5.0"), &["0.2.0", "0.4.5"]);
+            let app = staging::app_dir(&state);
+            staging::write(&app, &Installed { current: Some("0.5.0".into()), previous: Some("0.2.0".into()), ..Default::default() }).unwrap();
+            assert_eq!(release_status(&state)["rollback_to"], "bundled");
+            // One at least as new as the app's still counts.
+            staging::write(&app, &Installed { current: Some("0.5.0".into()), previous: Some("0.4.5".into()), ..Default::default() }).unwrap();
+            assert_eq!(release_status(&state)["rollback_to"], "0.4.5");
+            // Without a bundled server to go back to, there's nothing.
+            let state = host_at(Config { bundled_server: None, ..cfg }, Some("0.5.0"), &["0.2.0"]);
+            staging::write(&staging::app_dir(&state), &Installed { current: Some("0.5.0".into()), previous: Some("0.2.0".into()), ..Default::default() }).unwrap();
+            assert_eq!(release_status(&state)["rollback_to"], Value::Null);
         });
     }
 

@@ -13,6 +13,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { Readable, Transform } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
+const { compareVersions } = require("./versions.cjs");
 
 /** What the app can install itself for an `installKind()` (versions.cjs): "appimage", "pacman", or null. */
 function updateKind(install) {
@@ -58,9 +59,11 @@ async function refusal(res, what) {
 
 /**
  * The release to install, from the server this app uses (`base`, `token`): {version}, the latest release its check
- * found, once that release's shell differs from this app's. Throws when there's nothing to install.
+ * found, once that release's shell differs from this app's and it's newer than this app (`current`, its version). Throws
+ * when there's nothing to install: an older package (a check that skips the prerelease this app came from) would
+ * downgrade it.
  */
-async function latestShellRelease({ base, token, fetch = globalThis.fetch }) {
+async function latestShellRelease({ base, token, current, fetch = globalThis.fetch }) {
   let res;
   try {
     res = await fetch(`${base}/api/admin/server`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(10_000) });
@@ -72,6 +75,7 @@ async function latestShellRelease({ base, token, fetch = globalThis.fetch }) {
   const version = release?.latest?.version;
   if (!version) throw fail("The server hasn't found a release yet. Check for updates in Settings → Server first.");
   if (!release.shell?.outdated) throw fail(`This app already has v${version}'s shell, so there's nothing to install.`);
+  if (current && !(compareVersions(version, current) > 0)) throw fail(`This app (v${current}) isn't older than v${version}, so there's nothing to install.`);
   return { version };
 }
 
@@ -243,11 +247,12 @@ async function updatePacman({ pkg, onProgress, onInstalling = () => {}, fetch, s
 /**
  * Install the latest release's package for `kind` ("appimage" with `appimage` its file, or "pacman"), as reported by the
  * server at `base`. Reports progress with `onProgress({phase, bytes, total})`: "checking", "downloading", "installing".
- * Resolves once it's installed (the caller relaunches), rejects with an error for the user.
+ * Resolves once it's installed (the caller relaunches), rejects with an error for the user. `current` is this app's
+ * version: an older release isn't installed.
  */
-async function updateShell({ kind, appimage, base, token, api, repo, platform, onProgress = () => {}, fetch = globalThis.fetch, spawn, tmpdir }) {
+async function updateShell({ kind, appimage, base, token, current, api, repo, platform, onProgress = () => {}, fetch = globalThis.fetch, spawn, tmpdir }) {
   onProgress({ phase: "checking" });
-  const { version } = await latestShellRelease({ base, token, fetch });
+  const { version } = await latestShellRelease({ base, token, current, fetch });
   const pkg = await findPackage({ api, repo, version, kind, platform, fetch });
   const downloading = (bytes, total) => onProgress({ phase: "downloading", version, bytes, total });
   if (kind === "appimage") {
