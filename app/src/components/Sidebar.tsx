@@ -345,7 +345,8 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
   const isFavorite = (p: Project) => favorites.has(hiddenKey(p)) && !hidden.has(hiddenKey(p));
   const favoriteList = shown.filter(isFavorite);
   const profileTasks = useMemo(() => taskList.filter((t) => profileOf(t) === active), [taskList, profileOf, active]);
-  const withTasks = useMemo(() => groupsWithTasks(profileTasks), [profileTasks]);
+  // Every profile's group tasks, as a group's row and board count them all (pinned projects bring in other profiles' groups).
+  const withTasks = useMemo(() => groupsWithTasks(taskList), [taskList]);
   // Group projects by host once more than one host is involved.
   const groups = hosts
     .map((h) => ({

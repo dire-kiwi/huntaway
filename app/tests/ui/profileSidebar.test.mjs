@@ -55,3 +55,22 @@ test("opening a group the profile only has group tasks in keeps the profile", as
     await ui.run(["goto /", `wait ${testRow}`, "assert location.pathname === '/profile/test'"]);
   });
 });
+
+// HA-84 review: a pinned project made a favorite under another profile leaves its group's row there, for the group tasks
+// of the project's own profile.
+test("keeps a pinned favorite's group for its own profile's group tasks", async () => {
+  const profiles = await server.api("GET", "/profiles");
+  const defaultProfile = profiles.find((p) => p.name === "Default");
+  await server.api("PATCH", `/projects/${demo.id}`, { group_name: "PinnedGroup" });
+  await server.api("POST", `/profiles/${defaultProfile.id}/group-tasks`, { group: "PinnedGroup", title: "Plan across PinnedGroup", status: "needs_attention" });
+
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const group = "css=aside >> role=button[name=/^PinnedGroup/]";
+    await ui.run(["goto /profile/Default", `wait ${demoRow}`, `rclick ${demoRow}`, "click [role=menu] >> text=Pin to every profile"]);
+    await ui.run(["click css=aside >> role=button[name=/^t test/]", `wait ${testRow}`, `wait ${demoRow}`, `wait ${group}`]);
+    await ui.run([`rclick ${demoRow}`, "click [role=menu] >> text=Add to favorites", "wait [aria-label=Favorites]", `wait ${group}`]);
+    assert.equal((await page.locator(group).innerText()).replace(/\s+/g, " ").trim(), "PinnedGroup 1", "with its group task needing attention");
+    await ui.run([`click ${group}`, "wait Plan across PinnedGroup"]);
+  });
+});
