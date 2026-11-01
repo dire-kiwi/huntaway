@@ -475,8 +475,13 @@ fn watch_orphan(dir: &Path) {
     tokio::spawn(async move {
         let since = std::time::Instant::now();
         let mut signal = libc::SIGTERM;
+        // Read once: the folder may yet go with its task (see `remove_finished`).
+        let Some(pid) = read_pid(&dir, "pid").filter(|_| !pid_reused(&dir)) else {
+            let _ = std::fs::remove_file(dir.join("orphan"));
+            return;
+        };
         // The group, which may outlive its leader. (Its id isn't given to a new process while it's in use.)
-        while let Some(pid) = read_pid(&dir, "pid").filter(|&pid| group_alive(pid) && !pid_reused(&dir)) {
+        while group_alive(pid) {
             if signal == libc::SIGTERM || since.elapsed() >= REAP_GRACE {
                 unsafe { libc::kill(-pid, signal) };
                 signal = libc::SIGKILL;
@@ -551,6 +556,8 @@ pub fn prune(state: &Shared, now: chrono::DateTime<chrono::Utc>) -> Result<Prune
     };
     for (id, dir) in dirs {
         let remove = match keep.get(&id) {
+            // Not while its agent is being stopped (see `stop_orphan`), which goes by its folder after a restart.
+            _ if dir.join("orphan").exists() => false,
             Some(keep) => !keep,
             None => finished(&dir),
         };
@@ -589,11 +596,11 @@ fn finished(dir: &Path) -> bool {
 }
 
 /// Remove the folders of these runs that have finished, as their task is deleted. `prune` takes
-/// the others once they have.
+/// the others once they have, and those whose agent is still being stopped (see `stop_orphan`).
 pub fn remove_finished(state: &Shared, run_ids: &[String]) {
     for id in run_ids {
         let dir = run_dir(state, id);
-        if dir.join("exit").exists() {
+        if dir.join("exit").exists() && !dir.join("orphan").exists() {
             if let Err(e) = std::fs::remove_dir_all(&dir) {
                 tracing::warn!(run = id, "removing the run's folder: {e}");
             }
@@ -801,6 +808,35 @@ mod tests {
             assert!(agent.try_wait().unwrap().is_none());
             resume_reaping(&state);
             exits(&mut agent, REAP_GRACE + Duration::from_secs(2)).await;
+        });
+    }
+
+    #[test]
+    fn an_orphan_is_still_stopped_when_its_task_is_deleted_meanwhile() {
+        crate::testing::run(async || {
+            let (state, task_id, run_id) = run_with_output("");
+            let mut agent = agent(&state, &run_id, "trap '' TERM; exec sleep 60");
+            let dir = run_dir(&state, &run_id);
+            let comm = format!("/proc/{}/comm", agent.id());
+            while std::fs::read_to_string(&comm).is_ok_and(|c| c.trim() != "sleep") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            // Its shim vanished, and its task is deleted while the agent is given time to go.
+            stop_orphan(&dir);
+            std::fs::write(dir.join("exit"), r#"{"code":null,"signal":null,"error":"the run's supervisor (ia-shim) disappeared"}"#).unwrap();
+            state.db().execute("DELETE FROM runs WHERE id=?1", [&run_id]).unwrap();
+            state.db().execute("DELETE FROM tasks WHERE id=?1", [&task_id]).unwrap();
+            remove_finished(&state, std::slice::from_ref(&run_id));
+            assert_eq!(prune(&state, chrono::Utc::now()).unwrap().runs, 0);
+            assert!(dir.join("orphan").exists() && dir.join("pid").exists());
+            exits(&mut agent, REAP_GRACE + Duration::from_secs(2)).await;
+            // Then its folder goes as any other of a deleted task's.
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while dir.join("orphan").exists() {
+                assert!(std::time::Instant::now() < deadline, "still marked to stop");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(prune(&state, chrono::Utc::now()).unwrap().runs, 1);
         });
     }
 
