@@ -589,7 +589,7 @@ mod tests {
             let dir = testing::temp_dir();
             let bin = dir.join("cloudflared");
             // The fake connector records the credential from its environment and blocks like cloudflared.
-            std::fs::write(&bin, format!("#!/bin/sh\nprintf '%s' \"$TUNNEL_TOKEN\" > '{}/token'\nprintf '%s' \"$$\" > '{}/pid'\nexec sleep 600\n", dir.display(), dir.display())).unwrap();
+            std::fs::write(&bin, "#!/bin/sh\nd=$(dirname \"$0\")\nprintf '%s' \"$TUNNEL_TOKEN\" > \"$d/token\"\nprintf '%s' \"$$\" > \"$d/pid\"\nexec sleep 600\n").unwrap();
             std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
             let tunnel = proto::Tunnel { url: "https://desktop.example.com".into(), token: "connector-secret".into() };
             let welcome = Ctl::Welcome { name: "desktop".into(), tunnel: Some(tunnel.clone()) };
@@ -660,7 +660,7 @@ mod tests {
             let dir = testing::temp_dir();
             // Spaces and shell metacharacters must be a literal executable name.
             let bin = dir.join("fake connector $literal");
-            std::fs::write(&bin, format!("#!/bin/sh\nprintf ready > {}/ready\nexec sleep 600\n", dir.display())).unwrap();
+            std::fs::write(&bin, "#!/bin/sh\nprintf ready > \"$(dirname \"$0\")/ready\"\nexec sleep 600\n").unwrap();
             std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
             let (mut child, alive) = spawn_connector(bin.as_os_str(), "connector-token").unwrap();
             for _ in 0..100 {
