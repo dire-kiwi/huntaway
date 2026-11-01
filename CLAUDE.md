@@ -191,8 +191,9 @@ node scripts/ui-check.mjs --env /tmp/ia<N>-env "goto /p/<project id>" "click New
 - Give a test a folder with `testing::temp_dir()`, which is removed when the test ends (panics
   included), not `std::env::temp_dir()`: tests that left their folders there filled `/tmp`.
   `testing::state()`'s data dir goes with the state. `IA_KEEP_TEST_DIRS=1` keeps failing tests'
-  folders. `scripts/check-tmp-leftovers.sh cargo test` runs the tests in a `TMPDIR` of their own and
-  fails if they leave anything in it; CI's `cargo test` runs that way.
+  folders. `cargo test` in `server/` runs each test binary in a `TMPDIR` of its own, which is removed
+  when it exits, and fails it if it left anything there (`server/.cargo/test-runner`), so a test that
+  leaks fails locally as it does in CI. `cargo test --manifest-path` from another folder skips that.
 - `AppState::db()` isn't reentrant: drop a guard before calling `db()` again (that includes two
   calls in one statement). Tests and debug builds panic on a second lock on the same thread;
   release builds would hang.

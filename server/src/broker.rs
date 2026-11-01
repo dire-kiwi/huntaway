@@ -586,8 +586,7 @@ mod tests {
     fn connector_lives_across_broker_disconnects_and_is_stopped_when_its_owner_goes() {
         testing::run(async || {
             use std::os::unix::fs::PermissionsExt;
-            let dir = std::env::temp_dir().join(format!("ha70-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = testing::temp_dir();
             let bin = dir.join("cloudflared");
             // The fake connector records the credential from its environment and blocks like cloudflared.
             std::fs::write(&bin, format!("#!/bin/sh\nprintf '%s' \"$TUNNEL_TOKEN\" > '{}/token'\nprintf '%s' \"$$\" > '{}/pid'\nexec sleep 600\n", dir.display(), dir.display())).unwrap();
@@ -620,7 +619,6 @@ mod tests {
             drop(tx);
             connector.await.unwrap();
             assert!(!process.exists(), "connector wasn't reaped");
-            std::fs::remove_dir_all(dir).unwrap();
         });
     }
 
@@ -659,8 +657,7 @@ mod tests {
     fn connector_watchdog_stops_the_group_when_the_servers_pipe_closes() {
         testing::run(async || {
             use std::os::unix::{fs::PermissionsExt, process::ExitStatusExt};
-            let dir = std::env::temp_dir().join(format!("ha70-{}", crate::util::new_id()));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = testing::temp_dir();
             // Spaces and shell metacharacters must be a literal executable name.
             let bin = dir.join("fake connector $literal");
             std::fs::write(&bin, format!("#!/bin/sh\nprintf ready > {}/ready\nexec sleep 600\n", dir.display())).unwrap();
@@ -675,7 +672,6 @@ mod tests {
             drop(alive);
             let status = tokio::time::timeout(Duration::from_secs(3), child.wait()).await.expect("orphaned connector").unwrap();
             assert_eq!(status.signal(), Some(libc::SIGKILL));
-            std::fs::remove_dir_all(dir).unwrap();
         });
     }
 
