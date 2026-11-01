@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
 # Cargo's runner (config.toml), which `cargo test`, `cargo bench` and `cargo run` start binaries with. A test binary runs
-# with TMPDIR set to a folder of its own, $TMPDIR/ia-cargo-test-XXXXXX, which is removed when it exits, so tests can't
-# fill /tmp with what they leave there (they used to, by the thousand). If it left anything in it, that's listed and the
-# run fails, as it would in CI. Other binaries, and test binaries run with IA_KEEP_TEST_DIRS (to keep failing tests'
-# folders) or where there is no flock, run as they are.
+# with TMPDIR set to a folder of its own, ia-cargo-test-XXXXXX, which is removed when it exits, so tests can't fill /tmp
+# with what they leave there (they used to, by the thousand). If it left anything in it, that's listed and the run fails,
+# as it would in CI. Other binaries, and test binaries run with IA_KEEP_TEST_DIRS (to keep failing tests' folders) or
+# where there is no flock, run as they are.
+#
+# The folder is on disk, in $IA_CARGO_TEST_TMPDIR or /var/tmp, rather than in $TMPDIR: that's usually in /tmp, a tmpfs
+# (in memory) that every agent's builds, test servers and browsers share, and tests' databases and git repos in it filled
+# it up, failing other runs with "disk I/O error". Where that can't be written (a sandbox that only lets us write to
+# $TMPDIR), it's in $TMPDIR as before. The path stays short, as tests put sockets in it.
 #
 # Called as `test-runner <binary> <args>...`.
 
 [[ $1 == */deps/* && -z ${IA_KEEP_TEST_DIRS:-} ]] && command -v flock > /dev/null || exec "$@"
 set -uo pipefail
 
-parent=${TMPDIR:-/tmp}
+for parent in "${IA_CARGO_TEST_TMPDIR:-/var/tmp}" "${TMPDIR:-/tmp}"; do
+  tmp=$(mktemp -d "$parent/ia-cargo-test-XXXXXX" 2> /dev/null) && break
+done
+[[ -n $tmp ]] || tmp=$(mktemp -d "$parent/ia-cargo-test-XXXXXX") || exit
+
 # A run holds a lock on its folder's `.lock` while it lasts (the test binary too, which inherits it), so one that was
 # killed before it could remove its folder leaves it unlocked, and later runs remove it. Only real folders of this
-# user's: $parent may be a /tmp shared with others, where an entry could be a symlink to somewhere else. A folder without
-# a `.lock` is one being made.
+# user's: $parent may be shared with others (/var/tmp, /tmp), where an entry could be a symlink to somewhere else. A
+# folder without a `.lock` is one being made (this run's too).
 for d in "$parent"/ia-cargo-test-*; do
   [[ -d $d && ! -L $d && -O $d && -f $d/.lock && ! -L $d/.lock ]] && flock -n "$d/.lock" true 2> /dev/null && rm -rf -- "$d"
 done
 
-tmp=$(mktemp -d "$parent/ia-cargo-test-XXXXXX") || exit
 # Locked before it's named `.lock`, so no other run's sweep sees it unlocked.
 exec 9> "$tmp/.lock-new" && flock -n 9 && mv "$tmp/.lock-new" "$tmp/.lock" || { rm -rf -- "$tmp"; exit 1; }
 # A signal while the binary runs is handled once it has exited (Ctrl-C reaches it too), so its folder goes after it.

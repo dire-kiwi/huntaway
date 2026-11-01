@@ -429,7 +429,8 @@ mod tests {
         assert!(temp_root().join(".lock").exists());
     }
 
-    /// Runs a fake test binary, `script`, with `.cargo/test-runner` (cargo's runner for them) and `parent` as TMPDIR.
+    /// Runs a fake test binary, `script`, with `.cargo/test-runner` (cargo's runner for them) and `parent` as the folder
+    /// for its TMPDIR (and as TMPDIR).
     #[cfg(target_os = "linux")]
     fn test_runner(parent: &Path, script: &str) -> std::process::Command {
         let bin = temp_dir().join("deps/fake-test");
@@ -437,7 +438,7 @@ mod tests {
         std::fs::write(&bin, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         let mut cmd = std::process::Command::new(Path::new(env!("CARGO_MANIFEST_DIR")).join(".cargo/test-runner"));
-        cmd.arg(bin).env("TMPDIR", parent).env_remove("IA_KEEP_TEST_DIRS");
+        cmd.arg(bin).env("IA_CARGO_TEST_TMPDIR", parent).env("TMPDIR", parent).env_remove("IA_KEEP_TEST_DIRS");
         cmd
     }
 
@@ -466,6 +467,21 @@ flock -n "$TMPDIR/.lock" true && exit 4; echo ok"#.replace("$1", &parent.display
         assert!(runs_in(&parent).is_empty());
         // A binary's own failure is passed on.
         assert_eq!(test_runner(&parent, "exit 7").status().unwrap().code(), Some(7));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_test_runner_puts_its_folder_on_disk_or_where_it_cant_in_tmpdir() {
+        let (parent, tmpdir) = (temp_dir(), temp_dir());
+        let in_ = |d: &Path| format!(r#"case $TMPDIR in '{}'/ia-cargo-test-*) ;; *) echo "$TMPDIR"; exit 3;; esac"#, d.display());
+        let out = test_runner(&parent, &in_(&parent)).env("TMPDIR", &tmpdir).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let out = test_runner(&parent, &in_(&tmpdir)).env("IA_CARGO_TEST_TMPDIR", parent.join("missing")).env("TMPDIR", &tmpdir).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert!(runs_in(&tmpdir).is_empty() && runs_in(&parent).is_empty());
+        // Neither can: it fails.
+        let out = test_runner(&parent, "true").env("IA_CARGO_TEST_TMPDIR", parent.join("missing")).env("TMPDIR", parent.join("gone")).output().unwrap();
+        assert!(!out.status.success(), "{out:?}");
     }
 
     #[cfg(target_os = "linux")]
