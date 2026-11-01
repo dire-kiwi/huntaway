@@ -71,7 +71,9 @@ pub async fn start(state: &Shared, l: Launch) -> Result<()> {
         bail!("ia-shim not found next to {} (build the workspace with `cargo build --release`)", state.exe.display());
     }
     tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::write(dir.join("run.json"), json!({"format": RUN_FORMAT, "version": env!("CARGO_PKG_VERSION")}).to_string()).await?;
+    // The boot tells whether its pids are still its own later (see `pid_reused`).
+    let run = json!({"format": RUN_FORMAT, "version": env!("CARGO_PKG_VERSION"), "boot": boot_id()});
+    tokio::fs::write(dir.join("run.json"), run.to_string()).await?;
     tokio::fs::write(dir.join("prompt"), &l.prompt).await?;
     if l.input {
         tokio::fs::write(dir.join("input.jsonl"), "").await?;
@@ -227,10 +229,17 @@ pub fn reap(state: &Shared, run_id: &str) {
     watch_to_reap(state, run_id);
 }
 
-/// Carry on stopping the agents of failed launches that a restart interrupted (see `reap`).
+/// Carry on stopping the agents of failed launches (see `reap`) and of shims that vanished (see
+/// `stop_orphan`, whose runs have ended) that a restart interrupted.
 pub fn resume_reaping(state: &Shared) {
     let Ok(dirs) = std::fs::read_dir(state.data_dir.join("runs")) else { return };
-    for dir in dirs.flatten().filter(|d| d.path().join("reap").exists()) {
+    for dir in dirs.flatten() {
+        if dir.path().join("orphan").exists() {
+            watch_orphan(&dir.path());
+        }
+        if !dir.path().join("reap").exists() {
+            continue;
+        }
         if let Some(run_id) = dir.file_name().to_str() {
             close_input(state, run_id);
             watch_to_reap(state, run_id);
@@ -251,7 +260,7 @@ fn watch_to_reap(state: &Shared, run_id: &str) {
                 None => {}
                 // (One gone without its exit recorded went with a reboot, say, and another
                 // process may have its pid since.)
-                Some(pid) if !alive(pid) || pid_reused(&dir, "pid", pid) => break,
+                Some(pid) if !alive(pid) || pid_reused(&dir) => break,
                 Some(pid) => match stopping {
                     None => {
                         tracing::warn!(run = %run_id, "stopping an agent that started after its launch was given up on");
@@ -393,7 +402,7 @@ async fn follow_inner(state: &Shared, run_id: &str, mut offset: u64) -> Result<(
         polls += 1;
         if polls % 10 == 0 {
             if let Some(shim_pid) = read_pid(&dir, "shim.pid") {
-                if (!alive(shim_pid) || pid_reused(&dir, "shim.pid", shim_pid)) && !dir.join("exit").exists() {
+                if (!alive(shim_pid) || pid_reused(&dir)) && !dir.join("exit").exists() {
                     // Its agent may have outlived it, and would go on working (and calling the
                     // board's tools) for a run the board is about to end.
                     stop_orphan(&dir);
@@ -415,57 +424,66 @@ fn alive(pid: i32) -> bool {
     ok || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-/// Whether the process `pid` names now started well after the run's file `name` recorded it, so
-/// it's another process that has taken its pid (after a reboot, say). False if that can't be told.
-fn pid_reused(dir: &Path, name: &str, pid: i32) -> bool {
-    let Ok(written) = std::fs::metadata(dir.join(name)).and_then(|m| m.modified()) else { return false };
-    // Some slack, as the boot time a start is reckoned from is only to the second.
-    started_at(pid).is_some_and(|t| t > written + Duration::from_secs(60))
+/// Whether the pids the run recorded may name other processes now: the machine has rebooted since
+/// it started (its `run.json` has another boot's id). Not told by comparing times, which a clock
+/// that jumps (a VM resumed, NTP catching up) would get wrong. False for runs from before boot ids.
+fn pid_reused(dir: &Path) -> bool {
+    let started = std::fs::read_to_string(dir.join("run.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    let started = started.as_ref().and_then(|v| v["boot"].as_str());
+    matches!((started, boot_id()), (Some(then), Some(now)) if then != now)
 }
 
-/// When process `pid` started, if it can be told.
-#[cfg(target_os = "linux")]
-fn started_at(pid: i32) -> Option<std::time::SystemTime> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // "pid (comm) state …", where comm may hold anything; the start (field 22) is in clock ticks since boot.
-    let ticks: u64 = stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()?;
-    let boot: u64 = std::fs::read_to_string("/proc/stat").ok()?.lines().find_map(|l| l.strip_prefix("btime "))?.trim().parse().ok()?;
-    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-    if hz <= 0 {
-        return None;
-    }
-    Some(std::time::UNIX_EPOCH + Duration::from_secs(boot) + Duration::from_millis(ticks * 1000 / hz as u64))
+/// This boot of the machine's id, if it can be told.
+fn boot_id() -> Option<&'static str> {
+    static ID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let id = if cfg!(target_os = "linux") {
+            std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()
+        } else {
+            let out = std::process::Command::new("sysctl").args(["-n", "kern.bootsessionuuid"]).output().ok();
+            out.filter(|o| o.status.success()).and_then(|o| String::from_utf8(o.stdout).ok())
+        };
+        id.map(|i| i.trim().to_string()).filter(|i| !i.is_empty())
+    })
+    .as_deref()
 }
 
-/// When process `pid` started, if it can be told: `ps` gives how long it has run, as `[[dd-]hh:]mm:ss`.
-#[cfg(not(target_os = "linux"))]
-fn started_at(pid: i32) -> Option<std::time::SystemTime> {
-    let out = std::process::Command::new("ps").args(["-o", "etime=", "-p", &pid.to_string()]).output().ok()?;
-    let etime = String::from_utf8(out.stdout).ok()?;
-    let etime = etime.trim();
-    let (days, rest) = match etime.split_once('-') {
-        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
-        None => (0, etime),
-    };
-    let secs = rest.split(':').try_fold(0u64, |n, part| Some(n * 60 + part.parse::<u64>().ok()?))?;
-    std::time::SystemTime::now().checked_sub(Duration::from_secs(days * 86400 + secs))
+/// Whether process group `pgid` has a process in it.
+fn group_alive(pgid: i32) -> bool {
+    let ok = unsafe { libc::kill(-pgid, 0) } == 0;
+    ok || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// Stop the agent of a run whose ia-shim vanished: nothing else will (`kill` and `reap` go by the
-/// exit the shim would have written). It's killed if it hasn't gone in time.
+/// exit the shim would have written). Marked `orphan` until it has gone, so a restart carries on
+/// (see `resume_reaping`).
 fn stop_orphan(dir: &Path) {
     let Some(pid) = read_pid(dir, "pid") else { return };
-    if !alive(pid) || pid_reused(dir, "pid", pid) {
+    if !alive(pid) || pid_reused(dir) {
         return;
     }
     tracing::warn!(dir = %dir.display(), "stopping an agent whose supervisor (ia-shim) disappeared");
-    unsafe { libc::kill(-pid, libc::SIGTERM) };
+    if let Err(e) = std::fs::write(dir.join("orphan"), "") {
+        tracing::error!(dir = %dir.display(), "marking an agent to stop: {e}");
+    }
+    watch_orphan(dir);
+}
+
+/// Stop the agent of a run marked `orphan`, killing it if it hasn't gone in time.
+fn watch_orphan(dir: &Path) {
+    let dir = dir.to_path_buf();
     tokio::spawn(async move {
-        tokio::time::sleep(REAP_GRACE).await;
+        let since = std::time::Instant::now();
+        let mut signal = libc::SIGTERM;
         // The group, which may outlive its leader. (Its id isn't given to a new process while it's in use.)
-        if unsafe { libc::kill(-pid, 0) } == 0 {
-            unsafe { libc::kill(-pid, libc::SIGKILL) };
+        while let Some(pid) = read_pid(&dir, "pid").filter(|&pid| group_alive(pid) && !pid_reused(&dir)) {
+            if signal == libc::SIGTERM || since.elapsed() >= REAP_GRACE {
+                unsafe { libc::kill(-pid, signal) };
+                signal = libc::SIGKILL;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        let _ = std::fs::remove_file(dir.join("orphan"));
     });
 }
 
@@ -725,48 +743,112 @@ mod tests {
         });
     }
 
-    /// An agent as ia-shim starts it, in a process group of its own, recorded in the run's `pid`.
-    fn agent(state: &Shared, run_id: &str) -> std::process::Child {
+    /// An agent as ia-shim starts it (running `script`), in a process group of its own, recorded in
+    /// the run's `pid`, on this boot as `start` records it.
+    fn agent(state: &Shared, run_id: &str, script: &str) -> std::process::Child {
         use std::os::unix::process::CommandExt;
-        let agent = std::process::Command::new("sleep").arg("60").process_group(0).spawn().unwrap();
-        std::fs::write(run_dir(state, run_id).join("pid"), agent.id().to_string()).unwrap();
+        let agent = std::process::Command::new("sh").args(["-c", script]).process_group(0).spawn().unwrap();
+        let dir = run_dir(state, run_id);
+        std::fs::write(dir.join("pid"), agent.id().to_string()).unwrap();
+        std::fs::write(dir.join("run.json"), json!({"format": RUN_FORMAT, "boot": boot_id()}).to_string()).unwrap();
         agent
+    }
+
+    async fn exits(agent: &mut std::process::Child, within: Duration) {
+        let deadline = std::time::Instant::now() + within;
+        while agent.try_wait().unwrap().is_none() {
+            assert!(std::time::Instant::now() < deadline, "the agent is still running");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     #[test]
     fn an_agent_that_outlives_its_shim_is_stopped() {
         crate::testing::run(async || {
             let (state, task_id, run_id) = run_with_output(&format!("{}\n", said("working")));
-            let mut agent = agent(&state, &run_id);
+            let mut agent = agent(&state, &run_id, "exec sleep 60");
             // Its shim was killed (by hand, or by the OOM killer).
             std::fs::write(run_dir(&state, &run_id).join("shim.pid"), "999999999").unwrap();
             follow_inner(&state, &run_id, 0).await.unwrap();
             let run = db::get_run(&state.db(), &run_id).unwrap().unwrap();
             assert_eq!(run.status, "exited");
             assert!(!db::get_task(&state.db(), &task_id).unwrap().unwrap().running);
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            while agent.try_wait().unwrap().is_none() {
-                assert!(std::time::Instant::now() < deadline, "the agent is still running");
+            exits(&mut agent, Duration::from_secs(5)).await;
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while run_dir(&state, &run_id).join("orphan").exists() {
+                assert!(std::time::Instant::now() < deadline, "still marked to stop");
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         });
     }
 
     #[test]
-    fn a_process_that_took_an_agents_pid_isnt_stopped() {
+    fn an_orphan_ignoring_sigterm_is_killed_after_a_restart_too() {
         crate::testing::run(async || {
             let (state, _task_id, run_id) = run_with_output("");
-            let mut other = agent(&state, &run_id);
-            let pid = other.id() as i32;
+            let mut agent = agent(&state, &run_id, "trap '' TERM; exec sleep 60");
             let dir = run_dir(&state, &run_id);
-            assert!(!pid_reused(&dir, "pid", pid));
+            // Once it ignores SIGTERM (it has run `trap`).
+            let comm = format!("/proc/{}/comm", agent.id());
+            while std::fs::read_to_string(&comm).is_ok_and(|c| c.trim() != "sleep") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            // The server stopped as it waited for the agent to go, after its run ended.
+            std::fs::write(dir.join("orphan"), "").unwrap();
+            unsafe { libc::kill(-(agent.id() as i32), libc::SIGTERM) };
+            std::fs::write(dir.join("exit"), r#"{"code":null,"signal":null,"error":"the run's supervisor (ia-shim) disappeared"}"#).unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert!(agent.try_wait().unwrap().is_none());
+            resume_reaping(&state);
+            exits(&mut agent, REAP_GRACE + Duration::from_secs(2)).await;
+        });
+    }
+
+    #[test]
+    fn a_live_shim_isnt_taken_for_gone_when_the_clock_jumps() {
+        crate::testing::run(async || {
+            let (state, _task_id, run_id) = run_with_output(&format!("{}\n", said("working")));
+            let mut agent = agent(&state, &run_id, "exec sleep 60");
+            let dir = run_dir(&state, &run_id);
+            // Its shim (this process, for the test) is running, and the clock has jumped forward two hours
+            // since it started (a VM resumed, say): its files look that much older than its processes.
+            std::fs::write(dir.join("shim.pid"), std::process::id().to_string()).unwrap();
+            let earlier = std::time::SystemTime::now() - Duration::from_secs(7200);
+            for f in ["pid", "shim.pid", "run.json"] {
+                std::fs::File::options().write(true).open(dir.join(f)).unwrap().set_modified(earlier).unwrap();
+            }
+            let following = tokio::spawn({
+                let (state, run_id) = (state.clone(), run_id.clone());
+                async move { follow_inner(&state, &run_id, 0).await }
+            });
+            // Past the follower's check on the shim.
+            tokio::time::sleep(Duration::from_millis(2600)).await;
+            assert!(!dir.join("exit").exists());
+            assert!(agent.try_wait().unwrap().is_none());
+            assert_eq!(db::get_run(&state.db(), &run_id).unwrap().unwrap().status, "running");
+            std::fs::write(dir.join("exit"), r#"{"code":0}"#).unwrap();
+            following.await.unwrap().unwrap();
+            agent.kill().unwrap();
+            agent.wait().unwrap();
+        });
+    }
+
+    #[test]
+    fn a_process_that_took_an_agents_pid_after_a_reboot_isnt_stopped() {
+        crate::testing::run(async || {
+            let (state, _task_id, run_id) = run_with_output("");
+            let mut other = agent(&state, &run_id, "exec sleep 60");
+            let dir = run_dir(&state, &run_id);
+            assert!(!pid_reused(&dir));
             // The agent's pid was recorded before a reboot, and this process has it now.
-            let before = std::time::SystemTime::now() - Duration::from_secs(7200);
-            std::fs::File::options().write(true).open(dir.join("pid")).unwrap().set_modified(before).unwrap();
-            assert!(pid_reused(&dir, "pid", pid));
+            std::fs::write(dir.join("run.json"), json!({"format": RUN_FORMAT, "boot": "an-earlier-boot"}).to_string()).unwrap();
+            assert!(pid_reused(&dir));
             stop_orphan(&dir);
-            tokio::time::sleep(REAP_GRACE + Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
             assert!(other.try_wait().unwrap().is_none(), "another process was stopped");
+            // As by a run from before boot ids were recorded, which goes by whether the pid is alive.
+            std::fs::write(dir.join("run.json"), json!({"format": RUN_FORMAT}).to_string()).unwrap();
+            assert!(!pid_reused(&dir));
             other.kill().unwrap();
             other.wait().unwrap();
         });

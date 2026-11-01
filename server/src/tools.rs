@@ -1359,6 +1359,20 @@ fn pick_one<T>(ctx: &Ctx, what: &str, mut found: Vec<(db::Profile, T)>, qualifie
 
 /// A project named by an agent: its id, key or name, optionally as `<profile>:<key>`.
 fn resolve_project(s: &Shared, ctx: &Ctx, r: &str, profile: Option<&str>) -> std::result::Result<db::Project, ToolError> {
+    // A name with a colon ("Ops: infra") is a project's on the caller's boards before it's a key on
+    // profile Ops's, which they may not even reach.
+    if r.contains(':')
+        && let Ok(boards) = pick_boards(s, ctx, profile)
+    {
+        let mut found = Vec::new();
+        for b in boards {
+            let named = db::list_projects(&s.db(), &b.id)?.into_iter().find(|p| p.name.eq_ignore_ascii_case(r));
+            found.extend(named.map(|p| (b, p)));
+        }
+        if !found.is_empty() {
+            return pick_one(ctx, &format!("project {r}"), found, |b| format!("{}:{r}", b.name));
+        }
+    }
     let (prefix, key) = split_ref(s, r)?;
     let boards = pick_boards(s, ctx, prefix.or(profile))?;
     if let Some(p) = db::get_project(&s.db(), key)?.filter(|p| boards.iter().any(|b| b.id == p.profile_id)) {
@@ -3656,9 +3670,13 @@ mod tests {
             assert_eq!(call(&s, &me, "get_project", json!({"project_id": "Ops: infra"})).await.unwrap()["key"], "KIW");
             // A profile's name still qualifies a key, and one that doesn't let the caller in says so.
             assert_eq!(call(&s, &me, "get_project", json!({"project_id": "personal:KIW"})).await.unwrap()["key"], "KIW");
-            insert_profile(&s.db(), "ops", &[], None).unwrap();
-            let err = call(&s, &me, "get_project", json!({"project_id": "Ops: infra"})).await.unwrap_err();
+            // Even if a profile is called Ops, whether it lets the caller in or not.
+            let ops = insert_profile(&s.db(), "ops", &[], None).unwrap();
+            assert_eq!(call(&s, &me, "get_project", json!({"project_id": "Ops: infra"})).await.unwrap()["key"], "KIW");
+            let err = call(&s, &me, "get_project", json!({"project_id": "ops:KIW"})).await.unwrap_err();
             assert!(err.contains("doesn't let agents in profile personal"), "{err}");
+            grant(&s, &ops, &["personal"]);
+            assert_eq!(call(&s, &me, "get_project", json!({"project_id": "Ops: infra"})).await.unwrap()["key"], "KIW");
         });
     }
 
