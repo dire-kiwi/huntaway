@@ -63,6 +63,45 @@ impl Config {
     }
 }
 
+/// On the startup of a server with release updates that the desktop app didn't start (a tarball host's, started again
+/// by its supervisor after a reboot, say): exec the release in `app/` it last updated to, when that's newer than this
+/// one (`staging::choose_at_startup`). The desktop app chooses for the servers it starts, and a server in `app/` is the
+/// one chosen. Returns when there's nothing to start, or the exec failed.
+#[cfg(unix)]
+pub fn exec_installed(data_dir: &std::path::Path) {
+    use std::os::unix::process::CommandExt;
+    if std::env::var_os("IA_DESKTOP_VERSION").is_some_and(|v| !v.is_empty()) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    if staging::running_from_app(data_dir, &exe).is_some() {
+        return;
+    }
+    let app = data_dir.join("app");
+    let (v, bin) = match staging::choose_at_startup(&app, &running()) {
+        Ok(Some(pick)) => pick,
+        Ok(None) => return,
+        Err(e) => return tracing::warn!("choosing a release in {} to start: {e:#}", app.display()),
+    };
+    tracing::info!("starting release {v}, which this host last updated to, from {}", bin.display());
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.args(std::env::args_os().skip(1));
+    // So that Roll back can come back to this server.
+    if std::env::var_os("IA_BUNDLED_SERVER").is_none_or(|v| v.is_empty()) {
+        cmd.env("IA_BUNDLED_SERVER", &exe);
+    }
+    let err = cmd.exec();
+    tracing::warn!("starting {}: {err}; running {} instead", bin.display(), env!("CARGO_PKG_VERSION"));
+    let mut s = staging::read(&app);
+    if s.trying.as_deref() == Some(v.as_str()) {
+        s.trying = None;
+        s.bad.push(v);
+        if let Err(e) = staging::write(&app, &s) {
+            tracing::warn!("marking the release bad: {e:#}");
+        }
+    }
+}
+
 /// This build's `<os>-<arch>`, with the names `release.yml` uses.
 fn platform() -> String {
     let os = match std::env::consts::OS {
@@ -544,13 +583,26 @@ async fn restart_onto(st: &Shared, v: &str) -> Result<()> {
     let app = staging::app_dir(st);
     let exe = staging::version_dir(&app, v).context("not a version")?.join("huntaway");
     let old = staging::change(st, |s| s.trying = Some(v.to_string()))?;
-    let err = admin::restart_into(st, &exe).await;
+    let err = admin::restart_into(st, &exe, &bundled_env(st)).await;
     staging::change(st, |s| {
         if s.trying.as_deref() == Some(v) {
             s.trying = old.trying;
         }
     })?;
     Err(err)
+}
+
+/// What an Update adds to the environment of the version it execs: a server that isn't running from `app/` (a
+/// tarball's) and has no `IA_BUNDLED_SERVER` passes itself as that, so that Roll back can come back to it straight
+/// away, as it can after a supervisor's restart (`exec_installed`). One set already (by the desktop app or by hand)
+/// carries over as it is.
+fn bundled_env(st: &Shared) -> Vec<(&'static str, std::ffi::OsString)> {
+    let unset = st.meta.release.as_ref().is_some_and(|c| c.bundled_server.is_none());
+    if unset && staging::running_from_app(&st.data_dir, &st.exe).is_none() {
+        vec![("IA_BUNDLED_SERVER", st.exe.clone().into_os_string())]
+    } else {
+        vec![]
+    }
 }
 
 /// What Roll back would exec, and its version (none for the desktop app's own server): the version before this one,
@@ -589,7 +641,7 @@ pub fn rollback(state: &Shared) -> ApiResult<()> {
         let (exe, previous) = rollback_target(&st).context("there's no earlier version to roll back to")?;
         admin::log_line(&st, &format!("Rolling back from {current} to {}", previous.as_deref().unwrap_or("the app's own server")));
         let old = staging::change(&st, |s| rolled_back(s, &current, previous.as_deref()))?;
-        let err = admin::restart_into(&st, &exe).await;
+        let err = admin::restart_into(&st, &exe, &[]).await;
         // Only what the rollback changed is put back: a download may have staged a version meanwhile.
         staging::change(&st, |s| not_rolled_back(s, &old, &current, previous.as_deref()))?;
         Err(err)
@@ -1625,6 +1677,42 @@ mod tests {
         });
     }
 
+    /// A tarball's server, started again by its supervisor, picks the version it last updated to, and a version that
+    /// didn't come up isn't picked again (or it would be started on every restart).
+    #[test]
+    fn a_server_started_again_picks_the_version_it_updated_to() {
+        let app = temp_dir();
+        let v = |s: &str| semver::Version::parse(s).unwrap();
+        let state = |s: &Value| std::fs::write(app.join("state.json"), s.to_string()).unwrap();
+        let installed = || -> Value { serde_json::from_slice(&std::fs::read(app.join("state.json")).unwrap()).unwrap() };
+        // Nothing downloaded: nothing to pick, and no state.json written.
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap(), None);
+        assert!(!app.join("state.json").exists());
+        for ver in ["0.2.0", "0.3.0"] {
+            server_files(&app.join(ver), "true");
+        }
+        state(&json!({"current": "0.3.0", "previous": "0.2.0", "staged": null, "trying": null, "bad": [], "shell": 1}));
+        let pick = staging::choose_at_startup(&app, &v("0.1.0")).unwrap();
+        assert_eq!(pick, Some(("0.3.0".to_string(), app.join("0.3.0/huntaway"))));
+        assert_eq!(installed(), json!({"current": "0.3.0", "previous": "0.2.0", "staged": null, "trying": "0.3.0", "bad": [], "shell": 1}));
+        // It came up and settled; a newer tarball (0.3.0 or later) runs itself.
+        state(&json!({"current": "0.3.0", "previous": "0.2.0", "bad": []}));
+        assert_eq!(staging::choose_at_startup(&app, &v("0.3.0")).unwrap(), None);
+        assert_eq!(staging::choose_at_startup(&app, &v("0.4.0")).unwrap(), None);
+        // 0.3.0 exited before it was listening (trying is still set): it's bad, and 0.2.0 is current and tried.
+        state(&json!({"current": "0.3.0", "previous": "0.2.0", "trying": "0.3.0", "bad": []}));
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap().unwrap().0, "0.2.0");
+        let s = staging::read(&app);
+        assert_eq!((s.current.as_deref(), s.previous.as_deref(), s.trying.as_deref(), s.bad.clone()), (Some("0.2.0"), None, Some("0.2.0"), vec!["0.3.0".into()]));
+        // And when 0.2.0 doesn't come up either, the tarball's own server runs.
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap(), None);
+        let s = staging::read(&app);
+        assert_eq!((s.trying, s.bad), (None, vec!["0.3.0".to_string(), "0.2.0".to_string()]));
+        // A version without its files isn't picked.
+        state(&json!({"current": "0.4.0", "bad": []}));
+        assert_eq!(staging::choose_at_startup(&app, &v("0.1.0")).unwrap(), None);
+    }
+
     #[test]
     fn state_json_round_trips_with_unknown_keys() {
         let app = temp_dir();
@@ -1686,6 +1774,31 @@ mod tests {
             // It failed, so this server carries on as it was.
             let s = staging::read(&staging::app_dir(&state));
             assert_eq!((s.trying, s.staged.as_deref()), (None, Some("0.2.0")));
+        });
+    }
+
+    /// HA-74 review: a tarball's server (not in `app/`, no IA_BUNDLED_SERVER) updated onto a release, which then had no
+    /// previous version and no bundled server, so it offered no Roll back until a supervisor restarted it. It passes
+    /// itself as IA_BUNDLED_SERVER; one that has it already, or runs from `app/`, adds nothing.
+    #[test]
+    fn a_tarball_servers_update_passes_itself_for_roll_back() {
+        testing::run(async || {
+            let update = async |cfg: Config, running: Option<&str>, staged: &str| {
+                let state = host_at(cfg, running, &[staged]);
+                staging::change(&state, |s| s.staged = Some(staged.into())).unwrap();
+                let mut events = state.events.subscribe();
+                let (code, v) = api(&state, "POST", "/api/admin/release/update", Some(json!({"version": staged}))).await;
+                assert_eq!(code, 200, "{v}");
+                job_fails(&mut events).await;
+                (admin::exec_env().unwrap(), state.exe.clone())
+            };
+            let tarball = Config { bundled_server: None, ..config("http://unused") };
+            let (env, exe) = update(tarball.clone(), None, "0.2.0").await;
+            assert_eq!(env, [("IA_BUNDLED_SERVER".to_string(), exe.into_os_string())]);
+            // The desktop app's server, or one given IA_BUNDLED_SERVER: it carries over as it is.
+            assert_eq!(update(config("http://unused"), None, "0.2.0").await.0, []);
+            // A release from app/: its Roll back goes to the version before it (or the bundled server it was given).
+            assert_eq!(update(tarball, Some("0.2.0"), "0.3.0").await.0, []);
         });
     }
 
