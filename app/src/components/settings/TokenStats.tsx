@@ -426,7 +426,7 @@ function Reviews({ data }: { data: TokenData }) {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile label="Reviews" value={String(s.reviews)} hint={`of ${plural(s.tasks, "task")}, in ${plural(tasks.reduce((n, t) => n + t.rounds.length, 0), "round")}`} />
+            <Tile label="Reviews" value={String(s.reviews)} hint={`of ${plural(s.tasks, "task")}, in ${plural(new Set(data.reviews.map((r) => `${r.taskId} ${r.round}`)).size, "round")}`} />
             <Tile label="Found serious issues" value={pct(s.withIssues, s.reviews)} hint={`${plural(s.serious, "issue")} in ${plural(s.withIssues, "review")}`} />
             <Tile label="Passed the first round" value={pct(s.firstPassed, s.tasks)} hint={`${s.firstPassed} of ${plural(s.tasks, "task")}`} />
             <Tile
@@ -469,10 +469,10 @@ function ReviewTable({ title, first, hint, rows, implementer }: { title: string;
               {implementer ? (
                 <>
                   <th className={clsx(th, "w-16")}>Tasks</th>
-                  <th className={clsx(th, "w-24")} title="Tasks whose first round of review found no serious issues">
+                  <th className={clsx(th, "w-24")} title="Tasks whose first round of review found no serious issues, if it was before this range too">
                     First pass
                   </th>
-                  <th className={clsx(th, "w-28")} title="Rounds of review that found serious issues, per task">
+                  <th className={clsx(th, "w-28")} title="Rounds of review that found serious issues, per task: all of its rounds, if some were outside this range">
                     Rounds of fixes
                   </th>
                 </>

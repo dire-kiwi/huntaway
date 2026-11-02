@@ -147,3 +147,22 @@ fn a_run_counted_from_nothing_is_scaled_to_its_cost() {
         assert!((cost - 1.0).abs() < 1e-9);
     })
 }
+
+#[test]
+fn a_codex_subagents_tokens_go_to_its_own_model() {
+    let lines = [
+        json!({"method": "huntaway/model", "params": {"threadId": "main", "model": "gpt-6.1-sol"}}).to_string(),
+        json!({"method": "item/started", "params": {"threadId": "main", "item": {"type": "collabAgentToolCall", "tool": "spawnAgent",
+            "receiverThreadIds": ["child"], "model": "gpt-6-luna"}}}).to_string(),
+        json!({"method": "item/started", "params": {"threadId": "main", "item": {"type": "subAgentActivity", "kind": "started",
+            "agentThreadId": "hosted", "model": "gpt-6-astra"}}}).to_string(),
+        usage("main", (100, 0, 10), (100, 0, 10)),
+        usage("child", (1000, 0, 200), (1000, 0, 200)),
+        usage("hosted", (50, 0, 7), (50, 0, 7)),
+        // Spawned without a model: the run's.
+        usage("other", (20, 0, 3), (20, 0, 3)),
+    ];
+    let c = count_codex(lines.into_iter(), "codex", &mut none);
+    let out: Vec<(&str, i64)> = c.models.iter().map(|(m, n)| (m.as_str(), n.output)).collect();
+    assert_eq!(out, [("gpt-6-astra", 7), ("gpt-6-luna", 200), ("gpt-6.1-sol", 13)]);
+}

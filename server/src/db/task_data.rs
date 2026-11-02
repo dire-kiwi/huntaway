@@ -182,6 +182,10 @@ pub struct Review {
     #[serde(default)]
     pub extra_rounds: u32,
     pub updated_at: String,
+    /// When this round of review started: the round each reviewer's submission is kept with, for
+    /// statistics (see review/stats.rs). Missing on reviews started before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
     /// Each reviewer's part (API 29). Empty in reviews from before there could be several.
     #[serde(default)]
     pub reviewers: Vec<ReviewerRun>,

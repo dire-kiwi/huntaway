@@ -792,7 +792,8 @@ pub const VERSION: i64 = 76;
 /// the totals its agent's session (or Codex's threads) had reached, which a later run that resumes
 /// the session goes on from.
 ///
-/// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed.
+/// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed,
+/// with when its review round started (`round`).
 /// `minor` is how many minor issues it listed, null for reviews from before they were listed;
 /// `minor_noted` whether it found any or its summary mentions them.
 const SCHEMA_V76: &str = r#"
@@ -813,6 +814,7 @@ CREATE TABLE IF NOT EXISTS review_stats (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   thread_id TEXT NOT NULL,
+  round TEXT NOT NULL,
   run_id TEXT,
   at TEXT NOT NULL,
   verdict TEXT NOT NULL,

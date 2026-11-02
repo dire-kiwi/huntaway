@@ -18,7 +18,8 @@
 //!   down (rolled back), adds just its latest request. Codex counts cached input as part of the
 //!   input: here `input_tokens` is what wasn't cached, as for Claude. The model is the one the
 //!   adapter says it started the thread with (`huntaway/model`), else the run's, else the one the
-//!   thread's rollout file says, else the task's.
+//!   thread's rollout file says, else the task's; a subagent's thread's is the one it was spawned
+//!   with, when that's in the run's output.
 //! - A run whose folder is gone gets a row with what it cost and no tokens, `estimated`.
 
 use std::collections::BTreeMap;
@@ -180,13 +181,18 @@ pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) 
     out
 }
 
-/// What a Codex run used, from its output's lines, with `model` unless the output names it.
+/// What a Codex run used, from its output's lines, with `model` unless the output names it. A
+/// subagent's thread counts towards the model it was started with, if its start says (Codex's
+/// `collabAgentToolCall` spawning it, or its `subAgentActivity`), else the run's.
 pub fn count_codex(lines: impl Iterator<Item = String>, model: &str, earlier: &mut Earlier) -> Counted {
     let mut out = Counted { runtime: "codex", ..Default::default() };
     let mut model = model.to_string();
-    let mut used = Counts::default();
+    // Threads' models, where they're known, and what each thread used.
+    let mut models: std::collections::HashMap<String, String> = Default::default();
+    let mut used: Vec<(String, Counts)> = Vec::new();
     for line in lines {
-        if !line.contains("thread/tokenUsage/updated") && !line.contains("huntaway/model") {
+        let starts = line.contains("collabAgentToolCall") || line.contains("subAgentActivity");
+        if !starts && !line.contains("thread/tokenUsage/updated") && !line.contains("huntaway/model") {
             continue;
         }
         let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
@@ -194,6 +200,22 @@ pub fn count_codex(lines: impl Iterator<Item = String>, model: &str, earlier: &m
         if v["method"] == "huntaway/model" {
             if let Some(m) = p["model"].as_str().filter(|m| !m.is_empty()) {
                 model = m.to_string();
+            }
+            continue;
+        }
+        let item = &p["item"];
+        let started = |m: &Value| m.as_str().filter(|m| !m.is_empty()).map(String::from);
+        if item["type"] == "collabAgentToolCall" && item["tool"] == "spawnAgent" {
+            if let Some(m) = started(&item["model"]) {
+                for t in item["receiverThreadIds"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                    models.insert(t.to_string(), m.clone());
+                }
+            }
+            continue;
+        }
+        if item["type"] == "subAgentActivity" {
+            if let (Some(t), Some(m)) = (item["agentThreadId"].as_str(), started(&item["model"])) {
+                models.insert(t.to_string(), m);
             }
             continue;
         }
@@ -215,12 +237,15 @@ pub fn count_codex(lines: impl Iterator<Item = String>, model: &str, earlier: &m
             None if total.total() == last.total() => total,
             None => last,
         };
-        used.add(&add);
+        used.push((thread.to_string(), add));
         out.snapshot.insert(thread.to_string(), total);
     }
-    if used.total() > 0 {
-        out.models.insert(model, used);
+    // Once the run's own model is known (the adapter says it as the thread starts).
+    for (thread, add) in used {
+        let m = models.get(&thread).cloned().unwrap_or_else(|| model.clone());
+        out.models.entry(m).or_default().add(&add);
     }
+    out.models.retain(|_, c| c.total() > 0);
     out
 }
 

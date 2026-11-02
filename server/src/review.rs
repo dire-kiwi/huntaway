@@ -205,6 +205,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         fixes: if manual { 0 } else { previous.as_ref().map(|r| r.fixes).unwrap_or(0) },
         extra_rounds: if manual { 0 } else { previous.map(|r| r.extra_rounds).unwrap_or(0) },
         updated_at: now(),
+        started_at: Some(now()),
         reviewers: parts.clone(),
     };
     #[cfg(test)]
@@ -565,9 +566,16 @@ pub fn submit(state: &Shared, thread: &Task, run_id: &str, args: &Value) -> ApiR
     }
     part.verdict = Some(if issues.is_empty() { "pass" } else { "issues" }.into());
     let minor = stats::minor_list(args);
+    // A review from before rounds were kept: the reviewer's run's start stands for its round's.
+    let round = match review.started_at.clone() {
+        Some(at) => Some(at),
+        None => db::get_run(&state.db(), run_id)?.map(|r| r.created_at),
+    };
+    let part = review.reviewers.iter_mut().find(|p| p.thread_id == thread.id).unwrap();
     let submission = stats::Submission {
         task_id: &parent.id,
         thread_id: &thread.id,
+        round: round.as_deref(),
         run_id: Some(run_id),
         verdict: part.verdict.as_deref().unwrap(),
         serious: issues.len(),

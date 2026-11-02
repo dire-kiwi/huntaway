@@ -27,6 +27,7 @@ const data = (extra = {}) => ({
   to: 100,
   rows: [],
   reviews: [],
+  rounds: [],
   followUps: [],
   tasks: {},
   projects: {},
@@ -115,15 +116,18 @@ test("days add up each purpose", () => {
   );
 });
 
-test("reviews come in rounds, one per reviewer's thread each", () => {
+const round = (taskId, n, verdict, extra = {}) => ({ taskId, round: n, at: n, verdict, serious: verdict === "issues" ? 1 : 0, reviewers: 1, ...extra });
+
+test("a task's rounds are the report's, whichever of its reviews are in range", () => {
   const d = data({
     reviews: [
-      review("C", "R", 1, "issues", { serious: 2 }),
-      review("C", "R2", 2, "pass", { reviewer: "Codex · gpt", model: "gpt" }),
-      review("C", "R", 10, "pass", { minor: 2, minorNoted: true }),
-      review("C", "R2", 11, "pass", { reviewer: "Codex · gpt", model: "gpt" }),
-      review("T", "R3", 5, "pass"),
+      review("C", "R", 1, "issues", { serious: 2, round: 1 }),
+      review("C", "R2", 2, "pass", { reviewer: "Codex · gpt", model: "gpt", round: 1 }),
+      review("C", "R", 10, "pass", { minor: 2, minorNoted: true, round: 2 }),
+      review("C", "R2", 11, "pass", { reviewer: "Codex · gpt", model: "gpt", round: 2 }),
+      review("T", "R3", 5, "pass", { round: 1 }),
     ],
+    rounds: [round("C", 2, "pass", { reviewers: 2 }), round("C", 1, "issues", { serious: 2, reviewers: 2 }), round("T", 1, "pass")],
     followUps: [
       { taskId: "F1", createdBy: "C", at: 12 },
       // Before the review that noted minor issues: not one of its follow-ups.
@@ -133,12 +137,11 @@ test("reviews come in rounds, one per reviewer's thread each", () => {
   });
   const tasks = reviewsByTask(d);
   const c = tasks.find((t) => t.taskId === "C");
-  assert.equal(c.rounds.length, 2);
   assert.deepEqual(
-    c.rounds.map((r) => r.map((x) => x.verdict)),
+    c.rounds.map((r) => [r.round, r.verdict]),
     [
-      ["issues", "pass"],
-      ["pass", "pass"],
+      [1, "issues"],
+      [2, "pass"],
     ],
   );
   assert.equal(c.followUps, 1);
@@ -161,6 +164,17 @@ test("reviews come in rounds, one per reviewer's thread each", () => {
       ["Codex · gpt", 2, 0],
     ],
   );
+});
+
+// HA-114 review: a task whose first round (with issues) was before the range, and whose second
+// passed in it, counted as passing its first round.
+test("a first round before the range still counts as the task's first", () => {
+  const d = data({
+    reviews: [review("C", "R", 10, "pass", { round: 2 })],
+    rounds: [round("C", 1, "issues"), round("C", 2, "pass")],
+  });
+  const s = summarise(d.reviews, reviewsByTask(d));
+  assert.deepEqual([s.reviews, s.tasks, s.firstPassed, s.roundsWithIssues], [1, 1, 0, 1]);
 });
 
 test("axis ticks are round numbers", () => {

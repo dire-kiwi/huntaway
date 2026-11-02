@@ -2,18 +2,29 @@
 //! analytics.rs): a row in `review_stats` for each `submit_review`, for the task reviewed, with how
 //! many serious and minor issues it listed. A task's `review` only has its latest round.
 //!
+//! Each row has its review's `round`: when the round started (Review::started_at), which every
+//! reviewer's submission in it shares, so a round's outcome is its reviewers' together. A reviewer
+//! that submits twice in a run is kept once, with what it submitted last.
+//!
 //! Reviews from before this was kept are read from their threads, where each `submit_review` call
-//! is (see `backfill`). They didn't list minor issues: only whether their summary mentions any.
+//! is (see `backfill`). They didn't list minor issues: only whether their summary mentions any. Their
+//! rounds are worked out from their reviewers' runs: a round's reviewers start together, so runs
+//! started within `ROUND_GAP` of each other are one round's, but for two runs of one reviewer.
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::util::now;
 
+/// Reviewer runs of a task started within this many seconds of the one before are one round's.
+pub const ROUND_GAP: i64 = 120;
+
 /// What one `submit_review` reported.
 pub struct Submission<'a> {
     pub task_id: &'a str,
     pub thread_id: &'a str,
+    /// When its round started.
+    pub round: Option<&'a str>,
     pub run_id: Option<&'a str>,
     /// pass or issues
     pub verdict: &'a str,
@@ -27,9 +38,24 @@ pub struct Submission<'a> {
 
 pub fn record(c: &Connection, s: &Submission, at: &str) -> rusqlite::Result<()> {
     let noted = s.minor.is_some_and(|n| n > 0) || s.summary.is_some_and(mentions_minor);
+    // What the run submitted before: this replaces it.
+    if let Some(run_id) = s.run_id {
+        c.execute("DELETE FROM review_stats WHERE thread_id=?1 AND run_id=?2", params![s.thread_id, run_id])?;
+    }
     c.execute(
-        "INSERT INTO review_stats (task_id, thread_id, run_id, at, verdict, serious, minor, minor_noted, label) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-        params![s.task_id, s.thread_id, s.run_id, at, s.verdict, s.serious as i64, s.minor.map(|n| n as i64), noted, s.label.filter(|l| !l.is_empty())],
+        "INSERT INTO review_stats (task_id, thread_id, round, run_id, at, verdict, serious, minor, minor_noted, label) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            s.task_id,
+            s.thread_id,
+            s.round.unwrap_or(at),
+            s.run_id,
+            at,
+            s.verdict,
+            s.serious as i64,
+            s.minor.map(|n| n as i64),
+            noted,
+            s.label.filter(|l| !l.is_empty())
+        ],
     )?;
     Ok(())
 }
@@ -106,6 +132,8 @@ pub fn backfill(c: &Connection) -> anyhow::Result<()> {
         }
     }
     let mut run = c.prepare("SELECT id FROM runs WHERE task_id=?1 AND created_at <= ?2 ORDER BY created_at DESC LIMIT 1")?;
+    // Each task's reviewer runs' rounds, worked out once.
+    let mut rounds: std::collections::HashMap<String, std::collections::HashMap<String, String>> = Default::default();
     let mut parent_exists = c.prepare("SELECT review FROM tasks WHERE id=?1")?;
     for (thread_id, parent_id, at, data) in rows {
         let Ok(v) = serde_json::from_str::<Value>(&data) else { continue };
@@ -120,12 +148,17 @@ pub fn backfill(c: &Connection) -> anyhow::Result<()> {
                 .and_then(|r| serde_json::from_str::<crate::db::Review>(&r).ok())
                 .and_then(|r| r.reviewers.into_iter().find(|p| p.thread_id == thread_id).map(|p| p.label));
             let run_id: Option<String> = run.query_row(params![thread_id, at], |r| r.get(0)).optional()?;
+            if !rounds.contains_key(&parent_id) {
+                rounds.insert(parent_id.clone(), run_rounds(c, &parent_id)?);
+            }
+            let round = run_id.as_ref().and_then(|r| rounds[&parent_id].get(r)).cloned();
             let input = &b["input"];
             let serious = serious_count(input);
             let minor = minor_list(input).map(|m| m.len());
             let s = Submission {
                 task_id: &parent_id,
                 thread_id: &thread_id,
+                round: round.as_deref(),
                 run_id: run_id.as_deref(),
                 verdict: if serious > 0 { "issues" } else { "pass" },
                 serious,
@@ -137,6 +170,53 @@ pub fn backfill(c: &Connection) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The round each of the runs of `task_id`'s review threads (not its summaries) was in, by when
+/// the round started: runs started within `ROUND_GAP` of the one before are in its round, unless
+/// their thread has a run in it already (a reviewer runs once a round).
+fn run_rounds(c: &Connection, task_id: &str) -> rusqlite::Result<std::collections::HashMap<String, String>> {
+    let mut st = c.prepare(
+        "SELECT r.id, r.task_id, r.created_at FROM runs r JOIN tasks t ON t.id=r.task_id
+         WHERE t.parent_id=?1 AND t.kind='review' AND COALESCE(t.task_type, '') != 'summary' AND r.kind='review'
+         ORDER BY r.created_at",
+    )?;
+    let runs: Vec<(String, String, String)> = st.query_map([task_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+    let mut out = std::collections::HashMap::new();
+    let mut rounds = Rounds::default();
+    for (id, thread, at) in runs {
+        out.insert(id, rounds.place(&thread, &at).to_string());
+    }
+    Ok(out)
+}
+
+/// Puts reviewers' runs (or submissions), in the order their rounds started, in rounds (see `run_rounds`).
+#[derive(Default)]
+pub struct Rounds {
+    start: String,
+    last: Option<chrono::DateTime<chrono::FixedOffset>>,
+    threads: std::collections::HashSet<String>,
+}
+
+impl Rounds {
+    /// The start of the round that `thread`'s run starting at `at` is in.
+    pub fn place(&mut self, thread: &str, at: &str) -> &str {
+        self.place_new(thread, at).0
+    }
+
+    /// The same, and whether it's a new round. One that starts at the round's own start is in it.
+    pub fn place_new(&mut self, thread: &str, at: &str) -> (&str, bool) {
+        let t = chrono::DateTime::parse_from_rfc3339(at).ok();
+        let near = matches!((self.last, t), (Some(l), Some(t)) if (t - l).num_seconds() <= ROUND_GAP);
+        let new = self.start.is_empty() || (at != self.start && (!near || self.threads.contains(thread)));
+        if new {
+            self.start = at.to_string();
+            self.threads.clear();
+        }
+        self.threads.insert(thread.to_string());
+        self.last = t.or(self.last);
+        (&self.start, new)
+    }
 }
 
 /// The tool calls thread message `m` has the board refusing.
@@ -166,42 +246,86 @@ mod tests {
     }
 
     #[test]
-    fn reviews_are_read_from_their_threads() {
+    fn reviews_are_read_from_their_threads_in_rounds() {
         crate::testing::run(async || {
             let s = crate::testing::state();
             let p = crate::db::insert_profile(&s.db(), "p", &[], None).unwrap();
             let new = |kind| crate::db::NewTask { profile_id: &p.id, project_id: None, kind, title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
             let task = crate::db::insert_task(&s.db(), new("task")).unwrap();
-            let thread = crate::db::insert_task(&s.db(), new("review")).unwrap();
-            s.update_task(&thread.id, &[("parent_id", json!(task.id))]).unwrap();
-            let run = crate::db::insert_run(&s.db(), &thread.id, "review").unwrap();
+            // Two reviewers, each with a thread of its own.
+            let threads: Vec<String> = (0..2)
+                .map(|_| {
+                    let t = crate::db::insert_task(&s.db(), new("review")).unwrap();
+                    s.update_task(&t.id, &[("parent_id", json!(task.id))]).unwrap();
+                    t.id
+                })
+                .collect();
+            let run = |thread: &str, at: &str| {
+                let r = crate::db::insert_run(&s.db(), thread, "review").unwrap();
+                s.db().execute("UPDATE runs SET created_at=?1 WHERE id=?2", [at, &r.id]).unwrap();
+                r.id
+            };
+            let say = |thread: &str, at: &str, data: Value| {
+                let m = s.add_message(thread, "claude", data).unwrap();
+                s.db().execute("UPDATE messages SET created_at=?1 WHERE id=?2", rusqlite::params![at, m.id]).unwrap();
+            };
             let call = |id: &str, input: Value| json!({"type": "assistant", "message": {"content": [
                 {"type": "text", "text": "Done."},
                 {"type": "tool_use", "id": id, "name": "mcp__huntaway__submit_review", "input": input},
             ]}});
-            s.add_message(&thread.id, "claude", call("a", json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["x", "y"]}))).unwrap();
-            // Refused: the round had ended.
-            s.add_message(&thread.id, "claude", call("b", json!({"verdict": "pass", "summary": "Fine."}))).unwrap();
-            let refused = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b", "is_error": true,
-                "content": "the review this run was asked for has ended, so there's nothing to submit"}]}});
-            s.add_message(&thread.id, "claude", refused).unwrap();
-            s.add_message(&thread.id, "claude", call("c", json!({"verdict": "pass", "summary": "Two minor issues remain.", "serious_issues": []}))).unwrap();
-            // The board's tools had another name before the rename (Claude Code and Codex alike).
-            let codex = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "d", "name": "mcp__issue_agent__submit_review",
+            // Round 1: the first reviewer finds issues; the second's call is refused (its round had
+            // ended), so it has no submission.
+            let a1 = run(&threads[0], "2026-10-01T10:00:00.000Z");
+            run(&threads[1], "2026-10-01T10:00:30.000Z");
+            say(&threads[0], "2026-10-01T10:05:00.000Z", call("a", json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["x", "y"]})));
+            say(&threads[1], "2026-10-01T10:06:00.000Z", call("b", json!({"verdict": "pass", "summary": "Fine."})));
+            say(&threads[1], "2026-10-01T10:06:01.000Z", json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b", "is_error": true,
+                "content": "the review this run was asked for has ended, so there's nothing to submit"}]}}));
+            // Round 2, after the fixes: the first reviewer submits twice (its last counts); the
+            // second uses the board's tools' name from before the rename.
+            let a2 = run(&threads[0], "2026-10-01T11:00:00.000Z");
+            let b2 = run(&threads[1], "2026-10-01T11:00:10.000Z");
+            say(&threads[0], "2026-10-01T11:04:00.000Z", call("c", json!({"verdict": "needs_fixes", "summary": "Hmm.", "serious_issues": ["z"]})));
+            say(&threads[0], "2026-10-01T11:05:00.000Z", call("d", json!({"verdict": "pass", "summary": "Two minor issues remain.", "serious_issues": []})));
+            let old = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e", "name": "mcp__issue_agent__submit_review",
                 "input": {"verdict": "needs_fixes", "summary": "Broken.", "serious_issues": []}}]}});
-            s.add_message(&thread.id, "claude", codex).unwrap();
+            say(&threads[1], "2026-10-01T11:06:00.000Z", old);
 
             let c = s.db();
+            c.execute("DELETE FROM review_stats", []).unwrap();
             backfill(&c).unwrap();
-            let mut st = c.prepare("SELECT task_id, run_id, verdict, serious, minor, minor_noted FROM review_stats ORDER BY id").unwrap();
-            type Row = (String, Option<String>, String, i64, Option<i64>, bool);
+            let mut st = c.prepare("SELECT run_id, round, verdict, serious, minor, minor_noted FROM review_stats ORDER BY at").unwrap();
+            type Row = (String, String, String, i64, Option<i64>, bool);
             let rows: Vec<Row> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).unwrap().map(Result::unwrap).collect();
-            let r = |verdict: &str, serious, noted| (task.id.clone(), Some(run.id.clone()), verdict.to_string(), serious, None, noted);
-            assert_eq!(rows, vec![r("issues", 2, false), r("pass", 0, true), r("issues", 1, false)]);
+            let (r1, r2) = ("2026-10-01T10:00:00.000Z".to_string(), "2026-10-01T11:00:00.000Z".to_string());
+            assert_eq!(
+                rows,
+                vec![
+                    (a1, r1, "issues".into(), 2, None, false),
+                    (a2, r2.clone(), "pass".into(), 0, None, true),
+                    (b2, r2, "issues".into(), 1, None, false),
+                ]
+            );
             // Once only.
             backfill(&c).unwrap();
             assert_eq!(c.query_row("SELECT COUNT(*) FROM review_stats", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
         })
+    }
+
+    #[test]
+    fn a_reviewer_runs_once_a_round() {
+        let mut r = Rounds::default();
+        let mut place = |thread: &str, at: &str| r.place_new(thread, at).1;
+        // Two reviewers starting together.
+        assert!(place("A", "2026-10-01T10:00:00.000Z"));
+        assert!(!place("B", "2026-10-01T10:00:20.000Z"));
+        // A quick fix: the first reviewer runs again within the gap, in a round of its own.
+        assert!(place("A", "2026-10-01T10:01:30.000Z"));
+        assert!(!place("B", "2026-10-01T10:01:35.000Z"));
+        // A round long after.
+        assert!(place("B", "2026-10-01T12:00:00.000Z"));
+        // Another submission of a round kept with its start (a reviewer run again in it).
+        assert!(!place("B", "2026-10-01T12:00:00.000Z"));
     }
 
     #[test]

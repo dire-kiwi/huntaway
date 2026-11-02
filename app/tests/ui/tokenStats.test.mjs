@@ -49,8 +49,14 @@ const report = {
     usage("r4", "solo", "claude-sonnet-5-5", 500),
   ],
   reviews: [
-    { task_id: "child", thread_id: "thread", at, verdict: "issues", serious: 2, minor: 1, minor_noted: true, label: "codex · xhigh", model: "gpt-6.1-sol" },
-    { task_id: "solo", thread_id: "thread2", at, verdict: "pass", serious: 0, minor: null, minor_noted: false, label: null, model: "claude-opus-5-5" },
+    { task_id: "child", thread_id: "thread", at, verdict: "issues", serious: 2, minor: 1, minor_noted: true, label: "codex · xhigh", model: "gpt-6.1-sol", round: 2 },
+    { task_id: "solo", thread_id: "thread2", at, verdict: "pass", serious: 0, minor: null, minor_noted: false, label: null, model: "claude-opus-5-5", round: 1 },
+  ],
+  // Its task's first round was before the range.
+  rounds: [
+    { task_id: "child", round: 1, at, verdict: "issues", serious: 1, reviewers: 1 },
+    { task_id: "child", round: 2, at, verdict: "issues", serious: 2, reviewers: 1 },
+    { task_id: "solo", round: 1, at, verdict: "pass", serious: 0, reviewers: 1 },
   ],
   follow_ups: [{ task_id: "follow", created_by: "child", at: new Date(Date.now() + 1000).toISOString() }],
   tasks: [
@@ -82,6 +88,9 @@ test("the Tokens tab shows where tokens went, a subproject's tasks and what revi
     await page.locator("tr", { hasText: "Its task" }).waitFor();
     // A reviewer is named with the model it ran, when its label doesn't say.
     await ui.run(["wait codex · xhigh · gpt-6.1-sol", "wait 1 of 1 task got 1 follow-up"]);
+    // Its first round counts, though it was before the range: one of the two tasks passed its first, and it took two rounds of fixes.
+    const byModel = page.locator("div", { has: page.getByText("By the model that did the work", { exact: true }) }).last();
+    assert.match(await byModel.locator("tr", { hasText: "claude-opus-5-5" }).innerText(), /^claude-opus-5-5\t1\t0% · 0\t2\.0\t/);
     // Cost: Codex has none.
     await ui.run(["click Cost", "wait Cost by day"]);
     assert.match(await page.locator("tr", { hasText: "gpt-6.1-sol · Codex" }).innerText(), /0%/);

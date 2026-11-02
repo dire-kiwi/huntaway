@@ -71,7 +71,11 @@ export interface TokenStatsReport {
     label: string | null;
     /** The model the reviewer's run used most. */
     model: string | null;
+    /** Which of its task's rounds of review it was in, from 1. */
+    round: number;
   }[];
+  /** Every round of review of the tasks `reviews` are for, those before the range included. */
+  rounds: { task_id: string; round: number; at: string; verdict: "pass" | "issues"; serious: number; reviewers: number }[];
   /** Tasks created by the agents of the tasks listed. */
   follow_ups: { task_id: string; created_by: string; at: string }[];
   tasks: (AnalyticsReport["tasks"][number] & {

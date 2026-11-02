@@ -8,6 +8,8 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::{DateTime, SecondsFormat, Utc};
+use std::collections::HashMap;
+
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -284,6 +286,23 @@ pub struct ReviewRow {
     pub label: Option<String>,
     /// The model the reviewer's run used most, once its tokens are counted.
     pub model: Option<String>,
+    /// Which of its task's review rounds it was in, from 1 (see `rounds`).
+    pub round: i64,
+}
+
+/// One round of review of a task: its reviewers' submissions together.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct RoundRow {
+    pub task_id: String,
+    /// From 1, in the order the task's rounds started.
+    pub round: i64,
+    /// When it started.
+    pub at: String,
+    /// `issues` if a reviewer found serious issues, else `pass`.
+    pub verdict: String,
+    pub serious: i64,
+    /// How many reviewers submitted in it.
+    pub reviewers: i64,
 }
 
 /// A task created by another's agent.
@@ -311,6 +330,9 @@ pub struct UsageTask {
 pub struct TokenReport {
     pub usage: Vec<UsageRow>,
     pub reviews: Vec<ReviewRow>,
+    /// Every round of review of the tasks `reviews` are for, those outside the range included, so
+    /// a task's first round is its first.
+    pub rounds: Vec<RoundRow>,
     /// Tasks created by the agents of the tasks in `tasks`.
     pub follow_ups: Vec<FollowUp>,
     /// Every task the rows refer to, the parents of those, and the follow-ups.
@@ -360,15 +382,17 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     let mut st = c.prepare(
-        "SELECT s.task_id, s.thread_id, s.at, s.verdict, s.serious, s.minor, s.minor_noted, s.label, s.run_id
+        "SELECT s.task_id, s.thread_id, s.at, s.verdict, s.serious, s.minor, s.minor_noted, s.label, s.run_id, s.round
          FROM review_stats s JOIN tasks t ON t.id=s.task_id
          WHERE t.profile_id=?1 AND s.at >= ?2 AND s.at < ?3 ORDER BY s.at",
     )?;
     let mut model = c.prepare(&format!("SELECT {RUN_MODEL}"))?;
     let mut reviews = Vec::new();
+    let mut round_of = Vec::new();
     let mut rows = st.query(params![profile_id, from, to])?;
     while let Some(r) = rows.next()? {
         let run_id: Option<String> = r.get(8)?;
+        round_of.push(r.get::<_, String>(9)?);
         let model = match &run_id {
             Some(id) => model.query_row([id], |r| r.get(0))?,
             None => None,
@@ -383,7 +407,13 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
             minor_noted: r.get(6)?,
             label: r.get(7)?,
             model,
+            round: 0,
         });
+    }
+    drop(rows);
+    let (rounds, numbers) = review_rounds(c, reviews.iter().map(|r| r.task_id.as_str()))?;
+    for (r, round) in reviews.iter_mut().zip(&round_of) {
+        r.round = numbers.get(&(r.task_id.clone(), round.clone())).copied().unwrap_or(0);
     }
 
     // The tasks the rows are for, with the tasks their threads review and the subprojects they're in.
@@ -424,7 +454,40 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
         [profile_id],
         |r| r.get(0),
     )?;
-    Ok(TokenReport { usage, reviews, follow_ups, tasks, projects, pending })
+    Ok(TokenReport { usage, reviews, rounds, follow_ups, tasks, projects, pending })
+}
+
+/// Every round of review of `tasks`, and the number of each task's rounds by when they started.
+/// Submissions whose rounds started within `stats::ROUND_GAP` of the one before are one round's
+/// (those of a review in progress as the board was updated each have their run's start), but for
+/// two of one reviewer's (see `stats::Rounds`).
+#[allow(clippy::type_complexity)]
+fn review_rounds<'a>(c: &Connection, tasks: impl Iterator<Item = &'a str>) -> anyhow::Result<(Vec<RoundRow>, HashMap<(String, String), i64>)> {
+    let mut tasks: Vec<&str> = tasks.collect();
+    tasks.sort_unstable();
+    tasks.dedup();
+    let mut st = c.prepare("SELECT round, thread_id, verdict, serious FROM review_stats WHERE task_id=?1 ORDER BY round, at")?;
+    let (mut rounds, mut numbers) = (Vec::new(), HashMap::new());
+    for task in tasks {
+        let subs: Vec<(String, String, String, i64)> = st.query_map([task], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+        let (mut placed, mut n) = (crate::review::stats::Rounds::default(), 0);
+        for (round, thread, verdict, serious) in subs {
+            // Submissions of one round share its start; those from before rounds were kept have their runs'.
+            let (start, new) = placed.place_new(&thread, &round);
+            if new {
+                n += 1;
+                rounds.push(RoundRow { task_id: task.to_string(), round: n, at: start.to_string(), verdict: "pass".into(), serious: 0, reviewers: 0 });
+            }
+            let r = rounds.last_mut().unwrap();
+            r.reviewers += 1;
+            r.serious += serious;
+            if verdict == "issues" {
+                r.verdict = "issues".into();
+            }
+            numbers.insert((task.to_string(), round), r.round);
+        }
+    }
+    Ok((rounds, numbers))
 }
 
 #[cfg(test)]
@@ -516,7 +579,7 @@ mod tests {
             let r = crate::db::insert_run(&c, &child.id, "prompt").unwrap();
             c.execute("UPDATE runs SET created_at='2026-10-01T05:00:00.000Z', status='exited' WHERE id=?1", [&r.id]).unwrap();
             let sub_ = crate::review::stats::Submission {
-                task_id: &child.id, thread_id: &thread.id, run_id: Some(&review_run), verdict: "issues", serious: 2, minor: Some(1), summary: None, label: Some("Codex · gpt"),
+                task_id: &child.id, thread_id: &thread.id, round: None, run_id: Some(&review_run), verdict: "issues", serious: 2, minor: Some(1), summary: None, label: Some("Codex · gpt"),
             };
             crate::review::stats::record(&c, &sub_, "2026-10-01T04:30:00.000Z").unwrap();
 
@@ -536,6 +599,37 @@ mod tests {
             assert_eq!(task(&child.id).model.as_deref(), Some("opus"));
             assert_eq!(task(&child.id).parent_id.as_deref(), Some(sub.id.as_str()));
             assert!(task(&sub.id).subproject);
+        })
+    }
+
+
+    #[test]
+    fn review_rounds_are_numbered_from_the_tasks_first_whatever_the_range() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let c = s.db();
+            let p = crate::db::insert_profile(&c, "p", &[], None).unwrap();
+            let new = crate::db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let task = crate::db::insert_task(&c, new).unwrap();
+            let sub = |thread: &str, round: &str, at: &str, verdict: &str, serious: usize| {
+                let s = crate::review::stats::Submission {
+                    task_id: &task.id, thread_id: thread, round: Some(round), run_id: None, verdict, serious, minor: Some(0), summary: None, label: Some(thread),
+                };
+                crate::review::stats::record(&c, &s, at).unwrap();
+            };
+            // Round 1, the day before: A found issues, B passed.
+            sub("A", "2026-10-01T10:00:00.000Z", "2026-10-01T10:05:00.000Z", "issues", 2);
+            sub("B", "2026-10-01T10:00:00.000Z", "2026-10-01T10:06:00.000Z", "pass", 0);
+            // Round 2, from before rounds were kept: each reviewer's run's start.
+            sub("A", "2026-10-02T09:00:00.000Z", "2026-10-02T09:05:00.000Z", "pass", 0);
+            sub("B", "2026-10-02T09:00:30.000Z", "2026-10-02T09:06:00.000Z", "issues", 1);
+            // Round 3: a reviewer added since (another thread); A didn't submit.
+            sub("C", "2026-10-02T12:00:00.000Z", "2026-10-02T12:05:00.000Z", "pass", 0);
+
+            let r = token_report(&c, &p.id, "2026-10-02T00:00:00.000Z", "2026-10-03T00:00:00.000Z").unwrap();
+            assert_eq!(r.reviews.iter().map(|v| (v.label.as_deref().unwrap(), v.round)).collect::<Vec<_>>(), [("A", 2), ("B", 2), ("C", 3)]);
+            let rounds: Vec<(i64, &str, i64, i64)> = r.rounds.iter().map(|x| (x.round, x.verdict.as_str(), x.serious, x.reviewers)).collect();
+            assert_eq!(rounds, [(1, "issues", 2, 2), (2, "issues", 1, 2), (3, "pass", 0, 1)]);
         })
     }
 

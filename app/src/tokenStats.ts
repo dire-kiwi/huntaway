@@ -63,6 +63,20 @@ export interface UReview {
   /** Who reviewed, e.g. "Codex · gpt-6.1-sol". */
   reviewer: string;
   model: string | null;
+  /** Which of its task's rounds of review it was in, from 1. */
+  round: number;
+}
+
+/** One round of review of a task: its reviewers' submissions together. */
+export interface URound {
+  taskId: string;
+  /** From 1, in the order the task's rounds started. */
+  round: number;
+  at: number;
+  /** `issues` if a reviewer found serious issues. */
+  verdict: "pass" | "issues";
+  serious: number;
+  reviewers: number;
 }
 
 export interface UThread {
@@ -81,6 +95,8 @@ export interface TokenData {
   to: number;
   rows: URow[];
   reviews: UReview[];
+  /** Every round of review of the tasks `reviews` are for, those before the range included. */
+  rounds: URound[];
   followUps: { taskId: string; createdBy: string; at: number }[];
   tasks: Record<string, ATask>;
   projects: Record<string, AProject>;
@@ -256,10 +272,10 @@ export function byTask(d: TokenData, rows: URow[], metric: Metric): TaskUsage[] 
   );
 }
 
-/** A task's reviews, in rounds: each reviewer's thread is reviewed again each round. */
+/** A task's reviews: all of its rounds, those outside the range too, so its first round is its first. */
 export interface TaskReviews {
   taskId: string;
-  rounds: UReview[][];
+  rounds: URound[];
   /** The model the task's own agent used most. */
   model: string | null;
   serious: number;
@@ -272,13 +288,7 @@ export function reviewsByTask(d: TokenData): TaskReviews[] {
   const byTask = new Map<string, UReview[]>();
   for (const r of d.reviews) byTask.set(r.taskId, [...(byTask.get(r.taskId) ?? []), r]);
   return [...byTask].map(([taskId, rs]) => {
-    const seen = new Map<string, number>();
-    const rounds: UReview[][] = [];
-    for (const r of rs) {
-      const n = seen.get(r.threadId) ?? 0;
-      seen.set(r.threadId, n + 1);
-      (rounds[n] ??= []).push(r);
-    }
+    const rounds = d.rounds.filter((r) => r.taskId === taskId).sort((a, b) => a.round - b.round);
     const firstMinor = rs.find((r) => r.minorNoted)?.at;
     const followUps = firstMinor === undefined ? 0 : d.followUps.filter((f) => f.createdBy === taskId && f.at > firstMinor).length;
     return {
@@ -320,8 +330,8 @@ export function summarise(reviews: UReview[], tasks: TaskReviews[]): ReviewSumma
     minorListed: reviews.filter((r) => r.minor !== null).length,
     minorNoted: reviews.filter((r) => r.minorNoted).length,
     tasks: tasks.length,
-    firstPassed: tasks.filter((t) => t.rounds[0]?.every((r) => r.verdict === "pass")).length,
-    roundsWithIssues: tasks.reduce((n, t) => n + t.rounds.filter((round) => round.some((r) => r.verdict === "issues")).length, 0),
+    firstPassed: tasks.filter((t) => t.rounds[0]?.verdict === "pass").length,
+    roundsWithIssues: tasks.reduce((n, t) => n + t.rounds.filter((r) => r.verdict === "issues").length, 0),
     minorTasks: tasks.filter((t) => t.minorNoted).length,
     minorTasksFollowedUp: tasks.filter((t) => t.followUps > 0).length,
     followUps: tasks.reduce((n, t) => n + t.followUps, 0),

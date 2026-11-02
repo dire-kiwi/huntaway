@@ -435,7 +435,8 @@ export function Analytics() {
                   the run started. A review or summary thread's tokens count towards the task it's for, and a subproject's tasks' towards the
                   subproject. Tokens are uncached input, cache reads and writes, and output. Cost is what Claude Code reports; Codex doesn't say.
                   Runs from before this version are counted from the output the board still keeps (two weeks of it); older runs show only what they
-                  cost, marked *. Each submitted review counts once per reviewer, and a reviewer's thread is reviewed again each round. Minor issues
+                  cost, marked *. Reviews count each reviewer's verdict in a round once. A task's first round and its rounds of fixes are all of its
+                  rounds, those outside the range too, for the tasks reviewed in it; a round found issues if any of its reviewers did. Minor issues
                   are listed by reviews from this version on; earlier ones count as noting minor issues when their summary mentions some.
                   Follow-ups are tasks the reviewed task's agent created after such a review.
                 </p>

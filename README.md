@@ -1479,7 +1479,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   are counted at startup from the output the board still keeps (14 days of it), and older ones
   show only what they cost, as estimates. Its *Reviews* part counts each reviewer's submission:
   how many found serious issues, how many tasks passed their first round, and how many rounds of
-  fixes each model's work took, by the model the task's agent used and by reviewer. Reviewers also
+  fixes each model's work took, by the model the task's agent used and by reviewer. A round is a
+  review of the task by all of its reviewers (each submission keeps when its round started), and a
+  task's first round and rounds of fixes count all of its rounds, those outside the range too. Reviewers also
   list minor issues (`submit_review`'s `minor_issues`); reviews from before that count as noting
   minor issues when their summary mentions some, and the follow-ups are the tasks the reviewed
   task's agent created after such a review. `GET /profiles/{id}/token-stats?from=&to=` has the data.

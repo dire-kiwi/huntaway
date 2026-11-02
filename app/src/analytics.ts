@@ -172,7 +172,7 @@ export async function loadContext(from: number, to: number): Promise<ContextData
 
 /** The tokens runs that started in range used, and the reviews then (see tokenStats.ts). */
 export async function loadTokens(from: number, to: number): Promise<TokenData> {
-  const out: TokenData = { from, to, rows: [], reviews: [], followUps: [], ...named(), threads: {}, pending: 0, errors: [] };
+  const out: TokenData = { from, to, rows: [], reviews: [], rounds: [], followUps: [], ...named(), threads: {}, pending: 0, errors: [] };
   const reports = await fromHosts(96, out.errors, (h, profile) => api.tokenStats(h, profile, new Date(from).toISOString(), new Date(to).toISOString()));
   for (const r of reports) {
     addNames(out, r.host, r.report);
@@ -208,7 +208,11 @@ export async function loadTokens(from: number, to: number): Promise<TokenData> {
         // A reviewer's label names its config, and its model only when it isn't the config's default.
         reviewer: v.label ? (v.model && !v.label.includes(v.model) ? `${v.label} · ${v.model}` : v.label) : (v.model ?? "Unknown"),
         model: v.model,
+        round: v.round,
       });
+    }
+    for (const x of r.report.rounds) {
+      out.rounds.push({ taskId: x.task_id, round: x.round, at: Date.parse(x.at), verdict: x.verdict, serious: x.serious, reviewers: x.reviewers });
     }
     for (const f of r.report.follow_ups) out.followUps.push({ taskId: f.task_id, createdBy: f.created_by, at: Date.parse(f.at) });
     out.pending += r.report.pending;
