@@ -359,7 +359,7 @@ const STOPPED: &str = "Stopped by user";
 /// How long a task that's ready to review has to stay so before it notifies (`REVIEW_GRACE_MS`).
 const REVIEW_GRACE: Duration = Duration::from_secs(5);
 
-/// How long a move the user made keeps its notification away (`MOVE_MS` in app/src/api.ts).
+/// How long a move the user made keeps its notification away (`MOVE_MS` in app/src/api/tasks.ts).
 const MOVE_GRACE: Duration = Duration::from_secs(15);
 
 fn status(t: &Value) -> &str {
