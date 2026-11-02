@@ -18,6 +18,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
                install.sh: install the desktop app from source (Linux, macOS)
+docs/          notes; structure.md: where code goes and how big modules are split
 ```
 
 Agents survive server restarts, and one board can span several machines. Each machine runs
