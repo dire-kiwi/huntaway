@@ -74,3 +74,37 @@ c.commit()
   });
   assert.ok((await server.api("GET", `/tasks/${task.id}`)).task.now_at, "the answer put it in Now");
 });
+
+// HA-109 review: so is an answer to Claude's own AskUserQuestion card (it posts to the permission's endpoint).
+test("answering Claude's own question card puts the task in Now", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Claude asks", description: "Needs an answer too" });
+  const ask = {
+    tool_name: "AskUserQuestion",
+    request_id: "ask-now",
+    tool_use_id: "toolu_1",
+    status: "expired",
+    input: { questions: [{ question: "Which pets?", header: "Pets", multiSelect: true, options: [{ label: "Cats" }, { label: "Dogs" }] }] },
+  };
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      `
+import json, sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+cur = c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (sys.argv[2], 'permission', sys.argv[3], '2026-10-31T07:00:00.000Z'))
+c.execute("insert into permission_requests (id,task_id,message_id,tool_name,input,status,created_at,kind) values (?,?,?,?,?,?,?,?)", ('ask-now', sys.argv[2], cur.lastrowid, 'AskUserQuestion', json.dumps(json.loads(sys.argv[3])['input']), 'expired', '2026-10-31T07:00:00.000Z', 'tool'))
+c.commit()
+`,
+      `${server.dataDir}/huntaway.db`,
+      task.id,
+      JSON.stringify(ask),
+    ],
+  );
+  assert.equal((await server.api("GET", `/tasks/${task.id}`)).task.now_at, null);
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Which pets?", "click css=[aria-label='Your own answer to: Which pets?']", "type Fish", "click Send answers"]);
+    await ui.run(["wait Fake reply to:"]);
+  });
+  assert.ok((await server.api("GET", `/tasks/${task.id}`)).task.now_at, "the answers put it in Now");
+});
