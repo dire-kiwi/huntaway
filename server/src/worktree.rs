@@ -1060,37 +1060,56 @@ pub async fn changes_base(dir: &Path, task: &Task, project: &Project) -> (Option
 /// including uncommitted and untracked changes.
 pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
     let (dir, task, project) = changes_dir(state, task_id)?;
-    if !is_git_repo(&dir).await {
-        return Ok(json!({"available": false, "reason": "not a git repository"}));
-    }
     // A task with a worktree of its own that isn't there (not set up yet, or removed): what its branch has, if
     // anything, rather than the project folder's changes, which aren't its own.
     if task.use_worktree && task.worktree_state != "ready" {
+        if !is_git_repo(&dir).await {
+            return Ok(json!({"available": false, "reason": "not a git repository"}));
+        }
         return branch_diff(&dir, &task, &project).await;
     }
-    let (base, merge_base) = changes_base(&dir, &task, &project).await;
+    let d = match is_git_repo(&dir).await {
+        true => folder_diff(&dir, &task, &project).await,
+        false => Ok(json!({"available": false, "reason": "not a git repository"})),
+    };
+    // HA-90: its worktree may have gone while it was read (Pick this one removes the other tasks'), which fails the
+    // git calls or leaves them nothing to show. Then it's answered as a removed worktree is.
+    if task.worktree_state == "ready" && task.worktree_path.is_some() {
+        let (now, project) = load(state, task_id)?;
+        if now.worktree_state != "ready" || now.worktree_path != task.worktree_path || !dir.is_dir() {
+            return branch_diff(Path::new(&project.repo_path), &now, &project).await;
+        }
+    }
+    d
+}
+
+/// The diff of the changes in `dir` (see `diff`).
+async fn folder_diff(dir: &Path, task: &Task, project: &Project) -> Result<Value> {
+    #[cfg(test)]
+    crate::testing::reached("diff:read");
+    let (base, merge_base) = changes_base(dir, task, project).await;
     let from = merge_base.clone().unwrap_or_else(|| "HEAD".into());
     // Mark untracked files as intent-to-add would mutate the index; instead diff them separately.
-    let tracked = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from]).await?.stdout;
-    let patch = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", &from]).await?.stdout;
+    let tracked = git(dir, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from]).await?.stdout;
+    let patch = git(dir, &["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", &from]).await?.stdout;
     // NUL-separated, so names git would quote (not ASCII, or with a newline) come as they are, and
     // after `--`, so a name starting with `-` isn't taken for an option.
-    let untracked_list = git_bytes(&dir, &["ls-files", "-z", "--others", "--exclude-standard"].map(OsStr::new)).await?;
+    let untracked_list = git_bytes(dir, &["ls-files", "-z", "--others", "--exclude-standard"].map(OsStr::new)).await?;
     let untracked: Vec<&OsStr> = untracked_list.split(|b| *b == 0).filter(|f| !f.is_empty()).map(OsStr::from_bytes).collect();
     let mut untracked_patch = String::new();
     for f in untracked.iter().take(50) {
         let args = ["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--no-index", "--", "/dev/null"].map(OsStr::new);
         // It exits 1 when the files differ, which they do.
-        let o = git_output(&dir, &[&args[..], &[*f]].concat()).await?;
+        let o = git_output(dir, &[&args[..], &[*f]].concat()).await?;
         untracked_patch.push_str(&String::from_utf8_lossy(&o.stdout));
     }
     let commits = match &merge_base {
-        Some(mb) => git(&dir, &["log", "--oneline", &format!("{mb}..HEAD")]).await?.stdout,
+        Some(mb) => git(dir, &["log", "--oneline", &format!("{mb}..HEAD")]).await?.stdout,
         None => String::new(),
     };
     Ok(json!({
         "available": true,
-        "dir": path_str(&dir),
+        "dir": path_str(dir),
         "base": base,
         "merge_base": merge_base,
         "commits": commits,
@@ -1296,6 +1315,36 @@ mod tests {
             let d = diff(&s, &t.id).await.unwrap();
             assert_eq!(d["available"], json!(false));
             assert!(d["reason"].as_str().unwrap().contains("is gone"), "{d}");
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
+    // HA-90: a diff read while the worktree was being removed (as Pick this one removes the other tasks') failed
+    // with a 500, as the git calls failed in the folder going away.
+    #[test]
+    fn a_worktree_removed_while_its_diff_is_read_shows_its_branch() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, t, wt, branch) = task_with_work(&s).await;
+            std::fs::write(wt.join("draft"), "uncommitted\n").unwrap();
+            // As teardown does, and with the folder gone without the task knowing.
+            for mark in [true, false] {
+                let (s2, id, wt2) = (s.clone(), t.id.clone(), wt.clone());
+                crate::testing::when("diff:read", move || {
+                    if mark {
+                        s2.update_task(&id, &[("worktree_state", json!("tearing_down"))]).unwrap();
+                    }
+                    std::fs::rename(&wt2, wt2.with_extension("gone")).unwrap();
+                });
+                let d = diff(&s, &t.id).await.unwrap();
+                assert_eq!((&d["available"], d["branch"].as_str()), (&json!(true), Some(branch.as_str())), "{d}");
+                assert!(d["patch"].as_str().unwrap().contains("+++ b/a"), "{d}");
+                std::fs::rename(wt.with_extension("gone"), &wt).unwrap();
+                s.update_task(&t.id, &[("worktree_state", json!("ready"))]).unwrap();
+                // Back in place, it's the worktree's again, uncommitted work and all.
+                let d = diff(&s, &t.id).await.unwrap();
+                assert!(d["branch"].is_null() && d["untracked"] == json!(["draft"]), "{d}");
+            }
             std::fs::remove_dir_all(&repo).ok();
         })
     }
