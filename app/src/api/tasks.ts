@@ -8,6 +8,16 @@ export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
 
 export type Resolution = "done" | "not_done" | "wont_fix";
 
+/** What a task's worktree starts from (API 96): its base branch, which its pull request targets, comes from it. */
+export type StartFrom =
+  | { type: "branch"; branch: string }
+  | { type: "task"; task_id: string }
+  | { type: "pull_request"; number: number; repo?: string }
+  | { type: "commit"; commit: string };
+
+/** The API that takes a task's start_from, and lists a project's branches. */
+export const START_FROM_API = 96;
+
 export type Status = "todo" | "in_progress" | "needs_attention" | "in_review" | "ready_for_merge" | "done" | "backlog";
 
 export const STATUSES: { id: Status; label: string }[] = [
@@ -252,6 +262,8 @@ export interface Task {
   worktree_path: string | null;
   branch: string | null;
   base_branch: string | null;
+  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 96). */
+  start_from?: StartFrom | null;
   worktree_state: "none" | "setting_up" | "ready" | "tearing_down" | "error";
   worktree_error: string | null;
   session_id: string | null;
@@ -493,10 +505,12 @@ export const tasksApi = {
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
+      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 96). */
+      start_from?: string;
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (h: string, id: string, b: Partial<Task>) => {
+  updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { start_from?: StartFrom | string | null }) => {
     // Noted before the request: the task event it causes reaches every tab before the response does.
     if (b.status) noteMove(h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);

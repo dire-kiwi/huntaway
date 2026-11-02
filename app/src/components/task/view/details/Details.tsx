@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, CHECKS_API, documentsOnly, hostSupports, isScratch, LABELS_API, taskLabels, type Task } from "../../../../api";
+import { api, CHECKS_API, documentsOnly, hostSupports, isScratch, LABELS_API, START_FROM_API, taskLabels, type Task } from "../../../../api";
 import { isGroupTask, useProject, useStore } from "../../../../store";
 import { Dependencies } from "../../../board/Dependencies";
 import { useConfirmDone } from "../../../board/ConfirmDone";
@@ -15,6 +15,7 @@ import { FailedChecks } from "./FailedChecks";
 import { LabelsSection } from "./LabelsSection";
 import { DeleteTaskModal, TeardownModal } from "./Modals";
 import { Row, Section, TextInput } from "./Section";
+import { StartFromRow } from "./StartFromRow";
 import { StatusSection } from "./StatusSection";
 import { SubprojectSection } from "./SubprojectSection";
 import { CreatedTasksSection, FanoutSection } from "./TaskLists";
@@ -163,6 +164,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
                   <span className="font-mono text-[11.5px]">{task.base_branch}</span>
                 </Row>
               )}
+              {hostSupports(host, START_FROM_API) && <StartFromRow task={task} project={project} onError={(e) => setErr("worktree", e)} />}
               {task.worktree_path && (
                 <Row label="Path">
                   <span className="group flex items-start gap-1 font-mono text-[11px]">

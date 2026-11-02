@@ -43,6 +43,9 @@ pub struct CreateTask {
     /// db::Task::fanout_id).
     #[serde(default)]
     pub fanout_id: Option<String>,
+    /// What its worktree starts from, if not the project's base branch (see `check_start_from`).
+    #[serde(default)]
+    pub start_from: Option<Value>,
 }
 
 /// A task's external links as they're stored (see db::ExternalLink): a list of
@@ -336,6 +339,16 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
         return Err(ApiError::bad(format!("effort must be one of {:?}", db::THREAD_EFFORTS)));
     }
     let config = pick_config(&s.db(), &project.profile_id, Some(&project), b.claude_config_id.as_deref())?;
+    let start_from = match &b.start_from {
+        Some(v) => check_start_from(&s.db(), &project, None, v)?,
+        None => None,
+    };
+    if start_from.is_some() && parent.is_some() {
+        return Err(ApiError::bad("start_from: a subproject's tasks start from its branch"));
+    }
+    if start_from.is_some() && !use_worktree {
+        return Err(ApiError::bad("start_from is for a task with a worktree"));
+    }
     let depends_on = match b.depends_on.as_deref().filter(|ids| !ids.is_empty()) {
         Some(_) if kind != "task" => return Err(ApiError::bad("only tasks can have dependencies")),
         Some(ids) => Some(db::check_dependencies(&s.db(), None, Some(&project.id), ids).map_err(ApiError::bad)?),
@@ -371,6 +384,9 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
     }
     if subproject {
         fields.push(("subproject", json!(true)));
+    }
+    if let Some(sf) = &start_from {
+        fields.push(("start_from", json!(sf)));
     }
     if let Some(ids) = &depends_on {
         fields.push(("depends_on", json!(ids)));
@@ -410,4 +426,119 @@ pub fn pick_config(c: &rusqlite::Connection, profile_id: &str, project: Option<&
         return Err(ApiError::bad("claude_config_id must be one of the project's (or profile's) Claude configs"));
     }
     Ok(Some(id.to_string()))
+}
+
+/// What a task's worktree starts from (see db::StartFrom), as `start_from` gives it for a task
+/// in `project` (`task_id`, if it exists): null (or blank) for the project's base branch, an
+/// object as tasks have it, or text. Text is `task:`, `branch:`, `pr:` or `commit:` and what it
+/// names, or without one of those: a task's key (or id) in the project, `#12` or a pull
+/// request's URL, a commit's SHA (7 to 40 hex digits), or else a branch, local or on a remote
+/// (`origin/feature`). Whether the branch or commit is there is found out as the worktree is
+/// made, after fetching.
+pub fn check_start_from(c: &rusqlite::Connection, project: &db::Project, task_id: Option<&str>, v: &Value) -> ApiResult<Option<db::StartFrom>> {
+    use db::StartFrom;
+    let bad = |m: String| ApiError::bad(format!("start_from: {m}"));
+    let sf = match v {
+        Value::Null => return Ok(None),
+        Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            let (kind, what) = match text.split_once(':') {
+                Some((k, rest)) if ["task", "branch", "pr", "commit"].contains(&k) => (Some(k), rest.trim()),
+                _ => (None, text),
+            };
+            let hex = |w: &str| (7..=40).contains(&w.len()) && w.bytes().all(|b| b.is_ascii_hexdigit());
+            let pr = |w: &str| -> Option<(u64, Option<String>)> {
+                if let Some(n) = w.strip_prefix('#').or(Some(w).filter(|_| kind == Some("pr"))) {
+                    return n.parse().ok().map(|n| (n, None));
+                }
+                // https://github.com/OWNER/REPO/pull/12, with anything after it (`/files`, `#discussion…`).
+                let path = w.strip_prefix("https://").or_else(|| w.strip_prefix("http://"))?.split_once('/')?.1;
+                let parts: Vec<&str> = path.split(['/', '#', '?']).collect();
+                match parts[..] {
+                    [owner, repo, "pull", n, ..] if !owner.is_empty() && !repo.is_empty() => n.parse().ok().map(|n| (n, Some(format!("{owner}/{repo}")))),
+                    _ => None,
+                }
+            };
+            match kind {
+                Some("task") => StartFrom::Task { task_id: find_task(c, project, what)?.ok_or_else(|| bad(format!("no task {what} in {}", project.name)))?.id },
+                Some("pr") => {
+                    let (number, repo) = pr(what).ok_or_else(|| bad(format!("{what:?} isn't a pull request's number or URL")))?;
+                    StartFrom::PullRequest { number, repo }
+                }
+                Some("commit") if hex(what) => StartFrom::Commit { commit: what.to_ascii_lowercase() },
+                Some("commit") => return Err(bad(format!("{what:?} isn't a commit's SHA (7 to 40 hex digits)"))),
+                Some(_) => StartFrom::Branch { branch: what.to_string() },
+                None => match (find_task(c, project, what)?, pr(what)) {
+                    (Some(t), _) => StartFrom::Task { task_id: t.id },
+                    (None, Some((number, repo))) => StartFrom::PullRequest { number, repo },
+                    _ if hex(what) => StartFrom::Commit { commit: what.to_ascii_lowercase() },
+                    _ => StartFrom::Branch { branch: what.to_string() },
+                },
+            }
+        }
+        Value::Object(_) => serde_json::from_value(v.clone()).map_err(|e| bad(format!("{e}")))?,
+        _ => return Err(bad("must be null, a string or an object".into())),
+    };
+    match &sf {
+        StartFrom::Branch { branch } if !worktree::valid_branch_name(branch) => return Err(bad(format!("{branch:?} isn't a valid branch name"))),
+        StartFrom::Commit { commit } if !((7..=40).contains(&commit.len()) && commit.bytes().all(|b| b.is_ascii_hexdigit())) => {
+            return Err(bad(format!("{commit:?} isn't a commit's SHA (7 to 40 hex digits)")));
+        }
+        StartFrom::PullRequest { number: 0, .. } => return Err(bad("a pull request's number starts at 1".into())),
+        StartFrom::Task { task_id: other } => {
+            let t = db::get_task(c, other)?.ok_or_else(|| bad(format!("no task {other}")))?;
+            if t.kind != "task" || t.project_id.as_deref() != Some(&project.id) {
+                return Err(bad(format!("\"{}\" isn't a task in the same project", t.title)));
+            }
+            if Some(t.id.as_str()) == task_id {
+                return Err(bad("a task can't start from itself".into()));
+            }
+            if t.is_scratch() || crate::agent::documents::documents_only(&t) || !(t.use_worktree || t.branch.is_some()) {
+                return Err(bad(format!("\"{}\" has no branch of its own to start from", t.title)));
+            }
+            // Nor from a task whose worktree (by way of others) needs this one's first: one that
+            // starts from it, or is in it as a subproject (each sets the other up first, see
+            // worktree::setup).
+            if let Some(task_id) = task_id {
+                let mut stack = vec![t.clone()];
+                let mut seen = vec![t.id.clone()];
+                while let Some(next) = stack.pop() {
+                    let needs = [
+                        match &next.start_from {
+                            Some(StartFrom::Task { task_id: id }) => Some(id.clone()),
+                            _ => None,
+                        },
+                        next.parent_id.clone(),
+                    ];
+                    for id in needs.into_iter().flatten() {
+                        if id == task_id {
+                            return Err(bad(format!("\"{}\" needs this task's worktree first (it starts from it, or is in it)", t.title)));
+                        }
+                        if !seen.contains(&id) {
+                            seen.push(id.clone());
+                            stack.extend(db::get_task(c, &id)?);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(Some(sf))
+}
+
+/// The task in `project` that `word` names: its id, or its key (with the project's key, or one it
+/// had before), in any case.
+fn find_task(c: &rusqlite::Connection, project: &db::Project, word: &str) -> ApiResult<Option<db::Task>> {
+    if let Some(t) = db::get_task(c, word)?.filter(|t| t.project_id.as_deref() == Some(&project.id)) {
+        return Ok(Some(t));
+    }
+    let Some((key, n)) = word.rsplit_once('-') else { return Ok(None) };
+    let (Ok(n), true) = (n.parse::<i64>(), std::iter::once(&project.key).chain(&project.former_keys).any(|k| k.eq_ignore_ascii_case(key))) else {
+        return Ok(None);
+    };
+    Ok(db::list_tasks_for_project(c, &project.id, "task")?.into_iter().find(|t| t.number == n))
 }

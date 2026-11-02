@@ -75,6 +75,45 @@ pub struct Context {
     pub detail_at: Option<String>,
 }
 
+/// What a task's worktree starts from instead of the project's base branch (API 96), stored on
+/// it as JSON. Set before the worktree is made; worktree::setup turns it into the task's base
+/// branch (which its pull request targets and its changes are compared with) and the commit its
+/// branch starts at.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StartFrom {
+    /// A branch, local or on the remote, which becomes the task's base branch.
+    Branch { branch: String },
+    /// Another task in the project (by id): its branch, so the task is stacked on it.
+    Task { task_id: String },
+    /// A pull request in the project's GitHub repository: its branch, as for a task. `repo`
+    /// (`OWNER/REPO`) is the repository its URL named, if it was given one.
+    PullRequest {
+        number: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+    },
+    /// A commit (its SHA, in full when it was found in the repository); the base branch stays
+    /// the project's.
+    Commit { commit: String },
+}
+
+impl StartFrom {
+    /// What it is, as people and agents read it: `task ABC-12` (`key` is its project's key),
+    /// `branch feature`, `pull request #12` or `commit 0123abcd`.
+    pub fn describe(&self, c: &Connection, key: &str) -> String {
+        match self {
+            StartFrom::Branch { branch } => format!("branch {branch}"),
+            StartFrom::Task { task_id } => match get_task(c, task_id).ok().flatten() {
+                Some(t) => format!("task {key}-{}", t.number),
+                None => "a deleted task".into(),
+            },
+            StartFrom::PullRequest { number, repo } => format!("pull request {}#{number}", repo.as_deref().unwrap_or_default()),
+            StartFrom::Commit { commit } => format!("commit {}", &commit[..commit.len().min(12)]),
+        }
+    }
+}
+
 /// What an agent in the `wait` tool is waiting for (see mcp/wait.rs), stored on its task as JSON.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AgentWait {

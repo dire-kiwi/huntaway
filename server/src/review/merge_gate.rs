@@ -75,7 +75,7 @@ pub fn request_summary(s: &Shared, task: &Task) -> ApiResult<Task> {
         Some(pid) => db::get_project(&s.db(), pid)?,
         None => None,
     };
-    let base = task.base_branch.clone().or_else(|| project.as_ref().and_then(|p| p.base_branch.clone()));
+    let base = db::task_base(&s.db(), task, project.as_ref());
     let into = base.map(|b| format!("`{b}`")).unwrap_or_else(|| "the base branch".into());
     let what = match &task.branch {
         Some(br) => format!("branch `{br}` into {into}"),

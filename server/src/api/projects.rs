@@ -506,6 +506,9 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         terminal::kill_all(s, &t.id).await;
         files.extend(crate::attachments::of_task(&s.db(), &t.id)?);
         // Remove worktrees but keep branches so no committed work is lost.
+        if t.start_from.is_some() {
+            worktree::forget_start(&repo, &t.id).await;
+        }
         if let Some(wt) = &t.worktree_path {
             crate::git::checkpoints::forget(s, &t.id, &repo).await;
             let _ = worktree::git(&repo, &["worktree", "remove", "--force", wt]).await;
@@ -569,4 +572,13 @@ pub(super) fn remove_unused_dir(s: &Shared, dir: &std::path::Path, what: &str) -
         tracing::warn!("removing {} after deleting its {what}: {e}", dir.display());
     }
     Ok(())
+}
+
+/// `GET /projects/{id}/branches` (API 96): the branches of the project's repository a task can
+/// start from (see `check_start_from`), the latest commits first: `{branches: [{name, remote}]}`,
+/// local ones as `feature` and those only on a remote as `origin/feature`. Empty for a folder
+/// that isn't a git repository.
+pub(super) async fn project_branches(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let project = db::get_project(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("project"))?;
+    Ok(Json(json!({"branches": worktree::branches(&expand_tilde(&project.repo_path)).await})))
 }

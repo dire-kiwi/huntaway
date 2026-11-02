@@ -346,6 +346,12 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     crate::agent::documents::turn_ended(state, task_id);
     state.emit(json!({"type": "delta_reset", "task_id": task_id}));
     let Ok(Some(task)) = db::get_task(&state.db(), task_id) else { return };
+    // What its agent took in of the branch it's stacked on (see worktree::keep_starts), and what the tasks
+    // stacked on it did of its own.
+    if task.kind == "task" && let Ok(rt) = tokio::runtime::Handle::try_current() {
+        let (s, id) = (state.clone(), task.id.clone());
+        rt.spawn(async move { crate::git::worktree::keep_starts(&s, &id).await });
+    }
     if run.kind == "review" && crate::review::summary::is_summary(&task) {
         crate::review::summary::finished(state, &task, run_id, &outcome, run.attention.as_deref());
     } else if run.kind == "review" {

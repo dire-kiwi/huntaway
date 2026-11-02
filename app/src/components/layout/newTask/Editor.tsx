@@ -136,7 +136,7 @@ export function Editor({
           onMouseDown={(e) => e.preventDefault()}
         >
           <div className="px-2 pt-1 pb-1 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
-            {{ "/": "Type or label", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on" }[completing!.prefix]}
+            {{ "/": "Type or label", "@": "Where it goes", "!": "Model", "^": "Effort", "#": "Depends on", "from:": "Starts from" }[completing!.prefix]}
           </div>
           {matches.map((s, i) => (
             <button

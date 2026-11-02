@@ -90,10 +90,8 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     if !manual && previous.as_ref().is_some_and(|s| s.state == "done" && s.head.as_deref() == Some(head.as_str())) {
         return Ok(None);
     }
-    let base = match task.base_branch.clone().or(project.base_branch.clone()).filter(|b| !b.is_empty()) {
-        Some(b) => Some(worktree::compare_ref(&dir, &b).await),
-        None => None,
-    };
+    // What the reviewers had as its work, too.
+    let (base, own_start) = worktree::work_scope(state, &dir, &task, &project).await;
     let mut elsewhere = false;
     if let Some(b) = &base {
         let merge_base = worktree::git(&dir, &["merge-base", b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string());
@@ -152,7 +150,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     };
     let commit = &head[..head.len().min(10)];
     let last_message = if elsewhere { db::last_assistant_text(&state.db(), &task.id)? } else { None };
-    let text = prompt(&key, &task, &branch, base.as_deref(), commit, elsewhere, last_message.as_deref());
+    let text = prompt(&key, &task, &branch, base.as_deref(), commit, elsewhere, own_start, last_message.as_deref());
     // A fresh conversation for each summary; the thread keeps every one's messages.
     state.update_task(&thread.id, &[("session_id", Value::Null)])?;
     crate::agent::context::clear(state, &thread.id)?;
@@ -181,13 +179,22 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
 const LAST_MESSAGE_CHARS: usize = 6000;
 
 /// Where the work is (on the branch, or `elsewhere` when the branch has no commits of its own and
-/// the agent's `last_message` says where), and how to write the summary.
-fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str, elsewhere: bool, last_message: Option<&str>) -> String {
+/// the agent's `last_message` says where; `own_start` when it starts after where it left its base
+/// branch, at `base`, see worktree::work_scope), and how to write the summary.
+#[allow(clippy::too_many_arguments)]
+fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str, elsewhere: bool, own_start: bool, last_message: Option<&str>) -> String {
     let mut p = format!("Summarise the changes made for task {key}: \"{}\".\n", task.title);
     if !task.description.trim().is_empty() {
         p.push_str(&format!("\nThe task's description:\n\n{}\n", task.description.trim()));
     }
-    if !elsewhere {
+    if let (false, true, Some(b)) = (elsewhere, own_start, base) {
+        p.push_str(&format!(
+            "\nThe work is on branch `{branch}` (commit {commit}), checked out in your working directory. It started from \
+             commit {b}, after where it left its base branch, so its pull request's diff (if it has one) also has commits \
+             that aren't its own: read the branch's changes (`git diff {b}...HEAD`, and `git log {b}..HEAD`) rather than \
+             `pr_diff`. Read its pull request with the gh MCP server's `pr_view` tool (pr `{branch}`) only for its description.\n"
+        ));
+    } else if !elsewhere {
         let fallback = match base {
             Some(b) => format!("the branch's changes (`git diff {b}...HEAD`, and `git log {b}..HEAD`)"),
             None => "the branch's commits".into(),
@@ -322,11 +329,11 @@ mod tests {
         let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let mut task = db::insert_task(&c, t).unwrap();
         task.review = Some(db::Review { state: "passed".into(), summary: Some("Looks good.".into()), ..Default::default() });
-        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, None);
+        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, false, None);
         for want in ["task X-1: \"Fix it\"", "`pr_view` tool (pr `ia/x-1`)", "`git diff master...HEAD`", "> Looks good.", "end your turn with only the summary"] {
             assert!(text.contains(want), "{want:?} not in {text}");
         }
-        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", true, Some("Done in o/deploy#4."));
+        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", true, false, Some("Done in o/deploy#4."));
         assert!(text.contains("no commits of its own") && text.contains("> Done in o/deploy#4."), "{text}");
     }
 
@@ -394,6 +401,44 @@ mod tests {
             reply(&s, thread, None);
             let sum = summary_of(&s, &task).unwrap();
             assert_eq!(sum.state, "failed", "{:?}", sum.text);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_task_that_started_after_its_base_branch_is_summarised_from_where_it_started() {
+        crate::testing::run(async || {
+            crate::agent::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let task = passed(&s);
+            let dir = std::path::PathBuf::from(task.worktree_path.clone().unwrap());
+            let git = |args: &[&str]| {
+                let mut cmd = std::process::Command::new("git");
+                cmd.arg("-C").arg(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args);
+                assert!(cmd.status().unwrap().success());
+                String::from_utf8(cmd.output().unwrap().stdout).unwrap().trim().to_string()
+            };
+            // It starts at a commit master doesn't have, with someone else's work, and has a pull request into master.
+            git(&["branch", "-q", "-m", "master"]);
+            git(&["commit", "-q", "--allow-empty", "-m", "someone else's"]);
+            let start_at = git(&["rev-parse", "HEAD"]);
+            git(&["checkout", "-q", "-b", "ia/x"]);
+            git(&["branch", "-q", "-f", "master", "HEAD~1"]);
+            git(&["update-ref", &format!("refs/huntaway/start/{}", task.id), "HEAD"]);
+            git(&["commit", "-q", "--allow-empty", "-m", "its own"]);
+            let fields = [
+                ("base_branch", json!("master")),
+                ("start_from", json!(db::StartFrom::Commit { commit: start_at.clone() })),
+                ("pr_url", json!("https://github.com/o/r/pull/3")),
+            ];
+            db::update_task(&s.db(), &task.id, &fields).unwrap();
+            start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().expect("it starts");
+            let thread = db::summary_threads(&s.db(), &task.id).unwrap().remove(0);
+            let prompt = db::list_messages(&s.db(), &thread.id).unwrap().into_iter().find(|m| m.kind == "user").unwrap();
+            let text = prompt.data["text"].as_str().unwrap();
+            assert!(text.contains(&format!("`git diff {start_at}...HEAD`, and `git log {start_at}..HEAD`) rather than `pr_diff`")), "{text}");
+            assert!(!text.contains("master...HEAD") && !text.contains("read its changes (`pr_diff`)"), "{text}");
+            reply(&s, &thread, Some("A summary."));
             crate::agent::runs::TEST_CAN_RUN.set(false);
         })
     }
