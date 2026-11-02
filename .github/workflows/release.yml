@@ -89,9 +89,11 @@ jobs:
         working-directory: app
         run: npm ci --no-audit --no-fund
 
+      # IA_BUILD_COMMIT: the server reports the commit it was built from, as a checkout does (a hub that updates
+      # itself to a release goes by it to update hosts, and hosts that follow the hub with --update-from too).
       - name: Build
         working-directory: app
-        run: npm run build && (cd ../server && cargo build --release --locked)
+        run: npm run build && (cd ../server && IA_BUILD_COMMIT=$(git rev-parse HEAD) cargo build --release --locked)
 
       # Linux: an AppImage and an Arch package. macOS: a dmg and a zip, ad-hoc signed (there's no Developer ID).
       - name: Package the desktop app
