@@ -475,7 +475,9 @@ Deleting `<data dir>/app/` goes back to the tarball's server until the next Upda
 (or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
 `~/.local/share/huntaway-server/current` at it, and prints the command to start it with
 `IA_RELEASE_UPDATES` set, and the forced command for a host a hub starts over SSH
-(`command="IA_RELEASE_UPDATES=dire-kiwi/huntaway …/current/huntaway ssh-host --port 7878"`).
+(`command="IA_RELEASE_UPDATES=dire-kiwi/huntaway '…/current/huntaway' ssh-host --port 7878 --data-dir '<data dir>'"`).
+Both name the data dir (`--data-dir`, or the default it found), so the host keeps its board.
+`scripts/install-release-host-test.sh` checks the script against a fake release.
 
 `scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
