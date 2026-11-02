@@ -131,3 +131,6 @@ jobs:
 
       - name: ia-api tests
         run: python3 scripts/ia-api-test.py
+
+      - name: install-release-host tests
+        run: sh scripts/install-release-host-test.sh

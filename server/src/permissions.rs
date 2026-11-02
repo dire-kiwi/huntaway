@@ -152,6 +152,13 @@ fn request(s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, 
     if let Some(id) = existing {
         return Ok(id);
     }
+    // Raised under the runs lock, so that the call's run can't end in between: runner::finish expires
+    // its thread's prompts under it. One from a run that has ended would flag its thread for nothing.
+    let runs = s.runs.lock().unwrap();
+    let run_id: Option<String> = s.db().query_row("SELECT run_id FROM mcp_calls WHERE id=?1", [call_id], |r| r.get(0)).optional()?;
+    if run_id.is_some_and(|r| runs.get(&task.id).is_none_or(|h| h.run_id != r)) {
+        anyhow::bail!("this call's run has ended on the board");
+    }
     let id = new_id();
     data["request_id"] = json!(id);
     data["status"] = json!("pending");
