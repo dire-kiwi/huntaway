@@ -79,9 +79,9 @@ test("the details' Title section renames and unpins the title", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     const section = "css=section:has(h3:text-is('Title'))";
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Details", `click ${section} >> text=Edit`, "press Control+a", "type Renamed in the details"]);
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Details", "click Edit title", "press Control+a", "type Renamed in the details"]);
     // Escape leaves the panel open, and the title as it was.
-    await ui.run(["press Escape", `gone ${section} >> input`, `click ${section} >> text=Edit`]);
+    await ui.run(["press Escape", `gone ${section} >> input`, "click Edit title"]);
     assert.equal(await page.locator(`${section.slice(4)} input`).inputValue(), "Before the details");
     await ui.run(["press Control+a", "type Renamed in the details", "press Enter", `wait ${section} >> text=Set by hand`]);
     assert.deepEqual(await savedTitle(page, task, "Before the details"), ["Renamed in the details", true]);

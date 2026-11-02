@@ -283,7 +283,7 @@ test("an edit of the description survives a change to it, and a failed save says
   await withBrowser(server, { allowErrors: [/status of 500/] }, async (ui) => {
     const { page } = ui;
     const send = await events(page);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click details", "wait Old text", "click Edit"]);
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click details", "wait Old text", "click Edit description"]);
     const field = page.locator("aside textarea");
     await field.fill("My new text");
     send({ type: "task", task: { ...task, description: "Changed elsewhere", updated_at: new Date().toISOString() } });

@@ -681,7 +681,7 @@ function TitleSection({ task }: { task: Task }) {
       title="Title"
       right={
         !editing && (
-          <button className="text-[11.5px] text-faint hover:text-fg" onClick={() => (setV(task.title), setErr(null), setEditing(true))}>
+          <button className="text-[11.5px] text-faint hover:text-fg" aria-label="Edit title" onClick={() => (setV(task.title), setErr(null), setEditing(true))}>
             Edit
           </button>
         )
@@ -904,7 +904,7 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         title="Description"
         right={
           !editingDesc && (
-            <button className="text-[11.5px] text-faint hover:text-fg" onClick={editDesc}>
+            <button className="text-[11.5px] text-faint hover:text-fg" aria-label="Edit description" onClick={editDesc}>
               Edit
             </button>
           )
