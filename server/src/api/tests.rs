@@ -315,6 +315,43 @@ fn a_setting_of_the_wrong_type_is_refused_rather_than_cleared() {
     })
 }
 
+/// A task in a project, and a second one waiting for it, to start without an agent running.
+fn waiting_for_another(s: &Shared) -> (db::Project, db::Task) {
+    let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+    let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+    let project = db::insert_project(&s.db(), project).unwrap();
+    let first = create_task_inner(s, &project.id, serde_json::from_value(json!({"title": "First"})).unwrap()).unwrap();
+    (project, first)
+}
+
+#[test]
+fn the_users_prompts_put_a_task_in_now_but_agents_and_starts_do_not() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = crate::testing::state();
+        let (project, first) = waiting_for_another(&s);
+        let make = async |v: Value| {
+            let b: CreateTask = serde_json::from_value(json!({"depends_on": [first.id], "title": "T"}).as_object().unwrap().iter().chain(v.as_object().unwrap()).map(|(k, v)| (k.clone(), v.clone())).collect::<Map<_, _>>().into()).unwrap();
+            let t = create_task(State(s.clone()), Path(project.id.clone()), Json(b)).await.unwrap().0;
+            serde_json::from_value::<db::Task>(t).unwrap()
+        };
+        // Made from the board with a prompt, it's in now; started without one (or by an agent: create_task_inner), it isn't.
+        assert!(make(json!({"start": "Do it"})).await.now_at.is_some());
+        assert_eq!(make(json!({"start": true})).await.now_at, None);
+        assert_eq!(make(json!({})).await.now_at, None);
+        let by_agent = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "T", "depends_on": [first.id], "start": "Do it"})).unwrap()).unwrap();
+        assert_eq!(by_agent.now_at, None);
+
+        // A prompt sent on its thread, not an empty one that starts its agent.
+        let t = make(json!({"start": true})).await;
+        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "  "})).unwrap())).await.unwrap();
+        assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at, None);
+        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "and this"})).unwrap())).await.unwrap();
+        assert!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at.is_some());
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
 #[test]
 fn how_long_a_task_stays_in_now_is_a_setting() {
     crate::testing::run(async || {

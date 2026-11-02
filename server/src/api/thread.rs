@@ -37,7 +37,12 @@ pub(super) struct SendBody {
 }
 
 pub(super) async fn send_message(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
-    let t = runner::send(&s, &id, &b.text)?;
+    let mut t = runner::send(&s, &id, &b.text)?;
+    // The user's prompt puts the task in "now" (or keeps it there, for another day). Not the agents' and the board's
+    // own messages, which are sent from elsewhere.
+    if !b.text.trim().is_empty() {
+        t = crate::agent::focus::put_in_now(&s, &id).unwrap_or(t);
+    }
     // The user's reply answers the questions the agent asked (see mcp/questions.rs).
     if !b.text.trim().is_empty() {
         crate::mcp::questions::replied(&s, &t.id);

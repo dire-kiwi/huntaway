@@ -63,8 +63,9 @@ const WIDE_VIEWS = 1500;
 const BACKLOG_KEY = "ia.board.backlog";
 // Whether the list view's Archived section is open (it starts collapsed), on this client.
 const ARCHIVED_KEY = "ia.board.archived";
-// How wide a board has to be for its search, filter and sort controls to go in its header (see TaskBoard).
-const WIDE_BOARD = 1180;
+// How wide a board has to be for its search, filter, sort and Now/Later controls to go in its header (see TaskBoard):
+// 1180 before the Now/Later switch, which is about 130px.
+const WIDE_BOARD = 1320;
 // How the boards sort their tasks, on this client.
 const SORT_KEY = "ia.board.sort";
 // Whether the boards show the tasks in Now, in Later or all of them, on this client.

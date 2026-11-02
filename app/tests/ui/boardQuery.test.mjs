@@ -116,7 +116,7 @@ test("a board's header keeps its title and buttons on screen at any width, with 
     const { page } = ui;
     // The widest the controls get: the longest sort's name on the button, and the search focused.
     await ui.run([`goto /t/${sp.id}/board`, "wait Checkout rework", "click Sort", "click Latest activity", "wait css=button[title^='Sorted by latest']"]);
-    for (const [w, h] of [[900, 700], [1000, 800], [1100, 800], [1280, 800], [1440, 900], [1900, 1000]]) {
+    for (const [w, h] of [[900, 700], [1000, 800], [1100, 800], [1280, 800], [1440, 900], [1500, 900], [1560, 900], [1620, 900], [1900, 1000]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.getByLabel("Search tasks").focus();
       await page.waitForTimeout(250); // the search field's width transition

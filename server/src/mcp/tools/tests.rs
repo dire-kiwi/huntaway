@@ -519,6 +519,24 @@ fn puts_tasks_in_now_and_later() {
 }
 
 #[test]
+fn a_task_an_agent_creates_and_starts_stays_in_later() {
+    testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let first = call(&s, &me, "create_task", json!({"title": "First", "project_id": "KIW"})).await.unwrap();
+        // Started, but waiting for what it depends on, so nothing runs here: it's only that it was sent to.
+        let t = call(&s, &me, "create_task", json!({"title": "Second", "project_id": "KIW", "depends_on": [first["id"]], "start": true})).await.unwrap();
+        let t = db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap();
+        assert!(t.waiting, "started");
+        assert_eq!(t.now_at, None);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
 fn stars_and_sets_reminders() {
     testing::run(async || {
         let s = state();

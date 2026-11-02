@@ -121,7 +121,8 @@ fn new_task_labels(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
 }
 
 pub(super) async fn create_scratch_task(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<CreateTask>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(create_scratch_task_inner(&s, &id, b)?)))
+    let prompted = is_prompt(&b.start);
+    Ok(Json(json!(prompted_now(&s, prompted, create_scratch_task_inner(&s, &id, b)?))))
 }
 
 /// `POST /profiles/{id}/tasks`: a scratch task (see db::Task::is_scratch), which is in no
@@ -189,6 +190,17 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
     })
 }
 
+/// Whether `start` is a prompt the user wrote (rather than just starting the agent).
+fn is_prompt(start: &Option<Value>) -> bool {
+    matches!(start, Some(Value::String(p)) if !p.trim().is_empty())
+}
+
+/// A task made with the user's own prompt, from the board, is in "now" like one they prompt later. Not the ones
+/// agents and automations make (they go through `create_task_inner` directly), which start in "later".
+fn prompted_now(s: &Shared, prompted: bool, t: db::Task) -> db::Task {
+    if prompted { crate::agent::focus::put_in_now(s, &t.id).unwrap_or(t) } else { t }
+}
+
 #[derive(Deserialize)]
 pub(super) struct CreateGroupTask {
     /// The group (of the profile's projects) the task plans for.
@@ -208,6 +220,7 @@ pub(super) async fn create_group_task(State(s): State<Shared>, Path(id): Path<St
         return Err(ApiError::bad("group must name a group of the profile's projects"));
     }
     let b = b.task;
+    let prompted = is_prompt(&b.start);
     if b.kind.as_deref().is_some_and(|k| k != "task") || b.parent_id.is_some() || b.subproject == Some(true) || b.depends_on.as_ref().is_some_and(|d| !d.is_empty()) {
         return Err(ApiError::bad("a group task can't be a subproject, be in one, or have dependencies"));
     }
@@ -260,16 +273,21 @@ pub(super) async fn create_group_task(State(s): State<Shared>, Path(id): Path<St
     };
     if generate_title {
         title::generate(&s, &t, start);
-        return Ok(Json(json!(t)));
+        return Ok(Json(json!(prompted_now(&s, prompted, t))));
     }
-    Ok(Json(json!(match start {
-        Some(p) => runner::send(&s, &t.id, &p)?,
-        None => t,
-    })))
+    Ok(Json(json!(prompted_now(
+        &s,
+        prompted,
+        match start {
+            Some(p) => runner::send(&s, &t.id, &p)?,
+            None => t,
+        }
+    ))))
 }
 
 pub(super) async fn create_task(State(s): State<Shared>, Path(project_id): Path<String>, Json(b): Json<CreateTask>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(create_task_inner(&s, &project_id, b)?)))
+    let prompted = is_prompt(&b.start);
+    Ok(Json(json!(prompted_now(&s, prompted, create_task_inner(&s, &project_id, b)?))))
 }
 
 pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResult<db::Task> {

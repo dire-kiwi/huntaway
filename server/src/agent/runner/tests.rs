@@ -173,7 +173,7 @@ fn an_effort_a_codex_model_doesnt_take_gives_way_to_its_default() {
 }
 
 /// A task whose agent is running a run that takes input (or not), with no process behind it.
-fn running(input: bool) -> (Shared, Task, Run) {
+pub(crate) fn running(input: bool) -> (Shared, Task, Run) {
     let state = crate::testing::state();
     let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
     let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };
@@ -458,24 +458,6 @@ fn the_users_messages_retitle_the_task() {
         crate::agent::title::tests::settle().await;
         assert_eq!(reload(&state, &task.id).title, "Deploy and tag the fix");
         assert!(crate::agent::title::TEST_ASKED.with_borrow(|a| a.len() == 2 && a[1].contains("and tag it")));
-    });
-}
-
-#[test]
-fn the_users_prompt_puts_the_task_in_now() {
-    crate::testing::run(async || {
-        let (state, task, _run) = running(true);
-        assert_eq!(task.now_at, None);
-        // Not what another agent sends.
-        send_from_agent(&state, &task.id, "from another agent").unwrap();
-        assert_eq!(reload(&state, &task.id).now_at, None);
-        // The user's, even one the running agent hasn't taken in yet.
-        send(&state, &task.id, "do this").unwrap();
-        let at = reload(&state, &task.id).now_at.expect("in now");
-        // Prompting it again keeps it there for another day.
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        send(&state, &task.id, "and this").unwrap();
-        assert!(reload(&state, &task.id).now_at.unwrap() > at);
     });
 }
 

@@ -939,8 +939,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
 - **Now and Later** (HA-109, API 94): every task is in *Later* until it's put in *Now*, which is
-  what you're working on at the moment. A prompt you send a task (not one from another agent or
-  the board) puts it in Now; so does *Move to Now* in its right-click menu (*Move to Later* puts
+  what you're working on at the moment. A prompt you send a task from its thread or the new task
+  dialog (not one from another agent, an automation or the board itself, and not a task an agent
+  creates and starts) puts it in Now; so does *Move to Now* in its right-click menu (*Move to Later* puts
   it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
   `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
   (*Now*, *Later*, *All*, which starts on *All* and is kept for every board) applies to every
@@ -960,7 +961,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
   *Board* and *List*, the view switch has four more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
-  1500px the switch names only the current view, and below 1180px none.
+  1500px the switch names only the current view, and below 1320px none.
   - *Triage*: what each task needs from you, most pressing first: an answer (*Needs
     attention*), a review (*In review*), a reminder that's come round, an agent that stopped
     before it finished, a start; then the agents at work. Each shows the agent's last words
