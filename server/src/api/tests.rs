@@ -1349,6 +1349,8 @@ fn a_merge_waits_for_the_users_approval_of_its_summary() {
         assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("ready_for_merge", true, Some("approved"), true));
         assert!(last_prompt(&s, &t.id).contains("The user approved the merge."), "{}", last_prompt(&s, &t.id));
         assert_eq!(approval_cards(&s, &t.id)[0].data["answer"]["choices"], json!(["Approve"]));
+        // The board's own question isn't a prompt of the user's.
+        assert_eq!(t.now_at, None);
         assert_eq!(blocked(&t.id), None);
         assert!(crate::mcp::questions::answer(&s, &t.id, cards[0].id, pick("Deny")).is_err(), "answered once");
         // The run's gh server asks the board.

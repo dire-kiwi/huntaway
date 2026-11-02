@@ -949,7 +949,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
 - **Now and Later** (HA-109, API 94): every task is in *Later* until it's put in *Now*, which is
   what you're working on at the moment. A prompt you send a task from its thread or the new task
-  dialog (not one from another agent, an automation or the board itself, and not a task an agent
+  dialog, or an answer to its question card (not one from another agent, an automation or the board itself, and not a task an agent
   creates and starts) puts it in Now; so does *Move to Now* in its right-click menu (*Move to Later* puts
   it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
   `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { after, before, test } from "node:test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
@@ -44,4 +45,32 @@ test("a task made with Create & start is in Now, one only created is in Later", 
     await page.waitForFunction((id) => !!document.querySelector(`[data-task="${id}"]`), started.id);
     assert.equal(await page.locator(`[data-task="${made.id}"]`).count(), 0);
   });
+});
+
+// HA-109 review: an answer typed into a question card is a prompt to the agent too (the card posts to its own
+// endpoint, not the thread's).
+test("answering an agent's question from its card puts the task in Now", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Asks a question", description: "Needs an answer" });
+  const card = { call_id: "c1", question: "Which colour should the button be?", options: [{ label: "Red" }, { label: "Green" }], multi_select: false, allow_other: true, status: "pending" };
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      `
+import json, sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (sys.argv[2], 'question', sys.argv[3], '2026-10-31T07:00:00.000Z'))
+c.commit()
+`,
+      `${server.dataDir}/huntaway.db`,
+      task.id,
+      JSON.stringify(card),
+    ],
+  );
+  assert.equal((await server.api("GET", `/tasks/${task.id}`)).task.now_at, null);
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Which colour should the button be?", "click Or write your own answer", "type Please do the second change instead", "press Enter"]);
+    await ui.run(["wait Fake reply to:"]);
+  });
+  assert.ok((await server.api("GET", `/tasks/${task.id}`)).task.now_at, "the answer put it in Now");
 });
