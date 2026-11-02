@@ -588,8 +588,10 @@ async fn update_claude_config(State(s): State<Shared>, Path(id): Path<String>, J
         }
         *v = json!(t);
     }
-    if let Some(v) = b.get("show_usage") {
-        fields.push(("show_usage", json!(v.as_bool().ok_or_else(|| ApiError::bad("show_usage must be true or false"))?)));
+    for key in ["show_usage", "restart_window"] {
+        if let Some(v) = b.get(key) {
+            fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
+        }
     }
     let c = s.db();
     let current = db::get_claude_config(&c, &id)?.ok_or_else(|| ApiError::not_found("Claude config"))?;

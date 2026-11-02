@@ -104,8 +104,12 @@ pub async fn list(State(s): State<Shared>, Query(q): Query<UsageQuery>) -> ApiRe
     Ok(Json(json!(out)))
 }
 
-async fn refresh(s: &Shared, config: &db::ClaudeConfig) {
+/// Fetch the config's usage now: whether that worked (the last numbers stay if it didn't).
+pub async fn refresh(s: &Shared, config: &db::ClaudeConfig) -> bool {
     let (config_id, config_dir) = (config.id.as_str(), config.config_dir.as_str());
+    #[cfg(test)]
+    let result = if config.is_codex() { TEST_CODEX.with_borrow(|r| r.clone()).ok_or("no codex in tests".to_string()).map(|rl| (None, crate::codex::limits(&rl))) } else { fetch(config_dir).await };
+    #[cfg(not(test))]
     let result = if config.is_codex() { crate::codex::rate_limits(config.dir()).await } else { fetch(config_dir).await };
     let mut cache = s.usage.lock().unwrap();
     let u = cache.entry(config_id.to_string()).or_insert_with(|| Usage { config_id: config_id.to_string(), ..Default::default() });
@@ -118,12 +122,22 @@ async fn refresh(s: &Shared, config: &db::ClaudeConfig) {
             u.plan = plan;
             u.updated_at = Some(crate::util::now());
             u.error = None;
+            true
         }
         Err(e) => {
             tracing::debug!(config = config_id, "usage fetch failed: {e}");
             u.error = Some(e);
+            false
         }
     }
+}
+
+/// The config's session (5-hour) limit as last seen: None when its usage has none, else when it
+/// resets (None when that isn't known, as when no window is running).
+pub fn session_reset(s: &Shared, config_id: &str) -> Option<Option<chrono::DateTime<chrono::Utc>>> {
+    let cache = s.usage.lock().unwrap();
+    let limit = cache.get(config_id)?.limits.iter().find(|l| l.id == "session")?;
+    Some(limit.resets_at.as_deref().and_then(parse_time))
 }
 
 #[derive(Deserialize)]
@@ -408,6 +422,12 @@ pub fn set_limits(s: &Shared, config_id: &str, limits: Vec<Limit>, plan: Option<
         u.clone()
     };
     s.emit(json!({"type": "usage", "usage": usage}));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Stands in for `codex app-server`'s `rateLimits` in tests (an error for None).
+    pub static TEST_CODEX: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]

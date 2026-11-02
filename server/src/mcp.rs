@@ -107,6 +107,17 @@ pub fn for_reviewers(tool: &str) -> bool {
     tool == "permission_prompt" || FOR_REVIEWERS.contains(&tool)
 }
 
+/// What a thread in plan mode may call: it only reads the board until its plan is approved, so it
+/// can't start agents (create_task with start, send_to_task, run_automation) or change anything.
+/// The server checks it (tools::execute_mcp): a run's tool list stays as it started while its mode changes.
+const FOR_PLANNING: &[&str] =
+    &["list_projects", "list_tasks", "get_task", "get_task_field", "get_project", "list_automations", "wait", "request_user_input", "submit_review"];
+
+/// Whether a thread in plan mode may call `tool`.
+pub fn for_planning(tool: &str) -> bool {
+    tool == "permission_prompt" || FOR_PLANNING.contains(&tool)
+}
+
 /// The board's tools, and for a review thread only those `for_reviewers`, with `submit_review`.
 fn tools(review: bool) -> Value {
     let mut tools = board_tools();

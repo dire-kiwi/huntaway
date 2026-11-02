@@ -141,3 +141,6 @@ jobs:
       - name: ia-api tests
         if: matrix.shard == 1
         run: python3 scripts/ia-api-test.py
+
+      - name: install-release-host tests
+        run: sh scripts/install-release-host-test.sh

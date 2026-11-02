@@ -200,6 +200,9 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   folders. `cargo test` in `server/` runs each test binary in a `TMPDIR` of its own, which is removed
   when it exits, and fails it if it left anything there (`server/.cargo/test-runner`), so a test that
   leaks fails locally as it does in CI. `cargo test --manifest-path` from another folder skips that.
+  That `TMPDIR` is on disk, `/var/tmp/ia-cargo-test-*` (`IA_CARGO_TEST_TMPDIR` picks another
+  folder), not in the task's `$TMPDIR`: `/tmp` is a tmpfs that every agent shares, and tests filled
+  it ("disk I/O error"). Where `/var/tmp` can't be written, it's in `$TMPDIR` as before.
 - `AppState::db()` isn't reentrant: drop a guard before calling `db()` again (that includes two
   calls in one statement). Tests and debug builds panic on a second lock on the same thread;
   release builds would hang.

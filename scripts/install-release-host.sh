@@ -71,14 +71,21 @@ fi
 ln -sfn "$version" "$dir/current"
 server=$dir/current/huntaway
 
+# For the shell: single-quoted, with any ' in it as '\''.
+q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+# The same data dir for both: without --data-dir, ssh-host would start a board in the default one instead. In
+# authorized_keys' command="…", sshd only undoes \" (opt_dequote), and leaves other backslashes as they are.
+serve="IA_RELEASE_UPDATES=$repo $(q "$server") serve --data-dir $(q "$data_dir")"
+ssh_host="IA_RELEASE_UPDATES=$repo $(q "$server") ssh-host --port 7878 --data-dir $(q "$data_dir")"
+
 cat <<EOF
 
 Installed $version in $target, and pointed $dir/current at it.
 
 Start it with release updates on (agents of a host running now keep running when you stop it):
-  IA_RELEASE_UPDATES=$repo $server serve --data-dir '$data_dir' …
+  $serve …
 For a host a hub starts over SSH, change the command in the hub's line in ~/.ssh/authorized_keys to
-  command="IA_RELEASE_UPDATES=$repo $server ssh-host --port 7878"
+  command="$(printf '%s' "$ssh_host" | sed 's/"/\\"/g')"
 (with your port), stop the host that's running now, and let the hub start it when it reconnects (or
 run that command yourself). Its board then shows new releases under Settings → Server, and a hub's
 Settings → Hosts offers Update to the release the hub runs.
