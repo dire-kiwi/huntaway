@@ -50,7 +50,7 @@ test("<ia-html> is a page of its own: its scripts work as in a page, its styles 
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-  await show(page, themedPlan(plan, css, ""));
+  await show(page, themedPlan(plan, css));
   const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
   assert.ok(frame, "the component's frame");
   await frame.waitForFunction(() => document.getElementById("loaded")?.textContent && document.getElementById("ext-module")?.textContent, null, { timeout: 5000 });
@@ -70,9 +70,9 @@ test("<ia-html> is a page of its own: its scripts work as in a page, its styles 
   await page.frameLocator("ia-html iframe").locator("#pick").click();
   assert.equal(await text("mode"), "dark");
   // Its styles stay in it, the theme's are there, and the frame is as tall as what's in it.
-  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("outside")).color), "rgb(230, 230, 236)");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("outside")).color), "rgb(227, 231, 239)");
   assert.equal(await frame.evaluate(() => getComputedStyle(document.getElementById("json")).color), "rgb(255, 0, 0)");
-  assert.equal(await frame.evaluate(() => getComputedStyle(document.body).color), "rgb(230, 230, 236)");
+  assert.equal(await frame.evaluate(() => getComputedStyle(document.body).color), "rgb(227, 231, 239)");
   const inner = await frame.evaluate(() => Math.ceil(document.documentElement.getBoundingClientRect().height));
   await page.waitForFunction((h) => document.querySelector("ia-html iframe").getBoundingClientRect().height === h, inner, { timeout: 5000 });
   assert.ok(inner > 200, `content height ${inner}`);
@@ -85,7 +85,7 @@ test("an <ia-html> frame fits its content offscreen, absolutely positioned conte
 <ia-html><template><div style="height: 600px">tall</div></template></ia-html>
 <ia-html><template><div id="w" style="position: absolute; top: 0; left: 0; width: 300px; height: 180px">widget</div></template></ia-html>`;
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-  await show(page, themedPlan(plan, css, ""));
+  await show(page, themedPlan(plan, css));
   const heights = () => page.evaluate(() => [...document.querySelectorAll("ia-html iframe")].map((f) => f.getBoundingClientRect().height).join());
   const expect = (want) => page.waitForFunction((want) => [...document.querySelectorAll("ia-html iframe")].map((f) => f.getBoundingClientRect().height).join() === want, want, { timeout: 3000 }).catch(async () => assert.equal(await heights(), want));
   await expect("600,180");
@@ -100,7 +100,7 @@ test("an <ia-html> frame fits its content offscreen, absolutely positioned conte
 
 test("a reloaded plan goes back to where it was read, with a tall <ia-html> above that place", async () => {
   const paragraphs = Array.from({ length: 80 }, (_, i) => `<p id="b${i}">Paragraph ${i}</p>`).join("\n");
-  const plan = (v) => themedPlan(`<h1>Version ${v}</h1><ia-html><template><div style="height: 600px">tall</div></template></ia-html>\n${paragraphs}`, css, "");
+  const plan = (v) => themedPlan(`<h1>Version ${v}</h1><ia-html><template><div style="height: 600px">tall</div></template></ia-html>\n${paragraphs}`, css);
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
   await show(page, `<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>
 <script>addEventListener("message", (e) => typeof e.data?.iaScroll === "number" && (window.lastScroll = e.data.iaScroll));</script>`);
@@ -139,7 +139,7 @@ test("a reloaded plan goes back to its place even when its load takes longer tha
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   try {
     const paragraphs = Array.from({ length: 120 }, (_, i) => `<p id="b${i}">Paragraph ${i}</p>`).join("\n");
-    const doc = frameDoc(themedPlan(`<h1>Slow</h1>${paragraphs}<img src="http://127.0.0.1:${server.address().port}/slow.svg">`, css, ""), 2000, 0);
+    const doc = frameDoc(themedPlan(`<h1>Slow</h1>${paragraphs}<img src="http://127.0.0.1:${server.address().port}/slow.svg">`, css), 2000, 0);
     const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const started = Date.now();
@@ -169,7 +169,7 @@ async function planPage(plan, form) {
     const f = document.querySelector("iframe");
     f.onload = done;
     f.srcdoc = doc;
-  }), frameDoc(themedPlan(plan, css, "", form), 0, 0));
+  }), frameDoc(themedPlan(plan, css, form), 0, 0));
   const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
   const last = () => page.evaluate(() => window.forms.at(-1));
   return { page, frame, last, errors, post: (data) => page.evaluate((data) => document.querySelector("iframe").contentWindow.postMessage(data, "*"), data) };

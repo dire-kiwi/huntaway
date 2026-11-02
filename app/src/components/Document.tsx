@@ -439,7 +439,7 @@ function HtmlFrame({
   const readOnly = !!plan?.readOnly;
   const key = plan?.key ?? undefined;
   const doc = useMemo(
-    () => frameDoc(plan ? themedPlan(html, planCss, undefined, readOnly ? { readOnly } : { answers: plan.answers(), key }) : html, scroll.current, bottom.current),
+    () => frameDoc(plan ? themedPlan(html, planCss, readOnly ? { readOnly } : { answers: plan.answers(), key }) : html, scroll.current, bottom.current),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [html, themed, readOnly, key],
   );

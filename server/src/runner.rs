@@ -2855,7 +2855,7 @@ mod tests {
             assert!(file.parent().unwrap().is_dir());
             // Its system prompt may not say how to write the plan, so the message does.
             let sent = input(&state, &run)[0]["message"]["content"].as_str().unwrap().to_string();
-            assert!(sent.contains(&path_str(&file)) && sent.contains("<ia-steps>") && sent.ends_with("What to plan: the cache"), "{sent}");
+            assert!(sent.contains(&path_str(&file)) && sent.contains("<ol class=\"steps\">") && sent.ends_with("What to plan: the cache"), "{sent}");
             // The thread shows the command, as it was sent.
             let steer = t.steering[0].clone();
             output(&state, &run, &[replay(&steer.id, &sent)]);
@@ -3687,7 +3687,7 @@ mod tests {
         assert!(text.contains("repository /src/web, which you can read") && !text.contains("worktree"), "{text}");
         assert!(!text.contains("label plan") && !text.contains("carry it out in this task"), "{text}");
         // It's told about the plan theme's components.
-        assert!(text.contains("<ia-steps>") && text.contains("<ia-html><template>"), "{text}");
+        assert!(text.contains("<ol class=\"steps\">") && text.contains("<ia-html><template>"), "{text}");
         // The project's start instructions are for its code tasks.
         assert!(start_prompt(&task, Some(&project), "").contains(crate::prompts::DEFAULT_START));
     }
@@ -3703,7 +3703,7 @@ mod tests {
         let mut task = db::insert_task(&c, t).unwrap();
         (task.branch, task.worktree_path) = (Some("ia/web-1-search".into()), Some("/w/1".into()));
         let plain = system_prompt(&task, Some(&project), None, &[], &[], None, true);
-        assert!(!plain.contains("label") && !plain.contains("<ia-steps>"), "{plain}");
+        assert!(!plain.contains("label") && !plain.contains("<ol class=\"steps\">"), "{plain}");
         task.labels = vec!["plan".into(), "diagram".into()];
         let docs = [("plan", "/d/plan.html".to_string()), ("diagram", "/d/diagram.mmd".to_string())];
         let text = system_prompt(&task, Some(&project), None, &[], &docs, None, true);
@@ -3711,7 +3711,7 @@ mod tests {
         assert!(text.starts_with(&plain) && text.contains("dedicated git worktree at /w/1"), "{text}");
         assert!(text.contains("the labels plan, diagram") && text.contains("a plan (HTML) to /d/plan.html and a Mermaid diagram to /d/diagram.mmd"), "{text}");
         assert!(text.contains("don't commit them") && text.contains("The plan comes first") && text.contains("carry it out in this task"), "{text}");
-        assert!(text.contains("<ia-steps>") && text.contains("Mermaid source") && !text.contains("Rather than changing code"), "{text}");
+        assert!(text.contains("<ol class=\"steps\">") && text.contains("Mermaid source") && !text.contains("Rather than changing code"), "{text}");
         assert!(text.contains("<ia-diagram><pre>flowchart LR") && text.contains("Always use Mermaid for plan diagrams"), "{text}");
         assert!(!text.contains("<ia-diagram><svg"), "{text}");
         // And it starts with the project's instructions.

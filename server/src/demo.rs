@@ -46,29 +46,31 @@ flowchart TD
         "Plan a dark mode for the demo site",
         "Plan how to add a dark mode that follows the system setting, with a toggle to override it.",
         r#"<h1>Dark mode</h1>
-<ia-lede>A sample plan. Reply in the task to change it; each turn keeps a version.</ia-lede>
+<p class="sub">A sample plan. Reply in the task to change it; each turn keeps a version.</p>
+
+<div class="callout"><strong>In short:</strong> the site follows the system's light or dark setting, and a toggle in the header overrides it. Colours move into CSS custom properties, so the dark palette is one more set of values.</div>
 
 <h2>Goal</h2>
-<p>The site follows the system's light or dark setting, and a toggle in the header overrides it.</p>
-<ia-callout kind="note" title="Out of scope">Per-page themes, and a theme editor.</ia-callout>
+<table>
+  <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+  <tbody>
+    <tr><td class="n">Default</td><td>Follows <code>prefers-color-scheme</code>.</td></tr>
+    <tr><td class="n">Override</td><td>A toggle in the header, remembered in local storage. <span class="pill ok">decided</span></td></tr>
+    <tr><td class="n">Out of scope</td><td>Per-page themes, and a theme editor. <span class="pill grey">later</span></td></tr>
+  </tbody>
+</table>
 
 <h2>How it works today</h2>
-<ul class="files">
-  <li><code>styles/site.css</code> every colour is written out where it's used</li>
-  <li><code>components/Header.tsx</code> the header, where the toggle goes</li>
+<ul>
+  <li><code>styles/site.css</code>: every colour is written out where it's used.</li>
+  <li><code>components/Header.tsx</code>: the header, where the toggle goes.</li>
 </ul>
 
 <h2>Approach</h2>
-<ia-cards>
-  <ia-card kind="chosen">
-    <h3>CSS custom properties</h3>
-    <p>Colours move into variables, with a dark set under <code>prefers-color-scheme: dark</code>. The toggle sets <code>data-theme</code> on the root element.</p>
-  </ia-card>
-  <ia-card kind="rejected">
-    <h3>A second stylesheet</h3>
-    <p>Swapping whole stylesheets doubles what has to be kept in step, and flashes on load.</p>
-  </ia-card>
-</ia-cards>
+<div class="grid2">
+  <div class="card"><h4>CSS custom properties <span class="pill ok">chosen</span></h4>Colours move into variables, with a dark set under <code>prefers-color-scheme: dark</code>. The toggle sets <code>data-theme</code> on the root element.</div>
+  <div class="card"><h4>A second stylesheet <span class="pill grey">not chosen</span></h4>Swapping whole stylesheets doubles what has to be kept in step, and flashes on load.</div>
+</div>
 <ia-diagram>
 <pre>flowchart LR
   system["System setting"] --> toggle["Header toggle"] --> theme["data-theme"]
@@ -76,11 +78,11 @@ flowchart TD
 </ia-diagram>
 
 <h2>Steps</h2>
-<ia-steps>
-  <ia-step size="M"><h3>Move every colour into custom properties</h3><p>No visible change yet.</p></ia-step>
-  <ia-step size="S"><h3>Add the dark palette</h3><p>Check contrast against <ia-badge kind="ok">WCAG AA</ia-badge>.</p></ia-step>
-  <ia-step size="S"><h3>Add the header toggle</h3><p>Remember its setting in local storage.</p></ia-step>
-</ia-steps>
+<ol class="steps">
+  <li><strong>Move every colour into custom properties</strong> One variable per role (background, text, accent). <span class="meta">Result: no visible change yet.</span></li>
+  <li><strong>Add the dark palette</strong> Check contrast against <span class="pill info">WCAG AA</span>. <span class="meta">Result: the site follows the system setting.</span></li>
+  <li><strong>Add the header toggle</strong> Remember its setting in local storage. <span class="meta">Result: the setting can be overridden.</span></li>
+</ol>
 <h3>The toggle</h3>
 <ia-html><template>
   <style>
@@ -95,7 +97,7 @@ flowchart TD
 </template></ia-html>
 
 <h2>Risks</h2>
-<ia-callout kind="risk">Third-party widgets with their own colours won't follow the theme.</ia-callout>
+<div class="callout warn"><strong>Embeds:</strong> third-party widgets with their own colours won't follow the theme.</div>
 
 <h2>Open questions</h2>
 <ia-question name="toggle-choices" type="radio" title="Which choices should the toggle offer?">
