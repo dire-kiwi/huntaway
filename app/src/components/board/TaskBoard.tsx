@@ -582,12 +582,12 @@ export function TaskBoard({
       <SearchBox value={query.search} onChange={(search) => setQuery({ ...query, search })} />
       <FilterMenu query={query} onChange={setQuery} statuses={statusOptions} kinds={kinds} projects={projectOptions} align={wide ? "right" : "left"} />
       <SortMenu sort={sort} onChange={changeSort} />
+      {focusSwitch}
     </>
   );
   const controls = (
     <>
       {wide && queryControls}
-      {focusSwitch}
       {viewToggle}
     </>
   );

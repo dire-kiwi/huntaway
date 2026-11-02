@@ -938,6 +938,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   the browser tab; *Sort* (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
+- **Now and Later** (HA-109, API 94): every task is in *Later* until it's put in *Now*, which is
+  what you're working on at the moment. A prompt you send a task (not one from another agent or
+  the board) puts it in Now; so does *Move to Now* in its right-click menu (*Move to Later* puts
+  it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
+  `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
+  (*Now*, *Later*, *All*, which starts on *All* and is kept for every board) applies to every
+  view: the board, list, triage, live, timeline and graph, with the search and filters. A task in
+  Now has a bolt on its card and row, and the switch counts them. A task goes back to Later once
+  nothing has happened on it for a day: no prompt from you, no message in its thread (the
+  agent's included), and its agent not running. The day is the host's *Tasks in Now go back to
+  Later after N hours* setting in its page in Settings (`now_expiry_hours` in `/settings`; 0
+  keeps them in Now until they're moved, null is the default 24), looked at every minute.
+  - **Lasso:** hold Ctrl and drag with the right mouse button on a board, in any view, to draw a
+    loop; the tasks it goes round or over are picked (outlined) as it's drawn, and the browser's
+    own menu stays shut. Add Shift to keep those already picked. Ctrl + right-click (without a
+    drag) on a card picks it, or lets it go if it was. A bar at the foot of the board counts the
+    picked tasks and moves them to *Now* or *Later*; so does the right-click menu of any of them
+    (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
+    use a card's menu button.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
   *Board* and *List*, the view switch has four more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
