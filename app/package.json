@@ -15,7 +15,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:ui": "npm run build && node --experimental-strip-types --test --test-concurrency=1 --test-timeout=120000 ${UI_SHARD:+--test-shard=$UI_SHARD} tests/ui/*.test.mjs",
+    "test:ui": "npm run build && node --experimental-strip-types --test --test-concurrency=${IA_UI_TEST_JOBS:-8} ${IA_UI_TEST_SHARD:+--test-shard=$IA_UI_TEST_SHARD} --test-timeout=120000 tests/ui/*.test.mjs",
     "electron": "electron .",
     "electron:dev": "IA_DEV_URL=http://localhost:5173 electron .",
     "dist": "npm run build && (cd ../server && cargo build --release --locked) && electron-builder --publish never"

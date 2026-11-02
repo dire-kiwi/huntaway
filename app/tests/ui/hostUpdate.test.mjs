@@ -46,6 +46,52 @@ test("a host's Update ends when it restarts, and offers the hub's checkout", asy
   });
 });
 
+// HA-76: a host installed from a release has no commit, so it was never offered an Update. It goes by version: Update
+// to the release the hub runs, only when that's newer, and it ends when the host comes back on it.
+test("a release host is offered the hub's version, and a checkout host without a commit isn't", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    let updates = 0;
+    let [version, boot] = ["0.0.9", "b1"];
+    let hub;
+    await page.route("**/api/hosts", async (route) => {
+      const hosts = await (await route.fetch()).json();
+      hub = hosts[0].version;
+      const linked = { local: false, connected: true, mode: "ssh", agents: true, api_version: hosts[0].api_version, api_compat: 1, commit: null };
+      json(route, [
+        ...hosts,
+        { ...linked, id: "rel", name: "releasebox", version, updates_from: "releases" },
+        { ...linked, id: "new", name: "newerbox", version: "99.0.0", updates_from: "releases" },
+        { ...linked, id: "chk", name: "checkoutbox", version: "0.0.9", updates_from: "checkout" },
+      ]);
+    });
+    await page.route("**/api/hosts/rel/update", (route) => {
+      updates++;
+      json(route, { ok: true });
+    });
+    await page.route("**/api/h/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/h/rel/admin/server") {
+        return json(route, { boot_id: boot, started_at: "", running_agents: 0, restart: updates ? { phase: "downloading", log: "", error: null } : null });
+      }
+      if (/^\/api\/h\/(rel|new|chk)\//.test(path)) return json(route, path.endsWith("/settings") ? {} : []);
+      return route.fallback();
+    });
+    await ui.run(["goto /settings", "wait checkoutbox"]);
+    await ui.run([`wait Update to v${hub}`]);
+    assert.equal(await page.locator("button", { hasText: "Update to" }).count(), 1, "only the older release host");
+    const button = page.locator("button", { hasText: `Update to v${hub}` });
+    assert.match(await button.getAttribute("title"), /downloads this release from GitHub/);
+    await ui.run([`click Update to v${hub}`, "wait downloading"]);
+    assert.equal(updates, 1);
+    [version, boot] = [hub, "b2"];
+    await ui.run(["gone downloading"]);
+    await page.reload();
+    await ui.run(["wait checkoutbox"]);
+    assert.equal(await page.locator("button", { hasText: "Update to" }).count(), 0);
+  });
+});
+
 // HA-38: after the events socket dropped, it waited out its backoff (up to 32 s) even once the network was back.
 test("the events socket reconnects at once when the network comes back", async () => {
   await withBrowser(server, {}, async (ui) => {

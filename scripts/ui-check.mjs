@@ -116,16 +116,19 @@ export const launchOptions = (chromium = defaultChromium()) => ({
   env: { ...process.env, TMPDIR: browserTmpDir() },
 });
 
+/** Launch a browser (`chromium` as for launchOptions), for `open` to share between several pages with its `browser` option. */
+export const launch = (chromium = defaultChromium()) => playwright().chromium.launch(launchOptions(chromium));
+
 /**
  * Open a browser on the server. `errors` collects page and console errors that weren't allowed.
  * Options: url, token, size ("1900x1000"), touch (a touch screen), timeout (ms), allowErrors (regexes), chromium (path),
- * log (function).
+ * log (function), browser (one from `launch` to open a context of its own in, which `close` closes instead of the browser).
  */
-export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = defaultChromium(), log = console.log } = {}) {
+export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = defaultChromium(), log = console.log, browser: shared } = {}) {
   if (!url) throw new Error("no server URL: pass --env <file|data dir>, or --url and --token (variables set with `. <env file>` aren't exported)");
   const base = url.replace(/\/+$/, "");
   const [width, height] = parseSize(size);
-  const browser = await playwright().chromium.launch(launchOptions(chromium));
+  const browser = shared ?? (await launch(chromium));
   const context = await browser.newContext({ viewport: { width, height }, ...(touch && { hasTouch: true, isMobile: true }) });
   // Signed in before the app's first script runs, so any page can be opened directly. Init scripts run in
   // every frame, and plans render in a sandboxed frame where touching localStorage throws: only the app's own page.
@@ -265,7 +268,7 @@ export async function open({ url, token = "", size = "1900x1000", touch = false,
     }
   }
 
-  const close = () => browser.close();
+  const close = () => (shared ? context.close() : browser.close());
   return { browser, context, page, errors, base, find, step, run, close };
 }
 

@@ -97,6 +97,26 @@ test("on a phone a card's menu moves it to another column", async () => {
   });
 });
 
+// HA-92: on a busy phone a column's smooth scroll can be slow to get going, and the column it was leaving took back over.
+test("on a phone a column picked above the board is the one shown, however slowly the board scrolls to it", async () => {
+  await withBrowser(server, PHONE, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^Needs attention/]"]);
+    await untilOnScreen(page, ATTENTION);
+    // A smooth scroll that starts a second late.
+    await page.evaluate(() => {
+      const el = document.querySelector("[role=tabpanel]").parentElement;
+      const scrollTo = el.scrollTo.bind(el);
+      el.scrollTo = (o) => (o?.behavior === "smooth" ? setTimeout(() => scrollTo(o), 1000) : scrollTo(o));
+    });
+    await ui.run(["click role=tab[name=/^In review/]"]);
+    await untilOnScreen(page, REVIEW);
+    await page.waitForTimeout(500);
+    assert.ok(await onScreen(page, REVIEW), "still in review");
+    assert.equal(await page.getByRole("tab", { selected: true }).textContent(), await page.getByRole("tab", { name: /^In review/ }).textContent());
+  });
+});
+
 // HA-13: a task opens over the whole of a phone's screen, with a back button to the board.
 test("on a phone a task opens full screen with a back button", async () => {
   await withBrowser(server, PHONE, async (ui) => {

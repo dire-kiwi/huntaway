@@ -107,6 +107,17 @@ pub fn for_reviewers(tool: &str) -> bool {
     tool == "permission_prompt" || FOR_REVIEWERS.contains(&tool)
 }
 
+/// What a thread in plan mode may call: it only reads the board until its plan is approved, so it
+/// can't start agents (create_task with start, send_to_task, run_automation) or change anything.
+/// The server checks it (tools::execute_mcp): a run's tool list stays as it started while its mode changes.
+const FOR_PLANNING: &[&str] =
+    &["list_projects", "list_tasks", "get_task", "get_task_field", "get_project", "list_automations", "wait", "request_user_input", "submit_review"];
+
+/// Whether a thread in plan mode may call `tool`.
+pub fn for_planning(tool: &str) -> bool {
+    tool == "permission_prompt" || FOR_PLANNING.contains(&tool)
+}
+
 /// The board's tools, and for a review thread only those `for_reviewers`, with `submit_review`.
 fn tools(review: bool) -> Value {
     let mut tools = board_tools();
@@ -262,7 +273,7 @@ fn board_tools() -> Value {
         },
         {
             "name": "update_task",
-            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work, after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
+            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work (where merges need the user's approval, to summarize it first, and to merge once the user approves), after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
             "inputSchema": {"type": "object", "properties": {
                 "task_id": task_ref,
                 "profile": profile,

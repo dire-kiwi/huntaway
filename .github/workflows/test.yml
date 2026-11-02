@@ -103,16 +103,18 @@ jobs:
         working-directory: app
         run: npm test
 
-  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, split
-  # across three jobs (UI_SHARD), and scripts/ia-api's tests.
+  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
+  # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time on a GitHub-hosted one
+  # (it has 4 CPUs, and Chromium keeps them busy: more at once only made each check slower) and 2 on a self-hosted one
+  # (2 CPUs).
   ui:
     name: ui (${{ matrix.shard }}/3)
+    runs-on: *runs-on
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3]
-    runs-on: *runs-on
-    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: "0"
       SCCACHE_DISABLE: "1"
@@ -164,9 +166,10 @@ jobs:
 
       - name: Browser checks
         working-directory: app
-        env:
-          UI_SHARD: ${{ matrix.shard }}/3
         run: npm run test:ui
+        env:
+          IA_UI_TEST_SHARD: ${{ matrix.shard }}/3
+          IA_UI_TEST_JOBS: ${{ runner.environment == 'github-hosted' && '4' || '2' }}
 
       # What the page showed when a step failed (scripts/ui-check.mjs saves it).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -180,3 +183,6 @@ jobs:
       - name: ia-api tests
         if: matrix.shard == 1
         run: python3 scripts/ia-api-test.py
+
+      - name: install-release-host tests
+        run: sh scripts/install-release-host-test.sh
