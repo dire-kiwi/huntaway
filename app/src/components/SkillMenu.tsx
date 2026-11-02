@@ -15,8 +15,8 @@ export interface SkillItem {
   args?: string;
 }
 
-/** Hosts that handle `/plan` (API 89): it gives the task the plan label and tells its agent how to write the plan. */
-const PLAN_API = 89;
+/** Hosts that handle `/plan` (API 90): it gives the task the plan label and tells its agent how to write the plan. */
+const PLAN_API = 90;
 
 /** Each task's skills (null when the host couldn't say), kept for a minute so typing `/` again doesn't wait for it. */
 const cache = new Map<string, { at: number; data: TaskSkills | null }>();
