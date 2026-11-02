@@ -1,5 +1,11 @@
-# Runs the server and UI tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request, on
-# GitHub-hosted runners. It needs no secrets, so pull requests from forks run it too. Deployments live outside this repository.
+# Runs the server and UI tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request. It needs
+# no secrets, so pull requests from forks run it too. Deployments live outside this repository.
+#
+# The owner's own jobs can run on self-hosted runners (labels self-hosted and huntaway), which keep their checkout, build
+# output and toolchains between jobs: set the repository variable SELF_HOSTED_USER to the owner's login. Those are pushes
+# and dispatches by them, and pull requests they opened from a branch of this repository (not a fork), started or re-run by
+# them. Everything else, and every job while the variable isn't set, runs on GitHub-hosted runners. A pull request's
+# workflow comes from its own branch, so the runners must also refuse other jobs themselves; this choice is only routing.
 name: Tests
 
 on:
@@ -19,7 +25,11 @@ concurrency:
 
 jobs:
   server:
-    runs-on: ubuntu-latest
+    runs-on: &runs-on >-
+      ${{ (vars.SELF_HOSTED_USER != '' && github.actor == vars.SELF_HOSTED_USER && github.triggering_actor == vars.SELF_HOSTED_USER
+      && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == vars.SELF_HOSTED_USER
+      && github.event.pull_request.head.repo.full_name == github.repository)))
+      && fromJSON('["self-hosted", "huntaway"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     env:
       # Incremental state only helps rebuilds of the same code, and is about half the size of a debug build.
@@ -28,11 +38,26 @@ jobs:
       SCCACHE_DISABLE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A self-hosted runner's checkout keeps the ignored build output (server/target, app/node_modules) of earlier
+          # jobs, so builds are incremental; the next step removes untracked files, as clean does.
+          clean: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Tidy the checkout
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffd
+          # Earlier jobs' screenshots of failed ui steps, which the ui job uploads.
+          rm -f /tmp/ui-check-*-failed.png
+          # Builds of many branches pile up in the target directory: start again once it's over 20G.
+          if [ -d server/target ] && [ "$(du -sm server/target | cut -f1)" -gt 20480 ]; then rm -rf server/target; fi
 
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
+      # Self-hosted runners keep their target directory instead.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: runner.environment == 'github-hosted'
         with:
           workspaces: server
 
@@ -47,6 +72,7 @@ jobs:
         working-directory: server
         run: cargo test --locked
 
+  # Always on a GitHub-hosted runner: it's quick, and leaves the self-hosted ones to the server and ui jobs.
   app:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -78,11 +104,12 @@ jobs:
         run: npm test
 
   # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
-  # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time (a runner has 4 CPUs,
-  # and Chromium keeps them busy: more at once only made each check slower).
+  # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time on a GitHub-hosted one
+  # (it has 4 CPUs, and Chromium keeps them busy: more at once only made each check slower) and 2 on a self-hosted one
+  # (2 CPUs).
   ui:
     name: ui (${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    runs-on: *runs-on
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -91,14 +118,28 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       SCCACHE_DISABLE: "1"
-      IA_UI_TEST_JOBS: "4"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A self-hosted runner's checkout keeps the ignored build output (server/target, app/node_modules) of earlier
+          # jobs, so builds are incremental; the next step removes untracked files, as clean does.
+          clean: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Tidy the checkout
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffd
+          # Earlier jobs' screenshots of failed ui steps, which the ui job uploads.
+          rm -f /tmp/ui-check-*-failed.png
+          # Builds of many branches pile up in the target directory: start again once it's over 20G.
+          if [ -d server/target ] && [ "$(du -sm server/target | cut -f1)" -gt 20480 ]; then rm -rf server/target; fi
 
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
+      # Self-hosted runners keep their target directory instead.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: runner.environment == 'github-hosted'
         with:
           workspaces: server
 
@@ -113,10 +154,10 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       # The runners have no /usr/bin/chromium, so scripts/ui-check.mjs falls back to Playwright's own Chromium (not its
-      # headless shell, which has no notifications or push).
+      # headless shell, which has no notifications or push). Self-hosted runners have its system libraries already.
       - name: Chromium
         working-directory: app
-        run: npx playwright-core install --with-deps --no-shell chromium
+        run: npx playwright-core install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} --no-shell chromium
 
       # Only the binaries the checks run, with no test binary beside them (see the server job's note on memory).
       - name: cargo build
@@ -128,6 +169,7 @@ jobs:
         run: npm run test:ui
         env:
           IA_UI_TEST_SHARD: ${{ matrix.shard }}/3
+          IA_UI_TEST_JOBS: ${{ runner.environment == 'github-hosted' && '4' || '2' }}
 
       # What the page showed when a step failed (scripts/ui-check.mjs saves it).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

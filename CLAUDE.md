@@ -214,7 +214,8 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   rewrites whole files. Match the surrounding style, and check `git diff --stat` before committing.
 - CI runs `cargo test`, `npm run typecheck` and `npm test` on every PR, and `npm run test:ui` and
   `scripts/ia-api-test.py` (`.github/workflows/test.yml`, the `Tests / server`, `Tests / app` and
-  `Tests / ui (1/3)` to `(3/3)` checks, on GitHub-hosted runners). Still run them
+  `Tests / ui (1/3)` to `(3/3)` checks, on self-hosted runners for the owner's own branches and GitHub-hosted ones
+  otherwise; see the workflow's header). Still run them
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
 - `scripts/ia-api` has its own tests (a faked server and clock): `python3 scripts/ia-api-test.py`.
