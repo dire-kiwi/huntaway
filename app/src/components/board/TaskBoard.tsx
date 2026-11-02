@@ -35,7 +35,8 @@ import { LiveView } from "./LiveView";
 import { Button, ContextMenu, IconButton, RESOLUTION_LABELS, StatusIcon, STATUS_COLOR, useClock, type MenuItem } from "../ui";
 import { useNarrow } from "../../narrow";
 import { TaskCard, TaskRow, useProgress, useCreatedProgress } from "./TaskCard";
-import { NewTaskModal, PROJECT_KEY } from "../layout/NewTaskModal";
+import { NewTaskModal } from "../layout/NewTaskModal";
+import { PROJECT_KEY } from "../layout/newTask/draft";
 
 // Columns that get a "new task" button. New work starts in To do or Backlog.
 const CAN_ADD: ReadonlySet<Status> = new Set<Status>(["todo", "backlog"]);

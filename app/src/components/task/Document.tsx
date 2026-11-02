@@ -9,7 +9,8 @@ import { isWholePage, themedPlan } from "./planTheme";
 import planCss from "./planTheme.css?raw";
 import { useHost, useThreadMessages } from "../../store";
 import type { Progress } from "../board/TaskCard";
-import { Composer, Markdown } from "./Thread";
+import { Composer } from "./thread/Composer";
+import { Markdown } from "./thread/Markdown";
 import { Button, CARD_BADGE, copyText, download, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "../ui";
 
 /** What each label asks its task's agent for (API 71; types of task from API 42), in the order tasks show them. */

@@ -32,7 +32,8 @@ import { ReminderModal, reminderItems, starItem, useReminderClock } from "../tas
 import { titleItem, TitleModal } from "./TitleModal";
 import { ReloadButton, UpdateButton } from "../settings/Server";
 import { UsagePanel } from "../settings/Usage";
-import { ArchiveProjectModal, NewProjectModal } from "../settings/Settings";
+import { ArchiveProjectModal } from "../settings/ArchivedProjects";
+import { NewProjectModal } from "../settings/NewProjectModal";
 import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, RunningDot, StatusBar, type MenuItem } from "../ui";
 
 function NavItem({ active, current, onClick, onContextMenu, icon, children, right, className, title, expanded }: {

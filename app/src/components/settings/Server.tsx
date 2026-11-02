@@ -6,7 +6,7 @@ import type { ShellUpdateKind, ShellUpdateProgress } from "../../notifier";
 import { useStore } from "../../store";
 import { useNewUiBuild } from "./uiVersion";
 import { compareVersions } from "./versions";
-import { Markdown } from "../task/Thread";
+import { Markdown } from "../task/thread/Markdown";
 import { Button, copyText, Modal, ModalFooter, timeAgo, Toggle } from "../ui";
 
 export const PHASES: Record<string, string> = {

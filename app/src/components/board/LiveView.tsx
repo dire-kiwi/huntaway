@@ -7,7 +7,7 @@ import { keyPrefix, useStore, useThreadMessages } from "../../store";
 import { useDelta } from "../../deltas";
 import { threadModel, type Item } from "../../threadModel";
 import { QUESTION_TOOLS, questionsOf } from "../../questions";
-import { toolMeta } from "../task/Thread";
+import { toolMeta } from "../task/thread/tools";
 import { AskCard, BoardQuestionCard, PlanCard } from "../task/Questions";
 import { CardState, StatusIcon } from "../ui";
 import type { OnMenu } from "./TaskCard";

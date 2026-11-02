@@ -11,7 +11,7 @@ import { api, hostSupports, PERMISSION_MODES, type PermissionMode } from "../../
 import { useHost, useProject, useStore } from "../../store";
 import { askedAnswers, declinedWithAnswers, planTitle, questionsOf, withoutTitle, type AskedQuestion } from "../../questions";
 import { Button, Textarea } from "../ui";
-import { Markdown } from "./Thread";
+import { Markdown } from "./thread/Markdown";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;

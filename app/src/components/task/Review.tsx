@@ -6,7 +6,7 @@ import { api, type Review, type ReviewerRun, type ReviewState, type Task, type T
 import { openTask } from "../../router";
 import { useProject, useStore } from "../../store";
 import { turnStat, useTurns } from "./turns";
-import { Markdown } from "./Thread";
+import { Markdown } from "./thread/Markdown";
 import { Button, CARD_BADGE, Wide } from "../ui";
 
 const PatchBox = lazy(() => import("../changes/git/Patches").then((m) => ({ default: m.PatchBox })));

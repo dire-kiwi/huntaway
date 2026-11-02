@@ -2,7 +2,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../agents";
 import { agentOf, type ClaudeConfig, type Reviewer } from "../../api";
 import { useStore } from "../../store";
-import { ModelPicker } from "../layout/NewTaskModal";
+import { ModelPicker } from "../layout/newTask/ModelPicker";
 import { Button, IconButton } from "../ui";
 
 export const DEFAULT_REVIEWER: Reviewer = { claude_config_id: null, model: null, effort: null };

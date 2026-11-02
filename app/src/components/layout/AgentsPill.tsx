@@ -5,7 +5,7 @@ import type { Message, Task } from "../../api";
 import { useStore, useThreadMessages } from "../../store";
 import { subagentTitle, useSubagentView } from "../../subagents";
 import { threadModel } from "../../threadModel";
-import { SubagentStatusBadge } from "../task/Thread";
+import { SubagentStatusBadge } from "../task/thread/subagents";
 
 const NO_MESSAGES: Message[] = [];
 

@@ -5,7 +5,8 @@ import { api, canRunAgents, dependencyQueued, limitQueued, readyToCheck, type Pr
 import { openTask, usePanelOpen } from "../../router";
 import { keyPrefix, useHost, useStore } from "../../store";
 import { isDue } from "../../reminders";
-import { Composer, Markdown } from "../task/Thread";
+import { Composer } from "../task/thread/Composer";
+import { Markdown } from "../task/thread/Markdown";
 import { PendingPrompts } from "./LiveView";
 import { ReviewBadge } from "../task/Review";
 import { Button, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "../ui";

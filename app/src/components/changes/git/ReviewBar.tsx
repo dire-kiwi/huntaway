@@ -4,7 +4,7 @@ import { useState } from "react";
 import { hostSupports, runningAgentSteers, type Task } from "../../../api";
 import { useHost } from "../../../store";
 import { dropDraft, lineRange, removeComments, type CommentLines, type Review } from "../lineComments";
-import { sendComments } from "../../task/Thread";
+import { sendComments } from "../../task/thread/Composer";
 import { Button } from "../../ui";
 
 /**

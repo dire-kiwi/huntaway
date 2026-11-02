@@ -1316,14 +1316,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   stashes, space applies, `g` pops and `d` drops. Right-clicking a file, commit or stash shows
   its menu. The view checks for changes every few seconds (the agent may be making them), and
   keys pressed while a change is being made wait for it, so pressing space again stages the next
-  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/changes.ts`),
+  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/components/changes/changes.ts`),
   applied with `git apply --cached`; if the file has changed since, git refuses it and the view
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
   wrong. A host before API 66 shows the branch's diff alone.
 - **Diffs and comments for the agent:** the Changes tab's diffs are highlighted for their
   file's language (by extension or name; the theme is the board's own colours), with
-  [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`app/src/highlight.worker.ts`),
+  [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`app/src/components/changes/highlight.worker.ts`),
   so a big diff doesn't hold up the page. Each language's grammar is fetched the first time a
   file in it is shown; a file's diff is highlighted once it's scrolled near, each hunk on its own
   (lines show plain until then), and files with more than 5000 lines in their diff, and lines over
@@ -1340,7 +1340,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   file, its lines (numbered in the new version, or the old one for removed lines), the lines as
   the diff has them and its note, and while the agent works it's queued or steered as any message
   is then. Comments, and notes still being written, are kept in the browser per task
-  (`app/src/lineComments.ts`), as composer drafts are.
+  (`app/src/components/changes/lineComments.ts`), as composer drafts are.
 - **Checkpoints and rewinding** (API 70): a task in a worktree of its own keeps a checkpoint of
   its files before each of its agent's runs (when anything changed since the last, so the first
   run's is the task's baseline) and after each of the agent's turns, including ones that were

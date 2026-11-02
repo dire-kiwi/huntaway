@@ -18,7 +18,7 @@ import { useHost } from "../../store";
 import { hasTurns, useTurns } from "../task/turns";
 import { CommentsContext, type CommentsApi, type Layout } from "./DiffLines";
 import { RewindDialog } from "../task/Rewind";
-import { rewound } from "../task/Thread";
+import { rewound } from "../task/thread/Composer";
 import { ContextMenu, type MenuItem } from "../ui";
 import { DialogView, OptionsBar } from "./git/Dialogs";
 import { MainPanel } from "./git/MainPanel";
