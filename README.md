@@ -1255,8 +1255,11 @@ skipped. Auto-compacting idle sessions is Claude-only.
     project's base branch as merged too. Stacking doesn't make it wait for the other task: add a
     dependency for that. A task can't start from one that (by way of others, or a subproject it's
     in) starts from it. Deleting a merged task keeps the tasks stacked on it going where it went:
-    one with a branch then starts from the commit where its own work starts, one without is a task
-    on that branch.
+    when that's the branch of a task it was stacked on that isn't merged yet, they're stacked on
+    that one; otherwise one with a branch then starts from the commit where its own work starts,
+    and one without is a task on that branch. A stacked task's pull request goes to the repository
+    the other task's branch is pushed to, or, while that has no remote of its own (it isn't pushed
+    yet), wherever the other task's pull request goes.
   - **A branch** becomes its base branch, fetched first as the project's is. A remote's branch
     is the branch of that name when it's on the remote the name alone follows (usually `origin`,
     where the task's pull request goes). Another remote's (`upstream/feature`) isn't a branch the
