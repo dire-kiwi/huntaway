@@ -422,6 +422,16 @@ pub fn created_tasks(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
+/// The tasks stacked on task `task_id`: those that start from it (see StartFrom::Task).
+pub fn stacked_on(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare(
+        "SELECT * FROM tasks WHERE start_from IS NOT NULL AND json_valid(start_from)
+           AND json_extract(start_from, '$.type')='task' AND json_extract(start_from, '$.task_id')=?1 ORDER BY created_at",
+    )?;
+    let rows = st.query_map([task_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 /// Scratch chats in no project. There are none since they became scratch tasks, but boards
 /// from before that still ask.
 pub fn list_profile_scratch(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
@@ -581,7 +591,8 @@ pub fn is_merged(t: &Task) -> bool {
 
 /// The branch `task` merges into and is compared with: its base branch, else its project's. One
 /// stacked on another task (see StartFrom) that's merged by now goes where that one went instead,
-/// as GitHub retargets a pull request whose base branch is deleted.
+/// as GitHub retargets a pull request whose base branch is deleted; so does one that started from
+/// a task that was merged already, and so took that one's base branch, once that goes somewhere else.
 pub fn task_base(c: &Connection, task: &Task, project: Option<&Project>) -> Option<String> {
     let own = |t: &Task| t.base_branch.clone().or_else(|| project.and_then(|p| p.base_branch.clone())).filter(|b| !b.is_empty());
     let mut t = task.clone();
@@ -590,7 +601,10 @@ pub fn task_base(c: &Connection, task: &Task, project: Option<&Project>) -> Opti
     for _ in 0..16 {
         let Some(StartFrom::Task { task_id }) = &t.start_from else { break };
         match get_task(c, task_id).ok().flatten() {
-            Some(other) if is_merged(&other) && other.branch.is_some() && other.branch == t.base_branch => t = other,
+            // Its base branch came from that task as its worktree was made (its branch, or where it went),
+            // and setting one of its own drops what it starts from (see api::update_task_inner), so it
+            // goes where that went, even once the board has deleted that task's branch.
+            Some(other) if is_merged(&other) => t = other,
             _ => break,
         }
     }

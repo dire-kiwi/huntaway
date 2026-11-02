@@ -123,10 +123,21 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         None => None,
     };
     // Started from somewhere else (a commit its base branch doesn't have, a task stacked on that's
-    // merged since): its work is what's after where the Changes tab has it start.
-    let base = match &task.start_from {
-        Some(_) => worktree::changes_base(state, &dir, &task, &project).await.1.or(base),
-        None => base,
+    // merged since): its work is what's after where the Changes tab has it start. When that's later
+    // than where it left its base branch, a pull request's diff has more than its own work.
+    let (base, own_start) = match &task.start_from {
+        Some(_) => match worktree::changes_base(state, &dir, &task, &project).await.1 {
+            Some(start) => {
+                let left = match &base {
+                    Some(b) => worktree::git(&dir, &["merge-base", b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string()),
+                    None => None,
+                };
+                let later = left.as_deref() != Some(start.as_str());
+                (Some(start), later)
+            }
+            None => (base, false),
+        },
+        None => (base, false),
     };
     let mut elsewhere = false;
     if let Some(b) = &base {
@@ -226,7 +237,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         set_review(state, &task.id, &review)?;
     }
     let commit = &head[..head.len().min(10)];
-    let work = if elsewhere { Work::Elsewhere { last_message: db::last_assistant_text(&state.db(), &task.id)? } } else { Work::Branch };
+    let work = if elsewhere { Work::Elsewhere { last_message: db::last_assistant_text(&state.db(), &task.id)? } } else { Work::Branch { own_start } };
     let replies = db::user_replies(&state.db(), &task.id, Some(REPLIES))?;
     let text = prompt(&key, &task, &branch, base.as_deref(), commit, &work, &fixed, &replies, crate::agent::prompts::review(Some(&project)));
     let (mut started, mut failed) = (0, None);
@@ -311,8 +322,9 @@ async fn changed_elsewhere(state: &Shared, task: &Task, dir: &Path, previous: Op
 
 /// Where the work to review is.
 enum Work {
-    /// On the task's branch.
-    Branch,
+    /// On the task's branch. `own_start`: it starts later than where the branch left its base branch
+    /// (it started from a commit that isn't on it, say), which its pull request's diff would include.
+    Branch { own_start: bool },
     /// The branch has no commits: the agent's changes, if any, are somewhere else (such as in
     /// another repository), which its last message should say.
     Elsewhere { last_message: Option<String> },
@@ -349,7 +361,16 @@ fn prompt(
         p.push_str(&format!("\nThe task's description:\n\n{}\n", task.description.trim()));
     }
     match work {
-        Work::Branch => {
+        Work::Branch { own_start: true } if base.is_some() => {
+            let b = base.unwrap_or_default();
+            p.push_str(&format!(
+                "\nThe work is on branch `{branch}` (commit {commit}), checked out in your working directory. It started from \
+                 commit {b}, after where it left its base branch, so its pull request's diff (if it has one) also has commits \
+                 that aren't its own: review the branch's changes (`git diff {b}...HEAD`) rather than `pr_diff`. Read its pull \
+                 request with the gh MCP server's `pr_view` tool (pr `{branch}`) only for its description and comments.\n"
+            ));
+        }
+        Work::Branch { .. } => {
             let fallback = match base {
                 Some(b) => format!("the branch's changes (`git diff {b}...HEAD`)"),
                 None => "the branch's commits".into(),

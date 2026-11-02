@@ -6,7 +6,7 @@ fn the_projects_instructions_go_between_where_and_how_to_report() {
     let p = db::insert_profile(&c, "p", &[], None).unwrap();
     let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
     let task = db::insert_task(&c, t).unwrap();
-    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch, &["the bug".into()], &Default::default(), "Check the docs too.");
+    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch { own_start: false }, &["the bug".into()], &Default::default(), "Check the docs too.");
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s:?} not in {text}"));
     assert!(at("`pr_view` tool (pr `ia/x-1`)") < at("Check the docs too.") && at("Check the docs too.") < at("call `submit_review` once"));
     assert!(at("submit_review") < at("- the bug"));
@@ -20,11 +20,11 @@ fn what_the_user_decided_goes_before_the_instructions() {
     let task = db::insert_task(&c, t).unwrap();
     let replies = vec![(Some("Should it be A or B?\nB is faster.".to_string()), "A, the gap is fine".to_string()), (None, "thanks".to_string())];
     let replies = db::UserReplies { replies, ..Default::default() };
-    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch, &[], &replies, "Check the docs too.");
+    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch { own_start: false }, &[], &replies, "Check the docs too.");
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s:?} not in {text}"));
     assert!(at("`pr_view`") < at("decisions they made there stand") && at("decisions they made") < at("Check the docs too."));
     assert!(at("The agent:\n\n> Should it be A or B?\n> B is faster.\n\nThe user:\n\n> A, the gap is fine\n") < at("The user:\n\n> thanks"));
-    let none = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch, &[], &Default::default(), "Check the docs too.");
+    let none = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch { own_start: false }, &[], &Default::default(), "Check the docs too.");
     assert!(!none.contains("decisions they made"));
 }
 
@@ -439,4 +439,55 @@ fn a_reviewer_started_just_before_a_restart_still_ends_its_part() {
         crate::agent::runs::TEST_CAN_RUN.set(false);
         std::fs::remove_dir_all(&dir).unwrap();
     })
+}
+
+#[test]
+fn a_task_that_started_after_its_base_branch_is_reviewed_from_where_it_started() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        // It starts at a commit master doesn't have, or at master's latest, and has a pull request
+        // into master either way.
+        for off_master in [true, false] {
+            let s = crate::testing::state();
+            let (task, dir) = reviewable(&s);
+            let git = ["-c", "user.name=t", "-c", "user.email=t@t"];
+            commit(&dir, &["branch", "-q", "-m", "master"]);
+            let start = match off_master {
+                true => {
+                    commit(&dir, &[&git[..], &["commit", "-q", "--allow-empty", "-m", "someone else's"]].concat());
+                    rev(&dir, "HEAD")
+                }
+                false => rev(&dir, "master"),
+            };
+            commit(&dir, &["checkout", "-q", "-b", "ia/x"]);
+            if off_master {
+                commit(&dir, &["branch", "-q", "-f", "master", "HEAD~1"]);
+            }
+            commit(&dir, &["update-ref", &format!("refs/huntaway/start/{}", task.id), "HEAD"]);
+            commit(&dir, &[&git[..], &["commit", "-q", "--allow-empty", "-m", "its own"]].concat());
+            let fields = [
+                ("base_branch", json!("master")),
+                ("start_from", json!(db::StartFrom::Commit { commit: start.clone() })),
+                ("pr_url", json!("https://github.com/o/r/pull/3")),
+            ];
+            db::update_task(&s.db(), &task.id, &fields).unwrap();
+            super::start(&s, &task.id, true).await.map_err(|e| e.1).unwrap();
+            let thread = db::review_threads(&s.db(), &task.id).unwrap().remove(0);
+            let sent = db::list_messages(&s.db(), &thread.id).unwrap().iter().map(|m| m.data.to_string()).collect::<String>();
+            let own = format!("`git diff {start}...HEAD`) rather than `pr_diff`");
+            match off_master {
+                true => assert!(sent.contains(&own) && sent.contains("only for its description and comments"), "{sent}"),
+                false => assert!(!sent.contains("rather than `pr_diff`") && sent.contains("review the pull request's changes"), "{sent}"),
+            }
+            let task = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            supersede(&s, &task);
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+fn rev(dir: &Path, rev: &str) -> String {
+    let out = std::process::Command::new("git").arg("-C").arg(dir).args(["rev-parse", rev]).output().unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
 }

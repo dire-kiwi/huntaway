@@ -595,7 +595,8 @@ async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path,
             let other = db::get_task(&state.db(), task_id)?.ok_or_else(|| anyhow!("the task this one starts from was deleted"))?;
             let key = format!("{}-{}", crate::agent::runner::key_prefix(&other, Some(project)), other.number);
             if db::is_merged(&other) {
-                let base = other.base_branch.clone().filter(|b| !b.is_empty());
+                // Where it went: that's merged too when it was stacked on another task (see db::task_base).
+                let base = db::task_base(&state.db(), &other, Some(project));
                 let note = format!("{key} is merged already, so starting from {}", base.as_deref().unwrap_or("the base branch"));
                 return Ok(Some(Picked { base, commit: None, notes: vec![("info", note)] }));
             }
@@ -770,6 +771,8 @@ pub async fn teardown(state: &Shared, task_id: &str, force: bool, delete_branch:
         bail!("task has no worktree");
     };
     let branch = task.branch.clone().unwrap_or_default();
+    // The tasks stacked on it keep where they took its branch up to before it's gone.
+    keep_starts(state, task_id).await;
 
     if wt.exists() {
         if !force {
@@ -1272,6 +1275,44 @@ pub async fn forget_start(repo: &Path, task_id: &str) {
     let _ = git(repo, &["update-ref", "-d", &start_ref(task_id)]).await;
 }
 
+/// Move task `task`'s start ref (see `start_ref`) on to the branch it's stacked on while that's there
+/// and the task's work at `head` in `dir` has all of it, so what it took in of it later isn't counted
+/// as its own either, even once that branch is gone.
+async fn keep_start(dir: &Path, task: &Task, head: &str) {
+    let kept = start_ref(&task.id);
+    let (Some(at), Some(b)) = (commit(dir, &kept).await, task.base_branch.as_ref()) else { return };
+    if let Some(tip) = commit(dir, &compare_ref(dir, b).await).await
+        && tip != at
+        && is_ancestor(dir, &at, &tip).await
+        && is_ancestor(dir, &tip, head).await
+    {
+        let _ = git(dir, &["update-ref", &kept, &tip, &at]).await;
+    }
+}
+
+/// `keep_start` for task `task_id`'s branch and those of the tasks stacked on it. Called as its agent's
+/// run ends, when it's done and before its worktree or branch goes, so its own start, and theirs on its
+/// branch, keep up without anyone reading their changes before that branch is deleted.
+pub async fn keep_starts(state: &Shared, task_id: &str) {
+    let found = {
+        let c = state.db();
+        let mut tasks = db::stacked_on(&c, task_id).unwrap_or_default();
+        tasks.extend(db::get_task(&c, task_id).ok().flatten());
+        tasks
+            .into_iter()
+            .filter(|t| t.start_from.is_some())
+            .filter_map(|t| {
+                let p = t.project_id.as_deref().and_then(|p| db::get_project(&c, p).ok().flatten())?;
+                let branch = t.branch.clone().filter(|b| !b.is_empty())?;
+                Some((t, p.repo_path, branch))
+            })
+            .collect::<Vec<_>>()
+    };
+    for (t, repo, branch) in found {
+        keep_start(Path::new(&repo), &t, &format!("refs/heads/{branch}")).await;
+    }
+}
+
 /// The base branch a task's changes are compared with (see db::task_base), and where its work
 /// starts (only known in the task's own worktree): its merge base with the base branch or, when it
 /// started from somewhere else that's later, that. That's where it started (see `start_ref`) or a
@@ -1304,17 +1345,7 @@ async fn changes_base_at(state: &Shared, dir: &Path, task: &Task, project: &Proj
     }
     if task.start_from.is_some() {
         let kept = start_ref(&task.id);
-        // Moved on to the branch it's stacked on while that's there and the task has all of it, so
-        // what it took in of it later isn't counted as its own either.
-        if let (Some(at), Some(b)) = (commit(dir, &kept).await, task.base_branch.as_ref()) {
-            if let Some(tip) = commit(dir, &compare_ref(dir, b).await).await
-                && tip != at
-                && is_ancestor(dir, &at, &tip).await
-                && is_ancestor(dir, &tip, head).await
-            {
-                let _ = git(dir, &["update-ref", &kept, &tip, &at]).await;
-            }
-        }
+        keep_start(dir, task, head).await;
         if commit(dir, &kept).await.is_some() {
             from.push(kept);
         }
@@ -2050,51 +2081,117 @@ mod tests {
     }
 
     #[test]
+    fn a_task_started_from_a_merged_task_goes_where_that_went() {
+        crate::testing::run(async || {
+            // Third is made as Second is merged into First, or once First is merged into master too.
+            for after_first in [false, true] {
+                let s = crate::testing::state();
+                let (root, repo, _, p) = stacking_repo(&s).await;
+                let new = |title: &str, from: &str| create_task_inner(&s, &p.id, CreateTask { title: title.into(), start_from: Some(json!(from)), ..Default::default() }).unwrap();
+                let a = setup(&s, &create_task_inner(&s, &p.id, CreateTask { title: "First".into(), ..Default::default() }).unwrap().id).await.unwrap();
+                let (a_wt, a_branch) = (PathBuf::from(a.worktree_path.clone().unwrap()), a.branch.clone().unwrap());
+                commit_file(&a_wt, "parent-file");
+                let b = setup(&s, &new("Second", "X-1").id).await.unwrap();
+                commit_file(Path::new(b.worktree_path.as_deref().unwrap()), "child-file");
+                // Second is squashed into First and done.
+                sh(&a_wt, &["merge", "-q", "--squash", b.branch.as_deref().unwrap()]);
+                sh(&a_wt, &["commit", "-qm", "Second"]);
+                db::update_task(&s.db(), &b.id, &[("status", json!("done"))]).unwrap();
+                let first_merged = async || {
+                    sh(&repo, &["merge", "-q", "--squash", &a_branch]);
+                    sh(&repo, &["commit", "-qm", "First"]);
+                    db::update_task(&s.db(), &a.id, &[("status", json!("done"))]).unwrap();
+                    teardown(&s, &a.id, true, true).await.unwrap();
+                };
+                if after_first {
+                    first_merged().await;
+                }
+                let c = setup(&s, &new("Third", "X-2").id).await.unwrap();
+                let c_wt = PathBuf::from(c.worktree_path.clone().unwrap());
+                let went = if after_first { "master" } else { a_branch.as_str() };
+                assert_eq!(c.base_branch.as_deref(), Some(went), "{after_first}");
+                assert!(log_of(&s, &c.id).contains(&format!("X-2 is merged already, so starting from {went}")), "{}", log_of(&s, &c.id));
+                assert_eq!(rev(&c_wt, "HEAD"), rev(&repo, went));
+                commit_file(&c_wt, "third-file");
+                if !after_first {
+                    // First is merged afterwards: Third goes to master too.
+                    first_merged().await;
+                }
+                let c = db::get_task(&s.db(), &c.id).unwrap().unwrap();
+                assert_eq!(db::task_base(&s.db(), &c, Some(&p)).as_deref(), Some("master"), "{after_first}");
+                assert_eq!(changed_files(&s, &c.id).await, ["third-file"], "{after_first}");
+                std::fs::remove_dir_all(&root).ok();
+            }
+        })
+    }
+
+    #[test]
     fn a_stacked_task_keeps_its_own_changes_when_the_branch_it_stacks_on_is_deleted() {
         crate::testing::run(async || {
-            let s = crate::testing::state();
-            let (root, repo, _, p) = stacking_repo(&s).await;
-            let a = setup(&s, &create_task_inner(&s, &p.id, CreateTask { title: "First".into(), ..Default::default() }).unwrap().id).await.unwrap();
-            let a_wt = PathBuf::from(a.worktree_path.clone().unwrap());
-            commit_file(&a_wt, "parent-file");
-            let b = create_task_inner(&s, &p.id, CreateTask { title: "Second".into(), start_from: Some(json!("X-1")), ..Default::default() }).unwrap();
-            let b = setup(&s, &b.id).await.unwrap();
-            let b_wt = PathBuf::from(b.worktree_path.clone().unwrap());
-            // First gets more work, which Second takes in.
-            commit_file(&a_wt, "more-parent-file");
-            sh(&b_wt, &["merge", "-q", "--no-edit", a.branch.as_deref().unwrap()]);
-            commit_file(&b_wt, "child-file");
-            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            // Second takes in First's later work, and the board hears of it as Second's run ends, as First
+            // is done or as First's worktree and branch are removed, without anyone reading Second's
+            // changes before First's branch is gone.
+            for how in ["run", "done", "teardown"] {
+                let s = crate::testing::state();
+                let (root, repo, _, p) = stacking_repo(&s).await;
+                let a = setup(&s, &create_task_inner(&s, &p.id, CreateTask { title: "First".into(), ..Default::default() }).unwrap().id).await.unwrap();
+                let a_wt = PathBuf::from(a.worktree_path.clone().unwrap());
+                commit_file(&a_wt, "parent-file");
+                let b = create_task_inner(&s, &p.id, CreateTask { title: "Second".into(), start_from: Some(json!("X-1")), ..Default::default() }).unwrap();
+                let b = setup(&s, &b.id).await.unwrap();
+                let b_wt = PathBuf::from(b.worktree_path.clone().unwrap());
+                let a_branch = a.branch.clone().unwrap();
+                let a_tip = commit_file(&a_wt, "more-parent-file");
+                sh(&b_wt, &["merge", "-q", "--no-edit", &a_branch]);
+                commit_file(&b_wt, "child-file");
+                if how == "run" {
+                    // As runner::finish does.
+                    keep_starts(&s, &b.id).await;
+                }
 
-            // First is squashed into master, done, and its branch deleted (pushed and fetched too),
-            // before Second is brought up to date: its changes are still only its own.
-            sh(&repo, &["merge", "-q", "--squash", a.branch.as_deref().unwrap()]);
-            sh(&repo, &["commit", "-qm", "First"]);
-            sh(&repo, &["push", "-q", "origin", "master", &format!("{}:{}", a.branch.as_deref().unwrap(), a.branch.as_deref().unwrap())]);
-            sh(&repo, &["fetch", "-q", "origin"]);
-            db::update_task(&s.db(), &a.id, &[("status", json!("done"))]).unwrap();
-            sh(&repo, &["worktree", "remove", "--force", &path_str(&a_wt)]);
-            sh(&repo, &["branch", "-q", "-D", a.branch.as_deref().unwrap()]);
-            sh(&repo, &["push", "-q", "origin", "--delete", a.branch.as_deref().unwrap()]);
-            sh(&repo, &["fetch", "-q", "--prune", "origin"]);
-            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
-            // So does a review, which compares with the same commit.
-            let (_, start) = changes_base(&s, &b_wt, &b, &p).await;
-            assert_eq!(start, Some(rev(&b_wt, "HEAD~1")));
-            // And its branch's, with its worktree removed.
-            teardown(&s, &b.id, false, false).await.unwrap();
-            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
-            setup(&s, &b.id).await.unwrap();
+                // First is squashed into master, done, and its branch deleted (pushed and fetched too),
+                // before Second is brought up to date: its changes are still only its own.
+                sh(&repo, &["merge", "-q", "--squash", &a_branch]);
+                sh(&repo, &["commit", "-qm", "First"]);
+                sh(&repo, &["push", "-q", "origin", "master", &format!("{a_branch}:{a_branch}")]);
+                sh(&repo, &["fetch", "-q", "origin"]);
+                if how == "done" {
+                    s.update_task(&a.id, &[("status", json!("done"))]).unwrap();
+                    let moved = async { while commit(&repo, &start_ref(&b.id)).await.as_deref() != Some(a_tip.as_str()) { tokio::time::sleep(Duration::from_millis(20)).await } };
+                    tokio::time::timeout(Duration::from_secs(10), moved).await.expect("Second's start moved on as First was done");
+                } else {
+                    db::update_task(&s.db(), &a.id, &[("status", json!("done"))]).unwrap();
+                }
+                if how == "teardown" {
+                    teardown(&s, &a.id, true, true).await.unwrap();
+                } else {
+                    sh(&repo, &["worktree", "remove", "--force", &path_str(&a_wt)]);
+                    sh(&repo, &["branch", "-q", "-D", &a_branch]);
+                }
+                assert!(commit(&repo, &format!("refs/heads/{a_branch}")).await.is_none());
+                sh(&repo, &["push", "-q", "origin", "--delete", &a_branch]);
+                sh(&repo, &["fetch", "-q", "--prune", "origin"]);
+                assert_eq!(changed_files(&s, &b.id).await, ["child-file"], "{how}");
+                // So does a review, which compares with the same commit.
+                let (_, start) = changes_base(&s, &b_wt, &b, &p).await;
+                assert_eq!(start, Some(rev(&b_wt, "HEAD~1")), "{how}");
+                // And its branch's, with its worktree removed.
+                teardown(&s, &b.id, false, false).await.unwrap();
+                assert_eq!(changed_files(&s, &b.id).await, ["child-file"], "{how}");
+                setup(&s, &b.id).await.unwrap();
 
-            // Rebased onto master (First's commits dropped), it's compared with master.
-            sh(&b_wt, &["rebase", "-q", "--onto", "master", "HEAD~1"]);
-            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
-            assert_eq!(diff(&s, &b.id).await.unwrap()["merge_base"], json!(rev(&repo, "master")));
+                // Rebased onto master (First's commits dropped), it's compared with master.
+                sh(&b_wt, &["rebase", "-q", "--onto", "master", "HEAD~1"]);
+                assert_eq!(changed_files(&s, &b.id).await, ["child-file"], "{how}");
+                assert_eq!(diff(&s, &b.id).await.unwrap()["merge_base"], json!(rev(&repo, "master")));
+                let (_, start) = changes_base(&s, &b_wt, &b, &p).await;
+                assert_eq!(start, Some(rev(&repo, "master")), "{how}");
 
-            // Deleting the task drops what it kept.
-            crate::api::delete_task_inner(&s, &b, false).await.unwrap();
-            assert!(commit(&repo, &start_ref(&b.id)).await.is_none());
-            std::fs::remove_dir_all(&root).ok();
+                // Deleting the task drops what it kept.
+                crate::api::delete_task_inner(&s, &b, false).await.unwrap();
+                assert!(commit(&repo, &start_ref(&b.id)).await.is_none());
+                std::fs::remove_dir_all(&root).ok();
+            }
         })
     }
 
