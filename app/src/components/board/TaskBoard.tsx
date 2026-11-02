@@ -243,16 +243,19 @@ export function TaskBoard({
   // still places it among all of its column's tasks, filtered out or not.
   const shownStatuses = statuses.filter((s) => showsStatus(query, s.id));
   const filtering = isFiltering(query);
-  const { shown, shownArchived } = useMemo(() => {
+  // What the search, filters and Now/Later choice keep.
+  const keep = useMemo(() => {
     const match = taskMatcher(
       query,
       (t) => `${keyPrefix(t, byId.get(`${t.host_id}:${t.project_id ?? ""}`))}-${t.number}`,
       (t) => byId.get(`${t.host_id}:${t.project_id ?? ""}`)?.name ?? t.group_name ?? undefined,
     );
-    const keep = (t: Task) => inFocus(t, focus) && match(t);
+    return (t: Task) => inFocus(t, focus) && match(t);
+  }, [query, focus, byId]);
+  const { shown, shownArchived } = useMemo(() => {
     const shown = Object.fromEntries(Object.entries(columns).map(([k, ts]) => [k, sortTasks(ts.filter(keep), sort)])) as Record<Status, Task[]>;
     return { shown, shownArchived: sortTasks(archived.filter(keep), sort) };
-  }, [columns, archived, query, sort, byId, focus]);
+  }, [columns, archived, sort, keep]);
   // For the views that aren't by status: every task shown, in the order of the statuses.
   const shownTasks = useMemo(
     () => [...shownStatuses.flatMap((s) => shown[s.id]), ...(showsStatus(query, "done") ? shownArchived : [])],
@@ -263,9 +266,12 @@ export function TaskBoard({
   const total = statuses.reduce((n, s) => n + columns[s.id].length, archived.length);
   // The tasks in Now (not counting archived ones), for the switch.
   const nowCount = useMemo(() => tasks.filter((t) => isNow(t) && !isArchived(t, now)).length, [tasks, now]);
-  // The tasks picked with the lasso that the board shows.
+  // The tasks picked with the lasso, which finds them in what the view draws (the graph's subproject tasks too, which
+  // aren't in `shownTasks`). Changing what the board shows lets them go.
   const pickedIds = useSelection((s) => s.ids);
-  const picked = useMemo(() => shownTasks.filter((t) => pickedIds.has(t.id)), [shownTasks, pickedIds]);
+  const allTasks = useStore((s) => s.tasks);
+  const picked = useMemo(() => [...pickedIds].map((id) => allTasks[id]).filter((t) => t?.kind === "task"), [allTasks, pickedIds]);
+  useEffect(() => useSelection.getState().clear(), [view, focus, query]);
   const lassoPath = useLasso(root);
   useClearSelection(true);
   const shownCount = shownStatuses.reduce((n, s) => n + shown[s.id].length, showsStatus(query, "done") ? shownArchived.length : 0);
@@ -614,7 +620,7 @@ export function TaskBoard({
       ) : view === "timeline" ? (
         <TimelineView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
       ) : view === "graph" ? (
-        <GraphView tasks={shownTasks} projectOf={projectOf} progressOf={progressOf} onMenu={onMenu} />
+        <GraphView tasks={shownTasks} boardTasks={tasks} keep={keep} projectOf={projectOf} progressOf={progressOf} onMenu={onMenu} />
       ) : view === "list" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-5 p-6 narrow:p-3">
