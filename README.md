@@ -749,9 +749,12 @@ skipped. Auto-compacting idle sessions is Claude-only.
   has never shown a session limit (like a plan with only weekly limits) is left alone, as is a config
   that's out of usage. (Where that fetch fails, as with a login that has expired, it waits for an
   agent run on the config to report the window.) It fetches again before each prompt, in case a run or another host already
-  started the window, and takes the prompt's own `rate_limit_event`s in as an agent run's are; a
-  prompt whose rate limits show no 5-hour window stops the restarts until the setting is turned on
-  again. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
+  started the window, and again after it, and takes the prompt's own `rate_limit_event`s in as an
+  agent run's are. The first request after a window ends reports the window that ended (as its
+  `rateLimitType`, left out of `unifiedWindows`), so that still counts as having one; only a prompt
+  whose rate limits show no 5-hour window at all, with usage that doesn't show one either, stops the
+  restarts until the setting is turned on again. Codex's windows are told apart by their length
+  (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
   then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
   has no session limit. See `server/src/window.rs`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit

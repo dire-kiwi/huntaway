@@ -1,4 +1,4 @@
-//! Restarting 5-hour windows. A plan's session limit (Claude's `five_hour`, Codex's primary
+//! Restarting 5-hour windows. A plan's session limit (Claude's `five_hour`, Codex's 300-minute
 //! window) runs for five hours from the first message after the last window ended, so a window
 //! that ends while nothing is running leaves the next one to start whenever work does, and then
 //! run five hours from there. For each config with `restart_window` on whose plan has the window,
@@ -6,12 +6,14 @@
 //! Claude, a low-effort turn for Codex, with no session kept. That starts the next window.
 //!
 //! What it knows of the window is the config's usage (see usage.rs): fetched when the config is
-//! first seen with the setting on, again before each prompt (another host or a run may have
-//! started the window since), and kept up to date by agent runs' `rate_limit_event`s, the
-//! prompt's own included. A plan whose usage has never shown a session limit is sent nothing, nor
-//! is a config that's out of usage. Once a plan has shown one it counts as having it, as its usage
-//! may leave the limit out while no window runs; a prompt whose own rate limits show no 5-hour
-//! window stops the restarts until the setting is turned on again (or the server restarts). A
+//! first seen with the setting on, again before and after each prompt (another host or a run may
+//! have started the window since, and the prompt's own rate limits can still show the window that
+//! ended), and kept up to date by agent runs' `rate_limit_event`s, the prompt's own included. A
+//! plan whose usage has never shown a session limit is sent nothing, nor is a config that's out of
+//! usage. Once a plan has shown one it counts as having it, as its usage may leave the limit out
+//! while no window runs; a prompt whose own rate limits show no 5-hour window at all, with usage
+//! that doesn't show one either, stops the restarts until the setting is turned on again (or the
+//! server restarts). A
 //! prompt that fails, or that doesn't leave a window running, is tried again later, backing off
 //! from `RETRY` up to `MAX_RETRY`.
 
@@ -117,13 +119,16 @@ async fn check(s: &Shared, c: &ClaudeConfig, w: &mut Watch, now: DateTime<Utc>) 
         return;
     }
     let result = ping(s, c).await;
-    let reported = match result {
-        // Codex's prompt doesn't say; its usage, asked again, does.
-        Ok(None) if c.is_codex() => usage::refresh(s, c).await.then(|| usage::session_reset(s, &c.id).is_some()),
-        Ok(r) => r,
-        Err(_) => None,
+    // The first request after a window ends can still report the old one, or leave the 5-hour
+    // window out of its rate limits, so the usage, asked again, says whether the next started.
+    let shown = usage::refresh(s, c).await.then(|| usage::session_reset(s, &c.id).is_some());
+    let no_window = match result {
+        Ok(Some(said)) => !said && shown != Some(true),
+        // Codex's prompt doesn't say; its usage does.
+        Ok(None) if c.is_codex() => shown == Some(false),
+        _ => false,
     };
-    if reported == Some(false) {
+    if no_window {
         tracing::info!(config = c.name, "not restarting its 5-hour window: its plan doesn't have one");
         w.no_window = true;
         return;
@@ -182,14 +187,15 @@ async fn ping(s: &Shared, c: &ClaudeConfig) -> Result<Option<bool>> {
 }
 
 /// Take in the `rate_limit_event`s in Claude's stream-json output: whether they showed a
-/// 5-hour window, if they showed any windows.
+/// 5-hour window, if they showed any rate limits. The first request after a window ends reports
+/// it as its `rateLimitType` but leaves it out of `unifiedWindows`, so either counts.
 fn read_output(s: &Shared, config_id: &str, stdout: &str) -> Option<bool> {
     let mut reported = None;
     for v in stdout.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|v| v["type"] == "rate_limit_event") {
         usage::on_rate_limit_event(s, config_id, &v);
-        let windows = &v["rate_limit_info"]["unifiedWindows"];
-        if windows.is_object() {
-            reported = Some(reported == Some(true) || windows["five_hour"].is_object());
+        let info = &v["rate_limit_info"];
+        if info["unifiedWindows"].is_object() || info["rateLimitType"].is_string() {
+            reported = Some(reported == Some(true) || info["unifiedWindows"]["five_hour"].is_object() || info["rateLimitType"] == "five_hour");
         }
     }
     reported
@@ -334,6 +340,56 @@ mod tests {
             check(&s, &c, &mut w, now).await;
             assert!(w.no_window);
             check(&s, &c, &mut w, now + TimeDelta::hours(2)).await;
+            assert_eq!(pings(), 1);
+        })
+    }
+
+    #[test]
+    fn a_prompt_that_reports_the_window_that_just_ended_carries_on() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let c = config(&s);
+            let now = Utc::now();
+            let mut w = Watch::default();
+            let ended = now - TimeDelta::minutes(1);
+            session(&s, &c.id, Some(ended));
+            // What Claude Code prints for the first request after a window ends.
+            let stale = json!({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "resetsAt": ended.timestamp(), "rateLimitType": "five_hour",
+                "unifiedWindows": {"seven_day": {"utilization": 0.3, "resetsAt": (now + TimeDelta::days(3)).timestamp()}, "seven_day_overage_included": {"utilization": 0.1}}}});
+            TEST_OUTPUT.with_borrow_mut(|o| o.push_back(Ok(stale.to_string())));
+            check(&s, &c, &mut w, now).await;
+            assert!(!w.no_window);
+            assert_eq!((pings(), w.failures), (1, 1), "tried again later");
+            let next = now + TimeDelta::hours(5);
+            TEST_OUTPUT.with_borrow_mut(|o| o.push_back(Ok(five_hour(next))));
+            check(&s, &c, &mut w, now + TimeDelta::minutes(5)).await;
+            assert_eq!((pings(), w.failures, w.no_window), (2, 0, false));
+            assert_eq!(window(&s, &c, &mut w, now + TimeDelta::minutes(5)), Window::Open(DateTime::from_timestamp(next.timestamp(), 0).unwrap()));
+        })
+    }
+
+    #[test]
+    fn a_codex_plan_whose_only_window_is_weekly_is_sent_nothing() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let c = {
+                let c = s.db();
+                let cfg = db::insert_claude_config(&c, "codex", "", "codex").unwrap();
+                db::update_claude_config(&c, &cfg.id, &[("restart_window", json!(true))]).unwrap().unwrap()
+            };
+            let past = (Utc::now() - TimeDelta::hours(1)).timestamp();
+            let weekly = json!({"primary": {"usedPercent": 10, "windowDurationMins": 10080, "resetsAt": past}, "secondary": null});
+            usage::TEST_CODEX.set(Some(weekly));
+            let mut w = Watch::default();
+            check(&s, &c, &mut w, Utc::now()).await;
+            check(&s, &c, &mut w, Utc::now() + TimeDelta::hours(2)).await;
+            assert_eq!(pings(), 0);
+            assert_eq!(usage::session_reset(&s, &c.id), None);
+            // One with a 5-hour window that ended is.
+            let both = json!({"primary": {"usedPercent": 0, "windowDurationMins": 300, "resetsAt": past}, "secondary": {"usedPercent": 10, "windowDurationMins": 10080}});
+            usage::TEST_CODEX.set(Some(both));
+            TEST_OUTPUT.with_borrow_mut(|o| o.push_back(Ok(String::new())));
+            check(&s, &c, &mut Watch::default(), Utc::now()).await;
             assert_eq!(pings(), 1);
         })
     }

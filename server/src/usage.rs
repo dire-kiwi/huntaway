@@ -107,6 +107,9 @@ pub async fn list(State(s): State<Shared>, Query(q): Query<UsageQuery>) -> ApiRe
 /// Fetch the config's usage now: whether that worked (the last numbers stay if it didn't).
 pub async fn refresh(s: &Shared, config: &db::ClaudeConfig) -> bool {
     let (config_id, config_dir) = (config.id.as_str(), config.config_dir.as_str());
+    #[cfg(test)]
+    let result = if config.is_codex() { TEST_CODEX.with_borrow(|r| r.clone()).ok_or("no codex in tests".to_string()).map(|rl| (None, crate::codex::limits(&rl))) } else { fetch(config_dir).await };
+    #[cfg(not(test))]
     let result = if config.is_codex() { crate::codex::rate_limits(config.dir()).await } else { fetch(config_dir).await };
     let mut cache = s.usage.lock().unwrap();
     let u = cache.entry(config_id.to_string()).or_insert_with(|| Usage { config_id: config_id.to_string(), ..Default::default() });
@@ -419,6 +422,12 @@ pub fn set_limits(s: &Shared, config_id: &str, limits: Vec<Limit>, plan: Option<
         u.clone()
     };
     s.emit(json!({"type": "usage", "usage": usage}));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Stands in for `codex app-server`'s `rateLimits` in tests (an error for None).
+    pub static TEST_CODEX: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
