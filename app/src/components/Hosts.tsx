@@ -10,6 +10,7 @@ import {
   hostCompat,
   hostSupports,
   LIMITS_API,
+  MERGE_APPROVAL_API,
   MODEL_ALIASES,
   PERMISSION_MODES,
   PROFILE_REVIEWERS_API,
@@ -598,6 +599,7 @@ export function ProfileForm({
   const [limitSwitch, setLimitSwitch] = useState(!!initial?.limit_switch);
   const [reviewers, setReviewers] = useState<Reviewer[]>(initial?.reviewers ?? []);
   const [summarizer, setSummarizer] = useState<Reviewer>(initial?.summarizer ?? DEFAULT_REVIEWER);
+  const [mergeApproval, setMergeApproval] = useState(!!initial?.merge_approval);
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
   const { busy, error: err, run } = useAsyncAction();
@@ -609,6 +611,7 @@ export function ProfileForm({
   const asanaToggle = hostSupports(hosts.find((h) => h.id === host), ASANA_TOGGLE_API);
   const limits = hostSupports(hosts.find((h) => h.id === host), LIMITS_API);
   const reviewing = hostSupports(hosts.find((h) => h.id === host), PROFILE_REVIEWERS_API);
+  const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
@@ -626,6 +629,7 @@ export function ProfileForm({
         ...(limits ? { limit_wait: limitWait, limit_switch: limitSwitch } : {}),
         // The host saves just the defaults as none, which is the same.
         ...(reviewing ? { reviewers, summarizer } : {}),
+        ...(approving ? { merge_approval: mergeApproval } : {}),
       };
       if (initial) await api.updateProfile(initial.host_id, initial.id, body);
       else {
@@ -717,6 +721,16 @@ export function ProfileForm({
             <ReviewerRow hostId={host} configs={hostConfigs} models={{ profile: model }} value={summarizer} onChange={(v) => setSummarizer(v ?? DEFAULT_REVIEWER)} removable={false} />
           </Field>
         </>
+      )}
+      {approving && (
+        <div className="space-y-1.5">
+          <Toggle checked={mergeApproval} onChange={setMergeApproval} label="Approve each merge first" />
+          <span className="block text-xs text-faint">
+            {mergeApproval
+              ? "A task moved to Ready for merge has its agent summarize what will be merged, and merges only once you approve it in its thread. A project can say otherwise in its Review settings."
+              : "A task moved to Ready for merge is merged by its agent without asking you first, unless its project says otherwise in its Review settings."}
+          </span>
+        </div>
       )}
       {sharing && (
         <Field

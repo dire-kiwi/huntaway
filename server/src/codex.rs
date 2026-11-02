@@ -930,20 +930,36 @@ pub async fn skills(codex_home: &str, cwd: Option<&Path>) -> Result<Vec<crate::a
 }
 
 /// The account's plan and rate limits, for the usage page.
+#[cfg_attr(test, allow(dead_code))]
 pub async fn rate_limits(codex_home: &str) -> Result<(Option<String>, Vec<crate::usage::Limit>), String> {
     let r = query(codex_home, &[("account/rateLimits/read", Value::Null)]).await.map_err(|e| format!("{e:#}"))?;
     let rl = &r[0]["rateLimits"];
     Ok((rl["planType"].as_str().map(String::from), limits(rl)))
 }
 
-/// Codex's windows: `primary` is the session (5-hour) one, `secondary` the weekly one.
+/// Codex's windows, told apart by their length (`windowDurationMins`), as Codex's own status
+/// does: 5 hours is the session one and a week the weekly one, whichever of `primary` and
+/// `secondary` has it (a weekly-only plan's `primary` is weekly). Without a length, `primary` is
+/// the session and `secondary` the weekly one; another length is named by it.
 pub fn limits(rl: &Value) -> Vec<crate::usage::Limit> {
-    let mut out = Vec::new();
-    for (key, id, label) in [("primary", "session", "Session"), ("secondary", "weekly", "Weekly")] {
+    let mut out: Vec<crate::usage::Limit> = Vec::new();
+    for (key, default_id) in [("primary", "session"), ("secondary", "weekly")] {
         let w = &rl[key];
         let Some(used) = w["usedPercent"].as_f64() else { continue };
+        let (id, label) = match w["windowDurationMins"].as_i64() {
+            None if default_id == "session" => ("session".to_string(), "Session".to_string()),
+            None => ("weekly".to_string(), "Weekly".to_string()),
+            Some(300) => ("session".to_string(), "Session".to_string()),
+            Some(10080) => ("weekly".to_string(), "Weekly".to_string()),
+            Some(m) if m % 1440 == 0 => (format!("window:{m}"), format!("{}-day", m / 1440)),
+            Some(m) if m % 60 == 0 => (format!("window:{m}"), format!("{}-hour", m / 60)),
+            Some(m) => (format!("window:{m}"), format!("{m}-minute")),
+        };
+        if out.iter().any(|l| l.id == id) {
+            continue;
+        }
         let resets_at = w["resetsAt"].as_i64().and_then(|t| chrono::DateTime::from_timestamp(t, 0)).map(|t| t.to_rfc3339());
-        out.push(crate::usage::Limit { id: id.into(), label: label.into(), percent: used, resets_at });
+        out.push(crate::usage::Limit { id, label, percent: used, resets_at });
     }
     out
 }
@@ -1362,6 +1378,18 @@ fn finish_turn(state: &Shared, run: &Run, turn: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limit_windows_go_by_their_length() {
+        let ids = |rl: Value| limits(&rl).into_iter().map(|l| (l.id, l.label)).collect::<Vec<_>>();
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        let w = |mins: Option<i64>| json!({"usedPercent": 10, "windowDurationMins": mins, "resetsAt": 1793521800});
+        assert_eq!(ids(json!({"primary": w(Some(300)), "secondary": w(Some(10080))})), [pair("session", "Session"), pair("weekly", "Weekly")]);
+        // A weekly-only plan's primary window is its weekly one.
+        assert_eq!(ids(json!({"primary": w(Some(10080)), "secondary": null})), [pair("weekly", "Weekly")]);
+        assert_eq!(ids(json!({"primary": w(None), "secondary": w(None)})), [pair("session", "Session"), pair("weekly", "Weekly")]);
+        assert_eq!(ids(json!({"primary": w(Some(120)), "secondary": w(Some(43200))})), [pair("window:120", "2-hour"), pair("window:43200", "30-day")]);
+    }
 
     #[test]
     fn unwraps_shell_commands() {

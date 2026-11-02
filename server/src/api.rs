@@ -168,6 +168,7 @@ fn host_routes() -> Router<Shared> {
         .route("/permissions/{id}", post(resolve_permission))
         .route("/project-approvals", get(project_approvals))
         .route("/internal/mcp", post(internal_mcp))
+        .route("/internal/merge-gate/{run_id}", get(internal_merge_gate))
         .route("/tools/{tool}", post(remote_tool))
         .route("/usage", get(crate::usage::list))
         .route("/settings", get(get_settings).patch(update_settings))
@@ -268,6 +269,9 @@ struct CreateProfile {
     /// See `db::Profile::summarizer` (API 87).
     #[serde(default)]
     summarizer: Value,
+    /// See `db::Profile::merge_approval` (API 92).
+    #[serde(default)]
+    merge_approval: bool,
 }
 
 async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -285,6 +289,7 @@ async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
     fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
+    fields.push(("merge_approval", json!(b.merge_approval)));
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -332,7 +337,7 @@ async fn update_profile(State(s): State<Shared>, Path(id): Path<String>, Json(b)
     if let Some(v) = b.get("asana_enabled") {
         fields.push(("asana_enabled", json!(v.as_bool().ok_or_else(|| ApiError::bad("asana_enabled must be true or false"))?)));
     }
-    for key in ["limit_wait", "limit_switch"] {
+    for key in ["limit_wait", "limit_switch", "merge_approval"] {
         if let Some(v) = b.get(key) {
             fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
         }
@@ -588,8 +593,10 @@ async fn update_claude_config(State(s): State<Shared>, Path(id): Path<String>, J
         }
         *v = json!(t);
     }
-    if let Some(v) = b.get("show_usage") {
-        fields.push(("show_usage", json!(v.as_bool().ok_or_else(|| ApiError::bad("show_usage must be true or false"))?)));
+    for key in ["show_usage", "restart_window"] {
+        if let Some(v) = b.get(key) {
+            fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
+        }
     }
     let c = s.db();
     let current = db::get_claude_config(&c, &id)?.ok_or_else(|| ApiError::not_found("Claude config"))?;
@@ -965,6 +972,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "name", "key", "repo_path", "base_branch", "setup_script", "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model",
             "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
+            "merge_approval",
             "github_account",
             "done_when_merged",
             "pull_requests",
@@ -1056,6 +1064,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
                 return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
             }
+            // null follows the profile's.
+            "merge_approval" if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("merge_approval must be null, true or false")),
             "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" | "pull_requests" | "subproject_pull_requests" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
@@ -1820,6 +1830,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     if remerge && !(current.merging && s.is_running(id) && b.get("status").and_then(Value::as_str) == Some("in_progress")) {
         return Err(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"));
     }
+    // Waiting for the user's approval, it isn't in the queue to step out of.
+    if remerge && crate::merge_gate::is_pending(&current) {
+        return Err(ApiError::bad("the merge hasn't been approved yet, so it isn't in the merge queue to step out of: summarize what will be merged and end your turn"));
+    }
     // Moving a task to "Ready for merge" asks its agent to merge it, once no other task in its
     // project is merging. On a host that can't run agents it joins the queue all the same, and
     // its merge starts once they can (see runner::start_queued_merges).
@@ -1837,6 +1851,11 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         // Anywhere but "Ready for merge" (or waiting on the user while merging) ends a merge.
         if merge || !["ready_for_merge", "needs_attention"].contains(&st) {
             fields.push(("merging", json!(merge)));
+        }
+        // Moved there again, a merge that needs approval is summarised again (see merge_gate.rs),
+        // unless it's approved already (stepping out to make changes keeps it).
+        if merge && current.merge_approval.as_deref() != Some(crate::merge_gate::APPROVED) {
+            fields.push(("merge_approval", Value::Null));
         }
         // Anywhere but "In progress" (or waiting on the user) drops its place to rejoin the queue (see db::update_task).
         if remerge {
@@ -1902,6 +1921,10 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         return Err(e);
     }
     let t = updated.ok_or_else(|| ApiError::not_found("task"))?;
+    // The approval it waited for is asked again, or not at all.
+    if crate::merge_gate::is_pending(&current) && !crate::merge_gate::is_pending(&t) {
+        crate::merge_gate::settle(s, id, "replaced");
+    }
     if remerge {
         s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
     }
@@ -2526,6 +2549,17 @@ async fn internal_mcp(State(s): State<Shared>, Json(call): Json<tools::McpCall>)
         Ok(v) => json!({"result": v}),
         Err(e) => json!({"error": e}),
     })
+}
+
+/// From a run's gh server, before it merges a pull request: why it can't, if it can't (see merge_gate.rs).
+async fn internal_merge_gate(State(s): State<Shared>, Path(run_id): Path<String>) -> ApiResult<Json<Value>> {
+    let c = s.db();
+    let run = db::get_run(&c, &run_id)?.ok_or_else(|| ApiError::not_found("run"))?;
+    let blocked = match db::get_task(&c, &run.task_id)? {
+        Some(task) => crate::merge_gate::blocked(&c, &task)?,
+        None => None,
+    };
+    Ok(Json(json!({"blocked": blocked})))
 }
 
 #[derive(Deserialize)]
@@ -4025,6 +4059,150 @@ pub(crate) mod tests {
             let (a, b) = tokio::join!(update_task_inner(&s, &t.id, body.as_object().unwrap()), update_task_inner(&s, &t.id, body.as_object().unwrap()));
             let codes: Vec<Option<StatusCode>> = [&a, &b].iter().map(|r| r.as_ref().err().map(|e| e.0)).collect();
             assert!(codes.contains(&None) && codes.contains(&Some(StatusCode::CONFLICT)), "{codes:?}");
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    /// A task in project `p` with a commit to merge.
+    async fn task_with_work(s: &Shared, p: &db::Project, title: &str) -> db::Task {
+        let t = create_task_inner(s, &p.id, CreateTask { title: title.into(), ..Default::default() }).unwrap();
+        let t = worktree::setup(s, &t.id).await.unwrap();
+        let wt = PathBuf::from(t.worktree_path.as_deref().unwrap());
+        assert!(std::process::Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]).status().unwrap().success());
+        t
+    }
+
+    /// Until the launch of `id`'s run is over: it fails, as there's no agent here.
+    async fn idle(s: &Shared, id: &str) {
+        while s.is_running(id) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    /// The agent's run on `id` ends, having answered (after its launch here failed).
+    async fn run_ends(s: &Shared, id: &str) {
+        idle(s, id).await;
+        let run = db::insert_run(&s.db(), id, "prompt").unwrap();
+        s.db().execute("UPDATE runs SET status='running', saw_result=1 WHERE id=?1", [&run.id]).unwrap();
+        s.runs.lock().unwrap().insert(id.into(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
+        s.update_task(id, &[("running", json!(true))]).unwrap();
+        crate::runner::on_exit(s, &run.id, Some(0), None, None, "");
+    }
+
+    fn last_prompt(s: &Shared, id: &str) -> String {
+        let m = db::list_messages(&s.db(), id).unwrap().into_iter().rfind(|m| m.kind == "user").unwrap();
+        m.data["text"].as_str().unwrap().to_string()
+    }
+
+    fn approval_cards(s: &Shared, id: &str) -> Vec<db::Message> {
+        db::list_messages(&s.db(), id).unwrap().into_iter().filter(|m| m.kind == "question" && m.data["merge_approval"] == true).collect()
+    }
+
+    fn pick(choice: &str) -> crate::questions::Answer {
+        crate::questions::Answer { choices: vec![choice.into()], text: None }
+    }
+
+    // HA-86: a merge waits for the user's approval of its agent's summary.
+    #[test]
+    fn a_merge_waits_for_the_users_approval_of_its_summary() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            db::update_profile(&s.db(), &p.profile_id, &[("merge_approval", json!(true))]).unwrap();
+            let t = task_with_work(&s, &p, "a").await;
+            let blocked = |id: &str| {
+                let t = db::get_task(&s.db(), id).unwrap().unwrap();
+                crate::merge_gate::blocked(&s.db(), &t).unwrap()
+            };
+            // Not merging, it can't merge either.
+            assert!(blocked(&t.id).is_some());
+
+            // Moved to Ready for merge, its agent summarises the merge, out of the merge queue.
+            let t = update_task_inner(&s, &t.id, json!({"status": "ready_for_merge"}).as_object().unwrap()).await.unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("ready_for_merge", true, Some("pending"), true));
+            assert!(last_prompt(&s, &t.id).contains("Do not merge yet"), "{}", last_prompt(&s, &t.id));
+            assert!(blocked(&t.id).unwrap().contains("hasn't approved"));
+            let run = db::latest_run(&s.db(), &t.id, None).unwrap().unwrap();
+            let gate = internal_merge_gate(State(s.clone()), Path(run)).await.unwrap().0;
+            assert!(gate["blocked"].as_str().unwrap().starts_with("Merging is disabled"), "{gate}");
+            assert!(db::active_merge(&s.db(), Some(&p.id), None).unwrap().is_none());
+
+            // Once it's done, the user is asked.
+            run_ends(&s, &t.id).await;
+            let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref()), ("needs_attention", true, Some("pending")));
+            let cards = approval_cards(&s, &t.id);
+            assert_eq!((cards.len(), &cards[0].data["status"]), (1, &json!("pending")));
+            // It doesn't hold the merge slot meanwhile: another task merges.
+            let other = task_with_work(&s, &p, "b").await;
+            db::update_task(&s.db(), &other.id, &[("status", json!("ready_for_merge")), ("merging", json!(true)), ("merge_approval", json!("approved"))]).unwrap();
+            crate::runner::start_next_merge(&s, Some(&p.id));
+            assert!(s.is_running(&other.id));
+            assert!(last_prompt(&s, &other.id).contains("The user approved the merge."));
+            idle(&s, &other.id).await;
+            update_task_inner(&s, &other.id, json!({"status": "done"}).as_object().unwrap()).await.unwrap();
+
+            // Approved, it merges.
+            let t = crate::questions::answer(&s, &t.id, cards[0].id, pick("Approve")).unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("ready_for_merge", true, Some("approved"), true));
+            assert!(last_prompt(&s, &t.id).contains("The user approved the merge."), "{}", last_prompt(&s, &t.id));
+            assert_eq!(approval_cards(&s, &t.id)[0].data["answer"]["choices"], json!(["Approve"]));
+            assert_eq!(blocked(&t.id), None);
+            assert!(crate::questions::answer(&s, &t.id, cards[0].id, pick("Deny")).is_err(), "answered once");
+            // The run's gh server asks the board.
+            let run = db::latest_run(&s.db(), &t.id, None).unwrap().unwrap();
+            assert_eq!(internal_merge_gate(State(s.clone()), Path(run)).await.unwrap().0, json!({"blocked": null}));
+            // Leaving the merge, it needs approving again.
+            idle(&s, &t.id).await;
+            let t = update_task_inner(&s, &t.id, json!({"status": "in_review"}).as_object().unwrap()).await.unwrap();
+            assert_eq!(t.merge_approval, None);
+            assert!(blocked(&t.id).is_some());
+            crate::runs::TEST_CAN_RUN.set(false);
+            std::fs::remove_dir_all(&dir).ok();
+        })
+    }
+
+    // HA-86: denied, a merge goes back to review; moved again, it's summarised again.
+    #[test]
+    fn a_denied_merge_goes_back_to_review() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let (dir, p) = git_project(&s).await;
+            // The project's setting wins over the profile's.
+            db::update_profile(&s.db(), &p.profile_id, &[("merge_approval", json!(false))]).unwrap();
+            update_project_inner(&s, &p.id, json!({"merge_approval": true}).as_object().unwrap()).await.unwrap();
+            let t = task_with_work(&s, &p, "a").await;
+            let to_merge = json!({"status": "ready_for_merge"});
+            update_task_inner(&s, &t.id, to_merge.as_object().unwrap()).await.unwrap();
+            // It can't step out of a queue it isn't in.
+            let out = json!({"status": "in_progress", "remerge": true});
+            assert_eq!(update_task_inner(&s, &t.id, out.as_object().unwrap()).await.unwrap_err().0, StatusCode::BAD_REQUEST);
+            run_ends(&s, &t.id).await;
+            let card = approval_cards(&s, &t.id)[0].id;
+            let t = crate::questions::answer(&s, &t.id, card, pick("Deny")).unwrap();
+            assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("in_review", false, None, false));
+
+            // Moved there again while waiting, the old card goes and it's summarised again.
+            update_task_inner(&s, &t.id, to_merge.as_object().unwrap()).await.unwrap();
+            run_ends(&s, &t.id).await;
+            update_task_inner(&s, &t.id, to_merge.as_object().unwrap()).await.unwrap();
+            let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+            assert_eq!((t.status.as_str(), t.merge_approval.as_deref(), t.running), ("ready_for_merge", Some("pending"), true));
+            let cards = approval_cards(&s, &t.id);
+            assert_eq!(cards.iter().map(|c| c.data["status"].as_str().unwrap()).collect::<Vec<_>>(), ["answered", "replaced"]);
+            assert_eq!(crate::questions::answer(&s, &t.id, cards[1].id, pick("Approve")).unwrap_err().0, StatusCode::CONFLICT);
+            idle(&s, &t.id).await;
+
+            // Turned off, merges go straight to the queue.
+            update_project_inner(&s, &p.id, json!({"merge_approval": false}).as_object().unwrap()).await.unwrap();
+            let u = task_with_work(&s, &p, "b").await;
+            let u = update_task_inner(&s, &u.id, to_merge.as_object().unwrap()).await.unwrap();
+            assert_eq!((u.merge_approval.as_deref(), u.running), (None, true));
+            assert!(last_prompt(&s, &u.id).starts_with("The user moved this task to \"Ready for merge\". Merge branch"), "{}", last_prompt(&s, &u.id));
+            idle(&s, &u.id).await;
+            crate::runs::TEST_CAN_RUN.set(false);
             std::fs::remove_dir_all(&dir).ok();
         })
     }
