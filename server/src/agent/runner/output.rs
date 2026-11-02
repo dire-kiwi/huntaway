@@ -342,6 +342,7 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     );
     #[cfg(test)]
     crate::testing::reached("finish:exited");
+    crate::agent::tokens::on_run_ended(state, task_id);
     // What a stopped or failed run had written of its document.
     crate::agent::documents::turn_ended(state, task_id);
     state.emit(json!({"type": "delta_reset", "task_id": task_id}));

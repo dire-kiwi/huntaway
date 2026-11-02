@@ -173,6 +173,28 @@ fn the_review_waits_for_every_reviewer_and_combines_their_issues() {
 }
 
 #[test]
+fn each_submission_is_kept_for_statistics() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 2);
+        let args = json!({"verdict": "needs_fixes", "summary": "One bug, and a nit.", "serious_issues": ["the bug"], "minor_issues": ["a nit", "another"]});
+        submit(&s, &threads[0], "run1", &args).unwrap();
+        submit(&s, &threads[1], "run2", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        let c = s.db();
+        let mut st = c.prepare("SELECT task_id, thread_id, run_id, verdict, serious, minor, minor_noted, label FROM review_stats ORDER BY id").unwrap();
+        type Row = (String, String, String, String, i64, Option<i64>, bool, String);
+        let rows: Vec<Row> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(
+            rows,
+            vec![
+                (task.id.clone(), threads[0].id.clone(), "run1".into(), "issues".into(), 1, Some(2), true, "r0".into()),
+                (task.id.clone(), threads[1].id.clone(), "run2".into(), "pass".into(), 0, Some(0), false, "r1".into()),
+            ]
+        );
+    })
+}
+
+#[test]
 fn a_review_passes_when_every_reviewer_passes() {
     crate::testing::run(async || {
         let s = crate::testing::state();

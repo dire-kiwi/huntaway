@@ -1,4 +1,5 @@
-//! Prompt analytics: when the user prompted which task, and when agents ran, for time tracking.
+//! Prompt analytics: when the user prompted which task, and when agents ran, for time tracking;
+//! and the tokens agents used, and what reviews found (`token_report`).
 //!
 //! Built from what threads already record (user messages and runs), so it covers history from
 //! before it existed. The UI turns the events into active time and calendar views; this only
@@ -7,7 +8,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::{DateTime, SecondsFormat, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -243,6 +244,191 @@ pub fn context_report(c: &Connection, profile_id: &str, from: &str, to: &str) ->
     Ok(ContextReport { stats, tasks, projects })
 }
 
+/// What one run used of one model (see agent/tokens.rs).
+#[derive(Serialize, Debug)]
+pub struct UsageRow {
+    pub run_id: String,
+    /// The thread the run was in: a task, or a review or summary thread.
+    pub task_id: String,
+    /// The run's: `prompt`, `compact` or `review`.
+    pub kind: String,
+    pub at: String,
+    pub model: String,
+    /// `claude` or `codex`.
+    pub runtime: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub reasoning_tokens: i64,
+    /// Claude Code's; Codex doesn't say.
+    pub cost_usd: Option<f64>,
+    /// A guess: from its cost alone, or scaled to it.
+    pub estimated: bool,
+}
+
+/// What a reviewer reported (see review/stats.rs).
+#[derive(Serialize, Debug)]
+pub struct ReviewRow {
+    /// The task reviewed.
+    pub task_id: String,
+    pub thread_id: String,
+    pub at: String,
+    /// `pass` or `issues`.
+    pub verdict: String,
+    pub serious: i64,
+    /// Null for reviews from before minor issues were listed.
+    pub minor: Option<i64>,
+    /// It listed minor issues, or its summary mentions some.
+    pub minor_noted: bool,
+    pub label: Option<String>,
+    /// The model the reviewer's run used most, once its tokens are counted.
+    pub model: Option<String>,
+}
+
+/// A task created by another's agent.
+#[derive(Serialize, Debug)]
+pub struct FollowUp {
+    pub task_id: String,
+    pub created_by: String,
+    pub at: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct UsageTask {
+    #[serde(flatten)]
+    pub info: TaskInfo,
+    /// A review thread's task, or a subproject task's subproject.
+    pub parent_id: Option<String>,
+    pub task_type: Option<String>,
+    pub subproject: bool,
+    pub group_name: Option<String>,
+    /// The model its own runs used most (by output), of those counted.
+    pub model: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct TokenReport {
+    pub usage: Vec<UsageRow>,
+    pub reviews: Vec<ReviewRow>,
+    /// Tasks created by the agents of the tasks in `tasks`.
+    pub follow_ups: Vec<FollowUp>,
+    /// Every task the rows refer to, the parents of those, and the follow-ups.
+    pub tasks: Vec<UsageTask>,
+    pub projects: Vec<ProjectInfo>,
+    /// The profile's runs that have ended but whose tokens aren't counted yet.
+    pub pending: i64,
+}
+
+/// `GET /profiles/{id}/token-stats?from=&to=`: the tokens the profile's runs that started in
+/// `[from, to)` used, the reviews then and the follow-up tasks their tasks' agents created.
+pub async fn tokens(State(s): State<Shared>, Path(profile_id): Path<String>, Query(q): Query<RangeQuery>) -> ApiResult<Json<TokenReport>> {
+    let from = parse_ts(&q.from, "from")?;
+    let to = parse_ts(&q.to, "to")?;
+    let report = tokio::task::spawn_blocking(move || token_report(&s.db(), &profile_id, &from, &to)).await.map_err(|e| anyhow::anyhow!(e))??;
+    Ok(Json(report))
+}
+
+/// The model a run used most, by output.
+const RUN_MODEL: &str = "(SELECT u.model FROM token_usage u WHERE u.run_id=?1 ORDER BY u.output_tokens DESC, u.cost_usd DESC LIMIT 1)";
+
+pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow::Result<TokenReport> {
+    let mut st = c.prepare(
+        "SELECT u.run_id, r.task_id, r.kind, r.created_at, u.model, u.runtime, u.input_tokens, u.output_tokens, u.cache_read_tokens,
+           u.cache_write_tokens, u.reasoning_tokens, u.cost_usd, u.estimated
+         FROM token_usage u JOIN runs r ON r.id=u.run_id JOIN tasks t ON t.id=r.task_id
+         WHERE t.profile_id=?1 AND r.created_at >= ?2 AND r.created_at < ?3 ORDER BY r.created_at",
+    )?;
+    let usage = st
+        .query_map(params![profile_id, from, to], |r| {
+            Ok(UsageRow {
+                run_id: r.get(0)?,
+                task_id: r.get(1)?,
+                kind: r.get(2)?,
+                at: r.get(3)?,
+                model: r.get(4)?,
+                runtime: r.get(5)?,
+                input_tokens: r.get(6)?,
+                output_tokens: r.get(7)?,
+                cache_read_tokens: r.get(8)?,
+                cache_write_tokens: r.get(9)?,
+                reasoning_tokens: r.get(10)?,
+                cost_usd: r.get(11)?,
+                estimated: r.get(12)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut st = c.prepare(
+        "SELECT s.task_id, s.thread_id, s.at, s.verdict, s.serious, s.minor, s.minor_noted, s.label, s.run_id
+         FROM review_stats s JOIN tasks t ON t.id=s.task_id
+         WHERE t.profile_id=?1 AND s.at >= ?2 AND s.at < ?3 ORDER BY s.at",
+    )?;
+    let mut model = c.prepare(&format!("SELECT {RUN_MODEL}"))?;
+    let mut reviews = Vec::new();
+    let mut rows = st.query(params![profile_id, from, to])?;
+    while let Some(r) = rows.next()? {
+        let run_id: Option<String> = r.get(8)?;
+        let model = match &run_id {
+            Some(id) => model.query_row([id], |r| r.get(0))?,
+            None => None,
+        };
+        reviews.push(ReviewRow {
+            task_id: r.get(0)?,
+            thread_id: r.get(1)?,
+            at: r.get(2)?,
+            verdict: r.get(3)?,
+            serious: r.get(4)?,
+            minor: r.get(5)?,
+            minor_noted: r.get(6)?,
+            label: r.get(7)?,
+            model,
+        });
+    }
+
+    // The tasks the rows are for, with the tasks their threads review and the subprojects they're in.
+    let mut ids: Vec<String> = usage.iter().map(|u| u.task_id.clone()).chain(reviews.iter().flat_map(|r| [r.task_id.clone(), r.thread_id.clone()])).collect();
+    let mut parent = c.prepare("SELECT parent_id FROM tasks WHERE id=?1 AND parent_id IS NOT NULL")?;
+    let mut i = 0;
+    while i < ids.len() {
+        if let Some(p) = parent.query_row([&ids[i]], |r| r.get::<_, String>(0)).optional()? {
+            if !ids.contains(&p) {
+                ids.push(p);
+            }
+        }
+        i += 1;
+    }
+    ids.sort_unstable();
+    ids.dedup();
+
+    let mut st = c.prepare("SELECT id, created_by, created_at FROM tasks WHERE created_by=?1 AND profile_id=?2")?;
+    let mut follow_ups = Vec::new();
+    for id in &ids {
+        let rows = st.query_map(params![id, profile_id], |r| Ok(FollowUp { task_id: r.get(0)?, created_by: r.get(1)?, at: r.get(2)? }))?;
+        follow_ups.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+    }
+    let ids: Vec<&str> = ids.iter().map(String::as_str).chain(follow_ups.iter().map(|f| f.task_id.as_str())).collect();
+    let (infos, projects) = tasks_and_projects(c, profile_id, ids.into_iter())?;
+    let mut st = c.prepare(
+        "SELECT parent_id, task_type, subproject, group_name,
+           (SELECT u.model FROM token_usage u JOIN runs r ON r.id=u.run_id WHERE r.task_id=tasks.id
+            GROUP BY u.model ORDER BY SUM(u.output_tokens) DESC, SUM(u.cost_usd) DESC LIMIT 1)
+         FROM tasks WHERE id=?1",
+    )?;
+    let mut tasks = Vec::new();
+    for info in infos {
+        let (parent_id, task_type, subproject, group_name, model) = st.query_row([&info.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+        tasks.push(UsageTask { info, parent_id, task_type, subproject, group_name, model });
+    }
+
+    let pending = c.query_row(
+        "SELECT COUNT(*) FROM runs r JOIN tasks t ON t.id=r.task_id WHERE t.profile_id=?1 AND r.status='exited' AND r.usage_at IS NULL",
+        [profile_id],
+        |r| r.get(0),
+    )?;
+    Ok(TokenReport { usage, reviews, follow_ups, tasks, projects, pending })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,4 +484,61 @@ mod tests {
         assert_eq!(r.tasks.len(), 1);
         assert_eq!(r.projects.len(), 1);
     }
+
+    #[test]
+    fn reports_tokens_reviews_and_follow_ups() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let c = s.db();
+            let p = crate::db::insert_profile(&c, "p", &[], None).unwrap();
+            let other = crate::db::insert_profile(&c, "o", &[], None).unwrap();
+            let new = |profile, kind| crate::db::NewTask { profile_id: profile, project_id: None, kind, title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let sub = crate::db::insert_task(&c, new(&p.id, "task")).unwrap();
+            let child = crate::db::insert_task(&c, new(&p.id, "task")).unwrap();
+            let thread = crate::db::insert_task(&c, new(&p.id, "review")).unwrap();
+            let follow = crate::db::insert_task(&c, new(&p.id, "task")).unwrap();
+            let theirs = crate::db::insert_task(&c, new(&other.id, "task")).unwrap();
+            c.execute("UPDATE tasks SET subproject=1 WHERE id=?1", [&sub.id]).unwrap();
+            c.execute("UPDATE tasks SET parent_id=?1 WHERE id=?2", [&sub.id, &child.id]).unwrap();
+            c.execute("UPDATE tasks SET parent_id=?1 WHERE id=?2", [&child.id, &thread.id]).unwrap();
+            c.execute("UPDATE tasks SET created_by=?1 WHERE id=?2", [&child.id, &follow.id]).unwrap();
+            let run = |task: &str, at: &str, model: &str, out: i64| {
+                let r = crate::db::insert_run(&c, task, "prompt").unwrap();
+                c.execute("UPDATE runs SET created_at=?1, status='exited', usage_at=?1 WHERE id=?2", [at, &r.id]).unwrap();
+                c.execute("INSERT INTO token_usage (run_id, model, runtime, output_tokens, cost_usd) VALUES (?1, ?2, 'claude', ?3, 0.5)", rusqlite::params![r.id, model, out]).unwrap();
+                r.id
+            };
+            run(&child.id, "2026-10-01T01:00:00.000Z", "opus", 100);
+            run(&child.id, "2026-10-01T02:00:00.000Z", "haiku", 300);
+            run(&child.id, "2026-10-01T03:00:00.000Z", "opus", 250);
+            let review_run = run(&thread.id, "2026-10-01T04:00:00.000Z", "gpt", 50);
+            run(&child.id, "2026-09-01T00:00:00.000Z", "opus", 1);
+            run(&theirs.id, "2026-10-01T01:00:00.000Z", "opus", 1);
+            // Ended, not counted yet.
+            let r = crate::db::insert_run(&c, &child.id, "prompt").unwrap();
+            c.execute("UPDATE runs SET created_at='2026-10-01T05:00:00.000Z', status='exited' WHERE id=?1", [&r.id]).unwrap();
+            let sub_ = crate::review::stats::Submission {
+                task_id: &child.id, thread_id: &thread.id, run_id: Some(&review_run), verdict: "issues", serious: 2, minor: Some(1), summary: None, label: Some("Codex · gpt"),
+            };
+            crate::review::stats::record(&c, &sub_, "2026-10-01T04:30:00.000Z").unwrap();
+
+            let r = token_report(&c, &p.id, "2026-10-01T00:00:00.000Z", "2026-10-02T00:00:00.000Z").unwrap();
+            assert_eq!(r.usage.len(), 4);
+            assert_eq!(r.pending, 1);
+            assert_eq!(r.reviews.len(), 1);
+            assert_eq!((r.reviews[0].serious, r.reviews[0].minor, r.reviews[0].model.as_deref()), (2, Some(1), Some("gpt")));
+            let ids: Vec<&str> = r.tasks.iter().map(|t| t.info.id.as_str()).collect();
+            for t in [&sub, &child, &thread, &follow] {
+                assert!(ids.contains(&t.id.as_str()), "{} missing", t.id);
+            }
+            assert!(!ids.contains(&theirs.id.as_str()));
+            assert_eq!(r.follow_ups.iter().map(|f| (f.task_id.as_str(), f.created_by.as_str())).collect::<Vec<_>>(), [(follow.id.as_str(), child.id.as_str())]);
+            let task = |id: &str| r.tasks.iter().find(|t| t.info.id == id).unwrap();
+            // The model it used most, its earlier runs' included.
+            assert_eq!(task(&child.id).model.as_deref(), Some("opus"));
+            assert_eq!(task(&child.id).parent_id.as_deref(), Some(sub.id.as_str()));
+            assert!(task(&sub.id).subproject);
+        })
+    }
+
 }
