@@ -1,8 +1,8 @@
 # Project structure
 
 Where code goes, and how big modules are split. Written for HA-96, which split the server's four
-largest files; HA-102 grouped the server's modules into folders. The rest of the plan, under *Next*,
-is for follow-up tasks.
+largest files; HA-101 split the next five and HA-102 grouped the server's modules into folders. The
+rest of the plan, under *Next*, is for follow-up tasks.
 
 ## Layout
 
@@ -77,27 +77,27 @@ first step: in several modules they're longer than the code.
 The largest part is now `db/schema.rs` (about 1,000 lines, mostly the migrations' SQL); the
 others are 60 to 800. A new DB migration goes in `db/schema.rs`.
 
+### What HA-101 split
+
+| Was | Lines | Now |
+|---|---|---|
+| `integrations/automations.rs` | 2,185 | `automations.rs` (types, database), `check`, `delivery`, `running`, `handlers`, `tests` |
+| `mcp/gh_mcp.rs` | 1,938 | `gh_mcp.rs` (the MCP server, the Bash hook), `account`, `targets`, `env`, `tests` |
+| `git/checkpoints.rs` | 1,803 | `checkpoints.rs` (types, database, the queue), `git`, `capture`, `changed`, `handlers`, `restore`, `tests` |
+| `agent/codex.rs` | 1,683 | `codex.rs` (`Spec`, policies), `rpc`, `adapter`, `queries`, `output`, `tests`, `subagent_tests` |
+| `hosts/hub.rs` | 1,437 | `hub.rs` (links, startup), `inbound`, `dial_out`, `endpoints`, `manage`, `tests` |
+
+Their parts are 100 to 530 lines. `release`, `agent_tools`, `broker`, `relocate`, `push`, `review`,
+`wait`, `permissions`, `git_view` and `changes` (under 1,000 lines of code each) moved their tests
+to `tests.rs`.
+
 ## Next
 
 ### Server: the next files
 
-Files over 1,000 lines, with how much of each is code rather than tests:
-
-| File | Lines | Code |
-|---|---|---|
-| `integrations/automations.rs` | 2,185 | 1,484 |
-| `update/release.rs` | 2,099 | 748 |
-| `mcp/gh_mcp.rs` | 1,938 | 1,245 |
-| `mcp/pr_watch.rs` | 1,878 | 1,304 |
-| `git/checkpoints.rs` | 1,803 | 1,222 |
-| `git/worktree.rs` | 1,790 | 1,153 |
-| `agent/codex.rs` | 1,683 | 1,377 |
-| `hosts/hub.rs` | 1,437 | 1,096 |
-| `agent/agent_tools.rs` | 1,403 | 993 |
-| `hosts/broker.rs`, `git/relocate.rs`, `integrations/push.rs`, `review.rs`, `mcp/wait.rs`, `mcp/permissions.rs`, `git/git_view.rs`, `git/changes.rs` | 1,000–1,300 | 480–750 |
-
-Those with over 1,000 lines of code split as above. For the others, moving tests to `tests.rs` is
-enough for now.
+`mcp/pr_watch.rs` (1,878 lines, 1,304 of code) and `git/worktree.rs` (1,790, 1,153) are the last files
+over 1,000 lines of code. They split as above, with their tests moved to `tests.rs`, once open PRs
+#53 and #52, which rewrite large parts of them, have merged.
 
 ### App: feature folders
 
