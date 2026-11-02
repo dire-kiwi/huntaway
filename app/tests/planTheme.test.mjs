@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isWholePage } from "../src/planTheme.ts";
+import { isWholePage } from "../src/components/task/planTheme.ts";
 
 test("a plan that's a whole page of its own is told apart from content for the theme", () => {
   assert.ok(isWholePage("<!doctype html>\n<html><body><h1>Plan</h1></body></html>"));

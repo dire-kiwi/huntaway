@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allValues, codeRanges, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens } from "../src/taskTokens.ts";
+import { allValues, codeRanges, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens } from "../src/components/layout/taskTokens.ts";
 
 const vocab = { "/": ["task", "plan", "scratch"], "@": ["IA", "SD", "group", "none"], "!": ["opus", "sonnet"], "^": ["high"], "#": ["IA-212", "IA-216"] };
 const parse = (text) => resolveTokens(findTokens(text), vocab);

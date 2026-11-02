@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compareVersions } from "../src/versions.ts";
+import { compareVersions } from "../src/components/settings/versions.ts";
 
 test("versions compare by semver precedence", () => {
   const sign = (a, b) => Math.sign(compareVersions(a, b));

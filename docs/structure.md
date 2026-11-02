@@ -1,8 +1,9 @@
 # Project structure
 
 Where code goes, and how big modules are split. Written for HA-96, which split the server's four
-largest files; HA-101 split the next five and HA-102 grouped the server's modules into folders. The
-rest of the plan, under *Next*, is for follow-up tasks.
+largest files; HA-101 split the next five and HA-102 grouped the server's modules into folders, and
+HA-103 grouped the app's components into feature folders and split its largest files. The rest of
+the plan, under *Next*, is for follow-up tasks.
 
 ## Layout
 
@@ -10,8 +11,9 @@ rest of the plan, under *Next*, is for follow-up tasks.
 server/src/          the huntaway binary: one module per feature, grouped in folders by area
 server/shim/         ia-shim, the per-run supervisor
 server/broker/       huntaway-broker
-app/src/             the UI: api.ts (types and calls), store.ts, feature helpers (*.ts)
-app/src/components/  React components, one file per view or panel
+app/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
+app/src/api/         the API's types and calls, a file per resource
+app/src/components/  React components in a folder per feature (see App modules)
 app/tests/           unit tests (npm test); app/tests/ui/ browser tests (npm run test:ui)
 scripts/             test servers, ia-api, ui-check and other tools (see README.md)
 docs/                notes like this one
@@ -91,6 +93,52 @@ Their parts are 100 to 530 lines. `release`, `agent_tools`, `broker`, `relocate`
 `wait`, `permissions`, `git_view` and `changes` (under 1,000 lines of code each) moved their tests
 to `tests.rs`.
 
+## App modules
+
+The app groups its components by feature (see *bulletproof-react* below): a folder in
+`app/src/components/` for each, with the helpers only that feature uses beside its components.
+Helpers several features use stay in `app/src/` (`store.ts`, `router.ts`, `threadModel.ts`,
+`analytics.ts`…).
+
+| Folder | What's in it |
+|---|---|
+| `board/` | the board and its views (TaskBoard, TaskCard, BoardControls, Graph, Timeline, Triage and Live views, Fanout, Dependencies, ConfirmDone), `boardQuery.ts`, `taskOrder.ts`, `timeline.ts` |
+| `task/` | the task panel (TaskView, and `view/` for its title, tabs and Details column), the thread (Thread, and `thread/` for its markdown, tool calls, subagents, items and the composer), Approvals, Questions, Review, Reviewers, Context, Rewind, Reminders, ExternalLinks, Attachments, Document, Terminal, WorktreeSetup, SkillMenu; `turns.ts`, `planTheme.ts`, `planAnswers.ts`, `openingTab.ts`, `htmlFrame.ts`, `mermaid.ts` |
+| `changes/` | the Changes tab (Changes, and `git/` for its parts), DiffLines, Compare; `changes.ts`, `lineComments.ts`, `highlight.ts` and its worker |
+| `settings/` | the settings page and its sections (Server, Hosts, HostPage, ClaudeConfigs, AgentTools, Automations, GithubRepos, Usage, DiskUsage, Analytics, chart), NewProjectModal, DirPicker, ArchivedProjects, Onboarding, TokenScreen, and `project/` for project settings, a file per tab; `disk.ts`, `githubRepos.ts`, `versions.ts`, `uiVersion.ts` |
+| `layout/` | Sidebar, Notifications, NewTaskModal (and `newTask/`, its hooks and sections), TitleModal, UnhandledErrors, AgentsPill; `harnesses.ts`, `taskTokens.ts` |
+| `ui/` | the shared building blocks, a file per kind (`controls`, `Modal`, `ContextMenu`, `status`, `links`, `time`, `hooks`, `format`) re-exported by `ui/index.ts`, AgentIcon, `preview.ts` |
+
+- A feature may import from another (the composer sends line comments from `changes/`, the Changes
+  tab reads turns from `task/`); what every feature needs goes in `ui/` or `app/src/`.
+- `app/src/api/` has a file per resource, as the server's `api/` has (`tasks`, `thread`, `git`,
+  `projects`, `hosts`…), with `http.ts` for the requests themselves. Each resource's calls are an
+  object (`tasksApi`), and `api/index.ts` re-exports the types and puts the calls together as
+  `api`, so `import { api, type Task } from "../../api"` works from anywhere. Tests stub calls on
+  that one `api` object.
+- When a component outgrows its file, it becomes a folder named after it beside it
+  (`changes/git/`, `task/thread/`, `layout/newTask/`): its state in hooks (`useX.ts`, each owning
+  one part of it), its sections or panes in components, and the file it had keeps the component
+  that puts them together. Importers then import from the file that has what they need, rather
+  than through a re-export.
+- The unit tests import the app's modules by path (`../src/components/changes/changes.ts`). Their
+  resolve hook adds `.ts`, or `/index.ts` for a folder, to imports without an extension.
+
+### What HA-103 split
+
+| Was | Lines | Now |
+|---|---|---|
+| `api.ts` | 1,918 | `api/`: `http`, `hosts`, `push`, `profiles`, `claudeConfigs`, `github`, `projects`, `agentTools`, `analytics`, `tasks`, `thread`, `git`, `terminal`, `approvals`, `automations`, `server`, `labels`, `index` |
+| `Changes.tsx` | 2,173 | `Changes.tsx` (`GitView` putting it together, 344) and `git/`: `useGitStatus`, `useGitSelection`, `useFileDiffs`, `useStaging`, `useShownDiffs`, `useGitActions`, `useGitKeys`, `SidePanels`, `MainPanel`, `Panels`, `Patches`, `ReviewBar`, `Dialogs`, `model` |
+| `Thread.tsx` | 1,617 | `Thread.tsx` (280) and `thread/`: `Markdown`, `context`, `tools`, `subagents`, `items`, `ItemList`, `ModeSelect`, `Composer` |
+| `TaskView.tsx` | 1,574 | `TaskView.tsx` (397) and `view/`: `layout`, `hooks`, `TabContent`, `ReviewThreadView`, `Title`, and `details/` (Details and its sections and dialogs) |
+| `Settings.tsx` | 1,525 | `Settings.tsx` (80), `DirPicker`, `NewProjectModal`, `ArchivedProjects`, `Onboarding`, `TokenScreen`, and `project/`: `ProjectSettings` and a file per tab |
+| `NewTaskModal.tsx` | 1,243 | `NewTaskModal.tsx` (129) and `newTask/`: hooks for the draft, text, destination, agent, tokens, options, submission, completion and editor layout, and the `Editor`, `ReadsAs`, `OptionsRow`, `Notes` and `Footer` sections |
+| `ui.tsx` | 823 | `ui/`: `controls`, `Modal`, `ContextMenu`, `status`, `links`, `time`, `hooks`, `format`, `index` |
+
+The largest files left in the app are `Hosts.tsx`, `Automations.tsx` and `Analytics.tsx` in
+`settings/` (about 1,100 lines each), which could split the same way.
+
 ## Next
 
 ### Server: the next files
@@ -98,34 +146,6 @@ to `tests.rs`.
 `mcp/pr_watch.rs` (1,878 lines, 1,304 of code) and `git/worktree.rs` (1,790, 1,153) are the last files
 over 1,000 lines of code. They split as above, with their tests moved to `tests.rs`, once open PRs
 #53 and #52, which rewrite large parts of them, have merged.
-
-### App: feature folders
-
-`app/src/components` has 49 files side by side, eight of them over 1,000 lines. React projects of
-this size usually group by feature (see *bulletproof-react* below): each feature's components,
-hooks and helpers together, with shared pieces in one place.
-
-| Folder | Components |
-|---|---|
-| `board/` | Board, TaskBoard, TaskCard, BoardControls, GraphView, TimelineView, TriageView, LiveView, Fanout, Dependencies, ConfirmDone |
-| `task/` | TaskView, Thread, Approvals, Questions, Review, Reviewers, Context, ContextStats, Rewind, Reminders, ExternalLinks, Attachments, Document, Terminal, WorktreeSetup, SkillMenu |
-| `changes/` | Changes, DiffLines, Compare |
-| `settings/` | Settings, Server, Hosts, HostPage, ClaudeConfigs, AgentTools, Automations, GithubRepos, Usage, DiskUsage, Analytics, chart |
-| `layout/` | Sidebar, Notifications, NewTaskModal, UnhandledErrors, AgentsPill |
-| `ui/` | ui.tsx (split by component), AgentIcon |
-
-Each folder takes the `app/src/*.ts` helpers only it uses (`changes.ts` and `lineComments.ts` go to
-`changes/`, `threadModel.ts`, `turns.ts` and `timeline.ts` to `task/`). Of the big files:
-
-- `Changes.tsx` (2,173 lines) is mostly `GitView`, one component of about 1,260 lines. It needs
-  its state and handlers pulled into hooks and its panes into components, which is a refactor
-  rather than a move.
-- `Thread.tsx`, `Settings.tsx`, `TaskView.tsx` and `NewTaskModal.tsx` (1,200–1,600 lines) split
-  into a component per section or tab.
-- `api.ts` (1,918 lines of types and calls) becomes `api/` with a file per resource, as the
-  server's `api/` has, and an `index.ts` that re-exports them so imports don't change.
-
-The redesign (PR #30) touches most components, so this waits for it.
 
 ### README
 

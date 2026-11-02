@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, unlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { fileRows, linesPatch, parseDiff, unquote } from "../src/changes.ts";
+import { fileRows, linesPatch, parseDiff, unquote } from "../src/components/changes/changes.ts";
 
 test("reads files, hunks and line numbers", () => {
   const patch = [
