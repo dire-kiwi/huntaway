@@ -34,6 +34,18 @@ pub struct ServerMeta {
     pub args: Vec<OsString>,
 }
 
+/// How this server updates when a hub asks it to (API 89): `checkout` (fast-forward and rebuild its source checkout),
+/// `releases` (installed from a release, with `--release-updates`: restart onto a newer release), or none.
+pub fn updates_from(meta: &ServerMeta) -> Option<&'static str> {
+    if meta.source_dir.is_some() {
+        Some("checkout")
+    } else if meta.release.is_some() {
+        Some("releases")
+    } else {
+        None
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct RestartJob {
     pub phase: String,
