@@ -589,6 +589,24 @@ fn ready_for_merge_needs_a_github_approval_where_required() {
         db::update_profile(&s.db(), &p.profile_id, &[("require_pr_approval", json!(true))]).unwrap();
         assert!(go(t.id.clone()).await.is_err());
         assert_ne!(db::get_task(&s.db(), &t.id).unwrap().unwrap().status, "ready_for_merge");
+        // A pull request set or cleared by the same request is the one checked: cleared, there's none.
+        db::update_task(&s.db(), &t.id, &[("pr_url", json!("https://github.com/o/r/pull/1"))]).unwrap();
+        let cleared = update_task_inner(&s, &t.id, json!({"status": "ready_for_merge", "pr_url": null}).as_object().unwrap()).await;
+        assert!(format!("{:?}", cleared.unwrap_err()).contains("no pull request"));
+        db::update_task(&s.db(), &t.id, &[("pr_url", Value::Null)]).unwrap();
+        // Where the project's settings open no pull request for its tasks, there's none to wait for.
+        db::update_project(&s.db(), &p.id, &[("pull_requests", json!(false))]).unwrap();
+        let cur = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+        assert!(!crate::git::worktree::pr_approval_required(&s, &cur));
+        db::update_project(&s.db(), &p.id, &[("pull_requests", json!(true)), ("subproject_pull_requests", json!(false))]).unwrap();
+        let sub = task_with_work(&s, &p, "sub").await;
+        db::update_task(&s.db(), &sub.id, &[("subproject", json!(true))]).unwrap();
+        db::update_task(&s.db(), &t.id, &[("parent_id", json!(sub.id))]).unwrap();
+        let cur = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+        assert!(!crate::git::worktree::pr_approval_required(&s, &cur));
+        db::update_task(&s.db(), &t.id, &[("parent_id", Value::Null)]).unwrap();
+        let cur = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+        assert!(crate::git::worktree::pr_approval_required(&s, &cur));
         // The project says otherwise.
         db::update_project(&s.db(), &p.id, &[("require_pr_approval", json!(false))]).unwrap();
         assert_eq!(go(t.id.clone()).await.unwrap().status, "ready_for_merge");

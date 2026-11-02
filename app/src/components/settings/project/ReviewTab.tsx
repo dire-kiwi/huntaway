@@ -154,7 +154,7 @@ function ProjectPrApproval({ project, onChange }: { project: Project; onChange: 
   return (
     <Field
       label="Require GitHub approval"
-      hint="A task can only be moved to Ready for merge once its pull request has an approving review on GitHub (and none asking for changes). Without a pull request, or if GitHub can't be read, the move is refused."
+      hint="A task can only be moved to Ready for merge once its pull request has an approving review on GitHub (and none asking for changes). Where the task gets a pull request but it has none yet, or GitHub can't be read, the move is refused. Tasks whose merges open no pull request (see the pull request settings above) aren't held."
     >
       <select
         value={value}
