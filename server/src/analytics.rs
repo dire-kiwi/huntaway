@@ -458,25 +458,21 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
 }
 
 /// Every round of review of `tasks`, and the number of each task's rounds by when they started.
-/// Submissions whose rounds started within `stats::ROUND_GAP` of the one before are one round's
-/// (those of a review in progress as the board was updated each have their run's start), but for
-/// two of one reviewer's (see `stats::Rounds`).
+/// A round is its submissions' `round` (see review/stats.rs).
 #[allow(clippy::type_complexity)]
 fn review_rounds<'a>(c: &Connection, tasks: impl Iterator<Item = &'a str>) -> anyhow::Result<(Vec<RoundRow>, HashMap<(String, String), i64>)> {
     let mut tasks: Vec<&str> = tasks.collect();
     tasks.sort_unstable();
     tasks.dedup();
-    let mut st = c.prepare("SELECT round, thread_id, verdict, serious FROM review_stats WHERE task_id=?1 ORDER BY round, at")?;
+    let mut st = c.prepare("SELECT round, verdict, serious FROM review_stats WHERE task_id=?1 ORDER BY round")?;
     let (mut rounds, mut numbers) = (Vec::new(), HashMap::new());
     for task in tasks {
-        let subs: Vec<(String, String, String, i64)> = st.query_map([task], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
-        let (mut placed, mut n) = (crate::review::stats::Rounds::default(), 0);
-        for (round, thread, verdict, serious) in subs {
-            // Submissions of one round share its start; those from before rounds were kept have their runs'.
-            let (start, new) = placed.place_new(&thread, &round);
-            if new {
+        let subs: Vec<(String, String, i64)> = st.query_map([task], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut n = 0;
+        for (round, verdict, serious) in subs {
+            if rounds.last().is_none_or(|r: &RoundRow| r.task_id != task || r.at != round) {
                 n += 1;
-                rounds.push(RoundRow { task_id: task.to_string(), round: n, at: start.to_string(), verdict: "pass".into(), serious: 0, reviewers: 0 });
+                rounds.push(RoundRow { task_id: task.to_string(), round: n, at: round.clone(), verdict: "pass".into(), serious: 0, reviewers: 0 });
             }
             let r = rounds.last_mut().unwrap();
             r.reviewers += 1;
@@ -620,16 +616,19 @@ mod tests {
             // Round 1, the day before: A found issues, B passed.
             sub("A", "2026-10-01T10:00:00.000Z", "2026-10-01T10:05:00.000Z", "issues", 2);
             sub("B", "2026-10-01T10:00:00.000Z", "2026-10-01T10:06:00.000Z", "pass", 0);
-            // Round 2, from before rounds were kept: each reviewer's run's start.
+            // Round 2.
             sub("A", "2026-10-02T09:00:00.000Z", "2026-10-02T09:05:00.000Z", "pass", 0);
-            sub("B", "2026-10-02T09:00:30.000Z", "2026-10-02T09:06:00.000Z", "issues", 1);
+            sub("B", "2026-10-02T09:00:00.000Z", "2026-10-02T09:06:00.000Z", "issues", 1);
             // Round 3: a reviewer added since (another thread); A didn't submit.
-            sub("C", "2026-10-02T12:00:00.000Z", "2026-10-02T12:05:00.000Z", "pass", 0);
+            sub("C", "2026-10-02T12:00:00.000Z", "2026-10-02T12:05:00.000Z", "issues", 1);
+            // Round 4, a minute after: C didn't submit, and B did. Rounds are kept apart however
+            // close they started.
+            sub("B", "2026-10-02T12:01:00.000Z", "2026-10-02T12:03:00.000Z", "issues", 1);
 
             let r = token_report(&c, &p.id, "2026-10-02T00:00:00.000Z", "2026-10-03T00:00:00.000Z").unwrap();
-            assert_eq!(r.reviews.iter().map(|v| (v.label.as_deref().unwrap(), v.round)).collect::<Vec<_>>(), [("A", 2), ("B", 2), ("C", 3)]);
+            assert_eq!(r.reviews.iter().map(|v| (v.label.as_deref().unwrap(), v.round)).collect::<Vec<_>>(), [("A", 2), ("B", 2), ("B", 4), ("C", 3)]);
             let rounds: Vec<(i64, &str, i64, i64)> = r.rounds.iter().map(|x| (x.round, x.verdict.as_str(), x.serious, x.reviewers)).collect();
-            assert_eq!(rounds, [(1, "issues", 2, 2), (2, "issues", 1, 2), (3, "pass", 0, 1)]);
+            assert_eq!(rounds, [(1, "issues", 2, 2), (2, "issues", 1, 2), (3, "issues", 1, 1), (4, "issues", 1, 1)]);
         })
     }
 

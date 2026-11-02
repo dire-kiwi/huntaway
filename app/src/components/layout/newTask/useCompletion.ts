@@ -16,7 +16,7 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
   const { completing, description, caret, edit } = ed;
   const { typeTabs, offered, atVocab, placeNames, project } = where;
   const { pickConfig, inherited, hostSettings, efforts, modelList } = agent;
-  const { labelWords, labelling, harnessVocab, specific, named, effortList, depTasks, depKey, deps, depProject } = tok;
+  const { labelWords, labelling, harnessVocab, specific, named, effortList, depTasks, depKey, deps, depProject, fromOk, fromTasks, fromKeys, projectBranches } = tok;
   const hostCount = hosts.length;
   // What's offered for each prefix as it's typed.
   const suggestions: Record<TokenPrefix, Suggestion[]> = {
@@ -46,6 +46,13 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
         ]
       : [],
     "#": depTasks.map((t) => ({ value: depKey(t), label: t.title })),
+    "from:": fromOk
+      ? [
+          ...fromTasks.map((t) => ({ value: depKey(t), label: t.title, hint: "Stacks it on this task's branch, which its pull request targets" })),
+          // Not the tasks' own branches, which their keys stand for.
+          ...projectBranches.filter((b) => !fromTasks.some((t) => t.branch === b.name)).map((b) => ({ value: b.name, label: b.remote ? "remote branch" : "branch" })),
+        ]
+      : [],
   };
   // The one that's what's typed comes first, then those starting with it, then those whose name has it.
   const query = completing?.query.toLowerCase() ?? "";
@@ -72,6 +79,7 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
     "!": modelList[0]?.id ?? DEFAULT_WORD,
     ...(efforts ? { "^": effortList.includes("high") ? "high" : (effortList[0] ?? DEFAULT_WORD) } : {}),
     ...(deps ? { "#": depTasks[0] ? depKey(depTasks[0]) : `${depProject!.key}-1` } : {}),
+    ...(fromOk ? { "from:": fromKeys[0] ?? "feature-x" } : {}),
   };
   const help = TOKEN_HELP.filter((h) => example[h.prefix]);
   const tokenHint = `Type ${help.map((h, i) => `${i === help.length - 1 && i > 0 ? "or " : ""}${h.prefix} for ${h.asks}`).join(", ")}.`;
@@ -79,7 +87,7 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
   // A legend's prefix, typed at the caret, to pick its value from the list.
   const typePrefix = (prefix: TokenPrefix) => {
     const space = caret > 0 && !/\s/.test(description[caret - 1]) ? " " : "";
-    edit(description.slice(0, caret) + space + prefix + description.slice(caret), caret + space.length + 1);
+    edit(description.slice(0, caret) + space + prefix + description.slice(caret), caret + space.length + prefix.length);
   };
 
   return { matches, listOpen, setHl, lit, pick, example, help, tokenHint, typePrefix };

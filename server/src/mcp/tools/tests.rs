@@ -27,8 +27,32 @@ fn task(s: &Shared, project: &str, title: &str) -> Task {
         labels: None,
         external_links: None,
         fanout_id: None,
+        start_from: None,
     };
     api::create_task_inner(s, project, body).map_err(|e| e.1).unwrap()
+}
+
+#[test]
+fn agents_say_what_a_task_starts_from() {
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "web", "WEB");
+        let me = ctx(&p);
+        let first = call(&s, &me, "create_task", json!({"title": "First", "project_id": "WEB", "use_worktree": true})).await.unwrap();
+        assert!(first.get("start_from").is_none());
+        let t = call(&s, &me, "create_task", json!({"title": "On top", "project_id": "WEB", "use_worktree": true, "start_from": "web-1"})).await.unwrap();
+        assert_eq!(t["start_from"], "task WEB-1");
+        let task = db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap();
+        assert_eq!(task.start_from, Some(db::StartFrom::Task { task_id: first["id"].as_str().unwrap().into() }));
+        let t = call(&s, &me, "update_task", json!({"task_id": "WEB-2", "start_from": "https://github.com/o/web/pull/7"})).await.unwrap();
+        assert_eq!(t["start_from"], "pull request o/web#7");
+        let t = call(&s, &me, "update_task", json!({"task_id": "WEB-2", "start_from": ""})).await.unwrap();
+        assert!(t.get("start_from").is_none());
+        // Not for a task without a worktree.
+        let err = call(&s, &me, "create_task", json!({"title": "Here", "project_id": "WEB", "start_from": "dev"})).await.unwrap_err();
+        assert!(err.contains("start_from is for a task with a worktree"), "{err}");
+    });
 }
 
 fn grant(s: &Shared, p: &db::Profile, names: &[&str]) {
@@ -496,6 +520,44 @@ fn sets_a_pull_request() {
         let t = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "pr_url": ""})).await.unwrap();
         assert!(t["pr_url"].is_null());
     });
+}
+
+#[test]
+fn puts_tasks_in_now_and_later() {
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let t = call(&s, &me, "create_task", json!({"title": "Soon", "project_id": "KIW"})).await.unwrap();
+        assert!(t["now"].is_null());
+        let t = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": true})).await.unwrap();
+        assert_eq!(t["now"].as_bool(), Some(true));
+        assert!(db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap().now_at.is_some());
+        let t = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": false})).await.unwrap();
+        assert!(t["now"].is_null());
+        assert!(db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap().now_at.is_none());
+        let err = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": "yes"})).await.unwrap_err();
+        assert!(err.contains("now must be"), "{err}");
+    })
+}
+
+#[test]
+fn a_task_an_agent_creates_and_starts_stays_in_later() {
+    testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let first = call(&s, &me, "create_task", json!({"title": "First", "project_id": "KIW"})).await.unwrap();
+        // Started, but waiting for what it depends on, so nothing runs here: it's only that it was sent to.
+        let t = call(&s, &me, "create_task", json!({"title": "Second", "project_id": "KIW", "depends_on": [first["id"]], "start": true})).await.unwrap();
+        let t = db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap();
+        assert!(t.waiting, "started");
+        assert_eq!(t.now_at, None);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
 }
 
 #[test]

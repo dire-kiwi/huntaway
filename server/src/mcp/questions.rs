@@ -136,13 +136,19 @@ pub fn answer(s: &Shared, task_id: &str, message_id: i64, answer: Answer) -> Api
         return Err(ApiError::conflict("this question has been answered already"));
     }
     // The board's own question, whether to merge (see review/merge_gate.rs): the answer is the board's to act on.
-    let sent = if asked["merge_approval"] == true {
+    let merge_approval = asked["merge_approval"] == true;
+    let sent = if merge_approval {
         crate::review::merge_gate::decide(s, task_id, choices.iter().any(|c| c == crate::review::merge_gate::APPROVE))
     } else {
         crate::agent::runner::send(s, task_id, &reply_text(asked["question"].as_str().unwrap_or(""), &choices, text))
     };
     match sent {
-        Ok(task) => {
+        Ok(mut task) => {
+            // The user's answer is a prompt to the agent: it puts the task in "now" like a message does (not the
+            // board's own merge decision).
+            if !merge_approval {
+                task = crate::agent::focus::put_in_now(s, task_id).unwrap_or(task);
+            }
             emit(s, message_id);
             // Any other question it was waiting on is settled by this reply.
             replied(s, task_id);
@@ -285,6 +291,8 @@ mod tests {
 
             let t = answer(&s, &task.id, id, pick(&["Red"], None)).unwrap();
             assert_eq!(t.queued_message.as_deref(), Some("> Which colour?\n\nRed"));
+            // The answer is the user's prompt: it puts the task in now.
+            assert!(t.now_at.is_some() && db::get_task(&s.db(), &task.id).unwrap().unwrap().now_at.is_some());
             let data = &questions(&s, &task.id)[0].data;
             assert_eq!((&data["status"], &data["answer"]), (&json!("answered"), &json!({"choices": ["Red"], "text": null})));
             // A second answer (another tab's) isn't sent.

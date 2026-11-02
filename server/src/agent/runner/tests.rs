@@ -173,7 +173,7 @@ fn an_effort_a_codex_model_doesnt_take_gives_way_to_its_default() {
 }
 
 /// A task whose agent is running a run that takes input (or not), with no process behind it.
-fn running(input: bool) -> (Shared, Task, Run) {
+pub(crate) fn running(input: bool) -> (Shared, Task, Run) {
     let state = crate::testing::state();
     let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
     let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };
@@ -1151,6 +1151,44 @@ fn a_task_on_github_is_told_to_open_a_pull_request() {
     assert!(!system_prompt(&task, Some(&project), None, &[], &[], Some(&gh), false).contains("open a pull request"));
     // Every agent is told it can wait on one, though.
     assert!(text.contains("For CI or reviews on a pull request, give it the `pull_request`"), "{text}");
+}
+
+#[test]
+fn a_stacked_task_targets_the_branch_it_stacks_on_until_that_task_is_merged() {
+    let s = crate::testing::state();
+    let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+    let np = db::NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: Some("main"), use_worktrees: true };
+    let project = db::insert_project(&s.db(), np).unwrap();
+    let new = |title| db::NewTask { profile_id: &p.id, project_id: Some("pr"), kind: "task", title, description: "", status: "in_review", use_worktree: true, model: None, effort: None, claude_config_id: None };
+    let first = db::insert_task(&s.db(), new("First")).unwrap();
+    let first = s.update_task(&first.id, &[("branch", json!("ia/web-1-first")), ("base_branch", json!("main"))]).unwrap().unwrap();
+    let second = db::insert_task(&s.db(), new("Second")).unwrap();
+    let sf = db::StartFrom::Task { task_id: first.id.clone() };
+    let fields = [("branch", json!("ia/web-2-second")), ("base_branch", json!("ia/web-1-first")), ("start_from", json!(sf)), ("worktree_path", json!("/w/2-second"))];
+    let second = s.update_task(&second.id, &fields).unwrap().unwrap();
+    let gh = worktree::Github { remote: "origin".into(), repo: "o/web".into() };
+    let text = system_prompt(&second, Some(&project), None, &[], &[], Some(&gh), true);
+    assert!(text.contains("stacked on another task: `ia/web-1-first` is that task's branch"), "{text}");
+    assert!(text.contains("head `ia/web-2-second` and base `ia/web-1-first`"), "{text}");
+
+    // While First is open, Second merges into its branch.
+    let base = db::task_base(&s.db(), &second, Some(&project));
+    assert_eq!(base.as_deref(), Some("ia/web-1-first"));
+    let said = stacked_merge(&s, &second, Some(&project), base.as_deref()).unwrap();
+    assert!(said.contains("stacked on WEB-1 (\"First\", in review), which isn't merged yet"), "{said}");
+    // Once it's merged, where First went, and its agent is told its pull request goes there.
+    s.update_task(&first.id, &[("status", json!("done"))]).unwrap();
+    let base = db::task_base(&s.db(), &second, Some(&project));
+    assert_eq!(base.as_deref(), Some("main"));
+    let said = stacked_merge(&s, &second, Some(&project), base.as_deref()).unwrap();
+    assert!(said.contains("if its pull request still targets `ia/web-1-first`, change its base to `main` first"), "{said}");
+    let told = as_told(&s, &second, Some(&project));
+    let text = system_prompt(&told, Some(&project), None, &[], &[], Some(&gh), true);
+    assert!(text.contains("head `ia/web-2-second` and base `main`") && !text.contains("stacked on"), "{text}");
+    // A task that isn't stacked is told nothing more.
+    let base = db::task_base(&s.db(), &first, Some(&project));
+    assert_eq!(stacked_merge(&s, &first, Some(&project), base.as_deref()).unwrap(), "");
+    assert_eq!(base.as_deref(), Some("main"));
 }
 
 #[test]

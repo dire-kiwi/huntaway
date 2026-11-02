@@ -238,7 +238,7 @@ pub(super) async fn check_base_branch(v: &Value) -> ApiResult<Value> {
     if name.is_empty() {
         return Ok(Value::Null);
     }
-    if !worktree::valid_branch_name(name).await {
+    if !worktree::valid_branch_name(name) {
         return Err(ApiError::bad(format!("base_branch {name:?} isn't a valid branch name")));
     }
     Ok(json!(name))

@@ -5,6 +5,7 @@ pub mod agent_tools;
 pub mod codex;
 pub mod context;
 pub mod documents;
+pub mod focus;
 pub mod prompts;
 pub mod runner;
 pub mod runs;

@@ -4,6 +4,7 @@ import { memo, type KeyboardEvent, type MouseEvent } from "react";
 import { agentWaiting, isScratch, limitQueued, mergeAwaitsApproval, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../../api";
 import { inGroupTaskGroup } from "../../projectGroups";
 import { navigate, openTask, usePanelOpen } from "../../router";
+import { useSelectable } from "../../selection";
 import { isGroupTask, keyPrefix, useStore } from "../../store";
 import { ExternalLinkIcon } from "../task/ExternalLinks";
 import { ReviewBadge } from "../task/Review";
@@ -281,6 +282,7 @@ export const TaskCard = memo(function TaskCard({
   onMenu?: OnMenu;
 }) {
   const open = usePanelOpen(task.id);
+  const selectable = useSelectable(task.id);
   return (
     <div
       draggable={draggable}
@@ -290,7 +292,7 @@ export const TaskCard = memo(function TaskCard({
       }}
       {...opensTask(task, open)}
       onContextMenu={menuHandler(task, onMenu)}
-      data-task={task.id}
+      {...selectable}
       className={clsx(
         "group @container relative cursor-pointer overflow-hidden rounded-lg border bg-panel-2 p-3 transition-colors outline-none hover:border-line-strong hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent",
         task.status === "needs_attention" ? "border-st-attention/35" : task.review?.state === "running" ? "border-st-review/40" : "border-line",
@@ -340,6 +342,7 @@ export const TaskCard = memo(function TaskCard({
 
 export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }: { task: Task; project?: Project; progress?: Progress; onMenu?: OnMenu }) {
   const open = usePanelOpen(task.id);
+  const selectable = useSelectable(task.id);
   return (
     <div
       draggable
@@ -349,7 +352,7 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
       }}
       {...opensTask(task, open)}
       onContextMenu={menuHandler(task, onMenu)}
-      data-task={task.id}
+      {...selectable}
       className={clsx(
         "flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-raised focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-inset narrow:flex-wrap narrow:gap-x-2 narrow:px-3",
         open ? "bg-raised shadow-[inset_2px_0_0_var(--color-accent)]" : "bg-panel/60",

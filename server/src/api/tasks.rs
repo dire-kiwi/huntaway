@@ -55,11 +55,22 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     let mut fields = pick(
         b,
         &[
-            "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "model", "effort", "base_branch", "permission_mode",
-            "preview_url", "pr_url", "external_links", "subproject", "claude_config_id", "depends_on", "starred", "remind_at", "reminder", "done_at",
+            "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "model", "effort", "base_branch", "start_from",
+            "permission_mode", "preview_url", "pr_url", "external_links", "subproject", "claude_config_id", "depends_on", "starred", "remind_at", "reminder", "done_at",
         ],
     );
     check_reminder(Some(&current), &mut fields)?;
+    // "now" puts the task in the Now view (from this moment), "later" takes it out.
+    match b.get("now") {
+        None | Some(Value::Null) => {}
+        Some(Value::Bool(on)) => {
+            if *on && current.kind != "task" {
+                return Err(ApiError::bad("only a task can be in now"));
+            }
+            fields.push(("now_at", if *on { json!(crate::util::now()) } else { Value::Null }));
+        }
+        Some(_) => return Err(ApiError::bad("now must be true or false")),
+    }
     // A title is text that isn't blank, and a description is text (null clears it): anything else is
     // turned away rather than kept as JSON text, or left to the database to refuse with a 500.
     if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "title") {
@@ -86,6 +97,36 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     }
     if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "base_branch") {
         *v = check_base_branch(v).await?;
+    }
+    if let Some(v) = fields.iter().find(|(k, _)| *k == "start_from").map(|(_, v)| v.clone()) {
+        let project = match &current.project_id {
+            Some(pid) => db::get_project(&s.db(), pid)?.ok_or_else(|| ApiError::not_found("project"))?,
+            None => return Err(ApiError::bad("start_from is for a task in a project")),
+        };
+        let sf = check_start_from(&s.db(), &project, Some(id), &v)?;
+        if sf.is_some() {
+            if db::subproject_of(&s.db(), &current)?.is_some() {
+                return Err(ApiError::bad("start_from: a subproject's tasks start from its branch"));
+            }
+            let worktree = fields.iter().find(|(k, _)| *k == "use_worktree").map_or(current.use_worktree, |(_, v)| *v == json!(true));
+            if !worktree {
+                return Err(ApiError::bad("start_from is for a task with a worktree"));
+            }
+            if fields.iter().any(|(k, v)| *k == "base_branch" && !v.is_null()) {
+                return Err(ApiError::bad("give start_from or base_branch, not both"));
+            }
+        }
+        // Its branch started where it did, and is set up again from there.
+        if let Some(b) = current.branch.as_deref().filter(|_| sf != current.start_from) {
+            return Err(ApiError::conflict(format!("the task's branch {b} exists already, so it starts from where it did")));
+        }
+        // What it starts from decides its base branch, as the worktree is made.
+        if sf.is_some() && !fields.iter().any(|(k, _)| *k == "base_branch") {
+            fields.push(("base_branch", Value::Null));
+        }
+        fields.iter_mut().find(|(k, _)| *k == "start_from").unwrap().1 = json!(sf);
+    } else if fields.iter().any(|(k, v)| *k == "base_branch" && !v.is_null()) && current.start_from.is_some() {
+        fields.push(("start_from", Value::Null));
     }
     if let Some(v) = b.get("labels") {
         if current.kind != "task" {
@@ -230,7 +271,16 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
             fields.push(("agent_wait", json!(db::AgentWait { moved_to: Some(st.to_string()), ..w })));
         }
     }
-    if fields.iter().any(|(k, _)| *k == "use_worktree" || *k == "base_branch") && current.worktree_state != "none" {
+    // A setup that failed before making the branch (a branch or pull request that isn't there, say) left nothing to
+    // tear down, so what it starts from can be put right, and it's set up again from scratch.
+    // (The branch, its base and the worktree's folder are saved as soon as git makes them.)
+    let unmade = |t: &db::Task| {
+        t.worktree_state == "none" || (t.worktree_state == "error" && t.branch.is_none() && t.worktree_path.as_deref().is_none_or(|p| !std::path::Path::new(p).exists()))
+    };
+    if fields.iter().any(|(k, _)| ["use_worktree", "base_branch", "start_from"].contains(k)) && current.worktree_state == "error" && unmade(&current) {
+        fields.extend([("worktree_state", json!("none")), ("worktree_error", Value::Null)]);
+    }
+    if fields.iter().any(|(k, _)| ["use_worktree", "base_branch", "start_from"].contains(k)) && !unmade(&current) {
         return Err(ApiError::conflict("tear down the worktree before changing worktree settings"));
     }
     if merge && s.is_running(id) {
@@ -268,7 +318,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     }
     // What was checked against the task as it was read is checked again under the lock the change
     // is made with, so that two requests at once can't both pass (and, say, both start a merge).
-    let worktree_settings = fields.iter().any(|(k, _)| *k == "use_worktree" || *k == "base_branch");
+    let worktree_settings = fields.iter().any(|(k, _)| ["use_worktree", "base_branch", "start_from"].contains(k));
     let config = fields.iter().any(|(k, _)| *k == "claude_config_id");
     let unsubproject = current.subproject && fields.iter().any(|(k, v)| *k == "subproject" && *v == json!(false));
     let mut refused = None;
@@ -279,7 +329,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
             Some(ApiError::conflict(format!("the task was moved to {} meanwhile", now.status)))
         } else if merge && running {
             Some(ApiError::conflict("the agent is still running; wait for it to finish before moving the task to Ready for merge"))
-        } else if worktree_settings && now.worktree_state != "none" {
+        } else if worktree_settings && !unmade(&now) {
             Some(ApiError::conflict("tear down the worktree before changing worktree settings"))
         } else if config && (now.session_id.is_some() || running) {
             Some(ApiError::conflict("the agent has already started with its Claude config"))
@@ -499,6 +549,11 @@ pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) ->
         if let Err(e) = worktree::teardown(s, &t.id, true, delete_branch).await {
             tracing::warn!("teardown during delete failed: {e:#}");
         }
+    }
+    // The tasks stacked on it keep going where it went.
+    worktree::unstack(s, t).await;
+    if let Some(project) = t.start_from.as_ref().and(t.project_id.as_deref()).map(|p| db::get_project(&s.db(), p)).transpose()?.flatten() {
+        worktree::forget_start(&expand_tilde(&project.repo_path), &t.id).await;
     }
     let runs = {
         let c = s.db();

@@ -315,6 +315,79 @@ fn a_setting_of_the_wrong_type_is_refused_rather_than_cleared() {
     })
 }
 
+/// A task in a project, and a second one waiting for it, to start without an agent running.
+fn waiting_for_another(s: &Shared) -> (db::Project, db::Task) {
+    let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+    let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+    let project = db::insert_project(&s.db(), project).unwrap();
+    let first = create_task_inner(s, &project.id, serde_json::from_value(json!({"title": "First"})).unwrap()).unwrap();
+    (project, first)
+}
+
+#[test]
+fn the_users_prompts_put_a_task_in_now_but_agents_and_starts_do_not() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = crate::testing::state();
+        let (project, first) = waiting_for_another(&s);
+        let make = async |v: Value| {
+            let b: CreateTask = serde_json::from_value(json!({"depends_on": [first.id], "title": "T"}).as_object().unwrap().iter().chain(v.as_object().unwrap()).map(|(k, v)| (k.clone(), v.clone())).collect::<Map<_, _>>().into()).unwrap();
+            let t = create_task(State(s.clone()), Path(project.id.clone()), Json(b)).await.unwrap().0;
+            serde_json::from_value::<db::Task>(t).unwrap()
+        };
+        // Made from the board with a prompt, it's in now; started without one (or by an agent: create_task_inner), it isn't.
+        assert!(make(json!({"start": "Do it"})).await.now_at.is_some());
+        // The new task dialog sends `start: true` with the description they typed (its title is made from it).
+        let dialog = json!({"description": "Implement the feature", "start": true, "status": "in_progress"});
+        assert!(make(dialog.clone()).await.now_at.is_some());
+        assert_eq!(make(json!({"start": true})).await.now_at, None);
+        assert_eq!(make(json!({"description": "  ", "start": true})).await.now_at, None);
+        assert_eq!(make(json!({"description": "Implement the feature"})).await.now_at, None);
+        // The same for the dialog's scratch and group tasks, which share it.
+        let profile = project.profile_id.clone();
+        let body = |extra: Value| -> CreateTask { serde_json::from_value(json!({"title": "T"}).as_object().unwrap().iter().chain(extra.as_object().unwrap()).map(|(k, v)| (k.clone(), v.clone())).collect::<Map<_, _>>().into()).unwrap() };
+        let Json(scratch) = create_scratch_task(State(s.clone()), Path(profile.clone()), Json(body(dialog.clone()))).await.unwrap();
+        assert!(serde_json::from_value::<db::Task>(scratch).unwrap().now_at.is_some());
+        let Json(scratch) = create_scratch_task(State(s.clone()), Path(profile.clone()), Json(body(json!({"start": true})))).await.unwrap();
+        assert_eq!(serde_json::from_value::<db::Task>(scratch).unwrap().now_at, None);
+        update_project_inner(&s, &project.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
+        let group = |extra: Value| CreateGroupTask { group: "Shop".into(), task: body(extra) };
+        let Json(g) = create_group_task(State(s.clone()), Path(profile.clone()), Json(group(dialog.clone()))).await.unwrap();
+        assert!(serde_json::from_value::<db::Task>(g).unwrap().now_at.is_some());
+        let Json(g) = create_group_task(State(s.clone()), Path(profile.clone()), Json(group(json!({"start": true})))).await.unwrap();
+        assert_eq!(serde_json::from_value::<db::Task>(g).unwrap().now_at, None);
+        assert_eq!(make(json!({})).await.now_at, None);
+        let by_agent = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "T", "depends_on": [first.id], "start": "Do it"})).unwrap()).unwrap();
+        assert_eq!(by_agent.now_at, None);
+
+        // A prompt sent on its thread, not an empty one that starts its agent.
+        let t = make(json!({"start": true})).await;
+        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "  "})).unwrap())).await.unwrap();
+        assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at, None);
+        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "and this"})).unwrap())).await.unwrap();
+        assert!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at.is_some());
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
+fn how_long_a_task_stays_in_now_is_a_setting() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let set = async |v: Value| update_settings(State(s.clone()), Json(v.as_object().unwrap().clone())).await.map(|j| j.0);
+        assert_eq!(get_settings(State(s.clone())).await.unwrap().0["now_expiry_hours"], json!(24));
+        assert_eq!(set(json!({"now_expiry_hours": 6})).await.unwrap()["now_expiry_hours"], json!(6));
+        // 0 keeps tasks there for good, and null goes back to a day.
+        assert_eq!(set(json!({"now_expiry_hours": 0})).await.unwrap()["now_expiry_hours"], json!(0));
+        assert_eq!(set(json!({})).await.unwrap()["now_expiry_hours"], json!(0));
+        assert_eq!(set(json!({"now_expiry_hours": null})).await.unwrap()["now_expiry_hours"], json!(24));
+        for bad in [json!({"now_expiry_hours": -1}), json!({"now_expiry_hours": 1.5}), json!({"now_expiry_hours": "soon"}), json!({"now_expiry_hours": 999999})] {
+            let err = set(bad.clone()).await.unwrap_err();
+            assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+        }
+    })
+}
+
 #[test]
 fn tasks_link_to_asana_tasks() {
     crate::testing::run(async || {
@@ -1325,6 +1398,8 @@ fn a_merge_waits_for_the_users_approval_of_its_summary() {
         assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("ready_for_merge", true, Some("approved"), true));
         assert!(last_prompt(&s, &t.id).contains("The user approved the merge."), "{}", last_prompt(&s, &t.id));
         assert_eq!(approval_cards(&s, &t.id)[0].data["answer"]["choices"], json!(["Approve"]));
+        // The board's own question isn't a prompt of the user's.
+        assert_eq!(t.now_at, None);
         assert_eq!(blocked(&t.id), None);
         assert!(crate::mcp::questions::answer(&s, &t.id, cards[0].id, pick("Deny")).is_err(), "answered once");
         // The run's gh server asks the board.

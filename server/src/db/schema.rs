@@ -763,11 +763,65 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=75; COMMIT;")?;
     }
     if version < 76 {
+        // What a task's worktree starts from, when not the project's base branch (see Task::start_from).
+        // Builds of this before it was version 76 had it as version 65, 71, 73, 74 or 75, and skipped what those
+        // versions add, so their columns are added here too if they aren't there (and 73's recount).
+        conn.execute_batch("BEGIN;")?;
+        let cols = [
+            ("tasks", "start_from", "TEXT"),
+            ("tasks", "limit_reset_at", "TEXT"),
+            ("profiles", "limit_wait", "INTEGER NOT NULL DEFAULT 0"),
+            ("profiles", "limit_switch", "INTEGER NOT NULL DEFAULT 0"),
+            ("claude_configs", "restart_window", "INTEGER NOT NULL DEFAULT 0"),
+            ("tasks", "pr_checks", "TEXT"),
+            ("profiles", "require_pr_approval", "INTEGER NOT NULL DEFAULT 0"),
+            ("projects", "require_pr_approval", "INTEGER"),
+        ];
+        for (table, column, kind) in cols {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name='session_id'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE runs ADD COLUMN session_id TEXT; ALTER TABLE runs ADD COLUMN session_cost REAL;")?;
+            recount_run_costs(&conn)?;
+        }
+        conn.execute_batch("PRAGMA user_version=76; COMMIT;")?;
+    }
+    if version < 77 {
+        // When a task went into "now" (see Task::now_at); the others are in "later". Added only if it isn't
+        // there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='now_at'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN now_at TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version=77; COMMIT;")?;
+    }
+    if version < 78 {
         // The tokens each run used, per model (see agent/tokens.rs), counted from runs' output as
         // they end (and from older runs' that are still kept), and what reviewers reported (see
         // review/stats.rs), with the reviews threads already show. Added only if they aren't
-        // there, in case another migration takes this version first.
-        conn.execute_batch(&format!("BEGIN; {SCHEMA_V76}"))?;
+        // there, in case another migration takes this version first. Builds of this before it was
+        // version 78 had it as version 74, 75 or 76, and skipped what those versions add: version
+        // 76's `start_from` is added here if it isn't there (76 adds 74's and 75's), and a
+        // `review_stats` from before its rounds were kept is made again.
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='start_from'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN start_from TEXT;")?;
+        }
+        let stale: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='review_stats') AND NOT EXISTS(SELECT 1 FROM pragma_table_info('review_stats') WHERE name='round')",
+            [],
+            |r| r.get(0),
+        )?;
+        if stale {
+            conn.execute_batch("DROP TABLE review_stats;")?;
+        }
+        conn.execute_batch(SCHEMA_V78)?;
         for column in ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT"] {
             let name = column.split(' ').next().unwrap();
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [name], |r| r.get(0))?;
@@ -776,14 +830,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             }
         }
         crate::review::stats::backfill(&conn)?;
-        conn.execute_batch("PRAGMA user_version=76; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=78; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 76;
+pub const VERSION: i64 = 78;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
@@ -796,7 +850,7 @@ pub const VERSION: i64 = 76;
 /// with when its review round started (`round`).
 /// `minor` is how many minor issues it listed, null for reviews from before they were listed;
 /// `minor_noted` whether it found any or its summary mentions them.
-const SCHEMA_V76: &str = r#"
+const SCHEMA_V78: &str = r#"
 CREATE TABLE IF NOT EXISTS token_usage (
   run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
   model TEXT NOT NULL,

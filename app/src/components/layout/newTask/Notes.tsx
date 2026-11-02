@@ -9,7 +9,7 @@ export function Notes({
   opened: { projects, subproject, scratch },
   origin: { hosts },
   where: { asGroup, noProject, inProject, host },
-  tok: { docType, taskType, labelling, labels, asSubproject, fanout, many, runs, pending, noun },
+  tok: { docType, taskType, labelling, labels, asSubproject, fanout, many, runs, pending, noun, fromNote },
   worktree,
   blocks: { labelBlock, fanoutBlock, modelsBlock, modelsLoading },
   whenLoaded,
@@ -65,6 +65,7 @@ export function Notes({
             : "It gets its own worktree and thread, and a board of tasks: each branches from the subproject's branch and merges back into it, and the subproject is merged as a whole through its own pull request."}
         </div>
       )}
+      {fromNote && <div className="text-[12px] text-muted">{fromNote}</div>}
       {labelBlock && <div className="text-[12px] text-amber-300">{labelBlock}</div>}
       {fanout && (
         <div className={clsx("text-[12px]", fanoutBlock ? "text-amber-300" : "text-muted")}>

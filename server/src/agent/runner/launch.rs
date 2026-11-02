@@ -85,11 +85,12 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         (Some(id), "task") => db::get_task(&state.db(), id)?,
         _ => parent,
     };
+    let told = as_told(state, &task, project.as_ref());
     // A task with its own branch in a repository on GitHub opens a pull request for it.
     let github = match (&project, &task.branch) {
         (Some(p), Some(_)) if task.kind == "task" => {
-            let base = task.base_branch.as_deref().or(p.base_branch.as_deref()).filter(|b| !b.is_empty());
-            worktree::github(std::path::Path::new(&p.repo_path), base).await
+            let base = worktree::remote_base(state, &task, p).await;
+            worktree::github(std::path::Path::new(&p.repo_path), base.as_deref()).await
         }
         _ => None,
     };
@@ -149,7 +150,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             None => Default::default(),
         };
         let gh_tools = uses_gh_server(&tools);
-        let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+        let base = system_prompt(&told, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
         let profiles = db::list_profiles(&state.db())?;
         let to = Told {
             codex: true,
@@ -239,7 +240,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     };
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
-    let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+    let base = system_prompt(&told, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
     let profiles = db::list_profiles(&state.db())?;
     let to = Told {
         codex: false,

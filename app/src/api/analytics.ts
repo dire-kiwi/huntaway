@@ -34,7 +34,7 @@ export interface ContextStatsReport {
   projects: AnalyticsReport["projects"];
 }
 
-/** The tokens a profile's runs used, per run and model, what reviewers reported, and the follow-up tasks agents created (API 96). */
+/** The tokens a profile's runs used, per run and model, what reviewers reported, and the follow-up tasks agents created (API 98). */
 export interface TokenStatsReport {
   usage: {
     run_id: string;
@@ -136,7 +136,7 @@ export const analyticsApi = {
   contextStats: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
-  /** The tokens the profile's runs that started in [from, to) used, and its reviews then (API 96). */
+  /** The tokens the profile's runs that started in [from, to) used, and its reviews then (API 98). */
   tokenStats: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<TokenStatsReport>(`/profiles/${enc(profileId)}/token-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 

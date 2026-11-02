@@ -947,10 +947,30 @@ skipped. Auto-compacting idle sessions is Claude-only.
   the browser tab; *Sort* (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
+- **Now and Later** (HA-109, API 97): every task is in *Later* until it's put in *Now*, which is
+  what you're working on at the moment. A prompt you send a task from its thread or the new task
+  dialog, or an answer to one of its question cards (not one from another agent, an automation or the board itself, and not a task an agent
+  creates and starts) puts it in Now; so does *Move to Now* in its right-click menu (*Move to Later* puts
+  it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
+  `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
+  (*Now*, *Later*, *All*, which starts on *All* and is kept for every board) applies to every
+  view: the board, list, triage, live, timeline and graph, with the search and filters. A task in
+  Now has a bolt on its card and row, and the switch counts them. A task goes back to Later once
+  nothing has happened on it for a day: no prompt from you, no message in its thread (the
+  agent's included), and its agent not running. The day is the host's *Tasks in Now go back to
+  Later after N hours* setting in its page in Settings (`now_expiry_hours` in `/settings`; 0
+  keeps them in Now until they're moved, null is the default 24), looked at every minute.
+  - **Lasso:** hold Ctrl and drag with the right mouse button on a board, in any view, to draw a
+    loop; the tasks it goes round or over are picked (outlined) as it's drawn, and the browser's
+    own menu stays shut. Add Shift to keep those already picked. Ctrl + right-click (without a
+    drag) on a card picks it, or lets it go if it was. A bar at the foot of the board counts the
+    picked tasks and moves them to *Now* or *Later*; so does the right-click menu of any of them
+    (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
+    use a card's menu button.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
   *Board* and *List*, the view switch has four more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
-  1500px the switch names only the current view, and below 1180px none.
+  1500px the switch names only the current view, and below 1320px none.
   - *Triage*: what each task needs from you, most pressing first: an answer (*Needs
     attention*), a review (*In review*), a reminder that's come round, an agent that stopped
     before it finished, a start; then the agents at work. Each shows the agent's last words
@@ -1225,6 +1245,63 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
+- **Starting from elsewhere** (API 96): a task's worktree can start from something other than the
+  project's base branch, picked before it's made: type `from:` in the new task dialog's
+  description (it suggests the project's open tasks and its branches), fill in *Starts from* in
+  the task's *Worktree* details before its first run (or after a setup that failed before making
+  its branch), or give `start_from` to the API and the agents' `create_task`/`update_task`. It
+  takes another task's key (`from:IA-12`), a branch (`from:feature-x`, or `from:origin/feature-x`
+  for one only on a remote), a pull request (`from:#12` or its URL) or a commit (`from:0123abc`, 7
+  to 40 hex digits); `task:`, `branch:`, `pr:` or `commit:` after `from:` says which when it could
+  be read as another. It's kept on the task as `start_from` (`{type: "branch", branch}`, `{type:
+  "task", task_id}`, `{type: "pull_request", number, repo?}` or `{type: "commit", commit}`), and
+  it's worked out as the worktree is first made, which sets the task's base branch:
+  - **Another task** stacks it on that task's branch, which becomes its base: its pull request
+    targets that branch, and its *Changes* tab, reviews and merged checks compare with it, so the
+    other task's changes aren't counted as its own. A task to stack on with no branch yet has its
+    worktree set up first (as a subproject's is for its tasks), and one that's merged already has
+    the task start from where it was merged. Merging a stacked task while the other is open puts
+    its work on the other's branch, as stacked pull requests do, so it reaches the base branch
+    with the other's merge. Once the other is merged, the stacked task goes where that went
+    instead, as GitHub retargets a pull request whose base branch is deleted: its agent is told
+    to merge, and open its pull request, there (retargeting one it has first), its merged checks
+    look there, and its *Changes* and reviews start from the later of its merge bases with that
+    and with where it started, so a squashed parent's work isn't counted as its own before
+    it's rebased, nor after, even once the parent's branch is deleted. Where it started is kept
+    as `refs/huntaway/start/<task id>` in the repository, and goes when the task does. It's moved on
+    to as much of the parent's branch as the task has taken in when either task's agent run ends,
+    when the parent is done, before the parent's worktree or branch is removed, and when *Changes*
+    or a review reads it. *Remove merged worktrees* counts a stacked task merged into the
+    project's base branch as merged too. Stacking doesn't make it wait for the other task: add a
+    dependency for that. A task can't start from one that (by way of others, or a subproject it's
+    in) starts from it. Deleting a merged task keeps the tasks stacked on it going where it went:
+    when that's the branch of a task it was stacked on that isn't merged yet, they're stacked on
+    that one; otherwise one with a branch then starts from the commit where its own work starts,
+    and one without is a task on that branch. A stacked task's pull request goes to the repository
+    the other task's branch is pushed to, or, while that has no remote of its own (it isn't pushed
+    yet), wherever the other task's pull request goes.
+  - **A branch** becomes its base branch, fetched first as the project's is. A remote's branch
+    is the branch of that name when it's on the remote the name alone follows (usually `origin`,
+    where the task's pull request goes). Another remote's (`upstream/feature`) isn't a branch the
+    task's pull request can target: as for a pull request from a fork, the task starts from its
+    latest commit (fetched even if it never was before), with the project's base branch as its
+    own, so its pull request has that branch's commits too, and its *Changes* and reviews start
+    after that commit.
+  - **A pull request** in the project's GitHub repository (the one its tasks open theirs in, going
+    by its base branch's remote; looked up with gh, as the task's GitHub account) is its branch, as
+    for a task, when that's the branch its name alone follows in the project's repository. A merged
+    one is where it was merged; one from a fork, closed, or whose branch the name follows elsewhere
+    (to another remote), starts from its head commit, fetched by its SHA, with the pull request's
+    base as the task's (so its pull request has the other's commits too).
+  - **A commit** is where its branch starts, fetched by its full SHA if the repository doesn't have
+    it; its base branch stays the project's, and its *Changes* and reviews start after the commit
+    when the base branch doesn't have it. Such a review, and the summary of its changes, read the
+    branch's changes from where it started rather than its pull request's diff, which has more.
+  The task's log says where it started. Its branch, base branch and worktree folder are saved as
+  soon as git makes them, so a setup script that fails doesn't lose them. It can't change once the
+  task's branch exists (it's set up again from that branch), a subproject's tasks start from the subproject's branch, and a task
+  that doesn't use a worktree has nothing to start. `base_branch` and `start_from` replace each
+  other. `GET /projects/{id}/branches` lists the branches of a project's repository, latest first.
 - **Temp folders:** each task's agents get a temp folder of their own,
   `<system temp>/ha-<hash of the data dir>/<first 12 hex digits of the task id>` (kept short, as
   sockets in it can't have paths over 107 bytes), as `$TMPDIR` for its runs (Claude and
@@ -1469,7 +1546,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   merged worktrees* does for each project, and lists what it removed, how much that freed and what it kept; click a worktree to open its task and
   remove it there, which is also the way to remove a worktree no task has. The
   folders are measured when the tab first opens and again on refresh (API 35).
-  The *Tokens* tab (API 96) shows where agents' tokens go: in total and per day, by what they were
+  The *Tokens* tab (API 98) shows where agents' tokens go: in total and per day, by what they were
   spent on (tasks' own agents, reviews, summaries, compactions, scratch and group tasks), by model
   (Claude's and Codex's), and per task, with a review or summary thread's tokens counted towards
   its task and a subproject's tasks' towards the subproject (expand it to see each). It can measure
@@ -1501,7 +1578,8 @@ Each run gets the `huntaway` MCP server (`huntaway mcp`, configured per run):
 *Waiting*), plus the internal `permission_prompt`. Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
-`list_tasks` takes `subproject`.
+`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see
+*Starting from elsewhere*), and task summaries say what a task started from.
 
 From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:
 small fields stay inline, `field_lengths` lists every available field's length, and

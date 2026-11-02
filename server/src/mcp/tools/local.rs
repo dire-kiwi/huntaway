@@ -145,6 +145,7 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
                 labels: Some(args["labels"].clone()),
                 external_links: None,
                 fanout_id: None,
+                start_from: Some(args["start_from"].clone()).filter(|v| !v.is_null()),
             };
             let marks = new_task_marks(args)?;
             let t = api::create_task_inner(s, &project.id, body)?;
@@ -153,7 +154,7 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;
             let mut body = Map::new();
-            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge", "labels"] {
+            for k in ["title", "description", "status", "resolution", "preview_url", "pr_url", "remerge", "labels", "start_from"] {
                 if !args[k].is_null() {
                     body.insert(k.into(), args[k].clone());
                 }

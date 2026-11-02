@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::util::now;
 
 /// Reviewer runs of a task started within this many seconds of the one before are one round's.
-pub const ROUND_GAP: i64 = 120;
+const ROUND_GAP: i64 = 120;
 
 /// What one `submit_review` reported.
 pub struct Submission<'a> {
@@ -172,6 +172,12 @@ pub fn backfill(c: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The round reviewer run `run_id` of `task_id` is in, worked out as `backfill` does: for a review
+/// started before rounds were kept, which has no start of its own.
+pub fn run_round(c: &Connection, task_id: &str, run_id: &str) -> rusqlite::Result<Option<String>> {
+    Ok(run_rounds(c, task_id)?.remove(run_id))
+}
+
 /// The round each of the runs of `task_id`'s review threads (not its summaries) was in, by when
 /// the round started: runs started within `ROUND_GAP` of the one before are in its round, unless
 /// their thread has a run in it already (a reviewer runs once a round).
@@ -190,9 +196,9 @@ fn run_rounds(c: &Connection, task_id: &str) -> rusqlite::Result<std::collection
     Ok(out)
 }
 
-/// Puts reviewers' runs (or submissions), in the order their rounds started, in rounds (see `run_rounds`).
+/// Puts reviewers' runs, in the order they started, in rounds (see `run_rounds`).
 #[derive(Default)]
-pub struct Rounds {
+struct Rounds {
     start: String,
     last: Option<chrono::DateTime<chrono::FixedOffset>>,
     threads: std::collections::HashSet<String>,
@@ -200,12 +206,12 @@ pub struct Rounds {
 
 impl Rounds {
     /// The start of the round that `thread`'s run starting at `at` is in.
-    pub fn place(&mut self, thread: &str, at: &str) -> &str {
+    fn place(&mut self, thread: &str, at: &str) -> &str {
         self.place_new(thread, at).0
     }
 
     /// The same, and whether it's a new round. One that starts at the round's own start is in it.
-    pub fn place_new(&mut self, thread: &str, at: &str) -> (&str, bool) {
+    fn place_new(&mut self, thread: &str, at: &str) -> (&str, bool) {
         let t = chrono::DateTime::parse_from_rfc3339(at).ok();
         let near = matches!((self.last, t), (Some(l), Some(t)) if (t - l).num_seconds() <= ROUND_GAP);
         let new = self.start.is_empty() || (at != self.start && (!near || self.threads.contains(thread)));
