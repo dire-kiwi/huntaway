@@ -18,8 +18,10 @@
 // `<data dir>/app/<version>/`, per user, so pacman's files in /opt stay as they are. The sidebar's Update restarts the
 // server onto it, and from then on this app starts that version (chooseServer in versions.cjs) rather than its bundled
 // one, unless the package is newer. A version that won't start is marked bad, and the one before it, or the bundled
-// one, runs instead. A release that also changed this shell (Electron and electron/) needs a newer package: an AppImage
-// or the pacman package installs it from the board's Settings → Server (updateShell in shellupdate.cjs) and relaunches.
+// one, runs instead. This shell updates the same way: boot.cjs, the app's entry point, loads this file from that
+// version's `electron/` (the package's own is the fallback), and the app relaunches onto a newer one once an Update has
+// reloaded the board. Only a release that changes boot.cjs or Electron needs a newer package: an AppImage or the
+// pacman package installs it from the board's Settings → Server (updateShell in shellupdate.cjs) and relaunches.
 // A server this app finds already running, or a remote serverUrl, isn't started here, so it never gets release updates
 // from the app. README's "Updating the desktop app" has the whole story; scripts/release-update-e2e.sh tests it.
 
@@ -29,7 +31,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const shellUpdate = require("./shellupdate.cjs");
-const { shellStamp } = require("./stamp.cjs");
+const { frameStamp, shellStamp } = require("./stamp.cjs");
 const versions = require("./versions.cjs");
 
 /** `dir`, or `legacy` from before the rename to Huntaway if only that one exists. */
@@ -158,7 +160,7 @@ function installKind() {
 /** The environment for a server started here: a release build's, whichever binary it runs, turns on release updates. */
 function serverEnv() {
   if (!resourcesDir) return process.env;
-  const desktop = { version: app.getVersion(), shell: startStamp, install: installKind(), bundled: path.join(resourcesDir, EXE) };
+  const desktop = { version: app.getVersion(), shell: frameStampNow(), install: installKind(), bundled: path.join(resourcesDir, EXE) };
   return { ...process.env, ...versions.releaseEnv(desktop) };
 }
 
@@ -376,20 +378,50 @@ function errorPage(message, title = "Huntaway couldn't start") {
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
 
-/** This process's own code (this directory) and its Electron (the one npm installed, from source), to see when an update
- * changed them. A release's manifest has the same stamp for its packaged app (stamp.cjs). */
-function mainStamp() {
-  let electron = process.versions.electron;
-  if (!app.isPackaged) {
-    try {
-      electron = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version;
-    } catch {
-      electron = undefined; // not installed
-    }
+/** The Electron that runs this: the one npm installed, from source. */
+function electronVersion() {
+  if (app.isPackaged) return process.versions.electron;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version;
+  } catch {
+    return undefined; // not installed
   }
-  return shellStamp(__dirname, electron);
+}
+
+/** This process's own code (this directory) and its Electron, to see when an update changed them in a checkout. */
+function mainStamp() {
+  return shellStamp(__dirname, electronVersion());
 }
 const startStamp = mainStamp();
+
+/**
+ * What the package gives this app that an update can't replace (boot.cjs and Electron), which a release's manifest has
+ * the same stamp of. It's the package's boot.cjs, not this directory's: this shell may have been loaded from a release.
+ */
+function frameStampNow() {
+  try {
+    return frameStamp(path.join(app.getAppPath(), "electron"), electronVersion());
+  } catch (e) {
+    console.error(`couldn't stamp the app's frame: ${e.message}`);
+    return startStamp;
+  }
+}
+
+/** Start the app again, as the package does it: from the AppImage's file (its mount goes away on quitting), or the launcher. */
+function relaunch() {
+  // Through install.sh's launcher where there is one, which downloads the Electron an update may have installed.
+  const launcher = process.env.HUNTAWAY_LAUNCHER;
+  if (launcher) app.relaunch({ execPath: launcher, args: process.argv.slice(2) });
+  else if (process.env.APPIMAGE) app.relaunch({ execPath: process.env.APPIMAGE, args: process.argv.slice(1) });
+  else app.relaunch();
+  app.quit();
+}
+
+/** Whether an Update left a different shell for the next start than the one running (boot.cjs's choice, not this file's). */
+function newerShellInstalled() {
+  const boot = globalThis.huntawayBoot;
+  return !!boot && (boot.choose()?.version ?? null) !== (boot.running?.version ?? null);
+}
 
 async function createWindow() {
   const win = new BrowserWindow({
@@ -406,10 +438,10 @@ async function createWindow() {
   win.webContents.on("did-finish-load", () => {
     if (mainStamp() !== startStamp) {
       console.log("the desktop app changed on disk; relaunching");
-      // Through install.sh's launcher where there is one, which downloads the Electron an update may have installed.
-      const launcher = process.env.HUNTAWAY_LAUNCHER;
-      app.relaunch(launcher ? { execPath: launcher, args: process.argv.slice(2) } : undefined);
-      app.quit();
+      relaunch();
+    } else if (newerShellInstalled()) {
+      console.log("an update brought a different desktop shell; relaunching");
+      relaunch();
     }
   });
   // Links open in the browser, web links only: a plan or artifact is a page an agent wrote, and its
