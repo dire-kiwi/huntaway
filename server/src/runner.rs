@@ -24,12 +24,13 @@ mod queue;
 mod send;
 
 pub use access::*;
-use launch::*;
 pub use merge::*;
 pub use output::*;
 pub use prompt::*;
 pub use queue::*;
 pub use send::*;
+
+use launch::*;
 
 #[cfg(test)]
 mod tests;
