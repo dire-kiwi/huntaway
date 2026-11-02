@@ -54,6 +54,21 @@ export interface Disk {
 /** A worktree whose task is done, or that no task has: it can likely go. */
 export const reclaimable = (w: DWorktree) => w.taskId === null || w.status === "done";
 
+/** What "Reclaim space" removes: the worktrees of done tasks, and only those the host finds merged and clean (API 39).
+ * Worktrees no task has can't be removed this way: they're listed as reclaimable, but left to remove by hand. */
+export const reclaimTargets = (data: Disk) => data.projects.filter((p) => p.worktrees.some((w) => w.taskId !== null && w.status === "done"));
+
+/** What reclaiming did with one done task's worktree. */
+export interface Reclaimed {
+  taskId: string;
+  key: string;
+  title: string;
+  removed: boolean;
+  detail: string;
+  /** What the worktree took up before, which removing it frees. */
+  bytes: number;
+}
+
 export async function loadDisk(): Promise<Disk> {
   const s = useStore.getState();
   const out: Disk = {
