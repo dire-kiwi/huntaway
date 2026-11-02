@@ -1,5 +1,5 @@
 //! The tokens each run used, per model, for statistics (`GET /profiles/{id}/token-stats`, see
-//! analytics.rs), in `token_usage` (see db::SCHEMA_V74).
+//! analytics.rs), in `token_usage` (see db::SCHEMA_V75).
 //!
 //! They're counted from the run's output (`runs/<id>/out.jsonl`) once it has ended, rather than as
 //! it streams in, so runs from before this was kept are counted the same way while their folders

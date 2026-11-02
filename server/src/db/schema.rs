@@ -746,11 +746,17 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=73; COMMIT;")?;
     }
     if version < 74 {
+        // How a task's pull request's checks stood at the latest read (see Task::pr_checks).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='pr_checks'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN pr_checks TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=74; COMMIT;"))?;
+    }
+    if version < 75 {
         // The tokens each run used, per model (see agent/tokens.rs), counted from runs' output as
         // they end (and from older runs' that are still kept), and what reviewers reported (see
         // review/stats.rs), with the reviews threads already show. Added only if they aren't
         // there, in case another migration takes this version first.
-        conn.execute_batch(&format!("BEGIN; {SCHEMA_V74}"))?;
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V75}"))?;
         for column in ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT"] {
             let name = column.split(' ').next().unwrap();
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [name], |r| r.get(0))?;
@@ -759,14 +765,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             }
         }
         crate::review::stats::backfill(&conn)?;
-        conn.execute_batch("PRAGMA user_version=74; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=75; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 74;
+pub const VERSION: i64 = 75;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
@@ -778,7 +784,7 @@ pub const VERSION: i64 = 74;
 /// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed.
 /// `minor` is how many minor issues it listed, null for reviews from before they were listed;
 /// `minor_noted` whether it found any or its summary mentions them.
-const SCHEMA_V74: &str = r#"
+const SCHEMA_V75: &str = r#"
 CREATE TABLE IF NOT EXISTS token_usage (
   run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
   model TEXT NOT NULL,

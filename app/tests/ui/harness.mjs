@@ -15,7 +15,7 @@ const script = fileURLToPath(new URL("../../../scripts/test-server.sh", import.m
 export function startServer(...args) {
   const out = execFileSync(script, ["start", "--demo", ...args], {
     encoding: "utf8",
-    env: { ...process.env, IA_CLAUDE_BIN: "/bin/false", IA_CODEX_BIN: "/bin/false" },
+    env: { ...process.env, IA_TEST_OPEN_TOKEN: "0", IA_CLAUDE_BIN: "/bin/false", IA_CODEX_BIN: "/bin/false" },
   });
   const vars = Object.fromEntries([...out.matchAll(/^(?:export )?(IA_TEST_\w+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
   const url = vars.IA_TEST_URL;

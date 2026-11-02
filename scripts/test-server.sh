@@ -152,6 +152,10 @@ start() {
       *) serve+=("$a") ;;
     esac
   done
+  # --open-token: a board that hands out its token never shows system notifications (see notifyPermission in
+  # app/src/notifier.ts), so a test server opened in the user's browser doesn't pop up on their desktop.
+  # IA_TEST_OPEN_TOKEN=0 starts a normal board instead (the browser tests do, to test a normal board's notifications).
+  if [[ ${IA_TEST_OPEN_TOKEN:-1} != 0 && " ${serve[*]} " != *" --open-token "* ]]; then serve+=(--open-token); fi
   if [[ -z $bin ]]; then
     # The newer of the release and debug builds, so a stale one isn't picked up.
     for b in "$root/server/target/release/huntaway" "$root/server/target/debug/huntaway"; do
