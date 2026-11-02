@@ -36,6 +36,20 @@ test("the / menu waits for the skills, picks one and closes on Escape", async ()
   });
 });
 
+// HA-87: `/plan` is the board's, beside `/compact`: it gives the task the plan label and tells its agent how to write the plan.
+test("the / menu offers /plan, over a skill of the same name", async () => {
+  const content = "---\nname: plan\ndescription: A skill called plan.\n---\n\nPlan.\n";
+  await server.api("POST", `/projects/${project.id}/agent-tools/skills`, { content });
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Plan it", status: "in_review" });
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /t/${task.id}`, "click thread", "click css=textarea", "type /pla", "wait Write a plan in the task's Plan tab"]);
+    assert.equal(await page.getByRole("option").count(), 1, "the skill named plan isn't listed");
+    await ui.run(["press Tab", "wait /plan [what to plan]"]);
+    assert.equal(await page.locator("textarea").inputValue(), "/plan ");
+  });
+});
+
 /** A Codex config on the demo profile, beside its Claude one; returns [codex, claude] config ids. */
 async function addCodexConfig() {
   const [profile] = await server.api("GET", "/profiles");

@@ -73,7 +73,8 @@ fn steer_or_queue(state: &Shared, task_id: &str, message: &db::Queued) -> ApiRes
     if text.is_empty() {
         return Ok(Some(task));
     }
-    let run = db::get_run(&state.db(), &handle.run_id)?.filter(|r| !is_compact(text) && can_steer(state, r));
+    let plan = task.kind == "task" && crate::documents::plan_command(text).is_some();
+    let run = db::get_run(&state.db(), &handle.run_id)?.filter(|r| !is_compact(text) && !(plan && !writes_documents(&r.id)) && can_steer(state, r));
     let task = match run {
         Some(run) => {
             let mut steering = task.steering;
@@ -90,6 +91,20 @@ fn steer_or_queue(state: &Shared, task_id: &str, message: &db::Queued) -> ApiRes
     Ok(Some(task))
 }
 
+/// The runs that can write their task's own folder (see documents.rs), as they started with labels
+/// or work in it. A `/plan` sent to any other run waits for the next instead: its sandbox (Codex's
+/// writable roots, Claude Code's directories) may not let it write the plan.
+static WRITE_DOCUMENTS: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+fn writes_documents(run_id: &str) -> bool {
+    WRITE_DOCUMENTS.lock().unwrap_or_else(|e| e.into_inner()).contains(run_id)
+}
+
+fn set_writes_documents(run_id: &str, writes: bool) {
+    let mut runs = WRITE_DOCUMENTS.lock().unwrap_or_else(|e| e.into_inner());
+    if writes { runs.insert(run_id.to_string()) } else { runs.remove(run_id) };
+}
+
 /// A stream-json user message, as the agent's input takes it.
 fn user_input(id: &str, text: &str) -> String {
     json!({"type": "user", "uuid": id, "message": {"role": "user", "content": text}}).to_string()
@@ -100,8 +115,12 @@ fn user_input(id: &str, text: &str) -> String {
 fn write_steers(state: &Shared, task_id: &str) -> Result<Option<Task>> {
     let Some(mut task) = db::get_task(&state.db(), task_id)? else { return Ok(None) };
     let mut wrote = false;
+    // `/plan` (only steered into a run that can write the plan, see WRITE_DOCUMENTS): the run may
+    // have started without the plan label, so its system prompt may not say how.
+    let plan_file = crate::documents::path(state, &task, "plan").filter(|_| task.kind == "task").map(|p| path_str(&p));
     for s in task.steering.iter_mut().filter(|s| !s.written) {
-        if !runs::write_input(state, &s.run_id, &user_input(&s.id, &s.text))? {
+        let plan = plan_file.as_deref().zip(crate::documents::plan_command(&s.text)).map(|(f, rest)| crate::documents::plan_prompt(f, rest, false));
+        if !runs::write_input(state, &s.run_id, &user_input(&s.id, plan.as_deref().unwrap_or(&s.text)))? {
             break; // keep the order: the rest wait with it
         }
         s.written = true;
@@ -366,7 +385,12 @@ pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Tas
 }
 
 fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: bool, kind: &str) -> ApiResult<Task> {
-    let task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
+    let mut task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
+    // `/plan` gives the task the plan label now, so it shows the Plan tab whether the message
+    // starts a run, goes to the one going or waits.
+    if kind == "prompt" && task.kind == "task" && crate::documents::plan_command(text).is_some() {
+        task = crate::documents::add_plan(state, &task)?;
+    }
     // The user's prompt may have moved the task on, so its title follows (see title::refresh).
     if kind == "prompt" && !auto && !from_agent && crate::title::worth_asking(text) && !is_compact(text) {
         crate::title::refresh(state, task_id);
@@ -777,6 +801,7 @@ fn abandon(state: &Shared, run: &Run, taken: Option<db::Queued>) {
     if runs.get(task_id).is_some_and(|h| h.run_id == run.id) {
         runs.remove(task_id);
     }
+    set_writes_documents(&run.id, false);
 }
 
 /// A run's launch is over: it started (`Ok(true)`), was stopped while it was being prepared
@@ -928,6 +953,10 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         crate::relocate::settled(state, pid).await;
     }
     let (mut task, project, profile) = load(state, task_id)?;
+    // `/plan` gives the task the plan label, if it was sent some other way than `send_run`.
+    if task.kind == "task" && run.kind != "compact" && crate::documents::plan_command(text).is_some() {
+        task = crate::documents::add_plan(state, &task)?;
+    }
     // A thread created while its profile had no configs takes the default it has now, and
     // keeps it from here on with its conversation.
     if task.claude_config_id.is_none() && task.session_id.is_none() {
@@ -992,6 +1021,7 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         tokio::fs::create_dir_all(d).await.ok();
         add_dirs.push(d.clone());
     }
+    set_writes_documents(&run.id, own_dir.is_some() || doc_dir.as_ref() == Some(&crate::documents::dir(state, &task.id)));
     // Setting up a subproject task's worktree may have set up the subproject's too.
     let parent = match (&task.parent_id, task.kind.as_str()) {
         (Some(id), "task") => db::get_task(&state.db(), id)?,
@@ -1006,6 +1036,13 @@ async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
         _ => None,
     };
 
+    // `/plan`: the system prompt has the plan's instructions, as the task has the label (see above).
+    let plan = crate::documents::plan_command(text).filter(|_| task.kind == "task" && run.kind != "compact");
+    let text = match (plan, documents.iter().find(|(l, _)| *l == "plan")) {
+        (Some(rest), Some((_, file))) => crate::documents::plan_prompt(file, rest, true),
+        _ => text.to_string(),
+    };
+    let text = text.as_str();
     let prompt = if task.session_id.is_none() && task.kind == "task" && run.kind != "compact" {
         start_prompt(&task, project.as_ref(), text)
     } else {
@@ -1604,7 +1641,9 @@ pub fn load_active(state: &Shared) -> Result<()> {
     for run in active {
         state.runs.lock().unwrap().insert(run.task_id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
         if runs::exists(state, &run.id) && runs::format(state, &run.id) > runs::RUN_FORMAT {
-            // Written by a newer build (a downgrade); we can't follow it safely.
+            // Written by a newer build (a downgrade); we can't follow it safely, so its agent is
+            // stopped rather than left working (and calling the board's tools) unfollowed.
+            runs::reap(state, &run.id);
             finish(state, &run.id, Outcome::Failed("This run was started by a newer huntaway; update this host to follow it".into()));
         } else if runs::exists(state, &run.id) {
             if run.status == "preparing" {
@@ -1627,10 +1666,21 @@ pub fn load_active(state: &Shared) -> Result<()> {
             if stopping == 1 && takes_input {
                 stop_unless_interrupted(state, &run.id, stop_id.as_deref().unwrap_or(""));
             }
-            // Its turn ended with messages it has been sent waiting to start the next one.
+            // Its turn ended, maybe before the end was seen to (see `turn_ended`): the messages it has been
+            // sent start the next one, written now if they weren't, or else its input is closed so it exits.
             if between_turns && takes_input {
-                let waiting: Vec<String> = task.into_iter().flat_map(|t| t.steering).filter(|s| s.run_id == run.id && s.written).map(|s| s.id).collect();
-                if !waiting.is_empty() {
+                let waiting: Vec<String> = {
+                    let _runs = state.runs.lock().unwrap();
+                    // Those it can't be sent are taken back once it doesn't take them in (see `finish`).
+                    let task = write_steers(state, &run.task_id).unwrap_or_else(|e| {
+                        tracing::error!(run = %run.id, "sending the agent the messages it was sent: {e:#}");
+                        task
+                    });
+                    task.into_iter().flat_map(|t| t.steering).filter(|s| s.run_id == run.id).map(|s| s.id).collect()
+                };
+                if waiting.is_empty() {
+                    runs::close_input(state, &run.id);
+                } else {
                     close_unless_taken_in(state, &run, waiting);
                 }
             }
@@ -2230,58 +2280,75 @@ fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
         }
         "control_response" => crate::context::on_control_response(state, task_id, &v)?,
         "result" => {
-            // The turn was refused: its config is out of usage (see usage.rs).
-            if v["api_error"] == "usage_limit_reached" {
-                if let Some(config) = task_config(state, task_id)? {
-                    crate::usage::ran_out(state, task_id, &config.id);
-                }
-            }
-            crate::context::on_result(state, task_id, &v)?;
-            // Before the turn's end closes its input (see `turn_ended`).
-            crate::context::request(state, run);
-            // A running total for the agent's process, which may go on for several turns.
-            let total = v["total_cost_usd"].as_f64().unwrap_or(0.0);
-            let so_far: f64 = state.db().query_row("SELECT cost_usd FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
-            let cost = (total - so_far).max(0.0);
-            state.db().execute("UPDATE runs SET cost_usd=?1 WHERE id=?2", rusqlite::params![total.max(so_far), run.id])?;
-            let task = db::get_task(&state.db(), task_id)?;
-            if let Some(t) = task {
-                let mut fields = vec![("cost_usd", json!(t.cost_usd + cost))];
-                if let Some(sid) = v["session_id"].as_str() {
-                    fields.push(("session_id", json!(sid)));
-                }
-                state.update_task(task_id, &fields)?;
-            }
-            let mut result_error = None;
-            if v["is_error"] == true || v["subtype"].as_str().is_some_and(|s| s != "success") {
-                result_error = Some(
-                    v["result"]
-                        .as_str()
-                        .map(String::from)
-                        .or_else(|| v["errors"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("\n")))
-                        .unwrap_or_else(|| format!("run ended with {}", v["subtype"])),
-                );
-            }
-            let slimmed = json!({
-                "type": "result",
-                "subtype": v["subtype"],
-                "is_error": v["is_error"],
-                "result": v["result"],
-                "duration_ms": v["duration_ms"],
-                "num_turns": v["num_turns"],
-                "total_cost_usd": cost,
-            });
-            record_result(state, run, result_error, slimmed)?;
+            let recorded = claude_result(state, run, &v);
+            // Whatever of it failed to be recorded (see `record_result`).
+            turn_ended(state, run);
+            recorded?;
         }
         _ => {}
     }
     Ok(())
 }
 
+/// The end of one of Claude Code's turns (its `result`, `v`), but for closing its input (see `turn_ended`).
+fn claude_result(state: &Shared, run: &Run, v: &Value) -> Result<()> {
+    let task_id = run.task_id.as_str();
+    // The turn was refused: its config is out of usage (see usage.rs).
+    if v["api_error"] == "usage_limit_reached" {
+        if let Some(config) = task_config(state, task_id)? {
+            crate::usage::ran_out(state, task_id, &config.id);
+        }
+    }
+    crate::context::on_result(state, task_id, v)?;
+    // Before the turn's end closes its input (see `turn_ended`).
+    crate::context::request(state, run);
+    // A running total for the agent's process, which may go on for several turns.
+    let total = v["total_cost_usd"].as_f64().unwrap_or(0.0);
+    let so_far: f64 = state.db().query_row("SELECT cost_usd FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
+    let cost = (total - so_far).max(0.0);
+    state.db().execute("UPDATE runs SET cost_usd=?1 WHERE id=?2", rusqlite::params![total.max(so_far), run.id])?;
+    let task = db::get_task(&state.db(), task_id)?;
+    if let Some(t) = task {
+        let mut fields = vec![("cost_usd", json!(t.cost_usd + cost))];
+        if let Some(sid) = v["session_id"].as_str() {
+            fields.push(("session_id", json!(sid)));
+        }
+        state.update_task(task_id, &fields)?;
+    }
+    let mut result_error = None;
+    if v["is_error"] == true || v["subtype"].as_str().is_some_and(|s| s != "success") {
+        result_error = Some(
+            v["result"]
+                .as_str()
+                .map(String::from)
+                .or_else(|| v["errors"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("\n")))
+                .unwrap_or_else(|| format!("run ended with {}", v["subtype"])),
+        );
+    }
+    let slimmed = json!({
+        "type": "result",
+        "subtype": v["subtype"],
+        "is_error": v["is_error"],
+        "result": v["result"],
+        "duration_ms": v["duration_ms"],
+        "num_turns": v["num_turns"],
+        "total_cost_usd": cost,
+    });
+    record_turn_end(state, run, result_error, slimmed)
+}
+
 /// The end of one of the agent's turns (Claude Code's `result`, or a Codex turn completing):
 /// record its outcome and add `result` (shaped like Claude Code's) to the thread. The last
 /// turn's outcome is the run's.
-pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut result: Value) -> Result<()> {
+pub fn record_result(state: &Shared, run: &Run, error: Option<String>, result: Value) -> Result<()> {
+    let recorded = record_turn_end(state, run, error, result);
+    // Even if that failed (the disk is full, say): the result's line has been read, so it isn't
+    // seen again, and an input left open would keep the agent (and the run) waiting for good.
+    turn_ended(state, run);
+    recorded
+}
+
+fn record_turn_end(state: &Shared, run: &Run, error: Option<String>, mut result: Value) -> Result<()> {
     let stopping: i64 = state.db().query_row("SELECT stop_requested FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
     if stopping == 1 {
         // The turn a stop interrupted: from here, a message it takes in starts a new one.
@@ -2298,7 +2365,6 @@ pub fn record_result(state: &Shared, run: &Run, error: Option<String>, mut resul
     crate::documents::turn_ended(state, &run.task_id);
     crate::context::record_turn(state, run, result["total_cost_usd"].as_f64())?;
     state.add_message(&run.task_id, "claude", result)?;
-    turn_ended(state, run);
     Ok(())
 }
 
@@ -2314,6 +2380,7 @@ fn end_run(state: &Shared, task_id: &str, run_id: &str, fields: &[(&str, Value)]
 }
 
 pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
+    set_writes_documents(run_id, false);
     let Ok(Some(run)) = db::get_run(&state.db(), run_id) else { return forget(state, run_id) };
     let task_id = run.task_id.as_str();
     let queued = {
@@ -2765,6 +2832,48 @@ mod tests {
     }
 
     #[test]
+    fn plan_labels_the_task_and_tells_its_agent_how() {
+        crate::testing::run(async || {
+            // A run that started without labels, working in a worktree, may not be let write the
+            // task's folder (Codex's writable roots don't have it): `/plan` waits for the next run,
+            // which starts with the label.
+            let (state, task, run) = running(true);
+            let t = send(&state, &task.id, "/plan  the cache ").unwrap();
+            assert_eq!(t.labels, vec!["plan"]);
+            assert!(crate::documents::dir(&state, &task.id).is_dir());
+            assert_eq!((t.queued_message.as_deref(), t.steering.len()), (Some("/plan  the cache"), 0));
+            assert!(input(&state, &run).is_empty());
+            // An ordinary message still goes to it.
+            assert_eq!(send(&state, &task.id, "and this").unwrap().steering.len(), 1);
+
+            // One that can write it (it started with a label, say) takes it in its turn.
+            let (state, task, run) = running(true);
+            set_writes_documents(&run.id, true);
+            let t = send(&state, &task.id, "/plan  the cache ").unwrap();
+            assert_eq!(t.labels, vec!["plan"]);
+            let file = crate::documents::path(&state, &t, "plan").unwrap();
+            assert!(file.parent().unwrap().is_dir());
+            // Its system prompt may not say how to write the plan, so the message does.
+            let sent = input(&state, &run)[0]["message"]["content"].as_str().unwrap().to_string();
+            assert!(sent.contains(&path_str(&file)) && sent.contains("<ia-steps>") && sent.ends_with("What to plan: the cache"), "{sent}");
+            // The thread shows the command, as it was sent.
+            let steer = t.steering[0].clone();
+            output(&state, &run, &[replay(&steer.id, &sent)]);
+            assert_eq!(user_messages(&state, &task.id), vec![json!({"text": "/plan  the cache", "steered": true})]);
+            // Its labels stay as they are, and a command that only starts the same way isn't it.
+            let t = state.update_task(&task.id, &[("labels", json!(["plan", "diagram"]))]).unwrap().unwrap();
+            assert_eq!(send(&state, &t.id, "/plan").unwrap().labels, vec!["plan", "diagram"]);
+            // Its end forgets it.
+            finish(&state, &run.id, Outcome::Ok);
+            assert!(!writes_documents(&run.id));
+            let (state, task, run) = running(true);
+            send(&state, &task.id, "/planner go").unwrap();
+            assert_eq!(input(&state, &run)[0]["message"]["content"], "/planner go");
+            assert!(reload(&state, &task.id).labels.is_empty());
+        });
+    }
+
+    #[test]
     fn the_end_of_a_turn_or_run_ends_a_wait() {
         crate::testing::run(async || {
             let (state, task, run) = running(true);
@@ -2982,6 +3091,70 @@ mod tests {
             assert!(!input_closed(&state, &run));
             tokio::time::sleep(STEER_GRACE).await;
             assert!(input_closed(&state, &run));
+        });
+    }
+
+    #[test]
+    fn after_a_restart_a_turn_that_ended_with_nothing_waiting_ends_the_run() {
+        crate::testing::run(async || {
+            let (state, task, run) = running(true);
+            // The server stopped after the turn's end was recorded, before its input was closed.
+            state.db().execute("UPDATE runs SET saw_result=1, between_turns=1 WHERE id=?1", [&run.id]).unwrap();
+            restart(&state, &task);
+            assert!(input_closed(&state, &run));
+        });
+    }
+
+    #[test]
+    fn after_a_restart_messages_the_agent_wasnt_sent_are_sent() {
+        crate::testing::run(async || {
+            let (state, task, run) = running(true);
+            // Sent as the turn ended, and kept, before the server stopped, to be written to its input.
+            let steer = db::Steer { id: "s1".into(), text: "one more thing".into(), from_agent: false, run_id: run.id.clone(), written: false };
+            state.update_task(&task.id, &[("steering", json!([steer]))]).unwrap();
+            state.db().execute("UPDATE runs SET saw_result=1, between_turns=1 WHERE id=?1", [&run.id]).unwrap();
+            restart(&state, &task);
+            assert_eq!(input(&state, &run).last().unwrap()["message"]["content"], "one more thing");
+            assert!(reload(&state, &task.id).steering[0].written);
+            // It starts the next turn, or the run ends and it goes to the next.
+            assert!(!input_closed(&state, &run));
+            tokio::time::sleep(STEER_GRACE * 3 / 2).await;
+            assert!(input_closed(&state, &run));
+        });
+    }
+
+    #[test]
+    fn a_turns_end_closes_the_input_even_if_it_cant_be_recorded() {
+        crate::testing::run(async || {
+            // The disk is full, say, as the turn's result goes in the thread, or as its cost is added up.
+            for failing in ["BEFORE INSERT ON messages", "BEFORE UPDATE OF cost_usd ON tasks"] {
+                let (state, _task, run) = running(true);
+                state.db().execute_batch(&format!("CREATE TRIGGER full {failing} BEGIN SELECT RAISE(FAIL, 'database or disk is full'); END;")).unwrap();
+                output(&state, &run, &[result("success", 0.1)]);
+                assert!(input_closed(&state, &run), "{failing}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_run_from_a_newer_build_is_stopped_rather_than_left_unfollowed() {
+        crate::testing::run(async || {
+            use std::os::unix::process::CommandExt;
+            let (state, task, run) = running(true);
+            let dir = runs::run_dir(&state, &run.id);
+            std::fs::write(dir.join("run.json"), r#"{"format": 99}"#).unwrap();
+            std::fs::write(dir.join("spec.json"), "{}").unwrap();
+            // Its agent, in a process group of its own as ia-shim starts it.
+            let mut agent = std::process::Command::new("sleep").arg("60").process_group(0).spawn().unwrap();
+            std::fs::write(dir.join("pid"), agent.id().to_string()).unwrap();
+            restart(&state, &task);
+            assert_eq!(db::get_run(&state.db(), &run.id).unwrap().unwrap().status, "exited");
+            assert!(input_closed(&state, &run));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while agent.try_wait().unwrap().is_none() {
+                assert!(std::time::Instant::now() < deadline, "the agent is still running");
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
         });
     }
 
