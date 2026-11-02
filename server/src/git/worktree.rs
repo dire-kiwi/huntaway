@@ -880,19 +880,21 @@ pub async fn unmerged(state: &Shared, task: &Task) -> bool {
 /// Whether the setting that a task needs an approving review on its pull request to go to
 /// "Ready for merge" applies to `task`: its project's, or else its profile's (API 94). It doesn't
 /// where the task's merge goes through no pull request (the project's settings open none for it).
-pub fn pr_approval_required(state: &Shared, task: &Task) -> bool {
-    let c = state.db();
-    let project = task.project_id.as_deref().and_then(|id| db::get_project(&c, id).ok().flatten());
-    if let Some(p) = &project {
+pub async fn pr_approval_required(state: &Shared, task: &Task) -> bool {
+    let (project, required) = {
+        let c = state.db();
+        let project = task.project_id.as_deref().and_then(|id| db::get_project(&c, id).ok().flatten());
         let in_subproject = task.parent_id.as_deref().and_then(|id| db::get_task(&c, id).ok().flatten()).is_some_and(|t| t.subproject);
-        if !p.pull_requests(in_subproject) {
-            return false;
-        }
-    }
-    if let Some(on) = project.and_then(|p| p.require_pr_approval) {
-        return on;
-    }
-    db::get_profile(&c, &task.profile_id).ok().flatten().is_some_and(|p| p.require_pr_approval)
+        let required = match project.as_ref().and_then(|p| p.require_pr_approval) {
+            Some(on) => on,
+            None => db::get_profile(&c, &task.profile_id).ok().flatten().is_some_and(|p| p.require_pr_approval),
+        };
+        (project.filter(|p| p.pull_requests(in_subproject)), required)
+    };
+    // Agents open a pull request only for a task with its own branch, in a repository pushed to GitHub (see agent/runner/launch.rs).
+    let Some(project) = project.filter(|_| required && task.branch.is_some()) else { return false };
+    let base = task.base_branch.as_deref().or(project.base_branch.as_deref()).filter(|b| !b.is_empty());
+    github(Path::new(&project.repo_path), base).await.is_some()
 }
 
 /// Whether a pull request (as `gh pr view --json reviewDecision,reviews` prints it) is approved:
@@ -901,12 +903,17 @@ pub fn pr_approval_required(state: &Shared, task: &Task) -> bool {
 pub fn approved_by_reviews(pr: &Value) -> bool {
     match pr["reviewDecision"].as_str() {
         Some("APPROVED") => return true,
-        Some("CHANGES_REQUESTED") => return false,
+        // Required reviews GitHub doesn't count as met (too few, or not from people who can write), or changes asked for.
+        Some("CHANGES_REQUESTED" | "REVIEW_REQUIRED") => return false,
         _ => {}
     }
     let mut verdicts: std::collections::HashMap<&str, &str> = Default::default();
     for r in pr["reviews"].as_array().into_iter().flatten() {
         let (Some(who), Some(state)) = (r["author"]["login"].as_str(), r["state"].as_str()) else { continue };
+        // Anyone can review a public repository's pull request: only those with a say in the repository count.
+        if state == "APPROVED" && !["OWNER", "MEMBER", "COLLABORATOR"].contains(&r["authorAssociation"].as_str().unwrap_or("")) {
+            continue;
+        }
         match state {
             "APPROVED" | "CHANGES_REQUESTED" => drop(verdicts.insert(who, state)),
             "DISMISSED" => drop(verdicts.remove(who)),
@@ -1846,7 +1853,7 @@ mod approval_tests {
     use serde_json::json;
 
     fn pr(decision: Value, reviews: &[(&str, &str)]) -> Value {
-        json!({"reviewDecision": decision, "reviews": reviews.iter().map(|(a, s)| json!({"author": {"login": a}, "state": s})).collect::<Vec<_>>()})
+        json!({"reviewDecision": decision, "reviews": reviews.iter().map(|(a, s)| json!({"author": {"login": a}, "state": s, "authorAssociation": "MEMBER"})).collect::<Vec<_>>()})
     }
     use serde_json::Value;
 
@@ -1860,5 +1867,10 @@ mod approval_tests {
         assert!(approved_by_reviews(&pr(json!(null), &[("a", "CHANGES_REQUESTED"), ("a", "APPROVED")])));
         assert!(!approved_by_reviews(&pr(json!(null), &[("a", "APPROVED"), ("a", "DISMISSED")])));
         assert!(!approved_by_reviews(&pr(json!(null), &[("a", "COMMENTED")])));
+        // Required reviews not met: an approval GitHub doesn't count is no approval.
+        assert!(!approved_by_reviews(&pr(json!("REVIEW_REQUIRED"), &[("a", "APPROVED")])));
+        // Without required reviews, an outside account's approval doesn't count.
+        let outsider = json!({"reviewDecision": "", "reviews": [{"author": {"login": "x"}, "state": "APPROVED", "authorAssociation": "NONE"}]});
+        assert!(!approved_by_reviews(&outsider));
     }
 }

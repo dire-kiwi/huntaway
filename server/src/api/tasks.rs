@@ -251,7 +251,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     }
     // Where the project or profile asks for it, the task's pull request needs an approving review on GitHub first.
     // The pull request it will have is the one checked, if the same request changes it.
-    let gated = merge && !nothing_to_merge && !remerge && worktree::pr_approval_required(s, &current);
+    let gated = merge && !nothing_to_merge && !remerge && worktree::pr_approval_required(s, &current).await;
     let pr_url_set = fields.iter().find(|(k, _)| *k == "pr_url").map(|(_, v)| v.as_str().map(str::to_string));
     if gated {
         let url = pr_url_set.clone().unwrap_or_else(|| current.pr_url.clone());

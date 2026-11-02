@@ -585,6 +585,15 @@ fn ready_for_merge_needs_a_github_approval_where_required() {
             let s = s.clone();
             async move { update_task_inner(&s, &id, json!({"status": "ready_for_merge"}).as_object().unwrap()).await }
         };
+        // A local-only repository, or one pushed elsewhere than GitHub, has no pull request workflow.
+        db::update_profile(&s.db(), &p.profile_id, &[("require_pr_approval", json!(true))]).unwrap();
+        let cur = db::get_task(&s.db(), &t.id).unwrap().unwrap();
+        assert!(!crate::git::worktree::pr_approval_required(&s, &cur).await);
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).status().unwrap().success());
+        git(&["remote", "add", "origin", "https://gitlab.com/o/r.git"]);
+        assert!(!crate::git::worktree::pr_approval_required(&s, &cur).await);
+        git(&["remote", "set-url", "origin", "https://github.com/o/r.git"]);
+        assert!(crate::git::worktree::pr_approval_required(&s, &cur).await);
         // The profile asks for it: no pull request, so refused, and the task stays where it was.
         db::update_profile(&s.db(), &p.profile_id, &[("require_pr_approval", json!(true))]).unwrap();
         assert!(go(t.id.clone()).await.is_err());
@@ -597,16 +606,16 @@ fn ready_for_merge_needs_a_github_approval_where_required() {
         // Where the project's settings open no pull request for its tasks, there's none to wait for.
         db::update_project(&s.db(), &p.id, &[("pull_requests", json!(false))]).unwrap();
         let cur = db::get_task(&s.db(), &t.id).unwrap().unwrap();
-        assert!(!crate::git::worktree::pr_approval_required(&s, &cur));
+        assert!(!crate::git::worktree::pr_approval_required(&s, &cur).await);
         db::update_project(&s.db(), &p.id, &[("pull_requests", json!(true)), ("subproject_pull_requests", json!(false))]).unwrap();
         let sub = task_with_work(&s, &p, "sub").await;
         db::update_task(&s.db(), &sub.id, &[("subproject", json!(true))]).unwrap();
         db::update_task(&s.db(), &t.id, &[("parent_id", json!(sub.id))]).unwrap();
         let cur = db::get_task(&s.db(), &t.id).unwrap().unwrap();
-        assert!(!crate::git::worktree::pr_approval_required(&s, &cur));
+        assert!(!crate::git::worktree::pr_approval_required(&s, &cur).await);
         db::update_task(&s.db(), &t.id, &[("parent_id", Value::Null)]).unwrap();
         let cur = db::get_task(&s.db(), &t.id).unwrap().unwrap();
-        assert!(crate::git::worktree::pr_approval_required(&s, &cur));
+        assert!(crate::git::worktree::pr_approval_required(&s, &cur).await);
         // The project says otherwise.
         db::update_project(&s.db(), &p.id, &[("require_pr_approval", json!(false))]).unwrap();
         assert_eq!(go(t.id.clone()).await.unwrap().status, "ready_for_merge");
