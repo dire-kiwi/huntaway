@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ticks } from "../src/timeline.ts";
+import { ticks } from "../src/components/board/timeline.ts";
 
 const at = (h, m) => new Date(2026, 9, 31, h, m).getTime();
 const HOUR = 3600_000;

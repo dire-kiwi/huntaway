@@ -77,6 +77,8 @@ test("@ puts a task in another project, and its draft keeps the tokens", async (
   await withBrowser(server, {}, async (ui) => {
     await ui.run([
       "goto /profile/Default",
+      // The board has its projects (a draft written in a dialog opened before then didn't always come back, HA-92).
+      "wait Checkout rework",
       "click New task",
       "wait Reads as",
       "type @SHOP",
@@ -93,6 +95,40 @@ test("@ puts a task in another project, and its draft keeps the tokens", async (
     ]);
   });
   assert.ok(await created("Fix totals `@none` /nothing"));
+});
+
+// HA-93: New task clicked on a profile's board before its projects load opens the dialog once they're there. Opened
+// before them, it started in no project (the only place there was) and kept its draft there, so the next dialog,
+// which starts in a project, came up empty.
+test("a draft typed before the profile board's projects load comes back", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    let release;
+    const held = new Promise((r) => (release = r));
+    await page.route(/\/profiles\/[^/]+\/projects(\?.*)?$/, async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      await held;
+      route.continue();
+    });
+    // It waits for them.
+    await ui.run(["goto /profile/Default", "click New task", "sleep 500", "assert !document.querySelector('[data-modal]')"]);
+    release();
+    await ui.run([
+      "wait Reads as",
+      "type @SHOP",
+      "press Enter",
+      "wait New task in Shop",
+      "type Fix rounding",
+      "press Escape",
+      "gone Reads as",
+      "click New task",
+      "wait New task in Shop",
+      `assert ${value} === '@SHOP Fix rounding'`,
+      "press Control+Enter",
+      "gone Reads as",
+    ]);
+  });
+  assert.ok(await created("Fix rounding"));
 });
 
 // IA-220 review: Ctrl+Enter with the caret still in a token that's the start of another (#SHOP-1 of #SHOP-10, @SHOP

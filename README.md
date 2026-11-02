@@ -7,6 +7,8 @@ approve tool calls, and review, stage and commit its changes (lazygit-style).
 
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
+server/src/    the huntaway binary's modules, grouped in agent/, mcp/, git/, hosts/, update/,
+               integrations/ and review/ (see docs/structure.md)
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
@@ -18,6 +20,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
                install.sh: install the desktop app from source (Linux, macOS)
+docs/          notes; structure.md: where code goes and how big modules are split
 ```
 
 Agents survive server restarts, and one board can span several machines. Each machine runs
@@ -56,6 +59,9 @@ runs rustc directly. The server is started with `$XDG_RUNTIME_DIR` (or `/tmp`) a
 rather than the build's, which may be a task's temp folder that goes when the task is done.
 `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s` shows the hit rate.
 Debug builds also leave dependencies' debuginfo out, which keeps each worktree's `target/` smaller.
+`cargo test` runs each test binary with a `TMPDIR` of its own on disk, `/var/tmp/ia-cargo-test-*`
+(or `$IA_CARGO_TEST_TMPDIR`), removed when it exits (`server/.cargo/test-runner`), rather than in
+`/tmp`, which is often a tmpfs in memory that tests' databases and repositories fill up.
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
 of how many of its tasks are in progress (blue), need attention (amber), in review (purple) and
@@ -91,9 +97,11 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
-Reorder projects in the sidebar by dragging their grip handles. With a handle focused,
-Alt + Up/Down moves the project using the keyboard. Projects stay within their host group;
-the order is saved in this browser.
+The sidebar lists projects in alphabetical order, with each group in its place by its own name
+and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
+under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
+out of its group, whose row stays while it has group tasks even if all its projects are favorites);
+*Remove from favorites* puts it back. Favorites are saved in this browser.
 
 Rename a project, change its key or point it at a moved repository folder in its settings (or
 with the `update_project` tool, API 45). After a key change the old task keys (e.g. `OS-2`) still
@@ -108,13 +116,13 @@ Group projects by right-clicking one in the sidebar (or with *Group* in its sett
 shows as a collapsible folder with its projects underneath, and clicking it opens one board
 (or list) with all of their tasks. Right-click a group to rename or ungroup it. Groups are
 saved on the host, per project, so projects on different hosts are in separate groups; which
-groups are collapsed is saved in this browser. Drag a group by its grip to move it with all
-its projects; projects inside a group reorder within it.
+groups are collapsed is saved in this browser.
 
 Hide a project from the sidebar by right-clicking it and picking *Hide from sidebar* (a group's
 menu hides all of its projects). Each host's hidden projects sit under a *N hidden* row at the
 end of its list, which carries their counts and opens to show them; right-click one there to
-show it again. A hidden project is only left out of the sidebar: its tasks are still on its
+show it again. A hidden favorite stays there rather than under *Favorites*, and making a hidden project a
+favorite shows it again. A hidden project is only left out of the sidebar: its tasks are still on its
 profile's and its group's boards. Hidden projects are saved in this browser.
 
 Archive a project you're done with by right-clicking it and picking *Archive…*, or with *Archive
@@ -195,7 +203,7 @@ those became done scratch tasks (in no project, whichever project they were in) 
 working in their old folder, so their conversations carry on.
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+).
+servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
 ### Server options
 
@@ -307,6 +315,18 @@ UI picks it up from `?token=` once and remembers it). Settings → Network acces
 ready-made link. The token lets anyone holding it run agents on your machine, and traffic is
 plain HTTP, so expose the server only on a trusted network (Tailscale, VPN) or behind a TLS
 reverse proxy.
+
+A server started with `--host 127.0.0.1` can still be used from another computer that can SSH into
+its machine, through a tunnel:
+
+```sh
+ssh -N -L 7878:127.0.0.1:7878 you@that-machine    # leave it running
+```
+
+Then open `http://localhost:7878/?token=<huntaway token>` there (`huntaway token`, or
+`<data-dir>/auth_token`, on that machine), or point the desktop app at it with `"serverUrl":
+"http://localhost:7878"` and the token (see *Desktop config*). To show that machine's board next to
+the other computer's own, link it as a host over SSH instead (see *Hosts*).
 
 ### Push notifications on a phone
 
@@ -471,6 +491,26 @@ back to the tarball's own server, from the first Update on: the tarball's server
 `IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
 Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
+A hub deployed as a container (a board on a server, with the binary and UI in its image or bundle) can
+update itself from GitHub this way too, rather than being redeployed for every change: start it with
+`--release-updates dire-kiwi/huntaway` and keep `<data dir>` on a volume, so the versions in
+`<data dir>/app/` and `app/state.json` survive the container being recreated. Update restarts the server
+in place (the container's process stays), and when the container starts again the deployed server execs
+the version it last updated to, as above. A release serves its own `ui/` even when the deployment passes
+`--ui-dir`, and reports the commit it was built from (`IA_BUILD_COMMIT`, which `release.yml` sets) rather
+than the deployment's `IA_COMMIT` (in `/api/health`, and `running_commit` in `/api/admin/server`), so hosts
+that follow the hub with `--update-from` and the checkouts it updates go by the release's commit. The Linux
+releases are built on GitHub's `ubuntu-latest`, so their server needs glibc 2.39 or later (Debian 13,
+Ubuntu 24.04) in the image.
+
+`scripts/install-release-host.sh` installs a host this way: it downloads the latest release's tarball
+(or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
+`~/.local/share/huntaway-server/current` at it, and prints the command to start it with
+`IA_RELEASE_UPDATES` set, and the forced command for a host a hub starts over SSH
+(`command="IA_RELEASE_UPDATES=dire-kiwi/huntaway '…/current/huntaway' ssh-host --port 7878 --data-dir '<data dir>'"`).
+Both name the data dir (`--data-dir`, or the default it found), so the host keeps its board.
+`scripts/install-release-host-test.sh` checks the script against a fake release.
+
 `scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
 background downloads, Update with an agent running, a broken version, Roll back, prereleases and
@@ -485,9 +525,25 @@ projects, tasks, agent threads and runs, and runs agents on its own machine. It 
 host is stored on a hub beyond how to reach it, so any number of boards (your desktop, a
 laptop somewhere else) can connect to the same host and see the same data.
 
-Settings → Hosts offers two ways to link a host:
+Settings → Hosts offers three ways to link a host:
 
-- **Add host** (the hub connects to the host): enter the host's URL and its token
+- **Add host → Over SSH** (the hub starts the host and tunnels to it): enter `user@host`, the SSH
+  port, the absolute path of `huntaway` on that machine (with `ia-shim` beside it) and the host's
+  port, then add the line the dialog shows to that machine's `~/.ssh/authorized_keys`. The line
+  holds the hub's own key (made on first use in `<hub data dir>/ssh/`), restricted to running
+  `huntaway ssh-host` and forwarding to the host's port:
+
+  ```text
+  restrict,port-forwarding,permitopen="127.0.0.1:7878",command="/path/huntaway ssh-host --port 7878" ssh-ed25519 AAAA… huntaway-hub@<hub>
+  ```
+
+  `ssh-host` starts `huntaway serve --host 127.0.0.1` through the login shell if nothing answers on
+  that port, and gives the hub the token from its data dir; add `--data-dir '<data dir>'` to the
+  command if the host's isn't the default (`scripts/install-release-host.sh` prints the whole
+  command). The host never listens beyond localhost or needs to reach the hub. The first connection
+  trusts the machine's SSH host key, and a changed one is refused later. If the tunnel drops, agents
+  keep running and the hub reconnects. The hub needs `ssh` and `ssh-keygen`.
+- **Add host → By URL and token** (the hub connects to the host): enter the host's URL and its token
   (`huntaway token` on that machine). This works whenever the hub can reach the host,
   e.g. over Tailscale.
 - **Connect from elsewhere** (the host dials out to the hub): run
@@ -536,6 +592,15 @@ it over the link, so no git remote or inbound access is needed. The host fast-fo
 checkout (it refuses if the checkout is dirty, on another branch, or has diverged), then
 rebuilds and restarts like Rebuild & restart; agents keep running. Hosts from before
 versioning need one manual update (`git pull`, then Rebuild & restart).
+
+A host installed from a release (with `--release-updates`, see *Release updates*; `/api/info`
+reports `updates_from: "releases"` rather than `"checkout"`, API 89) goes by version instead: when
+the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
+onto that release as its own Update would, checking for releases first if it hasn't seen it yet. It
+refuses a version older than its own, or one older than the latest release it knows of (update the
+hub first). A hub without a checkout that runs a release sends its version and the commit the release was built
+from (`IA_BUILD_COMMIT`; a release from before that, or a build without it or `IA_COMMIT`, sends only its
+version, so it can update release hosts but not checkouts).
 
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
@@ -724,6 +789,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   out). A limit at 80% or more is marked in amber, and one that's used up in red, in the
   sidebar and where a config is picked (the new task dialog's config picker, a task's
   *Config* row), so you can pick another config before starting work.
+- **Restarting the 5-hour window** (API 91): a plan's session limit runs for five hours from
+  the first message after the last window ended, so a window that ends while nothing runs leaves
+  the next one to start whenever work does. Tick *Restart 5h window* on a config in Settings →
+  Agent configs (off by default) and the host sends one short prompt just after each window ends
+  (a minute late, for clocks that disagree): `claude -p` on Haiku with no tools, MCP servers or
+  saved session for Claude, a low-effort ephemeral turn for Codex, from the data dir. That starts
+  the next window straight away. Only plans with a 5-hour limit are sent anything: the host fetches
+  the config's usage when the setting is turned on (or the server starts), and a plan whose usage
+  has never shown a session limit (like a plan with only weekly limits) is left alone, as is a config
+  that's out of usage. (Where that fetch fails, as with a login that has expired, it waits for an
+  agent run on the config to report the window.) It fetches again before each prompt, in case a run or another host already
+  started the window, and again after it, and takes the prompt's own `rate_limit_event`s in as an
+  agent run's are. The first request after a window ends reports the window that ended (as its
+  `rateLimitType`, left out of `unifiedWindows`), so that still counts as having one; only a prompt
+  whose rate limits show no 5-hour window at all, with usage that doesn't show one either, stops the
+  restarts until the setting is turned on again. Codex's windows are told apart by their length
+  (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
+  then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
+  has no session limit. See `server/src/agent/window.rs`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
@@ -1234,14 +1318,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   stashes, space applies, `g` pops and `d` drops. Right-clicking a file, commit or stash shows
   its menu. The view checks for changes every few seconds (the agent may be making them), and
   keys pressed while a change is being made wait for it, so pressing space again stages the next
-  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/changes.ts`),
+  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/components/changes/changes.ts`),
   applied with `git apply --cached`; if the file has changed since, git refuses it and the view
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
   wrong. A host before API 66 shows the branch's diff alone.
 - **Diffs and comments for the agent:** the Changes tab's diffs are highlighted for their
   file's language (by extension or name; the theme is the board's own colours), with
-  [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`app/src/highlight.worker.ts`),
+  [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`app/src/components/changes/highlight.worker.ts`),
   so a big diff doesn't hold up the page. Each language's grammar is fetched the first time a
   file in it is shown; a file's diff is highlighted once it's scrolled near, each hunk on its own
   (lines show plain until then), and files with more than 5000 lines in their diff, and lines over
@@ -1258,7 +1342,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   file, its lines (numbered in the new version, or the old one for removed lines), the lines as
   the diff has them and its note, and while the agent works it's queued or steered as any message
   is then. Comments, and notes still being written, are kept in the browser per task
-  (`app/src/lineComments.ts`), as composer drafts are.
+  (`app/src/components/changes/lineComments.ts`), as composer drafts are.
 - **Checkpoints and rewinding** (API 70): a task in a worktree of its own keeps a checkpoint of
   its files before each of its agent's runs (when anything changed since the last, so the first
   run's is the task's baseline) and after each of the agent's turns, including ones that were
@@ -1521,7 +1605,7 @@ or with comments and reviews from people who can push to the repository too (`al
 
 The reads above (a `wait` on a pull request, watching it in review, and the reads for *Done when
 merged*, which also ask for the head commit's checks) keep how the task's pull request's checks
-stood on the task (`pr_checks`, API 89, DB 71): the head commit, the outcome (`failed`, `passed`,
+stood on the task (`pr_checks`, API 93, DB 73): the head commit, the outcome (`failed`, `passed`,
 `pending` or `none`), the failed checks' names, conclusions and links, and how many passed and are
 still running. It's only written when that changes. No reads are added for it, so a task whose
 pull request isn't read by any of them (in *In progress* without a `wait`, or in a project with

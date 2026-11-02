@@ -30,9 +30,12 @@ test("a plan is themed, its components work, and it runs to the bottom with room
     await page.frameLocator("iframe").first().getByRole("heading", { name: "Dark mode", exact: true }).waitFor();
     const frame = page.frames().find((f) => f !== page.mainFrame());
 
-    // The board's background, and the demo's <ia-html> toggle, a page of its own in a frame in the plan's.
-    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    assert.equal(await frame.evaluate(() => getComputedStyle(document.body).backgroundColor), bg);
+    // The plan theme's background (planTheme.css, not the board's), its components, and the demo's <ia-html> toggle, a
+    // page of its own in a frame in the plan's.
+    assert.equal(await frame.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(17, 20, 27)");
+    assert.equal(await frame.evaluate(() => getComputedStyle(document.querySelector(".callout")).borderLeftWidth), "4px");
+    assert.equal(await frame.evaluate(() => getComputedStyle(document.querySelector(".pill.ok")).color), "rgb(111, 212, 154)");
+    assert.equal(await frame.evaluate(() => getComputedStyle(document.querySelector(".grid2")).display), "grid");
     // The panel slides in, and Playwright's stability check runs inside the frame, so it doesn't see the frame
     // itself move: wait for the frames to stop moving, and for the button's scroll into view to settle, first.
     await settled(page.locator("iframe"));

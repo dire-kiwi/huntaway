@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { parseDiff } from "../src/changes.ts";
+import { parseDiff } from "../src/components/changes/changes.ts";
 
 // The review is kept in localStorage: a stand-in for node.
 const store = new Map();
@@ -10,7 +10,7 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
 };
 const { commentLines, editComment, getReview, lineRange, openDraft, removeComments, reviewMessage, saveDraft, setDraftNote, withComments, clearReview } = await import(
-  "../src/lineComments.ts"
+  "../src/components/changes/lineComments.ts"
 );
 
 const [file] = parseDiff(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { harnessesOf, harnessWords } from "../src/harnesses.ts";
+import { harnessesOf, harnessWords } from "../src/components/layout/harnesses.ts";
 
 const claude = (id, name) => ({ id, name, agent: "claude", models: [{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }] });
 const codex = { id: "cx", name: "Codex", agent: "codex", models: [{ id: "gpt-5.5", label: "GPT-5.5" }] };

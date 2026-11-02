@@ -1,58 +1,23 @@
 // The tool list in mcp.rs is one json! value, deeper than the default limit lets the macro expand.
 #![recursion_limit = "256"]
 
-mod admin;
-mod agent_tools;
-mod attachments;
-mod automations;
-mod broker;
-mod codex;
-mod context;
+mod agent;
 mod analytics;
-mod changes;
-mod checkpoints;
 mod api;
-mod asana;
+mod attachments;
 mod db;
 mod demo;
 mod disk;
-mod documents;
-mod fanout;
-mod gh_mcp;
-mod git_view;
-mod github;
-mod hub;
+mod git;
+mod hosts;
+mod integrations;
 mod mcp;
-mod merged;
-mod permissions;
-mod pr_watch;
-mod prompts;
-mod questions;
-mod proto;
-mod pty;
-mod push;
-mod relay;
-mod release;
-mod relocate;
 mod review;
-mod runner;
-mod runs;
-mod ssh;
-mod staging;
 mod state;
-mod status_script;
-mod summary;
-mod task_tmp;
-mod terminal;
 #[cfg(test)]
 mod testing;
-mod title;
-mod tools;
-mod usage;
-mod wait;
+mod update;
 mod util;
-mod worktree;
-mod worktree_files;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -60,6 +25,14 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tower_http::services::{ServeDir, ServeFile};
+
+use agent::{codex, runner, runs, task_tmp, title, usage, window};
+use git::relocate;
+use hosts::{broker, hub, ssh, terminal};
+use integrations::{automations, push};
+use mcp::{gh_mcp, pr_watch};
+use review::merged;
+use update::{admin, release, staging};
 
 #[derive(Parser)]
 #[command(name = "huntaway", version, about = "Kanban board that orchestrates Claude Code and Codex agents")]
@@ -230,11 +203,20 @@ fn load_or_create_token(data_dir: &std::path::Path, file: &str) -> Result<String
     Ok(token)
 }
 
-fn find_ui_dir(explicit: Option<PathBuf>) -> Option<PathBuf> {
+/// `--ui-dir`, else the UI beside the binary (a release's `ui/`) or the checkout's build. A release this server
+/// updated to (`from_app`) serves its own UI even with `--ui-dir`, which it inherits from the server it replaced and
+/// which names that server's UI.
+fn find_ui_dir(explicit: Option<PathBuf>, from_app: bool) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    if from_app && exe.parent().is_some_and(|d| d.join("ui/index.html").is_file()) {
+        if let Some(p) = &explicit {
+            tracing::info!("serving this release's own UI rather than --ui-dir {}", p.display());
+        }
+        return Some(exe.parent()?.join("ui"));
+    }
     if let Some(p) = explicit {
         return Some(p);
     }
-    let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
     [
         exe_dir.join("ui"),
@@ -324,10 +306,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let port = listener.local_addr()?.port();
     let internal_url = format!("http://127.0.0.1:{port}");
     let source_dir = admin::detect_source_dir(args.source_dir.clone());
-    // Without a checkout (e.g. deployed from a CI bundle), the deployment says which commit it is.
+    let from_app = std::env::current_exe().is_ok_and(|exe| staging::running_from_app(&data_dir, &exe).is_some());
+    // Without a checkout (e.g. deployed from a CI bundle, or a release), the build or the deployment says which commit it is.
     let running_commit = match &source_dir {
         Some(src) => admin::head_commit(src).await,
-        None => std::env::var("IA_COMMIT").ok().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()),
+        None => admin::bundle_commit(from_app),
     };
     let meta = admin::ServerMeta {
         boot_id: util::new_id(),
@@ -356,7 +339,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     }
     let mut app = api::router(state.clone());
-    match find_ui_dir(args.ui_dir) {
+    match find_ui_dir(args.ui_dir, from_app) {
         Some(ui) => {
             tracing::info!("serving UI from {}", ui.display());
             let files = ServeDir::new(&ui).fallback(ServeFile::new(ui.join("index.html")));
@@ -376,6 +359,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runner::load_active(&state)?;
     runner::auto_compact(&state);
     usage::resume_loop(&state);
+    window::start(&state);
     pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);
