@@ -33,7 +33,7 @@ pub struct CreateTask {
     #[serde(default)]
     pub task_type: Option<String>,
     /// Some of db::LABELS, each a document its agent writes besides its other work (see
-    /// documents.rs).
+    /// agent/documents.rs).
     #[serde(default)]
     pub labels: Option<Value>,
     /// The tasks elsewhere it's for (see `check_external_links`).
@@ -116,7 +116,7 @@ fn new_task_labels(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
         Some(_) => return Err(ApiError::bad("labels must be a list of strings")),
     };
     asked.extend(b.task_type.as_deref().map(str::trim).filter(|t| db::LABELS.contains(t)).map(|t| json!(t)));
-    let labels = crate::documents::check_labels(&Value::Array(asked)).map_err(ApiError::bad)?;
+    let labels = crate::agent::documents::check_labels(&Value::Array(asked)).map_err(ApiError::bad)?;
     Ok((!labels.is_empty()).then(|| ("labels", json!(labels))))
 }
 
@@ -328,7 +328,7 @@ pub fn create_task_inner(s: &Shared, project_id: &str, b: CreateTask) -> ApiResu
         return Err(ApiError::bad("only a task can have labels"));
     }
     // A subproject's branch is what its tasks branch from, so it and they work in worktrees. A
-    // scratch task works in its own folder instead (see documents.rs).
+    // scratch task works in its own folder instead (see agent/documents.rs).
     let use_worktree =
         kind == "task" && task_type.is_none() && (subproject || parent.is_some() || b.use_worktree.unwrap_or(project.use_worktrees && project.is_git));
     let effort = b.effort.as_deref().filter(|e| !e.is_empty());

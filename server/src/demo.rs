@@ -218,10 +218,10 @@ pub async fn seed(s: &Shared) -> Result<()> {
         )?;
         let t = db::update_task(&s.db(), &t.id, &[("labels", json!([label]))])?.ok_or_else(|| anyhow!("task not found"))?;
         // Kept as an agent's turn would have kept it.
-        let file = crate::documents::path(s, &t, label).ok_or_else(|| anyhow!("no document for {label}"))?;
-        std::fs::create_dir_all(crate::documents::dir(s, &t.id))?;
+        let file = crate::agent::documents::path(s, &t, label).ok_or_else(|| anyhow!("no document for {label}"))?;
+        std::fs::create_dir_all(crate::agent::documents::dir(s, &t.id))?;
         std::fs::write(file, document)?;
-        crate::documents::turn_ended(s, &t.id);
+        crate::agent::documents::turn_ended(s, &t.id);
     }
     // A scratch task, in no project, on the profile's board.
     db::insert_scratch_task(

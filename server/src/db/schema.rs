@@ -271,7 +271,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     }
     if version < 25 {
         // A project's own instructions for the prompts the board sends when a task's agent
-        // starts, when it's reviewed and when it's merged (see prompts.rs); NULL for the default.
+        // starts, when it's reviewed and when it's merged (see agent/prompts.rs); NULL for the default.
         conn.execute_batch(
             "BEGIN;
              ALTER TABLE projects ADD COLUMN start_prompt TEXT;
@@ -346,15 +346,15 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("BEGIN; ALTER TABLE tasks ADD COLUMN agent_wait TEXT; PRAGMA user_version=34; COMMIT;")?;
     }
     if version < 35 {
-        // Runs whenever one of the project's tasks changes status (see status_script.rs).
+        // Runs whenever one of the project's tasks changes status (see integrations/status_script.rs).
         conn.execute_batch("BEGIN; ALTER TABLE projects ADD COLUMN status_script TEXT NOT NULL DEFAULT ''; PRAGMA user_version=35; COMMIT;")?;
     }
     if version < 36 {
-        // A script per column, run when a task moves into it (see status_script.rs).
+        // A script per column, run when a task moves into it (see integrations/status_script.rs).
         conn.execute_batch("BEGIN; ALTER TABLE projects ADD COLUMN status_scripts TEXT NOT NULL DEFAULT '{}'; PRAGMA user_version=36; COMMIT;")?;
     }
     if version < 37 {
-        // How full the agent's context window is (see context.rs).
+        // How full the agent's context window is (see agent/context.rs).
         conn.execute_batch(
             "BEGIN;
              ALTER TABLE tasks ADD COLUMN context TEXT;
@@ -364,7 +364,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     }
     if version < 38 {
         // Plan, artifact and diagram tasks, and the versions of the document each one makes
-        // (see documents.rs).
+        // (see agent/documents.rs).
         conn.execute_batch(
             "BEGIN;
              ALTER TABLE tasks ADD COLUMN task_type TEXT;
@@ -467,7 +467,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=47; COMMIT;")?;
     }
     if version < 48 {
-        // Whether the board fetches and shows a config's subscription usage (see usage.rs); off
+        // Whether the board fetches and shows a config's subscription usage (see agent/usage.rs); off
         // until the user turns it on, so every copy of a login (previews, test servers) doesn't.
         // Tables created by migrate_claude_configs since have it already.
         let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('claude_configs') WHERE name='show_usage'", [], |r| r.get(0))?;
@@ -511,7 +511,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=53; COMMIT;"))?;
     }
     if version < 54 {
-        // What a task's agent has been told about each pull request it waited on (see pr_watch.rs).
+        // What a task's agent has been told about each pull request it waited on (see mcp/pr_watch.rs).
         conn.execute_batch(
             "BEGIN;
              CREATE TABLE IF NOT EXISTS pr_watches (
@@ -525,11 +525,11 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         )?;
     }
     if version < 55 {
-        // Projects' automations and their runs (see automations.rs).
+        // Projects' automations and their runs (see integrations/automations.rs).
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V55} PRAGMA user_version=55; COMMIT;"))?;
     }
     if version < 56 {
-        // Whether a task whose pull request was merged on GitHub moves to Done (see merged.rs),
+        // Whether a task whose pull request was merged on GitHub moves to Done (see review/merged.rs),
         // on until it's turned off, and what its last read found.
         let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name='done_when_merged'", [], |r| r.get(0))?;
         let add = if has { "" } else { "ALTER TABLE projects ADD COLUMN done_when_merged INTEGER NOT NULL DEFAULT 1;" };
@@ -553,7 +553,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     }
     if version < 58 {
         // Checkpoints of tasks' worktrees, a conversation rollback waiting for a task's next run,
-        // and where each run's turn is (see checkpoints.rs). Columns added only if they aren't
+        // and where each run's turn is (see git/checkpoints.rs). Columns added only if they aren't
         // there, in case another migration takes this version first.
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V58}"))?;
         for (table, column) in [("tasks", "rewind TEXT"), ("runs", "turn_message_id INTEGER"), ("runs", "agent_at TEXT")] {
@@ -567,7 +567,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     }
     if version < 59 {
         // Plans, artifacts and diagrams are labels any task can have, with a document each
-        // (see documents.rs), rather than types of task. A task that was one of those types gets
+        // (see agent/documents.rs), rather than types of task. A task that was one of those types gets
         // its type as its label, and keeps working in its own folder (as a `work_dir` in the data
         // dir), where its agent's conversation is.
         let has = |table: &str, column: &str| {
@@ -600,7 +600,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=61; COMMIT;"))?;
     }
     if version < 62 {
-        // The devices that get this board's notifications by Web Push (see push.rs).
+        // The devices that get this board's notifications by Web Push (see integrations/push.rs).
         conn.execute_batch(
             "BEGIN;
              CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -647,7 +647,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=65; COMMIT;")?;
     }
     if version < 66 {
-        // Ignored files copied, and folders linked, into each new task worktree (see worktree_files.rs).
+        // Ignored files copied, and folders linked, into each new task worktree (see git/worktree_files.rs).
         let mut add = String::new();
         for col in ["copy_files", "link_folders"] {
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name=?1", [col], |r| r.get(0))?;
@@ -658,7 +658,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=66; COMMIT;"))?;
     }
     if version < 67 {
-        // A summary of each task's changes once its review passes (see summary.rs): whether a
+        // A summary of each task's changes once its review passes (see review/summary.rs): whether a
         // project makes them and who writes them, and the task's latest. Added only if they
         // aren't there, in case another migration takes this version first.
         conn.execute_batch("BEGIN;")?;
@@ -710,7 +710,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     }
     if version < 71 {
         // Whether the board starts a config's next 5-hour window as soon as one ends (see
-        // window.rs); off until the user turns it on. Added only if it isn't there, in case
+        // agent/window.rs); off until the user turns it on. Added only if it isn't there, in case
         // another migration takes this version first (tables created by migrate_claude_configs
         // since have it already).
         let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('claude_configs') WHERE name='restart_window'", [], |r| r.get(0))?;
@@ -719,7 +719,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     }
     if version < 72 {
         // Whether a profile's and a project's merges wait for the user's approval, and where a
-        // task's merge is with it (see merge_gate.rs). Added only if they aren't there, in case
+        // task's merge is with it (see review/merge_gate.rs). Added only if they aren't there, in case
         // another migration takes this version first.
         conn.execute_batch("BEGIN;")?;
         for (table, column, kind) in [("profiles", "merge_approval", "INTEGER NOT NULL DEFAULT 0"), ("projects", "merge_approval", "INTEGER"), ("tasks", "merge_approval", "TEXT")] {
@@ -741,7 +741,7 @@ pub const VERSION: i64 = 72;
 /// `start_tokens` what its first request to the model held) and for
 /// each compaction (`compact`: `tokens` before it and `post_tokens` after, and its `source`:
 /// `auto` when the agent compacted by itself as its context filled up, `user` for a `/compact`,
-/// `idle` for the board's after a session sat idle). See context.rs. A run's `turn_start_tokens`
+/// `idle` for the board's after a session sat idle). See agent/context.rs. A run's `turn_start_tokens`
 /// and `turn_tokens` follow its current turn's requests to the model, until the turn's row is written.
 const SCHEMA_V69: &str = r#"
 CREATE TABLE IF NOT EXISTS context_stats (
@@ -786,7 +786,7 @@ FROM (
 ) b LEFT JOIN runs r ON r.id = b.run_id;
 "#;
 
-/// Checkpoints of a task's worktree (see checkpoints.rs), each kept as a commit under
+/// Checkpoints of a task's worktree (see git/checkpoints.rs), each kept as a commit under
 /// `refs/huntaway/checkpoints/<task>/<n>` in its repository.
 const SCHEMA_V58: &str = r#"
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -811,7 +811,7 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 "#;
 
 /// Automations, which create a task or message one on a schedule or when a webhook is
-/// delivered, and their runs (including webhook deliveries that didn't run). See automations.rs.
+/// delivered, and their runs (including webhook deliveries that didn't run). See integrations/automations.rs.
 const SCHEMA_V55: &str = r#"
 CREATE TABLE IF NOT EXISTS automations (
   id TEXT PRIMARY KEY,
@@ -916,7 +916,7 @@ pub(super) fn migrate_claude_configs(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Per-project skills and MCP servers (see agent_tools.rs).
+/// Per-project skills and MCP servers (see agent/agent_tools.rs).
 const SCHEMA_V19: &str = r#"
 CREATE TABLE project_skills (
   id TEXT PRIMARY KEY,
@@ -948,7 +948,7 @@ CREATE TABLE project_agent_tools (
 "#;
 
 /// Global skills and MCP servers (no project) join the projects' own, and each profile can
-/// switch a global one on by default, which its projects can override (see agent_tools.rs).
+/// switch a global one on by default, which its projects can override (see agent/agent_tools.rs).
 const SCHEMA_V20: &str = r#"
 CREATE TABLE agent_skills (
   id TEXT PRIMARY KEY,

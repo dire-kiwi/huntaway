@@ -1,6 +1,6 @@
 /**
  * Statistics on how big threads' contexts get and when they're compacted (see server
- * context.rs), to tell whether compacting at some size would be worth it: each turn's end says
+ * agent/context.rs), to tell whether compacting at some size would be worth it: each turn's end says
  * how big a context the next prompt starts from, and each compaction how big it had got.
  */
 

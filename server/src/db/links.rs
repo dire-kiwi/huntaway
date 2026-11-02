@@ -1,4 +1,4 @@
-//! Links to other hosts (see hub.rs).
+//! Links to other hosts (see hosts/hub.rs).
 
 use super::*;
 

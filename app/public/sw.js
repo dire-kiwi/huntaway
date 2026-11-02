@@ -1,5 +1,5 @@
 // The board's service worker (registered by push.ts): it shows the board's push notifications (see
-// server/src/push.rs) and opens the task when one is tapped. It caches nothing, and has no fetch
+// server/src/integrations/push.rs) and opens the task when one is tapped. It caches nothing, and has no fetch
 // handler: pages, the UI's scripts and the API all come from the server as they would without it, so
 // a new UI build is never hidden behind an old copy (see uiVersion.ts).
 

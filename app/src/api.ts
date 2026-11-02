@@ -1573,7 +1573,7 @@ export interface HostInfo {
 /** Which of the board's notifications a device gets by push (see notifications.ts). */
 export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean>;
 
-/** A device that gets the board's notifications by Web Push (API 74; see server/src/push.rs). */
+/** A device that gets the board's notifications by Web Push (API 74; see server/src/integrations/push.rs). */
 export interface PushDevice {
   id: string;
   /** Its push service's URL for it, which tells this browser's own from the others. */

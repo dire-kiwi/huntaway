@@ -79,8 +79,8 @@ pub fn state() -> Shared {
     state_with(meta())
 }
 
-pub fn meta() -> crate::admin::ServerMeta {
-    crate::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] }
+pub fn meta() -> crate::update::admin::ServerMeta {
+    crate::update::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] }
 }
 
 fn identity() -> Identity {
@@ -88,7 +88,7 @@ fn identity() -> Identity {
 }
 
 /// `state()` with this process's `meta`.
-pub fn state_with(meta: crate::admin::ServerMeta) -> Shared {
+pub fn state_with(meta: crate::update::admin::ServerMeta) -> Shared {
     state_of(identity(), meta)
 }
 
@@ -98,12 +98,12 @@ pub fn state_as(id: Identity) -> Shared {
 }
 
 /// An `AppState` on an in-memory database, with its data in `data_dir`, for a server whose binary is `exe`.
-pub fn state_at(meta: crate::admin::ServerMeta, data_dir: std::path::PathBuf, exe: std::path::PathBuf) -> Shared {
+pub fn state_at(meta: crate::update::admin::ServerMeta, data_dir: std::path::PathBuf, exe: std::path::PathBuf) -> Shared {
     let c = crate::db::open(std::path::Path::new(":memory:")).unwrap();
     AppState::with_exe(c, data_dir, identity(), meta, exe)
 }
 
-fn state_of(id: Identity, meta: crate::admin::ServerMeta) -> Shared {
+fn state_of(id: Identity, meta: crate::update::admin::ServerMeta) -> Shared {
     let c = crate::db::open(Path::new(":memory:")).unwrap();
     let dir = TempDir::new();
     let s = AppState::new(c, dir.to_path_buf(), id, meta);

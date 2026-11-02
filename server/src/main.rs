@@ -1,60 +1,23 @@
 // The tool list in mcp.rs is one json! value, deeper than the default limit lets the macro expand.
 #![recursion_limit = "256"]
 
-mod admin;
-mod agent_tools;
-mod attachments;
-mod automations;
-mod broker;
-mod codex;
-mod context;
+mod agent;
 mod analytics;
-mod changes;
-mod checkpoints;
 mod api;
-mod asana;
+mod attachments;
 mod db;
 mod demo;
 mod disk;
-mod documents;
-mod fanout;
-mod gh_mcp;
-mod git_view;
-mod github;
-mod hub;
+mod git;
+mod hosts;
+mod integrations;
 mod mcp;
-mod merge_gate;
-mod merged;
-mod permissions;
-mod pr_watch;
-mod prompts;
-mod questions;
-mod proto;
-mod pty;
-mod push;
-mod relay;
-mod release;
-mod relocate;
 mod review;
-mod runner;
-mod runs;
-mod ssh;
-mod staging;
 mod state;
-mod status_script;
-mod summary;
-mod task_tmp;
-mod terminal;
 #[cfg(test)]
 mod testing;
-mod title;
-mod tools;
-mod usage;
-mod wait;
-mod window;
+mod update;
 mod util;
-mod worktree;
-mod worktree_files;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -62,6 +25,14 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tower_http::services::{ServeDir, ServeFile};
+
+use agent::{codex, runner, runs, task_tmp, title, usage, window};
+use git::relocate;
+use hosts::{broker, hub, ssh, terminal};
+use integrations::{automations, push};
+use mcp::{gh_mcp, pr_watch};
+use review::merged;
+use update::{admin, release, staging};
 
 #[derive(Parser)]
 #[command(name = "huntaway", version, about = "Kanban board that orchestrates Claude Code and Codex agents")]

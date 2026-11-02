@@ -13,9 +13,9 @@ pub struct ClaudeConfig {
     pub config_dir: String,
     /// One of AGENTS.
     pub agent: String,
-    /// Whether the board fetches and shows its plan's usage limits (see usage.rs).
+    /// Whether the board fetches and shows its plan's usage limits (see agent/usage.rs).
     pub show_usage: bool,
-    /// Whether the board starts its plan's next 5-hour window as soon as one ends (see window.rs).
+    /// Whether the board starts its plan's next 5-hour window as soon as one ends (see agent/window.rs).
     #[serde(default)]
     pub restart_window: bool,
     pub created_at: String,
@@ -61,7 +61,7 @@ pub struct Profile {
     /// through their board tools (`*` for every profile). Names, since profiles are matched by
     /// name across hosts.
     pub agent_access: Vec<String>,
-    /// The GitHub account its agents' gh tools act as (see gh_mcp.rs): a login on github.com, or
+    /// The GitHub account its agents' gh tools act as (see mcp/gh_mcp.rs): a login on github.com, or
     /// `HOST/LOGIN` for another GitHub host. None uses gh's active account on the host.
     #[serde(default)]
     pub github_account: Option<String>,
@@ -69,7 +69,7 @@ pub struct Profile {
     /// folder of its own. None for `~/<name>` (see `clone_dir_or_default`). May start with `~`.
     #[serde(default)]
     pub clone_dir: Option<String>,
-    /// The Asana personal access token its tasks' Asana links are looked up with (see asana.rs).
+    /// The Asana personal access token its tasks' Asana links are looked up with (see integrations/asana.rs).
     /// Never sent to the board, which sees `asana_user` instead.
     #[serde(default, skip_serializing)]
     pub asana_token: Option<String>,
@@ -82,7 +82,7 @@ pub struct Profile {
     pub asana_enabled: bool,
     /// When a run stops because its config's usage limit ran out, its task waits in "In progress"
     /// for the limit to reset and then carries on, and tasks started on a config that's out wait
-    /// for it too (API 81, see usage.rs). Off, the task needs attention, offering to do that.
+    /// for it too (API 81, see agent/usage.rs). Off, the task needs attention, offering to do that.
     #[serde(default)]
     pub limit_wait: bool,
     /// Tasks whose agent hasn't started yet start on the next of their configs that isn't out of
@@ -98,7 +98,7 @@ pub struct Profile {
     #[serde(default)]
     pub summarizer: Option<Reviewer>,
     /// A task moved to "Ready for merge" has its agent summarise what it would merge, and merges
-    /// only once the user approves (API 92, see merge_gate.rs). Its projects can say otherwise.
+    /// only once the user approves (API 92, see review/merge_gate.rs). Its projects can say otherwise.
     #[serde(default)]
     pub merge_approval: bool,
     pub created_at: String,
@@ -306,7 +306,7 @@ pub fn task_config_dir(c: &Connection, task: &Task) -> Result<Option<String>> {
     Ok(task_claude_config(c, task)?.map(|cfg| cfg.config_dir).filter(|d| !d.trim().is_empty()))
 }
 
-/// Whether a thread runs on Codex rather than Claude Code (see codex.rs).
+/// Whether a thread runs on Codex rather than Claude Code (see agent/codex.rs).
 pub fn task_is_codex(c: &Connection, task: &Task) -> Result<bool> {
     Ok(task_claude_config(c, task)?.is_some_and(|cfg| cfg.is_codex()))
 }

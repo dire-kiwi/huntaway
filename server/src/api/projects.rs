@@ -112,7 +112,7 @@ pub struct CloneProject {
 }
 
 pub(super) async fn clone_project(State(s): State<Shared>, Path(profile_id): Path<String>, Json(b): Json<CloneProject>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(clone_project_inner(&s, &profile_id, b, crate::gh_mcp::gh_program()).await?)))
+    Ok(Json(json!(clone_project_inner(&s, &profile_id, b, crate::mcp::gh_mcp::gh_program()).await?)))
 }
 
 /// Clones a GitHub repository with `gh` as the profile's GitHub account, and adds it as a project
@@ -166,7 +166,7 @@ pub(super) async fn update_project(State(s): State<Shared>, Path(id): Path<Strin
 }
 
 /// `move_repo: true` with a new `repo_path` moves the repository folder there; a `repo_path`
-/// alone points the project at where its folder is now (see relocate.rs).
+/// alone points the project at where its folder is now (see git/relocate.rs).
 pub async fn update_project_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> ApiResult<db::Project> {
     // One at a time: moving the folder takes a while, and meanwhile another change mustn't take
     // the key this one checked, or store old keys this one would overwrite.
@@ -332,7 +332,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
     let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizer).chain(from_profile).collect();
     for (k, v) in fields.iter_mut() {
         match *k {
-            // null (or blank) uses the default (see prompts.rs).
+            // null (or blank) uses the default (see agent/prompts.rs).
             "start_prompt" | "review_prompt" | "merge_prompt" => {
                 if !(v.is_null() || v.is_string()) {
                     return Err(ApiError::bad(format!("{k} must be null or a string")));
@@ -368,7 +368,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
                     return Err(ApiError::bad(format!("{k} must be a string, one entry per line")));
                 }
                 let text = v.as_str().map(str::trim).unwrap_or_default();
-                crate::worktree_files::check(k, text).map_err(ApiError::bad)?;
+                crate::git::worktree_files::check(k, text).map_err(ApiError::bad)?;
                 *v = json!(text);
             }
             // null falls back to the host's default mode.
@@ -403,8 +403,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
                 }
                 *v = json!(key);
             }
-            "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::pr_watch::WATCH_MODES.contains(&m)) => {
-                return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::pr_watch::WATCH_MODES)));
+            "watch_pull_requests" if !v.as_str().is_some_and(|m| crate::mcp::pr_watch::WATCH_MODES.contains(&m)) => {
+                return Err(ApiError::bad(format!("watch_pull_requests must be one of {:?}", crate::mcp::pr_watch::WATCH_MODES)));
             }
             // null follows the profile's.
             "merge_approval" if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("merge_approval must be null, true or false")),
@@ -505,7 +505,7 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         files.extend(crate::attachments::of_task(&s.db(), &t.id)?);
         // Remove worktrees but keep branches so no committed work is lost.
         if let Some(wt) = &t.worktree_path {
-            crate::checkpoints::forget(s, &t.id, &repo).await;
+            crate::git::checkpoints::forget(s, &t.id, &repo).await;
             let _ = worktree::git(&repo, &["worktree", "remove", "--force", wt]).await;
         }
     }
@@ -518,11 +518,11 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
     };
     s.db().execute("DELETE FROM projects WHERE id=?1", [id])?;
-    crate::runs::remove_finished(s, &runs);
+    crate::agent::runs::remove_finished(s, &runs);
     for t in &tasks {
         // Any agent asking to delete one is told it's gone (see tools::delete_task).
         permissions::expire_deletions_of(s, &t.id);
-        crate::documents::remove(s, &t.id);
+        crate::agent::documents::remove(s, &t.id);
     }
     // Unless another task refers to them too.
     if let Err(e) = crate::attachments::remove_unreferenced(s, &files) {

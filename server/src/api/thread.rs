@@ -38,9 +38,9 @@ pub(super) struct SendBody {
 
 pub(super) async fn send_message(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
     let t = runner::send(&s, &id, &b.text)?;
-    // The user's reply answers the questions the agent asked (see questions.rs).
+    // The user's reply answers the questions the agent asked (see mcp/questions.rs).
     if !b.text.trim().is_empty() {
-        crate::questions::replied(&s, &t.id);
+        crate::mcp::questions::replied(&s, &t.id);
     }
     Ok(Json(json!(t)))
 }
@@ -50,10 +50,10 @@ pub(super) async fn send_message(State(s): State<Shared>, Path(id): Path<String>
 pub(super) async fn answer_question(
     State(s): State<Shared>,
     Path((id, message_id)): Path<(String, i64)>,
-    Json(b): Json<crate::questions::Answer>,
+    Json(b): Json<crate::mcp::questions::Answer>,
 ) -> ApiResult<Json<Value>> {
     let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
-    Ok(Json(json!(crate::questions::answer(&s, &task.id, message_id, b)?)))
+    Ok(Json(json!(crate::mcp::questions::answer(&s, &task.id, message_id, b)?)))
 }
 
 /// Drop the queued message. Returns the task as it was, queued message included.
@@ -65,13 +65,13 @@ pub(super) async fn unqueue_message(State(s): State<Shared>, Path(id): Path<Stri
 pub(super) async fn stop_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let agent = runner::stop(&s, &id);
     let review = crate::review::stop(&s, &id);
-    let summary = crate::summary::stop(&s, &id);
+    let summary = crate::review::summary::stop(&s, &id);
     Ok(Json(json!({"stopped": agent || review || summary})))
 }
 
-/// Summarise the task's changes now (see summary.rs).
+/// Summarise the task's changes now (see review/summary.rs).
 pub(super) async fn summarise_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let t = crate::summary::start(&s, &id, true).await?;
+    let t = crate::review::summary::start(&s, &id, true).await?;
     Ok(Json(json!(t)))
 }
 
