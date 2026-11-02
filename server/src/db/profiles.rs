@@ -102,7 +102,7 @@ pub struct Profile {
     #[serde(default)]
     pub merge_approval: bool,
     /// A task can only go to "Ready for merge" once its pull request has an approving review on
-    /// GitHub (API 94). Its projects can say otherwise.
+    /// GitHub (API 95). Its projects can say otherwise.
     #[serde(default)]
     pub require_pr_approval: bool,
     pub created_at: String,

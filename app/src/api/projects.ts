@@ -73,7 +73,7 @@ export interface Project {
   summarizer?: Reviewer | null;
   /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
   merge_approval?: boolean | null;
-  /** null follows the profile's (API 94). */
+  /** null follows the profile's (API 95). */
   require_pr_approval?: boolean | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */

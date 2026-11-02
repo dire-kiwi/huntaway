@@ -9,7 +9,7 @@ import { Composer } from "../task/thread/Composer";
 import { Markdown } from "../task/thread/Markdown";
 import { PendingPrompts } from "./LiveView";
 import { ReviewBadge } from "../task/Review";
-import { Button, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "../ui";
+import { Button, ChecksMark, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "../ui";
 import type { OnMenu } from "./TaskCard";
 
 /**
@@ -152,6 +152,7 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{task.title}</span>
         <ReviewBadge task={task} compact />
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
+        <ChecksMark task={task} />
         <span className="shrink-0 text-[11.5px] text-faint" title={new Date(task.last_activity_at).toLocaleString()}>
           {bucket === "due" && task.remind_at ? `reminder ${timeAgo(task.remind_at)}` : `waiting ${timeAgo(task.last_activity_at).replace(" ago", "")}`}
         </span>

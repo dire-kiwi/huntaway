@@ -41,7 +41,7 @@ pub(super) struct CreateProfile {
     /// See `db::Profile::merge_approval` (API 92).
     #[serde(default)]
     merge_approval: bool,
-    /// See `db::Profile::require_pr_approval` (API 94).
+    /// See `db::Profile::require_pr_approval` (API 95).
     #[serde(default)]
     require_pr_approval: bool,
 }

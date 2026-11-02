@@ -107,7 +107,7 @@ async fn http_server(app: axum::Router) -> (String, tokio::task::JoinHandle<()>)
 #[test]
 fn private_tunnel_origin_never_exposes_open_token() {
     testing::run(async || {
-        let app = axum::Router::new().route("/api/open-token", axum::routing::get(crate::open_token("secret".into())));
+        let app = axum::Router::new().route("/api/open-token", axum::routing::get(crate::open_token("secret".into(), false)));
         let port = origin(app).await.unwrap();
         let client = reqwest::Client::new();
         for path in ["/api/open-token", "/api/%6fpen-token", "/api/open-token?token=x"] {
@@ -347,7 +347,7 @@ async fn host_with(id: &str, broker: &str, extra: axum::Router) -> Shared {
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let internal_url = format!("http://{}", l.local_addr().unwrap());
     let s = testing::state_as(Identity { host_id: id.into(), host_name: id.into(), token: format!("{id}-tok"), hub_token: format!("{id}-hub"), internal_url });
-    let app = crate::api::router(s.clone()).route("/api/open-token", axum::routing::get(crate::open_token(s.token.clone()))).merge(extra);
+    let app = crate::api::router(s.clone()).route("/api/open-token", axum::routing::get(crate::open_token(s.token.clone(), false))).merge(extra);
     tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
     dial_out(&s, broker.into(), BROKER_TOKEN.into(), id.into(), format!("{id}-key"));
     // Connected once the broker passes a request to it.

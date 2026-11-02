@@ -87,7 +87,7 @@ pub struct Project {
     #[serde(default)]
     pub merge_approval: Option<bool>,
     /// Whether a task can only go to "Ready for merge" once its pull request has an approving
-    /// review on GitHub (API 94). None follows its profile's `require_pr_approval`.
+    /// review on GitHub (API 95). None follows its profile's `require_pr_approval`.
     #[serde(default)]
     pub require_pr_approval: Option<bool>,
     /// The project's instructions for the prompts sent when a task's agent starts, when its

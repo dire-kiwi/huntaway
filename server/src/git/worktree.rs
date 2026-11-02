@@ -878,7 +878,7 @@ pub async fn unmerged(state: &Shared, task: &Task) -> bool {
 }
 
 /// Whether the setting that a task needs an approving review on its pull request to go to
-/// "Ready for merge" applies to `task`: its project's, or else its profile's (API 94). It doesn't
+/// "Ready for merge" applies to `task`: its project's, or else its profile's (API 95). It doesn't
 /// where the task's merge goes through no pull request (the project's settings open none for it).
 pub async fn pr_approval_required(state: &Shared, task: &Task) -> bool {
     let (project, required) = {
