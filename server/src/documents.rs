@@ -440,16 +440,19 @@ const PLAN_FORMAT: &str = "The board shows the plan in its own theme (dark) with
     So write only the content, starting with an <h1> title: no doctype, <html>, <head>, <body> or <style>, and no \
     colours or fonts of your own (a whole page is shown as it is, without the theme or the components). Plain \
     HTML (h2/h3 sections, p, ul/ol, table, dl, pre/code, blockquote, details) is already styled. The components:\n\
-    - <ia-lede>One-line summary under the title</ia-lede>\n\
-    - <ia-callout kind=\"note|tip|info|warn|risk|question|decision\" title=\"Optional heading\">…</ia-callout>\n\
-    - <ia-steps><ia-step size=\"S|M|L\"><h3>Step title</h3><p>…</p></ia-step>…</ia-steps>: numbered steps \
-    (size is optional)\n\
-    - <ia-cards><ia-card kind=\"chosen|rejected\"><h3>Option</h3>…</ia-card>…</ia-cards>: a grid of cards, e.g. \
-    the alternatives (kind is optional)\n\
-    - <ia-columns>…</ia-columns>: its children side by side\n\
-    - <ia-badge kind=\"accent|ok|warn|danger|info\">label</ia-badge>: inline, e.g. in table cells\n\
-    - <ul class=\"pros\">, <ul class=\"cons\">, <ul class=\"checklist\"> (<li class=\"done\"> for ticked items), \
-    <ul class=\"files\"> (<li><code>path</code> what changes</li>)\n\
+    - <p class=\"sub\">One line under the title: what this is and what it follows on from</p>\n\
+    - <div class=\"callout\"><strong>In short:</strong> …</div>: a highlighted note, e.g. the summary at the top. \
+    Add ok, warn, bad or info to the class for that tone (class=\"callout warn\" for a caveat)\n\
+    - <span class=\"pill ok|warn|bad|info|accent|grey\">label</span>: a small inline label, e.g. in table cells \
+    or after a card's title (\"today\", \"new\", \"for now\", \"later\")\n\
+    - <div class=\"grid2\"><div class=\"card\"><h4>Title <span class=\"pill info\">new</span></h4>…</div>…</div>: \
+    cards two to a row (grid3 for three), e.g. the alternatives or the parts of the design\n\
+    - <ol class=\"steps\"><li><strong>Step title</strong> what it does. <span class=\"meta\">Result: what works \
+    after it</span></li>…</ol>: numbered steps, the title on a line of its own; .meta is muted secondary text \
+    anywhere\n\
+    - In a table whose rows are named things (decisions, options, risks), put the name in <td class=\"n\">\n\
+    (Older plans may use retired <ia-lede>, <ia-callout>, <ia-steps>, <ia-cards>, <ia-columns> and <ia-badge> \
+    elements, which still show. Don't add more; when you edit such a plan, move the parts you touch to these.)\n\
     - <ia-diagram><pre>flowchart LR\nA[\"Start\"] --&gt; B[\"Finish\"]</pre></ia-diagram>: a Mermaid diagram, \
     rendered by the board in its dark theme. Always use Mermaid for plan diagrams, never hand-written SVG. \
     Put only Mermaid source inside the <pre>, without Markdown fences, scripts or a CDN. HTML-escape & and < \
@@ -468,7 +471,8 @@ const PLAN_FORMAT: &str = "The board shows the plan in its own theme (dark) with
     page (`document` is that page, and libraries can come from a CDN), without affecting the rest of the \
     plan. Don't size it to the window (no vh units). The theme's CSS variables are set there, to match it: \
     --bg, --panel, --panel-2, --raised, --line, --line-strong, --fg, --heading, --muted, --faint, --accent, \
-    --ok, --warn, --danger, --info, --font-sans, --font-mono.";
+    --ok, --warn, --danger, --info (with --accent-bg, --ok-bg, --warn-bg, --danger-bg and --info-bg, their tinted \
+    backgrounds), --font-sans, --font-mono.";
 
 /// How to make an artifact.
 const ARTIFACT: &str = "The artifact is a single self-contained HTML page, the kind you'd make as an artifact on claude.ai: a \
@@ -529,7 +533,7 @@ mod tests {
         assert_eq!(super::plan_command("make a /plan"), None);
         // Told already, it doesn't repeat the instructions.
         let told = plan_prompt("/d/plan.html", "", true);
-        assert!(told.contains("/d/plan.html") && !told.contains("<ia-steps>") && told.ends_with("for the work this task is about."), "{told}");
+        assert!(told.contains("/d/plan.html") && !told.contains("<ol class=\"steps\">") && told.ends_with("for the work this task is about."), "{told}");
         let full = plan_prompt("/d/plan.html", "the cache", false);
         assert!(full.starts_with("This task has the label plan") && full.contains("<ia-question") && full.ends_with("What to plan: the cache"), "{full}");
     }

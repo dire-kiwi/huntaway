@@ -1,26 +1,3 @@
-/** The plan theme's colours, from the board's own (index.css) so a plan follows it. */
-const COLORS: [string, string][] = [
-  ["--bg", "--color-bg"],
-  ["--panel", "--color-panel"],
-  ["--panel-2", "--color-panel-2"],
-  ["--raised", "--color-raised"],
-  ["--line", "--color-line"],
-  ["--line-strong", "--color-line-strong"],
-  ["--fg", "--color-fg"],
-  ["--muted", "--color-muted"],
-  ["--faint", "--color-faint"],
-  ["--accent", "--color-accent"],
-  ["--ok", "--color-st-done"],
-  ["--warn", "--color-st-attention"],
-  ["--info", "--color-st-progress"],
-];
-
-function boardColors(): string {
-  const style = getComputedStyle(document.documentElement);
-  const vars = COLORS.map(([to, from]) => [to, style.getPropertyValue(from).trim()]).filter(([, v]) => v);
-  return `:root{${vars.map(([k, v]) => `${k}:${v}`).join(";")}}`;
-}
-
 /**
  * Sizes an <ia-html>'s frame to its content (not the window, which the frame sets): it reports the
  * body's extent, overflow included, to the plan's frame (iaHtmlHeight). Chromium doesn't update the
@@ -59,14 +36,15 @@ function fitFrame() {
  * can't use anything from outside).
  */
 function iaHtml(fit: string) {
-  const vars = ["--bg", "--panel", "--panel-2", "--raised", "--line", "--line-strong", "--fg", "--heading", "--muted", "--faint", "--accent", "--ok", "--warn", "--danger", "--info", "--font-sans", "--font-mono"];
+  const vars = ["--bg", "--panel", "--panel-2", "--raised", "--line", "--line-strong", "--fg", "--heading", "--muted", "--faint", "--accent", "--accent-bg"];
+  vars.push(...["--ok", "--ok-bg", "--warn", "--warn-bg", "--danger", "--danger-bg", "--info", "--info-bg", "--font-sans", "--font-mono"]);
   const style = getComputedStyle(document.documentElement);
   const theme = vars.map((v) => `${v}:${style.getPropertyValue(v).trim()}`).join(";");
   // Written out so that the plan's own <script> holding this isn't closed by it.
   const end = String.fromCharCode(60) + "/script>";
   const sizer = `<script>${fit}${end}`;
   // The body contains what's positioned absolutely, and the margins of what's in it, so its extent is the content's.
-  const head = `<!doctype html><meta charset="utf-8"><style>:root{color-scheme:dark;${theme}}html,body{margin:0;background:transparent}body{position:relative;display:flow-root;color:var(--fg);font:15px/1.65 var(--font-sans)}</style>${sizer}\n`;
+  const head = `<!doctype html><meta charset="utf-8"><style>:root{color-scheme:dark;${theme}}html,body{margin:0;background:transparent}body{position:relative;display:flow-root;color:var(--fg);font:16px/1.6 var(--font-sans)}</style>${sizer}\n`;
   addEventListener("message", (e) => {
     if (typeof e.data?.iaHtmlHeight !== "number") return;
     for (const f of document.querySelectorAll<HTMLIFrameElement>("ia-html > iframe")) if (f.contentWindow === e.source) f.style.height = `${e.data.iaHtmlHeight}px`;
@@ -339,20 +317,18 @@ function iaForm(saved: Record<string, { v: string[]; o?: string }>, readOnly: bo
 export const isWholePage = (html: string) => /^\s*(<!--[\s\S]*?-->\s*)*<(!doctype|html)\b/i.test(html);
 
 /**
- * A plan's content (not a whole page) as a page in the board's theme (planTheme.css), with the
- * components' scripts. `colors` (CSS) defaults to the board's own. `form` is what its questions start
- * with (see iaForm).
+ * A plan's content (not a whole page) as a page in the plan theme (planTheme.css), with the
+ * components' scripts. `form` is what its questions start with (see iaForm).
  */
 export function themedPlan(
   html: string,
   css: string,
-  colors = boardColors(),
   form: { answers?: Record<string, { v: string[]; o?: string }>; readOnly?: boolean; key?: string } = {},
 ): string {
   // Inside a <script>, so what the user typed mustn't close it.
   const answers = JSON.stringify(form.answers ?? {}).replace(/</g, "\\u003c");
   return (
-    `<!doctype html><meta charset="utf-8"><style>${css}\n${colors}</style>\n${html}\n` +
+    `<!doctype html><meta charset="utf-8"><style>${css}</style>\n${html}\n` +
     `<script>(${iaForm})(${answers}, ${!!form.readOnly}, ${JSON.stringify(form.key ?? null).replace(/</g, "\\u003c")})</script>\n` +
     `<script>(${iaHtml})(${JSON.stringify(`(${fitFrame})()`)})</script>\n<script>(${iaDiagrams})()</script>`
   );

@@ -26,6 +26,7 @@ import {
   LABELS,
   hostStatuses,
   hostSupports,
+  MERGE_APPROVAL_API,
   PERMISSION_MODES,
   PROFILE_REVIEWERS_API,
   setToken,
@@ -407,7 +408,7 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     label: "Review",
     icon: <ScanSearch size={14} />,
     description:
-      "Reviewer agents that check each task's changes before it's merged, a summary of the changes once they pass, whether it gets a pull request, where that's previewed, and what happens once it's merged.",
+      "Reviewer agents that check each task's changes before it's merged, a summary of the changes once they pass, whether it gets a pull request, where that's previewed, whether merges wait for your approval, and what happens once it's merged.",
     fields: [
       "auto_review",
       "review_rounds",
@@ -417,6 +418,7 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
       "pull_requests",
       "subproject_pull_requests",
       "done_when_merged",
+      "merge_approval",
       "watch_pull_requests",
       "pr_preview_url",
     ],
@@ -800,6 +802,10 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
               </>
             )}
 
+            {current.id === "review" && hostSupports(host, MERGE_APPROVAL_API) && (
+              <ProjectMergeApproval project={form} onChange={(v) => set("merge_approval", v)} />
+            )}
+
             {current.id === "review" && form.done_when_merged !== undefined && (
               <div className="space-y-1.5">
                 <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
@@ -1162,6 +1168,28 @@ function ProjectConfigs({ project, onChange }: { project: Project; onChange: (id
       </div>
       {own && <ConfigPicker hostId={project.host_id} value={project.claude_config_ids ?? []} onChange={onChange} />}
     </div>
+  );
+}
+
+/** Whether the project's merges wait for your approval of a summary: its own say, or its profile's. */
+function ProjectMergeApproval({ project, onChange }: { project: Project; onChange: (on: boolean | null) => void }) {
+  const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
+  const value = project.merge_approval == null ? "profile" : project.merge_approval ? "on" : "off";
+  return (
+    <Field
+      label="Approve merges"
+      hint="When a task moves to Ready for merge, its agent summarizes what will be merged, without merging, and you approve or deny the merge in its thread. Only once you approve is the agent asked to merge; until then its gh tools refuse to merge. Denied, the task goes back to In review."
+    >
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value === "profile" ? null : e.target.value === "on")}
+        className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+      >
+        <option value="profile">The profile's setting ({profile?.merge_approval ? "approve each merge first" : "merge without asking"})</option>
+        <option value="on">Approve each merge first</option>
+        <option value="off">Merge without asking</option>
+      </select>
+    </Field>
   );
 }
 
