@@ -49,7 +49,10 @@ export function hostCompat(h: Host): Compat {
 export const canRunAgents = (h: Host | undefined) => !!h && h.connected && h.agents !== false;
 
 /** Waiting in "Ready for merge" for another task in its project to finish merging. */
-export const mergeQueued = (t: Task) => !!t.merging && t.status === "ready_for_merge" && !t.running;
+export const mergeQueued = (t: Task) => !!t.merging && t.status === "ready_for_merge" && !t.running && !mergeAwaitsApproval(t);
+
+/** Its merge waits for the user's approval (API 92): its agent summarises what will be merged, then the user approves or denies it. */
+export const mergeAwaitsApproval = (t: Task) => !!t.merging && t.merge_approval === "pending";
 
 /** Stepped out of the merge queue to make changes, and rejoins it when its agent is done. */
 export const rejoinsMerge = (t: Task) => !!t.remerge && (t.status === "in_progress" || t.status === "needs_attention");
@@ -70,6 +73,8 @@ export const outOfUsage = (t: Task, now = Date.now()) => !t.waiting && !t.runnin
 export const LIMITS_API = 81;
 /** Profiles choose reviewers and a summarizer for their projects that don't choose their own. */
 export const PROFILE_REVIEWERS_API = 87;
+/** Profiles and projects can have merges wait for the user's approval of a summary. */
+export const MERGE_APPROVAL_API = 92;
 
 /** Whether a task counts as merged for the tasks that depend on it (server: db::is_merged). */
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
@@ -170,6 +175,8 @@ export interface Profile {
   reviewers?: Reviewer[];
   /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 87). */
   summarizer?: Reviewer | null;
+  /** A task moved to Ready for merge has its agent summarise what it would merge, and merges once you approve (API 92). */
+  merge_approval?: boolean;
   created_at: string;
 }
 
@@ -417,6 +424,8 @@ export interface Project {
   auto_summary?: boolean;
   /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
   summarizer?: Reviewer | null;
+  /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
+  merge_approval?: boolean | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
   start_prompt?: string | null;
@@ -617,6 +626,8 @@ export interface Task {
   merging?: boolean;
   /** Its agent stepped out of the merge queue to make changes; it rejoins the queue when the agent is done (API 69). */
   remerge?: boolean;
+  /** Where its merge is with your approval, when its project asks for it (API 92): `pending` while its agent summarises it and you decide. */
+  merge_approval?: "pending" | "approved" | null;
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
   depends_on?: string[];
@@ -1623,6 +1634,7 @@ export const api = {
       limit_switch?: boolean;
       reviewers?: Reviewer[];
       summarizer?: Reviewer | null;
+      merge_approval?: boolean;
     },
   ) =>
     on(h).post<Profile>("/profiles", b),

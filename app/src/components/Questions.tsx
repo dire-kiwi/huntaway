@@ -218,13 +218,21 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
   const answered: { choices?: string[]; text?: string | null } = data.answer ?? {};
   const shown = pending ? picked : answered.choices ?? [];
   const canSend = multi ? picked.length > 0 || !!text.trim() : !!text.trim();
+  // The board's own question, whether to merge (API 92): answering it is the decision, not a message to the agent.
+  const merge = data.merge_approval === true;
   return (
-    <Frame pending={pending} cardRef={ref} label="Question from the agent">
+    <Frame pending={pending} cardRef={ref} label={merge ? "Merge approval" : "Question from the agent"}>
       <div className="mb-1.5 flex items-center gap-2 text-[12px] text-faint">
         <MessageCircleQuestion size={14} className={pending ? "text-st-attention" : "text-faint"} />
-        {pending ? "The agent asks" : "The agent asked"}
-        {data.status === "answered" && <Outcome tone="good">answered</Outcome>}
-        {data.status === "replied" && <Outcome tone="plain">answered in the thread</Outcome>}
+        {merge ? "Merge approval" : pending ? "The agent asks" : "The agent asked"}
+        {data.status === "answered" &&
+          (merge ? (
+            <Outcome tone={answered.choices?.includes("Approve") ? "good" : "bad"}>{answered.choices?.includes("Approve") ? "approved" : "denied"}</Outcome>
+          ) : (
+            <Outcome tone="good">answered</Outcome>
+          ))}
+        {data.status === "replied" && <Outcome tone="plain">{merge ? "not answered" : "answered in the thread"}</Outcome>}
+        {data.status === "replaced" && <Outcome tone="plain">not answered</Outcome>}
         {data.status === "pending" && movedOn && <Outcome tone="plain">not answered</Outcome>}
       </div>
       <div className={clsx("text-[13.5px] font-semibold whitespace-pre-wrap", pending ? "text-fg" : "text-muted")}>{data.question}</div>
@@ -273,7 +281,11 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
       )}
       {pending && (
         <div className="mt-2 text-[11.5px] text-faint">
-          {options.length > 0 ? "Pick an answer (keys 1–9), or reply below in your own words." : "Reply below to answer it."}
+          {merge
+            ? "Pick one (keys 1–2). To ask the agent about the merge first, reply below: you're asked again once it answers."
+            : options.length > 0
+              ? "Pick an answer (keys 1–9), or reply below in your own words."
+              : "Reply below to answer it."}
         </div>
       )}
       {err && <div className="mt-1.5 text-xs text-red-400">{err}</div>}
