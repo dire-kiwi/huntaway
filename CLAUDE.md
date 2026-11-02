@@ -99,7 +99,7 @@ Keep test servers fully separate from it:
     when the task needs attention (a pending prompt, unless `--approve` answers it, or a run that
     ended in `needs_attention`) and 124 on timeout. Run it with the Bash tool's timeout above
     `--timeout`, or with `run_in_background`.
-- API facts that agents keep rediscovering (routes are in `router` in `server/src/api.rs`):
+- API facts that agents keep rediscovering (routes are in `host_routes` in `server/src/api.rs`, handlers in `server/src/api/`):
   - There's no `/api/projects` or `/api/tasks` list: use `/api/profiles/{id}/projects` and
     `/api/projects/{id}/tasks`.
   - `GET /api/tasks/{id}` returns `{task, last_message, pending_permissions}`, so read
@@ -220,7 +220,7 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
 - `scripts/ia-api` has its own tests (a faked server and clock): `python3 scripts/ia-api-test.py`.
 - If both your branch and master bumped `API_VERSION` (`server/src/proto.rs`) or added a DB
-  migration (`server/src/db.rs`), git may merge the two without a conflict. After merging master,
+  migration (`server/src/db/schema.rs`), git may merge the two without a conflict. After merging master,
   check both numbers and move yours above master's.
 
 ## What to test
