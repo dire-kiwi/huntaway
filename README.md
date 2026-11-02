@@ -313,6 +313,18 @@ ready-made link. The token lets anyone holding it run agents on your machine, an
 plain HTTP, so expose the server only on a trusted network (Tailscale, VPN) or behind a TLS
 reverse proxy.
 
+A server started with `--host 127.0.0.1` can still be used from another computer that can SSH into
+its machine, through a tunnel:
+
+```sh
+ssh -N -L 7878:127.0.0.1:7878 you@that-machine    # leave it running
+```
+
+Then open `http://localhost:7878/?token=<huntaway token>` there (`huntaway token`, or
+`<data-dir>/auth_token`, on that machine), or point the desktop app at it with `"serverUrl":
+"http://localhost:7878"` and the token (see *Desktop config*). To show that machine's board next to
+the other computer's own, link it as a host over SSH instead (see *Hosts*).
+
 ### Push notifications on a phone
 
 The board can push its notifications to a phone (or any browser) even while the board isn't open
@@ -510,9 +522,25 @@ projects, tasks, agent threads and runs, and runs agents on its own machine. It 
 host is stored on a hub beyond how to reach it, so any number of boards (your desktop, a
 laptop somewhere else) can connect to the same host and see the same data.
 
-Settings → Hosts offers two ways to link a host:
+Settings → Hosts offers three ways to link a host:
 
-- **Add host** (the hub connects to the host): enter the host's URL and its token
+- **Add host → Over SSH** (the hub starts the host and tunnels to it): enter `user@host`, the SSH
+  port, the absolute path of `huntaway` on that machine (with `ia-shim` beside it) and the host's
+  port, then add the line the dialog shows to that machine's `~/.ssh/authorized_keys`. The line
+  holds the hub's own key (made on first use in `<hub data dir>/ssh/`), restricted to running
+  `huntaway ssh-host` and forwarding to the host's port:
+
+  ```text
+  restrict,port-forwarding,permitopen="127.0.0.1:7878",command="/path/huntaway ssh-host --port 7878" ssh-ed25519 AAAA… huntaway-hub@<hub>
+  ```
+
+  `ssh-host` starts `huntaway serve --host 127.0.0.1` through the login shell if nothing answers on
+  that port, and gives the hub the token from its data dir; add `--data-dir '<data dir>'` to the
+  command if the host's isn't the default (`scripts/install-release-host.sh` prints the whole
+  command). The host never listens beyond localhost or needs to reach the hub. The first connection
+  trusts the machine's SSH host key, and a changed one is refused later. If the tunnel drops, agents
+  keep running and the hub reconnects. The hub needs `ssh` and `ssh-keygen`.
+- **Add host → By URL and token** (the hub connects to the host): enter the host's URL and its token
   (`huntaway token` on that machine). This works whenever the hub can reach the host,
   e.g. over Tailscale.
 - **Connect from elsewhere** (the host dials out to the hub): run

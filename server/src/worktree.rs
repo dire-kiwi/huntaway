@@ -1080,6 +1080,8 @@ pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
 
 /// `diff` of the changes in `dir`, the task's worktree or the project's folder.
 async fn dir_diff(dir: &Path, task: &Task, project: &Project) -> Result<Value> {
+    #[cfg(test)]
+    crate::testing::reached("diff:read");
     let (base, merge_base) = changes_base(dir, task, project).await;
     let from = merge_base.clone().unwrap_or_else(|| "HEAD".into());
     // Mark untracked files as intent-to-add would mutate the index; instead diff them separately.
@@ -1324,6 +1326,27 @@ mod tests {
             let d = diff(&s, &t.id).await.unwrap();
             assert_eq!((&d["available"], d["branch"].as_str()), (&json!(true), Some(branch.as_str())));
             assert!(d["patch"].as_str().unwrap().contains("+++ b/a"), "{d}");
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
+    // HA-90: the same, with the folder going after the diff checked for it, while git runs in it.
+    #[test]
+    fn a_worktree_removed_while_git_reads_its_diff_gives_its_branchs() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, t, wt, branch) = task_with_work(&s).await;
+            std::fs::write(wt.join("draft"), "uncommitted\n").unwrap();
+            let gone = wt.with_extension("gone");
+            let (from, to) = (wt.clone(), gone.clone());
+            crate::testing::when("diff:read", move || std::fs::rename(&from, &to).unwrap());
+            let d = diff(&s, &t.id).await.unwrap();
+            assert_eq!((&d["available"], d["branch"].as_str()), (&json!(true), Some(branch.as_str())), "{d}");
+            assert!(d["patch"].as_str().unwrap().contains("+++ b/a"), "{d}");
+            // Back in place, it's the worktree's again, uncommitted work and all.
+            std::fs::rename(&gone, &wt).unwrap();
+            let d = diff(&s, &t.id).await.unwrap();
+            assert!(d["branch"].is_null() && d["untracked"] == json!(["draft"]), "{d}");
             std::fs::remove_dir_all(&repo).ok();
         })
     }
