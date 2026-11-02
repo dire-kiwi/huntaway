@@ -22,14 +22,14 @@ function updateKind(install) {
   return install === "pacman" ? "pacman" : null;
 }
 
-/** `<os>-<arch>` as the release's asset names have it (`linux-x64`), like `platform()` in server/src/release.rs. */
+/** `<os>-<arch>` as the release's asset names have it (`linux-x64`), like `platform()` in server/src/update/release.rs. */
 function assetPlatform(platform = process.platform, arch = process.arch) {
   return `${platform === "darwin" ? "mac" : platform}-${arch}`;
 }
 
 /**
  * The package for an install `kind` in release `version`, as electron-builder names it: the pacman package with the
- * platform's arch (`linux-x64`), the AppImage with AppImage's own (`linux-x86_64`). As `package_name` in release.rs.
+ * platform's arch (`linux-x64`), the AppImage with AppImage's own (`linux-x86_64`). As `package_name` in update/release.rs.
  */
 function packageName(kind, version, platform) {
   if (kind === "pacman") return `huntaway-${version}-${platform}.pacman`;

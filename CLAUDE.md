@@ -99,7 +99,7 @@ Keep test servers fully separate from it:
     when the task needs attention (a pending prompt, unless `--approve` answers it, or a run that
     ended in `needs_attention`) and 124 on timeout. Run it with the Bash tool's timeout above
     `--timeout`, or with `run_in_background`.
-- API facts that agents keep rediscovering (routes are in `router` in `server/src/api.rs`):
+- API facts that agents keep rediscovering (routes are in `host_routes` in `server/src/api.rs`, handlers in `server/src/api/`):
   - There's no `/api/projects` or `/api/tasks` list: use `/api/profiles/{id}/projects` and
     `/api/projects/{id}/tasks`.
   - `GET /api/tasks/{id}` returns `{task, last_message, pending_permissions}`, so read
@@ -173,8 +173,10 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   calls in between), import `open` from `scripts/ui-check.mjs` and use `ui.page`, which is a
   Playwright page. Checks for bugs that are easy to bring back go in `app/tests/ui/` and run with
   `npm run test:ui` in `app/` (it builds the UI, and each file starts its own `--demo` test server
-  with agents switched off, so `cargo build` in `server/` first). They aren't part of `npm test`,
-  but CI runs them (`Tests / ui`). Run them when you change the UI they cover, and add one when an interaction found a bug.
+  with agents switched off, so `cargo build` in `server/` first). Files run 8 at a time (`IA_UI_TEST_JOBS`
+  changes that), so a check mustn't count on a quiet machine: wait for what it reads rather than read it
+  at once. Run one file with `node --experimental-strip-types --test tests/ui/<file>`. They aren't part of `npm test`,
+  but CI runs them, split between three runners (`Tests / ui (1/3)` to `(3/3)`; `IA_UI_TEST_SHARD=2/3` runs the second third). Run them when you change the UI they cover, and add one when an interaction found a bug.
 - For a change meant to make the UI faster, measure it: `node scripts/ui-profile.mjs --env $TMPDIR/ia<N>-env
   --task <id>` opens a task with a long thread and feeds the page streamed tokens, task events and
   messages, then prints the main-thread time each took. Run it on the build with the change set
@@ -198,6 +200,9 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   folders. `cargo test` in `server/` runs each test binary in a `TMPDIR` of its own, which is removed
   when it exits, and fails it if it left anything there (`server/.cargo/test-runner`), so a test that
   leaks fails locally as it does in CI. `cargo test --manifest-path` from another folder skips that.
+  That `TMPDIR` is on disk, `/var/tmp/ia-cargo-test-*` (`IA_CARGO_TEST_TMPDIR` picks another
+  folder), not in the task's `$TMPDIR`: `/tmp` is a tmpfs that every agent shares, and tests filled
+  it ("disk I/O error"). Where `/var/tmp` can't be written, it's in `$TMPDIR` as before.
 - `AppState::db()` isn't reentrant: drop a guard before calling `db()` again (that includes two
   calls in one statement). Tests and debug builds panic on a second lock on the same thread;
   release builds would hang.
@@ -209,12 +214,13 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   rewrites whole files. Match the surrounding style, and check `git diff --stat` before committing.
 - CI runs `cargo test`, `npm run typecheck` and `npm test` on every PR, and `npm run test:ui` and
   `scripts/ia-api-test.py` (`.github/workflows/test.yml`, the `Tests / server`, `Tests / app` and
-  `Tests / ui` checks, on GitHub-hosted runners). Still run them
+  `Tests / ui (1/3)` to `(3/3)` checks, on self-hosted runners for the owner's own branches and GitHub-hosted ones
+  otherwise; see the workflow's header). Still run them
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
 - `scripts/ia-api` has its own tests (a faked server and clock): `python3 scripts/ia-api-test.py`.
-- If both your branch and master bumped `API_VERSION` (`server/src/proto.rs`) or added a DB
-  migration (`server/src/db.rs`), git may merge the two without a conflict. After merging master,
+- If both your branch and master bumped `API_VERSION` (`server/src/hosts/proto.rs`) or added a DB
+  migration (`server/src/db/schema.rs`), git may merge the two without a conflict. After merging master,
   check both numbers and move yours above master's.
 
 ## What to test

@@ -291,11 +291,11 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 ### 4.8 Documents (`src/documents.rs`)
 
 - Plans are written as HTML fragments using board components that the README doesn't list:
-  `<ia-lede>`, `<ia-callout kind="note|tip|info|warn|risk|question|decision">`, `<ia-steps>`/`<ia-step size>`,
-  `<ia-cards>`/`<ia-card kind="chosen|rejected">`, `<ia-columns>`, `<ia-badge>`, `<ia-diagram>` (Mermaid
-  source inside a `<pre>`, rendered by the board), `<ia-question>` (README), and list classes `pros`, `cons`,
-  `checklist`, `files`. The board's dark theme styles plain HTML; a whole page (with `<html>`) is shown
-  as is.
+  classes `sub`, `callout` (with tones `ok|warn|bad|info`), `pill`, `grid2`/`grid3` of `card`s, `ol.steps`,
+  `meta` and `td.n`, plus `<ia-diagram>` (Mermaid source inside a `<pre>`, rendered by the board) and
+  `<ia-question>` (README). The older `<ia-lede>`, `<ia-callout>`, `<ia-steps>`, `<ia-cards>`, `<ia-columns>`
+  and `<ia-badge>` elements are retired but still styled. The plan theme (`app/src/planTheme.css`) styles
+  plain HTML; a whole page (with `<html>`) is shown as is.
 - A document file is capped at 5 MB (`MAX_SIZE`); a version stays `open` while the turn that writes it
   goes on, so the UI shows it as it's written. (Versions: README.)
 

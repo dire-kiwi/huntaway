@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useEffect, useMemo } from "react";
 import { approvalLoads, sortApprovals, withApproval, type HostApproval } from "./approvals";
-import { loadProjectOrder, moveProjects, saveProjectOrder, sortProjects } from "./projectOrder";
+import { sortProjects } from "./projectOrder";
 import {
   api,
   ApiError,
@@ -43,7 +43,6 @@ interface State {
   projects: Project[];
   /** Archived projects (API 46). They're off the board: their tasks aren't loaded, and their tasks' events are left out. */
   archived: Project[];
-  projectOrder: string[];
   /** Every profile's tasks (review threads too), by id. */
   tasks: Record<string, Task>;
   /** The messages of the threads that are shown (see useThreadMessages), by task id: the latest ones, and older pages as they're scrolled to (see `threads`). */
@@ -76,8 +75,6 @@ interface State {
   loadOlderMessages: (taskId: string) => Promise<void>;
   upsertTask: (t: Task) => void;
   upsertProject: (p: Project) => void;
-  /** Moves projects `ids` next to projects `targetIds` (see projectOrder.moveProjects). */
-  moveProjects: (ids: string[], targetIds: string[], position: "before" | "after") => void;
   removeProject: (hostId: string, id: string) => void;
 }
 
@@ -288,7 +285,6 @@ export const useStore = create<State>((set, get) => ({
   claudeConfigs: [],
   projects: [],
   archived: [],
-  projectOrder: loadProjectOrder(),
   tasks: {},
   messages: {},
   threads: {},
@@ -404,7 +400,7 @@ export const useStore = create<State>((set, get) => ({
       const ours = (x: { host_id: string }) => x.host_id === h;
       for (const id of new Set([...Object.values(s.tasks).filter(ours).map((t) => t.id), ...tasks.map((t) => t.id)])) changed(h, "tasks", id, gen);
       for (const p of [...s.projects, ...s.archived].filter(ours).concat(projects, archived)) changed(h, "projects", p.id, gen);
-      return { projects: sortProjects(nextProjects, s.projectOrder), archived: nextArchived, tasks: next };
+      return { projects: sortProjects(nextProjects), archived: nextArchived, tasks: next };
     });
   },
 
@@ -516,7 +512,7 @@ export const useStore = create<State>((set, get) => ({
     const unarchived = get().archived.some(same);
     set((s) => {
       const others = s.projects.filter((x) => !same(x));
-      return { archived: s.archived.filter((x) => !same(x)), projects: sortProjects([...others, p], s.projectOrder) };
+      return { archived: s.archived.filter((x) => !same(x)), projects: sortProjects([...others, p]) };
     });
     // One that's back has its tasks loaded again.
     if (unarchived) {
@@ -537,14 +533,6 @@ export const useStore = create<State>((set, get) => ({
         .catch(() => {})
         .finally(load.done);
     }
-  },
-
-  moveProjects: (ids, targetIds, position) => {
-    const s = get();
-    const projectOrder = moveProjects(s.projects, s.projectOrder, ids, targetIds, position);
-    if (projectOrder === s.projectOrder) return;
-    saveProjectOrder(projectOrder);
-    set({ projectOrder, projects: sortProjects(s.projects, projectOrder) });
   },
 
   removeProject: (h, id) => {

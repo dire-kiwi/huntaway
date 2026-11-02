@@ -11,9 +11,9 @@ use serde_json::{Value, json};
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::admin::{RestartJob, ServerMeta};
 use crate::db::{self, Message, Task};
-use crate::hub::LinkHandle;
+use crate::hosts::hub::LinkHandle;
+use crate::update::admin::{RestartJob, ServerMeta};
 
 /// A run that hasn't finished. Its durable state lives in the `runs` table.
 pub struct RunHandle {
@@ -65,23 +65,23 @@ pub struct AppState {
     pub meta: ServerMeta,
     pub restart: Mutex<Option<RestartJob>>,
     /// What `--update-from` last reported (see admin::start_update_check).
-    pub deployed: Mutex<Option<crate::admin::Deployed>>,
-    /// What the release checks found (see release.rs).
-    pub release: crate::release::Releases,
+    pub deployed: Mutex<Option<crate::update::admin::Deployed>>,
+    /// What the release checks found (see update/release.rs).
+    pub release: crate::update::release::Releases,
     /// Claude usage limits by Claude config id.
-    pub usage: Mutex<HashMap<String, crate::usage::Usage>>,
+    pub usage: Mutex<HashMap<String, crate::agent::usage::Usage>>,
     /// Held while a project is created or changed, so a key is checked against the keys as they
     /// are when it's stored, and a change works from the project as the one before left it (see
     /// api::update_project_inner).
     pub project_changes: tokio::sync::Mutex<()>,
     /// The projects whose folders are moving, which hold project_changes until they have, and
     /// those whose folders are kept where they are meanwhile (see relocate::Moving and Holding).
-    pub relocating: Mutex<crate::relocate::Relocations>,
+    pub relocating: Mutex<crate::git::relocate::Relocations>,
     /// The tasks being deleted (by how many deletions), which no task can be added to meanwhile
     /// (see api::Deleting).
     pub deleting: Mutex<HashMap<String, usize>>,
-    /// Web Push to devices (see push.rs).
-    pub push: crate::push::PushState,
+    /// Web Push to devices (see integrations/push.rs).
+    pub push: crate::integrations::push::PushState,
     /// A test state's `data_dir`, removed when the state goes (see testing::state).
     #[cfg(test)]
     pub test_dir: OnceLock<crate::testing::TempDir>,
@@ -243,18 +243,18 @@ impl AppState {
         Ok(moved)
     }
 
-    /// Queue the project's status script (see status_script.rs) if the task's status moved,
+    /// Queue the project's status script (see integrations/status_script.rs) if the task's status moved,
     /// under the database lock `c` the change was made with.
     fn status_changed(&self, c: &Connection, t: &Task, old: &str) {
         if let Some(me) = self.me.upgrade() {
-            crate::status_script::status_changed(&me, c, t, old);
+            crate::integrations::status_script::status_changed(&me, c, t, old);
         }
     }
 
     /// Task `t`'s status or running state changed (see task_tmp::changed), with the database unlocked.
     fn task_changed(&self, t: &Task) {
         if let Some(me) = self.me.upgrade() {
-            crate::task_tmp::changed(&me, t);
+            crate::agent::task_tmp::changed(&me, t);
         }
     }
 

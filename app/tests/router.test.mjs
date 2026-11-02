@@ -6,6 +6,7 @@ import { test } from "node:test";
 const hook = `export async function resolve(spec, ctx, next) {
   if (spec.startsWith(".") && !/\\.[cm]?[jt]sx?$/.test(spec)) {
     try { return await next(spec + ".ts", ctx); } catch {}
+    try { return await next(spec + "/index.ts", ctx); } catch {}
   }
   return next(spec, ctx);
 }`;
