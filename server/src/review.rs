@@ -5,7 +5,7 @@
 //! outcome, which the board shows on the card. Once every reviewer has finished, the serious
 //! issues they reported with `submit_review` go back to the task's agent to fix; when it
 //! finishes, the new commit is reviewed again. After the project's `review_rounds` rounds of
-//! that in a row, the task is left for the user. Only code changes are reviewed automatically:
+//! that in a row, the task is left for the user, who can give it as many more (see `extend`). Only code changes are reviewed automatically:
 //! a task whose branch has no commits of its own is skipped unless its agent changed code
 //! somewhere else (see `changed_elsewhere`).
 //!
@@ -201,7 +201,8 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         summary: None,
         issues: Vec::new(),
         verdict: None,
-        fixes: if manual { 0 } else { previous.map(|r| r.fixes).unwrap_or(0) },
+        fixes: if manual { 0 } else { previous.as_ref().map(|r| r.fixes).unwrap_or(0) },
+        extra_rounds: if manual { 0 } else { previous.map(|r| r.extra_rounds).unwrap_or(0) },
         updated_at: now(),
         reviewers: parts.clone(),
     };
@@ -654,23 +655,18 @@ fn act(state: &Shared, parent: Task, review: Review) {
 /// Ask the task's agent to fix what the review found, if it's still waiting in "In review"
 /// and hasn't had its `rounds` of fixes already. Otherwise it's flagged for the user.
 fn send_issues(state: &Shared, task: &Task, mut review: Review, rounds: u32, save: impl Fn(&Review)) {
-    let n = review.issues.len();
-    let listed = review.issues.iter().enumerate().map(|(i, s)| format!("{}. {s}", i + 1)).collect::<Vec<_>>().join("\n\n");
-    let issues = if n == 1 { "serious issue" } else { "serious issues" };
-    let found = match review.reviewers.len() {
-        0 | 1 => format!("The review found {n} {issues}"),
-        k => format!("The {k} reviewers found {n} {issues}"),
-    };
+    let listed = listed(&review);
+    let found = found(&review);
     if task.status != "in_review" || state.is_running(&task.id) {
         // The user (or the agent) has moved on; leave the findings for them.
         save(&review);
         state.add_event(&task.id, "warn", found, Some(listed));
         return;
     }
-    if review.fixes >= rounds {
+    if review.fixes >= rounds + review.extra_rounds {
         save(&review);
         state.add_event(&task.id, "warn", found.clone(), Some(listed));
-        let reason = match rounds {
+        let reason = match review.fixes {
             0 => found,
             1 => format!("{found} after a round of fixes"),
             n => format!("{found} after {n} rounds of fixes"),
@@ -682,16 +678,87 @@ fn send_issues(state: &Shared, task: &Task, mut review: Review, rounds: u32, sav
     }
     review.fixes += 1;
     save(&review);
+    if let Err(e) = runner::send_fixes(state, &task.id, &fixes_prompt(&review), review.fixes) {
+        state.add_event(&task.id, "error", "Couldn't send the review's issues to the agent", Some(e.1));
+    }
+}
+
+/// How many serious issues a review found, e.g. "The 2 reviewers found 3 serious issues".
+fn found(review: &Review) -> String {
+    let n = review.issues.len();
+    let issues = if n == 1 { "serious issue" } else { "serious issues" };
+    match review.reviewers.len() {
+        0 | 1 => format!("The review found {n} {issues}"),
+        k => format!("The {k} reviewers found {n} {issues}"),
+    }
+}
+
+/// A review's serious issues as a numbered list.
+fn listed(review: &Review) -> String {
+    review.issues.iter().enumerate().map(|(i, s)| format!("{}. {s}", i + 1)).collect::<Vec<_>>().join("\n\n")
+}
+
+/// What a review found, for the task's agent to fix.
+fn fixes_prompt(review: &Review) -> String {
+    let (found, listed) = (found(review), listed(review));
     // Each reviewer reports what it found, so two may describe the same problem.
     let overlap = if review.reviewers.len() > 1 { "Each issue says which reviewer found it, and some may be the same problem. " } else { "" };
-    let text = format!(
+    format!(
         "{found} in your changes:\n\n{listed}\n\n{overlap}Fix them, then commit (and push, if the branch has a pull request), and end \
          with a summary of what you changed. You don't have to agree with the reviewer: if you think an issue is mistaken, or \
          fixing it needs a decision or information from the user, leave that issue alone and call `request_user_input` \
          explaining your reasoning or question, so the task moves to \"Needs attention\" for the user to decide."
-    );
-    if let Err(e) = runner::send_fixes(state, &task.id, &text, review.fixes) {
-        state.add_event(&task.id, "error", "Couldn't send the review's issues to the agent", Some(e.1));
+    )
+}
+
+/// Give a task whose review still found serious issues after its rounds of fixes another
+/// `review_rounds` of them (at least one): its agent is sent the issues to fix, as when it had
+/// rounds left, and the task is reviewed again when it finishes (HA-106, API 93). A review the
+/// user asks for starts afresh, without them.
+pub fn extend(state: &Shared, task_id: &str) -> ApiResult<Task> {
+    let (previous, review) = {
+        // So two at once don't both add rounds, and a review that starts meanwhile isn't overwritten.
+        let _g = updating();
+        let task = db::get_task(&state.db(), task_id)?.ok_or_else(|| ApiError::not_found("task"))?;
+        let project = match (&task.project_id, task.kind.as_str()) {
+            (Some(pid), "task") => db::get_project(&state.db(), pid)?,
+            _ => None,
+        };
+        let Some(project) = project else { return Err(ApiError::conflict("only tasks in a project are reviewed")) };
+        let Some(previous) = task.review.clone().filter(|r| r.state == "issues" && !r.issues.is_empty()) else {
+            return Err(ApiError::conflict("the task's latest review didn't find issues to fix"));
+        };
+        if previous.fixes < project.review_rounds + previous.extra_rounds {
+            return Err(ApiError::conflict("the task hasn't used up its rounds of fixes"));
+        }
+        if state.is_running(&task.id) {
+            return Err(ApiError::conflict("the agent is working on the task; wait for it to finish or stop it"));
+        }
+        if task.status == "done" || task.merging {
+            return Err(ApiError::conflict("the task is done or merging; move it to another column first"));
+        }
+        let mut review = previous.clone();
+        review.extra_rounds += project.review_rounds.max(1);
+        review.fixes += 1;
+        set_review(state, &task.id, &review)?;
+        (previous, review)
+    };
+    let more = review.extra_rounds - previous.extra_rounds;
+    match runner::send_fixes(state, task_id, &fixes_prompt(&review), review.fixes) {
+        Ok(task) => {
+            let rounds = if more == 1 { "another round of fixes".to_string() } else { format!("{more} more rounds of fixes") };
+            state.add_event(task_id, "info", format!("Given {rounds}"), None);
+            Ok(task)
+        }
+        Err(e) => {
+            // Unless something changed it meanwhile, it's as it was, so it can be tried again.
+            let _g = updating();
+            let current = db::get_task(&state.db(), task_id)?.and_then(|t| t.review);
+            if current.is_some_and(|c| c.fixes == review.fixes && c.extra_rounds == review.extra_rounds && c.updated_at == review.updated_at) {
+                set_review(state, task_id, &previous)?;
+            }
+            Err(e)
+        }
     }
 }
 

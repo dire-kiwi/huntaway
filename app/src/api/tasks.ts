@@ -125,6 +125,8 @@ export interface Review {
   issues: string[];
   /** Reviews in a row that sent issues back to the agent. */
   fixes: number;
+  /** Rounds of fixes you added, past the project's review_rounds, after the task ran out of them (API 93). */
+  extra_rounds?: number;
   updated_at: string;
   /** Each reviewer's part (API 29). */
   reviewers?: ReviewerRun[];
@@ -472,6 +474,8 @@ export const tasksApi = {
   waitForLimit: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/wait-for-limit`),
   /** Review the task's work now (API 12). */
   review: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/review`),
+  /** A task whose review still found serious issues after its rounds of fixes gets as many again, starting with those issues (API 93). */
+  extendReview: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/review/extend`),
   summarize: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/summary`),
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),

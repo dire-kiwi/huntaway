@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, canRunAgents, dependencyQueued, hostStatuses, hostSupports, limitQueued, mergeAwaitsApproval, mergeQueued, outOfUsage, rejoinsMerge, type Host, type Resolution, type Status, type Task } from "../../../../api";
 import { resetsPhrase, resetTime } from "../../../../usageConfigs";
 import { saveMarks } from "../../Reminders";
+import { MoreFixRounds } from "../../Review";
 import { Button, RESOLUTION_LABELS, RunningDot, StatusIcon } from "../../../ui";
 import { useThreadConfig } from "../hooks";
 import { Section } from "./Section";
@@ -89,6 +90,7 @@ export function StatusSection({ task, host, confirmDone }: { task: Task; host: H
       {task.attention_reason && (
         <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2.5 py-2 text-[12px] text-amber-200/90">{task.attention_reason}</div>
       )}
+      {task.status === "needs_attention" && <MoreFixRounds task={task} className="mt-2" />}
       <UsageLimitNote task={task} onError={(e) => setErr(e)} />
       {task.remind_at && (
         <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
