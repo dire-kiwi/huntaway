@@ -71,10 +71,12 @@ launch() {
   # set: they only count with --release-updates, which IA_RELEASE_UPDATES can't turn on here.
   # Its temp folder, with its tasks' (see agent/task_tmp.rs), goes with the data dir.
   mkdir -p "$dir/tmp"
+  # --open-token: a board that hands out its token never shows system notifications (see notifyPermission in
+  # app/src/notifier.ts), so a test server opened in the user's browser doesn't pop up on their desktop.
   TMPDIR="$dir/tmp" env -u IA_HUB -u IA_HUB_TOKEN -u IA_TOKEN -u IA_OPEN_TOKEN -u IA_DEMO -u IA_UI_DIR \
     -u IA_CLOUDFLARED_BIN -u IA_BROKER -u IA_BROKER_TOKEN -u IA_BROKER_NAME -u IA_PROFILES -u IA_SOURCE_DIR -u IA_UPDATE_FROM -u IA_RELEASE_UPDATES \
     -u IA_NAME -u IA_HOST -u IA_PORT -u IA_DATA_DIR \
-    setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test "${serve[@]}" \
+    setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test --open-token "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!
   echo "$pid" > "$dir/server.pid"
