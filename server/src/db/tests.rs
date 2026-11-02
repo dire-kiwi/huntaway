@@ -712,14 +712,14 @@ fn a_database_at_version_67_gets_projects_pull_request_settings() {
 }
 
 #[test]
-fn a_database_at_version_74_has_every_task_in_later() {
-    // As master's build left it, with run sessions (73) and no now/later split yet.
+fn a_database_at_version_75_has_every_task_in_later() {
+    // As master's build left it, with a review-approval setting (75) and no now/later split yet.
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
         c.execute_batch(
             "ALTER TABLE tasks DROP COLUMN now_at;
-                 PRAGMA user_version=74;
+                 PRAGMA user_version=75;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
                  INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
                    VALUES ('t','p','task',1,'t','todo','1','1','1');",

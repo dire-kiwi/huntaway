@@ -1,7 +1,7 @@
 import type { Task } from "./api";
 
 /** Hosts from this API version on keep which tasks are in Now (`now_at`), and set it with `now`. */
-export const NOW_API = 95;
+export const NOW_API = 96;
 
 /** Which tasks a board shows: those in Now, those in Later (where tasks start), or all of them. */
 export type Focus = "now" | "later" | "all";

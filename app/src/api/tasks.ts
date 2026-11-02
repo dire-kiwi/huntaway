@@ -58,6 +58,8 @@ export const LIMITS_API = 81;
 
 /** Profiles and projects can have merges wait for the user's approval of a summary. */
 export const MERGE_APPROVAL_API = 92;
+/** Projects and profiles can require an approving GitHub review before a task goes to Ready for merge. */
+export const PR_APPROVAL_API = 95;
 
 export const isMerged = (t: Task) => t.status === "done" && (t.resolution ?? "done") === "done";
 
@@ -301,7 +303,7 @@ export interface Task {
   remind_at?: string | null;
   /** What the reminder is for (API 48). */
   reminder?: string | null;
-  /** When it was put in Now (API 95); unset for the tasks in Later, where tasks start. */
+  /** When it was put in Now (API 96); unset for the tasks in Later, where tasks start. */
   now_at?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;

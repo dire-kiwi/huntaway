@@ -11,6 +11,7 @@ import {
   hostSupports,
   LIMITS_API,
   MERGE_APPROVAL_API,
+  PR_APPROVAL_API,
   MODEL_ALIASES,
   PERMISSION_MODES,
   PROFILE_REVIEWERS_API,
@@ -601,6 +602,7 @@ export function ProfileForm({
   const [reviewers, setReviewers] = useState<Reviewer[]>(initial?.reviewers ?? []);
   const [summarizer, setSummarizer] = useState<Reviewer>(initial?.summarizer ?? DEFAULT_REVIEWER);
   const [mergeApproval, setMergeApproval] = useState(!!initial?.merge_approval);
+  const [prApproval, setPrApproval] = useState(!!initial?.require_pr_approval);
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
   const { busy, error: err, run } = useAsyncAction();
@@ -613,6 +615,7 @@ export function ProfileForm({
   const limits = hostSupports(hosts.find((h) => h.id === host), LIMITS_API);
   const reviewing = hostSupports(hosts.find((h) => h.id === host), PROFILE_REVIEWERS_API);
   const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
+  const gating = hostSupports(hosts.find((h) => h.id === host), PR_APPROVAL_API);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
@@ -631,6 +634,7 @@ export function ProfileForm({
         // The host saves just the defaults as none, which is the same.
         ...(reviewing ? { reviewers, summarizer } : {}),
         ...(approving ? { merge_approval: mergeApproval } : {}),
+        ...(gating ? { require_pr_approval: prApproval } : {}),
       };
       if (initial) await api.updateProfile(initial.host_id, initial.id, body);
       else {
@@ -730,6 +734,16 @@ export function ProfileForm({
             {mergeApproval
               ? "A task moved to Ready for merge has its agent summarize what will be merged, and merges only once you approve it in its thread. A project can say otherwise in its Review settings."
               : "A task moved to Ready for merge is merged by its agent without asking you first, unless its project says otherwise in its Review settings."}
+          </span>
+        </div>
+      )}
+      {gating && (
+        <div className="space-y-1.5">
+          <Toggle checked={prApproval} onChange={setPrApproval} label="Require GitHub approval before Ready for merge" />
+          <span className="block text-xs text-faint">
+            {prApproval
+              ? "A task can only be moved to Ready for merge once its pull request has an approving review on GitHub. A project can say otherwise in its Review settings."
+              : "A task can be moved to Ready for merge without a review on GitHub, unless its project says otherwise in its Review settings."}
           </span>
         </div>
       )}

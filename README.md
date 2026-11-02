@@ -947,7 +947,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   the browser tab; *Sort* (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
-- **Now and Later** (HA-109, API 95): every task is in *Later* until it's put in *Now*, which is
+- **Now and Later** (HA-109, API 96): every task is in *Later* until it's put in *Now*, which is
   what you're working on at the moment. A prompt you send a task from its thread or the new task
   dialog, or an answer to its question card (not one from another agent, an automation or the board itself, and not a task an agent
   creates and starts) puts it in Now; so does *Move to Now* in its right-click menu (*Move to Later* puts

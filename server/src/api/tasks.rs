@@ -260,6 +260,18 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         };
         s.add_event(id, "info", why, None);
     }
+    // Where the project or profile asks for it, the task's pull request needs an approving review on GitHub first.
+    // The pull request it will have is the one checked, if the same request changes it.
+    let gated = merge && !nothing_to_merge && !remerge && worktree::pr_approval_required(s, &current).await;
+    let pr_url_set = fields.iter().find(|(k, _)| *k == "pr_url").map(|(_, v)| v.as_str().map(str::to_string));
+    if gated {
+        let url = pr_url_set.clone().unwrap_or_else(|| current.pr_url.clone());
+        match worktree::pr_approved(s, &current, url.as_deref().filter(|u| !u.is_empty())).await {
+            Ok(true) => {}
+            Ok(false) => return Err(ApiError::conflict("the task's pull request has no approving review on GitHub yet, so it can't go to Ready for merge")),
+            Err(e) => return Err(ApiError::conflict(format!("can't move the task to Ready for merge until its pull request is approved on GitHub: {e}"))),
+        }
+    }
     // Moved without a position (e.g. by an agent), it joins the back of the merge queue.
     if merge && !fields.iter().any(|(k, _)| *k == "position") {
         let end = db::end_position(&s.db(), current.project_id.as_deref(), "ready_for_merge", "task")?;
@@ -284,6 +296,8 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
             Some(ApiError::conflict("the agent has already started with its Claude config"))
         } else if remerge && !(now.merging && running) {
             Some(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"))
+        } else if gated && pr_url_set.is_none() && now.pr_url != current.pr_url {
+            Some(ApiError::conflict("the task's pull request changed meanwhile; try again"))
         } else if unsubproject && !db::subproject_tasks(c, id)?.is_empty() {
             Some(ApiError::conflict("the subproject still has tasks; delete them first"))
         } else {

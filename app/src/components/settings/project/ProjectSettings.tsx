@@ -58,6 +58,7 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
       "subproject_pull_requests",
       "done_when_merged",
       "merge_approval",
+      "require_pr_approval",
       "watch_pull_requests",
       "pr_preview_url",
     ],
