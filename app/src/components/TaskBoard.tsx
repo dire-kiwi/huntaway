@@ -91,6 +91,7 @@ export function TaskBoard({
   profiles,
   targets,
   scratch,
+  ready = true,
   notice,
   header,
 }: {
@@ -108,6 +109,12 @@ export function TaskBoard({
   targets?: Project[];
   /** Where its scratch tasks go, for a profile's board. */
   scratch?: Profile | null;
+  /**
+   * Whether New task's dialog can open yet. A profile's board waits for its projects: a dialog opened before them
+   * would start in no project and keep its draft there, where the next one (starting in a project) doesn't look (HA-93).
+   * New task clicked meanwhile opens it once it can.
+   */
+  ready?: boolean;
   /** Shown above the tasks. */
   notice?: ReactNode;
   /** The header, given the search, filter, sort and view controls to show in it. */
@@ -783,7 +790,7 @@ export function TaskBoard({
       )}
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
       {doneDialog}
-      {newIn && canAdd && (
+      {newIn && canAdd && ready && (
         <NewTaskModal
           // A group's (or profile's) new task starts in the project last picked for one, if it's on the board.
           project={(choices.length > 1 && choices.find((p) => p.id === localStorage.getItem(PROJECT_KEY))) || project}

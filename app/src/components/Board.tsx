@@ -177,6 +177,7 @@ export function ProfileBoard({ profile }: { profile: string }) {
       profiles={ids}
       targets={targets}
       scratch={scratch}
+      ready={loaded}
       header={({ controls, newTask }) => (
         <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
           <MenuButton />
