@@ -50,3 +50,42 @@ test("a rename doesn't follow the panel to another task", async () => {
     assert.deepEqual(titles, ["First task", "Second task"]);
   });
 });
+
+/** The task's title and whether it's pinned once its title is no longer `old`, as the server has them. */
+async function savedTitle(page, task, old) {
+  let saved;
+  for (const end = Date.now() + 5000; Date.now() < end; await page.waitForTimeout(100)) {
+    saved = (await server.api("GET", `/tasks/${task.id}`)).task;
+    if (saved.title !== old) break;
+  }
+  return [saved.title, saved.title_pinned];
+}
+
+// HA-100: a card's right-click menu sets its title in a dialog, which pins it.
+test("Set title… in a card's menu renames the task", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Named by its prompt" });
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, "rclick Named by its prompt", "click [role=menu] >> text=Set title…", "wait [role=dialog]"]);
+    assert.equal(await page.locator("[role=dialog] input[aria-label=Title]").inputValue(), "Named by its prompt");
+    await ui.run(["press Control+a", "type Named from the menu", "press Enter", "gone [role=dialog]", "wait Named from the menu"]);
+    assert.deepEqual(await savedTitle(page, task, "Named by its prompt"), ["Named from the menu", true]);
+  });
+});
+
+// HA-100: the task's details have its title, to rename and to unpin.
+test("the details' Title section renames and unpins the title", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Before the details" });
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const section = "css=section:has(h3:text-is('Title'))";
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Details", `click ${section} >> text=Edit`, "press Control+a", "type Renamed in the details"]);
+    // Escape leaves the panel open, and the title as it was.
+    await ui.run(["press Escape", `gone ${section} >> input`, `click ${section} >> text=Edit`]);
+    assert.equal(await page.locator(`${section.slice(4)} input`).inputValue(), "Before the details");
+    await ui.run(["press Control+a", "type Renamed in the details", "press Enter", `wait ${section} >> text=Set by hand`]);
+    assert.deepEqual(await savedTitle(page, task, "Before the details"), ["Renamed in the details", true]);
+    await ui.run([`click ${section} >> text=Unpin`, `gone ${section} >> text=Set by hand`]);
+    assert.equal((await server.api("GET", `/tasks/${task.id}`)).task.title_pinned, false);
+  });
+});
