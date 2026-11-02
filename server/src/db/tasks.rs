@@ -202,6 +202,11 @@ pub struct Task {
     /// What the reminder is for, set with it.
     #[serde(default)]
     pub reminder: Option<String>,
+    /// When the task went into "now" (UTC, RFC 3339), which the board's Now view lists; unset for the tasks in "later"
+    /// (all of them to begin with). It's set when the user prompts the task or moves it there, and a task with no
+    /// activity for the host's `now_expiry_hours` goes back (see agent/focus.rs).
+    #[serde(default)]
+    pub now_at: Option<String>,
     /// The latest automatic review of the task's work.
     pub review: Option<Review>,
     /// The latest summary of its changes, written once its review passed (see review/summary.rs).
@@ -289,6 +294,7 @@ impl Task {
             starred: r.get("starred")?,
             remind_at: r.get("remind_at")?,
             reminder: r.get("reminder")?,
+            now_at: r.get("now_at")?,
             review: r.get::<_, Option<String>>("review")?.and_then(|v| serde_json::from_str(&v).ok()),
             summary: r.get::<_, Option<String>>("summary")?.and_then(|v| serde_json::from_str(&v).ok()),
             context: r.get::<_, Option<String>>("context")?.and_then(|v| serde_json::from_str(&v).ok()),
@@ -808,7 +814,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "start_from", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "merge_approval", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "now_at", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.

@@ -173,7 +173,7 @@ fn an_effort_a_codex_model_doesnt_take_gives_way_to_its_default() {
 }
 
 /// A task whose agent is running a run that takes input (or not), with no process behind it.
-fn running(input: bool) -> (Shared, Task, Run) {
+pub(crate) fn running(input: bool) -> (Shared, Task, Run) {
     let state = crate::testing::state();
     let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
     let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };

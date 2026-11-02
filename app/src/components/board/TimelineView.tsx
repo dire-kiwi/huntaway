@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, hostSupports, type Project, type Task } from "../../api";
 import { usePanel, openTask } from "../../router";
+import { useSelection } from "../../selection";
 import { keyPrefix, useStore } from "../../store";
 import { ticks } from "./timeline";
 import { duration, StatusIcon, STATUS_COLOR, useClock } from "../ui";
@@ -116,6 +117,7 @@ export function TimelineView({ tasks, projectOf, onMenu }: { tasks: Task[]; proj
   const [span, setSpan] = useState<SpanId>(() => (SPANS.find((s) => s.id === localStorage.getItem(SPAN_KEY))?.id ?? "24h") as SpanId);
   // How many windows back from now it shows.
   const [back, setBack] = useState(0);
+  const picked = useSelection((s) => s.ids);
   const now = useClock(60_000);
   const ms = SPANS.find((s) => s.id === span)!.ms;
   const to = now - back * ms;
@@ -291,6 +293,8 @@ export function TimelineView({ tasks, projectOf, onMenu }: { tasks: Task[]; proj
             return (
               <div
                 key={t.id}
+                data-task={t.id}
+                data-selected={picked.has(t.id) ? "true" : undefined}
                 role="button"
                 tabIndex={0}
                 aria-current={openId === t.id || undefined}

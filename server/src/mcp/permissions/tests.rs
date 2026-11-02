@@ -78,6 +78,8 @@ fn answers_to_claudes_questions_go_back_as_its_tool_takes_them() {
         assert_eq!((&shown["status"], &shown["answers"]), (&json!("allowed"), &json!([["Summer"], ["Cats", "Birds", "a lizard"]])));
         let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
         assert_eq!((t.status.as_str(), t.attention_reason), ("in_progress", None));
+        // Answers to a question the agent is waiting for are a prompt too; a permission decision isn't.
+        assert!(t.now_at.is_some());
         // Not as an always-allowed tool.
         assert!(t.auto_allow.is_empty());
     });
@@ -223,8 +225,12 @@ fn a_question_or_plan_whose_run_ended_is_answered_by_message() {
         assert!(answer(&s, &id, true, false, None, answers(vec![vec!["Winter"], vec!["Dogs"]])).is_err());
         assert_eq!(prompt_message(&s, &id)["status"], "expired");
 
+        assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().now_at, None, "not sent, so not a prompt");
+
         s.runs.lock().unwrap().insert(task.id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
         assert_eq!(answer(&s, &id, true, false, None, answers(vec![vec!["Winter"], vec!["Dogs"]])).unwrap(), "allowed");
+        // The answers are the user's prompt: it puts the task in now.
+        assert!(db::get_task(&s.db(), &task.id).unwrap().unwrap().now_at.is_some());
         let queued = db::get_task(&s.db(), &task.id).unwrap().unwrap().queued_message.unwrap();
         assert_eq!(queued, "My answers to the questions you asked:\n\n- Which season?\n  Winter\n- Which pets?\n  Dogs");
         let shown = prompt_message(&s, &id);

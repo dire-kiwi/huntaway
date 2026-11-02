@@ -146,11 +146,11 @@ pub(super) fn created(s: &Shared, ctx: &Ctx, mut t: Task, marks: &[(&str, Value)
     Ok(t)
 }
 
-/// `starred`, `remind_at` and `reminder` from `create_task` or `update_task`, with the time made
+/// `starred`, `remind_at`, `reminder` and (on update_task) `now` from `create_task` or `update_task`, with the time made
 /// absolute (see reminder_time). The API checks the rest.
 pub(super) fn reminder_args(args: &Value) -> std::result::Result<Map<String, Value>, ToolError> {
     let mut body = Map::new();
-    for k in ["starred", "reminder"] {
+    for k in ["starred", "reminder", "now"] {
         if !args[k].is_null() {
             body.insert(k.into(), args[k].clone());
         }
@@ -241,6 +241,9 @@ pub(super) fn summary(s: &Shared, t: &Task) -> Value {
     if let Some(at) = &t.remind_at {
         v["remind_at"] = json!(at);
         v["reminder"] = json!(t.reminder);
+    }
+    if t.now_at.is_some() {
+        v["now"] = json!(true);
     }
     v
 }

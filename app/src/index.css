@@ -162,3 +162,9 @@ body {
 .kanban-scroll:hover {
   scrollbar-color: #4a4a5a var(--color-panel);
 }
+
+/* A task picked with the board's lasso (see components/board/Lasso.tsx). */
+[data-selected="true"] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}

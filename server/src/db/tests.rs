@@ -757,6 +757,28 @@ fn a_database_at_version_67_gets_projects_pull_request_settings() {
 }
 
 #[test]
+fn a_database_at_version_76_has_every_task_in_later() {
+    // As master's build left it, with a worktree start point (76) and no now/later split yet.
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE tasks DROP COLUMN now_at;
+                 PRAGMA user_version=76;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'t','todo','1','1','1');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert_eq!(get_task(&c, "t").unwrap().unwrap().now_at, None);
+    let t = update_task(&c, "t", &[("now_at", json!("2030-01-01T00:00:00.000Z"))]).unwrap().unwrap();
+    assert_eq!(t.now_at.as_deref(), Some("2030-01-01T00:00:00.000Z"));
+}
+
+#[test]
 fn a_database_at_version_69_gets_profiles_reviewers_and_summarizer() {
     // As master's build left it, with context stats (69) and no profile reviewers yet.
     let path = crate::testing::temp_dir().join("huntaway.db");
