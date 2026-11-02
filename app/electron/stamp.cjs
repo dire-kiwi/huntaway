@@ -31,4 +31,21 @@ function frameStamp(dir, electronVersion) {
   return hash.digest("hex");
 }
 
-module.exports = { shellStamp, frameStamp, FRAME_FILES };
+/**
+ * Why the app should relaunch, or null. `boot` is `globalThis.huntawayBoot` (boot.cjs, set for a release build):
+ * whether the shell it would load now differs from the running one. That comes first, because an Update or a Roll back
+ * can delete the running shell's folder (the server prunes versions nothing needs), which `stampNow` can't hash.
+ * `stampNow()` against `startStamp` is for a checkout, whose files change in place; a shell loaded from a release never
+ * does, so it's skipped there, and an error from it (files gone) counts as no change.
+ */
+function shellChange({ boot, stampNow, startStamp }) {
+  if (boot && (boot.choose()?.version ?? null) !== (boot.running?.version ?? null)) return "an update brought a different desktop shell";
+  if (boot?.running) return null;
+  try {
+    return stampNow() !== startStamp ? "the desktop app changed on disk" : null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { shellStamp, frameStamp, shellChange, FRAME_FILES };

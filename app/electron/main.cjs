@@ -31,7 +31,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const shellUpdate = require("./shellupdate.cjs");
-const { frameStamp, shellStamp } = require("./stamp.cjs");
+const { frameStamp, shellChange, shellStamp } = require("./stamp.cjs");
 const versions = require("./versions.cjs");
 
 /** `dir`, or `legacy` from before the rename to Huntaway if only that one exists. */
@@ -417,12 +417,6 @@ function relaunch() {
   app.quit();
 }
 
-/** Whether an Update left a different shell for the next start than the one running (boot.cjs's choice, not this file's). */
-function newerShellInstalled() {
-  const boot = globalThis.huntawayBoot;
-  return !!boot && (boot.choose()?.version ?? null) !== (boot.running?.version ?? null);
-}
-
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -436,11 +430,9 @@ async function createWindow() {
   });
   // The board reloads once a rebuild has restarted the server. If that changed the app itself, start the new one.
   win.webContents.on("did-finish-load", () => {
-    if (mainStamp() !== startStamp) {
-      console.log("the desktop app changed on disk; relaunching");
-      relaunch();
-    } else if (newerShellInstalled()) {
-      console.log("an update brought a different desktop shell; relaunching");
+    const why = shellChange({ boot: globalThis.huntawayBoot, stampNow: mainStamp, startStamp });
+    if (why) {
+      console.log(`${why}; relaunching`);
       relaunch();
     }
   });

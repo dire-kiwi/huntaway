@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const boot = require("../electron/boot.cjs");
 const { chooseServer, compareVersions } = require("../electron/versions.cjs");
-const { frameStamp, shellStamp } = require("../electron/stamp.cjs");
+const { frameStamp, shellChange, shellStamp } = require("../electron/stamp.cjs");
 
 const dirs = [];
 afterEach(() => {
@@ -150,4 +150,41 @@ test("the frame stamp changes with boot.cjs and Electron, not with the rest of t
 test("loading boot.cjs outside Electron does nothing", () => {
   // The module would have run boot() against a missing `app` otherwise; reaching this line is the test.
   assert.equal(typeof boot.chooseShell, "function");
+});
+
+/** What main.cjs's did-finish-load asks: boot.cjs's view of the app dir, and a stamp of the running shell's folder. */
+function relaunchCheck(dir, running, startStamp) {
+  const params = { appDir: dir, appVersion: "0.1.0", electronVersion: ELECTRON };
+  return shellChange({ boot: { running, choose: () => boot.chooseShell(params) }, stampNow: () => shellStamp(running.dir, ELECTRON), startStamp });
+}
+
+test("a Roll back that deleted the running shell relaunches the app rather than throwing", () => {
+  const dir = appDir({ current: "0.3.0", previous: "0.2.0" }, ["0.3.0", "0.2.0"]);
+  const running = shellOf(dir, "0.3.0");
+  const started = shellStamp(running.dir, ELECTRON);
+  assert.equal(relaunchCheck(dir, running, started), null);
+  // Roll back marks 0.3.0 bad and makes 0.2.0 current, then the server prunes 0.3.0 (staging::prune).
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({ current: "0.2.0", bad: ["0.3.0"] }));
+  fs.rmSync(path.join(dir, "0.3.0"), { recursive: true });
+  assert.throws(() => shellStamp(running.dir, ELECTRON), /ENOENT/);
+  assert.match(relaunchCheck(dir, running, started), /different desktop shell/);
+  // Back to the package's shell: nothing left to load.
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({ current: "0.1.0" }));
+  assert.match(relaunchCheck(dir, running, started), /different desktop shell/);
+});
+
+test("a shell loaded from a release isn't hashed, and a checkout still relaunches on a change", () => {
+  const dir = appDir({ current: "0.2.0" }, ["0.2.0"]);
+  const running = shellOf(dir, "0.2.0");
+  const params = { appDir: dir, appVersion: "0.1.0", electronVersion: ELECTRON };
+  const stampNow = () => {
+    throw new Error("a release's shell folder never changes in place, and may be gone");
+  };
+  assert.equal(shellChange({ boot: { running, choose: () => boot.chooseShell(params) }, stampNow, startStamp: "a" }), null);
+  // No boot.cjs (a checkout): the stamp decides, and unreadable files aren't a change.
+  assert.equal(shellChange({ boot: undefined, stampNow: () => "b", startStamp: "a" }), "the desktop app changed on disk");
+  assert.equal(shellChange({ boot: undefined, stampNow: () => "a", startStamp: "a" }), null);
+  assert.equal(shellChange({ boot: undefined, stampNow: () => { throw new Error("ENOENT"); }, startStamp: "a" }), null);
+  // The package's own shell in a release build (running null): the stamp still applies.
+  assert.equal(shellChange({ boot: { running: null, choose: () => null }, stampNow: () => "b", startStamp: "a" }), "the desktop app changed on disk");
 });
