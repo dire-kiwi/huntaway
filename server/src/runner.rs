@@ -263,6 +263,9 @@ const STEP_OUT: &str = "Tasks queued to merge after this one wait while you merg
     `remerge` true. Then make the changes, check them, commit and push, and end your turn without merging: the board puts the task \
     back at the end of the merge queue and asks you to merge again when its turn comes.";
 
+/// Why a task whose merge waits for the user's approval needs attention.
+const APPROVAL: &str = "Approve or deny the merge";
+
 /// Ask the agent on a task that was moved to "Ready for merge" to merge its work. The task
 /// stays in that column while it does; the agent moves it to "Done" once merged.
 pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
@@ -285,8 +288,9 @@ pub fn request_merge(state: &Shared, task: &Task) -> ApiResult<Task> {
         Some(br) => format!("Merge branch `{br}` into {into}"),
         None => format!("Merge this task's work into {into}"),
     };
+    let approved = if task.merge_approval.as_deref() == Some(crate::merge_gate::APPROVED) { " The user approved the merge." } else { "" };
     let mut text = format!(
-        "The user moved this task to \"Ready for merge\". {what}.\n\n{}\n\nIf you can't merge, call `request_user_input` \
+        "The user moved this task to \"Ready for merge\".{approved} {what}.\n\n{}\n\nIf you can't merge, call `request_user_input` \
          explaining why. Once it is merged, call `update_task` to set this task's status to `done`.\n\n{STEP_OUT}",
         crate::prompts::merge(project.as_ref())
     );
@@ -311,7 +315,9 @@ static MERGE_SLOT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// slot, and each subproject's tasks share another. A task moved to "Ready for merge" waits
 /// there, in column order, while another task in its slot is merging (running, or waiting on
 /// the user in "Needs attention"). Call this whenever a merge may have ended or been queued: it
-/// asks the next waiting task's agent to merge wherever a slot in the project is free.
+/// asks the next waiting task's agent to merge wherever a slot in the project is free. A task
+/// whose merge needs the user's approval first has its agent summarise it straight away, without
+/// waiting for the slot, and waits for the approval out of the queue (see merge_gate.rs).
 pub fn start_next_merge(state: &Shared, project_id: Option<&str>) {
     if !runs::can_run_agents(state) {
         return;
@@ -322,22 +328,41 @@ pub fn start_next_merge(state: &Shared, project_id: Option<&str>) {
         Err(e) => return tracing::error!("checking the merge queue: {e:#}"),
     };
     for lane in lanes {
-        let next = {
+        // The tasks to summarise for approval, and the next to merge if the slot is free.
+        let next = (|| -> anyhow::Result<(Vec<Task>, Option<Task>)> {
             let c = state.db();
-            match db::active_merge(&c, project_id, lane.as_deref()) {
-                Ok(None) => db::queued_merges(&c, project_id, lane.as_deref()).map(|q| q.into_iter().next()),
-                Ok(Some(_)) => Ok(None),
-                Err(e) => Err(e),
+            let free = db::active_merge(&c, project_id, lane.as_deref())?.is_none();
+            let (mut summarise, mut next) = (Vec::new(), None);
+            for t in db::queued_merges(&c, project_id, lane.as_deref())? {
+                if crate::merge_gate::needs_summary(&c, &t)? {
+                    summarise.push(t);
+                } else if free && next.is_none() {
+                    next = Some(t);
+                }
             }
-        };
-        let next = match next {
-            Ok(Some(t)) => t,
-            Ok(None) => continue,
+            Ok((summarise, next))
+        })();
+        let (summarise, next) = match next {
+            Ok(n) => n,
             Err(e) => {
                 tracing::error!("checking the merge queue: {e:#}");
                 continue;
             }
         };
+        for t in summarise {
+            // Out of the queue until the user decides (see db::queued_merges).
+            if let Err(e) = state.update_task(&t.id, &[("merge_approval", json!(crate::merge_gate::PENDING))]) {
+                tracing::error!(task = t.id, "asking for a merge's approval: {e:#}");
+                continue;
+            }
+            state.add_event(&t.id, "info", "The merge waits for your approval: its agent summarizes what will be merged first", None);
+            if let Err(e) = crate::merge_gate::request_summary(state, &t) {
+                let reason = format!("Couldn't ask for a summary of the merge: {}", e.1);
+                state.add_event(&t.id, "error", reason.clone(), None);
+                let _ = state.update_task(&t.id, &[("status", json!("needs_attention")), ("attention_reason", json!(reason))]);
+            }
+        }
+        let Some(next) = next else { continue };
         if let Err(e) = request_merge(state, &next) {
             // Stays merging, so the queue waits for the user to sort it out.
             let reason = format!("Couldn't start the merge: {}", e.1);
@@ -410,7 +435,8 @@ fn send_message(state: &Shared, task_id: &str, message: Option<db::Queued>, auto
     let compact = is_compact(&message.text) || queued.is_some_and(is_compact);
     // Before the message is queued for later (behind dependencies, say), where nothing would send it.
     check_not_archived(state, &task)?;
-    if task.merging && !auto {
+    // One waiting for the user's approval isn't in the queue yet, so it can be talked to.
+    if task.merging && !auto && !crate::merge_gate::is_pending(&task) {
         // A merge waiting for its turn can't run alongside the one in progress.
         let active = db::active_merge(&state.db(), task.project_id.as_deref(), task.parent_id.as_deref())?;
         if let Some(other) = active.filter(|o| o.id != task.id) {
@@ -2469,6 +2495,8 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         (Outcome::Ok, Some(q)) => (Some("needs_attention"), Some(q)),
         // The agent marked its own task done (e.g. after merging it).
         (Outcome::Ok, None) if task.status == "done" => (None, None),
+        // It summarised the merge, which waits for the user's approval (see merge_gate.rs).
+        (Outcome::Ok, None) if task.merging && crate::merge_gate::is_pending(&task) => (Some("needs_attention"), Some(APPROVAL.into())),
         (Outcome::Ok, None) if task.merging => (Some("needs_attention"), Some("The agent finished without marking the task merged".into())),
         // It stepped out of the merge queue to make changes, and now rejoins it.
         (Outcome::Ok, None) if task.remerge => (Some("ready_for_merge"), None),
@@ -2501,6 +2529,11 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
             None
         }
     };
+    if is_task && reason.as_deref() == Some(APPROVAL) {
+        if let Err(e) = crate::merge_gate::ask(state, task_id) {
+            tracing::error!(task = task_id, "asking for a merge's approval: {e:#}");
+        }
+    }
     if is_task {
         start_next_merge(state, task.project_id.as_deref());
         crate::worktree::find_pr(state, &task);

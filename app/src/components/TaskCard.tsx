@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Hourglass, Kanban, Layers } from "lucide-react";
+import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Hourglass, Kanban, Layers, ShieldQuestionMark } from "lucide-react";
 import { memo, type KeyboardEvent, type MouseEvent } from "react";
-import { agentWaiting, isScratch, limitQueued, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../api";
+import { agentWaiting, isScratch, limitQueued, mergeAwaitsApproval, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../api";
 import { inGroupTaskGroup } from "../projectGroups";
 import { navigate, openTask, usePanelOpen } from "../router";
 import { isGroupTask, keyPrefix, useStore } from "../store";
@@ -197,6 +197,11 @@ function TaskBadges({ task, project, progress, compact }: { task: Task; project?
       {mergeQueued(task) && (
         <span className={badge} title="Queued to merge: waits for the merge in progress in this project">
           <Clock size={11} /> {words("queued to merge")}
+        </span>
+      )}
+      {mergeAwaitsApproval(task) && (
+        <span className={badge} title="The merge waits for your approval: its agent summarizes what will be merged, then you approve or deny it in its thread">
+          <ShieldQuestionMark size={11} /> {words("merge needs approval")}
         </span>
       )}
       {rejoinsMerge(task) && (

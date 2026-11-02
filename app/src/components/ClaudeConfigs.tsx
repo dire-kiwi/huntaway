@@ -28,11 +28,17 @@ function useUsedBy(c: ClaudeConfig) {
 function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeConfig; label: string; canCopy: boolean; onEdit: () => void; onCopy: () => void }) {
   const usedBy = useUsedBy(config);
   const canShowUsage = useStore((s) => hostSupports(s.hosts.find((h) => h.id === config.host_id), 52));
+  const canRestart = useStore((s) => hostSupports(s.hosts.find((h) => h.id === config.host_id), 91));
+  // Usage that's been fetched and has no session limit: a plan without the 5-hour window.
+  const noWindow = useStore((s) => {
+    const u = s.usage[usageKey(config.host_id, config.id)];
+    return !!u && !u.error && u.limits.length > 0 && !u.limits.some((l) => l.id === "session");
+  });
   const [err, setErr] = useState<string | null>(null);
-  const setShowUsage = async (on: boolean) => {
+  const set = async (b: { show_usage?: boolean; restart_window?: boolean }) => {
     setErr(null);
     try {
-      await api.updateClaudeConfig(config.host_id, config.id, { show_usage: on });
+      await api.updateClaudeConfig(config.host_id, config.id, b);
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -62,8 +68,20 @@ function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeC
             className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted"
             title="Check this login's plan limits and show what's left in the sidebar, for the profiles that use it. Off on new hosts, so copies of a login don't all ask."
           >
-            <input type="checkbox" className="accent-accent" checked={!!config.show_usage} onChange={(e) => setShowUsage(e.target.checked)} />
+            <input type="checkbox" className="accent-accent" checked={!!config.show_usage} onChange={(e) => set({ show_usage: e.target.checked })} />
             Show usage
+          </label>
+        )}
+        {canRestart && (
+          <label
+            className={clsx("flex shrink-0 items-center gap-1.5 text-[11.5px]", noWindow ? "text-faint" : "text-muted")}
+            title={
+              (noWindow ? "This login's plan has no 5-hour window, so nothing is sent. " : "") +
+              "When this login's 5-hour session window ends, start the next one right away with a one-word prompt (Haiku, or a low-effort Codex turn), so a new window is always running. Only plans with a 5-hour limit are sent anything."
+            }
+          >
+            <input type="checkbox" className="accent-accent" checked={!!config.restart_window} onChange={(e) => set({ restart_window: e.target.checked })} />
+            Restart 5h window
           </label>
         )}
         {canCopy && (

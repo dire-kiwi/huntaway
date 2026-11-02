@@ -5,8 +5,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { open } from "../../../scripts/ui-check.mjs";
+import { launch, open } from "../../../scripts/ui-check.mjs";
 
 const script = fileURLToPath(new URL("../../../scripts/test-server.sh", import.meta.url));
 
@@ -49,13 +50,22 @@ export async function demoProject(server) {
 
 let failures = 0;
 
+// One browser for the file's checks, each in a context of its own (as fresh as a new browser's): launching one for each
+// took longer than most checks. Launched again if it went away (a crash).
+let browser;
+const sharedBrowser = async () => {
+  if (!(await browser)?.isConnected()) browser = launch();
+  return browser;
+};
+after(async () => (await browser)?.close());
+
 /**
  * Run `fn` with a browser on the server (see `open` in scripts/ui-check.mjs), then close it. Page and console
  * errors that weren't allowed fail the check; if `fn` failed as well, they're added to its error, and a screenshot
  * of the page is saved to <tmp>/ui-check-<pid>-<n>-failed.png.
  */
 export async function withBrowser(server, opts, fn) {
-  const ui = await open({ url: server.url, token: server.token, log: () => {}, ...opts });
+  const ui = await open({ url: server.url, token: server.token, log: () => {}, browser: await sharedBrowser(), ...opts });
   try {
     await fn(ui);
   } catch (e) {

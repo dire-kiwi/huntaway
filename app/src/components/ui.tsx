@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Ban, Check, CheckCircle2, CircleAlert, CircleSlash, GitBranch, GitPullRequest, Hourglass, Loader2, Menu, X } from "lucide-react";
 import { createContext, Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ComponentProps, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { agentWaiting, type AgentWait, type PrWaitEvent, type Resolution, type Status, type Task } from "../api";
+import { agentWaiting, mergeAwaitsApproval, type AgentWait, type PrWaitEvent, type Resolution, type Status, type Task } from "../api";
 import { useDrawer, useNarrow } from "../narrow";
 import { usePreviewUp } from "../preview";
 
@@ -563,7 +563,7 @@ export function ProgressCount({ progress, word = "done" }: { progress: { done: n
 export function CardState({ task }: { task: Task }) {
   const wait = agentWaiting(task);
   const at = (iso: string) => new Date(iso).toLocaleString();
-  const working = `${task.merging ? "Merging" : "Working"}${task.run_started_at ? ` since ${at(task.run_started_at)}` : ""}`;
+  const working = `${mergeAwaitsApproval(task) ? "Summarizing the merge" : task.merging ? "Merging" : "Working"}${task.run_started_at ? ` since ${at(task.run_started_at)}` : ""}`;
   // Needing you comes first: an agent stopped on a permission prompt is still running.
   const [icon, className, title]: [ReactNode, string, string | undefined] =
     task.status === "needs_attention"
@@ -603,7 +603,7 @@ export function RunState({ task }: { task: Task }) {
   }
   return (
     <span className="flex items-center gap-1 text-st-progress">
-      <RunningDot /> {task.merging ? "merging" : "working"}
+      <RunningDot /> {mergeAwaitsApproval(task) ? "summarizing" : task.merging ? "merging" : "working"}
     </span>
   );
 }

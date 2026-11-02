@@ -422,6 +422,8 @@ fn positional_host(arg: &str) -> Option<String> {
 #[cfg(test)]
 thread_local! {
     pub(crate) static TEST_GH_PROGRAM: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// The board's `BOARD_ENV`, in place of the environment's.
+    static TEST_BOARD: std::cell::RefCell<Option<[String; 3]>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The gh to run: `IA_GH_BIN` (for `gh-run`, which is `gh` on its commands' PATH), or else `gh`.
@@ -1064,8 +1066,61 @@ fn clip(s: &str) -> String {
 
 /// Run a tool call: its output, and whether it failed.
 async fn run(tool: &str, a: &Value) -> Result<(String, bool)> {
+    if merges(tool, a) {
+        if let Some(why) = merge_gate().await? {
+            return Ok((why, true));
+        }
+    }
     let a = if tool == "pr_merge" { resolve_pr(a).await? } else { a.clone() };
     exec(&command(tool, &a)?, &a).await
+}
+
+/// The board's line to the run this server is for, which the commands it runs don't get.
+const BOARD_ENV: [&str; 3] = ["IA_URL", "IA_TOKEN", "IA_RUN_ID"];
+
+/// Whether call `a` to `tool` may merge a pull request: pr_merge, `gh pr merge`, or GitHub's API
+/// (REST or GraphQL) with "merge" anywhere in the call, or with a request read from a file, which
+/// can't be seen. It errs on the side of asking the board: a call that only reads (a PR's
+/// mergeability, say) is refused too while a merge waits for approval, and pr_view has that.
+fn merges(tool: &str, a: &Value) -> bool {
+    match tool {
+        "pr_merge" => true,
+        // Wherever its words are: flags (and their values) can come between a command and its
+        // subcommand (`pr --repo o/r merge`), so any call with both words counts.
+        "gh" => {
+            let args: Vec<&str> = a["args"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let has = |w: &str| args.iter().any(|a| a.eq_ignore_ascii_case(w));
+            // `--input FILE` (or `-`) is the request body, and `-F key=@FILE` a field's value.
+            let from_file = args.iter().any(|a| a.starts_with("--input") || a.starts_with('@') || a.contains("=@"));
+            (has("pr") && has("merge")) || (has("api") && (from_file || mentions_merge(&args.join(" "))))
+        }
+        // Its string fields are sent as they are (--raw-field), never read from files.
+        "api" => mentions_merge(&a.to_string()),
+        _ => false,
+    }
+}
+
+fn mentions_merge(call: &str) -> bool {
+    call.to_ascii_lowercase().contains("merge")
+}
+
+/// Why the board won't let this run merge, if it won't (see merge_gate.rs). A server started
+/// without the board's address (by hand, say) has no say from it.
+async fn merge_gate() -> Result<Option<String>> {
+    let board = BOARD_ENV.map(std::env::var);
+    #[cfg(test)]
+    let board = TEST_BOARD.with_borrow(Clone::clone).map(|b| b.map(Ok)).unwrap_or(board);
+    let [Ok(url), Ok(token), Ok(run_id)] = board else { return Ok(None) };
+    let check = async {
+        let res = reqwest::Client::new().get(format!("{url}/api/internal/merge-gate/{run_id}")).bearer_auth(token).send().await?.error_for_status()?;
+        anyhow::Ok(res.json::<Value>().await?)
+    };
+    let v = tokio::time::timeout(std::time::Duration::from_secs(30), check)
+        .await
+        .map_err(|_| anyhow!("timed out"))
+        .and_then(|r| r)
+        .context("couldn't ask the board whether this merge is approved, so it wasn't merged (try again)")?;
+    Ok(v["blocked"].as_str().map(String::from))
 }
 
 /// Run a command where call `a` runs, as the run's account if it has one: its output, and
@@ -1103,6 +1158,9 @@ async fn exec(c: &Command, a: &Value) -> Result<(String, bool)> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    for k in BOARD_ENV {
+        cmd.env_remove(k);
+    }
     // Only the call's own repository, which was checked.
     cmd.env_remove("GH_REPO");
     if let Some(r) = &c.repo {
@@ -1783,6 +1841,70 @@ FLAGS
         }
         assert_eq!(call("Read", "gh pr view"), None);
         assert_eq!(hook_denial(&json!({})), None);
+    }
+
+    // HA-86: a merge waiting for approval could go through the gh tool or the API instead.
+    #[test]
+    fn knows_which_calls_merge() {
+        let gh = |args: &[&str]| merges("gh", &json!({"args": args}));
+        assert!(merges("pr_merge", &json!({"pr": "1"})));
+        assert!(gh(&["pr", "merge", "1", "--squash"]) && gh(&["--help", "pr", "merge"]));
+        // With flags between the command and its subcommand.
+        assert!(gh(&["pr", "--repo=o/r", "merge", "1", "--merge"]) && gh(&["pr", "-R", "o/r", "merge", "1"]));
+        assert!(gh(&["api", "--method", "PUT", "repos/o/r/pulls/1/merge"]));
+        assert!(gh(&["api", "-X", "PUT", "repos/o/r/pulls/1/merge"]));
+        assert!(gh(&["api", "graphql", "-f", "query=mutation { mergePullRequest(input: {}) { clientMutationId } }"]));
+        assert!(merges("api", &json!({"endpoint": "repos/o/r/pulls/1/merge", "method": "PUT"})));
+        assert!(merges("api", &json!({"endpoint": "graphql", "fields": {"query": "mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }"}})));
+        // A request read from a file could be anything (HA-86 review).
+        assert!(gh(&["api", "graphql", "--method", "POST", "--input", "/x/payload.json"]) && gh(&["api", "graphql", "--input=/x/p.json"]));
+        assert!(gh(&["api", "graphql", "-F", "query=@/x/query.graphql"]) && gh(&["api", "graphql", "--field=query=@q"]));
+        // As could one that mentions merging, so it waits too, even if it only reads.
+        assert!(merges("api", &json!({"endpoint": "repos/o/r/pulls/1/merge"})));
+        // Anything else doesn't.
+        assert!(!gh(&["api", "repos/o/r/pulls/1"]) && !gh(&["api", "graphql", "-f", "query={ viewer { login } }", "-F", "n=1"]));
+        assert!(!merges("api", &json!({"endpoint": "repos/o/r/issues", "fields": {"body": "@someone"}})));
+        assert!(!gh(&["pr", "view", "1"]) && !merges("pr_view", &json!({"pr": "1"})) && !merges("pr_checks", &json!({"pr": "merge"})));
+    }
+
+    // HA-86 review: `pr --repo=o/r merge` got past the check and merged while approval was pending.
+    #[test]
+    fn a_merge_the_board_hasnt_approved_never_runs_gh() {
+        crate::testing::run(async || {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = crate::testing::temp_dir();
+            let (gh, ran) = (dir.join("gh"), dir.join("ran"));
+            std::fs::write(&gh, format!("#!/bin/sh\necho \"$*\" >> '{}'\n", ran.display())).unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            TEST_GH_PROGRAM.set(Some(crate::util::path_str(&gh)));
+            let board = axum::Router::new()
+                .route("/api/internal/merge-gate/{run}", axum::routing::get(|| async { axum::Json(json!({"blocked": "Merging is disabled: not approved"})) }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, board).await });
+            TEST_BOARD.set(Some([url, "t".into(), "r".into()]));
+            let calls = [
+                ("gh", json!({"args": ["pr", "--repo=o/r", "merge", "1", "--merge"]})),
+                ("gh", json!({"args": ["pr", "-R", "o/r", "merge", "1"]})),
+                ("gh", json!({"args": ["pr", "merge", "1", "--repo", "o/r"]})),
+                ("api", json!({"endpoint": "repos/o/r/pulls/1/merge", "method": "PUT"})),
+                ("gh", json!({"args": ["api", "graphql", "--method", "POST", "--input", "/x/payload.json"]})),
+                ("gh", json!({"args": ["api", "graphql", "-F", "query=@/x/query.graphql"]})),
+                ("pr_merge", json!({"pr": "https://github.com/o/r/pull/1"})),
+            ];
+            for (tool, a) in calls {
+                let (text, failed) = run(tool, &a).await.unwrap();
+                assert!(failed && text.contains("not approved"), "{tool} {a}: {text}");
+            }
+            assert!(!ran.exists(), "gh ran: {}", std::fs::read_to_string(&ran).unwrap_or_default());
+            // What doesn't merge runs.
+            assert!(!run("gh", &json!({"args": ["pr", "view", "1", "--repo", "o/r"]})).await.unwrap().1);
+            assert!(ran.exists());
+            TEST_BOARD.set(None);
+            TEST_GH_PROGRAM.set(None);
+            server.abort();
+            std::fs::remove_dir_all(&dir).ok();
+        })
     }
 
     #[test]
