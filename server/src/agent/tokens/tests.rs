@@ -218,3 +218,80 @@ fn a_claude_runs_requests_after_its_last_result_count_once() {
     assert_eq!(lost.models["claude-opus-5-5"].output, 30);
     assert!(!lost.estimated);
 }
+
+/// Counts runs A, B, … of one session in turn, each going on from the one before, as count_run does.
+fn in_turn(runs: Vec<Vec<String>>) -> Vec<Counted> {
+    let mut before: Option<Before> = None;
+    runs.into_iter()
+        .map(|lines| {
+            let prev = before.clone();
+            let mut earlier = |_: &str| prev.clone();
+            let c = count_claude(lines.into_iter(), &mut earlier);
+            // A run that saved no totals leaves its earlier run's (see save).
+            if !c.snapshot.is_empty() {
+                before = Some(Before { totals: c.snapshot.clone(), tail: c.tail.clone() });
+            }
+            c
+        })
+        .collect()
+}
+
+#[test]
+fn a_resumed_claude_run_with_no_result_goes_on_from_the_sessions_totals() {
+    let init = || json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string();
+    let a = vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))];
+    // Killed before its result.
+    let b = vec![init(), reply("m1", "claude-opus-5-5", 2, 40, None)];
+    // Claude Code kept B's request in its totals.
+    let c = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))];
+    let out: Vec<i64> = in_turn(vec![a.clone(), b.clone(), c]).iter().map(|c| c.models["claude-opus-5-5"].output).collect();
+    assert_eq!(out, [100, 40, 30]);
+    // It didn't: C goes on from A's totals.
+    let c = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))];
+    let counted = in_turn(vec![a.clone(), b.clone(), c]);
+    assert_eq!(counted.iter().map(|c| c.models["claude-opus-5-5"].output).collect::<Vec<_>>(), [100, 40, 30]);
+    assert!((counted[2].models["claude-opus-5-5"].cost - 0.5).abs() < 1e-9);
+
+    // Two runs in a row with no result: their tails add up, and are taken away together if they
+    // weren't kept.
+    let b2 = vec![init(), reply("m2", "claude-opus-5-5", 1, 20, None)];
+    let kept = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 190, 2000, 1.5)}))];
+    let lost = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))];
+    for (c, want) in [(kept, 30), (lost, 30)] {
+        let counted = in_turn(vec![a.clone(), b.clone(), b2.clone(), c]);
+        assert_eq!(counted.iter().map(|c| c.models["claude-opus-5-5"].output).collect::<Vec<_>>(), [100, 40, 20, want]);
+        assert_eq!(counted[2].tail["claude-opus-5-5"].output, 60);
+    }
+}
+
+#[test]
+fn a_run_killed_before_its_result_doesnt_hide_its_sessions_totals() {
+    crate::testing::run(async || {
+        let state = crate::testing::state();
+        let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
+        let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let task = db::insert_task(&state.db(), t).unwrap();
+        let init = || json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string();
+        let outputs = [
+            vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))],
+            vec![init(), reply("m1", "claude-opus-5-5", 2, 40, None)],
+            vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))],
+        ];
+        let mut runs = Vec::new();
+        for lines in outputs {
+            let run = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+            let dir = run_dir(&state, &run.id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("out.jsonl"), lines.join("\n")).unwrap();
+            state.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
+            runs.push(run.id);
+        }
+        state.db().execute("UPDATE runs SET cost_usd=0.5 WHERE id=?1", [&runs[2]]).unwrap();
+        count_pending(&state, None).unwrap();
+        let out: Vec<(i64, bool)> = runs
+            .iter()
+            .map(|id| state.db().query_row("SELECT output_tokens, estimated FROM token_usage WHERE run_id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap())
+            .collect();
+        assert_eq!(out, [(100, false), (40, true), (30, false)]);
+    })
+}

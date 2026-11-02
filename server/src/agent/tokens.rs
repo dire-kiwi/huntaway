@@ -174,7 +174,8 @@ fn request_usage(v: &Value) -> Option<(String, String, Counts)> {
 /// and estimated (a message's output count can be short of the request's). They go in the
 /// session's totals too, as `tail`: Claude Code keeps them in its totals if it saved them as the
 /// run ended, so a run that resumes the session goes on from the totals with them, or else from
-/// the totals without them.
+/// the totals without them. A run with no result at all goes on from its earlier run's totals,
+/// and its tail adds to that run's.
 pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) -> Counted {
     let mut out = Counted { runtime: "claude", ..Default::default() };
     let mut session: Option<String> = None;
@@ -253,17 +254,21 @@ pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) 
         let r = requests.entry(id).or_insert((model, c));
         r.1.output = r.1.output.max(c.output);
     }
-    for (model, c) in requests.into_values() {
-        if c.total() == 0 {
-            continue;
+    requests.retain(|_, (_, c)| c.total() > 0);
+    // No result set where the session's totals were: the run's requests go on from its earlier
+    // run's (and from its tail, if that had one too, which a run that resumes it may not find).
+    if !requests.is_empty() && !have_base {
+        if let Some(before) = session.as_deref().and_then(&mut *earlier) {
+            out.snapshot = before.totals;
+            out.tail = before.tail;
         }
+        out.session = session.clone();
+    }
+    for (model, c) in requests.into_values() {
         out.estimated = true;
         out.models.entry(model.clone()).or_default().add(&c);
         out.snapshot.entry(model.clone()).or_default().add(&c);
         out.tail.entry(model).or_default().add(&c);
-        if out.session.is_none() {
-            out.session = session.clone();
-        }
     }
     out.models.retain(|_, c| c.total() > 0 || c.cost > 0.0);
     out
