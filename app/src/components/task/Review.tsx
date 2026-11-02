@@ -7,7 +7,7 @@ import { openTask } from "../../router";
 import { useProject, useStore } from "../../store";
 import { turnStat, useTurns } from "./turns";
 import { Markdown } from "./Thread";
-import { Button, CARD_BADGE, Wide } from "../ui/ui";
+import { Button, CARD_BADGE, Wide } from "../ui";
 
 const PatchBox = lazy(() => import("../changes/Changes").then((m) => ({ default: m.PatchBox })));
 

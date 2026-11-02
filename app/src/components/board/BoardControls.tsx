@@ -3,7 +3,7 @@ import { ArrowUpDown, Check, ListFilter, Search, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Status } from "../../api";
 import { EMPTY_QUERY, filterCount, isFiltering, SORTS, TASK_FLAGS, TASK_KINDS, toggled, type BoardQuery, type SortKey, type TaskKind } from "./boardQuery";
-import { ContextMenu, StatusIcon } from "../ui/ui";
+import { ContextMenu, StatusIcon } from "../ui";
 
 const BUTTON = "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors narrow:h-8";
 const BUTTON_STATE = (active: boolean) => (active ? "border-accent/50 bg-accent/10 text-fg" : "border-line text-muted hover:text-fg");

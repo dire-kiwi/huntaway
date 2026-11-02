@@ -3,7 +3,7 @@ import { Archive, Check, GitFork, Loader2, Lock } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, type GithubRepo, type GithubRepoList } from "../../api";
 import { filterRepos, mergeRepos, repoFromInput } from "./githubRepos";
-import { Input, timeAgo } from "../ui/ui";
+import { Input, timeAgo } from "../ui";
 
 /** GitHub's mark (Octicons' `mark-github`, MIT), which lucide doesn't have. */
 export function GithubMark({ size = 12, className }: { size?: number; className?: string }) {

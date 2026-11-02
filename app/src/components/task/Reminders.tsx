@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { api, hostSupports, type Task } from "../../api";
 import { fromLocalInput, isDue, nextDue, REMINDERS_API, reminderLabel, reminderPresets, toLocalInput } from "../../reminders";
 import { useStore } from "../../store";
-import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, Wide, type MenuItem } from "../ui/ui";
+import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, Wide, type MenuItem } from "../ui";
 
 /** Whether the task's host can star it and set reminders on it. */
 export function useCanMark(task: Task | undefined) {

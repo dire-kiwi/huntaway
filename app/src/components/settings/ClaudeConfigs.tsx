@@ -6,7 +6,7 @@ import { AGENTS, agentInfo, agentOf, api, canRunAgents, hostSupports, type Agent
 import { usageKey, useStore } from "../../store";
 import { usageAlert } from "../../usageConfigs";
 import { CopyLoginModal } from "./Hosts";
-import { Button, Field, Input, Modal, ModalFooter, useAsyncAction, useConfirm } from "../ui/ui";
+import { Button, Field, Input, Modal, ModalFooter, useAsyncAction, useConfirm } from "../ui";
 
 /** Hosts that can run agents and keep Claude configs of their own (API 20). */
 const configHosts = (hosts: ReturnType<typeof useStore.getState>["hosts"]) => hosts.filter((h) => canRunAgents(h) && hostSupports(h, 20));

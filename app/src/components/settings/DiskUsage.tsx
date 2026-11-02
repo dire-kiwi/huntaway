@@ -6,7 +6,7 @@ import { baseName, bytes, loadDisk, reclaimable, type Disk, type DProject, type 
 import { navigate } from "../../router";
 import { useStore } from "../../store";
 import { Swatch, useTip } from "./chart";
-import { IconButton } from "../ui/ui";
+import { IconButton } from "../ui";
 
 /** How the parts of a project's bar are told apart: by how strong its colour is. */
 const PARTS = [

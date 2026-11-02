@@ -19,7 +19,7 @@ import { hasTurns, turnLabel, turnStat, useTurns } from "../task/turns";
 import { CommentsContext, DiffLines, diffRows, type CommentsApi, type DiffRow, type Layout, type PickHow } from "./DiffLines";
 import { RewindDialog } from "../task/Rewind";
 import { rewound, sendComments } from "../task/Thread";
-import { Button, ContextMenu, copyText, Input, isSubmitShortcut, Kbd, Modal, SUBMIT_KEYS, Textarea, type MenuItem } from "../ui/ui";
+import { Button, ContextMenu, copyText, Input, isSubmitShortcut, Kbd, Modal, SUBMIT_KEYS, Textarea, type MenuItem } from "../ui";
 
 type Side = "status" | "files" | "commits" | "stash" | "turns";
 const SIDES: Side[] = ["status", "files", "commits", "stash"];

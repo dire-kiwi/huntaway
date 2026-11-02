@@ -10,7 +10,7 @@ import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, hostSupports, PERMISSION_MODES, type PermissionMode } from "../../api";
 import { useHost, useProject, useStore } from "../../store";
 import { askedAnswers, declinedWithAnswers, planTitle, questionsOf, withoutTitle, type AskedQuestion } from "../../questions";
-import { Button, Textarea } from "../ui/ui";
+import { Button, Textarea } from "../ui";
 import { Markdown } from "./Thread";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

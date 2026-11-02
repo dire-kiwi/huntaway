@@ -26,7 +26,7 @@ import {
 } from "../../api";
 import { openTask } from "../../router";
 import { onAutomationsChanged, useAvailableConfigs, useHost, useStore } from "../../store";
-import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useAsyncAction, useConfirm, useDraft } from "../ui/ui";
+import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useAsyncAction, useConfirm, useDraft } from "../ui";
 
 type TimeZone = { name: string | null; offset: string };
 

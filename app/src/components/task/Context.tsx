@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useEffect, useState } from "react";
 import { api, type ContextCategory, type ContextDetail, type ContextSummary, type Task } from "../../api";
-import { Modal, timeAgo } from "../ui/ui";
+import { Modal, timeAgo } from "../ui";
 
 /** "830", "84.2k", "1M". */
 export function tokens(n: number) {

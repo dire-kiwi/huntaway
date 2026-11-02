@@ -4,7 +4,7 @@ import { api, type Project } from "../../api";
 import { navigate } from "../../router";
 import { useStore } from "../../store";
 import { Thread } from "./Thread";
-import { Button, IconButton, SUBMIT_KEYS, Textarea } from "../ui/ui";
+import { Button, IconButton, SUBMIT_KEYS, Textarea } from "../ui";
 
 /** How often the project is looked at again while it isn't ready: its agent (or the user, in a terminal) makes it so. */
 const RECHECK_MS = 3000;

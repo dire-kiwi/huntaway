@@ -31,7 +31,7 @@ import { withAttachments, type AttachmentRef } from "../../attachments";
 import { AttachButton, DraftAttachments, useAttachmentDraft } from "../task/Attachments";
 import { AsanaIcon, AsanaPicker, LinkList, LINKS_API, usesAsana } from "../task/ExternalLinks";
 import { documentInfo, LABEL_INFO, SCRATCH_TYPE } from "../task/Document";
-import { Button, Input, Modal, ModalFooter, SUBMIT_KEYS, Toggle } from "../ui/ui";
+import { Button, Input, Modal, ModalFooter, SUBMIT_KEYS, Toggle } from "../ui";
 
 
 

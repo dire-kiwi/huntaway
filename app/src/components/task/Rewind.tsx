@@ -3,7 +3,7 @@
 import { History, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { api, type RewindResult, type Task, type Turn } from "../../api";
-import { Button, Modal } from "../ui/ui";
+import { Button, Modal } from "../ui";
 
 const short = (sha: string) => sha.slice(0, 8);
 

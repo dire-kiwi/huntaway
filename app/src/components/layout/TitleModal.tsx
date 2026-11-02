@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api, type Task } from "../../api";
-import { Button, errorText, Input, Modal, ModalFooter, type MenuItem } from "../ui/ui";
+import { Button, errorText, Input, Modal, ModalFooter, type MenuItem } from "../ui";
 
 /** The menu item that opens the task's title in a {@link TitleModal}. */
 export const titleItem = (onPick: () => void, divider = false): MenuItem => ({ label: "Set title…", divider, onSelect: onPick });

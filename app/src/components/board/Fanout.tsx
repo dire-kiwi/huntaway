@@ -6,7 +6,7 @@ import { useShallow } from "zustand/react/shallow";
 import { agentOf, hostSupports, type ClaudeConfig, type Task } from "../../api";
 import { openCompare } from "../../router";
 import { taskConfig, taskKey, useHost, useStore } from "../../store";
-import { CARD_BADGE } from "../ui/ui";
+import { CARD_BADGE } from "../ui";
 
 /** Hosts from this API version compare them, and pick one (see Compare.tsx). */
 export const COMPARE_API = 83;

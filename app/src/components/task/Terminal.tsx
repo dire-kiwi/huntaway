@@ -6,7 +6,7 @@ import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { Loader2, RotateCcw, Square, SquareTerminal, TerminalSquare, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, terminalWsUrl, type Task, type TerminalStatus, type TerminalTool } from "../../api";
-import { Button, copyText } from "../ui/ui";
+import { Button, copyText } from "../ui";
 
 /**
  * A task's tmux session on its host, in xterm.js. The session lives on the host, so leaving

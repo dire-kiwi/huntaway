@@ -3,7 +3,7 @@ import { CheckCircle2, Circle, Link2, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, asanaLink, type AsanaTask, type ExternalLink, type Profile, type Task } from "../../api";
 import { useStore } from "../../store";
-import { Button, IconButton, Input, Modal } from "../ui/ui";
+import { Button, IconButton, Input, Modal } from "../ui";
 
 /** Hosts from this API version link tasks to Asana tasks. */
 export const LINKS_API = 57;

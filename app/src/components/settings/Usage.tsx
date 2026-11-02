@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { UsageLimit } from "../../api";
 import { usageKey, useStore } from "../../store";
 import { resetsIn, resetsPhrase, resetTime, usageAlert, usageConfigs, WARN_AT, type UsageAlert } from "../../usageConfigs";
-import { timeAgo } from "../ui/ui";
+import { timeAgo } from "../ui";
 
 const OPEN_KEY = "ia.usageOpen";
 /** The host caches for a few minutes and agent runs push updates, so polling can be slow. */

@@ -31,7 +31,7 @@ import { compareVersions } from "./versions";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "../task/ExternalLinks";
 import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow } from "../task/Reviewers";
-import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle, useAsyncAction, useConfirm } from "../ui/ui";
+import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle, useAsyncAction, useConfirm } from "../ui";
 
 const MODE_LABEL: Record<Host["mode"], string> = {
   local: "this host",

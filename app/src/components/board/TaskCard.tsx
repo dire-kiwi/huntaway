@@ -12,7 +12,7 @@ import { FanoutBadge } from "./Fanout";
 import { TaskMarks } from "../task/Reminders";
 import { TaskTypeBadge } from "../task/Document";
 import { AgentIcon } from "../ui/AgentIcon";
-import { ActivityTime, BranchIcon, CARD_BADGE, CardState, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "../ui/ui";
+import { ActivityTime, BranchIcon, CARD_BADGE, CardState, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "../ui";
 import { useNarrow, useTouch } from "../../narrow";
 import { resetsIn, resetTime } from "../../usageConfigs";
 

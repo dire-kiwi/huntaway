@@ -3,7 +3,7 @@ import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../
 import { agentOf, type ClaudeConfig, type Reviewer } from "../../api";
 import { useStore } from "../../store";
 import { ModelPicker } from "../layout/NewTaskModal";
-import { Button, IconButton } from "../ui/ui";
+import { Button, IconButton } from "../ui";
 
 export const DEFAULT_REVIEWER: Reviewer = { claude_config_id: null, model: null, effort: null };
 const MAX_REVIEWERS = 6;

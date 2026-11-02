@@ -61,7 +61,7 @@ import { QUESTION_TOOLS, questionsOf } from "../../questions";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "./Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "./SkillMenu";
 import { useTouch } from "../../narrow";
-import { Button, RunningDot, WaitReason, waitTitle } from "../ui/ui";
+import { Button, RunningDot, WaitReason, waitTitle } from "../ui";
 import { RewindDialog, RewindNote } from "./Rewind";
 import { useTurns } from "./turns";
 

@@ -27,7 +27,7 @@ import { Thread, Markdown } from "./Thread";
 import { splitAttachments } from "../../attachments";
 import { AttachmentList } from "./Attachments";
 import { LinkedTasks, LINKS_API, usesAsana } from "./ExternalLinks";
-import { ActivityTime, Ago, Button, ConfirmModal, cost, ErrorBox, errorText, IconButton, Input, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut, useDraft } from "../ui/ui";
+import { ActivityTime, Ago, Button, ConfirmModal, cost, ErrorBox, errorText, IconButton, Input, PrIcon, PreviewDot, RESOLUTION_LABELS, RunningDot, showsPreview, waitTitle, StatusIcon, SUBMIT_KEYS, Textarea, Toggle, isSubmitShortcut, useDraft } from "../ui";
 
 // xterm is large; load it with the first terminal.
 const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })));

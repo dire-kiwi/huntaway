@@ -15,7 +15,7 @@ import {
 } from "../../notifications";
 import { chime, notifyPermission, showNotification, unlockSound } from "../../notifier";
 import { currentSubscription, pushSupport, subscribe, unsubscribe } from "../../push";
-import { Button, IconButton, timeAgo, Toggle } from "../ui/ui";
+import { Button, IconButton, timeAgo, Toggle } from "../ui";
 
 /** Settings → Notifications: how this browser tells the user that a task needs them. */
 export function NotificationsPanel() {

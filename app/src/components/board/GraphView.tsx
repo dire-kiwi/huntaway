@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { isScratch, taskLabels, type Project, type Task } from "../../api";
 import { openTask, usePanelOpen } from "../../router";
 import { keyPrefix, useStore } from "../../store";
-import { RunningDot, StatusIcon, STATUS_COLOR } from "../ui/ui";
+import { RunningDot, StatusIcon, STATUS_COLOR } from "../ui";
 import type { OnMenu, Progress } from "./TaskCard";
 
 /**

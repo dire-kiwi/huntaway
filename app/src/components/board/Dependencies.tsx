@@ -5,7 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import { api, dependencyQueued, isMerged, type Project, type Task } from "../../api";
 import { openTask } from "../../router";
 import { useStore } from "../../store";
-import { CARD_BADGE, StatusIcon, Wide } from "../ui/ui";
+import { CARD_BADGE, StatusIcon, Wide } from "../ui";
 
 /** The tasks a task depends on that are still on the board, in its order. */
 function useDependencies(task: Task): Task[] {

@@ -10,7 +10,7 @@ import planCss from "./planTheme.css?raw";
 import { useHost, useThreadMessages } from "../../store";
 import type { Progress } from "../board/TaskCard";
 import { Composer, Markdown } from "./Thread";
-import { Button, CARD_BADGE, copyText, download, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "../ui/ui";
+import { Button, CARD_BADGE, copyText, download, IconButton, ProgressCount, RunningDot, timeAgo, Wide } from "../ui";
 
 /** What each label asks its task's agent for (API 71; types of task from API 42), in the order tasks show them. */
 export const LABEL_INFO: { id: DocumentType; label: string; icon: ReactNode; file: string; hint: string }[] = [

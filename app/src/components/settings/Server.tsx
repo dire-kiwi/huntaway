@@ -7,7 +7,7 @@ import { useStore } from "../../store";
 import { useNewUiBuild } from "./uiVersion";
 import { compareVersions } from "./versions";
 import { Markdown } from "../task/Thread";
-import { Button, copyText, Modal, ModalFooter, timeAgo, Toggle } from "../ui/ui";
+import { Button, copyText, Modal, ModalFooter, timeAgo, Toggle } from "../ui";
 
 export const PHASES: Record<string, string> = {
   starting: "Starting…",

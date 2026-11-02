@@ -34,7 +34,7 @@ import { useStore } from "../../store";
 import { Swatch, useTip } from "./chart";
 import { ContextStats } from "../task/ContextStats";
 import { DiskUsage } from "./DiskUsage";
-import { Button, download, IconButton, MenuButton } from "../ui/ui";
+import { Button, download, IconButton, MenuButton } from "../ui";
 
 const selectClass = "h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] text-fg outline-none";
 

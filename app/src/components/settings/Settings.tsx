@@ -56,7 +56,7 @@ import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos";
 import { GithubAccountSelect, HostSelect, HostsPanel, ProfileForm, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "../layout/Notifications";
 import { ServerPanel } from "./Server";
-import { Button, ConfirmModal, Field, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "../ui/ui";
+import { Button, ConfirmModal, Field, Input, MenuButton, Modal, ModalFooter, Textarea, timeAgo, Toggle } from "../ui";
 
 // ---------- directory picker ----------
 

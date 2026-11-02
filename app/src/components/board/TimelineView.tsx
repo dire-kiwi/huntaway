@@ -5,7 +5,7 @@ import { api, hostSupports, type Project, type Task } from "../../api";
 import { usePanel, openTask } from "../../router";
 import { keyPrefix, useStore } from "../../store";
 import { ticks } from "./timeline";
-import { duration, StatusIcon, STATUS_COLOR, useClock } from "../ui/ui";
+import { duration, StatusIcon, STATUS_COLOR, useClock } from "../ui";
 import type { OnMenu } from "./TaskCard";
 
 /**

@@ -9,7 +9,7 @@ import { threadModel, type Item } from "../../threadModel";
 import { QUESTION_TOOLS, questionsOf } from "../../questions";
 import { toolMeta } from "../task/Thread";
 import { AskCard, BoardQuestionCard, PlanCard } from "../task/Questions";
-import { CardState, StatusIcon } from "../ui/ui";
+import { CardState, StatusIcon } from "../ui";
 import type { OnMenu } from "./TaskCard";
 
 /**

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { api, hostSupports, type Task } from "../../api";
 import { taskKey, useProject, useStore } from "../../store";
-import { Button, Modal, ModalFooter, prLabel } from "../ui/ui";
+import { Button, Modal, ModalFooter, prLabel } from "../ui";
 
 /** Hosts from this API version say whether a task's work is merged (`api.unmerged`). */
 export const UNMERGED_API = 75;

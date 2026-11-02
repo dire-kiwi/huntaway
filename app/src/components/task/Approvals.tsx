@@ -19,7 +19,7 @@ import {
 import { filterText, triggerText } from "../settings/Automations";
 import { navigate } from "../../router";
 import { useStore } from "../../store";
-import { Button, Modal } from "../ui/ui";
+import { Button, Modal } from "../ui";
 
 /** Project settings as the project's settings page names them. */
 const LABELS: Record<string, string> = {

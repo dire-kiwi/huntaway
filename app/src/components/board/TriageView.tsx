@@ -8,7 +8,7 @@ import { isDue } from "../../reminders";
 import { Composer, Markdown } from "../task/Thread";
 import { PendingPrompts } from "./LiveView";
 import { ReviewBadge } from "../task/Review";
-import { Button, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "../ui/ui";
+import { Button, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "../ui";
 import type { OnMenu } from "./TaskCard";
 
 /**

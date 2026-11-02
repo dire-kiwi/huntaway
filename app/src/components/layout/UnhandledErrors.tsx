@@ -1,7 +1,7 @@
 import { CircleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api";
-import { IconButton } from "../ui/ui";
+import { IconButton } from "../ui";
 
 /**
  * A request that failed with nobody to catch it (a button that doesn't show its own errors): says so in a bar at the

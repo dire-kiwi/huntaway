@@ -6,7 +6,7 @@ import { groupProjects, groupTasks } from "../../projectGroups";
 import { navigate, openTask } from "../../router";
 import { scratchHost, useHost, useStore } from "../../store";
 import { WorktreeSetup } from "../task/WorktreeSetup";
-import { Button, IconButton, MenuButton, RunningDot } from "../ui/ui";
+import { Button, IconButton, MenuButton, RunningDot } from "../ui";
 import { NewTaskButton, TaskBoard } from "./TaskBoard";
 
 /** A subproject's own board: its tasks, beside a link to its agent's thread. */

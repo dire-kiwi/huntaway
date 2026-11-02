@@ -5,7 +5,7 @@ import { api, canRunAgents, hostSupports, type AgentTools, type GlobalAgentTools
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../../store";
 import { HostSelect } from "./Hosts";
-import { Button, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useConfirm } from "../ui/ui";
+import { Button, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useConfirm } from "../ui";
 
 const SKILL_TEMPLATE = `---
 name: my-skill

@@ -32,7 +32,7 @@ import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
 import { LiveView } from "./LiveView";
-import { Button, ContextMenu, IconButton, RESOLUTION_LABELS, StatusIcon, STATUS_COLOR, useClock, type MenuItem } from "../ui/ui";
+import { Button, ContextMenu, IconButton, RESOLUTION_LABELS, StatusIcon, STATUS_COLOR, useClock, type MenuItem } from "../ui";
 import { useNarrow } from "../../narrow";
 import { TaskCard, TaskRow, useProgress, useCreatedProgress } from "./TaskCard";
 import { NewTaskModal, PROJECT_KEY } from "../layout/NewTaskModal";

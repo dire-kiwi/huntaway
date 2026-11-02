@@ -15,7 +15,7 @@ import { BranchView, LayoutToggle } from "./Changes";
 import type { Layout } from "./DiffLines";
 import { harnessLabels, useConfigsOf, useFanout } from "../board/Fanout";
 import { ReviewVerdict } from "../task/Review";
-import { Button, cost, duration, errorText, IconButton, Modal, ModalFooter, PrIcon, RESOLUTION_LABELS, RunningDot, StatusIcon, useClock } from "../ui/ui";
+import { Button, cost, duration, errorText, IconButton, Modal, ModalFooter, PrIcon, RESOLUTION_LABELS, RunningDot, StatusIcon, useClock } from "../ui";
 
 /** Side by side or one at a time, kept in this browser. */
 type Mode = "side" | "one";

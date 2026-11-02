@@ -7,7 +7,7 @@ import { profileConfigLabel, useStore } from "../../store";
 import { HostClaudeConfigs } from "./ClaudeConfigs";
 import { AgentDefaultsRow, CopyLoginModal, HostVersion, ProfileForm, TerminalToolsRow } from "./Hosts";
 import { installName, PHASES, Releases, RestartModal, ServerPanel, ShellNotice, stagedRelease } from "./Server";
-import { Button, IconButton, MenuButton, Modal, timeAgo, useConfirm } from "../ui/ui";
+import { Button, IconButton, MenuButton, Modal, timeAgo, useConfirm } from "../ui";
 
 const MODE: Record<string, string> = { local: "this hub's own host", outbound: "linked by URL", inbound: "dials in", ssh: "over SSH" };
 

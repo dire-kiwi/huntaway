@@ -7,7 +7,7 @@ import { createContext, Fragment, memo, useContext, useEffect, useLayoutEffect, 
 import type { DiffLine, FileDiff } from "./changes";
 import { runStyle, useHighlight, type Run } from "./highlight";
 import { dropDraft, isUnder, lineRange, removeComments, saveDraft, setDraftNote, type CommentDraft, type CommentLines, type CommentSource, type LineComment, type Review } from "./lineComments";
-import { Button } from "../ui/ui";
+import { Button } from "../ui";
 
 export type Layout = "unified" | "split";
 
