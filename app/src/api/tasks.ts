@@ -289,6 +289,8 @@ export interface Task {
   preview_url?: string | null;
   /** Its pull request, set by its agent or found with `gh` (API 26). */
   pr_url?: string | null;
+  /** How its pull request's checks stood when the board last read them (API 94); see `failedChecks`. */
+  pr_checks?: PrChecks | null;
   /** The tasks elsewhere (Asana) it's for (API 57). */
   external_links?: ExternalLink[];
   /** Shared by the tasks made together from one prompt, each run by another agent (a model or config) (API 61). */
@@ -311,6 +313,40 @@ export interface Task {
   last_activity_at: string;
   created_at: string;
   updated_at: string;
+}
+
+/** A pull request's head commit's checks, as a read found them (API 94): by a wait on it, while it's watched in review, when it's read for "Done when merged", or by Fix broken checks. */
+export interface PrChecks {
+  /** The pull request read; the task's `pr_url` may have changed since. */
+  url: string;
+  head: string;
+  outcome: "failed" | "passed" | "pending" | "none";
+  failed: { name: string; conclusion: string; url: string | null }[];
+  /** How many more failed than are listed. */
+  more_failed: number;
+  pending: number;
+  passed: number;
+  /** When a read first found them like this. */
+  since: string;
+}
+
+/** The host API version that reads tasks' checks and has Fix broken checks. */
+export const CHECKS_API = 94;
+
+const prKey = (url: string) => url.match(/^https?:\/\/(?:www\.)?([^/]+\/[^/]+\/[^/]+)\/pull\/(\d+)/i)?.slice(1).join("#").toLowerCase();
+
+/** How the checks of the task's pull request stood at the board's latest read of it, if it has read the one the task has now. */
+export function prChecks(t: Task): PrChecks | null {
+  const c = t.pr_checks;
+  if (!c || !t.pr_url) return null;
+  const key = prKey(t.pr_url);
+  return key && key === prKey(c.url) ? c : null;
+}
+
+/** The failed checks of an open task's pull request, if the board's latest read of it found some. */
+export function failedChecks(t: Task): PrChecks | null {
+  const c = prChecks(t);
+  return c && c.outcome === "failed" && t.status !== "done" ? c : null;
 }
 
 /** What the compare view shows of a task made from one prompt with others, besides the task (API 81). */
@@ -477,6 +513,8 @@ export const tasksApi = {
   /** A task whose review still found serious issues after its rounds of fixes gets as many again, starting with those issues (API 93). */
   extendReview: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/review/extend`),
   summarize: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/summary`),
+  /** Sends the agent its pull request's failed checks, with the ends of their logs (API 94). */
+  fixChecks: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/fix_checks`),
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),
   /** The tasks made from the same prompt as this one, it among them (API 81). */
