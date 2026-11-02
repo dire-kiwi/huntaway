@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import type { GitStatus } from "../../../api";
-import { hasStaged, hasUnstaged, linesStageable, untracked } from "../changes";
+import { hasStaged, hasUnstaged, linesStageable, untracked } from "../diffs";
 import type { CommentSource } from "../lineComments";
 import type { useTurns } from "../../task/turns";
 import { DiffLines, type Layout } from "../DiffLines";

@@ -24,7 +24,7 @@ import {
   type TerminalTool,
 } from "../../api";
 import { useShallow } from "zustand/react/shallow";
-import { defaultCloneDir } from "./githubRepos";
+import { defaultCloneDir } from "./repoSource";
 import { navigate } from "../../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../../store";
 import { compareVersions } from "./versions";

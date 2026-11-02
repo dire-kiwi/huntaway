@@ -1321,7 +1321,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   stashes, space applies, `g` pops and `d` drops. Right-clicking a file, commit or stash shows
   its menu. The view checks for changes every few seconds (the agent may be making them), and
   keys pressed while a change is being made wait for it, so pressing space again stages the next
-  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/components/changes/changes.ts`),
+  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/components/changes/diffs.ts`),
   applied with `git apply --cached`; if the file has changed since, git refuses it and the view
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back

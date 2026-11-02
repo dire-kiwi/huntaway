@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import type { GitCommit, GitStash, GitStatus, Turn } from "../../../api";
-import { fileRows, type FileRow } from "../changes";
+import { fileRows, type FileRow } from "../diffs";
 import type { Side } from "./model";
 
 const TREE_KEY = "ia.changes.tree";

@@ -1,7 +1,7 @@
 // What the Changes tab's parts share: its panels, options and dialogs, a file's diffs as fetched, and helpers.
 import type { ReactNode } from "react";
 import { api, type GitCommit, type GitFile, type GitStash, type GitStatus, type Turn } from "../../../api";
-import { hasStaged, hasUnstaged, linesStageable, untracked, type FileDiff, type FileRow } from "../changes";
+import { hasStaged, hasUnstaged, linesStageable, untracked, type FileDiff, type FileRow } from "../diffs";
 import type { CommentSource } from "../lineComments";
 import { diffRows, type DiffRow } from "../DiffLines";
 import { turnStat } from "../../task/turns";
