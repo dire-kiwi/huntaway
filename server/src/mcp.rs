@@ -1,6 +1,16 @@
 //! `huntaway mcp`: the stdio MCP server that `claude -p` launches for each run. It lists
 //! the board tools and relays every call to the server that started the run. Each call keeps
 //! one id across retries, so a server restart mid-call is harmless.
+//!
+//! The `mcp` folder has the rest of the board's MCP side: the tools runs call (`tools`), the GitHub server (`gh_mcp`),
+//! `wait` and its pull request watches, and permission prompts and questions.
+
+pub mod gh_mcp;
+pub mod permissions;
+pub mod pr_watch;
+pub mod questions;
+pub mod tools;
+pub mod wait;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -182,12 +192,12 @@ fn board_tools() -> Value {
                 yes or no, which of several things to do), give them as options: the user then answers with a click (or keys 1-9), and \
                 can still write their own answer unless allow_other is false. After calling it, end your turn with the question (and \
                 what the user needs to know to answer it); the user's reply (the options they picked, or what they wrote) will resume \
-                the conversation. Up to {} options.", crate::questions::MAX_OPTIONS),
+                the conversation. Up to {} options.", crate::mcp::questions::MAX_OPTIONS),
             "inputSchema": {"type": "object", "properties": {
                 "question": {"type": "string", "description": "The question, short enough to show on the task's card (e.g. 'Which database should the cache use?')"},
                 "options": {
                     "type": "array",
-                    "maxItems": crate::questions::MAX_OPTIONS,
+                    "maxItems": crate::mcp::questions::MAX_OPTIONS,
                     "description": "The answers to pick from, if they're known; put the one you recommend first",
                     "items": {"type": "object", "properties": {
                         "label": {"type": "string", "description": "The answer, in a few words"},
@@ -206,16 +216,16 @@ fn board_tools() -> Value {
                 as waiting rather than working, with your reason. Use it instead of sleeping or polling in a loop; call it again to keep \
                 waiting. Without tasks, a command or a pull request, a wait lasts {} seconds at most, as little but a message or a subagent can end it early: for CI \
                 or reviews on a pull request, give pull_request; for a deploy, give a command that exits once it's ready, or check and wait again. To wait for the user, use request_user_input instead.",
-                crate::wait::UNWATCHED_MAX_SECS),
+                crate::mcp::wait::UNWATCHED_MAX_SECS),
             "inputSchema": {"type": "object", "properties": {
                 "reason": {"type": "string", "description": "What you're waiting for, shown on the board (e.g. 'waiting on OBP-1 and OWC-1', 'waiting for CI and review')"},
-                "seconds": {"type": "number", "minimum": 1, "maximum": crate::wait::MAX_SECS, "description": format!(
+                "seconds": {"type": "number", "minimum": 1, "maximum": crate::mcp::wait::MAX_SECS, "description": format!(
                     "How long to wait at most (with tasks, a command or a pull request: default {}, at most {}; without them: default and at most {})",
-                    crate::wait::DEFAULT_SECS, crate::wait::MAX_SECS, crate::wait::UNWATCHED_MAX_SECS
+                    crate::mcp::wait::DEFAULT_SECS, crate::mcp::wait::MAX_SECS, crate::mcp::wait::UNWATCHED_MAX_SECS
                 )},
                 "tasks": {"type": "array", "items": {"type": "string"}, "description": "Tasks (ids or keys like ABC-12, on this host) to watch: the wait ends as soon as one of them changes status"},
                 "pull_request": {"type": "string", "description": "A pull request to watch: its number (in your task's repository), OWNER/REPO#NUMBER or URL. The wait ends on news about it you haven't been told yet (see pull_request_events): its head commit's checks finished (one failed, or all the required ones passed), someone other than your GitHub account commented or reviewed, it started to conflict with its base branch, or it was merged or closed. It says what happened in pull_request: the failed checks with their links, new comments with their author, file, line and text, and its merge state. What you've been told is remembered across waits, so after acting on the news wait on it again: a comment made meanwhile ends that wait straight away. The first wait on a pull request reports how its checks ended and a conflict, but not its earlier comments. GitHub is read every minute or so, as your GitHub account."},
-                "pull_request_events": {"type": "array", "items": {"type": "string", "enum": crate::pr_watch::EVENTS}, "description": "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does."},
+                "pull_request_events": {"type": "array", "items": {"type": "string", "enum": crate::mcp::pr_watch::EVENTS}, "description": "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does."},
                 "command": {"type": "string", "description": "A shell command (bash) to run in your working directory while you wait: the wait ends as soon as it exits, and returns its exit code and the end of its output. Use one that blocks until what you're waiting for is ready (e.g. 'gh run watch 123'), or loop until it is (e.g. 'until curl -sf https://example.com/health; do sleep 15; done'). It's approved like your Bash calls, and stopped with everything it started if the wait ends first. For a pull request, give pull_request instead."}
             }, "required": ["reason"]}
         },
@@ -246,7 +256,7 @@ fn board_tools() -> Value {
                 "task_id": task_ref, "profile": profile,
                 "field": {"type": "string", "description": "Top-level field name from get_task's field_lengths (e.g. description, last_message, review or created_tasks)"},
                 "offset": {"type": "integer", "minimum": 0, "default": 0, "description": "Zero-based character offset"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": crate::tools::TASK_FIELD_MAX_LIMIT, "default": crate::tools::TASK_FIELD_DEFAULT_LIMIT, "description": "Maximum number of characters to return"}
+                "limit": {"type": "integer", "minimum": 1, "maximum": crate::mcp::tools::TASK_FIELD_MAX_LIMIT, "default": crate::mcp::tools::TASK_FIELD_DEFAULT_LIMIT, "description": "Maximum number of characters to return"}
             }, "required": ["task_id", "field"]}
         },
         {
@@ -387,7 +397,7 @@ fn board_tools() -> Value {
     tools
 }
 
-/// The tools for a project's automations (see automations.rs).
+/// The tools for a project's automations (see integrations/automations.rs).
 fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
     let automation_ref = json!({
         "type": "string",
@@ -398,10 +408,10 @@ fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
         "description": format!("What starts it: {{kind: 'interval', every_minutes}} ({} minutes to 31 days, counted from when it's turned on or changed); \
             {{kind: 'daily', time: 'HH:MM', weekdays}} (in the host's time zone, on those weekdays, or every day with none); \
             or {{kind: 'webhook', filters, coalesce_seconds, coalesce_key}}: each POST to its URL that passes all the filters. \
-            Use the fields of its kind.", crate::automations::MIN_INTERVAL_MINUTES),
+            Use the fields of its kind.", crate::integrations::automations::MIN_INTERVAL_MINUTES),
         "properties": {
             "kind": {"type": "string", "enum": ["interval", "daily", "webhook"]},
-            "every_minutes": {"type": "integer", "minimum": crate::automations::MIN_INTERVAL_MINUTES},
+            "every_minutes": {"type": "integer", "minimum": crate::integrations::automations::MIN_INTERVAL_MINUTES},
             "time": {"type": "string", "description": "A time of day like 09:30"},
             "weekdays": {"type": "array", "items": {"type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}},
             "filters": {"type": "array", "description": "Conditions a delivery must meet: path names a value as templates do (event, action, labels, body.issue.user.login…)",

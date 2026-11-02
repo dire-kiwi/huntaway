@@ -21,7 +21,7 @@ pub const LINK_PROVIDERS: &[&str] = &["asana"];
 /// How many external links a task can have.
 pub const MAX_LINKS: usize = 20;
 
-/// How much of a thread's context window its agent's session uses (see context.rs), stored on
+/// How much of a thread's context window its agent's session uses (see agent/context.rs), stored on
 /// its task as JSON.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Context {
@@ -41,7 +41,7 @@ pub struct Context {
     pub detail_at: Option<String>,
 }
 
-/// What an agent in the `wait` tool is waiting for (see wait.rs), stored on its task as JSON.
+/// What an agent in the `wait` tool is waiting for (see mcp/wait.rs), stored on its task as JSON.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AgentWait {
     /// What it's waiting on, in the agent's words.
@@ -68,7 +68,7 @@ pub struct AgentWait {
     /// across a server restart).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_finished: Option<Value>,
-    /// A pull request whose news ends the wait (API 62, see pr_watch.rs).
+    /// A pull request whose news ends the wait (API 62, see mcp/pr_watch.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull_request: Option<WaitPr>,
 }
@@ -150,7 +150,7 @@ pub struct Review {
     pub reviewers: Vec<ReviewerRun>,
 }
 
-/// A summary of a task's changes (see summary.rs), stored on the task as JSON.
+/// A summary of a task's changes (see review/summary.rs), stored on the task as JSON.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ChangeSummary {
     /// The summary thread: a `review` task of type `summary` whose parent is this task.

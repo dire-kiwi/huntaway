@@ -1,4 +1,4 @@
-//! Agent runs (see runner.rs and runs.rs).
+//! Agent runs (see agent/runner.rs and agent/runs.rs).
 
 use super::*;
 
@@ -20,7 +20,7 @@ pub struct Run {
     /// Its last turn has ended, and no message has started another yet.
     #[serde(default)]
     pub between_turns: bool,
-    /// The user message its turn started with (see checkpoints.rs).
+    /// The user message its turn started with (see git/checkpoints.rs).
     #[serde(default)]
     pub turn_message_id: Option<i64>,
     /// Where its conversation is (see checkpoints::Checkpoint::agent_at).

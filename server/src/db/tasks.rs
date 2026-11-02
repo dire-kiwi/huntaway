@@ -76,7 +76,7 @@ pub struct Task {
     #[serde(default)]
     pub task_type: Option<String>,
     /// Some of LABELS: the documents its agent writes (an HTML plan or artifact, or a Mermaid
-    /// diagram) besides its other work, which the board keeps and shows (see documents.rs).
+    /// diagram) besides its other work, which the board keeps and shows (see agent/documents.rs).
     #[serde(default)]
     pub labels: Vec<String>,
     /// Where the task's agent works, if not where its kind and project say: for a scratch task
@@ -127,7 +127,7 @@ pub struct Task {
     #[serde(default)]
     pub remerge: bool,
     /// Where its merge is with the user's approval, when its project asks for it (see
-    /// merge_gate.rs): `pending` while its agent summarises what it would merge and the user
+    /// review/merge_gate.rs): `pending` while its agent summarises what it would merge and the user
     /// decides, `approved` once they have. Cleared when it leaves the merge.
     #[serde(default)]
     pub merge_approval: Option<String>,
@@ -142,11 +142,11 @@ pub struct Task {
     pub waiting: bool,
     /// When the usage limit its agent last ran out of resets (UTC, RFC 3339), set as the run
     /// stops and cleared when the next starts. With `waiting`, the agent carries on then (see
-    /// usage.rs); without, the task needs attention and offers to.
+    /// agent/usage.rs); without, the task needs attention and offers to.
     #[serde(default)]
     pub limit_reset_at: Option<String>,
     /// Its agent is waiting (in the `wait` tool) rather than working, while its run goes on
-    /// and the task stays in its column. Not to be confused with `waiting` (see wait.rs).
+    /// and the task stays in its column. Not to be confused with `waiting` (see mcp/wait.rs).
     #[serde(default)]
     pub agent_wait: Option<AgentWait>,
     /// Sent while the agent was running; becomes the next prompt once the run ends (see
@@ -197,15 +197,15 @@ pub struct Task {
     pub reminder: Option<String>,
     /// The latest automatic review of the task's work.
     pub review: Option<Review>,
-    /// The latest summary of its changes, written once its review passed (see summary.rs).
+    /// The latest summary of its changes, written once its review passed (see review/summary.rs).
     #[serde(default)]
     pub summary: Option<ChangeSummary>,
-    /// How full its agent's context window is, as of its latest reply (see context.rs).
+    /// How full its agent's context window is, as of its latest reply (see agent/context.rs).
     #[serde(default)]
     pub context: Option<Context>,
     /// The conversation rollback its next run makes, after a rewind (see checkpoints::Rewind).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rewind: Option<crate::checkpoints::Rewind>,
+    pub rewind: Option<crate::git::checkpoints::Rewind>,
     pub cost_usd: f64,
     pub last_activity_at: String,
     pub created_at: String,
@@ -443,7 +443,7 @@ pub fn list_tasks_for_profile(c: &Connection, profile_id: &str) -> Result<Vec<Ta
 }
 
 /// Tasks in "In review" or "Needs attention" with a pull request, not running or merging, in
-/// projects whose merged pull requests move them to Done (see merged.rs).
+/// projects whose merged pull requests move them to Done (see review/merged.rs).
 pub fn tasks_with_open_prs(c: &Connection) -> Result<Vec<Task>> {
     let mut st = c.prepare(
         "SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id
@@ -500,7 +500,7 @@ pub fn review_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
-/// A task's summary threads (review threads that summarise its changes, see summary.rs), oldest first.
+/// A task's summary threads (review threads that summarise its changes, see review/summary.rs), oldest first.
 pub fn summary_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' AND task_type='summary' ORDER BY created_at, number")?;
     let rows = st.query_map([task_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
@@ -786,7 +786,7 @@ pub fn update_task(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result
     get_task(c, id)
 }
 
-/// Give a task a title written for it (see title.rs), unless it's been pinned, or its title has
+/// Give a task a title written for it (see agent/title.rs), unless it's been pinned, or its title has
 /// changed from `old` (if given) since. The task as it is then, if it changed.
 pub fn replace_title(c: &Connection, id: &str, old: Option<&str>, title: &str) -> Result<Option<Task>> {
     let n = c.execute(

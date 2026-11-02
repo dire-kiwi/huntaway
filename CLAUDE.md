@@ -219,7 +219,7 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
 - `scripts/ia-api` has its own tests (a faked server and clock): `python3 scripts/ia-api-test.py`.
-- If both your branch and master bumped `API_VERSION` (`server/src/proto.rs`) or added a DB
+- If both your branch and master bumped `API_VERSION` (`server/src/hosts/proto.rs`) or added a DB
   migration (`server/src/db/schema.rs`), git may merge the two without a conflict. After merging master,
   check both numbers and move yours above master's.
 

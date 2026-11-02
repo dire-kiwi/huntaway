@@ -3,7 +3,7 @@ import { notifySettings } from "./notifications";
 import { navigate, openTask } from "./router";
 
 /**
- * Web Push on this device: the board's notifications (notifications.ts) pushed to it by the board (server/src/push.rs)
+ * Web Push on this device: the board's notifications (notifications.ts) pushed to it by the board (server/src/integrations/push.rs)
  * even while the board isn't open, and shown by its service worker (public/sw.js). For a phone, with the board added
  * to its home screen.
  */

@@ -59,7 +59,7 @@ pub struct ProjectUsage {
     pub worktrees: Vec<Worktree>,
     /// The project's scratch folder and the rest of its folder in the data dir.
     pub other: Size,
-    /// The folders of its tasks' runs (see runs.rs), kept `runs::KEEP_DAYS` after they finish (API 59).
+    /// The folders of its tasks' runs (see agent/runs.rs), kept `runs::KEEP_DAYS` after they finish (API 59).
     pub runs: Size,
 }
 
@@ -354,7 +354,7 @@ fn measure(plan: Plan, data_dir: &Path) -> Report {
         projects,
         scratch: size(&plan.scratch).unwrap_or_default(),
         runs: runs(&plan.runs),
-        runs_kept_days: crate::runs::KEEP_DAYS,
+        runs_kept_days: crate::agent::runs::KEEP_DAYS,
         database: (!plan.database.is_empty())
             .then(|| plan.database.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| allocated(&m)).sum()),
         filesystem: filesystem(data_dir),
@@ -558,7 +558,7 @@ mod tests {
             assert_eq!(p.runs.files, 3);
             assert!(p.runs.bytes >= 32_000);
             assert_eq!(r.runs.files, 1);
-            assert_eq!((r.runs_kept_days, r.database), (crate::runs::KEEP_DAYS, None));
+            assert_eq!((r.runs_kept_days, r.database), (crate::agent::runs::KEEP_DAYS, None));
             std::fs::remove_dir_all(&tmp).unwrap();
         })
     }

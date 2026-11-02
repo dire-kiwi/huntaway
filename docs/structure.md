@@ -1,13 +1,14 @@
 # Project structure
 
 Where code goes, and how big modules are split. Written for HA-96, which split the server's four
-largest files, and brought up to date by HA-103, which did the same for the app. The rest of the
-plan, under *Next*, is for follow-up tasks.
+largest files; HA-101 split the next five and HA-102 grouped the server's modules into folders, and
+HA-103 grouped the app's components into feature folders and split its largest files. The rest of
+the plan, under *Next*, is for follow-up tasks.
 
 ## Layout
 
 ```
-server/src/          the huntaway binary: one module per feature, plus folders for the big ones
+server/src/          the huntaway binary: one module per feature, grouped in folders by area
 server/shim/         ia-shim, the per-run supervisor
 server/broker/       huntaway-broker
 app/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
@@ -20,14 +21,31 @@ docs/                notes like this one
 
 ## Server modules
 
-The server is one crate, so each module is a file in `server/src/` named after its feature
-(`worktree.rs`, `hub.rs`, `review.rs`…). When a module outgrows one file it becomes a folder, as
-`runner`, `db`, `api` and `tools` have:
+The server is one crate, so each module is a file named after its feature (`worktree.rs`, `hub.rs`,
+`review.rs`…), in a folder for its area of `server/src/`:
+
+| Folder | Modules |
+|---|---|
+| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, prompts, documents, agent_tools |
+| `mcp/` | (`mcp.rs`, the stdio server) tools, gh_mcp, wait, pr_watch, permissions, questions |
+| `git/` | worktree, worktree_files, checkpoints, git_view, changes, relocate |
+| `hosts/` | hub, broker, proto, relay, ssh, terminal, pty |
+| `update/` | admin, release, staging |
+| `integrations/` | github, asana, push, automations, status_script |
+| `review/` | (`review.rs`, automatic review) summary, merged, merge_gate, fanout |
+
+`main`, `state`, `util`, `db`, `api`, `testing`, `demo`, `analytics`, `disk` and `attachments`
+stay at the top. A folder's `agent.rs` (and so on) has its `//!` docs and a `pub mod` for each
+module; `mcp.rs` and `review.rs` are modules of their own as well as their folders'. Paths name the
+folder: `crate::agent::runner::send_message`, `use crate::git::{checkpoints, worktree};`. A new
+module goes in the folder for what it's about, or at the top if it's used everywhere, as `util` is.
+
+When a module outgrows one file it becomes a folder too, as `runner`, `db`, `api` and `tools` have:
 
 ```
-server/src/runner.rs         what the module is about (its //! docs), shared items, the core
-server/src/runner/queue.rs   one part of it each, with its own //! line
-server/src/runner/tests.rs   its tests
+server/src/agent/runner.rs         what the module is about (its //! docs), shared items, the core
+server/src/agent/runner/queue.rs   one part of it each, with its own //! line
+server/src/agent/runner/tests.rs   its tests
 ```
 
 - Rust's file layout: `foo.rs` next to a `foo/` folder for its submodules (rather than
@@ -53,13 +71,27 @@ first step: in several modules they're longer than the code.
 
 | Was | Lines | Now |
 |---|---|---|
-| `runner.rs` | 4,546 | `runner.rs` (run lifecycle, startup), `queue`, `merge`, `send`, `launch`, `access`, `prompt`, `output`, `tests` |
+| `agent/runner.rs` | 4,546 | `runner.rs` (run lifecycle, startup), `queue`, `merge`, `send`, `launch`, `access`, `prompt`, `output`, `tests` |
 | `db.rs` | 4,452 | `db.rs` (settings, field values), `schema` (`open`, migrations), `profiles`, `projects`, `tasks`, `task_data`, `messages`, `links`, `runs`, `tests` |
 | `api.rs` | 4,209 | `api.rs` (routes, auth, websocket), `profiles`, `claude_configs`, `projects`, `tasks`, `new_task`, `thread`, `host`, `tests` |
-| `tools.rs` | 4,055 | `tools.rs` (`Ctx`, errors), `dispatch`, `local`, `projects`, `approvals`, `automations`, `resolve`, `tasks`, `tests` |
+| `mcp/tools.rs` | 4,055 | `tools.rs` (`Ctx`, errors), `dispatch`, `local`, `projects`, `approvals`, `automations`, `resolve`, `tasks`, `tests` |
 
 The largest part is now `db/schema.rs` (about 1,000 lines, mostly the migrations' SQL); the
 others are 60 to 800. A new DB migration goes in `db/schema.rs`.
+
+### What HA-101 split
+
+| Was | Lines | Now |
+|---|---|---|
+| `integrations/automations.rs` | 2,185 | `automations.rs` (types, database), `check`, `delivery`, `running`, `handlers`, `tests` |
+| `mcp/gh_mcp.rs` | 1,938 | `gh_mcp.rs` (the MCP server, the Bash hook), `account`, `targets`, `env`, `tests` |
+| `git/checkpoints.rs` | 1,803 | `checkpoints.rs` (types, database, the queue), `git`, `capture`, `changed`, `handlers`, `restore`, `tests` |
+| `agent/codex.rs` | 1,683 | `codex.rs` (`Spec`, policies), `rpc`, `adapter`, `queries`, `output`, `tests`, `subagent_tests` |
+| `hosts/hub.rs` | 1,437 | `hub.rs` (links, startup), `inbound`, `dial_out`, `endpoints`, `manage`, `tests` |
+
+Their parts are 100 to 530 lines. `release`, `agent_tools`, `broker`, `relocate`, `push`, `review`,
+`wait`, `permissions`, `git_view` and `changes` (under 1,000 lines of code each) moved their tests
+to `tests.rs`.
 
 ## App modules
 
@@ -111,42 +143,9 @@ The largest files left in the app are `Hosts.tsx`, `Automations.tsx` and `Analyt
 
 ### Server: the next files
 
-Files over 1,000 lines, with how much of each is code rather than tests:
-
-| File | Lines | Code |
-|---|---|---|
-| `automations.rs` | 2,185 | 1,484 |
-| `release.rs` | 2,099 | 748 |
-| `gh_mcp.rs` | 1,938 | 1,245 |
-| `pr_watch.rs` | 1,878 | 1,304 |
-| `checkpoints.rs` | 1,803 | 1,222 |
-| `worktree.rs` | 1,790 | 1,153 |
-| `codex.rs` | 1,683 | 1,377 |
-| `hub.rs` | 1,437 | 1,096 |
-| `agent_tools.rs` | 1,403 | 993 |
-| `broker.rs`, `relocate.rs`, `push.rs`, `review.rs`, `wait.rs`, `permissions.rs`, `git_view.rs`, `changes.rs` | 1,000–1,300 | 480–750 |
-
-Those with over 1,000 lines of code split as above. For the others, moving tests to `tests.rs` is
-enough for now.
-
-### Server: folders for related modules
-
-`server/src` has over 50 modules side by side. Grouping them would make it easier to find your way
-around, at the cost of changing `crate::` paths across the crate, so it's best done when few
-pull requests are open:
-
-| Folder | Modules |
-|---|---|
-| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, prompts, documents |
-| `mcp/` | mcp, tools, gh_mcp, wait, pr_watch, permissions, questions |
-| `git/` | worktree, worktree_files, checkpoints, git_view, changes, relocate |
-| `hosts/` | hub, broker, proto, relay, ssh, terminal, pty |
-| `update/` | admin, release, staging |
-| `integrations/` | github, asana, push, automations, status_script |
-| `review/` | review, summary, merged, merge_gate, fanout |
-
-`main`, `state`, `util`, `db`, `api`, `testing`, `demo`, `analytics`, `disk` and `attachments`
-stay at the top.
+`mcp/pr_watch.rs` (1,878 lines, 1,304 of code) and `git/worktree.rs` (1,790, 1,153) are the last files
+over 1,000 lines of code. They split as above, with their tests moved to `tests.rs`, once open PRs
+#53 and #52, which rewrite large parts of them, have merged.
 
 ### README
 

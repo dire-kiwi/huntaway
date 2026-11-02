@@ -135,7 +135,7 @@ pub(super) async fn update_profile(State(s): State<Shared>, Path(id): Path<Strin
     Ok(Json(json!(p)))
 }
 
-/// A profile's Asana token as it's stored, with who it's for (see asana.rs): null (or blank)
+/// A profile's Asana token as it's stored, with who it's for (see integrations/asana.rs): null (or blank)
 /// disconnects it, and a token is checked with Asana first.
 async fn check_asana_token(v: &Value) -> ApiResult<(Value, Value)> {
     let token = match v {
@@ -146,7 +146,7 @@ async fn check_asana_token(v: &Value) -> ApiResult<(Value, Value)> {
     if token.is_empty() {
         return Ok((Value::Null, Value::Null));
     }
-    let user = crate::asana::me(token).await.map_err(|e| ApiError::bad(e.to_string()))?;
+    let user = crate::integrations::asana::me(token).await.map_err(|e| ApiError::bad(e.to_string()))?;
     Ok((json!(token), json!(user.label())))
 }
 
@@ -164,9 +164,9 @@ pub(super) async fn asana_tasks(State(s): State<Shared>, Path(id): Path<String>,
         return Err(ApiError::conflict(format!("Asana is turned off for the {} profile (Settings → Profiles)", p.name)));
     }
     let token = p.asana_token.filter(|t| !t.is_empty()).ok_or_else(|| ApiError::conflict(format!("the {} profile isn't connected to Asana", p.name)))?;
-    match crate::asana::search(&token, &q.q).await {
+    match crate::integrations::asana::search(&token, &q.q).await {
         Ok(tasks) => Ok(Json(json!(tasks))),
-        Err(crate::asana::Error::NotFound) if crate::asana::task_gid(q.q.trim()).is_some() => Ok(Json(json!([]))),
+        Err(crate::integrations::asana::Error::NotFound) if crate::integrations::asana::task_gid(q.q.trim()).is_some() => Ok(Json(json!([]))),
         Err(e) => Err(ApiError(StatusCode::BAD_GATEWAY, e.to_string())),
     }
 }
@@ -181,7 +181,7 @@ pub(super) fn check_github_account(v: &Value) -> ApiResult<Value> {
     if account.is_empty() {
         return Ok(Value::Null);
     }
-    if crate::gh_mcp::Account::parse(account).is_none() {
+    if crate::mcp::gh_mcp::Account::parse(account).is_none() {
         return Err(ApiError::bad("github_account must be a GitHub login, or HOST/LOGIN for another GitHub host"));
     }
     Ok(json!(account))
@@ -189,7 +189,7 @@ pub(super) fn check_github_account(v: &Value) -> ApiResult<Value> {
 
 /// The GitHub accounts gh is signed in to on this host (see gh_mcp::accounts).
 pub(super) async fn github_accounts() -> ApiResult<Json<Value>> {
-    Ok(Json(json!(crate::gh_mcp::accounts().await)))
+    Ok(Json(json!(crate::mcp::gh_mcp::accounts().await)))
 }
 
 #[derive(Deserialize)]
