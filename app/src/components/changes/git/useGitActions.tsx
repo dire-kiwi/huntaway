@@ -1,6 +1,6 @@
 import { useRef, useState, type RefObject } from "react";
 import { api, type GitCommit, type GitStash, type GitStatus, type Turn } from "../../../api";
-import { fileRows, hasStaged, hasUnstaged, linesPatch, untracked, type FileRow } from "../changes";
+import { fileRows, hasStaged, hasUnstaged, linesPatch, untracked, type FileRow } from "../diffs";
 import { copyText } from "../../ui";
 import type { FileDiffsView } from "./useFileDiffs";
 import type { GitSelection } from "./useGitSelection";

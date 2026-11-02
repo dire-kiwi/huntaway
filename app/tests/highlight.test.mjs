@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseDiff } from "../src/components/changes/changes.ts";
+import { parseDiff } from "../src/components/changes/diffs.ts";
 import { highlightable, langFor, MAX_LINES, sidesOf } from "../src/components/changes/highlight.ts";
 
 test("a file's language, by extension or name", () => {

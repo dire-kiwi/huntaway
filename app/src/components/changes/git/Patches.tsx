@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DiffResult, GitCommitShown, Turn, TurnDiff } from "../../../api";
-import { parseDiff, type FileDiff } from "../changes";
+import { parseDiff, type FileDiff } from "../diffs";
 import { commentLines, type CommentSource } from "../lineComments";
 import { turnLabel } from "../../task/turns";
 import { CommentsContext, DiffLines, diffRows, type Layout, type PickHow } from "../DiffLines";
