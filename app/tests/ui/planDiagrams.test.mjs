@@ -73,7 +73,6 @@ test("plan diagrams render Mermaid locally, including multiple types and escaped
     assert.match(decodeURIComponent(svg), /Two<br \/>lines/);
     assert.equal(await frame.locator("input[name=notes]").inputValue(), "Keep this answer");
     assert.ok(await frame.locator("ia-diagram > pre").first().isHidden());
-    await page.screenshot({ path: "/tmp/ha62-plan-diagrams.png" });
 
     // Source stays editable Mermaid, and rebuilding the sandbox restores both diagrams and unsent answers.
     await ui.run(["click Source", "gone css=iframe"]);

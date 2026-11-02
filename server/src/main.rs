@@ -23,6 +23,7 @@ mod git_view;
 mod github;
 mod hub;
 mod mcp;
+mod merge_gate;
 mod merged;
 mod permissions;
 mod pr_watch;
@@ -50,6 +51,7 @@ mod title;
 mod tools;
 mod usage;
 mod wait;
+mod window;
 mod util;
 mod worktree;
 mod worktree_files;
@@ -230,11 +232,20 @@ fn load_or_create_token(data_dir: &std::path::Path, file: &str) -> Result<String
     Ok(token)
 }
 
-fn find_ui_dir(explicit: Option<PathBuf>) -> Option<PathBuf> {
+/// `--ui-dir`, else the UI beside the binary (a release's `ui/`) or the checkout's build. A release this server
+/// updated to (`from_app`) serves its own UI even with `--ui-dir`, which it inherits from the server it replaced and
+/// which names that server's UI.
+fn find_ui_dir(explicit: Option<PathBuf>, from_app: bool) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    if from_app && exe.parent().is_some_and(|d| d.join("ui/index.html").is_file()) {
+        if let Some(p) = &explicit {
+            tracing::info!("serving this release's own UI rather than --ui-dir {}", p.display());
+        }
+        return Some(exe.parent()?.join("ui"));
+    }
     if let Some(p) = explicit {
         return Some(p);
     }
-    let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
     [
         exe_dir.join("ui"),
@@ -324,10 +335,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let port = listener.local_addr()?.port();
     let internal_url = format!("http://127.0.0.1:{port}");
     let source_dir = admin::detect_source_dir(args.source_dir.clone());
-    // Without a checkout (e.g. deployed from a CI bundle), the deployment says which commit it is.
+    let from_app = std::env::current_exe().is_ok_and(|exe| staging::running_from_app(&data_dir, &exe).is_some());
+    // Without a checkout (e.g. deployed from a CI bundle, or a release), the build or the deployment says which commit it is.
     let running_commit = match &source_dir {
         Some(src) => admin::head_commit(src).await,
-        None => std::env::var("IA_COMMIT").ok().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()),
+        None => admin::bundle_commit(from_app),
     };
     let meta = admin::ServerMeta {
         boot_id: util::new_id(),
@@ -356,7 +368,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     }
     let mut app = api::router(state.clone());
-    match find_ui_dir(args.ui_dir) {
+    match find_ui_dir(args.ui_dir, from_app) {
         Some(ui) => {
             tracing::info!("serving UI from {}", ui.display());
             let files = ServeDir::new(&ui).fallback(ServeFile::new(ui.join("index.html")));
@@ -376,6 +388,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runner::load_active(&state)?;
     runner::auto_compact(&state);
     usage::resume_loop(&state);
+    window::start(&state);
     pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);

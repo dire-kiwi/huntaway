@@ -200,7 +200,7 @@ those became done scratch tasks (in no project, whichever project they were in) 
 working in their old folder, so their conversations carry on.
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+).
+servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
 ### Server options
 
@@ -312,6 +312,18 @@ UI picks it up from `?token=` once and remembers it). Settings → Network acces
 ready-made link. The token lets anyone holding it run agents on your machine, and traffic is
 plain HTTP, so expose the server only on a trusted network (Tailscale, VPN) or behind a TLS
 reverse proxy.
+
+A server started with `--host 127.0.0.1` can still be used from another computer that can SSH into
+its machine, through a tunnel:
+
+```sh
+ssh -N -L 7878:127.0.0.1:7878 you@that-machine    # leave it running
+```
+
+Then open `http://localhost:7878/?token=<huntaway token>` there (`huntaway token`, or
+`<data-dir>/auth_token`, on that machine), or point the desktop app at it with `"serverUrl":
+"http://localhost:7878"` and the token (see *Desktop config*). To show that machine's board next to
+the other computer's own, link it as a host over SSH instead (see *Hosts*).
 
 ### Push notifications on a phone
 
@@ -476,6 +488,18 @@ back to the tarball's own server, from the first Update on: the tarball's server
 `IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
 Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
+A hub deployed as a container (a board on a server, with the binary and UI in its image or bundle) can
+update itself from GitHub this way too, rather than being redeployed for every change: start it with
+`--release-updates dire-kiwi/huntaway` and keep `<data dir>` on a volume, so the versions in
+`<data dir>/app/` and `app/state.json` survive the container being recreated. Update restarts the server
+in place (the container's process stays), and when the container starts again the deployed server execs
+the version it last updated to, as above. A release serves its own `ui/` even when the deployment passes
+`--ui-dir`, and reports the commit it was built from (`IA_BUILD_COMMIT`, which `release.yml` sets) rather
+than the deployment's `IA_COMMIT` (in `/api/health`, and `running_commit` in `/api/admin/server`), so hosts
+that follow the hub with `--update-from` and the checkouts it updates go by the release's commit. The Linux
+releases are built on GitHub's `ubuntu-latest`, so their server needs glibc 2.39 or later (Debian 13,
+Ubuntu 24.04) in the image.
+
 `scripts/install-release-host.sh` installs a host this way: it downloads the latest release's tarball
 (or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
 `~/.local/share/huntaway-server/current` at it, and prints the command to start it with
@@ -498,9 +522,25 @@ projects, tasks, agent threads and runs, and runs agents on its own machine. It 
 host is stored on a hub beyond how to reach it, so any number of boards (your desktop, a
 laptop somewhere else) can connect to the same host and see the same data.
 
-Settings → Hosts offers two ways to link a host:
+Settings → Hosts offers three ways to link a host:
 
-- **Add host** (the hub connects to the host): enter the host's URL and its token
+- **Add host → Over SSH** (the hub starts the host and tunnels to it): enter `user@host`, the SSH
+  port, the absolute path of `huntaway` on that machine (with `ia-shim` beside it) and the host's
+  port, then add the line the dialog shows to that machine's `~/.ssh/authorized_keys`. The line
+  holds the hub's own key (made on first use in `<hub data dir>/ssh/`), restricted to running
+  `huntaway ssh-host` and forwarding to the host's port:
+
+  ```text
+  restrict,port-forwarding,permitopen="127.0.0.1:7878",command="/path/huntaway ssh-host --port 7878" ssh-ed25519 AAAA… huntaway-hub@<hub>
+  ```
+
+  `ssh-host` starts `huntaway serve --host 127.0.0.1` through the login shell if nothing answers on
+  that port, and gives the hub the token from its data dir; add `--data-dir '<data dir>'` to the
+  command if the host's isn't the default (`scripts/install-release-host.sh` prints the whole
+  command). The host never listens beyond localhost or needs to reach the hub. The first connection
+  trusts the machine's SSH host key, and a changed one is refused later. If the tunnel drops, agents
+  keep running and the hub reconnects. The hub needs `ssh` and `ssh-keygen`.
+- **Add host → By URL and token** (the hub connects to the host): enter the host's URL and its token
   (`huntaway token` on that machine). This works whenever the hub can reach the host,
   e.g. over Tailscale.
 - **Connect from elsewhere** (the host dials out to the hub): run
@@ -555,8 +595,9 @@ reports `updates_from: "releases"` rather than `"checkout"`, API 89) goes by ver
 the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
 onto that release as its own Update would, checking for releases first if it hasn't seen it yet. It
 refuses a version older than its own, or one older than the latest release it knows of (update the
-hub first). A hub without a checkout or `IA_COMMIT` that runs a release sends only its version, so
-it can update release hosts but not checkouts.
+hub first). A hub without a checkout that runs a release sends its version and the commit the release was built
+from (`IA_BUILD_COMMIT`; a release from before that, or a build without it or `IA_COMMIT`, sends only its
+version, so it can update release hosts but not checkouts).
 
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
@@ -745,6 +786,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   out). A limit at 80% or more is marked in amber, and one that's used up in red, in the
   sidebar and where a config is picked (the new task dialog's config picker, a task's
   *Config* row), so you can pick another config before starting work.
+- **Restarting the 5-hour window** (API 91): a plan's session limit runs for five hours from
+  the first message after the last window ended, so a window that ends while nothing runs leaves
+  the next one to start whenever work does. Tick *Restart 5h window* on a config in Settings →
+  Agent configs (off by default) and the host sends one short prompt just after each window ends
+  (a minute late, for clocks that disagree): `claude -p` on Haiku with no tools, MCP servers or
+  saved session for Claude, a low-effort ephemeral turn for Codex, from the data dir. That starts
+  the next window straight away. Only plans with a 5-hour limit are sent anything: the host fetches
+  the config's usage when the setting is turned on (or the server starts), and a plan whose usage
+  has never shown a session limit (like a plan with only weekly limits) is left alone, as is a config
+  that's out of usage. (Where that fetch fails, as with a login that has expired, it waits for an
+  agent run on the config to report the window.) It fetches again before each prompt, in case a run or another host already
+  started the window, and again after it, and takes the prompt's own `rate_limit_event`s in as an
+  agent run's are. The first request after a window ends reports the window that ended (as its
+  `rateLimitType`, left out of `unifiedWindows`), so that still counts as having one; only a prompt
+  whose rate limits show no 5-hour window at all, with usage that doesn't show one either, stops the
+  restarts until the setting is turned on again. Codex's windows are told apart by their length
+  (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
+  then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
+  has no session limit. See `server/src/window.rs`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the

@@ -1060,37 +1060,51 @@ pub async fn changes_base(dir: &Path, task: &Task, project: &Project) -> (Option
 /// including uncommitted and untracked changes.
 pub async fn diff(state: &Shared, task_id: &str) -> Result<Value> {
     let (dir, task, project) = changes_dir(state, task_id)?;
-    if !is_git_repo(&dir).await {
+    // A task with a worktree of its own that isn't there (not set up yet, or removed, even since the task was loaded, as a
+    // teardown does while it's read): what its branch has, if anything, rather than the project folder's changes, which
+    // aren't its own.
+    let repo = Path::new(&project.repo_path);
+    let gone = || task.use_worktree && (task.worktree_state != "ready" || !dir.exists());
+    let from = if gone() { repo } else { &dir };
+    if !is_git_repo(from).await {
         return Ok(json!({"available": false, "reason": "not a git repository"}));
     }
-    // A task with a worktree of its own that isn't there (not set up yet, or removed): what its branch has, if
-    // anything, rather than the project folder's changes, which aren't its own.
-    if task.use_worktree && task.worktree_state != "ready" {
-        return branch_diff(&dir, &task, &project).await;
+    if gone() {
+        return branch_diff(repo, &task, &project).await;
     }
-    let (base, merge_base) = changes_base(&dir, &task, &project).await;
+    match dir_diff(&dir, &task, &project).await {
+        Err(_) if gone() => branch_diff(repo, &task, &project).await,
+        r => r,
+    }
+}
+
+/// `diff` of the changes in `dir`, the task's worktree or the project's folder.
+async fn dir_diff(dir: &Path, task: &Task, project: &Project) -> Result<Value> {
+    #[cfg(test)]
+    crate::testing::reached("diff:read");
+    let (base, merge_base) = changes_base(dir, task, project).await;
     let from = merge_base.clone().unwrap_or_else(|| "HEAD".into());
     // Mark untracked files as intent-to-add would mutate the index; instead diff them separately.
-    let tracked = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from]).await?.stdout;
-    let patch = git(&dir, &["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", &from]).await?.stdout;
+    let tracked = git(dir, &["diff", "--no-color", "--no-ext-diff", "--stat=200", &from]).await?.stdout;
+    let patch = git(dir, &["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", &from]).await?.stdout;
     // NUL-separated, so names git would quote (not ASCII, or with a newline) come as they are, and
     // after `--`, so a name starting with `-` isn't taken for an option.
-    let untracked_list = git_bytes(&dir, &["ls-files", "-z", "--others", "--exclude-standard"].map(OsStr::new)).await?;
+    let untracked_list = git_bytes(dir, &["ls-files", "-z", "--others", "--exclude-standard"].map(OsStr::new)).await?;
     let untracked: Vec<&OsStr> = untracked_list.split(|b| *b == 0).filter(|f| !f.is_empty()).map(OsStr::from_bytes).collect();
     let mut untracked_patch = String::new();
     for f in untracked.iter().take(50) {
         let args = ["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--no-index", "--", "/dev/null"].map(OsStr::new);
         // It exits 1 when the files differ, which they do.
-        let o = git_output(&dir, &[&args[..], &[*f]].concat()).await?;
+        let o = git_output(dir, &[&args[..], &[*f]].concat()).await?;
         untracked_patch.push_str(&String::from_utf8_lossy(&o.stdout));
     }
     let commits = match &merge_base {
-        Some(mb) => git(&dir, &["log", "--oneline", &format!("{mb}..HEAD")]).await?.stdout,
+        Some(mb) => git(dir, &["log", "--oneline", &format!("{mb}..HEAD")]).await?.stdout,
         None => String::new(),
     };
     Ok(json!({
         "available": true,
-        "dir": path_str(&dir),
+        "dir": path_str(dir),
         "base": base,
         "merge_base": merge_base,
         "commits": commits,
@@ -1296,6 +1310,43 @@ mod tests {
             let d = diff(&s, &t.id).await.unwrap();
             assert_eq!(d["available"], json!(false));
             assert!(d["reason"].as_str().unwrap().contains("is gone"), "{d}");
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
+    // HA-92: a worktree removed while its diff was being read (picking one of a set's tasks tears the others' down) failed
+    // the request with git's "cannot change to" the folder.
+    #[test]
+    fn a_worktree_removed_while_its_diff_is_read_gives_its_branchs() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, t, wt, branch) = task_with_work(&s).await;
+            // The task as the diff loaded it, still "ready", with the folder gone by the time git runs in it.
+            sh(&repo, &["worktree", "remove", "--force", &path_str(&wt)]);
+            let d = diff(&s, &t.id).await.unwrap();
+            assert_eq!((&d["available"], d["branch"].as_str()), (&json!(true), Some(branch.as_str())));
+            assert!(d["patch"].as_str().unwrap().contains("+++ b/a"), "{d}");
+            std::fs::remove_dir_all(&repo).ok();
+        })
+    }
+
+    // HA-90: the same, with the folder going after the diff checked for it, while git runs in it.
+    #[test]
+    fn a_worktree_removed_while_git_reads_its_diff_gives_its_branchs() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (repo, t, wt, branch) = task_with_work(&s).await;
+            std::fs::write(wt.join("draft"), "uncommitted\n").unwrap();
+            let gone = wt.with_extension("gone");
+            let (from, to) = (wt.clone(), gone.clone());
+            crate::testing::when("diff:read", move || std::fs::rename(&from, &to).unwrap());
+            let d = diff(&s, &t.id).await.unwrap();
+            assert_eq!((&d["available"], d["branch"].as_str()), (&json!(true), Some(branch.as_str())), "{d}");
+            assert!(d["patch"].as_str().unwrap().contains("+++ b/a"), "{d}");
+            // Back in place, it's the worktree's again, uncommitted work and all.
+            std::fs::rename(&gone, &wt).unwrap();
+            let d = diff(&s, &t.id).await.unwrap();
+            assert!(d["branch"].is_null() && d["untracked"] == json!(["draft"]), "{d}");
             std::fs::remove_dir_all(&repo).ok();
         })
     }

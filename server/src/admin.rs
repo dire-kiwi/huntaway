@@ -69,6 +69,18 @@ pub fn detect_source_dir(explicit: Option<PathBuf>) -> Option<PathBuf> {
     (root.join("server/Cargo.toml").is_file() && root.join("app/package.json").is_file()).then_some(root)
 }
 
+/// The commit a server without a checkout runs: the one it was built from (`IA_BUILD_COMMIT` when it was compiled,
+/// which release builds set), else what its deployment says (`IA_COMMIT`). A release it updated to, in `app/`,
+/// inherits the deployment's environment, so there `IA_COMMIT` is the deployed bundle's commit rather than its own.
+pub fn bundle_commit(from_app: bool) -> Option<String> {
+    pick_bundle_commit(option_env!("IA_BUILD_COMMIT"), std::env::var("IA_COMMIT").ok(), from_app)
+}
+
+fn pick_bundle_commit(built: Option<&str>, deployed: Option<String>, from_app: bool) -> Option<String> {
+    let clean = |c: &str| Some(c.trim().to_string()).filter(|c| !c.is_empty());
+    built.and_then(clean).or_else(|| deployed.filter(|_| !from_app).as_deref().and_then(clean))
+}
+
 pub async fn head_commit(dir: &Path) -> Option<String> {
     let o = git(dir, &["rev-parse", "HEAD"]).await.ok()?;
     o.ok.then(|| o.stdout.trim().to_string())
@@ -489,6 +501,20 @@ mod tests {
         let first = commit(&origin, "first");
         sh(&root, &["clone", "-q", &path_str(&origin), "src"]);
         (origin, root.join("src"), first)
+    }
+
+    /// HA-97: a deployed hub that updated itself to a release kept reporting its bundle's IA_COMMIT, so hosts that
+    /// follow it, and the checkouts it updates, went by the old commit.
+    #[test]
+    fn a_release_reports_the_commit_it_was_built_from() {
+        let deployed = || Some("bundle".to_string());
+        assert_eq!(pick_bundle_commit(Some("built"), deployed(), false).as_deref(), Some("built"));
+        assert_eq!(pick_bundle_commit(Some("built"), deployed(), true).as_deref(), Some("built"));
+        // A build that doesn't know its commit: the deployment's bundle goes by IA_COMMIT, a release in app/ by none.
+        assert_eq!(pick_bundle_commit(None, deployed(), false).as_deref(), Some("bundle"));
+        assert_eq!(pick_bundle_commit(Some(" "), Some(" bundle\n".into()), false).as_deref(), Some("bundle"));
+        assert_eq!(pick_bundle_commit(None, deployed(), true), None);
+        assert_eq!(pick_bundle_commit(None, Some(String::new()), false), None);
     }
 
     #[test]
