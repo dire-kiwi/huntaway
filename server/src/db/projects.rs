@@ -86,6 +86,10 @@ pub struct Project {
     /// profile's `merge_approval`.
     #[serde(default)]
     pub merge_approval: Option<bool>,
+    /// Whether a task can only go to "Ready for merge" once its pull request has an approving
+    /// review on GitHub (API 94). None follows its profile's `require_pr_approval`.
+    #[serde(default)]
+    pub require_pr_approval: Option<bool>,
     /// The project's instructions for the prompts sent when a task's agent starts, when its
     /// work is reviewed and when it's merged; None uses the default (see agent/prompts.rs).
     pub start_prompt: Option<String>,
@@ -148,6 +152,7 @@ impl Project {
             auto_summary: r.get("auto_summary")?,
             summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             merge_approval: r.get("merge_approval")?,
+            require_pr_approval: r.get("require_pr_approval")?,
             start_prompt: r.get("start_prompt")?,
             review_prompt: r.get("review_prompt")?,
             merge_prompt: r.get("merge_prompt")?,
@@ -215,7 +220,7 @@ pub fn insert_project(c: &Connection, p: NewProject) -> Result<Project> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "auto_summary", "summarizer", "merge_approval", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "auto_summary", "summarizer", "merge_approval", "require_pr_approval", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
     "copy_files", "link_folders",
 ];

@@ -58,6 +58,8 @@ export const LIMITS_API = 81;
 
 /** Profiles and projects can have merges wait for the user's approval of a summary. */
 export const MERGE_APPROVAL_API = 92;
+/** Projects and profiles can require an approving GitHub review before a task goes to Ready for merge. */
+export const PR_APPROVAL_API = 94;
 
 export const isMerged = (t: Task) => t.status === "done" && (t.resolution ?? "done") === "done";
 

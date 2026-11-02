@@ -574,6 +574,28 @@ fn ready_for_merge_queues_the_merge_even_before_agents_can_run() {
     })
 }
 
+// HA-113: where GitHub approval is required, a task with no approved pull request can't go to Ready for merge.
+#[test]
+fn ready_for_merge_needs_a_github_approval_where_required() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (dir, p) = git_project(&s).await;
+        let t = task_with_work(&s, &p, "a").await;
+        let go = |id: String| {
+            let s = s.clone();
+            async move { update_task_inner(&s, &id, json!({"status": "ready_for_merge"}).as_object().unwrap()).await }
+        };
+        // The profile asks for it: no pull request, so refused, and the task stays where it was.
+        db::update_profile(&s.db(), &p.profile_id, &[("require_pr_approval", json!(true))]).unwrap();
+        assert!(go(t.id.clone()).await.is_err());
+        assert_ne!(db::get_task(&s.db(), &t.id).unwrap().unwrap().status, "ready_for_merge");
+        // The project says otherwise.
+        db::update_project(&s.db(), &p.id, &[("require_pr_approval", json!(false))]).unwrap();
+        assert_eq!(go(t.id.clone()).await.unwrap().status, "ready_for_merge");
+        std::fs::remove_dir_all(&dir).ok();
+    })
+}
+
 #[test]
 fn a_folder_not_ready_for_worktrees_gets_one_setup_thread() {
     crate::testing::run(async || {

@@ -745,12 +745,23 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         recount_run_costs(&conn)?;
         conn.execute_batch("PRAGMA user_version=73; COMMIT;")?;
     }
+    if version < 74 {
+        // Whether a task needs an approving review on its pull request to go to "Ready for merge".
+        conn.execute_batch("BEGIN;")?;
+        for (table, kind) in [("profiles", "INTEGER NOT NULL DEFAULT 0"), ("projects", "INTEGER")] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name='require_pr_approval'", [table], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN require_pr_approval {kind};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=74; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 73;
+pub const VERSION: i64 = 74;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

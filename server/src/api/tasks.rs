@@ -249,6 +249,14 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         };
         s.add_event(id, "info", why, None);
     }
+    // Where the project or profile asks for it, the task's pull request needs an approving review on GitHub first.
+    if merge && !nothing_to_merge && !remerge && worktree::pr_approval_required(s, &current) {
+        match worktree::pr_approved(s, &current).await {
+            Ok(true) => {}
+            Ok(false) => return Err(ApiError::conflict("the task's pull request has no approving review on GitHub yet, so it can't go to Ready for merge")),
+            Err(e) => return Err(ApiError::conflict(format!("can't move the task to Ready for merge until its pull request is approved on GitHub: {e}"))),
+        }
+    }
     // Moved without a position (e.g. by an agent), it joins the back of the merge queue.
     if merge && !fields.iter().any(|(k, _)| *k == "position") {
         let end = db::end_position(&s.db(), current.project_id.as_deref(), "ready_for_merge", "task")?;

@@ -877,6 +877,37 @@ pub async fn unmerged(state: &Shared, task: &Task) -> bool {
     !matches!(tokio::time::timeout(Duration::from_secs(5), pr).await, Ok(Some(pr)) if pr["state"] == "MERGED")
 }
 
+/// Whether the setting that a task needs an approving review on its pull request to go to
+/// "Ready for merge" applies to `task`: its project's, or else its profile's (API 94).
+pub fn pr_approval_required(state: &Shared, task: &Task) -> bool {
+    let c = state.db();
+    let project = task.project_id.as_deref().and_then(|id| db::get_project(&c, id).ok().flatten());
+    if let Some(on) = project.and_then(|p| p.require_pr_approval) {
+        return on;
+    }
+    db::get_profile(&c, &task.profile_id).ok().flatten().is_some_and(|p| p.require_pr_approval)
+}
+
+/// Whether `task`'s pull request has an approving review on GitHub and no review asking for changes
+/// after it. Err says why it can't be told (no pull request, or GitHub couldn't be read).
+pub async fn pr_approved(state: &Shared, task: &Task) -> Result<bool, String> {
+    let Some(url) = task.pr_url.clone() else { return Err("the task has no pull request yet; open one and get it approved on GitHub first".into()) };
+    let project = task.project_id.as_deref().and_then(|id| db::get_project(&state.db(), id).ok().flatten()).ok_or("the task has no project")?;
+    let env = crate::agent::runner::task_gh_env(state, task).await.map_err(|e| format!("couldn't read the pull request: {e:#}"))?;
+    let pr = gh_json(Path::new(&project.repo_path), &["pr", "view", &url, "--json", "reviewDecision,latestReviews"], env.as_ref())
+        .await
+        .ok_or("couldn't read the pull request's reviews from GitHub")?;
+    Ok(match pr["reviewDecision"].as_str() {
+        Some("APPROVED") => true,
+        Some("CHANGES_REQUESTED") => false,
+        // A repository with no required reviews has no decision: go by the latest review of each reviewer.
+        _ => {
+            let reviews = pr["latestReviews"].as_array().cloned().unwrap_or_default();
+            reviews.iter().any(|r| r["state"] == "APPROVED") && !reviews.iter().any(|r| r["state"] == "CHANGES_REQUESTED")
+        }
+    })
+}
+
 /// Look up the pull request for a task's branch with `gh` once its agent's run ends, and keep
 /// its URL on the task. Skipped when the task already has one; quietly gives up when `gh`
 /// isn't installed or signed in, or the branch has no pull request yet.
