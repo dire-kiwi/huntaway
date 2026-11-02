@@ -325,12 +325,13 @@ fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled()
 #[test]
 fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skipped() {
     // Builds of start_from had it as version 65 (skipping that version's limit columns), then 71
-    // (skipping restart_window), then 73 (skipping the runs' sessions); the first two had no
-    // merge_approval (72) either.
+    // (skipping restart_window), then 73 (skipping the runs' sessions), then 74 (skipping pr_checks);
+    // the first two had no merge_approval (72) either, and none before 74 had pr_checks.
     let skipped = [
         (65, "ALTER TABLE tasks DROP COLUMN limit_reset_at; ALTER TABLE profiles DROP COLUMN limit_wait; ALTER TABLE profiles DROP COLUMN limit_switch; ALTER TABLE profiles DROP COLUMN merge_approval;"),
         (71, "ALTER TABLE claude_configs DROP COLUMN restart_window; ALTER TABLE profiles DROP COLUMN merge_approval;"),
-        (73, "ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost;"),
+        (73, "ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; ALTER TABLE tasks DROP COLUMN pr_checks;"),
+        (74, "ALTER TABLE tasks DROP COLUMN pr_checks;"),
     ];
     for (version, dropped) in skipped {
         let path = crate::testing::temp_dir().join("huntaway.db");
@@ -349,6 +350,7 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
             ("profiles", "merge_approval"),
             ("runs", "session_id"),
             ("runs", "session_cost"),
+            ("tasks", "pr_checks"),
         ];
         for (table, column) in columns {
             let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();
@@ -632,6 +634,25 @@ fn a_database_from_version_70_gets_restart_window_off() {
     assert_eq!((cfg.show_usage, cfg.restart_window), (true, false));
     let cfg = update_claude_config(&c, "c", &[("restart_window", json!(true))]).unwrap().unwrap();
     assert!(cfg.restart_window);
+}
+
+#[test]
+fn a_database_at_version_73_gets_tasks_pr_checks() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let id = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let t = insert_task(&c, t).unwrap();
+        c.execute_batch("ALTER TABLE tasks DROP COLUMN pr_checks; PRAGMA user_version=73;").unwrap();
+        t.id
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert_eq!(get_task(&c, &id).unwrap().unwrap().pr_checks, None);
+    let checks = PrChecks { url: "https://github.com/o/r/pull/1".into(), head: "a1".into(), outcome: "failed".into(), since: "1".into(), ..Default::default() };
+    let t = update_task(&c, &id, &[("pr_checks", json!(checks))]).unwrap().unwrap();
+    assert_eq!(t.pr_checks, Some(checks));
 }
 
 #[test]

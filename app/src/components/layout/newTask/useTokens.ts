@@ -38,7 +38,7 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
     ),
   );
   const depKey = (t: Task) => `${depProject?.key}-${t.number}`;
-  // What its worktree starts from (API 94), as `from:` and another task's key (to stack it on that task's branch), a
+  // What its worktree starts from (API 95), as `from:` and another task's key (to stack it on that task's branch), a
   // branch, a pull request (`#12` or its URL) or a commit, which the host makes out. Not a subproject's task, which
   // starts from the subproject's branch. A key of the project's that isn't one of its tasks to stack on isn't known.
   const fromOk = deps && hostSupports(host, START_FROM_API) && !subproject;

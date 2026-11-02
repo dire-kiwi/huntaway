@@ -155,6 +155,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/review", post(review_task))
         .route("/tasks/{id}/review/extend", post(extend_review))
         .route("/tasks/{id}/summary", post(summarise_task))
+        .route("/tasks/{id}/fix_checks", post(fix_checks))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))
         .route("/tasks/{id}/diff", get(task_diff))

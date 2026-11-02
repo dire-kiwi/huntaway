@@ -1225,7 +1225,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
-- **Starting from elsewhere** (API 94): a task's worktree can start from something other than the
+- **Starting from elsewhere** (API 95): a task's worktree can start from something other than the
   project's base branch, picked before it's made: type `from:` in the new task dialog's
   description (it suggests the project's open tasks and its branches), fill in *Starts from* in
   the task's *Worktree* details before its first run (or after a setup that failed before making
@@ -1533,7 +1533,7 @@ Each run gets the `huntaway` MCP server (`huntaway mcp`, configured per run):
 *Waiting*), plus the internal `permission_prompt`. Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
-`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 94, see
+`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 95, see
 *Starting from elsewhere*), and task summaries say what a task started from.
 
 From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:
@@ -1657,6 +1657,34 @@ left alone. Turn it off for a project with *Move a task to Done when its pull re
 GitHub* in its settings (`done_when_merged`, on by default). An agent `wait`ing on its pull
 request is told it was merged and marks the task done itself, as its project's instructions say;
 if its run ends without doing so, the next read moves the task.
+
+A project can have its tasks' pull requests watched while they're in *In review* (*Watch pull
+requests in review* in its settings' Review tab, `watch_pull_requests`, API 72): every 2 minutes,
+while the agent is idle, the host reads the pull request (as a `wait` does, with the same record of
+what the agent has been told) and wakes the agent with failed checks and conflicts (`failures`),
+or with comments and reviews from people who can push to the repository too (`all`).
+
+### Failed checks
+
+The reads above (a `wait` on a pull request, watching it in review, and the reads for *Done when
+merged*, which also ask for the head commit's checks) keep how the task's pull request's checks
+stood on the task (`pr_checks`, API 94, DB 74): the head commit, the outcome (`failed`, `passed`,
+`pending` or `none`), the failed checks' names, conclusions and links, and how many passed and are
+still running. It's only written when that changes. No reads are added for it, so a task whose
+pull request isn't read by any of them (in *In progress* without a `wait`, or in a project with
+*Done when merged* off and no watching) has none. While the latest read found failed checks, the
+task's card shows a red mark next to its pull request icon (naming them in its tooltip), and its
+sidebar lists them under Pull request, each linking to its run.
+
+**Fix broken checks** there (`POST /tasks/{id}/fix_checks`) reads the pull request again, as the
+task's GitHub account, and sends its agent the failed checks with the end of each GitHub Actions
+job's failed steps' log (`gh run view --job <id> --log-failed`, for 5 jobs at most: the last 80
+lines, up to 6,000 characters, without times, colours or grouping markers) inside
+`<untrusted-data>` tags, asking it to fix them and push. It goes as your message (to the agent
+while it works, or starting its turn, which moves the task to *In progress*), but the task isn't
+re-titled from it, and those failures count as told, so watching the task in review doesn't wake
+the agent with them again. With no failed checks on the head commit, it says so and sends
+nothing. A wake for failed checks while the task is watched in review brings the same log ends.
 
 ### Preview URLs
 

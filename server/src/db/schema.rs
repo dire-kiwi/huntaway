@@ -746,8 +746,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=73; COMMIT;")?;
     }
     if version < 74 {
+        // How a task's pull request's checks stood at the latest read (see Task::pr_checks).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='pr_checks'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN pr_checks TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=74; COMMIT;"))?;
+    }
+    if version < 75 {
         // What a task's worktree starts from, when not the project's base branch (see Task::start_from).
-        // Builds of this before it was version 74 had it as version 65, 71 or 73, and skipped what those
+        // Builds of this before it was version 75 had it as version 65, 71, 73 or 74, and skipped what those
         // versions add, so their columns are added here too if they aren't there (and 73's recount).
         conn.execute_batch("BEGIN;")?;
         let cols = [
@@ -756,6 +762,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             ("profiles", "limit_wait", "INTEGER NOT NULL DEFAULT 0"),
             ("profiles", "limit_switch", "INTEGER NOT NULL DEFAULT 0"),
             ("claude_configs", "restart_window", "INTEGER NOT NULL DEFAULT 0"),
+            ("tasks", "pr_checks", "TEXT"),
         ];
         for (table, column, kind) in cols {
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
@@ -768,14 +775,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             conn.execute_batch("ALTER TABLE runs ADD COLUMN session_id TEXT; ALTER TABLE runs ADD COLUMN session_cost REAL;")?;
             recount_run_costs(&conn)?;
         }
-        conn.execute_batch("PRAGMA user_version=74; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=75; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 74;
+pub const VERSION: i64 = 75;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

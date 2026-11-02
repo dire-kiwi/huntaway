@@ -19,7 +19,7 @@ function startFromText(sf: StartFrom | null | undefined, other: Task | undefined
 }
 
 /**
- * What the task's worktree starts from (API 94): until its branch exists, another task's key (stacking it on that task's
+ * What the task's worktree starts from (API 95): until its branch exists, another task's key (stacking it on that task's
  * branch), a branch, a pull request or a commit, or blank for the base branch; then what it started from, if anything.
  * A subproject's tasks start from its branch.
  */

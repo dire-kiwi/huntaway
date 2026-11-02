@@ -1,4 +1,4 @@
-//! Values kept on a task as JSON: its external links, context, the agent's wait, steers, reviewers
+//! Values kept on a task as JSON: its external links, its pull request's checks, context, the agent's wait, steers, reviewers
 //! and reviews.
 
 use super::*;
@@ -21,6 +21,40 @@ pub const LINK_PROVIDERS: &[&str] = &["asana"];
 /// How many external links a task can have.
 pub const MAX_LINKS: usize = 20;
 
+/// How a task's pull request's checks stood on its head commit when the board last read them:
+/// by a `wait` on it, while it's watched in review, when its state is read for *Done when merged*,
+/// or for *Fix broken checks* (see mcp/pr_watch.rs's record_checks). Stored on its task as JSON.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct PrChecks {
+    /// The pull request read (see pr_watch::Target::url).
+    pub url: String,
+    /// The head commit whose checks these are.
+    pub head: String,
+    /// `failed` (one or more did), `passed` (all those that have to), `pending` or `none`.
+    pub outcome: String,
+    /// The checks that failed (`FAILED_MAX` at most).
+    #[serde(default)]
+    pub failed: Vec<FailedCheck>,
+    /// How many more failed than are listed.
+    #[serde(default)]
+    pub more_failed: usize,
+    #[serde(default)]
+    pub pending: usize,
+    #[serde(default)]
+    pub passed: usize,
+    /// When a read first found them like this.
+    pub since: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct FailedCheck {
+    /// `Workflow / job` for GitHub Actions, the check's or status's name otherwise.
+    pub name: String,
+    /// How it ended: `failure`, `cancelled`, `timed_out`…
+    pub conclusion: String,
+    pub url: Option<String>,
+}
+
 /// How much of a thread's context window its agent's session uses (see agent/context.rs), stored on
 /// its task as JSON.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -41,7 +75,7 @@ pub struct Context {
     pub detail_at: Option<String>,
 }
 
-/// What a task's worktree starts from instead of the project's base branch (API 94), stored on
+/// What a task's worktree starts from instead of the project's base branch (API 95), stored on
 /// it as JSON. Set before the worktree is made; worktree::setup turns it into the task's base
 /// branch (which its pull request targets and its changes are compared with) and the commit its
 /// branch starts at.
