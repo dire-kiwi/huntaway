@@ -421,7 +421,7 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
 | `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
-| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update changes the app itself rather than only the server and the UI |
+| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
 
@@ -463,9 +463,18 @@ version is all a check does; quitting and starting the app again still runs the 
 - **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
   rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
   each. Deleting `app/` goes back to the app's own server.
-- **The app itself.** Most releases change only the server and the UI. When a release newer than the
-  app also changes it (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records),
-  Settings → Server says so and how to install it. An app installed from a prerelease isn't offered
+- **The app's own code.** The window, notifications, badge and the server launcher (`app/electron/`) update
+  with the server, like the UI. The app's entry point, `boot.cjs`, loads `electron/main.cjs` from the `electron/`
+  folder of the version the server runs (each release's server tarball has one, with a `shell.json` naming the
+  Electron it was written for), and falls back to the copy in the package. After an Update has restarted the
+  server and the board has reloaded, the app relaunches once onto the new code. A shell that throws as it loads, or
+  that stops without the app quitting in its first 20 seconds, is marked bad (`app/shell-state.json`) and the
+  package's runs instead; the server version stays. A shell written for another Electron major version isn't loaded.
+  `IA_RELEASE_UPDATES` blank or a remote `serverUrl` turn this off with the rest.
+- **What needs a new package.** Only Electron itself and `boot.cjs` (the "frame"), which
+  `huntaway-<v>-release.json` records as `shell`. When a release newer than the app changes either,
+  Settings → Server says so and how to install it. An app installed before `boot.cjs` existed needs one new package
+  to start getting its code this way. An app installed from a prerelease isn't offered
   an older release's package while prereleases are off. The AppImage's **Update app** downloads the new AppImage beside the
   running one, checks it, renames it over the old file and relaunches. The pacman package's
   **Install** downloads and checks the `.pacman`, then runs `pkexec pacman -U --noconfirm` on it,
