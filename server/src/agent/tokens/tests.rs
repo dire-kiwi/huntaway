@@ -14,7 +14,7 @@ fn usage(thread: &str, total: (i64, i64, i64), last: (i64, i64, i64)) -> String 
     json!({"method": "thread/tokenUsage/updated", "params": {"threadId": thread, "tokenUsage": {"total": u(total), "last": u(last)}}}).to_string()
 }
 
-fn none(_: &str) -> Option<BTreeMap<String, Counts>> {
+fn none(_: &str) -> Option<Before> {
     None
 }
 
@@ -36,7 +36,7 @@ fn a_claude_run_uses_what_its_sessions_totals_went_up_by() {
 
     // A later run that resumes the session goes on from those totals.
     let snapshot = c.snapshot.clone();
-    let mut earlier = |s: &str| (s == "s1").then(|| snapshot.clone());
+    let mut earlier = |s: &str| (s == "s1").then(|| Before { totals: snapshot.clone(), tail: BTreeMap::new() });
     let next = count_claude([result("s1", json!({"claude-opus-5-5": opus(9, 200, 4000, 2.0), "claude-haiku-5-5": opus(1, 2, 0, 0.01)}))].into_iter(), &mut earlier);
     assert_eq!(next.models["claude-opus-5-5"].output, 50);
     assert_eq!(next.models["claude-opus-5-5"].cache_read, 1000);
@@ -71,7 +71,7 @@ fn a_codex_run_counts_each_threads_increase() {
 
     // Resumed: the thread says its old totals again first, then goes on.
     let snapshot = c.snapshot.clone();
-    let mut earlier = |t: &str| snapshot.contains_key(t).then(|| snapshot.clone());
+    let mut earlier = |t: &str| snapshot.contains_key(t).then(|| Before { totals: snapshot.clone(), tail: BTreeMap::new() });
     let lines = [usage("main", (300, 200, 30), (200, 160, 20)), usage("main", (400, 250, 40), (100, 50, 10))];
     let next = count_codex(lines.into_iter(), "gpt-6.1-sol", &mut earlier);
     assert_eq!(next.models["gpt-6.1-sol"].output, 10);
@@ -165,4 +165,56 @@ fn a_codex_subagents_tokens_go_to_its_own_model() {
     let c = count_codex(lines.into_iter(), "codex", &mut none);
     let out: Vec<(&str, i64)> = c.models.iter().map(|(m, n)| (m.as_str(), n.output)).collect();
     assert_eq!(out, [("gpt-6-astra", 7), ("gpt-6-luna", 200), ("gpt-6.1-sol", 13)]);
+}
+
+/// An `assistant` message of request `id`, as Claude Code prints one for each of its content blocks.
+fn reply(id: &str, model: &str, input: i64, output: i64, parent: Option<&str>) -> String {
+    json!({"type": "assistant", "parent_tool_use_id": parent, "message": {"id": id, "model": model, "content": [{"type": "text", "text": "…"}],
+        "usage": {"input_tokens": input, "output_tokens": output, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 0}}})
+    .to_string()
+}
+
+#[test]
+fn a_claude_run_that_ends_without_a_result_counts_its_requests() {
+    let lines = [
+        json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string(),
+        reply("m1", "claude-opus-5-5", 1200, 10, None),
+        // The same request's next content block, with more of its output.
+        reply("m1", "claude-opus-5-5", 1200, 300, None),
+        // A subagent's, and a synthetic message (an error) that wasn't sent to the model.
+        reply("m2", "claude-haiku-5-5", 50, 5, Some("toolu_1")),
+        reply("m3", "<synthetic>", 0, 0, None),
+    ];
+    let c = count_claude(lines.into_iter(), &mut none);
+    let out: Vec<(&str, i64, i64)> = c.models.iter().map(|(m, n)| (m.as_str(), n.input, n.output)).collect();
+    assert_eq!(out, [("claude-haiku-5-5", 50, 5), ("claude-opus-5-5", 1200, 300)]);
+    assert!(c.estimated);
+    assert_eq!(c.session.as_deref(), Some("s1"));
+    assert_eq!(c.tail["claude-opus-5-5"].output, 300);
+}
+
+#[test]
+fn a_claude_runs_requests_after_its_last_result_count_once() {
+    let lines = [
+        json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string(),
+        reply("m1", "claude-opus-5-5", 5, 100, None),
+        result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)})),
+        // The next turn was stopped before its result.
+        reply("m2", "claude-opus-5-5", 2, 40, None),
+    ];
+    let c = count_claude(lines.into_iter(), &mut none);
+    // m1 is in the result's totals; m2 is counted from its message.
+    assert_eq!(c.models["claude-opus-5-5"].output, 140);
+    assert_eq!(c.snapshot["claude-opus-5-5"].output, 140);
+    assert_eq!(c.tail["claude-opus-5-5"].output, 40);
+    let before = Before { totals: c.snapshot.clone(), tail: c.tail.clone() };
+
+    // The next run resumes the session. Claude Code kept the stopped turn in its totals: it goes on from them.
+    let mut earlier = |_: &str| Some(before.clone());
+    let kept = count_claude([result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))].into_iter(), &mut earlier);
+    assert_eq!(kept.models["claude-opus-5-5"].output, 30);
+    // It didn't: it goes on from the totals before it, not from nothing.
+    let lost = count_claude([result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))].into_iter(), &mut earlier);
+    assert_eq!(lost.models["claude-opus-5-5"].output, 30);
+    assert!(!lost.estimated);
 }

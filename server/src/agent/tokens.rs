@@ -11,7 +11,8 @@
 //!   latest earlier run in the session (`usage_session`, `usage_snapshot`), or from nothing in a
 //!   new session or one whose totals went down (Claude Code started counting again). A run's cost
 //!   is also what the board charged it: one counted from nothing because its earlier runs' output
-//!   was gone is scaled down to that, and estimated.
+//!   was gone is scaled down to that, and estimated. Requests after a run's last `result` are
+//!   counted from their own messages (see `count_claude`).
 //! - Codex's `thread/tokenUsage/updated` has each thread's totals (subagents' threads are their
 //!   own) and its latest request's (`last`). Threads keep their totals when they're resumed, so a
 //!   run used what they went up by too. A thread whose earlier totals aren't known, or that went
@@ -131,26 +132,73 @@ pub struct Counted {
     pub models: BTreeMap<String, Counts>,
     pub session: Option<String>,
     pub snapshot: BTreeMap<String, Counts>,
+    /// The part of `snapshot` a Claude Code run's requests after its last `result` add, counted
+    /// from their own usage (see `count_claude`).
+    pub tail: BTreeMap<String, Counts>,
     /// Some of it is a guess (see the module's docs).
     pub estimated: bool,
 }
 
 /// The totals a run's agent started from: its task's latest earlier counted run's for session (or
-/// thread) `key`.
-type Earlier<'a> = dyn FnMut(&str) -> Option<BTreeMap<String, Counts>> + 'a;
+/// thread) `key`, and the part of them that run's requests after its last `result` add.
+type Earlier<'a> = dyn FnMut(&str) -> Option<Before> + 'a;
+
+#[derive(Debug, Default, Clone)]
+pub struct Before {
+    pub totals: BTreeMap<String, Counts>,
+    pub tail: BTreeMap<String, Counts>,
+}
+
+/// One Claude Code request's usage, from an `assistant` message (`v`), and its model and id.
+fn request_usage(v: &Value) -> Option<(String, String, Counts)> {
+    let m = &v["message"];
+    let model = m["model"].as_str().filter(|m| !m.starts_with('<'))?;
+    let id = m["id"].as_str()?;
+    let u = &m["usage"];
+    let n = |k: &str| u[k].as_i64().unwrap_or(0);
+    let c = Counts {
+        input: n("input_tokens"),
+        output: n("output_tokens"),
+        cache_read: n("cache_read_input_tokens"),
+        cache_write: n("cache_creation_input_tokens"),
+        ..Default::default()
+    };
+    Some((id.to_string(), model.to_string(), c))
+}
 
 /// What a Claude Code run used, from its output's lines.
+///
+/// Requests after the run's last `result` (a turn stopped, or a run that failed or was killed
+/// before its result) aren't in any totals: they're counted from their `assistant` messages' own
+/// usage, each request once (its message comes once for each content block), subagents' included,
+/// and estimated (a message's output count can be short of the request's). They go in the
+/// session's totals too, as `tail`: Claude Code keeps them in its totals if it saved them as the
+/// run ended, so a run that resumes the session goes on from the totals with them, or else from
+/// the totals without them.
 pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) -> Counted {
     let mut out = Counted { runtime: "claude", ..Default::default() };
     let mut session: Option<String> = None;
-    // The session the totals in `out.snapshot` are for.
+    // The session the totals in `out.snapshot` are for, and those totals without the earlier
+    // run's tail, if it had one.
     let mut base_session: Option<String> = None;
     let mut have_base = false;
+    let mut without_tail: Option<BTreeMap<String, Counts>> = None;
+    // The assistant messages since the latest result, which no result's totals have.
+    let mut since: Vec<String> = Vec::new();
     for line in lines {
-        if !line.contains("\"result\"") && !line.contains("\"init\"") {
+        let (assistant, other) = (line.contains("\"assistant\""), line.contains("\"result\"") || line.contains("\"init\""));
+        if !other {
+            // Read once it's known whether a result comes after it.
+            if assistant {
+                since.push(line);
+            }
             continue;
         }
         let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        if v["type"] == "assistant" {
+            since.push(line);
+            continue;
+        }
         if v["type"] == "system" && v["subtype"] == "init" {
             session = v["session_id"].as_str().map(String::from).or(session);
             continue;
@@ -159,23 +207,63 @@ pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) 
             continue;
         }
         let Some(usage) = v["modelUsage"].as_object().filter(|m| !m.is_empty()) else { continue };
+        since.clear();
         let sid = v["session_id"].as_str().map(String::from).or(session.clone());
         if !have_base || base_session != sid {
-            out.snapshot = sid.as_deref().and_then(&mut *earlier).unwrap_or_default();
+            let before = sid.as_deref().and_then(&mut *earlier).unwrap_or_default();
+            without_tail = (!before.tail.is_empty()).then(|| {
+                let mut t = before.totals.clone();
+                for (m, tail) in &before.tail {
+                    if let Some(c) = t.get_mut(m) {
+                        *c = c.minus(tail);
+                    }
+                }
+                t
+            });
+            out.snapshot = before.totals;
             base_session = sid.clone();
             have_base = true;
         }
         let totals: BTreeMap<String, Counts> = usage.iter().map(|(m, u)| (m.clone(), Counts::from_claude(u))).collect();
-        // Counting started again: a model it had is gone, or went down.
-        if out.snapshot.iter().any(|(m, before)| totals.get(m).is_none_or(|now| !now.covers(before))) {
-            out.snapshot.clear();
+        let covered = |before: &BTreeMap<String, Counts>| before.iter().all(|(m, b)| totals.get(m).is_some_and(|now| now.covers(b)));
+        if !covered(&out.snapshot) {
+            match without_tail.take() {
+                // Claude Code didn't keep the earlier run's tail.
+                Some(t) if covered(&t) => out.snapshot = t,
+                // Counting started again: a model it had is gone, or went down.
+                _ => out.snapshot.clear(),
+            }
         }
+        without_tail = None;
         for (model, now) in &totals {
             let used = now.minus(out.snapshot.get(model).unwrap_or(&Counts::default()));
             out.models.entry(model.clone()).or_default().add(&used);
         }
         out.snapshot = totals;
         out.session = sid;
+    }
+    // The requests after the last result.
+    let mut requests: BTreeMap<String, (String, Counts)> = BTreeMap::new();
+    for line in since {
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        if v["type"] != "assistant" {
+            continue;
+        }
+        let Some((id, model, c)) = request_usage(&v) else { continue };
+        let r = requests.entry(id).or_insert((model, c));
+        r.1.output = r.1.output.max(c.output);
+    }
+    for (model, c) in requests.into_values() {
+        if c.total() == 0 {
+            continue;
+        }
+        out.estimated = true;
+        out.models.entry(model.clone()).or_default().add(&c);
+        out.snapshot.entry(model.clone()).or_default().add(&c);
+        out.tail.entry(model).or_default().add(&c);
+        if out.session.is_none() {
+            out.session = session.clone();
+        }
     }
     out.models.retain(|_, c| c.total() > 0 || c.cost > 0.0);
     out
@@ -226,7 +314,7 @@ pub fn count_codex(lines: impl Iterator<Item = String>, model: &str, earlier: &m
         let total = Counts::from_codex(&p["tokenUsage"]["total"]);
         let last = Counts::from_codex(&p["tokenUsage"]["last"]);
         if !out.snapshot.contains_key(thread) {
-            if let Some(before) = earlier(thread).and_then(|mut s| s.remove(thread)) {
+            if let Some(before) = earlier(thread).and_then(|mut s| s.totals.remove(thread)) {
                 out.snapshot.insert(thread.to_string(), before);
             }
         }
@@ -292,20 +380,24 @@ fn count_run(state: &Shared, run: &RunRow) -> Result<()> {
     let dir = run_dir(state, &run.id);
     let out_file = dir.join("out.jsonl");
     // The totals the task's latest earlier counted run had reached for a session or thread.
-    let mut earlier = |key: &str| -> Option<BTreeMap<String, Counts>> {
+    let mut earlier = |key: &str| -> Option<Before> {
         let c = state.db();
-        let snap: Option<String> = c
+        let snap: Option<(String, Option<String>)> = c
             .query_row(
-                "SELECT usage_snapshot FROM runs WHERE task_id=?1 AND rowid < ?2 AND usage_snapshot IS NOT NULL
+                "SELECT usage_snapshot, usage_tail FROM runs WHERE task_id=?1 AND rowid < ?2 AND usage_snapshot IS NOT NULL
                    AND (usage_session=?3 OR (usage_session IS NULL AND instr(usage_snapshot, ?4) > 0))
                  ORDER BY rowid DESC LIMIT 1",
                 params![run.task_id, run.rowid, key, format!("\"{key}\"")],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
             .ok()
             .flatten();
-        snap.and_then(|s| serde_json::from_str(&s).ok())
+        let (totals, tail) = snap?;
+        Some(Before {
+            totals: serde_json::from_str(&totals).ok()?,
+            tail: tail.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
+        })
     };
     let counted = if !out_file.exists() {
         estimate(state, run)?
@@ -411,7 +503,11 @@ fn save(state: &Shared, run_id: &str, counted: &Counted) -> Result<()> {
         )?;
     }
     let snapshot = (!counted.snapshot.is_empty()).then(|| serde_json::to_string(&counted.snapshot)).transpose()?;
-    tx.execute("UPDATE runs SET usage_at=?1, usage_session=?2, usage_snapshot=?3 WHERE id=?4", params![now(), counted.session, snapshot, run_id])?;
+    let tail = (!counted.tail.is_empty()).then(|| serde_json::to_string(&counted.tail)).transpose()?;
+    tx.execute(
+        "UPDATE runs SET usage_at=?1, usage_session=?2, usage_snapshot=?3, usage_tail=?4 WHERE id=?5",
+        params![now(), counted.session, snapshot, tail, run_id],
+    )?;
     tx.commit()?;
     Ok(())
 }

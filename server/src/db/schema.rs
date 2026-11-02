@@ -822,7 +822,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             conn.execute_batch("DROP TABLE review_stats;")?;
         }
         conn.execute_batch(SCHEMA_V78)?;
-        for column in ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT"] {
+        for column in ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT", "usage_tail TEXT"] {
             let name = column.split(' ').next().unwrap();
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [name], |r| r.get(0))?;
             if !has {
@@ -844,7 +844,7 @@ pub const VERSION: i64 = 78;
 /// thought in. `estimated` rows are guesses: a run whose output was gone has its cost and no
 /// tokens. A run's `usage_at` says when it was counted, and `usage_session` and `usage_snapshot`
 /// the totals its agent's session (or Codex's threads) had reached, which a later run that resumes
-/// the session goes on from.
+/// the session goes on from; `usage_tail` the part of them its requests after its last result add.
 ///
 /// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed,
 /// with when its review round started (`round`).
