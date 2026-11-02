@@ -527,3 +527,18 @@ fn only_a_review_with_issues_left_after_its_rounds_can_be_extended() {
         crate::agent::runs::TEST_CAN_RUN.set(false);
     })
 }
+
+#[test]
+fn rounds_added_to_a_cycle_of_fixes_end_with_it() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 1);
+        let extended = Review { fixes: 3, extra_rounds: 2, ..review_of(&s, &task) };
+        set_review(&s, &task.id, &extended).unwrap();
+        submit(&s, &threads[0], "run", &json!({"verdict": "pass"})).unwrap();
+        finished(&s, &threads[0], "run", &Outcome::Ok, None);
+        let r = review_of(&s, &task);
+        // So the next automatic review, which carries both on, gets the project's rounds.
+        assert_eq!((r.state.as_str(), r.fixes, r.extra_rounds), ("passed", 0, 0));
+    })
+}

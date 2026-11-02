@@ -503,7 +503,9 @@ fn combine(r: &mut Review) {
     };
     r.verdict = None;
     if r.state == "passed" {
+        // The next review that finds issues starts a cycle of the project's rounds, without any added to this one.
         r.fixes = 0;
+        r.extra_rounds = 0;
     }
 }
 
