@@ -730,12 +730,27 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=72; COMMIT;")?;
     }
+    if version < 73 {
+        // The Claude Code session a run is in and its total cost as it last said, which a run that
+        // resumes the session goes on from (see db::add_cost), and the costs counted twice before.
+        // Added only if they aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for column in ["session_id TEXT", "session_cost REAL"] {
+            let name = column.split(' ').next().unwrap();
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [name], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column};"))?;
+            }
+        }
+        recount_run_costs(&conn)?;
+        conn.execute_batch("PRAGMA user_version=73; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 72;
+pub const VERSION: i64 = 73;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for
@@ -849,6 +864,82 @@ CREATE INDEX IF NOT EXISTS automation_runs_automation ON automation_runs(automat
 CREATE INDEX IF NOT EXISTS automation_runs_status ON automation_runs(status, due_at);
 CREATE INDEX IF NOT EXISTS automation_runs_delivery ON automation_runs(automation_id, delivery_id);
 "#;
+
+/// Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and
+/// the task was charged what that went up by in the run, from nothing: so a run that resumed a
+/// session charged the task for all of the session's earlier runs again (see db::add_cost). Each
+/// run's cost becomes what the session's total went up by in it, and its task's cost and its
+/// first turn's (in `context_stats`) lose what they were charged twice.
+///
+/// Runs don't say which session they were in, but a thread's session is only replaced by a review
+/// round or a summary (a review run, see review.rs) or a rewind that starts a new conversation
+/// (its event says so, see checkpoints::handlers): any other run resumes the session its thread's
+/// previous run was in. Checkpoints say the session of the runs they were taken in, which starts
+/// a new one where it changes; and a total lower than the session's last means Claude Code
+/// started counting again. A run with no total (it ended before its first result) is left out.
+/// The runs of the thread's current session are put in it, so the next one's goes on from them.
+fn recount_run_costs(c: &Connection) -> Result<()> {
+    struct R {
+        id: String,
+        task_id: String,
+        kind: String,
+        cost: f64,
+        created_at: String,
+        session: Option<String>,
+    }
+    let mut st = c.prepare(
+        "SELECT r.id, r.task_id, r.kind, r.cost_usd, r.created_at,
+           (SELECT k.session FROM checkpoints k WHERE k.task_id=r.task_id AND k.run_id=r.id AND k.session IS NOT NULL ORDER BY k.n DESC LIMIT 1)
+         FROM runs r ORDER BY r.task_id, r.rowid",
+    )?;
+    let runs: Vec<R> = st
+        .query_map([], |r| Ok(R { id: r.get(0)?, task_id: r.get(1)?, kind: r.get(2)?, cost: r.get(3)?, created_at: r.get(4)?, session: r.get(5)? }))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut rewinds = c.prepare(
+        "SELECT created_at FROM messages WHERE task_id=?1 AND kind='event'
+           AND json_extract(data, '$.text') LIKE 'Rewound to before turn %the next message starts a new conversation%'",
+    )?;
+    for task in runs.chunk_by(|a, b| a.task_id == b.task_id) {
+        let task_id = &task[0].task_id;
+        let session: Option<String> = c.query_row("SELECT session_id FROM tasks WHERE id=?1", [task_id], |r| r.get(0)).optional()?.flatten();
+        let fresh: Vec<String> = rewinds.query_map([task_id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        // The session's total before each run, where the latest session started and what it's
+        // known to be.
+        let (mut total, mut start, mut known, mut twice) = (0.0, 0, None, 0.0);
+        for (i, run) in task.iter().enumerate() {
+            let rewound = i > 0 && fresh.iter().any(|at| *at > task[i - 1].created_at && *at < run.created_at);
+            let other = known.is_some() && run.session.is_some() && known != run.session.as_ref();
+            if run.kind == "review" || rewound || other || (run.cost > 0.0 && run.cost < total) {
+                (total, start, known) = (0.0, i, None);
+            }
+            known = run.session.as_ref().or(known);
+            if run.cost <= 0.0 {
+                continue;
+            }
+            let before = total;
+            total = run.cost;
+            if before > 0.0 {
+                twice += before;
+                c.execute("UPDATE runs SET cost_usd=?1 WHERE id=?2", params![run.cost - before, run.id])?;
+                c.execute(
+                    "UPDATE context_stats SET cost_usd=MAX(cost_usd-?1, 0) WHERE id=(SELECT MIN(id) FROM context_stats WHERE run_id=?2 AND kind='turn') AND cost_usd >= ?1",
+                    params![before, run.id],
+                )?;
+            }
+        }
+        if twice > 0.0 {
+            c.execute("UPDATE tasks SET cost_usd=MAX(cost_usd-?1, 0) WHERE id=?2", params![twice, task_id])?;
+        }
+        // Unless the latest runs are known to have been in another session.
+        if let Some(session) = session.as_ref().filter(|s| known.is_none_or(|k| k == *s)) {
+            for run in &task[start..] {
+                // Its old cost was the session's total.
+                c.execute("UPDATE runs SET session_id=?1, session_cost=?2 WHERE id=?3", params![session, (run.cost > 0.0).then_some(run.cost), run.id])?;
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Scratch chats, a project's and the profile's own, become scratch tasks. They're in no
 /// project, and done (they can still be opened and carried on), numbered in the order they were

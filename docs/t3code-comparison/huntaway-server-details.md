@@ -302,7 +302,8 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 ### 4.9 Cost, context, compaction, usage
 
 - **Cost** (`handle_line` in `src/agent/runner.rs`): from Claude's `result` event `total_cost_usd`, a running
-  total per process; the increase is added to the run's and the task's `cost_usd`. Codex runs report no
+  total per session (a resumed session's goes on from its earlier runs'); the increase over the session's last
+  total is added to the run's and the task's `cost_usd` (`db::add_cost`, since HA-108). Codex runs report no
   cost (`src/agent/codex.rs` has none), so Codex tasks stay at $0. The README mentions sorting by cost and
   comparing fan-out costs but not where cost comes from.
 - **Idle compaction** (README): a loop every 60 s finds sessions idle 50–60 min (`AUTO_COMPACT_AFTER`,
