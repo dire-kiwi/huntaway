@@ -1286,7 +1286,61 @@ fn a_database_from_version_72_counts_each_runs_cost_once() {
     let none = |id| s(id, None, None);
     assert_eq!(sessions, vec![none("a"), none("b"), none("c"), s("d", Some("s2"), Some(0.4)), s("e", Some("s2"), Some(0.9)), none("f"), none("g"), s("h", Some("r2"), Some(0.6))]);
     let next = insert_run(&c, &task, "prompt").unwrap();
-    assert!(close(add_cost(&c, &next.id, Some("s2"), 1.2).unwrap(), 0.3));
+    assert!(close(add_cost(&c, &next.id, Some("s2"), 1.2, true).unwrap(), 0.3));
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+// HA-108: a new session's runs that cost more than the old session's are a session of their own.
+#[test]
+fn a_database_from_version_72_keeps_new_sessions_apart() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (rewound, checkpointed) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "me", &[], None).unwrap();
+        let new = || NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (rewound, checkpointed) = (insert_task(&c, new()).unwrap().id, insert_task(&c, new()).unwrap().id);
+        c.execute_batch("ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; PRAGMA user_version=72;").unwrap();
+        // One task rewound to its first message between its runs, which started a new conversation
+        // (that cost more than the first); then a run of it that hadn't said its total yet. The
+        // other's checkpoints say its runs were in different sessions, then the same.
+        let runs = [(&rewound, "a", 1.0, "1"), (&rewound, "b", 2.0, "3"), (&rewound, "c", 0.0, "4"), (&checkpointed, "d", 1.0, "1"), (&checkpointed, "e", 2.0, "2")];
+        for (task_id, id, cost, at) in runs.into_iter().chain([(&checkpointed, "f", 2.5, "3")]) {
+            c.execute("INSERT INTO runs (id,task_id,kind,status,cost_usd,created_at) VALUES (?1,?2,'prompt','exited',?3,?4)", params![id, task_id, cost, at]).unwrap();
+        }
+        let text = "Rewound to before turn 1: 1 file restored, 0 files removed; the next message starts a new conversation";
+        c.execute("INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,'event',?2,'2')", params![rewound, json!({"level": "info", "text": text}).to_string()]).unwrap();
+        for (n, run, session) in [(1, "d", "k1"), (2, "e", "k2"), (3, "f", "k2")] {
+            c.execute(
+                "INSERT INTO checkpoints (task_id,n,kind,sha,tree,run_id,session,created_at) VALUES (?1,?2,'turn','s','t',?3,?4,'1')",
+                params![checkpointed, n, run, session],
+            )
+            .unwrap();
+        }
+        c.execute("UPDATE tasks SET cost_usd=3.0, session_id='new' WHERE id=?1", [&rewound]).unwrap();
+        c.execute("UPDATE tasks SET cost_usd=5.5, session_id='k2' WHERE id=?1", [&checkpointed]).unwrap();
+        (rewound, checkpointed)
+    };
+    let c = open(&path).unwrap();
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let runs: Vec<(String, f64, Option<String>, Option<f64>)> = c
+        .prepare("SELECT id, cost_usd, session_id, session_cost FROM runs ORDER BY rowid")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    let want = [("a", 1.0, None, None), ("b", 2.0, Some("new"), Some(2.0)), ("c", 0.0, Some("new"), None), ("d", 1.0, None, None), ("e", 2.0, Some("k2"), Some(2.0)), ("f", 0.5, Some("k2"), Some(2.5))];
+    assert_eq!(runs.len(), want.len());
+    for (got, want) in runs.iter().zip(want) {
+        assert!(got.0 == want.0 && close(got.1, want.1) && got.2.as_deref() == want.2 && got.3 == want.3, "{got:?} {want:?}");
+    }
+    let tasks = [get_task(&c, &rewound).unwrap().unwrap().cost_usd, get_task(&c, &checkpointed).unwrap().unwrap().cost_usd];
+    assert!(close(tasks[0], 3.0) && close(tasks[1], 3.5), "{tasks:?}");
+    // The run of the new conversation that was going during the upgrade starts from nothing.
+    assert!(close(add_cost(&c, "c", Some("new"), 0.25, true).unwrap(), 0.25));
     drop(c);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

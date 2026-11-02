@@ -149,5 +149,6 @@ emit({
     "duration_ms": 1,
     "num_turns": 1,
     "total_cost_usd": total,
+    "modelUsage": {model: {"inputTokens": 1, "outputTokens": 1, "costUSD": total}} if total else {},
 })
 sys.exit(int(os.environ.get("IA_FAKE_CLAUDE_EXIT", "0")))

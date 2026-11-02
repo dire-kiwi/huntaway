@@ -228,7 +228,10 @@ fn claude_result(state: &Shared, run: &Run, v: &Value) -> Result<()> {
     crate::agent::context::request(state, run);
     // A running total for the session, which goes on over its turns and the runs that resume it.
     let cost = match v["total_cost_usd"].as_f64() {
-        Some(total) => db::add_cost(&state.db(), &run.id, v["session_id"].as_str(), total)?,
+        Some(total) => {
+            let counted = v["modelUsage"].as_object().is_some_and(|m| !m.is_empty());
+            db::add_cost(&state.db(), &run.id, v["session_id"].as_str(), total, counted)?
+        }
         None => 0.0,
     };
     let task = db::get_task(&state.db(), task_id)?;

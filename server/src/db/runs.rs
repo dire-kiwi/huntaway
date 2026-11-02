@@ -95,8 +95,11 @@ pub fn later_run(c: &Connection, task_id: &str, run_id: &str) -> Result<bool> {
 /// that resumes one starts from what its earlier runs cost (Claude Code keeps a session's cost
 /// for it), so what the run adds is the increase over the session's last total, the run's own or
 /// else its task's latest earlier run's in that session. A new session (a review round's, say)
-/// starts from nothing, as does one whose total went down: Claude Code started counting again.
-pub fn add_cost(c: &Connection, run_id: &str, session: Option<&str>, total: f64) -> Result<f64> {
+/// starts from nothing, as does one whose total went down in a result that `counted` the model's
+/// use (it has `modelUsage`): Claude Code started counting again. A lower total in a result that
+/// didn't (Claude Code's own for a turn that failed, with a total of 0) is no count at all, and
+/// charges nothing.
+pub fn add_cost(c: &Connection, run_id: &str, session: Option<&str>, total: f64, counted: bool) -> Result<f64> {
     let before: Option<f64> = c
         .query_row(
             "SELECT o.session_cost FROM runs r JOIN runs o ON o.task_id=r.task_id AND o.rowid <= r.rowid
@@ -106,7 +109,11 @@ pub fn add_cost(c: &Connection, run_id: &str, session: Option<&str>, total: f64)
             |r| r.get(0),
         )
         .optional()?;
-    let before = before.filter(|b| *b <= total).unwrap_or(0.0);
+    let before = match before {
+        Some(b) if b > total && !counted => return Ok(0.0),
+        Some(b) if b <= total => b,
+        _ => 0.0,
+    };
     let cost = total - before;
     c.execute(
         "UPDATE runs SET cost_usd=cost_usd+?1, session_id=COALESCE(?2, session_id), session_cost=?3 WHERE id=?4",

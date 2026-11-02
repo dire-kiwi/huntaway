@@ -423,6 +423,7 @@ fn a_run_that_resumes_a_session_is_charged_only_what_it_adds() {
         let total = |session: &str, total: f64| {
             let mut r = result("success", total);
             r["session_id"] = json!(session);
+            r["modelUsage"] = json!({"claude-x": {"costUSD": total}});
             r
         };
         let next = |kind: &str| {
@@ -455,6 +456,18 @@ fn a_run_that_resumes_a_session_is_charged_only_what_it_adds() {
         ended(&resumed);
         let (t, r) = charged(&resumed);
         assert!(close(t, 2.5) && close(r, 0.75), "{t} {r}");
+        // A turn that failed before the model counted anything says a total of 0 (Claude Code's
+        // own result for it): it charges nothing, and the next run goes on from the last total.
+        let failed = next("prompt");
+        let error = json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "session_id": "s1", "total_cost_usd": 0, "modelUsage": {}});
+        output(&state, &failed, &[init("s1"), error]);
+        ended(&failed);
+        assert_eq!(charged(&failed), (2.5, 0.0));
+        let resumed = next("prompt");
+        output(&state, &resumed, &[init("s1"), total("s1", 2.75)]);
+        ended(&resumed);
+        let (t, r) = charged(&resumed);
+        assert!(close(t, 2.75) && close(r, 0.25), "{t} {r}");
 
         // A new session (a review round's, a rewind's) starts from nothing, even after a run that
         // started it and ended before its first result.
@@ -465,16 +478,16 @@ fn a_run_that_resumes_a_session_is_charged_only_what_it_adds() {
         output(&state, &fresh, &[init("s2"), total("s2", 3.0)]);
         ended(&fresh);
         let (t, r) = charged(&fresh);
-        assert!(close(t, 5.5) && close(r, 3.0), "{t} {r}");
+        assert!(close(t, 5.75) && close(r, 3.0), "{t} {r}");
         // So does a session whose total went down: Claude Code started counting again.
         let again = next("prompt");
         output(&state, &again, &[init("s2"), total("s2", 0.5)]);
         let (t, r) = charged(&again);
-        assert!(close(t, 6.0) && close(r, 0.5), "{t} {r}");
+        assert!(close(t, 6.25) && close(r, 0.5), "{t} {r}");
         // A result without a total charges nothing, and the next goes on from the last.
         output(&state, &again, &[json!({"type": "result", "subtype": "success", "session_id": "s2"}), total("s2", 0.75)]);
         let (t, r) = charged(&again);
-        assert!(close(t, 6.25) && close(r, 0.75), "{t} {r}");
+        assert!(close(t, 6.5) && close(r, 0.75), "{t} {r}");
     });
 }
 
