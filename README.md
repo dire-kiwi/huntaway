@@ -476,6 +476,18 @@ back to the tarball's own server, from the first Update on: the tarball's server
 `IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
 Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
+A hub deployed as a container (a board on a server, with the binary and UI in its image or bundle) can
+update itself from GitHub this way too, rather than being redeployed for every change: start it with
+`--release-updates dire-kiwi/huntaway` and keep `<data dir>` on a volume, so the versions in
+`<data dir>/app/` and `app/state.json` survive the container being recreated. Update restarts the server
+in place (the container's process stays), and when the container starts again the deployed server execs
+the version it last updated to, as above. A release serves its own `ui/` even when the deployment passes
+`--ui-dir`, and reports the commit it was built from (`IA_BUILD_COMMIT`, which `release.yml` sets) rather
+than the deployment's `IA_COMMIT` (in `/api/health`, and `running_commit` in `/api/admin/server`), so hosts
+that follow the hub with `--update-from` and the checkouts it updates go by the release's commit. The Linux
+releases are built on GitHub's `ubuntu-latest`, so their server needs glibc 2.39 or later (Debian 13,
+Ubuntu 24.04) in the image.
+
 `scripts/install-release-host.sh` installs a host this way: it downloads the latest release's tarball
 (or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
 `~/.local/share/huntaway-server/current` at it, and prints the command to start it with
@@ -555,8 +567,9 @@ reports `updates_from: "releases"` rather than `"checkout"`, API 89) goes by ver
 the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
 onto that release as its own Update would, checking for releases first if it hasn't seen it yet. It
 refuses a version older than its own, or one older than the latest release it knows of (update the
-hub first). A hub without a checkout or `IA_COMMIT` that runs a release sends only its version, so
-it can update release hosts but not checkouts.
+hub first). A hub without a checkout that runs a release sends its version and the commit the release was built
+from (`IA_BUILD_COMMIT`; a release from before that, or a build without it or `IA_COMMIT`, sends only its
+version, so it can update release hosts but not checkouts).
 
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
