@@ -40,6 +40,7 @@ import { Swatch, useTip } from "./chart";
 /** Each purpose keeps its colour whatever is shown (validated for CVD separation on the dark panel). */
 const COLOR: Record<Purpose, string> = Object.fromEntries(PURPOSES.map((p, i) => [p, PALETTE[i]])) as Record<Purpose, string>;
 const pct = (n: number, of: number) => (of ? `${Math.round((n * 100) / of)}%` : "–");
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function openTask(t: ATask | undefined) {
   if (t) navigate({ name: "task", taskId: t.id });
@@ -67,7 +68,7 @@ export function TokenStats({ data, project }: { data: TokenData; project: string
             </button>
           ))}
         </div>
-        {data.pending > 0 && <span className="text-[11.5px] text-faint">{data.pending} finished runs are still being counted</span>}
+        {data.pending > 0 && <span className="text-[11.5px] text-faint">{plural(data.pending, "finished run is", "finished runs are")} still being counted</span>}
       </div>
       <Tiles rows={rows} />
       <DailyChart data={scoped} metric={metric} />
@@ -100,7 +101,7 @@ function Tiles({ rows }: { rows: URow[] }) {
       <Tile label="All tokens" value={tokens(t ? allTokens(t) : 0)} hint={t ? `${tokens(t.cacheRead)} of them cache reads` : "none counted"} />
       <Tile label="Output tokens" value={tokens(t?.output ?? 0)} hint={t ? `${tokens(t.input + t.cacheWrite)} input and cache writes` : "–"} />
       <Tile label="Cost" value={usd(t?.cost ?? 0)} hint={codex.length ? `Claude's; Codex used ${tokens(codexTokens)} tokens` : "as Claude Code reports it"} />
-      <Tile label="Runs" value={String(t?.runs ?? 0)} hint={`on ${new Set(rows.map((r) => r.model)).size} models`} />
+      <Tile label="Runs" value={String(t?.runs ?? 0)} hint={`on ${plural(new Set(rows.map((r) => r.model)).size, "model")}`} />
     </div>
   );
 }
@@ -240,7 +241,7 @@ function ByPurpose({ data, metric }: { data: TokenData; metric: Metric }) {
                   <span className="flex items-center gap-2">
                     <Swatch color={COLOR[g.key]} />
                     {PURPOSE_LABEL[g.key]}
-                    <span className="text-faint">· {g.totals.runs} runs</span>
+                    <span className="text-faint">· {plural(g.totals.runs, "run")}</span>
                   </span>
                 </td>
                 <Cells t={g.totals} metric={metric} whole={whole} />
@@ -330,7 +331,7 @@ function Tasks({ data, metric }: { data: TokenData; metric: Metric }) {
               (u.children.length ? (
                 <button
                   className="shrink-0 rounded p-0.5 text-faint hover:text-fg"
-                  title={isOpen ? "Hide its tasks" : `Show its ${u.children.length} tasks`}
+                  title={isOpen ? "Hide its tasks" : `Show its ${plural(u.children.length, "task")}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     toggle();
@@ -425,15 +426,15 @@ function Reviews({ data }: { data: TokenData }) {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile label="Reviews" value={String(s.reviews)} hint={`of ${s.tasks} tasks, in ${tasks.reduce((n, t) => n + t.rounds.length, 0)} rounds`} />
-            <Tile label="Found serious issues" value={pct(s.withIssues, s.reviews)} hint={`${s.serious} issues in ${s.withIssues} reviews`} />
-            <Tile label="Passed the first round" value={pct(s.firstPassed, s.tasks)} hint={`${s.firstPassed} of ${s.tasks} tasks`} />
+            <Tile label="Reviews" value={String(s.reviews)} hint={`of ${plural(s.tasks, "task")}, in ${plural(tasks.reduce((n, t) => n + t.rounds.length, 0), "round")}`} />
+            <Tile label="Found serious issues" value={pct(s.withIssues, s.reviews)} hint={`${plural(s.serious, "issue")} in ${plural(s.withIssues, "review")}`} />
+            <Tile label="Passed the first round" value={pct(s.firstPassed, s.tasks)} hint={`${s.firstPassed} of ${plural(s.tasks, "task")}`} />
             <Tile
               label="Noted minor issues"
               value={pct(s.minorNoted, s.reviews)}
               hint={
                 <span title="Follow-up tasks the reviewed task's agent created after a review that noted minor issues">
-                  {s.minorTasksFollowedUp} of {s.minorTasks} tasks got {s.followUps} follow-ups
+                  {s.minorTasksFollowedUp} of {plural(s.minorTasks, "task")} got {plural(s.followUps, "follow-up")}
                 </span>
               }
             />
