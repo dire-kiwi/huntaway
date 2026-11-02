@@ -176,7 +176,7 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   with agents switched off, so `cargo build` in `server/` first). Files run 8 at a time (`IA_UI_TEST_JOBS`
   changes that), so a check mustn't count on a quiet machine: wait for what it reads rather than read it
   at once. Run one file with `node --experimental-strip-types --test tests/ui/<file>`. They aren't part of `npm test`,
-  but CI runs them (`Tests / ui`). Run them when you change the UI they cover, and add one when an interaction found a bug.
+  but CI runs them, split between three runners (`Tests / ui (1/3)` to `(3/3)`; `IA_UI_TEST_SHARD=2/3` runs the second third). Run them when you change the UI they cover, and add one when an interaction found a bug.
 - For a change meant to make the UI faster, measure it: `node scripts/ui-profile.mjs --env $TMPDIR/ia<N>-env
   --task <id>` opens a task with a long thread and feeds the page streamed tokens, task events and
   messages, then prints the main-thread time each took. Run it on the build with the change set
@@ -211,7 +211,7 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   rewrites whole files. Match the surrounding style, and check `git diff --stat` before committing.
 - CI runs `cargo test`, `npm run typecheck` and `npm test` on every PR, and `npm run test:ui` and
   `scripts/ia-api-test.py` (`.github/workflows/test.yml`, the `Tests / server`, `Tests / app` and
-  `Tests / ui` checks, on GitHub-hosted runners). Still run them
+  `Tests / ui (1/3)` to `(3/3)` checks, on GitHub-hosted runners). Still run them
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
 - `scripts/ia-api` has its own tests (a faked server and clock): `python3 scripts/ia-api-test.py`.

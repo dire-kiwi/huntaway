@@ -216,8 +216,8 @@ test("a push shows a notification, and a tap opens its task", async () => {
       const [board] = await self.clients.matchAll({ type: "window" });
       board.postMessage({ type: "open-task", task_id: id });
     }, [t.id]);
-    await ui.run([`wait ${t.title}`]);
-    assert.equal(new URL(page.url()).searchParams.get("task"), t.id);
+    // Not its title, which its card on the board already shows.
+    await page.waitForURL((url) => url.searchParams.get("task") === t.id);
     assert.equal(await page.evaluate(() => window.loadedOnce), true);
   });
 });
