@@ -121,6 +121,7 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}/remove-merged-worktrees", post(remove_merged_worktrees))
         .route("/projects/{id}/setup-thread", post(start_setup_thread))
         .route("/projects/{id}/system-prompt", get(system_prompt_preview))
+        .route("/projects/{id}/branches", get(project_branches))
         .route("/projects/{id}/automations", get(automations::list_handler).post(automations::create_handler))
         .route(
             "/automations/{id}",

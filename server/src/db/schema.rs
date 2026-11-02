@@ -763,6 +763,34 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=75; COMMIT;")?;
     }
     if version < 76 {
+        // What a task's worktree starts from, when not the project's base branch (see Task::start_from).
+        // Builds of this before it was version 76 had it as version 65, 71, 73, 74 or 75, and skipped what those
+        // versions add, so their columns are added here too if they aren't there (and 73's recount).
+        conn.execute_batch("BEGIN;")?;
+        let cols = [
+            ("tasks", "start_from", "TEXT"),
+            ("tasks", "limit_reset_at", "TEXT"),
+            ("profiles", "limit_wait", "INTEGER NOT NULL DEFAULT 0"),
+            ("profiles", "limit_switch", "INTEGER NOT NULL DEFAULT 0"),
+            ("claude_configs", "restart_window", "INTEGER NOT NULL DEFAULT 0"),
+            ("tasks", "pr_checks", "TEXT"),
+            ("profiles", "require_pr_approval", "INTEGER NOT NULL DEFAULT 0"),
+            ("projects", "require_pr_approval", "INTEGER"),
+        ];
+        for (table, column, kind) in cols {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name='session_id'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE runs ADD COLUMN session_id TEXT; ALTER TABLE runs ADD COLUMN session_cost REAL;")?;
+            recount_run_costs(&conn)?;
+        }
+        conn.execute_batch("PRAGMA user_version=76; COMMIT;")?;
+    }
+    if version < 77 {
         // When a task went into "now" (see Task::now_at); the others are in "later". Added only if it isn't
         // there, in case another migration takes this version first.
         conn.execute_batch("BEGIN;")?;
@@ -770,14 +798,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         if !has {
             conn.execute_batch("ALTER TABLE tasks ADD COLUMN now_at TEXT;")?;
         }
-        conn.execute_batch("PRAGMA user_version=76; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=77; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 76;
+pub const VERSION: i64 = 77;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

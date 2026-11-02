@@ -323,6 +323,51 @@ fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled()
 }
 
 #[test]
+fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skipped() {
+    // Builds of start_from had it as version 65 (skipping that version's limit columns), then 71
+    // (skipping restart_window), then 73 (skipping the runs' sessions), then 74 (skipping pr_checks),
+    // then 75 (skipping require_pr_approval); the first two had no merge_approval (72) either, and
+    // none before 74 had pr_checks.
+    let skipped = [
+        (65, "ALTER TABLE tasks DROP COLUMN limit_reset_at; ALTER TABLE profiles DROP COLUMN limit_wait; ALTER TABLE profiles DROP COLUMN limit_switch; ALTER TABLE profiles DROP COLUMN merge_approval;"),
+        (71, "ALTER TABLE claude_configs DROP COLUMN restart_window; ALTER TABLE profiles DROP COLUMN merge_approval;"),
+        (73, "ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; ALTER TABLE tasks DROP COLUMN pr_checks;"),
+        (74, "ALTER TABLE tasks DROP COLUMN pr_checks;"),
+        (75, "ALTER TABLE profiles DROP COLUMN require_pr_approval; ALTER TABLE projects DROP COLUMN require_pr_approval;"),
+    ];
+    for (version, dropped) in skipped {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(&format!("{dropped} PRAGMA user_version={version};")).unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let columns = [
+            ("tasks", "start_from"),
+            ("tasks", "limit_reset_at"),
+            ("profiles", "limit_wait"),
+            ("profiles", "limit_switch"),
+            ("claude_configs", "restart_window"),
+            ("profiles", "merge_approval"),
+            ("runs", "session_id"),
+            ("runs", "session_cost"),
+            ("tasks", "pr_checks"),
+            ("profiles", "require_pr_approval"),
+            ("projects", "require_pr_approval"),
+        ];
+        for (table, column) in columns {
+            let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();
+            assert!(has, "version {version}: {table}.{column}");
+        }
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+}
+
+#[test]
 fn a_database_from_version_54_gets_automations() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
@@ -712,14 +757,14 @@ fn a_database_at_version_67_gets_projects_pull_request_settings() {
 }
 
 #[test]
-fn a_database_at_version_75_has_every_task_in_later() {
-    // As master's build left it, with a review-approval setting (75) and no now/later split yet.
+fn a_database_at_version_76_has_every_task_in_later() {
+    // As master's build left it, with a worktree start point (76) and no now/later split yet.
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
         c.execute_batch(
             "ALTER TABLE tasks DROP COLUMN now_at;
-                 PRAGMA user_version=75;
+                 PRAGMA user_version=76;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
                  INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
                    VALUES ('t','p','task',1,'t','todo','1','1','1');",

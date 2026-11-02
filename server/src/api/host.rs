@@ -24,7 +24,7 @@ pub(super) async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Valu
 /// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
 /// URLs are shown with. And whether release checks include prereleases (`release_prereleases`,
 /// API 88), which checks again when it changes. And how many hours a task can go without activity
-/// in the board's Now view before it goes back to Later (`now_expiry_hours`, API 96; 0 for never,
+/// in the board's Now view before it goes back to Later (`now_expiry_hours`, API 97; 0 for never,
 /// null for the default of a day).
 pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.

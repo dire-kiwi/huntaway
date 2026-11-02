@@ -38,7 +38,7 @@ export function useSubmit(p: {
   const { heldBack, prefId, target, noProject, asGroup, project, inProject, host } = p.where;
   const { setModel, setEffort, setConfigPref, model, config, pickConfig, efforts } = p.agent;
   const { pending, setPending, runs, fanout, labelling, labels, text, docType, taskType, deps, dependsOn } = p.tok;
-  const { runEfforts, pickedEffort, untoken, harnessOf, effortList, runLabel, named, tokens } = p.tok;
+  const { runEfforts, pickedEffort, untoken, harnessOf, effortList, runLabel, named, tokens, startFrom, fromTask, codeTask } = p.tok;
   // As useTokens has it, here so that it narrows taskType below.
   const asSubproject = taskType === "subproject";
   const { attach, links, setLinks, hasContent, linking } = p.kept;
@@ -129,6 +129,7 @@ export function useSubmit(p: {
                     // Sent as the flag, which hosts before API 51 take too.
                     ...(asSubproject ? { subproject: true } : taskType ? { task_type: taskType } : docType ? { task_type: docType } : {}),
                     ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
+                    ...(startFrom !== undefined && codeTask ? { start_from: fromTask ? `task:${fromTask.id}` : startFrom } : {}),
                   }),
           );
         } catch (e) {

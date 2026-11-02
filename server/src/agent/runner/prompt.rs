@@ -122,7 +122,7 @@ pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> A
         task.base_branch = Some(base);
     }
     let github = match &task.branch {
-        Some(_) => worktree::github(&crate::util::expand_tilde(&project.repo_path), task.base_branch.as_deref()).await,
+        Some(_) => worktree::github(&crate::util::expand_tilde(&project.repo_path), worktree::remote_base(state, &task, &project).await.as_deref()).await,
         None => None,
     };
     let documents: Vec<(&str, String)> = crate::agent::documents::paths(state, &task).into_iter().map(|(l, p)| (l, path_str(&p))).collect();
@@ -236,7 +236,7 @@ fn ask_and_finish(done: &str) -> String {
 /// adds more). `group`: for a group task, its group's projects. `documents`: the files its labels ask it to
 /// write, by label (see agent/documents.rs). `github`: where a task with its own branch opens
 /// its pull request, if its repository is on GitHub.
-pub(super) fn system_prompt(
+pub(crate) fn system_prompt(
     task: &Task,
     project: Option<&Project>,
     parent: Option<&Task>,
@@ -401,6 +401,15 @@ pub(super) fn system_prompt(
                     task.base_branch.as_ref().map(|b| format!(" (branched from `{b}`)")).unwrap_or_default(),
                     // It pushes the branch for its pull request.
                     if github.is_some() { "merge or switch branches" } else { "push, merge, or switch branches" }
+                ));
+            }
+            // Stacked on another task's (or pull request's) branch, which it merges into rather than the project's.
+            if let (Some(sf @ (db::StartFrom::Task { .. } | db::StartFrom::PullRequest { .. })), Some(b), Some(_)) = (&task.start_from, &task.base_branch, &task.branch) {
+                let on = if matches!(sf, db::StartFrom::Task { .. }) { "another task" } else { "a pull request" };
+                s.push_str(&format!(
+                    " This task is stacked on {on}: `{b}` is that {}'s branch, so your work is compared with it and your pull request \
+                     targets it, and its own changes aren't yours to review or redo.",
+                    if matches!(sf, db::StartFrom::Task { .. }) { "task" } else { "pull request" }
                 ));
             }
             if task.subproject {

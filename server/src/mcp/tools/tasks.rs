@@ -92,6 +92,14 @@ pub(super) fn summarize(s: &Shared, t: &Task) -> Value {
             v["depends_on"] = json!(deps);
         }
     }
+    if let Some(sf) = &t.start_from {
+        let key = project_key(s, t);
+        v["start_from"] = json!(sf.describe(&s.db(), &key));
+        // Where that took it, once its worktree is made: what its pull request targets.
+        if t.branch.is_some() {
+            v["base_branch"] = json!(t.base_branch);
+        }
+    }
     if t.waiting {
         v["queued_for_dependencies"] = json!(true);
     }
