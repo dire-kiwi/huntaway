@@ -60,6 +60,17 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         ],
     );
     check_reminder(Some(&current), &mut fields)?;
+    // "now" puts the task in the Now view (from this moment), "later" takes it out.
+    match b.get("now") {
+        None | Some(Value::Null) => {}
+        Some(Value::Bool(on)) => {
+            if *on && current.kind != "task" {
+                return Err(ApiError::bad("only a task can be in now"));
+            }
+            fields.push(("now_at", if *on { json!(crate::util::now()) } else { Value::Null }));
+        }
+        Some(_) => return Err(ApiError::bad("now must be true or false")),
+    }
     // A title is text that isn't blank, and a description is text (null clears it): anything else is
     // turned away rather than kept as JSON text, or left to the database to refuse with a 500.
     if let Some((_, v)) = fields.iter_mut().find(|(k, _)| *k == "title") {

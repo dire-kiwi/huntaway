@@ -3,6 +3,7 @@ import { Check, Map as MapIcon, Maximize2, MessageCircleQuestion, Send, ShieldQu
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ownWorkDir, type Message, type Project, type Task } from "../../api";
 import { openTask, usePanelOpen } from "../../router";
+import { useSelectable } from "../../selection";
 import { keyPrefix, useStore, useThreadMessages } from "../../store";
 import { useDelta } from "../../deltas";
 import { threadModel, type Item } from "../../threadModel";
@@ -125,6 +126,7 @@ export function PendingPrompts({ task }: { task: Task }) {
 }
 
 function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu?: OnMenu }) {
+  const selectable = useSelectable(task.id);
   const messages = useThreadMessages(task.id);
   const earlier = useStore((s) => s.threads[task.id]?.subagents);
   const delta = useDelta(task.id);
@@ -157,6 +159,7 @@ function Tile({ task, project, onMenu }: { task: Task; project?: Project; onMenu
 
   return (
     <div
+      {...selectable}
       onContextMenu={onMenu && ((e) => onMenu(e, task))}
       className={clsx(
         "flex h-[340px] min-w-0 flex-col overflow-hidden rounded-lg border bg-[#0c0c10]",

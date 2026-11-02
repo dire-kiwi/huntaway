@@ -388,6 +388,11 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
             v["late"] = json!(true);
         }
     })?;
+    // The user's answers to the agent's questions are a prompt to it: they put the task in "now", like a message does
+    // (not the other permission decisions, which only let the agent carry on).
+    if answers.is_some() {
+        crate::agent::focus::put_in_now(s, &task_id);
+    }
     if let (true, Some(t)) = (always, &task) {
         let mut list = t.auto_allow.clone();
         if !list.contains(&tool_name) {
