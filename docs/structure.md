@@ -93,6 +93,17 @@ Their parts are 100 to 530 lines. `release`, `agent_tools`, `broker`, `relocate`
 `wait`, `permissions`, `git_view` and `changes` (under 1,000 lines of code each) moved their tests
 to `tests.rs`.
 
+### What HA-104 split
+
+HA-101 left these two alone while open PRs #53 (HA-53) and #52 (HA-55) rewrote large parts of them.
+
+| Was | Lines | Now |
+|---|---|---|
+| `git/worktree.rs` | 2,978 (1,629 of code) | `worktree.rs` (running git, the helpers every part uses), `upstream`, `scripts`, `setup`, `start`, `remove`, `pr`, `remote`, `changes`, `tests`, `approval_tests` |
+| `mcp/pr_watch.rs` | 2,431 (1,623 of code) | `pr_watch.rs` (`Target`, `Request`, the fake GitHub for tests), `read`, `seen`, `pr`, `in_review`, `failed`, `tests` |
+
+Their parts are 70 to 460 lines.
+
 ## App modules
 
 The app groups its components by feature (see *bulletproof-react* below): a folder in
@@ -143,9 +154,10 @@ The largest files left in the app are `Hosts.tsx`, `Automations.tsx` and `Analyt
 
 ### Server: the next files
 
-`mcp/pr_watch.rs` (1,878 lines, 1,304 of code) and `git/worktree.rs` (1,790, 1,153) are the last files
-over 1,000 lines of code. They split as above, with their tests moved to `tests.rs`, once open PRs
-#53 and #52, which rewrite large parts of them, have merged.
+No server file but `db/schema.rs` (1,131 lines, most of them the migrations' SQL) has more than
+1,000 lines of code now. The next largest are `agent/agent_tools.rs` (995), `git/worktree_files.rs`
+(952, 575 of code) and `agent/runs.rs` (937, 629 of code): `agent_tools` would be the next to split,
+and the other two can move their tests to `tests.rs` first.
 
 ### README
 
