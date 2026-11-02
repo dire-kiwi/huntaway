@@ -7,6 +7,8 @@ approve tool calls, and review, stage and commit its changes (lazygit-style).
 
 ```
 server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
+server/src/    the huntaway binary's modules, grouped in agent/, mcp/, git/, hosts/, update/,
+               integrations/ and review/ (see docs/structure.md)
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
@@ -805,7 +807,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   restarts until the setting is turned on again. Codex's windows are told apart by their length
   (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
   then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
-  has no session limit. See `server/src/window.rs`.
+  has no session limit. See `server/src/agent/window.rs`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the

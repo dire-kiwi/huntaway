@@ -209,7 +209,7 @@ fn profiles_keep_their_clone_folder() {
 #[test]
 fn profiles_connect_to_asana_and_search_it() {
     crate::testing::run(async || {
-        crate::asana::tests::fake().await;
+        crate::integrations::asana::tests::fake().await;
         let s = crate::testing::state();
         let app = router(s.clone());
         let p = db::insert_profile(&s.db(), "work", &[], None).unwrap();
@@ -225,12 +225,12 @@ fn profiles_connect_to_asana_and_search_it() {
         assert_eq!(db::get_profile(&s.db(), &p.id).unwrap().unwrap().asana_token, None);
 
         // One it takes is, with who it's for; the board sees only that.
-        let Json(v) = update(json!({"asana_token": format!(" {} ", crate::asana::tests::TOKEN)})).await.unwrap();
+        let Json(v) = update(json!({"asana_token": format!(" {} ", crate::integrations::asana::tests::TOKEN)})).await.unwrap();
         assert_eq!(v["asana_user"], "Ivy (ivy@example.com)");
         assert!(v.get("asana_token").is_none(), "{v}");
-        assert_eq!(db::get_profile(&s.db(), &p.id).unwrap().unwrap().asana_token.as_deref(), Some(crate::asana::tests::TOKEN));
+        assert_eq!(db::get_profile(&s.db(), &p.id).unwrap().unwrap().asana_token.as_deref(), Some(crate::integrations::asana::tests::TOKEN));
         let (_, list) = call(&app, "GET", "/api/profiles").await;
-        assert!(!list.to_string().contains(crate::asana::tests::TOKEN));
+        assert!(!list.to_string().contains(crate::integrations::asana::tests::TOKEN));
         assert_eq!(update(json!({"name": "job"})).await.unwrap().0["asana_user"], "Ivy (ivy@example.com)", "kept when other fields change");
 
         let (status, found) = call(&app, "GET", &search).await;
@@ -387,7 +387,7 @@ fn a_folder_being_cloned_into_waits_for_that_clone_and_isnt_added_twice() {
     crate::testing::run(async || {
         let s = crate::testing::state();
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
-        let github = crate::github::tests::fake_github();
+        let github = crate::integrations::github::tests::fake_github();
         let gh = path_str(&github.join("gh"));
         // Also as a path through a symlink to a folder above it, below which there's a folder
         // that isn't there until the clone makes it, and with the symlink after a folder that
@@ -566,7 +566,7 @@ fn ready_for_merge_queues_the_merge_even_before_agents_can_run() {
         let t = worktree::setup(&s, &t.id).await.unwrap();
         let wt = PathBuf::from(t.worktree_path.as_deref().unwrap());
         assert!(std::process::Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]).status().unwrap().success());
-        assert!(!crate::runs::can_run_agents(&s));
+        assert!(!crate::agent::runs::can_run_agents(&s));
         let t = update_task_inner(&s, &t.id, json!({"status": "ready_for_merge"}).as_object().unwrap()).await.unwrap();
         assert_eq!((t.status.as_str(), t.merging), ("ready_for_merge", true));
         assert_eq!(db::queued_merges(&s.db(), Some(&p.id), None).unwrap().len(), 1);
@@ -592,10 +592,10 @@ fn a_folder_not_ready_for_worktrees_gets_one_setup_thread() {
         assert_eq!((t.project_id.as_deref(), t.use_worktree, t.task_type.as_deref()), (Some(p.id.as_str()), false, None));
         assert!(t.description.contains("isn't a git repository yet") && t.description.contains(&p.repo_path), "{}", t.description);
         // Asked again (from another tab, say), it's the same thread.
-        crate::runs::TEST_CAN_RUN.set(true);
+        crate::agent::runs::TEST_CAN_RUN.set(true);
         assert_eq!(start_setup_thread_inner(&s, &p.id, StartSetupThread::default()).await.unwrap().id, id);
         assert_eq!(db::list_tasks_for_project(&s.db(), &p.id, "task").unwrap().len(), 1);
-        crate::runs::TEST_CAN_RUN.set(false);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
 
         let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).status().unwrap().success());
         git(&["init", "-q"]);
@@ -693,7 +693,7 @@ fn groups_projects() {
 #[test]
 fn scratch_tasks_are_in_no_project_and_work_in_their_own_folder() {
     crate::testing::run(async || {
-        crate::runs::TEST_CAN_RUN.set(true);
+        crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = crate::testing::state();
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
         let t = create_scratch_task_inner(&s, &profile.id, CreateTask::default()).unwrap();
@@ -701,8 +701,8 @@ fn scratch_tasks_are_in_no_project_and_work_in_their_own_folder() {
         assert_eq!(runner::task_key_prefix(&s, &t), "S");
         let t2 = create_scratch_task_inner(&s, &profile.id, CreateTask { title: "Notes".into(), task_type: Some("scratch".into()), ..Default::default() }).unwrap();
         assert_eq!(t2.number, 2);
-        assert_eq!(crate::documents::work_dir(&s, &t2), Some(crate::documents::dir(&s, &t2.id)));
-        assert_eq!(runner::work_dir(&s, &t2).unwrap(), crate::documents::dir(&s, &t2.id));
+        assert_eq!(crate::agent::documents::work_dir(&s, &t2), Some(crate::agent::documents::dir(&s, &t2.id)));
+        assert_eq!(runner::work_dir(&s, &t2).unwrap(), crate::agent::documents::dir(&s, &t2.id));
         // It can have labels too, also given as a type as before API 71.
         let planned = create_scratch_task_inner(&s, &profile.id, CreateTask { task_type: Some("plan".into()), ..Default::default() }).unwrap();
         assert_eq!((planned.task_type.as_deref(), planned.labels.as_slice()), (Some("scratch"), ["plan".to_string()].as_slice()));
@@ -728,7 +728,7 @@ fn scratch_tasks_are_in_no_project_and_work_in_their_own_folder() {
         let p = create_project_inner(&s, &profile.id, b(None)).await.unwrap();
         assert!(update_project_inner(&s, &p.id, json!({"key": "S"}).as_object().unwrap()).await.is_err());
         std::fs::remove_dir_all(&dir).ok();
-        crate::runs::TEST_CAN_RUN.set(false);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
     })
 }
 
@@ -805,7 +805,7 @@ fn a_done_task_can_be_given_when_it_was_done() {
 #[test]
 fn any_task_can_have_labels() {
     crate::testing::run(async || {
-        crate::runs::TEST_CAN_RUN.set(true);
+        crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = crate::testing::state();
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
         let dir = crate::testing::temp_dir();
@@ -847,7 +847,7 @@ fn any_task_can_have_labels() {
         // A plan task from before labels (as the migration leaves it) still works in its own folder.
         let fields = [("labels", json!(["plan"])), ("use_worktree", json!(false)), ("work_dir", json!(format!("documents/{}", old.id)))];
         let old = db::update_task(&s.db(), &old.id, &fields).unwrap().unwrap();
-        assert_eq!(runner::work_dir(&s, &old).unwrap(), crate::documents::dir(&s, &old.id));
+        assert_eq!(runner::work_dir(&s, &old).unwrap(), crate::agent::documents::dir(&s, &old.id));
         assert!(set(&old.id, json!({"use_worktree": true})).await.is_err());
         assert!(set(&old.id, json!({"subproject": true})).await.is_err());
         // The board keeps the document, so there's nothing to merge.
@@ -865,13 +865,13 @@ fn any_task_can_have_labels() {
         assert!(create_group_task(State(s.clone()), Path(profile.id.clone()), Json(b)).await.is_err());
 
         // Its folder goes with it.
-        let folder = crate::documents::dir(&s, &done.id);
+        let folder = crate::agent::documents::dir(&s, &done.id);
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("plan.html"), "<h1>Plan</h1>").unwrap();
         // So do its finished runs' folders; one still stopping is left for runs::prune.
         let run = |exit: bool| {
             let run = db::insert_run(&s.db(), &done.id, "prompt").unwrap();
-            let dir = crate::runs::run_dir(&s, &run.id);
+            let dir = crate::agent::runs::run_dir(&s, &run.id);
             std::fs::create_dir_all(&dir).unwrap();
             if exit {
                 std::fs::write(dir.join("exit"), "{}").unwrap();
@@ -884,14 +884,14 @@ fn any_task_can_have_labels() {
         assert!(!finished.exists() && stopping.exists());
         std::fs::remove_dir_all(&s.data_dir).ok();
         std::fs::remove_dir_all(&dir).ok();
-        crate::runs::TEST_CAN_RUN.set(false);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
     })
 }
 
 #[test]
 fn tasks_made_from_one_prompt_share_a_fanout_id() {
     crate::testing::run(async || {
-        crate::runs::TEST_CAN_RUN.set(true);
+        crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = crate::testing::state();
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
         let dir = crate::testing::temp_dir();
@@ -922,7 +922,7 @@ fn tasks_made_from_one_prompt_share_a_fanout_id() {
 #[test]
 fn scratch_tasks_and_subprojects_are_task_types_in_a_project() {
     crate::testing::run(async || {
-        crate::runs::TEST_CAN_RUN.set(true);
+        crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = crate::testing::state();
         let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
         let dir = crate::testing::temp_dir();
@@ -940,7 +940,7 @@ fn scratch_tasks_and_subprojects_are_task_types_in_a_project() {
         assert!(scratch.is_scratch());
         assert_eq!((scratch.project_id.as_deref(), scratch.number, scratch.use_worktree), (Some(p.id.as_str()), 2, false));
         assert_eq!(runner::task_key_prefix(&s, &scratch), "WEB");
-        assert_eq!(runner::work_dir(&s, &scratch).unwrap(), crate::documents::dir(&s, &scratch.id));
+        assert_eq!(runner::work_dir(&s, &scratch).unwrap(), crate::agent::documents::dir(&s, &scratch.id));
         assert!(create_task_inner(&s, &p.id, CreateTask { use_worktree: Some(true), ..typed("scratch") }).unwrap().is_scratch());
         assert!(create_task_inner(&s, &p.id, CreateTask { subproject: Some(true), ..typed("scratch") }).is_err());
 
@@ -960,7 +960,7 @@ fn scratch_tasks_and_subprojects_are_task_types_in_a_project() {
         let done = update_task_inner(&s, &sp.id, json!({"status": "ready_for_merge"}).as_object().unwrap()).await.unwrap();
         assert_eq!((done.status.as_str(), done.merging, done.running), ("done", false, false));
         std::fs::remove_dir_all(&dir).ok();
-        crate::runs::TEST_CAN_RUN.set(false);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
     })
 }
 
@@ -995,7 +995,7 @@ fn deleting_a_running_task_lets_go_of_its_run() {
         let task = db::insert_task(&s.db(), t).unwrap();
         let run = db::insert_run(&s.db(), &task.id, "prompt").unwrap();
         s.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
-        let dir = crate::runs::run_dir(&s, &run.id);
+        let dir = crate::agent::runs::run_dir(&s, &run.id);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("out.jsonl"), "").unwrap();
         s.runs.lock().unwrap().insert(task.id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
@@ -1022,11 +1022,11 @@ fn deleting_a_profile_cleans_up_after_its_projects_and_threads() {
         // A finished run, and a scratch task's documents.
         let run = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
         s.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
-        let run_dir = crate::runs::run_dir(&s, &run.id);
+        let run_dir = crate::agent::runs::run_dir(&s, &run.id);
         std::fs::create_dir_all(&run_dir).unwrap();
         std::fs::write(run_dir.join("exit"), "0").unwrap();
         let scratch = create_scratch_task_inner(&s, &p.profile_id, CreateTask::default()).unwrap();
-        let docs = crate::documents::dir(&s, &scratch.id);
+        let docs = crate::agent::documents::dir(&s, &scratch.id);
         std::fs::create_dir_all(&docs).unwrap();
         std::fs::write(docs.join("notes.md"), "x").unwrap();
         std::fs::create_dir_all(s.profile_scratch_dir(&p.profile_id)).unwrap();
@@ -1214,7 +1214,7 @@ async fn run_ends(s: &Shared, id: &str) {
     s.db().execute("UPDATE runs SET status='running', saw_result=1 WHERE id=?1", [&run.id]).unwrap();
     s.runs.lock().unwrap().insert(id.into(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
     s.update_task(id, &[("running", json!(true))]).unwrap();
-    crate::runner::on_exit(s, &run.id, Some(0), None, None, "");
+    crate::agent::runner::on_exit(s, &run.id, Some(0), None, None, "");
 }
 
 fn last_prompt(s: &Shared, id: &str) -> String {
@@ -1226,22 +1226,22 @@ fn approval_cards(s: &Shared, id: &str) -> Vec<db::Message> {
     db::list_messages(&s.db(), id).unwrap().into_iter().filter(|m| m.kind == "question" && m.data["merge_approval"] == true).collect()
 }
 
-fn pick(choice: &str) -> crate::questions::Answer {
-    crate::questions::Answer { choices: vec![choice.into()], text: None }
+fn pick(choice: &str) -> crate::mcp::questions::Answer {
+    crate::mcp::questions::Answer { choices: vec![choice.into()], text: None }
 }
 
 // HA-86: a merge waits for the user's approval of its agent's summary.
 #[test]
 fn a_merge_waits_for_the_users_approval_of_its_summary() {
     crate::testing::run(async || {
-        crate::runs::TEST_CAN_RUN.set(true);
+        crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = crate::testing::state();
         let (dir, p) = git_project(&s).await;
         db::update_profile(&s.db(), &p.profile_id, &[("merge_approval", json!(true))]).unwrap();
         let t = task_with_work(&s, &p, "a").await;
         let blocked = |id: &str| {
             let t = db::get_task(&s.db(), id).unwrap().unwrap();
-            crate::merge_gate::blocked(&s.db(), &t).unwrap()
+            crate::review::merge_gate::blocked(&s.db(), &t).unwrap()
         };
         // Not merging, it can't merge either.
         assert!(blocked(&t.id).is_some());
@@ -1265,19 +1265,19 @@ fn a_merge_waits_for_the_users_approval_of_its_summary() {
         // It doesn't hold the merge slot meanwhile: another task merges.
         let other = task_with_work(&s, &p, "b").await;
         db::update_task(&s.db(), &other.id, &[("status", json!("ready_for_merge")), ("merging", json!(true)), ("merge_approval", json!("approved"))]).unwrap();
-        crate::runner::start_next_merge(&s, Some(&p.id));
+        crate::agent::runner::start_next_merge(&s, Some(&p.id));
         assert!(s.is_running(&other.id));
         assert!(last_prompt(&s, &other.id).contains("The user approved the merge."));
         idle(&s, &other.id).await;
         update_task_inner(&s, &other.id, json!({"status": "done"}).as_object().unwrap()).await.unwrap();
 
         // Approved, it merges.
-        let t = crate::questions::answer(&s, &t.id, cards[0].id, pick("Approve")).unwrap();
+        let t = crate::mcp::questions::answer(&s, &t.id, cards[0].id, pick("Approve")).unwrap();
         assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("ready_for_merge", true, Some("approved"), true));
         assert!(last_prompt(&s, &t.id).contains("The user approved the merge."), "{}", last_prompt(&s, &t.id));
         assert_eq!(approval_cards(&s, &t.id)[0].data["answer"]["choices"], json!(["Approve"]));
         assert_eq!(blocked(&t.id), None);
-        assert!(crate::questions::answer(&s, &t.id, cards[0].id, pick("Deny")).is_err(), "answered once");
+        assert!(crate::mcp::questions::answer(&s, &t.id, cards[0].id, pick("Deny")).is_err(), "answered once");
         // The run's gh server asks the board.
         let run = db::latest_run(&s.db(), &t.id, None).unwrap().unwrap();
         assert_eq!(internal_merge_gate(State(s.clone()), Path(run)).await.unwrap().0, json!({"blocked": null}));
@@ -1286,7 +1286,7 @@ fn a_merge_waits_for_the_users_approval_of_its_summary() {
         let t = update_task_inner(&s, &t.id, json!({"status": "in_review"}).as_object().unwrap()).await.unwrap();
         assert_eq!(t.merge_approval, None);
         assert!(blocked(&t.id).is_some());
-        crate::runs::TEST_CAN_RUN.set(false);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
         std::fs::remove_dir_all(&dir).ok();
     })
 }
@@ -1295,7 +1295,7 @@ fn a_merge_waits_for_the_users_approval_of_its_summary() {
 #[test]
 fn a_denied_merge_goes_back_to_review() {
     crate::testing::run(async || {
-        crate::runs::TEST_CAN_RUN.set(true);
+        crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = crate::testing::state();
         let (dir, p) = git_project(&s).await;
         // The project's setting wins over the profile's.
@@ -1309,7 +1309,7 @@ fn a_denied_merge_goes_back_to_review() {
         assert_eq!(update_task_inner(&s, &t.id, out.as_object().unwrap()).await.unwrap_err().0, StatusCode::BAD_REQUEST);
         run_ends(&s, &t.id).await;
         let card = approval_cards(&s, &t.id)[0].id;
-        let t = crate::questions::answer(&s, &t.id, card, pick("Deny")).unwrap();
+        let t = crate::mcp::questions::answer(&s, &t.id, card, pick("Deny")).unwrap();
         assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("in_review", false, None, false));
 
         // Moved there again while waiting, the old card goes and it's summarised again.
@@ -1320,7 +1320,7 @@ fn a_denied_merge_goes_back_to_review() {
         assert_eq!((t.status.as_str(), t.merge_approval.as_deref(), t.running), ("ready_for_merge", Some("pending"), true));
         let cards = approval_cards(&s, &t.id);
         assert_eq!(cards.iter().map(|c| c.data["status"].as_str().unwrap()).collect::<Vec<_>>(), ["answered", "replaced"]);
-        assert_eq!(crate::questions::answer(&s, &t.id, cards[1].id, pick("Approve")).unwrap_err().0, StatusCode::CONFLICT);
+        assert_eq!(crate::mcp::questions::answer(&s, &t.id, cards[1].id, pick("Approve")).unwrap_err().0, StatusCode::CONFLICT);
         idle(&s, &t.id).await;
 
         // Turned off, merges go straight to the queue.
@@ -1330,7 +1330,7 @@ fn a_denied_merge_goes_back_to_review() {
         assert_eq!((u.merge_approval.as_deref(), u.running), (None, true));
         assert!(last_prompt(&s, &u.id).starts_with("The user moved this task to \"Ready for merge\". Merge branch"), "{}", last_prompt(&s, &u.id));
         idle(&s, &u.id).await;
-        crate::runs::TEST_CAN_RUN.set(false);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
         std::fs::remove_dir_all(&dir).ok();
     })
 }

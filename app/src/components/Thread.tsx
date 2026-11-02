@@ -98,7 +98,7 @@ export function toolMeta(name: string, input: Any, cwd?: string | null): { icon:
       return { icon: <Pencil size={s} />, label: "Edited", summary: rel(input?.file_path) };
     case "Write":
       return { icon: <Pencil size={s} />, label: "Wrote", summary: rel(input?.file_path) };
-    // Codex's file edits (see codex.rs on the server).
+    // Codex's file edits (see agent/codex.rs on the server).
     case "ApplyPatch": {
       const changes: Any[] = input?.changes ?? [];
       const label = changes.length && changes.every((c) => c.kind === "add") ? "Wrote" : changes.every((c) => c.kind === "delete") ? "Deleted" : "Edited";

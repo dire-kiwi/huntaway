@@ -12,7 +12,7 @@ pub(super) async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Valu
         "scratch_host": db::get_setting(&c, "scratch_host")?,
         "terminal_tools": terminal::tools(&c),
         "public_url": db::get_setting(&c, "public_url")?,
-        "release_prereleases": db::get_setting(&c, crate::release::PRERELEASES)?.as_deref() == Some("true"),
+        "release_prereleases": db::get_setting(&c, crate::update::release::PRERELEASES)?.as_deref() == Some("true"),
     })))
 }
 
@@ -54,7 +54,7 @@ pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<S
         let url = url.to_string();
         b.insert("public_url".into(), json!(url));
     }
-    let prereleases = match b.get(crate::release::PRERELEASES) {
+    let prereleases = match b.get(crate::update::release::PRERELEASES) {
         Some(v) if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("release_prereleases must be true, false or null")),
         Some(v) => Some(v.as_bool() == Some(true)),
         None => None,
@@ -73,9 +73,9 @@ pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<S
         db::set_setting(&s.db(), "terminal_tools", v.as_deref())?;
     }
     if let Some(on) = prereleases {
-        if crate::release::prereleases(&s)? != on {
-            db::set_setting(&s.db(), crate::release::PRERELEASES, on.then_some("true"))?;
-            crate::release::check_soon(&s);
+        if crate::update::release::prereleases(&s)? != on {
+            db::set_setting(&s.db(), crate::update::release::PRERELEASES, on.then_some("true"))?;
+            crate::update::release::check_soon(&s);
         }
     }
     s.emit(json!({"type": "settings_changed"}));
@@ -92,12 +92,12 @@ pub(super) async fn internal_mcp(State(s): State<Shared>, Json(call): Json<tools
     })
 }
 
-/// From a run's gh server, before it merges a pull request: why it can't, if it can't (see merge_gate.rs).
+/// From a run's gh server, before it merges a pull request: why it can't, if it can't (see review/merge_gate.rs).
 pub(super) async fn internal_merge_gate(State(s): State<Shared>, Path(run_id): Path<String>) -> ApiResult<Json<Value>> {
     let c = s.db();
     let run = db::get_run(&c, &run_id)?.ok_or_else(|| ApiError::not_found("run"))?;
     let blocked = match db::get_task(&c, &run.task_id)? {
-        Some(task) => crate::merge_gate::blocked(&c, &task)?,
+        Some(task) => crate::review::merge_gate::blocked(&c, &task)?,
         None => None,
     };
     Ok(Json(json!({"blocked": blocked})))
@@ -147,7 +147,7 @@ pub(super) async fn check_releases(State(s): State<Shared>) -> ApiResult<Json<Va
     if s.meta.release.is_none() {
         return Err(ApiError::bad("this server doesn't check for releases (start it with --release-updates OWNER/REPO)"));
     }
-    crate::release::check(&s).await;
+    crate::update::release::check(&s).await;
     Ok(Json(admin::status(&s).await?))
 }
 
@@ -158,13 +158,13 @@ pub(super) struct ReleaseUpdateBody {
 
 /// Restart onto a release (staged, or downloaded first), as a restart job.
 pub(super) async fn update_to_release(State(s): State<Shared>, Json(b): Json<ReleaseUpdateBody>) -> ApiResult<Json<Value>> {
-    crate::release::update(&s, &b.version)?;
+    crate::update::release::update(&s, &b.version)?;
     Ok(Json(json!({"ok": true})))
 }
 
 /// Mark the running release bad and restart onto the one before it, as a restart job.
 pub(super) async fn roll_back_release(State(s): State<Shared>) -> ApiResult<Json<Value>> {
-    crate::release::rollback(&s)?;
+    crate::update::release::rollback(&s)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -185,7 +185,7 @@ pub(super) struct UpdateBody {
 pub(super) async fn update_from_hub(State(s): State<Shared>, Json(b): Json<UpdateBody>) -> ApiResult<Json<Value>> {
     if admin::updates_from(&s.meta) == Some("releases") {
         let version = b.version.as_deref().ok_or_else(|| ApiError::bad("this host updates from releases, and the board didn't say which version it runs (it needs API 89)"))?;
-        return Ok(Json(crate::release::update_from_hub(&s, version).await?));
+        return Ok(Json(crate::update::release::update_from_hub(&s, version).await?));
     }
     if b.commit.is_empty() {
         return Err(ApiError::bad("the board runs a release rather than a checkout, so it can't say which commit to update this host to"));

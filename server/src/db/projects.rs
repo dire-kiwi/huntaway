@@ -15,7 +15,7 @@ pub struct Project {
     pub repo_path: String,
     /// What the repository folder was when last seen, to tell whether a folder it has moved to
     /// is the same repository: its root commits, `git` for one without commits, empty for a
-    /// folder that isn't a git repository, or None if not looked at yet (see relocate.rs).
+    /// folder that isn't a git repository, or None if not looked at yet (see git/relocate.rs).
     #[serde(skip)]
     pub repo_root: Option<String>,
     pub scratch_path: String,
@@ -24,13 +24,13 @@ pub struct Project {
     pub setup_script: String,
     pub teardown_script: String,
     /// Ignored files copied into each new task worktree from the repository folder, as
-    /// .gitignore-style patterns, one per line (see worktree_files.rs).
+    /// .gitignore-style patterns, one per line (see git/worktree_files.rs).
     #[serde(default)]
     pub copy_files: String,
     /// Ignored folders of the repository linked into each new task worktree, one per line.
     #[serde(default)]
     pub link_folders: String,
-    /// Runs whenever one of the project's tasks changes status (see status_script.rs).
+    /// Runs whenever one of the project's tasks changes status (see integrations/status_script.rs).
     pub status_script: String,
     /// A script per status, run when one of the project's tasks moves into it.
     #[serde(default)]
@@ -56,7 +56,7 @@ pub struct Project {
     pub claude_config_ids: Option<Vec<String>>,
     /// Review each task's work when it moves to "In review" (see review.rs).
     pub auto_review: bool,
-    /// Move a task to Done when its pull request is merged on GitHub (see merged.rs).
+    /// Move a task to Done when its pull request is merged on GitHub (see review/merged.rs).
     #[serde(default = "yes")]
     pub done_when_merged: bool,
     /// Agents open a pull request for their task's branch when the repository is on GitHub
@@ -75,19 +75,19 @@ pub struct Project {
     #[serde(default)]
     pub reviewers: Vec<Reviewer>,
     /// Summarise each task's changes once its review passes, for the user to read before
-    /// merging (see summary.rs).
+    /// merging (see review/summary.rs).
     #[serde(default = "yes")]
     pub auto_summary: bool,
     /// Who writes those summaries, in a thread of its own. None uses the profile's (see
     /// `summarizer_for`).
     #[serde(default)]
     pub summarizer: Option<Reviewer>,
-    /// Whether its merges wait for the user's approval (see merge_gate.rs). None follows its
+    /// Whether its merges wait for the user's approval (see review/merge_gate.rs). None follows its
     /// profile's `merge_approval`.
     #[serde(default)]
     pub merge_approval: Option<bool>,
     /// The project's instructions for the prompts sent when a task's agent starts, when its
-    /// work is reviewed and when it's merged; None uses the default (see prompts.rs).
+    /// work is reviewed and when it's merged; None uses the default (see agent/prompts.rs).
     pub start_prompt: Option<String>,
     pub review_prompt: Option<String>,
     pub merge_prompt: Option<String>,
@@ -170,7 +170,7 @@ impl Project {
     /// doesn't preview them or it isn't a pull request's URL.
     pub fn preview_for(&self, pr_url: Option<&str>) -> Option<String> {
         let template = self.pr_preview_url.as_deref()?;
-        let pr = crate::pr_watch::Target::parse(pr_url?, None).ok()?;
+        let pr = crate::mcp::pr_watch::Target::parse(pr_url?, None).ok()?;
         Some(template.replace("{pr}", &pr.number.to_string()))
     }
 }

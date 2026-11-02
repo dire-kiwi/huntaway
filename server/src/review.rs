@@ -11,16 +11,24 @@
 //!
 //! The task stays in "In review" while it's reviewed, and only goes back to "In progress" when
 //! its agent works on it again (to fix the issues found, or because it was sent a message).
+//!
+//! The `review` folder has what follows a review: summaries of the changes, merge approvals, merged pull requests and
+//! fan-outs.
+
+pub mod fanout;
+pub mod merge_gate;
+pub mod merged;
+pub mod summary;
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::agent::runner::{self, Outcome};
 use crate::db::{self, ClaudeConfig, NewTask, Review, ReviewerRun, Task};
-use crate::runner::{self, Outcome};
+use crate::git::worktree;
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::now;
-use crate::worktree;
 
 /// Read-only tools a reviewer may use without asking.
 pub const ALLOWED_TOOLS: &[&str] = &[
@@ -96,7 +104,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     if !manual && !project.auto_review {
         return Ok(None);
     }
-    if !crate::runs::can_run_agents(state) {
+    if !crate::agent::runs::can_run_agents(state) {
         return skip(manual, "this host can't run agents");
     }
     let (Some(dir), Some(branch)) = (task.worktree_path.clone().filter(|_| task.worktree_state == "ready"), task.branch.clone()) else {
@@ -140,7 +148,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     let specs = db::reviewers_for(&state.db(), &project)?;
     let task_config = db::task_claude_config(&state.db(), &task)?;
     let mut threads = db::review_threads(&state.db(), &task.id)?;
-    threads.retain(|t| !crate::summary::is_summary(t));
+    threads.retain(|t| !crate::review::summary::is_summary(t));
     let key = format!("{}-{}", project.key, task.number);
     let mut parts: Vec<ReviewerRun> = Vec::new();
     for spec in &specs {
@@ -213,12 +221,12 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     let commit = &head[..head.len().min(10)];
     let work = if elsewhere { Work::Elsewhere { last_message: db::last_assistant_text(&state.db(), &task.id)? } } else { Work::Branch };
     let replies = db::user_replies(&state.db(), &task.id, Some(REPLIES))?;
-    let text = prompt(&key, &task, &branch, base.as_deref(), commit, &work, &fixed, &replies, crate::prompts::review(Some(&project)));
+    let text = prompt(&key, &task, &branch, base.as_deref(), commit, &work, &fixed, &replies, crate::agent::prompts::review(Some(&project)));
     let (mut started, mut failed) = (0, None);
     for part in &parts {
         // Each review starts from a clean slate; the thread keeps every round's messages.
         state.update_task(&part.thread_id, &[("session_id", Value::Null)])?;
-        crate::context::clear(state, &part.thread_id)?;
+        crate::agent::context::clear(state, &part.thread_id)?;
         let sent = {
             // Under the lock `supersede` stops the review with: a reviewer of a review it has
             // stopped doesn't start, and one that starts first is stopped with it.
@@ -284,7 +292,7 @@ async fn rev_parse(dir: &Path, rev: &str) -> Option<String> {
 /// first review, a pull request on the task.
 async fn changed_elsewhere(state: &Shared, task: &Task, dir: &Path, previous: Option<&Review>) -> ApiResult<bool> {
     let since = previous.filter(|r| ["passed", "issues"].contains(&r.state.as_str())).map(|r| r.updated_at.clone());
-    if db::tool_calls_since(&state.db(), &task.id, since.as_deref())?.iter().any(|(call, result)| crate::changes::changes_code(call, result.as_ref())) {
+    if db::tool_calls_since(&state.db(), &task.id, since.as_deref())?.iter().any(|(call, result)| crate::git::changes::changes_code(call, result.as_ref())) {
         return Ok(true);
     }
     if since.is_none() && task.pr_url.as_deref().is_some_and(|u| !u.trim().is_empty()) {
@@ -633,7 +641,7 @@ fn act(state: &Shared, parent: Task, review: Review) {
     match review.state.as_str() {
         "passed" => {
             state.add_event(&parent.id, "info", "Review passed", review.summary.clone());
-            crate::summary::on_review_passed(state, &parent.id);
+            crate::review::summary::on_review_passed(state, &parent.id);
         }
         "issues" => {
             let rounds = parent.project_id.as_deref().and_then(|p| db::get_project(&state.db(), p).ok().flatten()).map(|p| p.review_rounds);
@@ -954,7 +962,7 @@ mod tests {
     #[test]
     fn a_review_doesnt_start_once_the_agent_has_started_again() {
         crate::testing::run(async || {
-            crate::runs::TEST_CAN_RUN.set(true);
+            crate::agent::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let (task, dir) = reviewable(&s);
             // The agent starts again while the review reads the worktree's git state.
@@ -972,7 +980,7 @@ mod tests {
             for thread in db::review_threads(&s.db(), &task.id).unwrap() {
                 assert!(!s.is_running(&thread.id), "no reviewer started");
             }
-            crate::runs::TEST_CAN_RUN.set(false);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
             std::fs::remove_dir_all(&dir).unwrap();
         })
     }
@@ -980,7 +988,7 @@ mod tests {
     #[test]
     fn a_review_doesnt_start_on_work_changed_while_it_was_read() {
         crate::testing::run(async || {
-            crate::runs::TEST_CAN_RUN.set(true);
+            crate::agent::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let (task, dir) = reviewable(&s);
             // A run starts, commits and ends while the review reads the worktree's git state.
@@ -1007,7 +1015,7 @@ mod tests {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             };
             assert_eq!(review.head, head);
-            crate::runs::TEST_CAN_RUN.set(false);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
             std::fs::remove_dir_all(&dir).unwrap();
         })
     }
@@ -1015,7 +1023,7 @@ mod tests {
     #[test]
     fn a_review_doesnt_start_on_work_changed_by_a_run_that_started_as_it_did() {
         crate::testing::run(async || {
-            crate::runs::TEST_CAN_RUN.set(true);
+            crate::agent::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let (task, dir) = reviewable(&s);
             // A run starts as the review looks for the task's last one, then commits and ends while git is read.
@@ -1038,7 +1046,7 @@ mod tests {
             assert!(start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().is_none());
             let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
             assert!(t.review.is_none(), "{:?}", t.review.map(|r| (r.state, r.head)));
-            crate::runs::TEST_CAN_RUN.set(false);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
             std::fs::remove_dir_all(&dir).unwrap();
         })
     }
@@ -1046,7 +1054,7 @@ mod tests {
     #[test]
     fn a_review_superseded_as_it_starts_leaves_the_task_to_its_agent() {
         crate::testing::run(async || {
-            crate::runs::TEST_CAN_RUN.set(true);
+            crate::agent::runs::TEST_CAN_RUN.set(true);
             for fails in [false, true] {
                 let s = crate::testing::state();
                 let (task, dir) = reviewable(&s);
@@ -1074,7 +1082,7 @@ mod tests {
                 }
                 std::fs::remove_dir_all(&dir).unwrap();
             }
-            crate::runs::TEST_CAN_RUN.set(false);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
         })
     }
 
@@ -1095,15 +1103,15 @@ mod tests {
             round("");
             let a = db::insert_run(&s.db(), &thread.id, "review").unwrap();
             // A's verdict is cut short by a restart, then A ends and B starts the next round.
-            let call = || crate::tools::McpCall { task_fields: true, run_id: a.id.clone(), call_id: "a".into(), tool: "submit_review".into(), args: json!({"verdict": "pass", "summary": "Fine.", "serious_issues": []}) };
+            let call = || crate::mcp::tools::McpCall { task_fields: true, run_id: a.id.clone(), call_id: "a".into(), tool: "submit_review".into(), args: json!({"verdict": "pass", "summary": "Fine.", "serious_issues": []}) };
             crate::testing::when("mcp:executed", || panic!("the server stopped"));
-            assert!(std::panic::AssertUnwindSafe(crate::tools::handle_mcp(&s, call())).catch_unwind().await.is_err());
+            assert!(std::panic::AssertUnwindSafe(crate::mcp::tools::handle_mcp(&s, call())).catch_unwind().await.is_err());
             finished(&s, thread, &a.id, &Outcome::Ok, None);
             round(&a.id);
             let b = db::insert_run(&s.db(), &thread.id, "review").unwrap();
             submit(&s, thread, &b.id, &json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["the bug"]})).unwrap();
             // A's verdict, retried, is turned away; B's stands.
-            let err = crate::tools::handle_mcp(&s, call()).await.unwrap_err();
+            let err = crate::mcp::tools::handle_mcp(&s, call()).await.unwrap_err();
             assert!(err.contains("has ended"), "{err}");
             assert!(submit(&s, thread, &a.id, &json!({"verdict": "pass"})).is_err());
             finished(&s, thread, &b.id, &Outcome::Ok, None);
@@ -1116,7 +1124,7 @@ mod tests {
     fn a_reviewer_started_just_before_a_restart_still_ends_its_part() {
         crate::testing::run(async || {
             use futures::FutureExt;
-            crate::runs::TEST_CAN_RUN.set(true);
+            crate::agent::runs::TEST_CAN_RUN.set(true);
             let s = crate::testing::state();
             let (task, dir) = reviewable(&s);
             crate::testing::when("review:reviewer-started", || panic!("the server stopped"));
@@ -1127,7 +1135,7 @@ mod tests {
             runner::load_active(&s).unwrap();
             let r = review_of(&s, &task);
             assert_eq!((r.state.as_str(), r.reviewers[0].state.as_str()), ("failed", "failed"));
-            crate::runs::TEST_CAN_RUN.set(false);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
             std::fs::remove_dir_all(&dir).unwrap();
         })
     }

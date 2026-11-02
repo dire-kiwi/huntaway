@@ -115,7 +115,7 @@ pub(super) async fn claude_config_models(State(s): State<Shared>, Path(id): Path
     if !cfg.is_codex() {
         return Ok(Json(json!([])));
     }
-    let models = crate::codex::models(cfg.dir()).await.map_err(|e| ApiError::bad(format!("couldn't list Codex models: {e:#}")))?;
+    let models = crate::agent::codex::models(cfg.dir()).await.map_err(|e| ApiError::bad(format!("couldn't list Codex models: {e:#}")))?;
     Ok(Json(json!(models)))
 }
 

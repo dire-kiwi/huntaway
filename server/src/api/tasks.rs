@@ -1,6 +1,7 @@
 //! Tasks: listing, reading, updating and deleting them.
 
 use super::*;
+use crate::agent::{documents, runs};
 
 #[derive(Deserialize)]
 pub(super) struct TaskListQuery {
@@ -49,7 +50,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     // A task with no changes to merge (and so no pull request) skips the merge and is done.
     let to_merge = b.get("status").and_then(Value::as_str) == Some("ready_for_merge") && current.status != "ready_for_merge" && current.kind == "task";
     // A scratch task, or one that makes only documents (which the board keeps), has nothing to merge.
-    let own_folder = current.is_scratch() || crate::documents::documents_only(&current);
+    let own_folder = current.is_scratch() || documents::documents_only(&current);
     let nothing_to_merge = to_merge && (own_folder || !worktree::has_work_to_merge(s, &current).await);
     let mut fields = pick(
         b,
@@ -90,7 +91,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         if current.kind != "task" {
             return Err(ApiError::bad("only a task can have labels"));
         }
-        fields.push(("labels", json!(crate::documents::check_labels(v).map_err(ApiError::bad)?)));
+        fields.push(("labels", json!(documents::check_labels(v).map_err(ApiError::bad)?)));
     }
     if fields.iter().any(|(k, v)| *k == "title_pinned" && !v.is_boolean()) {
         return Err(ApiError::bad("title_pinned must be true or false"));
@@ -194,7 +195,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         return Err(ApiError::bad("remerge only takes a task out of the merge queue while its agent is merging it, with status in_progress"));
     }
     // Waiting for the user's approval, it isn't in the queue to step out of.
-    if remerge && crate::merge_gate::is_pending(&current) {
+    if remerge && crate::review::merge_gate::is_pending(&current) {
         return Err(ApiError::bad("the merge hasn't been approved yet, so it isn't in the merge queue to step out of: summarize what will be merged and end your turn"));
     }
     // Moving a task to "Ready for merge" asks its agent to merge it, once no other task in its
@@ -215,16 +216,16 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         if merge || !["ready_for_merge", "needs_attention"].contains(&st) {
             fields.push(("merging", json!(merge)));
         }
-        // Moved there again, a merge that needs approval is summarised again (see merge_gate.rs),
+        // Moved there again, a merge that needs approval is summarised again (see review/merge_gate.rs),
         // unless it's approved already (stepping out to make changes keeps it).
-        if merge && current.merge_approval.as_deref() != Some(crate::merge_gate::APPROVED) {
+        if merge && current.merge_approval.as_deref() != Some(crate::review::merge_gate::APPROVED) {
             fields.push(("merge_approval", Value::Null));
         }
         // Anywhere but "In progress" (or waiting on the user) drops its place to rejoin the queue (see db::update_task).
         if remerge {
             fields.push(("remerge", json!(true)));
         }
-        // Moving it ends its agent's wait (see wait.rs), told so in the same write.
+        // Moving it ends its agent's wait (see mcp/wait.rs), told so in the same write.
         if let Some(w) = current.agent_wait.clone().filter(|_| st != current.status) {
             fields.push(("agent_wait", json!(db::AgentWait { moved_to: Some(st.to_string()), ..w })));
         }
@@ -285,13 +286,13 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     }
     let t = updated.ok_or_else(|| ApiError::not_found("task"))?;
     // The approval it waited for is asked again, or not at all.
-    if crate::merge_gate::is_pending(&current) && !crate::merge_gate::is_pending(&t) {
-        crate::merge_gate::settle(s, id, "replaced");
+    if crate::review::merge_gate::is_pending(&current) && !crate::review::merge_gate::is_pending(&t) {
+        crate::review::merge_gate::settle(s, id, "replaced");
     }
     if remerge {
         s.add_event(id, "info", "Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done", None);
     }
-    if merge && !crate::runs::can_run_agents(s) {
+    if merge && !runs::can_run_agents(s) {
         s.add_event(id, "warn", "Agents can't run on this host yet (no Claude Code or Codex found), so the task waits in the merge queue until they can", None);
     }
     // Unpinned, the title catches up with what the task is about now.
@@ -302,7 +303,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         permissions::apply_mode_to_pending(s, &t)?;
     }
     // Moved into "In progress" before what it depends on is merged, it's queued until it is.
-    if t.status == "in_progress" && current.status != "in_progress" && t.kind == "task" && !t.waiting && !s.is_running(id) && crate::runs::can_run_agents(s) {
+    if t.status == "in_progress" && current.status != "in_progress" && t.kind == "task" && !t.waiting && !s.is_running(id) && runs::can_run_agents(s) {
         let unmet = db::unmet_dependencies(&s.db(), &t)?;
         if !unmet.is_empty() {
             runner::wait_for_dependencies(s, &t, &unmet, Some(db::Queued::new("", false)))?;
@@ -495,11 +496,11 @@ pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) ->
         runs
     };
     s.db().execute("DELETE FROM tasks WHERE id=?1", [&t.id])?;
-    crate::runs::remove_finished(s, &runs);
-    crate::task_tmp::deleted(s, &t.id).await;
+    runs::remove_finished(s, &runs);
+    crate::agent::task_tmp::deleted(s, &t.id).await;
     // Any agent asking to delete it is told it's gone (see tools::delete_task), so after that.
     permissions::expire_deletions_of(s, &t.id);
-    crate::documents::remove(s, &t.id);
+    documents::remove(s, &t.id);
     let dependents = db::drop_dependency(&s.db(), &t.id)?;
     for id in dependents {
         if let Some(d) = db::get_task(&s.db(), &id)? {

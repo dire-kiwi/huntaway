@@ -52,7 +52,7 @@ pub const STATUSES: &[&str] = &["todo", "in_progress", "needs_attention", "in_re
 /// What a task can be besides a code task: `scratch`, for a scratch task (see Task::is_scratch).
 pub const TASK_TYPES: &[&str] = &[SCRATCH];
 /// The labels a task can have, each a document its agent writes besides its other work (see
-/// Task::labels and documents.rs), in the order the task shows them. They were task types of their
+/// Task::labels and agent/documents.rs), in the order the task shows them. They were task types of their
 /// own before API 71, which still accepts them as a new task's `task_type`.
 pub const LABELS: &[&str] = &["plan", "artifact", "diagram"];
 /// The task type of a scratch task.
@@ -81,7 +81,7 @@ pub fn check_resolution(status: &str, resolution: &Value) -> std::result::Result
 pub const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "auto", "plan", "dontAsk", "bypassPermissions"];
 
 /// The agent CLIs a config can be for: Claude Code (`claude -p`) and Codex (`codex app-server`,
-/// see codex.rs).
+/// see agent/codex.rs).
 pub const AGENTS: &[&str] = &["claude", "codex"];
 
 fn json_list(v: String) -> Vec<String> {
