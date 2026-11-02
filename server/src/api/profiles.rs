@@ -2,8 +2,6 @@
 
 use super::*;
 
-// ---------- profiles ----------
-
 pub(super) async fn list_profiles(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(db::list_profiles(&s.db())?)))
 }

@@ -2,8 +2,6 @@
 
 use super::*;
 
-// ---------- links (hub) ----------
-
 /// Another host this node shows on its board. `outbound`: we connect to its URL with its
 /// token. `inbound`: it dials us (we only remember it). `ssh`: we start it and tunnel to it
 /// over SSH.

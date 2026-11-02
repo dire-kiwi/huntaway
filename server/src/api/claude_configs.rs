@@ -3,8 +3,6 @@
 
 use super::*;
 
-// ---------- Claude configs ----------
-
 pub(super) async fn list_claude_configs(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(db::list_claude_configs(&s.db())?)))
 }

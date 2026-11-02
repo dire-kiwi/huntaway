@@ -2,8 +2,6 @@
 
 use super::*;
 
-// ---------- projects ----------
-
 #[derive(Deserialize)]
 pub(super) struct ProjectListQuery {
     /// Lists the archived projects instead of the others (API 46).

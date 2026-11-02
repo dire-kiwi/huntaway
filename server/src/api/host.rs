@@ -3,8 +3,6 @@
 
 use super::*;
 
-// ---------- host settings ----------
-
 pub(super) async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     let c = s.db();
     Ok(Json(json!({

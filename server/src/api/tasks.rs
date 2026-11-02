@@ -2,8 +2,6 @@
 
 use super::*;
 
-// ---------- tasks ----------
-
 #[derive(Deserialize)]
 pub(super) struct TaskListQuery {
     kind: Option<String>,

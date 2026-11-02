@@ -2,8 +2,6 @@
 
 use super::*;
 
-// ---------- runs ----------
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Run {
     pub id: String,
