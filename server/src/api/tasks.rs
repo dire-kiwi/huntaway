@@ -525,6 +525,8 @@ pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) ->
             tracing::warn!("teardown during delete failed: {e:#}");
         }
     }
+    // The tasks stacked on it keep going where it went.
+    worktree::unstack(s, t).await;
     if let Some(project) = t.start_from.as_ref().and(t.project_id.as_deref()).map(|p| db::get_project(&s.db(), p)).transpose()?.flatten() {
         worktree::forget_start(&expand_tilde(&project.repo_path), &t.id).await;
     }

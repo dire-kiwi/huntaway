@@ -628,7 +628,9 @@ async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path,
             Ok(picked(branch.clone(), format!("Stacked on {key}: starting from its branch {branch}, which this task's pull request targets")))
         }
         db::StartFrom::PullRequest { number, repo: named } => {
-            let gh = github(repo, None).await.ok_or_else(|| anyhow!("{} isn't on GitHub, so it has no pull request #{number}", project.repo_path))?;
+            // Where the project's tasks open their pull requests: its base branch's remote's repository.
+            let default = project_base(repo, project).await;
+            let gh = github(repo, default.as_deref()).await.ok_or_else(|| anyhow!("{} isn't on GitHub, so it has no pull request #{number}", project.repo_path))?;
             if let Some(named) = named.as_deref().filter(|n| !n.eq_ignore_ascii_case(&gh.repo)) {
                 bail!("pull request #{number} is in {named}, not in the project's repository {}", gh.repo);
             }
@@ -645,13 +647,19 @@ async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path,
             if pr["state"] == "MERGED" {
                 return Ok(picked(base.clone(), format!("Pull request #{number} is merged already, so starting from its base {base}")));
             }
-            if pr["state"] == "OPEN" && pr["isCrossRepository"] == false {
+            // Its branch, if the name alone follows the remote it's on (where this task's pull request goes too).
+            let follows = upstream(repo, &head).await.is_some_and(|up| up.remote == gh.remote && up.merge == format!("refs/heads/{head}"));
+            if pr["state"] == "OPEN" && pr["isCrossRepository"] == false && follows {
                 return Ok(picked(head.clone(), format!("Starting from pull request #{number}'s branch {head}, which this task's pull request targets")));
             }
             // Its branch isn't one the task's pull request can target: its commit it is.
             let account = crate::agent::runner::task_github_account(state, task)?;
             fetch_commit(repo, &gh.remote, &oid, account.as_deref()).await.with_context(|| format!("fetching pull request #{number}'s head {oid}"))?;
-            let why = if pr["state"] == "OPEN" { "is from a fork" } else { "is closed" };
+            let why = match pr["state"] == "OPEN" {
+                true if pr["isCrossRepository"] == false => &*format!("has its branch on {}, which {head} alone doesn't follow here", gh.remote),
+                true => "is from a fork",
+                false => "is closed",
+            };
             let note = format!(
                 "Pull request #{number} {why}, so starting from its head commit {} on top of {base}: this task's pull request targets {base}, with its commits too",
                 &oid[..oid.len().min(12)]
@@ -663,7 +671,7 @@ async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path,
                 Some(c) => c,
                 None => {
                     // GitHub (like most hosts) hands out a commit that's on one of its branches by its full SHA.
-                    let remote = push_remote(repo, None).await.map(|(r, _)| r);
+                    let remote = push_remote(repo, project_base(repo, project).await.as_deref()).await.map(|(r, _)| r);
                     let account = crate::agent::runner::task_github_account(state, task)?;
                     match remote {
                         Some(r) if sha.len() == 40 => fetch_commit(repo, &r, sha, account.as_deref()).await.with_context(|| format!("fetching commit {sha}"))?,
@@ -675,6 +683,47 @@ async fn pick_start(state: &Shared, task: &Task, project: &Project, repo: &Path,
             let short = found[..12].to_string();
             Ok(Some(Picked { base: None, commit: Some((found, short.clone())), notes: vec![("info", format!("Starting from commit {short}"))] }))
         }
+    }
+}
+
+/// The base branch a task in `project` (in `repo`) gets when it doesn't say: the project's, or the
+/// branch checked out in its repository.
+async fn project_base(repo: &Path, project: &Project) -> Option<String> {
+    match project.base_branch.clone().filter(|b| !b.is_empty()) {
+        Some(b) => Some(b),
+        None => current_branch(repo).await,
+    }
+}
+
+/// Before task `gone` is deleted, if it's merged: the tasks stacked on it keep going where it went
+/// (see db::task_base), which they'd no longer find. One with a branch starts, from then on, from
+/// the commit where its own work starts (see `start_ref`), so its changes are still only its own;
+/// one without is a task on that branch.
+pub async fn unstack(state: &Shared, gone: &Task) {
+    if !db::is_merged(gone) {
+        return;
+    }
+    keep_starts(state, &gone.id).await;
+    let stacked = db::stacked_on(&state.db(), &gone.id).unwrap_or_default();
+    for t in stacked {
+        let project = t.project_id.as_deref().and_then(|p| db::get_project(&state.db(), p).ok().flatten());
+        let base = db::task_base(&state.db(), &t, project.as_ref());
+        let kept = match (&project, &t.branch) {
+            (Some(p), Some(_)) => commit(&crate::util::expand_tilde(&p.repo_path), &start_ref(&t.id)).await,
+            _ => None,
+        };
+        let from = match (&t.branch, kept) {
+            (Some(_), Some(at)) => json!(db::StartFrom::Commit { commit: at }),
+            (Some(_), None) => json!(t.start_from),
+            (None, _) => Value::Null,
+        };
+        let key = format!("{}-{}", crate::agent::runner::key_prefix(gone, project.as_ref()), gone.number);
+        if let Err(e) = state.update_task(&t.id, &[("base_branch", json!(base)), ("start_from", from)]) {
+            tracing::warn!(task = %t.id, "keeping where it goes as {key} is deleted: {e:#}");
+            continue;
+        }
+        let to = base.as_deref().unwrap_or("the base branch");
+        state.add_event(&t.id, "info", format!("{key}, which this task was stacked on, was deleted: it's merged, so this task goes to {to}"), None);
     }
 }
 
@@ -2400,6 +2449,100 @@ mod tests {
             let err = setup(&s, &new("Missing", "#10").id).await.unwrap_err().to_string();
             assert!(err.contains("couldn't read pull request #10 of o/r with gh"), "{err}");
             GH.set(None);
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_pull_request_is_looked_up_where_the_projects_tasks_open_theirs() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, repo, other, p) = stacking_repo(&s).await;
+            // Origin and upstream are different repositories on GitHub, and master follows upstream's, so
+            // the project's tasks open their pull requests there.
+            let up = root.join("upstream");
+            sh(&root, &["clone", "-q", "--bare", &path_str(&root.join("origin")), &path_str(&up)]);
+            sh(&repo, &["remote", "add", "upstream", &path_str(&up)]);
+            sh(&repo, &["remote", "set-url", "--push", "origin", "git@github.com:o/origin.git"]);
+            sh(&repo, &["remote", "set-url", "--push", "upstream", "git@github.com:o/upstream.git"]);
+            sh(&repo, &["fetch", "-q", "upstream"]);
+            sh(&repo, &["branch", "-q", "-u", "upstream/master", "master"]);
+            sh(&other, &["checkout", "-q", "-b", "feature"]);
+            let feature = commit_file(&other, "feature-file");
+            sh(&other, &["push", "-q", &path_str(&up), "feature"]);
+            let gh = root.join("gh");
+            let pr = format!(r#"{{"state":"OPEN","headRefName":"feature","baseRefName":"master","headRefOid":"{feature}","isCrossRepository":false}}"#);
+            let log = root.join("gh.log");
+            let script = format!("#!/bin/sh\necho \"$@\" >> {}\ncase \"$3 $5\" in\n'7 o/upstream') echo '{pr}' ;;\n*) echo 'no such pull request' >&2; exit 1 ;;\nesac\n", path_str(&log));
+            std::fs::write(&gh, script).unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            GH.set(Some(gh));
+            let new = |title: &str, from: &str| create_task_inner(&s, &p.id, CreateTask { title: title.into(), start_from: Some(json!(from)), ..Default::default() }).unwrap();
+            let told = async |t: &Task| {
+                let gh = github(&repo, t.base_branch.as_deref()).await.unwrap();
+                crate::agent::runner::system_prompt(t, Some(&p), None, &[], &[], Some(&gh), true)
+            };
+
+            // Its branch isn't one `feature` alone follows here (that would be origin's): its head commit,
+            // fetched from upstream, on top of its base, where the task's pull request goes.
+            for from in ["https://github.com/o/upstream/pull/7", "#7"] {
+                let t = setup(&s, &new("On upstream's PR", from).id).await.unwrap();
+                assert_eq!((rev(Path::new(t.worktree_path.as_deref().unwrap()), "HEAD"), t.base_branch.as_deref()), (feature.clone(), Some("master")), "{from}");
+                assert!(log_of(&s, &t.id).contains("Pull request #7 has its branch on upstream"), "{}", log_of(&s, &t.id));
+                let text = told(&t).await;
+                assert!(text.contains(&format!("repo `o/upstream`, head `{}` and base `master`", t.branch.as_deref().unwrap())), "{text}");
+            }
+            assert!(std::fs::read_to_string(&log).unwrap().lines().all(|l| l.contains("--repo o/upstream")));
+            // With a local feature that follows upstream's, it's that branch, and the task's pull request targets it there.
+            sh(&repo, &["fetch", "-q", "upstream"]);
+            sh(&repo, &["branch", "-q", "--track", "feature", "upstream/feature"]);
+            let t = setup(&s, &new("On upstream's branch", "#7").id).await.unwrap();
+            assert_eq!(t.base_branch.as_deref(), Some("feature"));
+            let text = told(&t).await;
+            assert!(text.contains(&format!("repo `o/upstream`, head `{}` and base `feature`", t.branch.as_deref().unwrap())), "{text}");
+            GH.set(None);
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_stacked_task_still_goes_where_its_merged_parent_went_once_that_is_deleted() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, repo, _, p) = stacking_repo(&s).await;
+            sh(&repo, &["remote", "set-url", "--push", "origin", "git@github.com:o/r.git"]);
+            let a = setup(&s, &create_task_inner(&s, &p.id, CreateTask { title: "First".into(), ..Default::default() }).unwrap().id).await.unwrap();
+            let a_wt = PathBuf::from(a.worktree_path.clone().unwrap());
+            let a_tip = commit_file(&a_wt, "parent-file");
+            let new = |title: &str| create_task_inner(&s, &p.id, CreateTask { title: title.into(), start_from: Some(json!("X-1")), ..Default::default() }).unwrap();
+            let b = setup(&s, &new("Second").id).await.unwrap();
+            commit_file(Path::new(b.worktree_path.as_deref().unwrap()), "child-file");
+            // Third isn't set up yet.
+            let c = new("Third");
+
+            // First is squashed into master, done, torn down with its branch, and deleted.
+            sh(&repo, &["merge", "-q", "--squash", a.branch.as_deref().unwrap()]);
+            sh(&repo, &["commit", "-qm", "First"]);
+            s.update_task(&a.id, &[("status", json!("done"))]).unwrap();
+            teardown(&s, &a.id, true, true).await.unwrap();
+            let a = db::get_task(&s.db(), &a.id).unwrap().unwrap();
+            crate::api::delete_task_inner(&s, &a, false).await.unwrap();
+
+            // Second goes to master, its changes still only its own.
+            let b = db::get_task(&s.db(), &b.id).unwrap().unwrap();
+            assert_eq!((b.base_branch.as_deref(), b.start_from.clone()), (Some("master"), Some(db::StartFrom::Commit { commit: a_tip.clone() })));
+            assert_eq!(db::task_base(&s.db(), &b, Some(&p)).as_deref(), Some("master"));
+            assert_eq!(changed_files(&s, &b.id).await, ["child-file"]);
+            assert!(log_of(&s, &b.id).contains("X-1, which this task was stacked on, was deleted: it's merged, so this task goes to master"), "{}", log_of(&s, &b.id));
+            // Its agent is told its pull request targets master, and not that it's stacked.
+            let gh = github(&repo, b.base_branch.as_deref()).await.unwrap();
+            let told = crate::agent::runner::system_prompt(&b, Some(&p), None, &[], &[], Some(&gh), true);
+            assert!(told.contains(&format!("head `{}` and base `master`", b.branch.as_deref().unwrap())) && !told.contains("stacked"), "{told}");
+            // Third is a task on master.
+            let c = db::get_task(&s.db(), &c.id).unwrap().unwrap();
+            assert_eq!((c.base_branch.as_deref(), c.start_from), (Some("master"), None));
+            let c = setup(&s, &c.id).await.unwrap();
+            assert_eq!(rev(Path::new(c.worktree_path.as_deref().unwrap()), "HEAD"), rev(&repo, "master"));
             std::fs::remove_dir_all(&root).ok();
         })
     }
