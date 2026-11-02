@@ -200,7 +200,7 @@ those became done scratch tasks (in no project, whichever project they were in) 
 working in their old folder, so their conversations carry on.
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+).
+servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
 ### Server options
 

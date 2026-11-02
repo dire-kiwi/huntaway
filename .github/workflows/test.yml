@@ -78,13 +78,20 @@ jobs:
         run: npm test
 
   # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
-  # scripts/ia-api's tests.
+  # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time (a runner has 4 CPUs,
+  # and Chromium keeps them busy: more at once only made each check slower).
   ui:
+    name: ui (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     env:
       CARGO_INCREMENTAL: "0"
       SCCACHE_DISABLE: "1"
+      IA_UI_TEST_JOBS: "4"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -119,17 +126,20 @@ jobs:
       - name: Browser checks
         working-directory: app
         run: npm run test:ui
+        env:
+          IA_UI_TEST_SHARD: ${{ matrix.shard }}/3
 
       # What the page showed when a step failed (scripts/ui-check.mjs saves it).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: ui-check-failures
+          name: ui-check-failures-${{ matrix.shard }}
           path: /tmp/ui-check-*-failed.png
           if-no-files-found: ignore
           retention-days: 7
 
       - name: ia-api tests
+        if: matrix.shard == 1
         run: python3 scripts/ia-api-test.py
 
       - name: install-release-host tests
