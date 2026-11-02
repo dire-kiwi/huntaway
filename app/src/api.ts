@@ -51,7 +51,7 @@ export const canRunAgents = (h: Host | undefined) => !!h && h.connected && h.age
 /** Waiting in "Ready for merge" for another task in its project to finish merging. */
 export const mergeQueued = (t: Task) => !!t.merging && t.status === "ready_for_merge" && !t.running && !mergeAwaitsApproval(t);
 
-/** Its merge waits for the user's approval (API 89): its agent summarises what will be merged, then the user approves or denies it. */
+/** Its merge waits for the user's approval (API 92): its agent summarises what will be merged, then the user approves or denies it. */
 export const mergeAwaitsApproval = (t: Task) => !!t.merging && t.merge_approval === "pending";
 
 /** Stepped out of the merge queue to make changes, and rejoins it when its agent is done. */
@@ -74,7 +74,7 @@ export const LIMITS_API = 81;
 /** Profiles choose reviewers and a summarizer for their projects that don't choose their own. */
 export const PROFILE_REVIEWERS_API = 87;
 /** Profiles and projects can have merges wait for the user's approval of a summary. */
-export const MERGE_APPROVAL_API = 89;
+export const MERGE_APPROVAL_API = 92;
 
 /** Whether a task counts as merged for the tasks that depend on it (server: db::is_merged). */
 /** Whether new tasks in the project get their own worktree: only once its repo is a git repository. */
@@ -140,6 +140,8 @@ export interface Host {
   api_compat?: number;
   /** Commit the host runs, if it runs from a git checkout. */
   commit?: string | null;
+  /** How an Update reaches it (API 89): its source checkout, or releases (installed from one, with --release-updates). */
+  updates_from?: "checkout" | "releases" | null;
   last_seen?: string | null;
   /** When the hub last heard from a connected host (API 78); pings keep it within about 20s. */
   last_message_at?: string;
@@ -173,7 +175,7 @@ export interface Profile {
   reviewers?: Reviewer[];
   /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 87). */
   summarizer?: Reviewer | null;
-  /** A task moved to Ready for merge has its agent summarise what it would merge, and merges once you approve (API 89). */
+  /** A task moved to Ready for merge has its agent summarise what it would merge, and merges once you approve (API 92). */
   merge_approval?: boolean;
   created_at: string;
 }
@@ -246,6 +248,8 @@ export interface ClaudeConfig {
   agent?: Agent;
   /** Whether the host fetches its plan's usage limits for the sidebar (API 52). Older hosts fetch every config's. */
   show_usage?: boolean;
+  /** Whether the host starts its plan's next 5-hour window as soon as one ends (API 91). */
+  restart_window?: boolean;
   created_at: string;
 }
 
@@ -420,7 +424,7 @@ export interface Project {
   auto_summary?: boolean;
   /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
   summarizer?: Reviewer | null;
-  /** Whether its merges wait for your approval of a summary; null follows the profile's (API 89). */
+  /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
   merge_approval?: boolean | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
@@ -622,7 +626,7 @@ export interface Task {
   merging?: boolean;
   /** Its agent stepped out of the merge queue to make changes; it rejoins the queue when the agent is done (API 69). */
   remerge?: boolean;
-  /** Where its merge is with your approval, when its project asks for it (API 89): `pending` while its agent summarises it and you decide. */
+  /** Where its merge is with your approval, when its project asks for it (API 92): `pending` while its agent summarises it and you decide. */
   merge_approval?: "pending" | "approved" | null;
   attention_reason: string | null;
   /** Tasks (ids) in the same project that have to be merged before its agent starts (API 24). */
@@ -1642,7 +1646,7 @@ export const api = {
   claudeConfigs: (h: string) => on(h).get<Omit<ClaudeConfig, "host_id">[]>("/claude-configs"),
   /** `agent` needs API 25. */
   createClaudeConfig: (h: string, b: { name: string; config_dir: string; agent?: Agent }) => on(h).post<ClaudeConfig>("/claude-configs", b),
-  updateClaudeConfig: (h: string, id: string, b: { name?: string; config_dir?: string; agent?: Agent; show_usage?: boolean }) =>
+  updateClaudeConfig: (h: string, id: string, b: { name?: string; config_dir?: string; agent?: Agent; show_usage?: boolean; restart_window?: boolean }) =>
     on(h).patch<ClaudeConfig>(`/claude-configs/${enc(id)}`, b),
   /** The models a Codex config offers (API 25); empty for Claude configs. */
   claudeConfigModels: (h: string, id: string) => on(h).get<AgentModel[]>(`/claude-configs/${enc(id)}/models`),

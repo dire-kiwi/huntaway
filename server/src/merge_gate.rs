@@ -1,4 +1,4 @@
-//! Merges that wait for the user's approval (API 89), for profiles and projects that ask for it
+//! Merges that wait for the user's approval (API 92), for profiles and projects that ask for it
 //! (`merge_approval`). A task moved to "Ready for merge" first has its agent summarise what it
 //! would merge, without merging, outside the merge queue (see runner::start_next_merge). When
 //! that run ends, the board asks the user to approve or deny the merge with a question card in

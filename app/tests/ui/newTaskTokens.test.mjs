@@ -77,6 +77,8 @@ test("@ puts a task in another project, and its draft keeps the tokens", async (
   await withBrowser(server, {}, async (ui) => {
     await ui.run([
       "goto /profile/Default",
+      // The board has its projects (a draft written in a dialog opened before then didn't always come back, HA-92).
+      "wait Checkout rework",
       "click New task",
       "wait Reads as",
       "type @SHOP",

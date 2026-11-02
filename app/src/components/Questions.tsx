@@ -218,7 +218,7 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
   const answered: { choices?: string[]; text?: string | null } = data.answer ?? {};
   const shown = pending ? picked : answered.choices ?? [];
   const canSend = multi ? picked.length > 0 || !!text.trim() : !!text.trim();
-  // The board's own question, whether to merge (API 89): answering it is the decision, not a message to the agent.
+  // The board's own question, whether to merge (API 92): answering it is the decision, not a message to the agent.
   const merge = data.merge_approval === true;
   return (
     <Frame pending={pending} cardRef={ref} label={merge ? "Merge approval" : "Question from the agent"}>

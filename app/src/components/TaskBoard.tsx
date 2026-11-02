@@ -307,8 +307,12 @@ export function TaskBoard({
   const columnIndex = shownStatuses.findIndex((s) => s.id === shownColumn);
   const columnsRef = useRef<HTMLDivElement>(null);
   const columnTabsRef = useRef<HTMLDivElement>(null);
-  /** The column being scrolled to, which the columns passed on the way don't take over from. */
-  const scrollingTo = useRef<{ index: number; timer: ReturnType<typeof setTimeout> } | null>(null);
+  /**
+   * The column being scrolled to, which the columns passed on the way don't take over from, until the scroll ends: on a
+   * busy phone it can take a while to get going, and a column it had barely left took back over (HA-92). Without
+   * scrollend (Safari before 26), until the scroll has had time to end.
+   */
+  const scrollingTo = useRef<{ index: number; timer?: ReturnType<typeof setTimeout> } | null>(null);
   const pickColumn = (s: Status) => {
     setColumn(s);
     localStorage.setItem(columnKey(boardKey), s);
@@ -324,7 +328,7 @@ export function TaskBoard({
     if (Math.abs(el.scrollLeft - left) <= 1) return;
     if (smooth) {
       clearTimeout(scrollingTo.current?.timer);
-      scrollingTo.current = { index: columnIndex, timer: setTimeout(() => (scrollingTo.current = null), 800) };
+      scrollingTo.current = { index: columnIndex, timer: "onscrollend" in window ? undefined : setTimeout(() => (scrollingTo.current = null), 800) };
     }
     el.scrollTo({ left, behavior: smooth ? "smooth" : "instant" });
   }, [columnIndex, narrow, view]);
@@ -338,6 +342,12 @@ export function TaskBoard({
     }
     const s = shownStatuses[i]?.id;
     if (s && s !== shownColumn) pickColumn(s);
+  };
+  // Where it ended is picked, if that isn't where it was going (a swipe took over).
+  const onColumnsScrollEnd = (e: UIEvent<HTMLDivElement>) => {
+    if (!scrollingTo.current) return;
+    scrollingTo.current = null;
+    onColumnsScroll(e);
   };
 
   const onDragOver = (e: DragEvent, status: Status) => {
@@ -662,7 +672,7 @@ export function TaskBoard({
               </button>
             ))}
           </div>
-          <div ref={columnsRef} onScroll={onColumnsScroll} className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
+          <div ref={columnsRef} onScroll={onColumnsScroll} onScrollEnd={onColumnsScrollEnd} className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
             {shownStatuses.map((s) => (
               <DropColumn
                 key={s.id}

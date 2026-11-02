@@ -51,6 +51,7 @@ mod title;
 mod tools;
 mod usage;
 mod wait;
+mod window;
 mod util;
 mod worktree;
 mod worktree_files;
@@ -303,6 +304,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let data_dir = args.data_dir.unwrap_or_else(default_data_dir);
     std::fs::create_dir_all(&data_dir).with_context(|| format!("creating {}", data_dir.display()))?;
     let data_dir = data_dir.canonicalize()?;
+    // Before opening the database: a newer release this host updated to takes over.
+    #[cfg(unix)]
+    if args.release_updates.as_deref().is_some_and(|r| !r.trim().is_empty()) {
+        release::exec_installed(&data_dir);
+    }
     let token = match args.access_token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         Some(t) => t.to_string(),
         None => load_or_create_token(&data_dir, "auth_token")?,
@@ -372,6 +378,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runner::load_active(&state)?;
     runner::auto_compact(&state);
     usage::resume_loop(&state);
+    window::start(&state);
     pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);

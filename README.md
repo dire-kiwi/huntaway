@@ -56,6 +56,9 @@ runs rustc directly. The server is started with `$XDG_RUNTIME_DIR` (or `/tmp`) a
 rather than the build's, which may be a task's temp folder that goes when the task is done.
 `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s` shows the hit rate.
 Debug builds also leave dependencies' debuginfo out, which keeps each worktree's `target/` smaller.
+`cargo test` runs each test binary with a `TMPDIR` of its own on disk, `/var/tmp/ia-cargo-test-*`
+(or `$IA_CARGO_TEST_TMPDIR`), removed when it exits (`server/.cargo/test-runner`), rather than in
+`/tmp`, which is often a tmpfs in memory that tests' databases and repositories fill up.
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
 of how many of its tasks are in progress (blue), need attention (amber), in review (purple) and
@@ -91,9 +94,11 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
-Reorder projects in the sidebar by dragging their grip handles. With a handle focused,
-Alt + Up/Down moves the project using the keyboard. Projects stay within their host group;
-the order is saved in this browser.
+The sidebar lists projects in alphabetical order, with each group in its place by its own name
+and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
+under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
+out of its group, whose row stays while it has group tasks even if all its projects are favorites);
+*Remove from favorites* puts it back. Favorites are saved in this browser.
 
 Rename a project, change its key or point it at a moved repository folder in its settings (or
 with the `update_project` tool, API 45). After a key change the old task keys (e.g. `OS-2`) still
@@ -108,13 +113,13 @@ Group projects by right-clicking one in the sidebar (or with *Group* in its sett
 shows as a collapsible folder with its projects underneath, and clicking it opens one board
 (or list) with all of their tasks. Right-click a group to rename or ungroup it. Groups are
 saved on the host, per project, so projects on different hosts are in separate groups; which
-groups are collapsed is saved in this browser. Drag a group by its grip to move it with all
-its projects; projects inside a group reorder within it.
+groups are collapsed is saved in this browser.
 
 Hide a project from the sidebar by right-clicking it and picking *Hide from sidebar* (a group's
 menu hides all of its projects). Each host's hidden projects sit under a *N hidden* row at the
 end of its list, which carries their counts and opens to show them; right-click one there to
-show it again. A hidden project is only left out of the sidebar: its tasks are still on its
+show it again. A hidden favorite stays there rather than under *Favorites*, and making a hidden project a
+favorite shows it again. A hidden project is only left out of the sidebar: its tasks are still on its
 profile's and its group's boards. Hidden projects are saved in this browser.
 
 Archive a project you're done with by right-clicking it and picking *Archive…*, or with *Archive
@@ -195,7 +200,7 @@ those became done scratch tasks (in no project, whichever project they were in) 
 working in their old folder, so their conversations carry on.
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+).
+servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
 ### Server options
 
@@ -459,20 +464,25 @@ version is all a check does; quitting and starting the app again still runs the 
 A host installed from the server tarball can update the same way with
 `huntaway serve --release-updates dire-kiwi/huntaway` (or `IA_RELEASE_UPDATES=dire-kiwi/huntaway`):
 the board it serves shows the same Update, Check now and Roll back, and versions go into
-`<data dir>/app/` as above. Set `IA_BUNDLED_SERVER` to the tarball's `huntaway` so that Roll back
-can go back to it. There's no desktop app to choose the version, so a supervisor that restarts the
-server (after a reboot, say) runs the binary it names, the tarball's, until you click Update again.
-To keep the version you updated to, have it start the current one instead, with a script like this:
+`<data dir>/app/` as above. So does its page in a hub's Settings → Hosts, through the hub. There's
+no desktop app to choose the version when a supervisor starts the tarball's `huntaway` again (after
+a reboot, say), so the server chooses as the app would: it execs the version you last updated to
+(`current` in `app/state.json`, else `previous`), when that's newer than itself and isn't bad, and
+otherwise carries on itself. So a newer tarball takes over from older downloads, as a newer package
+does. A version it starts this way that exits before it's listening is marked bad on the next start,
+which starts the one before it, or the tarball's own server: a broken version is tried once, not on
+every restart (a server killed while it's starting counts as one that didn't start). Roll back can go
+back to the tarball's own server, from the first Update on: the tarball's server passes itself as
+`IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
+Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
-```sh
-#!/bin/sh
-# Start the release last updated to, or the installed one. It doesn't compare versions, so after
-# installing a newer tarball, delete <data dir>/app/.
-data=${IA_DATA_DIR:-$HOME/.local/share/huntaway}
-v=$(sed -n 's/^ *"current": *"\([^"]*\)".*/\1/p' "$data/app/state.json" 2>/dev/null)
-[ -n "$v" ] && [ -x "$data/app/$v/huntaway" ] && exec "$data/app/$v/huntaway" "$@"
-exec /opt/huntaway-server/huntaway "$@"
-```
+`scripts/install-release-host.sh` installs a host this way: it downloads the latest release's tarball
+(or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
+`~/.local/share/huntaway-server/current` at it, and prints the command to start it with
+`IA_RELEASE_UPDATES` set, and the forced command for a host a hub starts over SSH
+(`command="IA_RELEASE_UPDATES=dire-kiwi/huntaway '…/current/huntaway' ssh-host --port 7878 --data-dir '<data dir>'"`).
+Both name the data dir (`--data-dir`, or the default it found), so the host keeps its board.
+`scripts/install-release-host-test.sh` checks the script against a fake release.
 
 `scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
@@ -539,6 +549,14 @@ it over the link, so no git remote or inbound access is needed. The host fast-fo
 checkout (it refuses if the checkout is dirty, on another branch, or has diverged), then
 rebuilds and restarts like Rebuild & restart; agents keep running. Hosts from before
 versioning need one manual update (`git pull`, then Rebuild & restart).
+
+A host installed from a release (with `--release-updates`, see *Release updates*; `/api/info`
+reports `updates_from: "releases"` rather than `"checkout"`, API 89) goes by version instead: when
+the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
+onto that release as its own Update would, checking for releases first if it hasn't seen it yet. It
+refuses a version older than its own, or one older than the latest release it knows of (update the
+hub first). A hub without a checkout or `IA_COMMIT` that runs a release sends only its version, so
+it can update release hosts but not checkouts.
 
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
@@ -727,6 +745,25 @@ skipped. Auto-compacting idle sessions is Claude-only.
   out). A limit at 80% or more is marked in amber, and one that's used up in red, in the
   sidebar and where a config is picked (the new task dialog's config picker, a task's
   *Config* row), so you can pick another config before starting work.
+- **Restarting the 5-hour window** (API 91): a plan's session limit runs for five hours from
+  the first message after the last window ended, so a window that ends while nothing runs leaves
+  the next one to start whenever work does. Tick *Restart 5h window* on a config in Settings →
+  Agent configs (off by default) and the host sends one short prompt just after each window ends
+  (a minute late, for clocks that disagree): `claude -p` on Haiku with no tools, MCP servers or
+  saved session for Claude, a low-effort ephemeral turn for Codex, from the data dir. That starts
+  the next window straight away. Only plans with a 5-hour limit are sent anything: the host fetches
+  the config's usage when the setting is turned on (or the server starts), and a plan whose usage
+  has never shown a session limit (like a plan with only weekly limits) is left alone, as is a config
+  that's out of usage. (Where that fetch fails, as with a login that has expired, it waits for an
+  agent run on the config to report the window.) It fetches again before each prompt, in case a run or another host already
+  started the window, and again after it, and takes the prompt's own `rate_limit_event`s in as an
+  agent run's are. The first request after a window ends reports the window that ended (as its
+  `rateLimitType`, left out of `unifiedWindows`), so that still counts as having one; only a prompt
+  whose rate limits show no 5-hour window at all, with usage that doesn't show one either, stops the
+  restarts until the setting is turned on again. Codex's windows are told apart by their length
+  (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
+  then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
+  has no session limit. See `server/src/window.rs`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
