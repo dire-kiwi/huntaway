@@ -121,7 +121,7 @@ fn new_task_labels(b: &CreateTask) -> ApiResult<Option<(&'static str, Value)>> {
 }
 
 pub(super) async fn create_scratch_task(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<CreateTask>) -> ApiResult<Json<Value>> {
-    let prompted = is_prompt(&b.start);
+    let prompted = is_prompt(&b);
     Ok(Json(json!(prompted_now(&s, prompted, create_scratch_task_inner(&s, &id, b)?))))
 }
 
@@ -190,9 +190,14 @@ pub fn create_scratch_task_inner(s: &Shared, profile_id: &str, b: CreateTask) ->
     })
 }
 
-/// Whether `start` is a prompt the user wrote (rather than just starting the agent).
-fn is_prompt(start: &Option<Value>) -> bool {
-    matches!(start, Some(Value::String(p)) if !p.trim().is_empty())
+/// Whether the task starts with a prompt the user wrote: a `start` that's text, or `start: true` (what the board's
+/// new task dialog sends) to start from the description they typed. Not a bare start with nothing to say.
+fn is_prompt(b: &CreateTask) -> bool {
+    match &b.start {
+        Some(Value::String(p)) => !p.trim().is_empty(),
+        Some(Value::Bool(true)) => !b.description.trim().is_empty(),
+        _ => false,
+    }
 }
 
 /// A task made with the user's own prompt, from the board, is in "now" like one they prompt later. Not the ones
@@ -220,7 +225,7 @@ pub(super) async fn create_group_task(State(s): State<Shared>, Path(id): Path<St
         return Err(ApiError::bad("group must name a group of the profile's projects"));
     }
     let b = b.task;
-    let prompted = is_prompt(&b.start);
+    let prompted = is_prompt(&b);
     if b.kind.as_deref().is_some_and(|k| k != "task") || b.parent_id.is_some() || b.subproject == Some(true) || b.depends_on.as_ref().is_some_and(|d| !d.is_empty()) {
         return Err(ApiError::bad("a group task can't be a subproject, be in one, or have dependencies"));
     }
@@ -286,7 +291,7 @@ pub(super) async fn create_group_task(State(s): State<Shared>, Path(id): Path<St
 }
 
 pub(super) async fn create_task(State(s): State<Shared>, Path(project_id): Path<String>, Json(b): Json<CreateTask>) -> ApiResult<Json<Value>> {
-    let prompted = is_prompt(&b.start);
+    let prompted = is_prompt(&b);
     Ok(Json(json!(prompted_now(&s, prompted, create_task_inner(&s, &project_id, b)?))))
 }
 

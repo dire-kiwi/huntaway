@@ -337,7 +337,25 @@ fn the_users_prompts_put_a_task_in_now_but_agents_and_starts_do_not() {
         };
         // Made from the board with a prompt, it's in now; started without one (or by an agent: create_task_inner), it isn't.
         assert!(make(json!({"start": "Do it"})).await.now_at.is_some());
+        // The new task dialog sends `start: true` with the description they typed (its title is made from it).
+        let dialog = json!({"description": "Implement the feature", "start": true, "status": "in_progress"});
+        assert!(make(dialog.clone()).await.now_at.is_some());
         assert_eq!(make(json!({"start": true})).await.now_at, None);
+        assert_eq!(make(json!({"description": "  ", "start": true})).await.now_at, None);
+        assert_eq!(make(json!({"description": "Implement the feature"})).await.now_at, None);
+        // The same for the dialog's scratch and group tasks, which share it.
+        let profile = project.profile_id.clone();
+        let body = |extra: Value| -> CreateTask { serde_json::from_value(json!({"title": "T"}).as_object().unwrap().iter().chain(extra.as_object().unwrap()).map(|(k, v)| (k.clone(), v.clone())).collect::<Map<_, _>>().into()).unwrap() };
+        let Json(scratch) = create_scratch_task(State(s.clone()), Path(profile.clone()), Json(body(dialog.clone()))).await.unwrap();
+        assert!(serde_json::from_value::<db::Task>(scratch).unwrap().now_at.is_some());
+        let Json(scratch) = create_scratch_task(State(s.clone()), Path(profile.clone()), Json(body(json!({"start": true})))).await.unwrap();
+        assert_eq!(serde_json::from_value::<db::Task>(scratch).unwrap().now_at, None);
+        update_project_inner(&s, &project.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
+        let group = |extra: Value| CreateGroupTask { group: "Shop".into(), task: body(extra) };
+        let Json(g) = create_group_task(State(s.clone()), Path(profile.clone()), Json(group(dialog.clone()))).await.unwrap();
+        assert!(serde_json::from_value::<db::Task>(g).unwrap().now_at.is_some());
+        let Json(g) = create_group_task(State(s.clone()), Path(profile.clone()), Json(group(json!({"start": true})))).await.unwrap();
+        assert_eq!(serde_json::from_value::<db::Task>(g).unwrap().now_at, None);
         assert_eq!(make(json!({})).await.now_at, None);
         let by_agent = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "T", "depends_on": [first.id], "start": "Do it"})).unwrap()).unwrap();
         assert_eq!(by_agent.now_at, None);
