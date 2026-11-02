@@ -745,12 +745,18 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         recount_run_costs(&conn)?;
         conn.execute_batch("PRAGMA user_version=73; COMMIT;")?;
     }
+    if version < 74 {
+        // How a task's pull request's checks stood at the latest read (see Task::pr_checks).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='pr_checks'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE tasks ADD COLUMN pr_checks TEXT;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=74; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 73;
+pub const VERSION: i64 = 74;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for
