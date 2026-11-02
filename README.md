@@ -1248,21 +1248,28 @@ skipped. Auto-compacting idle sessions is Claude-only.
     look there, and its *Changes* and reviews start from the later of its merge bases with that
     and with where it started, so a squashed parent's work isn't counted as its own before
     it's rebased, nor after, even once the parent's branch is deleted. Where it started is kept
-    as `refs/huntaway/start/<task id>` in the repository (moved on to the parent's branch as the
-    task takes in more of it), and goes when the task does. *Remove merged worktrees* counts a stacked task merged into the
+    as `refs/huntaway/start/<task id>` in the repository, and goes when the task does. It's moved on
+    to as much of the parent's branch as the task has taken in when either task's agent run ends,
+    when the parent is done, before the parent's worktree or branch is removed, and when *Changes*
+    or a review reads it. *Remove merged worktrees* counts a stacked task merged into the
     project's base branch as merged too. Stacking doesn't make it wait for the other task: add a
     dependency for that. A task can't start from one that (by way of others, or a subproject it's
     in) starts from it.
   - **A branch** becomes its base branch, fetched first as the project's is. A remote's branch
-    (`upstream/feature`) is that remote's, fetched even if it never was before, unless it's the
-    remote the branch's name alone follows (usually `origin`), where it's the branch of that name.
+    is the branch of that name when it's on the remote the name alone follows (usually `origin`,
+    where the task's pull request goes). Another remote's (`upstream/feature`) isn't a branch the
+    task's pull request can target: as for a pull request from a fork, the task starts from its
+    latest commit (fetched even if it never was before), with the project's base branch as its
+    own, so its pull request has that branch's commits too, and its *Changes* and reviews start
+    after that commit.
   - **A pull request** in the project's GitHub repository (looked up with gh, as the task's GitHub
     account) is its branch, as for a task. A merged one is where it was merged; one from a fork,
     or closed, starts from its head commit, fetched by its SHA, with the pull request's base as the
     task's (so its pull request has the other's commits too).
   - **A commit** is where its branch starts, fetched by its full SHA if the repository doesn't have
     it; its base branch stays the project's, and its *Changes* and reviews start after the commit
-    when the base branch doesn't have it.
+    when the base branch doesn't have it. Such a review, and the summary of its changes, read the
+    branch's changes from where it started rather than its pull request's diff, which has more.
   The task's log says where it started. Its branch, base branch and worktree folder are saved as
   soon as git makes them, so a setup script that fails doesn't lose them. It can't change once the
   task's branch exists (it's set up again from that branch), a subproject's tasks start from the subproject's branch, and a task

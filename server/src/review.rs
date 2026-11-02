@@ -116,29 +116,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     }
     let dir = PathBuf::from(dir);
     let head = rev_parse(&dir, "HEAD").await.ok_or_else(|| ApiError::bad("couldn't read the worktree's HEAD commit"))?;
-    // What the branch is compared with: it may have started from the base branch's upstream.
-    let base = db::task_base(&state.db(), &task, Some(&project));
-    let base = match base {
-        Some(b) => Some(worktree::compare_ref(&dir, &b).await),
-        None => None,
-    };
-    // Started from somewhere else (a commit its base branch doesn't have, a task stacked on that's
-    // merged since): its work is what's after where the Changes tab has it start. When that's later
-    // than where it left its base branch, a pull request's diff has more than its own work.
-    let (base, own_start) = match &task.start_from {
-        Some(_) => match worktree::changes_base(state, &dir, &task, &project).await.1 {
-            Some(start) => {
-                let left = match &base {
-                    Some(b) => worktree::git(&dir, &["merge-base", b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string()),
-                    None => None,
-                };
-                let later = left.as_deref() != Some(start.as_str());
-                (Some(start), later)
-            }
-            None => (base, false),
-        },
-        None => (base, false),
-    };
+    let (base, own_start) = worktree::work_scope(state, &dir, &task, &project).await;
     let mut elsewhere = false;
     if let Some(b) = &base {
         let merge_base = worktree::git(&dir, &["merge-base", b, "HEAD"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string());

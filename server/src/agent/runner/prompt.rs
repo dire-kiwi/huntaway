@@ -236,7 +236,7 @@ fn ask_and_finish(done: &str) -> String {
 /// adds more). `group`: for a group task, its group's projects. `documents`: the files its labels ask it to
 /// write, by label (see agent/documents.rs). `github`: where a task with its own branch opens
 /// its pull request, if its repository is on GitHub.
-pub(super) fn system_prompt(
+pub(crate) fn system_prompt(
     task: &Task,
     project: Option<&Project>,
     parent: Option<&Task>,
