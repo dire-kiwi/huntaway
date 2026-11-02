@@ -11,7 +11,7 @@ import { parseDiff, type FileDiff } from "./changes";
 import { useNarrow } from "../../narrow";
 import { closeCompare, openTask } from "../../router";
 import { taskKey, useStore } from "../../store";
-import { BranchView, LayoutToggle } from "./Changes";
+import { BranchView, LayoutToggle } from "./git/Patches";
 import type { Layout } from "./DiffLines";
 import { harnessLabels, useConfigsOf, useFanout } from "../board/Fanout";
 import { ReviewVerdict } from "../task/Review";

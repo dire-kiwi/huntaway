@@ -9,7 +9,7 @@ import { turnStat, useTurns } from "./turns";
 import { Markdown } from "./Thread";
 import { Button, CARD_BADGE, Wide } from "../ui";
 
-const PatchBox = lazy(() => import("../changes/Changes").then((m) => ({ default: m.PatchBox })));
+const PatchBox = lazy(() => import("../changes/git/Patches").then((m) => ({ default: m.PatchBox })));
 
 /** Each reviewer's part: a review from before there could be several has just its own. */
 export const reviewParts = (r: Review): ReviewerRun[] =>
