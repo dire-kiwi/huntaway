@@ -17,6 +17,9 @@ Set these in the server's environment (before test-server.sh, which keeps them f
                          "out-of-usage", which is refused for the usage limit as Claude Code does
   IA_FAKE_CLAUDE_USAGE   "out" refuses every run that way; "extra" (or a prompt containing
                          "on-extra-usage") reports the limit as used up but carries on, on extra usage
+  IA_FAKE_CLAUDE_WINDOW  seconds a 5-hour window lasts: each stream-json run reports its window, which
+                         starts with the first run after the last one ended (kept in a file beside the log);
+                         that first run reports the window that ended, as Claude Code does
 """
 import json
 import os
@@ -72,6 +75,27 @@ model = opt("--model") or "fake"
 emit({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": os.getcwd(), "tools": []})
 time.sleep(float(os.environ.get("IA_FAKE_CLAUDE_SLEEP", "0")))
 usage = os.environ.get("IA_FAKE_CLAUDE_USAGE") or ("extra" if "on-extra-usage" in prompt else "out" if "out-of-usage" in prompt else "")
+window = os.environ.get("IA_FAKE_CLAUDE_WINDOW")
+if window and not usage:
+    # The plan's 5-hour window, as Claude Code reports it on each turn.
+    state = os.path.join(os.path.dirname(log or os.path.abspath(".")), "fake-claude-window")
+    try:
+        resets = int(open(state).read())
+    except (OSError, ValueError):
+        resets = 0
+    windows = {"seven_day": {"utilization": 0.3, "resetsAt": int(time.time() + 86400), "status": "allowed"}}
+    if resets <= time.time():
+        # As Claude Code does, the first run after a window ends reports the one that ended, and
+        # leaves it out of unifiedWindows; the next run reports the new one.
+        old, resets = resets, int(time.time() + float(window))
+        with open(state, "w") as f:
+            f.write(str(resets))
+    else:
+        old = None
+        windows["five_hour"] = {"utilization": 0.01, "resetsAt": resets, "status": "allowed"}
+    info = {"status": "allowed", "resetsAt": old or resets, "rateLimitType": "five_hour", "overageStatus": "rejected", "isUsingOverage": False,
+            "unifiedWindows": windows}
+    emit({"type": "rate_limit_event", "rate_limit_info": info, "session_id": session})
 if usage == "extra":
     # What a plan with extra usage reports on each turn past its limit, which goes on.
     resets = int(time.time() + float(os.environ.get("IA_FAKE_CLAUDE_LIMIT", "7200")))

@@ -712,12 +712,21 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=70; COMMIT;")?;
     }
+    if version < 71 {
+        // Whether the board starts a config's next 5-hour window as soon as one ends (see
+        // window.rs); off until the user turns it on. Added only if it isn't there, in case
+        // another migration takes this version first (tables created by migrate_claude_configs
+        // since have it already).
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('claude_configs') WHERE name='restart_window'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE claude_configs ADD COLUMN restart_window INTEGER NOT NULL DEFAULT 0;" };
+        conn.execute_batch(&format!("BEGIN; {add} PRAGMA user_version=71; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 70;
+pub const VERSION: i64 = 71;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for
@@ -917,7 +926,8 @@ fn migrate_claude_configs(conn: &Connection) -> Result<()> {
            config_dir TEXT NOT NULL DEFAULT '',
            created_at TEXT NOT NULL,
            agent TEXT NOT NULL DEFAULT 'claude',
-           show_usage INTEGER NOT NULL DEFAULT 0
+           show_usage INTEGER NOT NULL DEFAULT 0,
+           restart_window INTEGER NOT NULL DEFAULT 0
          );
          ALTER TABLE profiles ADD COLUMN claude_config_ids TEXT NOT NULL DEFAULT '[]';
          ALTER TABLE projects ADD COLUMN claude_config_ids TEXT;
@@ -1090,6 +1100,9 @@ pub struct ClaudeConfig {
     pub agent: String,
     /// Whether the board fetches and shows its plan's usage limits (see usage.rs).
     pub show_usage: bool,
+    /// Whether the board starts its plan's next 5-hour window as soon as one ends (see window.rs).
+    #[serde(default)]
+    pub restart_window: bool,
     pub created_at: String,
 }
 
@@ -1101,6 +1114,7 @@ impl ClaudeConfig {
             config_dir: r.get("config_dir")?,
             agent: r.get("agent")?,
             show_usage: r.get("show_usage")?,
+            restart_window: r.get("restart_window")?,
             created_at: r.get("created_at")?,
         })
     }
@@ -1936,7 +1950,7 @@ pub fn insert_claude_config(c: &Connection, name: &str, config_dir: &str, agent:
     Ok(get_claude_config(c, &id)?.unwrap())
 }
 
-const CLAUDE_CONFIG_COLUMNS: &[&str] = &["name", "config_dir", "agent", "show_usage"];
+const CLAUDE_CONFIG_COLUMNS: &[&str] = &["name", "config_dir", "agent", "show_usage", "restart_window"];
 
 pub fn update_claude_config(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<ClaudeConfig>> {
     update_generic(c, "claude_configs", CLAUDE_CONFIG_COLUMNS, id, fields)?;
@@ -3733,6 +3747,25 @@ mod tests {
         for name in ["", " ", ".", ".."] {
             assert_eq!(default_clone_dir(name), "~", "{name:?}");
         }
+    }
+
+    #[test]
+    fn a_database_from_version_70_gets_restart_window_off() {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(
+                "ALTER TABLE claude_configs DROP COLUMN restart_window; PRAGMA user_version=70;
+                 INSERT INTO claude_configs (id,name,config_dir,created_at,show_usage) VALUES ('c','work','~/.claude','1',1);",
+            )
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let cfg = get_claude_config(&c, "c").unwrap().unwrap();
+        assert_eq!((cfg.show_usage, cfg.restart_window), (true, false));
+        let cfg = update_claude_config(&c, "c", &[("restart_window", json!(true))]).unwrap().unwrap();
+        assert!(cfg.restart_window);
     }
 
     #[test]

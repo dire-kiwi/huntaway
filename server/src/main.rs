@@ -50,6 +50,7 @@ mod title;
 mod tools;
 mod usage;
 mod wait;
+mod window;
 mod util;
 mod worktree;
 mod worktree_files;
@@ -376,6 +377,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runner::load_active(&state)?;
     runner::auto_compact(&state);
     usage::resume_loop(&state);
+    window::start(&state);
     pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);

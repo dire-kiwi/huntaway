@@ -241,6 +241,8 @@ export interface ClaudeConfig {
   agent?: Agent;
   /** Whether the host fetches its plan's usage limits for the sidebar (API 52). Older hosts fetch every config's. */
   show_usage?: boolean;
+  /** Whether the host starts its plan's next 5-hour window as soon as one ends (API 91). */
+  restart_window?: boolean;
   created_at: string;
 }
 
@@ -1632,7 +1634,7 @@ export const api = {
   claudeConfigs: (h: string) => on(h).get<Omit<ClaudeConfig, "host_id">[]>("/claude-configs"),
   /** `agent` needs API 25. */
   createClaudeConfig: (h: string, b: { name: string; config_dir: string; agent?: Agent }) => on(h).post<ClaudeConfig>("/claude-configs", b),
-  updateClaudeConfig: (h: string, id: string, b: { name?: string; config_dir?: string; agent?: Agent; show_usage?: boolean }) =>
+  updateClaudeConfig: (h: string, id: string, b: { name?: string; config_dir?: string; agent?: Agent; show_usage?: boolean; restart_window?: boolean }) =>
     on(h).patch<ClaudeConfig>(`/claude-configs/${enc(id)}`, b),
   /** The models a Codex config offers (API 25); empty for Claude configs. */
   claudeConfigModels: (h: string, id: string) => on(h).get<AgentModel[]>(`/claude-configs/${enc(id)}/models`),
