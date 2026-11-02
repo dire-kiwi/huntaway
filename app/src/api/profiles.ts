@@ -35,6 +35,8 @@ export interface Profile {
   summarizer?: Reviewer | null;
   /** A task moved to Ready for merge has its agent summarise what it would merge, and merges once you approve (API 92). */
   merge_approval?: boolean;
+  /** A task needs an approving review on its pull request on GitHub to go to Ready for merge (API 95). */
+  require_pr_approval?: boolean;
   created_at: string;
 }
 
@@ -72,6 +74,7 @@ export const profilesApi = {
       reviewers?: Reviewer[];
       summarizer?: Reviewer | null;
       merge_approval?: boolean;
+      require_pr_approval?: boolean;
     },
   ) =>
     on(h).post<Profile>("/profiles", b),

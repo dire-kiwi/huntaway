@@ -1469,7 +1469,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   merged worktrees* does for each project, and lists what it removed, how much that freed and what it kept; click a worktree to open its task and
   remove it there, which is also the way to remove a worktree no task has. The
   folders are measured when the tab first opens and again on refresh (API 35).
-  The *Tokens* tab (API 95) shows where agents' tokens go: in total and per day, by what they were
+  The *Tokens* tab (API 96) shows where agents' tokens go: in total and per day, by what they were
   spent on (tasks' own agents, reviews, summaries, compactions, scratch and group tasks), by model
   (Claude's and Codex's), and per task, with a review or summary thread's tokens counted towards
   its task and a subproject's tasks' towards the subproject (expand it to see each). It can measure

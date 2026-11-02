@@ -877,6 +877,64 @@ pub async fn unmerged(state: &Shared, task: &Task) -> bool {
     !matches!(tokio::time::timeout(Duration::from_secs(5), pr).await, Ok(Some(pr)) if pr["state"] == "MERGED")
 }
 
+/// Whether the setting that a task needs an approving review on its pull request to go to
+/// "Ready for merge" applies to `task`: its project's, or else its profile's (API 95). It doesn't
+/// where the task's merge goes through no pull request (the project's settings open none for it).
+pub async fn pr_approval_required(state: &Shared, task: &Task) -> bool {
+    let (project, required) = {
+        let c = state.db();
+        let project = task.project_id.as_deref().and_then(|id| db::get_project(&c, id).ok().flatten());
+        let in_subproject = task.parent_id.as_deref().and_then(|id| db::get_task(&c, id).ok().flatten()).is_some_and(|t| t.subproject);
+        let required = match project.as_ref().and_then(|p| p.require_pr_approval) {
+            Some(on) => on,
+            None => db::get_profile(&c, &task.profile_id).ok().flatten().is_some_and(|p| p.require_pr_approval),
+        };
+        (project.filter(|p| p.pull_requests(in_subproject)), required)
+    };
+    // Agents open a pull request only for a task with its own branch, in a repository pushed to GitHub (see agent/runner/launch.rs).
+    let Some(project) = project.filter(|_| required && task.branch.is_some()) else { return false };
+    let base = task.base_branch.as_deref().or(project.base_branch.as_deref()).filter(|b| !b.is_empty());
+    github(Path::new(&project.repo_path), base).await.is_some()
+}
+
+/// Whether a pull request (as `gh pr view --json reviewDecision,reviews` prints it) is approved:
+/// GitHub's decision if it has one, else each reviewer's standing verdict from their reviews in order
+/// (comments keep it, a dismissal clears it) is an approval with no change request standing.
+pub fn approved_by_reviews(pr: &Value) -> bool {
+    match pr["reviewDecision"].as_str() {
+        Some("APPROVED") => return true,
+        // Required reviews GitHub doesn't count as met (too few, or not from people who can write), or changes asked for.
+        Some("CHANGES_REQUESTED" | "REVIEW_REQUIRED") => return false,
+        _ => {}
+    }
+    let mut verdicts: std::collections::HashMap<&str, &str> = Default::default();
+    for r in pr["reviews"].as_array().into_iter().flatten() {
+        let (Some(who), Some(state)) = (r["author"]["login"].as_str(), r["state"].as_str()) else { continue };
+        // Anyone can review a public repository's pull request: only those with a say in the repository count.
+        if state == "APPROVED" && !["OWNER", "MEMBER", "COLLABORATOR"].contains(&r["authorAssociation"].as_str().unwrap_or("")) {
+            continue;
+        }
+        match state {
+            "APPROVED" | "CHANGES_REQUESTED" => drop(verdicts.insert(who, state)),
+            "DISMISSED" => drop(verdicts.remove(who)),
+            _ => {}
+        }
+    }
+    verdicts.values().any(|v| *v == "APPROVED") && !verdicts.values().any(|v| *v == "CHANGES_REQUESTED")
+}
+
+/// Whether the pull request at `url` (the one the task will have) is approved on GitHub. Err says why
+/// it can't be told (no pull request, or GitHub couldn't be read).
+pub async fn pr_approved(state: &Shared, task: &Task, url: Option<&str>) -> Result<bool, String> {
+    let Some(url) = url else { return Err("the task has no pull request yet; open one and get it approved on GitHub first".into()) };
+    let project = task.project_id.as_deref().and_then(|id| db::get_project(&state.db(), id).ok().flatten()).ok_or("the task has no project")?;
+    let env = crate::agent::runner::task_gh_env(state, task).await.map_err(|e| format!("couldn't read the pull request: {e:#}"))?;
+    let pr = gh_json(Path::new(&project.repo_path), &["pr", "view", url, "--json", "reviewDecision,reviews"], env.as_ref())
+        .await
+        .ok_or("couldn't read the pull request's reviews from GitHub")?;
+    Ok(approved_by_reviews(&pr))
+}
+
 /// Look up the pull request for a task's branch with `gh` once its agent's run ends, and keep
 /// its URL on the task. Skipped when the task already has one; quietly gives up when `gh`
 /// isn't installed or signed in, or the branch has no pull request yet.
@@ -1786,5 +1844,33 @@ mod tests {
             assert!(wt.exists());
             std::fs::remove_dir_all(&repo).ok();
         })
+    }
+}
+
+#[cfg(test)]
+mod approval_tests {
+    use super::approved_by_reviews;
+    use serde_json::json;
+
+    fn pr(decision: Value, reviews: &[(&str, &str)]) -> Value {
+        json!({"reviewDecision": decision, "reviews": reviews.iter().map(|(a, s)| json!({"author": {"login": a}, "state": s, "authorAssociation": "MEMBER"})).collect::<Vec<_>>()})
+    }
+    use serde_json::Value;
+
+    // HA-113: a comment after an approval (or a change request) doesn't replace the reviewer's verdict.
+    #[test]
+    fn a_reviewers_standing_verdict_survives_their_comments() {
+        assert!(approved_by_reviews(&pr(json!("APPROVED"), &[])));
+        assert!(!approved_by_reviews(&pr(json!("CHANGES_REQUESTED"), &[("a", "APPROVED")])));
+        assert!(approved_by_reviews(&pr(json!(""), &[("a", "APPROVED"), ("a", "COMMENTED")])));
+        assert!(!approved_by_reviews(&pr(json!(null), &[("a", "CHANGES_REQUESTED"), ("a", "COMMENTED"), ("b", "APPROVED")])));
+        assert!(approved_by_reviews(&pr(json!(null), &[("a", "CHANGES_REQUESTED"), ("a", "APPROVED")])));
+        assert!(!approved_by_reviews(&pr(json!(null), &[("a", "APPROVED"), ("a", "DISMISSED")])));
+        assert!(!approved_by_reviews(&pr(json!(null), &[("a", "COMMENTED")])));
+        // Required reviews not met: an approval GitHub doesn't count is no approval.
+        assert!(!approved_by_reviews(&pr(json!("REVIEW_REQUIRED"), &[("a", "APPROVED")])));
+        // Without required reviews, an outside account's approval doesn't count.
+        let outsider = json!({"reviewDecision": "", "reviews": [{"author": {"login": "x"}, "state": "APPROVED", "authorAssociation": "NONE"}]});
+        assert!(!approved_by_reviews(&outsider));
     }
 }
