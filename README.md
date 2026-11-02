@@ -1465,7 +1465,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   its repository (and how much of that is `.git`), each task's worktree, its agent runs' folders
   (output and logs, kept 14 days after a run ends) and its scratch folders, as `du` counts them,
   and each host's database (API 59). Worktrees of done tasks, and worktrees of a project's repository in its
-  worktrees folder that no task on the host has, count as reclaimable; click a worktree to open its task and remove it there. The
+  worktrees folder that no task on the host has, count as reclaimable. **Reclaim space** (API 39) removes the done tasks' worktrees that are merged and clean, as *Remove
+  merged worktrees* does for each project, and lists what it removed, how much that freed and what it kept; click a worktree to open its task and
+  remove it there, which is also the way to remove a worktree no task has. The
   folders are measured when the tab first opens and again on refresh (API 35).
 - **Subagents:** each subagent Claude or Codex starts is a row in the thread
   showing whether it is running (in the foreground or background), done, failed or stopped. Expand
