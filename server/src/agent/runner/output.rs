@@ -122,6 +122,7 @@ pub(super) fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
         "system" if v["subtype"] == "init" => {
             if let Some(sid) = v["session_id"].as_str() {
                 state.update_task(task_id, &[("session_id", json!(sid))])?;
+                db::set_run_session(&state.db(), &run.id, sid)?;
             }
             let c = state.db();
             if let Some(t) = db::get_task(&c, task_id)?.filter(|t| t.project_id.is_some()) {
@@ -225,11 +226,14 @@ fn claude_result(state: &Shared, run: &Run, v: &Value) -> Result<()> {
     crate::agent::context::on_result(state, task_id, v)?;
     // Before the turn's end closes its input (see `turn_ended`).
     crate::agent::context::request(state, run);
-    // A running total for the agent's process, which may go on for several turns.
-    let total = v["total_cost_usd"].as_f64().unwrap_or(0.0);
-    let so_far: f64 = state.db().query_row("SELECT cost_usd FROM runs WHERE id=?1", [&run.id], |r| r.get(0))?;
-    let cost = (total - so_far).max(0.0);
-    state.db().execute("UPDATE runs SET cost_usd=?1 WHERE id=?2", rusqlite::params![total.max(so_far), run.id])?;
+    // A running total for the session, which goes on over its turns and the runs that resume it.
+    let cost = match v["total_cost_usd"].as_f64() {
+        Some(total) => {
+            let counted = v["modelUsage"].as_object().is_some_and(|m| !m.is_empty());
+            db::add_cost(&state.db(), &run.id, v["session_id"].as_str(), total, counted)?
+        }
+        None => 0.0,
+    };
     let task = db::get_task(&state.db(), task_id)?;
     if let Some(t) = task {
         let mut fields = vec![("cost_usd", json!(t.cost_usd + cost))];

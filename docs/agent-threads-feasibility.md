@@ -32,7 +32,7 @@ formats in use until every linked host upgrades.
 What Huntaway would gain:
 
 - **A data model of its own.** Claude's stream-json is Huntaway's storage format today, and Codex is converted into it
-  (`server/src/codex.rs`, about 900 lines). The normalized items (`user_message`, `assistant_message`, `reasoning`,
+  (`server/src/agent/codex.rs`, about 900 lines). The normalized items (`user_message`, `assistant_message`, `reasoning`,
   `tool_call` with a `kind`, `compaction`, `notice`, `turn_result`) mean less special-casing for Codex in the server and
   the UI.
 - **In-process board tools.** Today the board's MCP server is a helper process (`huntaway mcp`). It gets the host's

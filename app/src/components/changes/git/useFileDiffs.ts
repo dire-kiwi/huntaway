@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { parseDiff, type FileRow } from "../changes";
+import { parseDiff, type FileRow } from "../diffs";
 import { errText, loadFileDiffs, NO_DIFFS, type FileDiffs } from "./model";
 
 export type FileDiffsView = ReturnType<typeof useFileDiffs>;

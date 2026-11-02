@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { linesStageable, type FileRow } from "../changes";
+import { linesStageable, type FileRow } from "../diffs";
 import type { FileDiffsView } from "./useFileDiffs";
 import type { GitSelection } from "./useGitSelection";
 import { isChange, nearestChange, stageRows, type Pane } from "./model";

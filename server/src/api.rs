@@ -153,6 +153,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/wait-for-limit", post(crate::agent::usage::wait_for_reset))
         .route("/tasks/{id}/review", post(review_task))
+        .route("/tasks/{id}/review/extend", post(extend_review))
         .route("/tasks/{id}/summary", post(summarise_task))
         .route("/tasks/{id}/worktree/setup", post(setup_worktree))
         .route("/tasks/{id}/worktree/teardown", post(teardown_worktree))

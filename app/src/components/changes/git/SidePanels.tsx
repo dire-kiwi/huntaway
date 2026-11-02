@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import type { ReactNode } from "react";
 import type { GitStatus } from "../../../api";
-import { hasUnstaged } from "../changes";
+import { hasUnstaged } from "../diffs";
 import { turnLabel, turnStat, type useTurns } from "../../task/turns";
 import type { MenuItem } from "../../ui";
 import { FilesList, List, Panel } from "./Panels";

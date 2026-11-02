@@ -4,9 +4,9 @@ Detail behind [huntaway-features.md](huntaway-features.md), the Huntaway invento
 
 Source: `app/src` (React 19 + Vite + Tailwind 4 + zustand, xterm.js, Mermaid, react-markdown) and
 `app/electron/main.cjs`, at commit `90bb99b`. Paths below are relative to `app/src` unless they start
-with `app/`. "(README)" marks something the README already describes; those get one line. Many
-features are gated per host by API version (`hostSupports(host, N)`): on an older linked host they're
-simply hidden.
+with `app/`, and are updated to the feature folders since HA-103 (see `docs/structure.md`). "(README)"
+marks something the README already describes; those get one line. Many features are gated per host by
+API version (`hostSupports(host, N)`): on an older linked host they're simply hidden.
 
 ## 1. Routes and pages (`router.ts`, `App.tsx`)
 
@@ -25,18 +25,18 @@ simply hidden.
   board), no command palette and no search across boards. `App.tsx`
 - Before anything loads: a **token screen** ("Access token required", paste `huntaway token`) on a
   401, and an **onboarding** card on a board with no profiles (create a profile; a board-only hub
-  instead shows the Hosts panel to link a machine that can run agents). `components/Settings.tsx`
+  instead shows the Hosts panel to link a machine that can run agents). `components/settings/Settings.tsx`
 - A project or task link that can't be found says so ("Project not found", "Task not found");
-  an archived project's old link says it's archived and links to Settings. `components/Board.tsx`
+  an archived project's old link says it's archived and links to Settings. `components/board/Board.tsx`
 
-## 2. Sidebar (`components/Sidebar.tsx`)
+## 2. Sidebar (`components/layout/Sidebar.tsx`)
 
 - Header: logo, "Huntaway", and a **connection dot** (green; red and pulsing with "Reconnecting…"
   while the event socket is down).
 - Profiles list with a per-profile **status bar** of coloured segments (README); Analytics link.
 - *Starred* and *Reminders* sections (README). Reminders show a relative label and turn amber with a
   bell-ring when due; the heading counts due ones. Right-click a row: Star/Unstar, the reminder
-  presets, *Remind me at…*, *Clear reminder*. `components/Reminders.tsx`, `reminders.ts`
+  presets, *Remind me at…*, *Clear reminder*. `components/task/Reminders.tsx`, `reminders.ts`
 - Projects of the active profile, grouped by host when there are several (README). Each row shows the
   key's first 3 letters as an icon, a **running dot** if any agent runs, a purple badge counting tasks
   **in review and ready to check** (review passed or none, agent not running) and an amber badge
@@ -49,11 +49,11 @@ simply hidden.
   group*; *Pin to every profile*/*Unpin*; *Hide from sidebar*/*Show in sidebar*; *Archive…*.
   Group menu: *Rename group…*, *Ungroup*, *Pin*/*Unpin*, *Hide from sidebar*.
 - Footer: **Usage left** panel (README; collapsible, refresh button, bars filled by what's left, red
-  under 10%, amber under 30%, reset countdown, plan name; `components/Usage.tsx`), **"New version ·
-  Reload"** when the server serves a newer UI build than the page runs (`uiVersion.ts`), **"N new
+  under 10%, amber under 30%, reset countdown, plan name; `components/settings/Usage.tsx`), **"New version ·
+  Reload"** when the server serves a newer UI build than the page runs (`components/settings/uiVersion.ts`), **"N new
   commits · Restart"** (README) which turns into a live build-phase indicator, and Settings.
 
-## 3. Boards (`components/Board.tsx`, `components/BoardControls.tsx`, `boardQuery.ts`)
+## 3. Boards (`components/board/Board.tsx`, `components/board/BoardControls.tsx`, `components/board/boardQuery.ts`)
 
 ### Columns and views
 - Columns: Backlog, To do, In progress, Needs attention, In review, Ready for merge, Done (README);
@@ -115,11 +115,11 @@ Menu titled "Complete KEY-N as": **Done / Not done / Won't fix** (current one ch
 end of Done), then **Star/Unstar**, **Remind me in 1 hour / in 3 hours / tomorrow at 9:00 / next
 Monday at 9:00**, **Remind me at…** (date-time + "what for" note dialog), **Clear reminder**. Hosts
 before API 19 keep the browser's own menu. The menu is keyboard navigable (arrows, Home/End, Escape).
-`components/ui.tsx` `ContextMenu`, `components/Reminders.tsx`
+`components/ui/ContextMenu.tsx`, `components/task/Reminders.tsx`
 
 - **No multi-select or bulk actions** anywhere on the boards.
 
-## 4. New task dialog (`NewTaskModal` in `components/Board.tsx`, `taskTokens.ts`, `harnesses.ts`)
+## 4. New task dialog (`components/layout/NewTaskModal.tsx`, `components/layout/taskTokens.ts`, `components/layout/harnesses.ts`)
 
 The README describes `!model` fan-out and (now outdated) type tabs and a project picker. The dialog is
 actually a single **token-driven editor** (IA-220): everything is typed into the description.
@@ -154,7 +154,7 @@ actually a single **token-driven editor** (IA-220): everything is typed into the
 - Submit button reads "Create task", "Create & start", "Create & queue" (has deps) or "Create & start
   3"; Ctrl/Cmd+Enter submits from anywhere in the dialog.
 
-## 5. Task panel (`components/TaskView.tsx`)
+## 5. Task panel (`components/task/TaskView.tsx`)
 
 ### Modes
 - **Side panel** sliding in over the right half of a board (below its header), **expanded** into a
@@ -164,7 +164,7 @@ actually a single **token-driven editor** (IA-220): everything is typed into the
   in it holds an unsaved draft (composer text, description edit), a dialog/menu is open, or the click
   selected text or navigated. Opening a terminal tab from the side panel auto-expands it.
 - Opens on the most useful tab: a plan/artifact/diagram on its document once it's ready, an unstarted
-  task on its details (when narrow), otherwise the thread (`openingTab.ts`).
+  task on its details (when narrow), otherwise the thread (`components/task/openingTab.ts`).
 
 ### Header
 Breadcrumb (project / group / profile → subproject key → task key) with links back to the board (keeping
@@ -172,7 +172,7 @@ the task open beside it), type badge, **title** (double-click to rename; a pin i
 hand, click to let it follow messages again; README), **star** toggle, then: subproject **Board**
 button with progress, **reminder bell** (README), **Agents** pill (README), **Context** pill (README;
 mini bar, amber at 85% of the compaction point, dialog with the `/context` breakdown;
-`components/Context.tsx`), the **tabs**, **terminal tool** buttons (green dot when one is open; README),
+`components/task/Context.tsx`), the **tabs**, **terminal tool** buttons (green dot when one is open; README),
 and **Stop** / "Queued" / **Start**. Expand/collapse and close buttons. Below 880px wide the controls
 wrap to a second row and the details become a tab.
 
@@ -213,21 +213,21 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
 - **Not there**: file tree, side-by-side view, syntax highlighting, per-commit or per-file selection,
   staging/reverting, inline comments sent to the agent, or a "commit/push/open PR" button.
 
-### Review tab and review threads (`components/Review.tsx`)
+### Review tab and review threads (`components/task/Review.tsx`)
 - The task's latest review (README): per-reviewer rows with state and a link to each reviewer's thread,
   summary and issues, and **Review now / Review again** (disabled while the agent runs).
 - A review thread opens in the same panel with breadcrumb back to the task, its own Agents/Context
   pills and Stop, and a sidebar: *Reviewing* (task + branch), *Latest review*, reviewer cost/session.
   The composer there asks "Ask the reviewer about its findings…".
 
-### Terminal and terminal tools (`components/Terminal.tsx`, `terminalTools.ts`)
+### Terminal and terminal tools (`components/task/Terminal.tsx`, `terminalTools.ts`)
 - (README) tmux-backed shell and tools. UI extras: a header with the tool command and cwd, connection
   state, **Restart** (end and start again), **End**/**Close**; an overlay on exit or disconnect with
   **Reconnect** / "Start a new session"; clickable URLs (web-links addon); Ctrl/Cmd+C copies a selection
   (else sends ^C), Ctrl/Cmd+V and Shift+Insert paste; bundled JetBrains Mono with Nerd Font symbols;
   terminals stay mounted across tab switches; xterm loads lazily.
 
-### Document tab (`components/Document.tsx`, `planTheme.ts`, `planAnswers.ts`, `htmlFrame.ts`)
+### Document tab (`components/task/Document.tsx`, `components/task/planTheme.ts`, `components/task/planAnswers.ts`, `components/task/htmlFrame.ts`)
 - (README) plan/artifact/diagram rendering, versions, plan questions. UI extras: a **version
   dropdown** ("v3 · 5m ago (latest)" / "(being written)") with *Back to the latest*; **Preview/Source**
   toggle; **copy source**; **download** the file (and the rendered **SVG** for diagrams); diagram
@@ -239,7 +239,7 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
 - The agent's **latest reply** floats in a small box above the composer under the document, with a
   *Thread* link; the plan's question bar ("2 of 5 questions answered", Reset, **Send answers**; README).
 
-## 6. Thread (`components/Thread.tsx`, `threadModel.ts`, `subagents.ts`)
+## 6. Thread (`components/task/Thread.tsx`, `threadModel.ts`, `subagents.ts`)
 
 - **Your messages**: right-aligned bubbles with attachment thumbnails/chips; the board's own prompts
   (review fixes, merge instructions, other agents) are shown in muted italics; a steered message's
@@ -279,7 +279,7 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
 - **Images** in tool results (screenshots, image Reads) are not shown: results are reduced to text.
 - No message actions: no copy, edit-and-resend, retry, fork, rewind/checkpoints or thread export.
 
-## 7. Composer (`Composer` in `components/Thread.tsx`, `components/SkillMenu.tsx`, `components/Attachments.tsx`)
+## 7. Composer (`components/task/thread/Composer.tsx`, `components/task/SkillMenu.tsx`, `components/task/Attachments.tsx`)
 
 - Auto-growing textarea (to 260px). **Enter sends**, Shift+Enter adds a line, **Shift+Tab cycles the
   permission mode** (README). An empty Enter on an unstarted task starts it with just the description.
@@ -303,7 +303,7 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
   sent is removed, even if you switched away meanwhile.
 - No `@file` mentions or file picker from the worktree, no prompt history, no voice input.
 
-## 8. App-wide approval dialog (`components/Approvals.tsx`, `approvals.ts`)
+## 8. App-wide approval dialog (`components/task/Approvals.tsx`, `approvals.ts`)
 
 - (README) Project-setting changes and task deletions requested by agents pop up as a modal over
   whatever page you're on, from any host. UI extras: "1 of N" counter, a per-setting old → new view with
@@ -312,8 +312,8 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
 
 ## 9. Settings
 
-### Settings page (`/settings`, `components/Settings.tsx`), in order
-1. **Hosts** (`components/Hosts.tsx`): each host's name, online dot, mode, URL, "last seen", "board
+### Settings page (`/settings`, `components/settings/Settings.tsx`), in order
+1. **Hosts** (`components/settings/Hosts.tsx`): each host's name, online dot, mode, URL, "last seen", "board
    only (can't run agents)", version/API/commit, compatibility badge (Outdated / Too old / Board too old)
    and **Update to <commit>** with live phases (README); **Configure**, **Rename**, **Remove**.
    **Add host** has two tabs: **Over SSH** (not in the README: SSH target, SSH port, path to `huntaway`
@@ -321,23 +321,23 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
    then starts `huntaway` there if needed and tunnels to it, with the host listening only on its
    localhost) and **By URL and token** (README). **Connect from elsewhere** shows the dial-out command
    and this host's token for another board (README). **Scratch task host** select on board-only hubs.
-2. **Agent configs** (`components/ClaudeConfigs.tsx`): grouped by name across hosts; add (host, name,
+2. **Agent configs** (`components/settings/ClaudeConfigs.tsx`): grouped by name across hosts; add (host, name,
    agent Claude/Codex, directory), edit, delete (warns which profiles use it), **Show usage**, **Copy
    login** to another host (README), and adding the same-named config on hosts missing it.
 3. **Profiles**: merged by name with a row per host; edit form (host, name, default model, ordered
    agent configs, GitHub account, clone folder, Asana toggle and token, agents from other profiles)
    (README for each field); Copy login.
-4. **Skills and MCP servers** (global; `components/AgentTools.tsx`): per-profile default on/off, add a
+4. **Skills and MCP servers** (global; `components/settings/AgentTools.tsx`): per-profile default on/off, add a
    skill by pasting `SKILL.md`, add an MCP server as stdio (command, args, env), HTTP (URL, headers) or a
    raw `.mcp.json` entry, "allow all tools" per server, filter when the list is long (README).
 5. **Archived projects** with Unarchive (README).
 6. **Server**: running commit, source checkout and branch, commits ahead, **Rebuild & restart** dialog
    with the new commits listed, running-agent count, warnings for a dirty or non-master checkout, a
    "Rebuild before restarting" toggle, a streamed build log and an automatic page reload once the new
-   process is up (README describes the action; `components/Server.tsx`).
+   process is up (README describes the action; `components/settings/Server.tsx`).
 7. **Network access**: the board URL with token (masked, Reveal, Copy), data directory and version.
 
-### Host page (`/hosts/<id>`, `components/HostPage.tsx`)
+### Host page (`/hosts/<id>`, `components/settings/HostPage.tsx`)
 Mode, URL, version and update; **Agent defaults** (model with "Specific model…", effort, permission
 mode; README); agent configs and profiles on this host; **Terminal tools** (name + command rows;
 README); **Server** (local: as above; a linked host: Rebuild & restart or plain Restart, polled log);
@@ -353,13 +353,13 @@ scripts with variable hints, **Remove merged worktrees** with a per-task removed
 scripts (any column + per column), scratch folder (read-only), **Archive project**, **Delete project**.
 All of these are README features; the page itself isn't described there.
 
-### Add project dialog (`NewProjectModal`, `components/GithubRepos.tsx`)
+### Add project dialog (`components/settings/NewProjectModal.tsx`, `components/settings/GithubRepos.tsx`)
 (README) Folder / GitHub tabs. UI extras: the **folder picker** browses the host's filesystem as you
 type (Tab completes, arrows pick, `~/` expands, git repos marked, "New folder. It's created when you
 add the project."); host and profile selects; a config-directory field when the profile doesn't exist
 on that host yet; the repo list marks forks, private and archived repositories.
 
-## 10. Analytics (`components/Analytics.tsx`, `components/DiskUsage.tsx`)
+## 10. Analytics (`components/settings/Analytics.tsx`, `components/settings/DiskUsage.tsx`)
 
 (README) Report, Calendar and Disk tabs. UI extras: range presets (today, yesterday, this/last week,
 this/last month, last 7/30 days, custom), headline tiles (active time, prompts and how many typed, tasks
@@ -412,7 +412,7 @@ No global shortcuts for new task, switching boards or tasks, and no command pale
 - Accessibility touches: focusable cards, ARIA menus/dialogs/listboxes, focus trap and return in
   dialogs, screen-reader text for reordering.
 
-## 14. Live updates, offline and versions (`store.ts`, `uiVersion.ts`)
+## 14. Live updates, offline and versions (`store.ts`, `components/settings/uiVersion.ts`)
 
 - One websocket carries events from every host (task, project, message, streamed delta, usage,
   settings, restart progress, resync). Updates are applied in place; open threads append messages.

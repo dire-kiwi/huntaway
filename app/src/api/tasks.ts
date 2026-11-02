@@ -8,7 +8,7 @@ export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
 
 export type Resolution = "done" | "not_done" | "wont_fix";
 
-/** What a task's worktree starts from (API 93): its base branch, which its pull request targets, comes from it. */
+/** What a task's worktree starts from (API 94): its base branch, which its pull request targets, comes from it. */
 export type StartFrom =
   | { type: "branch"; branch: string }
   | { type: "task"; task_id: string }
@@ -16,7 +16,7 @@ export type StartFrom =
   | { type: "commit"; commit: string };
 
 /** The API that takes a task's start_from, and lists a project's branches. */
-export const START_FROM_API = 93;
+export const START_FROM_API = 94;
 
 export type Status = "todo" | "in_progress" | "needs_attention" | "in_review" | "ready_for_merge" | "done" | "backlog";
 
@@ -135,6 +135,8 @@ export interface Review {
   issues: string[];
   /** Reviews in a row that sent issues back to the agent. */
   fixes: number;
+  /** Rounds of fixes you added, past the project's review_rounds, after the task ran out of them (API 93). */
+  extra_rounds?: number;
   updated_at: string;
   /** Each reviewer's part (API 29). */
   reviewers?: ReviewerRun[];
@@ -258,7 +260,7 @@ export interface Task {
   worktree_path: string | null;
   branch: string | null;
   base_branch: string | null;
-  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 93). */
+  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 94). */
   start_from?: StartFrom | null;
   worktree_state: "none" | "setting_up" | "ready" | "tearing_down" | "error";
   worktree_error: string | null;
@@ -465,7 +467,7 @@ export const tasksApi = {
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
-      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 93). */
+      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 94). */
       start_from?: string;
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
@@ -486,6 +488,8 @@ export const tasksApi = {
   waitForLimit: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/wait-for-limit`),
   /** Review the task's work now (API 12). */
   review: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/review`),
+  /** A task whose review still found serious issues after its rounds of fixes gets as many again, starting with those issues (API 93). */
+  extendReview: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/review/extend`),
   summarize: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/summary`),
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),

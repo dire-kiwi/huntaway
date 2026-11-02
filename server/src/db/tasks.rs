@@ -108,7 +108,7 @@ pub struct Task {
     pub worktree_path: Option<String>,
     pub branch: Option<String>,
     pub base_branch: Option<String>,
-    /// What its worktree starts from, when it isn't the project's base branch (API 93): picked
+    /// What its worktree starts from, when it isn't the project's base branch (API 94): picked
     /// before the worktree is made, which sets `base_branch` from it (see worktree::setup).
     #[serde(default)]
     pub start_from: Option<StartFrom>,

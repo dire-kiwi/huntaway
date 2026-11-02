@@ -41,7 +41,7 @@ pub struct Context {
     pub detail_at: Option<String>,
 }
 
-/// What a task's worktree starts from instead of the project's base branch (API 93), stored on
+/// What a task's worktree starts from instead of the project's base branch (API 94), stored on
 /// it as JSON. Set before the worktree is made; worktree::setup turns it into the task's base
 /// branch (which its pull request targets and its changes are compared with) and the commit its
 /// branch starts at.
@@ -180,9 +180,12 @@ pub struct Review {
     /// Set by `submit_review` while the review is running: pass or issues.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
-    /// Reviews in a row that sent issues back to the agent (capped by the project's review_rounds).
+    /// Reviews in a row that sent issues back to the agent (capped by the project's review_rounds, plus `extra_rounds`).
     #[serde(default)]
     pub fixes: u32,
+    /// Rounds of fixes the user added after the task ran out of them (API 93, see review::extend).
+    #[serde(default)]
+    pub extra_rounds: u32,
     pub updated_at: String,
     /// Each reviewer's part (API 29). Empty in reviews from before there could be several.
     #[serde(default)]

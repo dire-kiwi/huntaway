@@ -572,7 +572,7 @@ pub(super) fn remove_unused_dir(s: &Shared, dir: &std::path::Path, what: &str) -
     Ok(())
 }
 
-/// `GET /projects/{id}/branches` (API 93): the branches of the project's repository a task can
+/// `GET /projects/{id}/branches` (API 94): the branches of the project's repository a task can
 /// start from (see `check_start_from`), the latest commits first: `{branches: [{name, remote}]}`,
 /// local ones as `feature` and those only on a remote as `origin/feature`. Empty for a folder
 /// that isn't a git repository.

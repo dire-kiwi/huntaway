@@ -421,7 +421,7 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
 | `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
-| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update changes the app itself rather than only the server and the UI |
+| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
 
@@ -463,9 +463,18 @@ version is all a check does; quitting and starting the app again still runs the 
 - **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
   rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
   each. Deleting `app/` goes back to the app's own server.
-- **The app itself.** Most releases change only the server and the UI. When a release newer than the
-  app also changes it (its Electron or `app/electron/`, which `huntaway-<v>-release.json` records),
-  Settings → Server says so and how to install it. An app installed from a prerelease isn't offered
+- **The app's own code.** The window, notifications, badge and the server launcher (`app/electron/`) update
+  with the server, like the UI. The app's entry point, `boot.cjs`, loads `electron/main.cjs` from the `electron/`
+  folder of the version the server runs (each release's server tarball has one, with a `shell.json` naming the
+  Electron it was written for), and falls back to the copy in the package. After an Update has restarted the
+  server and the board has reloaded, the app relaunches once onto the new code. A shell that throws as it loads, or
+  that stops without the app quitting in its first 20 seconds, is marked bad (`app/shell-state.json`) and the
+  package's runs instead; the server version stays. A shell written for another Electron major version isn't loaded.
+  `IA_RELEASE_UPDATES` blank or a remote `serverUrl` turn this off with the rest.
+- **What needs a new package.** Only Electron itself and `boot.cjs` (the "frame"), which
+  `huntaway-<v>-release.json` records as `shell`. When a release newer than the app changes either,
+  Settings → Server says so and how to install it. An app installed before `boot.cjs` existed needs one new package
+  to start getting its code this way. An app installed from a prerelease isn't offered
   an older release's package while prereleases are off. The AppImage's **Update app** downloads the new AppImage beside the
   running one, checks it, renames it over the old file and relaunches. The pacman package's
   **Install** downloads and checks the `.pacman`, then runs `pkexec pacman -U --noconfirm` on it,
@@ -1074,7 +1083,10 @@ skipped. Auto-compacting idle sessions is Claude-only.
   Serious issues go back to the task's agent to fix, which it may push back on by asking you
   (`request_user_input`, so the task goes to *Needs attention*). When it finishes, the new commit
   is reviewed again. After the project's *Fix rounds* (default 2) in a row, a review that still
-  finds serious issues moves the task to *Needs attention* instead. A commit that was already
+  finds serious issues moves the task to *Needs attention* instead. There, *N more rounds of fixes*
+  (in the task's sidebar, under its status and on its *Review* tab) sends those issues to the agent
+  and gives the task as many rounds again, at least one: a project's 2 become 4, then 6 (API 93,
+  `POST /tasks/{id}/review/extend`). *Review again* starts afresh, with the project's rounds. A commit that was already
   reviewed isn't reviewed again (unless its review found issues and the branch has no commits, as
   the fixes are then elsewhere), and a review in progress is stopped when the task's agent
   starts working again. The card stays in *In review* while it's reviewed, and only goes back to
@@ -1213,7 +1225,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
-- **Starting from elsewhere** (API 93): a task's worktree can start from something other than the
+- **Starting from elsewhere** (API 94): a task's worktree can start from something other than the
   project's base branch, picked before it's made: type `from:` in the new task dialog's
   description (it suggests the project's open tasks and its branches), fill in *Starts from* in
   the task's *Worktree* details before its first run (or after a setup that failed before making
@@ -1361,7 +1373,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   stashes, space applies, `g` pops and `d` drops. Right-clicking a file, commit or stash shows
   its menu. The view checks for changes every few seconds (the agent may be making them), and
   keys pressed while a change is being made wait for it, so pressing space again stages the next
-  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/components/changes/changes.ts`),
+  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/components/changes/diffs.ts`),
   applied with `git apply --cached`; if the file has changed since, git refuses it and the view
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
@@ -1514,7 +1526,7 @@ Each run gets the `huntaway` MCP server (`huntaway mcp`, configured per run):
 *Waiting*), plus the internal `permission_prompt`. Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
-`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 93, see
+`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 94, see
 *Starting from elsewhere*), and task summaries say what a task started from.
 
 From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:

@@ -20,6 +20,9 @@ Set these in the server's environment (before test-server.sh, which keeps them f
   IA_FAKE_CLAUDE_WINDOW  seconds a 5-hour window lasts: each stream-json run reports its window, which
                          starts with the first run after the last one ended (kept in a file beside the log);
                          that first run reports the window that ended, as Claude Code does
+  IA_FAKE_CLAUDE_COST    what each stream-json run costs (default 0): its result reports its session's total,
+                         which goes on over the runs that resume the session (kept in a file beside the log),
+                         as Claude Code's `total_cost_usd` does
 """
 import json
 import os
@@ -125,6 +128,18 @@ emit({
                 "usage": {"input_tokens": 1, "output_tokens": 1}},
 })
 subtype = os.environ.get("IA_FAKE_CLAUDE_RESULT", "success")
+total = float(os.environ.get("IA_FAKE_CLAUDE_COST", "0"))
+if total and log:
+    costs = os.path.join(os.path.dirname(log), "fake-claude-costs.json")
+    try:
+        with open(costs) as f:
+            sessions = json.load(f)
+    except (OSError, ValueError):
+        sessions = {}
+    total += sessions.get(session, 0)
+    sessions[session] = total
+    with open(costs, "w") as f:
+        json.dump(sessions, f)
 emit({
     "type": "result",
     "subtype": subtype,
@@ -133,6 +148,7 @@ emit({
     "session_id": session,
     "duration_ms": 1,
     "num_turns": 1,
-    "total_cost_usd": 0,
+    "total_cost_usd": total,
+    "modelUsage": {model: {"inputTokens": 1, "outputTokens": 1, "costUSD": total}} if total else {},
 })
 sys.exit(int(os.environ.get("IA_FAKE_CLAUDE_EXIT", "0")))

@@ -2,7 +2,7 @@
 
 Detail behind [huntaway-features.md](huntaway-features.md), the Huntaway inventory.
 
-Source: `master` at `90bb99b`.
+Source: `master` at `90bb99b`; paths are updated to the folders since HA-102 and HA-103 (`docs/structure.md`).
 Paths are relative to `server/` unless they say otherwise. Items marked **(README)** are already described
 in `README.md` and are kept to a line here.
 
@@ -10,11 +10,11 @@ Version numbers at this commit:
 
 | What | Value | Source |
 |---|---|---|
-| Host API version (`API_VERSION`) | **61** | `src/proto.rs` |
-| Oldest UI a host still serves (`API_COMPAT`) | 1 | `src/proto.rs` |
-| Hub tunnel protocol (`PROTOCOL`) | 1 | `src/proto.rs` |
+| Host API version (`API_VERSION`) | **61** | `src/hosts/proto.rs` |
+| Oldest UI a host still serves (`API_COMPAT`) | 1 | `src/hosts/proto.rs` |
+| Hub tunnel protocol (`PROTOCOL`) | 1 | `src/hosts/proto.rs` |
 | SQLite schema (`PRAGMA user_version`) | 53 | `src/db.rs` (`open`) |
-| Run directory format (`RUN_FORMAT`) | 2 | `src/runs.rs` |
+| Run directory format (`RUN_FORMAT`) | 2 | `src/agent/runs.rs` |
 
 ---
 
@@ -27,12 +27,12 @@ One binary, `huntaway` (clap, `src/main.rs`), plus `ia-shim` (`shim/src/main.rs`
 |---|---|---|
 | `serve` | `--host`/`IA_HOST` (`0.0.0.0`), `--port`/`IA_PORT` (7878; 0 = free port), `--data-dir`/`IA_DATA_DIR`, `--ui-dir`/`IA_UI_DIR`, `--source-dir`/`IA_SOURCE_DIR`, `--name`/`IA_NAME`, `--hub`/`IA_HUB` (repeatable or comma-separated), `--hub-token`/`IA_HUB_TOKEN`, **`--token`/`IA_TOKEN`** (fixed access token, e.g. a deployment secret; not in the README's table), `--demo`/`IA_DEMO`, `--open-token`/`IA_OPEN_TOKEN` | Runs the server and serves the UI. Prints a machine-readable `IA_READY {"port","token"}` line for Electron (`token` is null when it came from `IA_TOKEN`, which is also kept out of the logs). `src/main.rs` |
 | `mcp` | none | Stdio MCP server spawned by each agent run: lists the board tools and relays each call to `POST /api/internal/mcp`, retrying under the same call id while the server restarts. Reads `IA_URL`, `IA_TOKEN`, `IA_RUN_ID`, `IA_REVIEW`. `src/mcp.rs` |
-| `gh-mcp` | none | Stdio MCP server that runs `gh` for agents outside their sandbox (reads `IA_CWD`, `IA_GH_ACCOUNT`). `src/gh_mcp.rs` (README) |
-| `gh-hook` (hidden) | none | Claude Code PreToolUse hook that denies `gh` in Bash. `src/gh_mcp.rs` (README) |
-| `gh-run` (hidden) | trailing gh args | `gh` shim on a `wait` command's PATH: checks targets, runs gh as the task's account. `src/gh_mcp.rs` (README) |
-| `codex-run <spec>` (hidden) | path to `codex.json` | The Codex adapter: drives `codex app-server` over JSON-RPC for one run (started under ia-shim). `src/codex.rs` |
-| `ssh-host` | `--port` (7878), `--data-dir`/`IA_DATA_DIR`, `--name` | Forced command for a hub's SSH key: starts `huntaway serve --host 127.0.0.1` through the login shell if no host answers on the port, then prints `{port, token, started, info}` as JSON. `src/ssh.rs` (not in README) |
-| `title-check` (hidden) | `--db <copy of a db>`, `--steps`, `--input`, task ids | Debug tool: prints the titles tasks would get now (each step after each user message with `--steps`; the model input with `--input`) without changing them. `src/title.rs` |
+| `gh-mcp` | none | Stdio MCP server that runs `gh` for agents outside their sandbox (reads `IA_CWD`, `IA_GH_ACCOUNT`). `src/mcp/gh_mcp.rs` (README) |
+| `gh-hook` (hidden) | none | Claude Code PreToolUse hook that denies `gh` in Bash. `src/mcp/gh_mcp.rs` (README) |
+| `gh-run` (hidden) | trailing gh args | `gh` shim on a `wait` command's PATH: checks targets, runs gh as the task's account. `src/mcp/gh_mcp.rs` (README) |
+| `codex-run <spec>` (hidden) | path to `codex.json` | The Codex adapter: drives `codex app-server` over JSON-RPC for one run (started under ia-shim). `src/agent/codex.rs` |
+| `ssh-host` | `--port` (7878), `--data-dir`/`IA_DATA_DIR`, `--name` | Forced command for a hub's SSH key: starts `huntaway serve --host 127.0.0.1` through the login shell if no host answers on the port, then prints `{port, token, started, info}` as JSON. `src/hosts/ssh.rs` (not in README) |
+| `title-check` (hidden) | `--db <copy of a db>`, `--steps`, `--input`, task ids | Debug tool: prints the titles tasks would get now (each step after each user message with `--steps`; the model input with `--input`) without changing them. `src/agent/title.rs` |
 | `token` | `--data-dir`, `--hub` | Prints the host's access token, or with `--hub` the token other hosts use to dial in (`hub_token`). `src/main.rs` |
 
 Other binaries and environment:
@@ -44,7 +44,7 @@ Other binaries and environment:
 - Environment variables read besides the flags: `IA_CLAUDE_BIN`, `IA_CODEX_BIN` (README), **`IA_GH_BIN`**
   (gh binary), **`IA_COMMIT`** (commit a deployment without a checkout reports), `IA_ASANA_URL` (README),
   `SHELL` (terminal tools, SSH-started hosts), `RUST_LOG`-style filter via `tracing_subscriber`
-  (default `huntaway=info`). `src/main.rs`, `src/codex.rs`, `src/gh_mcp.rs`, `src/admin.rs`.
+  (default `huntaway=info`). `src/main.rs`, `src/agent/codex.rs`, `src/mcp/gh_mcp.rs`, `src/update/admin.rs`.
 
 ---
 
@@ -61,29 +61,29 @@ JSON 404 `no such API route: …` instead of the UI (`no_route`).
 
 | Group | Routes | What they enable |
 |---|---|---|
-| Host info & settings | `GET /info`; `GET,PATCH /settings`; `GET /default-prompts` | Host id/name, build id, `api_version`/`api_compat`, commit, whether it can run agents and which CLIs (`agent_clis`), data dir, home. Settings: `default_model`, `default_effort`, `default_permission_mode`, `scratch_host`, `terminal_tools`. Default start/review/merge prompt text. `src/api.rs`, `src/prompts.rs` |
+| Host info & settings | `GET /info`; `GET,PATCH /settings`; `GET /default-prompts` | Host id/name, build id, `api_version`/`api_compat`, commit, whether it can run agents and which CLIs (`agent_clis`), data dir, home. Settings: `default_model`, `default_effort`, `default_permission_mode`, `scratch_host`, `terminal_tools`. Default start/review/merge prompt text. `src/api.rs`, `src/agent/prompts.rs` |
 | Profiles | `GET,POST /profiles`; `PATCH,DELETE /profiles/{id}` | Profiles with their agent configs, default model, `agent_access`, `github_account`, `clone_dir`, `asana_token`/`asana_enabled`. `src/api.rs` |
 | Agent configs | `GET,POST /claude-configs`; `PATCH,DELETE /claude-configs/{id}`; `GET /claude-configs/{id}/models`; `GET,POST /claude-configs/{id}/archive`; legacy `GET,POST /profiles/{id}/claude-config` | Claude/Codex config dirs (`agent`, `show_usage`); Codex model list with efforts (Claude configs list none); export/import a config as a base64 tar.gz (256 MB body limit) for **Copy login**. `src/api.rs` |
-| Projects | `GET,POST /profiles/{id}/projects` (`?archived=true` lists archived); `POST /profiles/{id}/projects/clone`; `GET,PATCH,DELETE /projects/{id}`; `POST /projects/{id}/remove-merged-worktrees` | Create from a folder or a GitHub clone, change every setting (key, repo path + `move_repo`, scripts, reviewers, prompts, group, archive…), delete with tasks and worktrees (branches kept), clean merged worktrees. `src/api.rs`, `src/relocate.rs`, `src/worktree.rs` |
+| Projects | `GET,POST /profiles/{id}/projects` (`?archived=true` lists archived); `POST /profiles/{id}/projects/clone`; `GET,PATCH,DELETE /projects/{id}`; `POST /projects/{id}/remove-merged-worktrees` | Create from a folder or a GitHub clone, change every setting (key, repo path + `move_repo`, scripts, reviewers, prompts, group, archive…), delete with tasks and worktrees (branches kept), clean merged worktrees. `src/api.rs`, `src/git/relocate.rs`, `src/git/worktree.rs` |
 | Boards / task lists | `GET,POST /projects/{id}/tasks` (`?kind=task` default, `review` for review threads); `GET,POST /profiles/{id}/tasks` (POST = scratch task); `GET,POST /profiles/{id}/group-tasks`; legacy `GET /profiles/{id}/scratch` (always empty now) | Project board, profile board, group tasks; create a task with title, description, status, model, effort, config, `start`, `depends_on`, `task_type`, `parent_id`/`subproject`, `external_links`, `fanout_id`, star/reminder. `src/api.rs` |
 | Tasks | `GET,PATCH,DELETE /tasks/{id}` (`?delete_branch=true`) | `GET` returns `{task, last_message, pending_permissions}`. `PATCH` takes title (pins it), description, status/resolution (moves trigger runs, reviews, merges, status scripts), position, worktree use, model, effort, base branch, permission mode, preview/PR URLs, external links, subproject, config, dependencies, star, reminder. `src/api.rs` |
-| Threads / messages | `GET,POST /tasks/{id}/messages` (`?before=&after=&limit=` pages, API 56); `POST /tasks/{id}/stop`; `DELETE /tasks/{id}/queue` | Read the thread (whole or paged, with the subagent rows that precede a page); send a message (starts, steers or queues); stop (interrupt, then kill after 10 s, and stop a review); take back a queued message. `src/api.rs`, `src/runner.rs` |
-| Review, worktree, diff | `POST /tasks/{id}/review`; `POST /tasks/{id}/worktree/setup`; `POST /tasks/{id}/worktree/teardown` (`force`, `delete_branch`); `GET /tasks/{id}/diff` | Review now; create/remove a task's worktree; the task's diff (see 4.7). `src/review.rs`, `src/worktree.rs` |
-| Agent introspection | `GET /tasks/{id}/context`; `GET /tasks/{id}/skills`; `GET /usage` (`?refresh=true`) | Context-window summary and `/context`-style breakdown; slash-command/skill menu; plan-limit usage per config. `src/context.rs`, `src/agent_tools.rs`, `src/usage.rs` |
-| Documents | `GET /tasks/{id}/document` (`?version=N`) | A plan/artifact/diagram task's document and its version list. `src/documents.rs` |
-| Skills & MCP servers | `GET /agent-tools`; `POST /agent-tools/switches`; `POST /agent-tools/skills`, `PATCH,DELETE /agent-tools/skills/{skill}`; `POST /agent-tools/mcp-servers`, `PATCH,DELETE /agent-tools/mcp-servers/{server}`; `GET,PATCH /projects/{id}/agent-tools` and the same skill/server CRUD under `/projects/{id}/agent-tools/…` | Global and per-project skills and MCP servers, profile/project on-off switches, turning off outside skills/servers. `src/agent_tools.rs` |
-| Permissions & approvals | `GET /permissions` (`?task_id=`); `POST /permissions/{id}` (`decision`: `allow`, `allow_always`, `deny`; optional `message`); `GET /project-approvals` (`?all=true` adds task deletions) | Answer tool prompts, project-setting changes and task deletions agents asked for. A deny can carry a note back to the agent. `src/api.rs`, `src/permissions.rs` |
-| Agent tool plumbing | `POST /internal/mcp`; `POST /tools/{tool}` | The MCP helper's calls (may block on a prompt); board tools forwarded from an agent on another host. `src/tools.rs` |
-| Terminals | `GET,DELETE /tasks/{id}/terminal` (`?tool=`); `GET /tasks/{id}/terminal/ws` (`?cols=&rows=&tool=`); `POST /tasks/{id}/terminal/keepalive` | tmux-backed shell or terminal tool per task over a websocket; tool-session lease renewal. `src/terminal.rs` |
+| Threads / messages | `GET,POST /tasks/{id}/messages` (`?before=&after=&limit=` pages, API 56); `POST /tasks/{id}/stop`; `DELETE /tasks/{id}/queue` | Read the thread (whole or paged, with the subagent rows that precede a page); send a message (starts, steers or queues); stop (interrupt, then kill after 10 s, and stop a review); take back a queued message. `src/api.rs`, `src/agent/runner.rs` |
+| Review, worktree, diff | `POST /tasks/{id}/review`; `POST /tasks/{id}/worktree/setup`; `POST /tasks/{id}/worktree/teardown` (`force`, `delete_branch`); `GET /tasks/{id}/diff` | Review now; create/remove a task's worktree; the task's diff (see 4.7). `src/review.rs`, `src/git/worktree.rs` |
+| Agent introspection | `GET /tasks/{id}/context`; `GET /tasks/{id}/skills`; `GET /usage` (`?refresh=true`) | Context-window summary and `/context`-style breakdown; slash-command/skill menu; plan-limit usage per config. `src/agent/context.rs`, `src/agent/agent_tools.rs`, `src/agent/usage.rs` |
+| Documents | `GET /tasks/{id}/document` (`?version=N`) | A plan/artifact/diagram task's document and its version list. `src/agent/documents.rs` |
+| Skills & MCP servers | `GET /agent-tools`; `POST /agent-tools/switches`; `POST /agent-tools/skills`, `PATCH,DELETE /agent-tools/skills/{skill}`; `POST /agent-tools/mcp-servers`, `PATCH,DELETE /agent-tools/mcp-servers/{server}`; `GET,PATCH /projects/{id}/agent-tools` and the same skill/server CRUD under `/projects/{id}/agent-tools/…` | Global and per-project skills and MCP servers, profile/project on-off switches, turning off outside skills/servers. `src/agent/agent_tools.rs` |
+| Permissions & approvals | `GET /permissions` (`?task_id=`); `POST /permissions/{id}` (`decision`: `allow`, `allow_always`, `deny`; optional `message`); `GET /project-approvals` (`?all=true` adds task deletions) | Answer tool prompts, project-setting changes and task deletions agents asked for. A deny can carry a note back to the agent. `src/api.rs`, `src/mcp/permissions.rs` |
+| Agent tool plumbing | `POST /internal/mcp`; `POST /tools/{tool}` | The MCP helper's calls (may block on a prompt); board tools forwarded from an agent on another host. `src/mcp/tools.rs` |
+| Terminals | `GET,DELETE /tasks/{id}/terminal` (`?tool=`); `GET /tasks/{id}/terminal/ws` (`?cols=&rows=&tool=`); `POST /tasks/{id}/terminal/keepalive` | tmux-backed shell or terminal tool per task over a websocket; tool-session lease renewal. `src/hosts/terminal.rs` |
 | Attachments | `POST /attachments` (JSON `{name, data: base64}`, 16 MB body, 10 MB file); `GET /attachments/{id}/{name}` | Upload/download prompt attachments (JSON so they travel through a hub). `src/attachments.rs` |
 | Analytics & disk | `GET /profiles/{id}/analytics?from=&to=`; `GET /profiles/{id}/disk-usage` | Prompt/run events for time tracking; per-project disk usage and the DB size. `src/analytics.rs`, `src/disk.rs` |
-| GitHub | `GET /github-accounts`; `GET /github-repos?account=&q=` | gh logins on the host; repositories to clone. `src/gh_mcp.rs`, `src/github.rs` |
-| Asana | `GET /profiles/{id}/asana/tasks?q=` | Search or resolve a pasted Asana task URL. `src/asana.rs` |
+| GitHub | `GET /github-accounts`; `GET /github-repos?account=&q=` | gh logins on the host; repositories to clone. `src/mcp/gh_mcp.rs`, `src/integrations/github.rs` |
+| Asana | `GET /profiles/{id}/asana/tasks?q=` | Search or resolve a pasted Asana task URL. `src/integrations/asana.rs` |
 | Filesystem | `GET /fs/dirs?path=` | Folder browser for picking a repository on a remote host (lists hidden folders, flags git repos, reports missing paths as creatable). `src/api.rs` |
-| Admin / restart / update | `GET /admin/server`; `POST /admin/restart` (`rebuild`, default true); `POST /admin/update` (`commit` + `bundle` + `branch`, or `commit` alone) | Running commit, source checkout state, new commits, running agent count, restart job log; rebuild & re-exec (or plain re-exec with `rebuild: false`); fast-forward to a hub's bundle or fetch a commit from the host's own `origin`. `src/admin.rs` |
-| Hosts (hub side) | `GET,POST /hosts`; `PATCH,DELETE /hosts/{id}`; `GET /hosts/join`; `GET /hosts/ssh-key`; `POST /hosts/ssh`; `POST /hosts/copy-claude-config`; `POST /hosts/{id}/update`; `ANY /h/{host_id}/{*rest}` | List/link/rename/unlink hosts (HTTP, inbound tunnel, SSH), the dial-in command line, the hub's SSH public key, copy a config between hosts, push an update, and proxy any host route. `src/hub.rs`, `src/ssh.rs` |
+| Admin / restart / update | `GET /admin/server`; `POST /admin/restart` (`rebuild`, default true); `POST /admin/update` (`commit` + `bundle` + `branch`, or `commit` alone) | Running commit, source checkout state, new commits, running agent count, restart job log; rebuild & re-exec (or plain re-exec with `rebuild: false`); fast-forward to a hub's bundle or fetch a commit from the host's own `origin`. `src/update/admin.rs` |
+| Hosts (hub side) | `GET,POST /hosts`; `PATCH,DELETE /hosts/{id}`; `GET /hosts/join`; `GET /hosts/ssh-key`; `POST /hosts/ssh`; `POST /hosts/copy-claude-config`; `POST /hosts/{id}/update`; `ANY /h/{host_id}/{*rest}` | List/link/rename/unlink hosts (HTTP, inbound tunnel, SSH), the dial-in command line, the hub's SSH public key, copy a config between hosts, push an update, and proxy any host route. `src/hosts/hub.rs`, `src/hosts/ssh.rs` |
 | Hub misc | `GET /preview-status?url=` | Server-side check of a preview URL (the browser can't read cross-origin status). `src/api.rs` |
-| Event websockets | `GET /host/ws` (this host's events); `GET /ws` (merged events from every host, tagged `host_id`); `GET /hub/connect` (host dial-in tunnel) | Live UI updates and the hub link (see 4.5, 4.10). `src/api.rs`, `src/hub.rs` |
+| Event websockets | `GET /host/ws` (this host's events); `GET /ws` (merged events from every host, tagged `host_id`); `GET /hub/connect` (host dial-in tunnel) | Live UI updates and the hub link (see 4.5, 4.10). `src/api.rs`, `src/hosts/hub.rs` |
 | Health | `GET /health` | `{ok: true}`, unauthenticated (used by `ssh-host`). `src/api.rs` |
 
 ---
@@ -116,7 +116,7 @@ Enumerations (`src/db.rs`):
 
 - **Statuses** (`STATUSES`): `backlog`, `todo`, `in_progress`, `needs_attention`, `in_review`,
   `ready_for_merge`, `done`. Backlog is a real column (first, starts collapsed per the demo text in
-  `src/demo.rs`; `app/src/api.ts` labels it), which the README only names in the status-script list.
+  `src/demo.rs`; `app/src/api/tasks.ts` labels it), which the README only names in the status-script list.
 - **Resolutions** (`RESOLUTIONS`, only while done): `done`, `not_done`, `wont_fix`.
 - **Task types** (`TASK_TYPES`): `plan`, `artifact`, `diagram`, `scratch`; `subproject` is accepted on
   creation but stored as the `subproject` flag. Thread `kind`: `task` or `review`.
@@ -130,13 +130,13 @@ Enumerations (`src/db.rs`):
 - **Review state** (`Review`, `ReviewerRun`): `running`, `passed`, `issues`, `failed`, `stopped`, with
   `fixes` (rounds in a row), `head` (reviewed commit) and per-reviewer parts.
 - Task keys: `<PROJECT>-<n>`, group tasks `G-<n>`, scratch tasks `S-<n>`; projects can't take `G` or `S`
-  (`src/runner.rs`, `src/db.rs`).
+  (`src/agent/runner.rs`, `src/db.rs`).
 
 ---
 
 ## 4. Features the README doesn't describe or only hints at
 
-### 4.1 How a Claude run is launched (`launch` in `src/runner.rs`, `start` in `src/runs.rs`)
+### 4.1 How a Claude run is launched (`launch` in `src/agent/runner.rs`, `start` in `src/agent/runs.rs`)
 
 Command: `ia-shim <run dir> -- claude <args> --mcp-config <run dir>/mcp.json`, in the task's working
 directory, with `CLAUDE_CONFIG_DIR` set to the thread's config and `MCP_TOOL_TIMEOUT=86400000` (24 h, so
@@ -165,13 +165,13 @@ permission prompts can wait on the user). Arguments, in order:
 `mcp.json` always has `huntaway` (stdio, `huntaway mcp`, with `IA_URL`, `IA_TOKEN`, `IA_RUN_ID`, `IA_REVIEW`)
 and `gh` (stdio, `huntaway gh-mcp`, with `IA_CWD`, `IA_GH_ACCOUNT`), then the project's servers. The launch
 is recorded in `spec.json` (cwd, args, config dir). Output is followed by polling `out.jsonl` every 200 ms
-(`follow_inner` in `src/runs.rs`), not by a pipe.
+(`follow_inner` in `src/agent/runs.rs`), not by a pipe.
 
-The first prompt is built by `start_prompt` (`src/runner.rs`): an optional leading slash command, then
+The first prompt is built by `start_prompt` (`src/agent/runner.rs`): an optional leading slash command, then
 `# KEY-n: title`, the description, the linked Asana tasks, `---`, the project's start instructions
 (default "Start working on this task.") and any extra text the task was started with.
 
-### 4.2 How a Codex run is launched (`src/codex.rs`)
+### 4.2 How a Codex run is launched (`src/agent/codex.rs`)
 
 `ia-shim … -- huntaway codex-run <run dir>/codex.json` with `CODEX_HOME` set. The adapter speaks
 `codex app-server` JSON-RPC: `thread/start`/`thread/resume`, `turn/start`, `turn/steer`,
@@ -185,7 +185,7 @@ Plan `untrusted`/`read-only` + Codex plan mode; Ask `untrusted`/`workspace-write
 instructions go in as `developer_instructions`; the same `mcp.json` is converted to Codex's
 `mcp_servers` config. (Mode table and sandbox paths: README.)
 
-### 4.3 What agents are told (`system_prompt`, `profiles_note`, `gh_note` in `src/runner.rs`; `src/documents.rs`; `src/prompts.rs`)
+### 4.3 What agents are told (`system_prompt`, `profiles_note`, `gh_note` in `src/agent/runner.rs`; `src/agent/documents.rs`; `src/agent/prompts.rs`)
 
 Appended to Claude's system prompt (Codex: developer instructions), varying by thread kind:
 
@@ -210,7 +210,7 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
   shell `gh` or the `codex_apps` GitHub tools. **Plan mode** (Codex): "investigate and propose a plan, but
   don't change any files".
 
-### 4.4 Runs, restarts and steering internals (`src/runs.rs`, `src/runner.rs`, `shim/src/main.rs`)
+### 4.4 Runs, restarts and steering internals (`src/agent/runs.rs`, `src/agent/runner.rs`, `shim/src/main.rs`)
 
 - Run directory files: `run.json` (format), `prompt`, `out.jsonl`, `err.log`, `pid`, `shim.pid`, `exit`,
   `input.jsonl` + `input.closed` (steering), `mcp.json`, `spec.json`, `codex.json`, `reap`. (README covers
@@ -224,12 +224,12 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 - Timings: Stop sends an `interrupt` and kills after 10 s (`STOP_GRACE`); an agent that ended a turn
   with unread messages has 30 s to start the next turn before they go to a new run (`STEER_GRACE`); a
   killed process group gets SIGTERM then SIGKILL after 10 s.
-- `slim` (`src/runner.rs`) trims what's stored per event: thinking signatures and empty thinking blocks
+- `slim` (`src/agent/runner.rs`) trims what's stored per event: thinking signatures and empty thinking blocks
   are dropped, tool results over 30,000 chars are truncated, images inside tool results become `[image]`,
   per-message `usage` is dropped, and subagent results keep only status/model/duration/token counts.
   The raw output stays in the run folder for 14 days (README).
 
-### 4.5 Event streaming to the UI (`src/state.rs`, `src/api.rs`, `src/hub.rs`)
+### 4.5 Event streaming to the UI (`src/state.rs`, `src/api.rs`, `src/hosts/hub.rs`)
 
 - Each host has a broadcast channel; `/api/host/ws` sends `{"type":"hello"}` then every event as JSON
   text. Event types: `task` (whole task), `task_deleted`, `message` (new thread entry), `message_updated`
@@ -243,7 +243,7 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
   `item/agentMessage/delta`); only completed messages are stored. Message history is fetched over REST,
   whole or in pages of up to ~1 MB (`PAGE_BYTES`, API 56).
 
-### 4.6 Hosts: three link modes, the tunnel and updates (`src/hub.rs`, `src/proto.rs`, `src/relay.rs`, `src/ssh.rs`, `src/admin.rs`)
+### 4.6 Hosts: three link modes, the tunnel and updates (`src/hosts/hub.rs`, `src/hosts/proto.rs`, `src/hosts/relay.rs`, `src/hosts/ssh.rs`, `src/update/admin.rs`)
 
 - **Outbound** (Add host): the hub calls the host's URL with its token, follows `/api/host/ws`, and
   reconnects with backoff 1→30 s. (README)
@@ -257,12 +257,12 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
   `permitopen="127.0.0.1:7878"`. The hub runs that command (which starts a host on 127.0.0.1 through the
   login shell if needed, logging to `serve.log`), then keeps an SSH tunnel to it (`BatchMode`,
   keep-alives, trust-on-first-use known_hosts, tunnels die with the hub via `PR_SET_PDEATHSIG`). So the
-  host needs no open port and never reaches the hub. The UI has this (`app/src/api.ts`: `sshKey`,
+  host needs no open port and never reaches the hub. The UI has this (`app/src/api/hosts.ts`: `sshKey`,
   `addSshHost`).
 - The hub's proxy (`/api/h/{host}/…`) is JSON in, JSON out (bodies up to 64 MB); an offline host gives a
   503 "host … is offline". Board tools fall back to linked hosts via `POST /api/tools/{tool}`, with
   version gates (e.g. project-settings changes need API 44, deletions API 58, `get_task_field` API 59)
-  (`src/tools.rs`).
+  (`src/mcp/tools.rs`).
 - **Updating a host** (README) has a second path: a hub without a checkout (a container) sends only its
   commit (`IA_COMMIT`), and the host fetches it from its own `origin` and fast-forwards if it's on the
   upstream of its branch (`update_from_origin`).
@@ -273,7 +273,7 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 - **Copy login** (README) also copies `settings.local.json`, `keybindings.json` and `output-styles` for
   Claude configs (`CLAUDE_CONFIG_ENTRIES` in `src/api.rs`), as a tar.gz through the hub.
 
-### 4.7 Diffs and "did it change code" (`diff` in `src/worktree.rs`; `src/changes.rs`)
+### 4.7 Diffs and "did it change code" (`diff` in `src/git/worktree.rs`; `src/git/changes.rs`)
 
 - `GET /tasks/{id}/diff` diffs the worktree (or the repository's own checkout if the task has none)
   against the merge base of HEAD and the base branch (or its upstream, if the task started from that),
@@ -288,22 +288,23 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
   cherry-pick/merge/rebase/revert/mv/rm`, in-place edits, redirects and copies outside scratch paths
   such as `/tmp`. Denied calls don't count. (README gives the outcome.)
 
-### 4.8 Documents (`src/documents.rs`)
+### 4.8 Documents (`src/agent/documents.rs`)
 
 - Plans are written as HTML fragments using board components that the README doesn't list:
   classes `sub`, `callout` (with tones `ok|warn|bad|info`), `pill`, `grid2`/`grid3` of `card`s, `ol.steps`,
   `meta` and `td.n`, plus `<ia-diagram>` (Mermaid source inside a `<pre>`, rendered by the board) and
   `<ia-question>` (README). The older `<ia-lede>`, `<ia-callout>`, `<ia-steps>`, `<ia-cards>`, `<ia-columns>`
-  and `<ia-badge>` elements are retired but still styled. The plan theme (`app/src/planTheme.css`) styles
+  and `<ia-badge>` elements are retired but still styled. The plan theme (`app/src/components/task/planTheme.css`) styles
   plain HTML; a whole page (with `<html>`) is shown as is.
 - A document file is capped at 5 MB (`MAX_SIZE`); a version stays `open` while the turn that writes it
   goes on, so the UI shows it as it's written. (Versions: README.)
 
 ### 4.9 Cost, context, compaction, usage
 
-- **Cost** (`handle_line` in `src/runner.rs`): from Claude's `result` event `total_cost_usd`, a running
-  total per process; the increase is added to the run's and the task's `cost_usd`. Codex runs report no
-  cost (`src/codex.rs` has none), so Codex tasks stay at $0. The README mentions sorting by cost and
+- **Cost** (`handle_line` in `src/agent/runner.rs`): from Claude's `result` event `total_cost_usd`, a running
+  total per session (a resumed session's goes on from its earlier runs'); the increase over the session's last
+  total is added to the run's and the task's `cost_usd` (`db::add_cost`, since HA-108). Codex runs report no
+  cost (`src/agent/codex.rs` has none), so Codex tasks stay at $0. The README mentions sorting by cost and
   comparing fan-out costs but not where cost comes from.
 - **Idle compaction** (README): a loop every 60 s finds sessions idle 50–60 min (`AUTO_COMPACT_AFTER`,
   `AUTO_COMPACT_UNTIL`) and starts a `compact` run (`/compact`); skipped for Codex threads and when the
@@ -313,25 +314,25 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 - **Context** (README): per-reply token totals; Claude's `get_context_usage` control request at turn end.
 - **Usage** (README): Anthropic's `https://api.anthropic.com/api/oauth/usage` with the config's own
   login, cached 4 min, at most every 30 s, plus `rate_limit_event`s from runs; Codex via
-  `account/rateLimits/read` and `account/rateLimits/updated` (`src/usage.rs`, `src/codex.rs`).
+  `account/rateLimits/read` and `account/rateLimits/updated` (`src/agent/usage.rs`, `src/agent/codex.rs`).
 
 ### 4.10 Other server behaviour worth listing
 
 - **Permission answers** carry an optional `message` sent to the agent with a deny; `allow_always` adds
   the tool to the thread's `auto_allow`. Approving `ExitPlanMode` drops the thread out of Plan mode
-  (`src/permissions.rs`). Switching to Bypass/Don't ask settles pending prompts (README).
+  (`src/mcp/permissions.rs`). Switching to Bypass/Don't ask settles pending prompts (README).
 - **Codex limits in the adapter**: MCP elicitations are only accepted when the form has no fields (tool
   approvals); Codex's own `item/tool/requestUserInput` is answered with no answers (agents use the board's
   `request_user_input`); any other server request is refused "Method not supported by Huntaway"
-  (`src/codex.rs`).
+  (`src/agent/codex.rs`).
 - **MCP servers** a project or host adds may be `stdio`, `http` or `sse` (`check_server_config` in
-  `src/agent_tools.rs`); SSE ones are dropped for Codex runs (`mcp_server_config` in `src/codex.rs`).
+  `src/agent/agent_tools.rs`); SSE ones are dropped for Codex runs (`mcp_server_config` in `src/agent/codex.rs`).
   Skill descriptions are capped at 1,024 chars; "seen" outside tools are remembered 14 days.
-- **Terminal websocket protocol** (`src/terminal.rs`): binary frames for output/input, JSON control
+- **Terminal websocket protocol** (`src/hosts/terminal.rs`): binary frames for output/input, JSON control
   frames `ready`, `resize {cols, rows}` and `ack {bytes}`; the server stops reading the pty past 384 KB
   unacknowledged (flow control), pings every 15 s; tool sessions are reaped every 30 s after a 90 s lease.
   Requires `tmux` (503 otherwise).
-- **Project fingerprints** (`src/relocate.rs`): every hour the host records what each project's folder is
+- **Project fingerprints** (`src/git/relocate.rs`): every hour the host records what each project's folder is
   (its root commits), so a moved repository can be recognised; on a move, Claude's conversation folders
   (`<config>/projects/<folder>`) are copied so sessions resume.
 - **Folder picker** for remote hosts: `GET /fs/dirs` (README mentions picking a folder, not that any
@@ -343,32 +344,32 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 - **Titles**: Claude title calls run `claude -p --model haiku --output-format text --tools ""
   --strict-mcp-config --no-session-persistence --disable-slash-commands --system-prompt …` with the
   task's config; a placeholder (first line of the description, or attached file names) shows meanwhile;
-  a reply over 10 words isn't taken as a title (8 are asked for); the refresh looks at up to 30 user messages (`src/title.rs`). (README)
+  a reply over 10 words isn't taken as a title (8 are asked for); the refresh looks at up to 30 user messages (`src/agent/title.rs`). (README)
 - **Analytics** recognise the board's own prompts ("Start working on this task.", "The user moved this
   task to "Ready for merge"…") and cut prompt previews to 280 chars (`src/analytics.rs`). (README)
 - **Status scripts** are killed after 5 minutes (`LIMIT`); attachments unused for 7 days are pruned every
-  6 hours; run folders are pruned hourly after 14 days, recorded MCP calls after 1 hour (`src/status_script.rs`,
-  `src/attachments.rs`, `src/runs.rs`). (README)
+  6 hours; run folders are pruned hourly after 14 days, recorded MCP calls after 1 hour (`src/integrations/status_script.rs`,
+  `src/attachments.rs`, `src/agent/runs.rs`). (README)
 
 ### 4.11 README-covered features (one line each)
 
-- Kanban flow, statuses and automatic transitions (README; `src/runner.rs`, `src/api.rs`).
-- Per-task git worktrees, branch naming, setup/teardown scripts, remove merged worktrees (README; `src/worktree.rs`).
-- Agents survive restarts under ia-shim; durable MCP calls and permission prompts (README; `src/runs.rs`, `src/tools.rs`).
-- Steering, queued messages, Stop as interrupt (README; `src/runner.rs`).
-- Codex agents, sandbox mapping, native subagents (README; `src/codex.rs`).
-- Board MCP tools incl. `wait`, `get_task_field`, `delete_task`, `create_project` (README; `src/mcp.rs`, `src/tools.rs`, `src/wait.rs`).
-- gh MCP server, gh-hook, per-profile GitHub accounts, GHE `HOST/LOGIN` (README; `src/gh_mcp.rs`).
-- PR discovery with `gh pr view`, preview URLs (README; `src/worktree.rs`, `src/api.rs`).
+- Kanban flow, statuses and automatic transitions (README; `src/agent/runner.rs`, `src/api.rs`).
+- Per-task git worktrees, branch naming, setup/teardown scripts, remove merged worktrees (README; `src/git/worktree.rs`).
+- Agents survive restarts under ia-shim; durable MCP calls and permission prompts (README; `src/agent/runs.rs`, `src/mcp/tools.rs`).
+- Steering, queued messages, Stop as interrupt (README; `src/agent/runner.rs`).
+- Codex agents, sandbox mapping, native subagents (README; `src/agent/codex.rs`).
+- Board MCP tools incl. `wait`, `get_task_field`, `delete_task`, `create_project` (README; `src/mcp.rs`, `src/mcp/tools.rs`, `src/mcp/wait.rs`).
+- gh MCP server, gh-hook, per-profile GitHub accounts, GHE `HOST/LOGIN` (README; `src/mcp/gh_mcp.rs`).
+- PR discovery with `gh pr view`, preview URLs (README; `src/git/worktree.rs`, `src/api.rs`).
 - Automatic reviews, up to 6 reviewers (`MAX_REVIEWERS`), fix rounds (README; `src/review.rs`).
-- Ready-for-merge agent merges, one per project/subproject at a time (README; `src/runner.rs`).
-- Dependencies, subprojects, group tasks, scratch tasks, document tasks (README; `src/runner.rs`, `src/documents.rs`).
+- Ready-for-merge agent merges, one per project/subproject at a time (README; `src/agent/runner.rs`).
+- Dependencies, subprojects, group tasks, scratch tasks, document tasks (README; `src/agent/runner.rs`, `src/agent/documents.rs`).
 - One prompt → several agents (`fanout_id`, API 61) (README; `src/api.rs`).
-- Profiles, cross-profile agent access, archived projects/tasks, stars, reminders (README; `src/tools.rs`, `src/db.rs`).
-- Skills and MCP servers per host/project, slash-command menu (README; `src/agent_tools.rs`).
+- Profiles, cross-profile agent access, archived projects/tasks, stars, reminders (README; `src/mcp/tools.rs`, `src/db.rs`).
+- Skills and MCP servers per host/project, slash-command menu (README; `src/agent/agent_tools.rs`).
 - Attachments, terminals, terminal tools, analytics, disk usage, usage limits, context pill (README).
-- Asana links (README; `src/asana.rs`). Clone from GitHub (README; `src/github.rs`).
-- Hosts/hub, Copy login, Update host, Rebuild & restart, versions (README; `src/hub.rs`, `src/admin.rs`).
+- Asana links (README; `src/integrations/asana.rs`). Clone from GitHub (README; `src/integrations/github.rs`).
+- Hosts/hub, Copy login, Update host, Rebuild & restart, versions (README; `src/hosts/hub.rs`, `src/update/admin.rs`).
 
 ---
 
@@ -377,8 +378,8 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 - **Agent runtimes**: only Claude Code (`claude -p`) and Codex (`codex app-server`); `AGENTS = ["claude",
   "codex"]` in `src/db.rs`. No API-key/direct-model provider, no other CLIs (no Gemini, OpenCode, Cursor…).
 - **Platform**: Unix only. The pty (`openpty`, `setsid`), ia-shim (process groups, libc), SSH hosts and
-  terminals use `std::os::unix`/libc without Windows fallbacks (`src/pty.rs`, `src/ssh.rs`,
-  `shim/src/main.rs`); only `disk.rs`, `admin.rs` and `main.rs` have `cfg(not(unix))` branches.
+  terminals use `std::os::unix`/libc without Windows fallbacks (`src/hosts/pty.rs`, `src/hosts/ssh.rs`,
+  `shim/src/main.rs`); only `disk.rs`, `update/admin.rs` and `main.rs` have `cfg(not(unix))` branches.
   Terminals need `tmux`; SSH hosts need `ssh`/`ssh-keygen`.
 - **Auth and security**: one shared bearer token per host (plus a hub-dial-in token); no user accounts,
   roles, per-user audit, OAuth or token rotation endpoint; plain HTTP with permissive CORS; `--open-token`
@@ -386,26 +387,26 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 - **Clients**: the server serves one web UI (`app/dist`), wrapped by Electron (`app/electron/main.cjs`); there
   is no native mobile app in the repository and no PWA manifest in `app/public` (only `icon.svg`).
 - **Forges**: GitHub only, through the `gh` CLI. The "open a PR before finishing" instruction is only given
-  when the push remote is on `github.com` (`is_github_com` in `src/worktree.rs`); GitHub Enterprise works
+  when the push remote is on `github.com` (`is_github_com` in `src/git/worktree.rs`); GitHub Enterprise works
   for gh tools via `HOST/LOGIN` accounts but doesn't get that instruction. No GitLab, Bitbucket or Gitea.
 - **Trackers**: Asana only (`LINK_PROVIDERS = ["asana"]`); no Linear, Jira or GitHub Issues linking
   (agents can still use `issue_*` gh tools).
 - **Diff/review UI data**: one cumulative diff per task (2 MB patch cap, 50 untracked files); no per-turn
-  diffs, checkpoints, rewind/undo or conversation forking (`src/worktree.rs`; nothing in `src/` handles
+  diffs, checkpoints, rewind/undo or conversation forking (`src/git/worktree.rs`; nothing in `src/` handles
   them).
 - **Codex parity gaps**: no cost tracking; no idle auto-compaction; context reports only a total; no
   gh-in-shell hook; SSE MCP servers not passed; MCP elicitation forms with fields declined; Codex's own
-  user-input requests get empty answers (`src/codex.rs`, `src/runner.rs`, `src/context.rs`).
+  user-input requests get empty answers (`src/agent/codex.rs`, `src/agent/runner.rs`, `src/agent/context.rs`).
 - **Claude models aren't listed** by the server (`GET /claude-configs/{id}/models` only lists Codex
   models; the UI suggests aliases) (`src/api.rs`).
 - **Thread fidelity**: images in tool results are stored as `[image]`, tool results over 30,000 chars are
   truncated, and streamed deltas are text only (no live thinking stream) (`slim`, `handle_line` in
-  `src/runner.rs`).
+  `src/agent/runner.rs`).
 - **Events**: no replay or sequence numbers; a lagging client is told to `resync` and refetch
-  (`src/api.rs`, `src/hub.rs`).
+  (`src/api.rs`, `src/hosts/hub.rs`).
 - **Scale**: one SQLite connection behind a mutex per host; the hub stores nothing about other hosts, so
-  each host must be online for its board to show (`src/state.rs`, `src/hub.rs`).
+  each host must be online for its board to show (`src/state.rs`, `src/hosts/hub.rs`).
 - **Self-update** assumes a source checkout with `npm` and `cargo` on the host (or a hub that sends a
-  git bundle); packaged installs can't update from the UI (`src/admin.rs`).
+  git bundle); packaged installs can't update from the UI (`src/update/admin.rs`).
 - **Agent-requested project changes and deletions** can't be approved for agents on other hosts
-  (README; `src/tools.rs`).
+  (README; `src/mcp/tools.rs`).

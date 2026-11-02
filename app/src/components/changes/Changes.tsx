@@ -12,7 +12,7 @@ import clsx from "clsx";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, hostSupports, type DiffResult, type Task, type Turn } from "../../api";
-import { untracked } from "./changes";
+import { untracked } from "./diffs";
 import { clearReview, commentLines, editComment, openDraft, useReview, type CommentLines, type CommentSource } from "./lineComments";
 import { useHost } from "../../store";
 import { hasTurns, useTurns } from "../task/turns";
