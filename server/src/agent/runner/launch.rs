@@ -89,8 +89,8 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     // A task with its own branch in a repository on GitHub opens a pull request for it.
     let github = match (&project, &task.branch) {
         (Some(p), Some(_)) if task.kind == "task" => {
-            let base = told.base_branch.as_deref().or(p.base_branch.as_deref()).filter(|b| !b.is_empty());
-            worktree::github(std::path::Path::new(&p.repo_path), base).await
+            let base = worktree::remote_base(state, &task, p).await;
+            worktree::github(std::path::Path::new(&p.repo_path), base.as_deref()).await
         }
         _ => None,
     };

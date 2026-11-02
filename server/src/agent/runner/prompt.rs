@@ -122,7 +122,7 @@ pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> A
         task.base_branch = Some(base);
     }
     let github = match &task.branch {
-        Some(_) => worktree::github(&crate::util::expand_tilde(&project.repo_path), task.base_branch.as_deref()).await,
+        Some(_) => worktree::github(&crate::util::expand_tilde(&project.repo_path), worktree::remote_base(state, &task, &project).await.as_deref()).await,
         None => None,
     };
     let documents: Vec<(&str, String)> = crate::agent::documents::paths(state, &task).into_iter().map(|(l, p)| (l, path_str(&p))).collect();

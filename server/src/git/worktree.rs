@@ -696,35 +696,69 @@ async fn project_base(repo: &Path, project: &Project) -> Option<String> {
 }
 
 /// Before task `gone` is deleted, if it's merged: the tasks stacked on it keep going where it went
-/// (see db::task_base), which they'd no longer find. One with a branch starts, from then on, from
-/// the commit where its own work starts (see `start_ref`), so its changes are still only its own;
-/// one without is a task on that branch.
+/// (see db::task_base), which they'd no longer find. When that's the branch of a task it was
+/// stacked on that isn't merged yet, they're stacked on that one instead. Otherwise one with a
+/// branch starts, from then on, from the commit where its own work starts (see `start_ref`), so
+/// its changes are still only its own; one without is a task on that branch.
 pub async fn unstack(state: &Shared, gone: &Task) {
     if !db::is_merged(gone) {
         return;
     }
     keep_starts(state, &gone.id).await;
-    let stacked = db::stacked_on(&state.db(), &gone.id).unwrap_or_default();
+    let (stacked, heir) = {
+        let c = state.db();
+        (db::stacked_on(&c, &gone.id).unwrap_or_default(), db::stacked_base(&c, gone))
+    };
     for t in stacked {
         let project = t.project_id.as_deref().and_then(|p| db::get_project(&state.db(), p).ok().flatten());
         let base = db::task_base(&state.db(), &t, project.as_ref());
-        let kept = match (&project, &t.branch) {
-            (Some(p), Some(_)) => commit(&crate::util::expand_tilde(&p.repo_path), &start_ref(&t.id)).await,
-            _ => None,
+        let key = |t: &Task| format!("{}-{}", crate::agent::runner::key_prefix(t, project.as_ref()), t.number);
+        let (fields, text) = match &heir {
+            Some(heir) => {
+                let fields = vec![("start_from", json!(db::StartFrom::Task { task_id: heir.id.clone() })), ("base_branch", json!(t.branch.as_ref().and(base)))];
+                (fields, format!("{}, which this task was stacked on, was deleted: it's merged into {}, so this task is stacked on that now", key(gone), key(heir)))
+            }
+            None => {
+                let kept = match (&project, &t.branch) {
+                    (Some(p), Some(_)) => commit(&crate::util::expand_tilde(&p.repo_path), &start_ref(&t.id)).await,
+                    _ => None,
+                };
+                let from = match (&t.branch, kept) {
+                    (Some(_), Some(at)) => json!(db::StartFrom::Commit { commit: at }),
+                    (Some(_), None) => json!(t.start_from),
+                    (None, _) => Value::Null,
+                };
+                let to = base.as_deref().unwrap_or("the base branch").to_string();
+                (vec![("base_branch", json!(base)), ("start_from", from)], format!("{}, which this task was stacked on, was deleted: it's merged, so this task goes to {to}", key(gone)))
+            }
         };
-        let from = match (&t.branch, kept) {
-            (Some(_), Some(at)) => json!(db::StartFrom::Commit { commit: at }),
-            (Some(_), None) => json!(t.start_from),
-            (None, _) => Value::Null,
-        };
-        let key = format!("{}-{}", crate::agent::runner::key_prefix(gone, project.as_ref()), gone.number);
-        if let Err(e) = state.update_task(&t.id, &[("base_branch", json!(base)), ("start_from", from)]) {
-            tracing::warn!(task = %t.id, "keeping where it goes as {key} is deleted: {e:#}");
+        if let Err(e) = state.update_task(&t.id, &fields) {
+            tracing::warn!(task = %t.id, "keeping where it goes as {} is deleted: {e:#}", key(gone));
             continue;
         }
-        let to = base.as_deref().unwrap_or("the base branch");
-        state.add_event(&t.id, "info", format!("{key}, which this task was stacked on, was deleted: it's merged, so this task goes to {to}"), None);
+        state.add_event(&t.id, "info", text, None);
     }
+}
+
+/// The branch whose remote task `task`'s pull request goes to (see `github`): its base branch (see
+/// db::task_base) or, while that's the branch of a task it's stacked on that has no remote of its
+/// own (made by the board and not pushed yet), that task's, and so on.
+pub async fn remote_base(state: &Shared, task: &Task, project: &Project) -> Option<String> {
+    let repo = crate::util::expand_tilde(&project.repo_path);
+    let mut t = task.clone();
+    for _ in 0..16 {
+        let (base, on) = {
+            let c = state.db();
+            (db::task_base(&c, &t, Some(project)), db::stacked_base(&c, &t))
+        };
+        let (Some(b), Some(on)) = (&base, on) else { return base };
+        let own = git(&repo, &["config", &format!("branch.{b}.remote")]).await.is_ok_and(|o| !o.stdout.trim().is_empty());
+        if own {
+            return base;
+        }
+        t = on;
+    }
+    None
 }
 
 /// Fetch commit `sha` (in full) from `remote`, as a pull request's head or a commit a task starts
@@ -1147,8 +1181,8 @@ pub async fn pr_approval_required(state: &Shared, task: &Task) -> bool {
     };
     // Agents open a pull request only for a task with its own branch, in a repository pushed to GitHub (see agent/runner/launch.rs).
     let Some(project) = project.filter(|_| required && task.branch.is_some()) else { return false };
-    let base = task.base_branch.as_deref().or(project.base_branch.as_deref()).filter(|b| !b.is_empty());
-    github(Path::new(&project.repo_path), base).await.is_some()
+    let base = remote_base(state, task, &project).await;
+    github(Path::new(&project.repo_path), base.as_deref()).await.is_some()
 }
 
 /// Whether a pull request (as `gh pr view --json reviewDecision,reviews` prints it) is approved:
@@ -1203,7 +1237,7 @@ pub fn find_pr(state: &Shared, task: &Task) {
             (Some(wt), "ready") => PathBuf::from(wt),
             _ => PathBuf::from(&project.repo_path),
         };
-        let base = db::task_base(&state.db(), &task, Some(&project));
+        let base = remote_base(&state, &task, &project).await;
         let args = pr_view_args(Path::new(&project.repo_path), base.as_deref(), &branch).await;
         // Not as another account when the task's isn't signed in.
         let env = match crate::agent::runner::task_gh_env(&state, &task).await {
@@ -2601,6 +2635,90 @@ mod tests {
             assert_eq!((c.base_branch.as_deref(), c.start_from), (Some("master"), None));
             let c = setup(&s, &c.id).await.unwrap();
             assert_eq!(rev(Path::new(c.worktree_path.as_deref().unwrap()), "HEAD"), rev(&repo, "master"));
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn deleting_a_merged_middle_task_stacks_its_tasks_on_the_one_below() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, repo, _, p) = stacking_repo(&s).await;
+            let new = |title: &str, from: Option<&str>| create_task_inner(&s, &p.id, CreateTask { title: title.into(), start_from: from.map(|f| json!(f)), ..Default::default() }).unwrap();
+            let a = setup(&s, &new("First", None).id).await.unwrap();
+            let a_wt = PathBuf::from(a.worktree_path.clone().unwrap());
+            commit_file(&a_wt, "first-file");
+            let b = setup(&s, &new("Second", Some("X-1")).id).await.unwrap();
+            commit_file(Path::new(b.worktree_path.as_deref().unwrap()), "second-file");
+            // Third has a branch on Second's, Fourth isn't set up yet.
+            let c = setup(&s, &new("Third", Some("X-2")).id).await.unwrap();
+            commit_file(Path::new(c.worktree_path.as_deref().unwrap()), "third-file");
+            let d = new("Fourth", Some("X-2"));
+
+            // Second is squashed into First, done and deleted with its branch, before First is merged.
+            sh(&a_wt, &["merge", "-q", "--squash", b.branch.as_deref().unwrap()]);
+            sh(&a_wt, &["commit", "-qm", "Second"]);
+            s.update_task(&b.id, &[("status", json!("done"))]).unwrap();
+            let b = db::get_task(&s.db(), &b.id).unwrap().unwrap();
+            crate::api::delete_task_inner(&s, &b, true).await.unwrap();
+            let task = |id: &str| db::get_task(&s.db(), id).unwrap().unwrap();
+            let on_first = Some(db::StartFrom::Task { task_id: a.id.clone() });
+            let (c, d) = (task(&c.id), task(&d.id));
+            assert_eq!((c.start_from.clone(), c.base_branch.as_deref()), (on_first.clone(), a.branch.as_deref()));
+            assert_eq!((d.start_from.clone(), d.base_branch.as_deref()), (on_first, None));
+            assert!(log_of(&s, &c.id).contains("X-2, which this task was stacked on, was deleted: it's merged into X-1, so this task is stacked on that now"), "{}", log_of(&s, &c.id));
+            assert_eq!(changed_files(&s, &c.id).await, ["third-file"]);
+
+            // First is squashed into master, done and its branch deleted: both go to master.
+            sh(&repo, &["merge", "-q", "--squash", a.branch.as_deref().unwrap()]);
+            sh(&repo, &["commit", "-qm", "First"]);
+            s.update_task(&a.id, &[("status", json!("done"))]).unwrap();
+            teardown(&s, &a.id, true, true).await.unwrap();
+            for t in [&c, &d] {
+                let t = task(&t.id);
+                assert_eq!(db::task_base(&s.db(), &t, Some(&p)).as_deref(), Some("master"), "{}", t.title);
+            }
+            assert_eq!(changed_files(&s, &c.id).await, ["third-file"]);
+            assert_eq!(diff(&s, &c.id).await.unwrap()["base"], "master");
+            let d = setup(&s, &d.id).await.unwrap();
+            assert_eq!((rev(Path::new(d.worktree_path.as_deref().unwrap()), "HEAD"), d.base_branch.as_deref()), (rev(&repo, "master"), Some("master")));
+            std::fs::remove_dir_all(&root).ok();
+        })
+    }
+
+    #[test]
+    fn a_task_stacked_on_an_unpushed_branch_opens_its_pull_request_where_that_ones_goes() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (root, repo, _, p) = stacking_repo(&s).await;
+            // Origin and upstream are different repositories on GitHub, and master follows upstream's.
+            let up = root.join("upstream");
+            sh(&root, &["clone", "-q", "--bare", &path_str(&root.join("origin")), &path_str(&up)]);
+            sh(&repo, &["remote", "add", "upstream", &path_str(&up)]);
+            sh(&repo, &["remote", "set-url", "--push", "origin", "git@github.com:o/origin.git"]);
+            sh(&repo, &["remote", "set-url", "--push", "upstream", "git@github.com:o/upstream.git"]);
+            sh(&repo, &["fetch", "-q", "upstream"]);
+            sh(&repo, &["branch", "-q", "-u", "upstream/master", "master"]);
+            let new = |title: &str, from: Option<&str>| create_task_inner(&s, &p.id, CreateTask { title: title.into(), start_from: from.map(|f| json!(f)), ..Default::default() }).unwrap();
+            // Second stacks on First, which isn't set up yet: it is, without a remote of its own.
+            let a = new("First", None);
+            let b = setup(&s, &new("Second", Some("X-1")).id).await.unwrap();
+            let a = db::get_task(&s.db(), &a.id).unwrap().unwrap();
+            let a_branch = a.branch.clone().unwrap();
+            assert_eq!(b.base_branch.as_deref(), Some(a_branch.as_str()));
+            let told = async |t: &Task| {
+                let gh = github(&repo, remote_base(&s, t, &p).await.as_deref()).await.unwrap();
+                crate::agent::runner::system_prompt(t, Some(&p), None, &[], &[], Some(&gh), true)
+            };
+            let text = told(&a).await;
+            assert!(text.contains(&format!("`git push -u upstream {a_branch}`")) && text.contains("repo `o/upstream`"), "{text}");
+            let text = told(&b).await;
+            let b_branch = b.branch.as_deref().unwrap();
+            assert!(text.contains(&format!("`git push -u upstream {b_branch}`")), "{text}");
+            assert!(text.contains(&format!("repo `o/upstream`, head `{b_branch}` and base `{a_branch}`")), "{text}");
+            // Once First's branch has a remote of its own, that's where.
+            sh(&repo, &["config", &format!("branch.{a_branch}.remote"), "origin"]);
+            assert!(told(&b).await.contains("repo `o/origin`"));
             std::fs::remove_dir_all(&root).ok();
         })
     }

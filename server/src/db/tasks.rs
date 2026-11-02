@@ -615,6 +615,21 @@ pub fn task_base(c: &Connection, task: &Task, project: Option<&Project>) -> Opti
     own(&t)
 }
 
+/// The task whose branch `task_base` has `task` go to, when that's a task it's stacked on (directly,
+/// or by way of ones merged since) that isn't merged yet.
+pub fn stacked_base(c: &Connection, task: &Task) -> Option<Task> {
+    let mut t = task.clone();
+    for _ in 0..16 {
+        let Some(StartFrom::Task { task_id }) = &t.start_from else { return None };
+        match get_task(c, task_id).ok().flatten() {
+            Some(other) if is_merged(&other) => t = other,
+            Some(other) => return (other.branch.is_some() && other.branch == t.base_branch).then_some(other),
+            None => return None,
+        }
+    }
+    None
+}
+
 /// The tasks `task` depends on that aren't merged yet, in the order it lists them. Deleted
 /// ones don't count.
 pub fn unmet_dependencies(c: &Connection, task: &Task) -> Result<Vec<Task>> {
