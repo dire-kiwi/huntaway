@@ -59,27 +59,27 @@ first step: in several modules they're longer than the code.
 The largest part is now `db/schema.rs` (about 1,000 lines, mostly the migrations' SQL); the
 others are 60 to 800. A new DB migration goes in `db/schema.rs`.
 
+### What HA-101 split
+
+| Was | Lines | Now |
+|---|---|---|
+| `automations.rs` | 2,185 | `automations.rs` (types, database), `check`, `delivery`, `running`, `handlers`, `tests` |
+| `gh_mcp.rs` | 1,938 | `gh_mcp.rs` (the MCP server, the Bash hook), `account`, `targets`, `env`, `tests` |
+| `checkpoints.rs` | 1,803 | `checkpoints.rs` (types, database, the queue), `git`, `capture`, `changed`, `handlers`, `restore`, `tests` |
+| `codex.rs` | 1,683 | `codex.rs` (`Spec`, policies), `rpc`, `adapter`, `queries`, `output`, `tests`, `subagent_tests` |
+| `hub.rs` | 1,437 | `hub.rs` (links, startup), `inbound`, `dial_out`, `endpoints`, `manage`, `tests` |
+
+Their parts are 100 to 530 lines. `release`, `agent_tools`, `broker`, `relocate`, `push`, `review`,
+`wait`, `permissions`, `git_view` and `changes` (under 1,000 lines of code each) moved their tests
+to `tests.rs`.
+
 ## Next
 
 ### Server: the next files
 
-Files over 1,000 lines, with how much of each is code rather than tests:
-
-| File | Lines | Code |
-|---|---|---|
-| `automations.rs` | 2,185 | 1,484 |
-| `release.rs` | 2,099 | 748 |
-| `gh_mcp.rs` | 1,938 | 1,245 |
-| `pr_watch.rs` | 1,878 | 1,304 |
-| `checkpoints.rs` | 1,803 | 1,222 |
-| `worktree.rs` | 1,790 | 1,153 |
-| `codex.rs` | 1,683 | 1,377 |
-| `hub.rs` | 1,437 | 1,096 |
-| `agent_tools.rs` | 1,403 | 993 |
-| `broker.rs`, `relocate.rs`, `push.rs`, `review.rs`, `wait.rs`, `permissions.rs`, `git_view.rs`, `changes.rs` | 1,000–1,300 | 480–750 |
-
-Those with over 1,000 lines of code split as above. For the others, moving tests to `tests.rs` is
-enough for now.
+`pr_watch.rs` (1,878 lines, 1,304 of code) and `worktree.rs` (1,790, 1,153) are the last files
+over 1,000 lines of code. They split as above, with their tests moved to `tests.rs`, once open PRs
+#53 and #52, which rewrite large parts of them, have merged.
 
 ### Server: folders for related modules
 
