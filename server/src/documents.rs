@@ -347,6 +347,41 @@ pub fn labels_prompt(files: &[(&str, String)]) -> String {
     s
 }
 
+/// `/plan [what to plan]`, a command the board handles itself rather than a skill: it gives the
+/// task the plan label (see add_plan) and tells the agent how to write the plan (see plan_prompt).
+/// The rest of the message, if it's one.
+pub fn plan_command(text: &str) -> Option<&str> {
+    let rest = text.trim_start().strip_prefix("/plan")?;
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then(|| rest.trim())
+}
+
+/// Give a task the plan label, for `/plan`, and make its folder for the plan, which a run only
+/// makes as it starts.
+pub fn add_plan(state: &Shared, task: &Task) -> anyhow::Result<Task> {
+    let mut task = task.clone();
+    if !labels(&task).contains(&"plan") {
+        let given: Vec<&str> = task.labels.iter().map(String::as_str).chain(["plan"]).collect();
+        let labels = check_labels(&json!(given)).map_err(anyhow::Error::msg)?;
+        task = state.update_task(&task.id, &[("labels", json!(labels))])?.ok_or_else(|| anyhow::anyhow!("task not found"))?;
+    }
+    std::fs::create_dir_all(dir(state, &task.id))?;
+    Ok(task)
+}
+
+/// What a `/plan` message says to the agent, in place of the command: how to write the plan to
+/// `file`, unless its system prompt says so already (`told`), and what to plan (`rest`).
+pub fn plan_prompt(file: &str, rest: &str, told: bool) -> String {
+    let mut s = match told {
+        true => format!("Write a plan to {file}, as your instructions for this task's plan say, and iterate on it with me before you start on the work."),
+        false => labels_prompt(&[("plan", file.to_string())]).trim_start().to_string(),
+    };
+    s.push_str(&match rest {
+        "" => "\n\nWrite the plan now, for the work this task is about.".to_string(),
+        r => format!("\n\nWhat to plan: {r}"),
+    });
+    s
+}
+
 /// The documents, for the agent: "a plan (HTML) to /…/plan.html and …".
 fn what(files: &[(&str, String)]) -> String {
     let each: Vec<String> = files
@@ -484,6 +519,19 @@ mod tests {
         std::fs::write(file, text).unwrap();
         let f = std::fs::File::options().write(true).open(file).unwrap();
         f.set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000 + secs)).unwrap();
+    }
+
+    #[test]
+    fn plan_command() {
+        assert_eq!(super::plan_command("/plan"), Some(""));
+        assert_eq!(super::plan_command("  /plan the cache\n"), Some("the cache"));
+        assert_eq!(super::plan_command("/planner"), None);
+        assert_eq!(super::plan_command("make a /plan"), None);
+        // Told already, it doesn't repeat the instructions.
+        let told = plan_prompt("/d/plan.html", "", true);
+        assert!(told.contains("/d/plan.html") && !told.contains("<ia-steps>") && told.ends_with("for the work this task is about."), "{told}");
+        let full = plan_prompt("/d/plan.html", "the cache", false);
+        assert!(full.starts_with("This task has the label plan") && full.contains("<ia-question") && full.ends_with("What to plan: the cache"), "{full}");
     }
 
     #[test]
