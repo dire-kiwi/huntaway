@@ -44,11 +44,22 @@ check() {
   out=$(HOME=$tmp/home XDG_DATA_HOME= PATH="$tmp/bin:$PATH" sh "$script" --dir "$tmp/servers" "$@") || fail "the installer failed: $out"
   serve=$(printf '%s\n' "$out" | sed -n 's/^  \(.* serve .*\) …$/\1/p')
   [ -n "$serve" ] || fail "no serve command in: $out"
-  # authorized_keys' command="…", with its \" and \\ undone.
-  ssh=$(printf '%s\n' "$out" | sed -n 's/^  command="\(.*\)"$/\1/p' | sed 's/\\\(["\\]\)/\1/g')
+  # authorized_keys' command="…" as sshd reads it (opt_dequote in OpenSSH's misc.c): \" is ", any other backslash
+  # stays, and the first " that isn't escaped ends it, which has to be the line's last.
+  ssh=$(printf '%s\n' "$out" | sed -n 's/^  command="//p' | awk '{
+    o = ""
+    for (i = 1; i <= length($0); i++) {
+      c = substr($0, i, 1)
+      if (c == "\"") break
+      if (c == "\\" && substr($0, i + 1, 1) == "\"") { i++; c = "\"" }
+      o = o c
+    }
+    if (i != length($0)) exit 1
+    print o
+  }') || fail "the forced command doesn't end at its closing quote: $out"
   [ -n "$ssh" ] || fail "no forced command in: $out"
   for cmd in "$serve" "$ssh"; do
-    got=$(sh -c "$cmd")
+    got=$(sh -c "$cmd" 2>&1) || fail "$cmd didn't run: $got"
     printf '%s\n' "$got" | grep -qxF 'updates=dire-kiwi/huntaway' || fail "no IA_RELEASE_UPDATES from: $cmd"
     printf '%s\n' "$got" | grep -A1 -xF -- '--data-dir' | tail -n1 | grep -qxF -- "$want" || fail "not on $want: $cmd gave: $got"
   done
@@ -57,6 +68,9 @@ check() {
 
 # A data dir given, with a space, quotes and a backslash in it.
 odd="$tmp/it's my \"board\" \\ here"
+check "$odd" --data-dir "$odd"
+# Backslashes next to quotes, and one at the end.
+odd="$tmp/a\\'b\\\"c\\"
 check "$odd" --data-dir "$odd"
 # The default: huntaway's, or the one from before the rename when only that exists.
 mkdir -p "$tmp/home/.local/share/issue-agent"
