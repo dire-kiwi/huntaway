@@ -92,6 +92,12 @@ pub(super) async fn extend_review(State(s): State<Shared>, Path(id): Path<String
     Ok(Json(json!(t)))
 }
 
+/// Send the agent its pull request's failed checks, with the ends of their logs (API 94, see
+/// mcp/pr_watch.rs's fix_checks).
+pub(super) async fn fix_checks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(crate::mcp::pr_watch::fix_checks(&s, &id).await?)))
+}
+
 pub(super) async fn setup_worktree(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     // Reviewers work in the worktree too.
     if worktree::agent_in_worktree(&s, &id) {

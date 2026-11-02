@@ -947,7 +947,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   the browser tab; *Sort* (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
-- **Now and Later** (HA-109, API 94): every task is in *Later* until it's put in *Now*, which is
+- **Now and Later** (HA-109, API 95): every task is in *Later* until it's put in *Now*, which is
   what you're working on at the moment. A prompt you send a task from its thread or the new task
   dialog, or an answer to its question card (not one from another agent, an automation or the board itself, and not a task an agent
   creates and starts) puts it in Now; so does *Move to Now* in its right-click menu (*Move to Later* puts
@@ -1485,7 +1485,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   its repository (and how much of that is `.git`), each task's worktree, its agent runs' folders
   (output and logs, kept 14 days after a run ends) and its scratch folders, as `du` counts them,
   and each host's database (API 59). Worktrees of done tasks, and worktrees of a project's repository in its
-  worktrees folder that no task on the host has, count as reclaimable; click a worktree to open its task and remove it there. The
+  worktrees folder that no task on the host has, count as reclaimable. **Reclaim space** (API 39) removes the done tasks' worktrees that are merged and clean, as *Remove
+  merged worktrees* does for each project, and lists what it removed, how much that freed and what it kept; click a worktree to open its task and
+  remove it there, which is also the way to remove a worktree no task has. The
   folders are measured when the tab first opens and again on refresh (API 35).
 - **Subagents:** each subagent Claude or Codex starts is a row in the thread
   showing whether it is running (in the foreground or background), done, failed or stopped. Expand
@@ -1626,6 +1628,34 @@ left alone. Turn it off for a project with *Move a task to Done when its pull re
 GitHub* in its settings (`done_when_merged`, on by default). An agent `wait`ing on its pull
 request is told it was merged and marks the task done itself, as its project's instructions say;
 if its run ends without doing so, the next read moves the task.
+
+A project can have its tasks' pull requests watched while they're in *In review* (*Watch pull
+requests in review* in its settings' Review tab, `watch_pull_requests`, API 72): every 2 minutes,
+while the agent is idle, the host reads the pull request (as a `wait` does, with the same record of
+what the agent has been told) and wakes the agent with failed checks and conflicts (`failures`),
+or with comments and reviews from people who can push to the repository too (`all`).
+
+### Failed checks
+
+The reads above (a `wait` on a pull request, watching it in review, and the reads for *Done when
+merged*, which also ask for the head commit's checks) keep how the task's pull request's checks
+stood on the task (`pr_checks`, API 94, DB 74): the head commit, the outcome (`failed`, `passed`,
+`pending` or `none`), the failed checks' names, conclusions and links, and how many passed and are
+still running. It's only written when that changes. No reads are added for it, so a task whose
+pull request isn't read by any of them (in *In progress* without a `wait`, or in a project with
+*Done when merged* off and no watching) has none. While the latest read found failed checks, the
+task's card shows a red mark next to its pull request icon (naming them in its tooltip), and its
+sidebar lists them under Pull request, each linking to its run.
+
+**Fix broken checks** there (`POST /tasks/{id}/fix_checks`) reads the pull request again, as the
+task's GitHub account, and sends its agent the failed checks with the end of each GitHub Actions
+job's failed steps' log (`gh run view --job <id> --log-failed`, for 5 jobs at most: the last 80
+lines, up to 6,000 characters, without times, colours or grouping markers) inside
+`<untrusted-data>` tags, asking it to fix them and push. It goes as your message (to the agent
+while it works, or starting its turn, which moves the task to *In progress*), but the task isn't
+re-titled from it, and those failures count as told, so watching the task in review doesn't wake
+the agent with them again. With no failed checks on the head commit, it says so and sends
+nothing. A wake for failed checks while the task is watched in review brings the same log ends.
 
 ### Preview URLs
 

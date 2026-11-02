@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { Check, GitBranch, GitPullRequest } from "lucide-react";
+import { Check, CircleX, GitBranch, GitPullRequest } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { Task } from "../../api";
+import { failedChecks, type Task } from "../../api";
 import { usePreviewUp } from "./preview";
 
 /** A task in review with a preview URL: polled while shown, the dot is green once it answers 200. */
@@ -91,5 +91,18 @@ export function PrIcon({ url, label, className }: { url: string; label?: boolean
       <GitPullRequest size={11} />
       {label && <span>{prLabel(url)}</span>}
     </a>
+  );
+}
+
+/** A red mark for a task whose pull request has failed checks (see `failedChecks`), naming them. */
+export function ChecksMark({ task, className }: { task: Task; className?: string }) {
+  const c = failedChecks(task);
+  if (!c) return null;
+  const n = c.failed.length + c.more_failed;
+  const names = c.failed.map((f) => f.name).join(", ") + (c.more_failed ? ` and ${c.more_failed} more` : "");
+  return (
+    <span title={`${n} check${n === 1 ? "" : "s"} failed on ${prLabel(c.url)}: ${names}`} className={clsx("inline-flex shrink-0 items-center text-red-400", className)}>
+      <CircleX size={11} />
+    </span>
   );
 }

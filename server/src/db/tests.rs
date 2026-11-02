@@ -596,6 +596,25 @@ fn a_database_from_version_70_gets_restart_window_off() {
 }
 
 #[test]
+fn a_database_at_version_73_gets_tasks_pr_checks() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let id = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let t = insert_task(&c, t).unwrap();
+        c.execute_batch("ALTER TABLE tasks DROP COLUMN pr_checks; PRAGMA user_version=73;").unwrap();
+        t.id
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert_eq!(get_task(&c, &id).unwrap().unwrap().pr_checks, None);
+    let checks = PrChecks { url: "https://github.com/o/r/pull/1".into(), head: "a1".into(), outcome: "failed".into(), since: "1".into(), ..Default::default() };
+    let t = update_task(&c, &id, &[("pr_checks", json!(checks))]).unwrap().unwrap();
+    assert_eq!(t.pr_checks, Some(checks));
+}
+
+#[test]
 fn a_database_from_version_47_gets_show_usage_off() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
@@ -693,14 +712,14 @@ fn a_database_at_version_67_gets_projects_pull_request_settings() {
 }
 
 #[test]
-fn a_database_at_version_73_has_every_task_in_later() {
+fn a_database_at_version_74_has_every_task_in_later() {
     // As master's build left it, with run sessions (73) and no now/later split yet.
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
         c.execute_batch(
             "ALTER TABLE tasks DROP COLUMN now_at;
-                 PRAGMA user_version=73;
+                 PRAGMA user_version=74;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
                  INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
                    VALUES ('t','p','task',1,'t','todo','1','1','1');",

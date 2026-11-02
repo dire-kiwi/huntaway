@@ -265,15 +265,28 @@ async fn main() -> Result<()> {
 
 /// `--open-token`'s route: the token for whoever asks, but not through a broker (where whoever
 /// asks could be anyone).
-fn open_token(token: String) -> impl Fn(axum::http::HeaderMap) -> std::future::Ready<axum::response::Response> + Clone {
+///
+/// On a loopback-only server (`--host 127.0.0.1`) it also needs a loopback `Host`, so a page on another
+/// site that rebinds its name to 127.0.0.1 can't read the token.
+fn open_token(token: String, loopback_only: bool) -> impl Fn(axum::http::HeaderMap) -> std::future::Ready<axum::response::Response> + Clone {
     move |headers| {
         use axum::response::IntoResponse;
-        std::future::ready(if headers.contains_key(broker::VIA_BROKER) {
+        std::future::ready(if headers.contains_key(broker::VIA_BROKER) || (loopback_only && !loopback_host(&headers)) {
             (axum::http::StatusCode::NOT_FOUND, axum::Json(api::no_route_error("GET", "/api/open-token"))).into_response()
         } else {
             axum::Json(serde_json::json!({ "token": token })).into_response()
         })
     }
+}
+
+/// Whether the request's `Host` names this machine (127.0.0.1, localhost or [::1], with any port).
+fn loopback_host(headers: &axum::http::HeaderMap) -> bool {
+    let host = headers.get(axum::http::header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("");
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(""),
+        None => host.rsplit_once(':').map_or(host, |(n, _)| n),
+    };
+    matches!(name.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
@@ -352,7 +365,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if args.open_token {
         tracing::warn!("--open-token: handing the access token to every browser that opens the board");
         let token = token.clone();
-        app = app.route("/api/open-token", axum::routing::get(open_token(token)));
+        app = app.route("/api/open-token", axum::routing::get(open_token(token, args.host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()))));
     }
 
     // Agents kept running while we were down; catch up on their output.
@@ -437,6 +450,18 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn loopback_host_only_accepts_local_names() {
+        let host = |h: &str| {
+            let mut m = axum::http::HeaderMap::new();
+            m.insert(axum::http::header::HOST, h.parse().unwrap());
+            super::loopback_host(&m)
+        };
+        assert!(host("127.0.0.1:7878") && host("localhost:80") && host("LOCALHOST") && host("[::1]:9"));
+        assert!(!host("attacker.example:7878") && !host("127.0.0.1.evil.test") && !host("localhost.evil.test:1"));
+        assert!(!super::loopback_host(&axum::http::HeaderMap::new()));
+    }
+
     #[test]
     fn db_path_keeps_the_database_from_before_the_rename() {
         let dir = crate::testing::temp_dir();

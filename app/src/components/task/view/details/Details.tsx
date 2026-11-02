@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, documentsOnly, hostSupports, isScratch, LABELS_API, taskLabels, type Task } from "../../../../api";
+import { api, CHECKS_API, documentsOnly, hostSupports, isScratch, LABELS_API, taskLabels, type Task } from "../../../../api";
 import { isGroupTask, useProject, useStore } from "../../../../store";
 import { Dependencies } from "../../../board/Dependencies";
 import { useConfirmDone } from "../../../board/ConfirmDone";
@@ -11,6 +11,7 @@ import { TitleSection } from "../Title";
 import type { Mode } from "../layout";
 import { AgentSection } from "./AgentSection";
 import { DescriptionSection } from "./DescriptionSection";
+import { FailedChecks } from "./FailedChecks";
 import { LabelsSection } from "./LabelsSection";
 import { DeleteTaskModal, TeardownModal } from "./Modals";
 import { Row, Section, TextInput } from "./Section";
@@ -117,6 +118,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             }}
           />
           {errs.pr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.pr}</div>}
+          {hostSupports(host, CHECKS_API) && <FailedChecks task={task} />}
         </Section>
       )}
 
