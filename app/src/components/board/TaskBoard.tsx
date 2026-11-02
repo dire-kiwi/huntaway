@@ -28,6 +28,10 @@ import { openCompare } from "../../router";
 import { ReminderModal, reminderItems, starItem } from "../task/Reminders";
 import { titleItem, TitleModal } from "../layout/TitleModal";
 import { REMINDERS_API } from "../../reminders";
+import { FOCUSES, inFocus, isFocus, isNow, type Focus } from "../../focus";
+import { useSelection } from "../../selection";
+import { focusItems, moveToFocus } from "./focusActions";
+import { LassoPath, SelectionBar, useClearSelection, useLasso } from "./Lasso";
 import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
@@ -63,6 +67,8 @@ const ARCHIVED_KEY = "ia.board.archived";
 const WIDE_BOARD = 1180;
 // How the boards sort their tasks, on this client.
 const SORT_KEY = "ia.board.sort";
+// Whether the boards show the tasks in Now, in Later or all of them, on this client.
+const FOCUS_KEY = "ia.board.focus";
 // The column each board shows in the narrow layout (one at a time), on this client.
 const columnKey = (board: string) => `ia.board.column.${board}`;
 // Each board's search and filters, in this tab (so they last over a reload, and don't stay on forever).
@@ -157,6 +163,14 @@ export function TaskBoard({
     setSort(s);
     localStorage.setItem(SORT_KEY, s);
   };
+  const [focus, setFocus] = useState<Focus>(() => {
+    const f = localStorage.getItem(FOCUS_KEY);
+    return isFocus(f) ? f : "all";
+  });
+  const changeFocus = (f: Focus) => {
+    setFocus(f);
+    localStorage.setItem(FOCUS_KEY, f);
+  };
   // The search, filter and sort controls go in the header when the board is wide enough for them beside
   // its title and buttons (a subproject's has the most), and otherwise in a row of their own below it.
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
@@ -235,9 +249,10 @@ export function TaskBoard({
       (t) => `${keyPrefix(t, byId.get(`${t.host_id}:${t.project_id ?? ""}`))}-${t.number}`,
       (t) => byId.get(`${t.host_id}:${t.project_id ?? ""}`)?.name ?? t.group_name ?? undefined,
     );
-    const shown = Object.fromEntries(Object.entries(columns).map(([k, ts]) => [k, sortTasks(ts.filter(match), sort)])) as Record<Status, Task[]>;
-    return { shown, shownArchived: sortTasks(archived.filter(match), sort) };
-  }, [columns, archived, query, sort, byId]);
+    const keep = (t: Task) => inFocus(t, focus) && match(t);
+    const shown = Object.fromEntries(Object.entries(columns).map(([k, ts]) => [k, sortTasks(ts.filter(keep), sort)])) as Record<Status, Task[]>;
+    return { shown, shownArchived: sortTasks(archived.filter(keep), sort) };
+  }, [columns, archived, query, sort, byId, focus]);
   // For the views that aren't by status: every task shown, in the order of the statuses.
   const shownTasks = useMemo(
     () => [...shownStatuses.flatMap((s) => shown[s.id]), ...(showsStatus(query, "done") ? shownArchived : [])],
@@ -246,6 +261,13 @@ export function TaskBoard({
     [shown, shownArchived, statuses, query],
   );
   const total = statuses.reduce((n, s) => n + columns[s.id].length, archived.length);
+  // The tasks in Now (not counting archived ones), for the switch.
+  const nowCount = useMemo(() => tasks.filter((t) => isNow(t) && !isArchived(t, now)).length, [tasks, now]);
+  // The tasks picked with the lasso that the board shows.
+  const pickedIds = useSelection((s) => s.ids);
+  const picked = useMemo(() => shownTasks.filter((t) => pickedIds.has(t.id)), [shownTasks, pickedIds]);
+  const lassoPath = useLasso(root);
+  useClearSelection(true);
   const shownCount = shownStatuses.reduce((n, s) => n + shown[s.id].length, showsStatus(query, "done") ? shownArchived.length : 0);
   // The filter menu's choices: the board's statuses, the kinds of task it has, and its projects (with "No project" for its group and scratch tasks).
   const statusOptions: FilterOption<Status>[] = statuses.map((s) => ({ id: s.id, label: s.label }));
@@ -512,6 +534,26 @@ export function TaskBoard({
     </div>
   );
 
+  const focusSwitch = (
+    <div role="group" aria-label="Show tasks in" className="mr-1 flex items-center rounded-md border border-line p-0.5" title="Hold Ctrl and right-drag on the board to lasso tasks, then move them to Now or Later">
+      {FOCUSES.map(({ id, label, title }) => (
+        <button
+          key={id}
+          title={title}
+          aria-pressed={focus === id}
+          onClick={() => changeFocus(id)}
+          className={clsx(
+            "inline-flex h-6 items-center gap-1 rounded px-2 text-xs font-medium transition-colors narrow:h-8",
+            focus === id ? "bg-raised text-fg" : "text-muted hover:text-fg",
+          )}
+        >
+          {label}
+          {id === "now" && nowCount > 0 && <span className="rounded bg-accent/25 px-1 text-[11px] text-fg">{nowCount}</span>}
+        </button>
+      ))}
+    </div>
+  );
+
   /** A column's cards, with where a dragged one would go, and what it says when it has none. */
   const cards = (status: Status) => (
     <>
@@ -545,6 +587,7 @@ export function TaskBoard({
   const controls = (
     <>
       {wide && queryControls}
+      {focusSwitch}
       {viewToggle}
     </>
   );
@@ -793,6 +836,7 @@ export function TaskBoard({
             ...(hostSupports(hostOf(menuTask), REMINDERS_API)
               ? [starItem(menuTask, setDropErr, true), ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr)]
               : []),
+            ...focusItems(menuTask, picked, setDropErr, !hostSupports(hostOf(menuTask), REMINDERS_API)),
             titleItem(() => setRenaming(menuTask), true),
             ...(menuSiblings > 1 && hostSupports(hostOf(menuTask), COMPARE_API)
               ? [{ label: `Compare all ${menuSiblings} from its prompt`, divider: true, onSelect: () => openCompare(menuTask.id) }]
@@ -805,6 +849,13 @@ export function TaskBoard({
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
       {renaming && <TitleModal task={renaming} onClose={() => setRenaming(null)} />}
       {doneDialog}
+      <LassoPath path={lassoPath} />
+      <SelectionBar
+        count={picked.length}
+        onNow={() => moveToFocus(picked, true).catch((e) => setDropErr((e as Error).message)).finally(() => useSelection.getState().clear())}
+        onLater={() => moveToFocus(picked, false).catch((e) => setDropErr((e as Error).message)).finally(() => useSelection.getState().clear())}
+        onClear={() => useSelection.getState().clear()}
+      />
       {newIn && canAdd && ready && (
         <NewTaskModal
           // A group's (or profile's) new task starts in the project last picked for one, if it's on the board.

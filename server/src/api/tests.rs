@@ -316,6 +316,24 @@ fn a_setting_of_the_wrong_type_is_refused_rather_than_cleared() {
 }
 
 #[test]
+fn how_long_a_task_stays_in_now_is_a_setting() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let set = async |v: Value| update_settings(State(s.clone()), Json(v.as_object().unwrap().clone())).await.map(|j| j.0);
+        assert_eq!(get_settings(State(s.clone())).await.unwrap().0["now_expiry_hours"], json!(24));
+        assert_eq!(set(json!({"now_expiry_hours": 6})).await.unwrap()["now_expiry_hours"], json!(6));
+        // 0 keeps tasks there for good, and null goes back to a day.
+        assert_eq!(set(json!({"now_expiry_hours": 0})).await.unwrap()["now_expiry_hours"], json!(0));
+        assert_eq!(set(json!({})).await.unwrap()["now_expiry_hours"], json!(0));
+        assert_eq!(set(json!({"now_expiry_hours": null})).await.unwrap()["now_expiry_hours"], json!(24));
+        for bad in [json!({"now_expiry_hours": -1}), json!({"now_expiry_hours": 1.5}), json!({"now_expiry_hours": "soon"}), json!({"now_expiry_hours": 999999})] {
+            let err = set(bad.clone()).await.unwrap_err();
+            assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+        }
+    })
+}
+
+#[test]
 fn tasks_link_to_asana_tasks() {
     crate::testing::run(async || {
         let s = crate::testing::state();

@@ -499,6 +499,26 @@ fn sets_a_pull_request() {
 }
 
 #[test]
+fn puts_tasks_in_now_and_later() {
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let t = call(&s, &me, "create_task", json!({"title": "Soon", "project_id": "KIW"})).await.unwrap();
+        assert!(t["now"].is_null());
+        let t = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": true})).await.unwrap();
+        assert_eq!(t["now"].as_bool(), Some(true));
+        assert!(db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap().now_at.is_some());
+        let t = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": false})).await.unwrap();
+        assert!(t["now"].is_null());
+        assert!(db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap().now_at.is_none());
+        let err = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": "yes"})).await.unwrap_err();
+        assert!(err.contains("now must be"), "{err}");
+    })
+}
+
+#[test]
 fn stars_and_sets_reminders() {
     testing::run(async || {
         let s = state();

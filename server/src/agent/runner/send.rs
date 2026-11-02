@@ -33,6 +33,10 @@ pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Tas
 
 fn send_run(state: &Shared, task_id: &str, text: &str, auto: bool, from_agent: bool, kind: &str) -> ApiResult<Task> {
     let mut task = send_message(state, task_id, Some(db::Queued::new(text, from_agent)), auto, kind, None)?;
+    // The user's prompt puts the task in "now" (or keeps it there, for another day).
+    if kind == "prompt" && !auto && !from_agent && task.kind == "task" {
+        task = crate::agent::focus::put_in_now(state, task_id).unwrap_or(task);
+    }
     // `/plan` gives the task the plan label now, so it shows the Plan tab whether the message
     // starts a run, goes to the one going or waits.
     if kind == "prompt" && task.kind == "task" && crate::agent::documents::plan_command(text).is_some() {

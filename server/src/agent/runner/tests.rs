@@ -462,6 +462,24 @@ fn the_users_messages_retitle_the_task() {
 }
 
 #[test]
+fn the_users_prompt_puts_the_task_in_now() {
+    crate::testing::run(async || {
+        let (state, task, _run) = running(true);
+        assert_eq!(task.now_at, None);
+        // Not what another agent sends.
+        send_from_agent(&state, &task.id, "from another agent").unwrap();
+        assert_eq!(reload(&state, &task.id).now_at, None);
+        // The user's, even one the running agent hasn't taken in yet.
+        send(&state, &task.id, "do this").unwrap();
+        let at = reload(&state, &task.id).now_at.expect("in now");
+        // Prompting it again keeps it there for another day.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        send(&state, &task.id, "and this").unwrap();
+        assert!(reload(&state, &task.id).now_at.unwrap() > at);
+    });
+}
+
+#[test]
 fn a_reply_the_agent_hasnt_taken_in_yet_goes_with_what_it_answers() {
     crate::testing::run(async || {
         let (state, task, run) = running(true);

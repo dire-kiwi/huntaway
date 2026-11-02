@@ -298,7 +298,8 @@ fn board_tools() -> Value {
                 "depends_on": depends_on,
                 "starred": starred,
                 "remind_at": remind_at,
-                "reminder": reminder
+                "reminder": reminder,
+                "now": {"type": "boolean", "description": "Put the task in the board's Now view (true) or send it back to Later (false). Tasks start in Later; the user's prompts put a task in Now, and a task with no activity for a day (the host's setting) goes back."}
             }, "required": ["task_id"]}
         },
         {

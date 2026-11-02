@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { useMemo } from "react";
 import { isScratch, taskLabels, type Project, type Task } from "../../api";
 import { openTask, usePanelOpen } from "../../router";
+import { useSelectable } from "../../selection";
 import { keyPrefix, useStore } from "../../store";
 import { RunningDot, StatusIcon, STATUS_COLOR } from "../ui";
 import type { OnMenu, Progress } from "./TaskCard";
@@ -166,8 +167,10 @@ function layout(shown: Task[], all: Record<string, Task>) {
 
 function Node({ task, ghost, project, progress, onMenu, style }: { task: Task; ghost?: boolean; project?: Project; progress?: Progress; onMenu?: OnMenu; style?: React.CSSProperties }) {
   const open = usePanelOpen(task.id);
+  const selectable = useSelectable(task.id);
   return (
     <div
+      {...(ghost ? undefined : selectable)}
       role="button"
       tabIndex={0}
       aria-current={open || undefined}
