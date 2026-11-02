@@ -173,7 +173,9 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   calls in between), import `open` from `scripts/ui-check.mjs` and use `ui.page`, which is a
   Playwright page. Checks for bugs that are easy to bring back go in `app/tests/ui/` and run with
   `npm run test:ui` in `app/` (it builds the UI, and each file starts its own `--demo` test server
-  with agents switched off, so `cargo build` in `server/` first). They aren't part of `npm test`,
+  with agents switched off, so `cargo build` in `server/` first). Files run 8 at a time (`IA_UI_TEST_JOBS`
+  changes that), so a check mustn't count on a quiet machine: wait for what it reads rather than read it
+  at once. Run one file with `node --experimental-strip-types --test tests/ui/<file>`. They aren't part of `npm test`,
   but CI runs them (`Tests / ui`). Run them when you change the UI they cover, and add one when an interaction found a bug.
 - For a change meant to make the UI faster, measure it: `node scripts/ui-profile.mjs --env $TMPDIR/ia<N>-env
   --task <id>` opens a task with a long thread and feeds the page streamed tokens, task events and

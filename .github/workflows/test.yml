@@ -77,8 +77,8 @@ jobs:
         working-directory: app
         run: npm test
 
-  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
-  # scripts/ia-api's tests.
+  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first and runs 8 files at a time) against a
+  # debug server, and scripts/ia-api's tests.
   ui:
     runs-on: ubuntu-latest
     timeout-minutes: 30
