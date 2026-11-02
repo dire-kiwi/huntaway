@@ -52,9 +52,13 @@ Faster Rust builds: install [sccache](https://github.com/mozilla/sccache) (`carg
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
 them again. Without sccache, or where it can't start its server (a sandbox with no network), cargo
-runs rustc directly. `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s`
-shows the hit rate. Debug builds also leave dependencies' debuginfo out, which keeps each
-worktree's `target/` smaller.
+runs rustc directly. The server is started with `$XDG_RUNTIME_DIR` (or `/tmp`) as its `TMPDIR`
+rather than the build's, which may be a task's temp folder that goes when the task is done.
+`RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s` shows the hit rate.
+Debug builds also leave dependencies' debuginfo out, which keeps each worktree's `target/` smaller.
+`cargo test` runs each test binary with a `TMPDIR` of its own on disk, `/var/tmp/ia-cargo-test-*`
+(or `$IA_CARGO_TEST_TMPDIR`), removed when it exits (`server/.cargo/test-runner`), rather than in
+`/tmp`, which is often a tmpfs in memory that tests' databases and repositories fill up.
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
 of how many of its tasks are in progress (blue), need attention (amber), in review (purple) and
@@ -460,20 +464,23 @@ version is all a check does; quitting and starting the app again still runs the 
 A host installed from the server tarball can update the same way with
 `huntaway serve --release-updates dire-kiwi/huntaway` (or `IA_RELEASE_UPDATES=dire-kiwi/huntaway`):
 the board it serves shows the same Update, Check now and Roll back, and versions go into
-`<data dir>/app/` as above. Set `IA_BUNDLED_SERVER` to the tarball's `huntaway` so that Roll back
-can go back to it. There's no desktop app to choose the version, so a supervisor that restarts the
-server (after a reboot, say) runs the binary it names, the tarball's, until you click Update again.
-To keep the version you updated to, have it start the current one instead, with a script like this:
+`<data dir>/app/` as above. So does its page in a hub's Settings → Hosts, through the hub. There's
+no desktop app to choose the version when a supervisor starts the tarball's `huntaway` again (after
+a reboot, say), so the server chooses as the app would: it execs the version you last updated to
+(`current` in `app/state.json`, else `previous`), when that's newer than itself and isn't bad, and
+otherwise carries on itself. So a newer tarball takes over from older downloads, as a newer package
+does. A version it starts this way that exits before it's listening is marked bad on the next start,
+which starts the one before it, or the tarball's own server: a broken version is tried once, not on
+every restart (a server killed while it's starting counts as one that didn't start). Roll back can go
+back to the tarball's own server, from the first Update on: the tarball's server passes itself as
+`IA_BUNDLED_SERVER` to the release it starts, by Update or as above, unless you set that yourself.
+Deleting `<data dir>/app/` goes back to the tarball's server until the next Update.
 
-```sh
-#!/bin/sh
-# Start the release last updated to, or the installed one. It doesn't compare versions, so after
-# installing a newer tarball, delete <data dir>/app/.
-data=${IA_DATA_DIR:-$HOME/.local/share/huntaway}
-v=$(sed -n 's/^ *"current": *"\([^"]*\)".*/\1/p' "$data/app/state.json" 2>/dev/null)
-[ -n "$v" ] && [ -x "$data/app/$v/huntaway" ] && exec "$data/app/$v/huntaway" "$@"
-exec /opt/huntaway-server/huntaway "$@"
-```
+`scripts/install-release-host.sh` installs a host this way: it downloads the latest release's tarball
+(or `--version`'s), checks its sha256, unpacks it into `~/.local/share/huntaway-server/<v>/`, points
+`~/.local/share/huntaway-server/current` at it, and prints the command to start it with
+`IA_RELEASE_UPDATES` set, and the forced command for a host a hub starts over SSH
+(`command="IA_RELEASE_UPDATES=dire-kiwi/huntaway …/current/huntaway ssh-host --port 7878"`).
 
 `scripts/release-update-e2e.sh` checks all of this on real packages: it builds three releases of the
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
@@ -540,6 +547,14 @@ it over the link, so no git remote or inbound access is needed. The host fast-fo
 checkout (it refuses if the checkout is dirty, on another branch, or has diverged), then
 rebuilds and restarts like Rebuild & restart; agents keep running. Hosts from before
 versioning need one manual update (`git pull`, then Rebuild & restart).
+
+A host installed from a release (with `--release-updates`, see *Release updates*; `/api/info`
+reports `updates_from: "releases"` rather than `"checkout"`, API 89) goes by version instead: when
+the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
+onto that release as its own Update would, checking for releases first if it hasn't seen it yet. It
+refuses a version older than its own, or one older than the latest release it knows of (update the
+hub first). A hub without a checkout or `IA_COMMIT` that runs a release sends only its version, so
+it can update release hosts but not checkouts.
 
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission

@@ -57,6 +57,8 @@ pub struct Version {
     pub commit: Option<String>,
     /// Whether it can run agents (hosts that don't say are assumed to).
     pub agents: bool,
+    /// How an Update reaches it (API 89): `checkout` or `releases`, or none.
+    pub updates_from: Option<String>,
 }
 
 impl Version {
@@ -67,6 +69,7 @@ impl Version {
             api_compat: info["api_compat"].as_u64().unwrap_or(0) as u32,
             commit: info["commit"].as_str().map(String::from),
             agents: info["agents"].as_bool().unwrap_or(true),
+            updates_from: info["updates_from"].as_str().map(String::from),
         }
     }
 }
@@ -406,7 +409,7 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
     let (host_id, name, version) = match hello {
         Some(Ok(WsMessage::Text(t))) => match serde_json::from_str::<Up>(&t)? {
             Up::Hello { host_id, name, protocol, version, api_version, api_compat } if protocol == PROTOCOL => {
-                (host_id, name, Version { version, api_version, api_compat, commit: None, agents: true })
+                (host_id, name, Version { version, api_version, api_compat, commit: None, agents: true, updates_from: None })
             }
             Up::Hello { protocol, .. } => bail!("host speaks protocol {protocol}, we speak {PROTOCOL}"),
             _ => bail!("expected hello"),
@@ -805,6 +808,7 @@ pub async fn list_hosts(State(s): State<Shared>) -> ApiResult<Json<Value>> {
         "api_version": API_VERSION,
         "api_compat": API_COMPAT,
         "commit": s.meta.running_commit,
+        "updates_from": crate::admin::updates_from(&s.meta),
         "agents": crate::runs::can_run_agents(&s),
     })];
     for l in db::list_links(&s.db())? {
@@ -820,6 +824,7 @@ pub async fn list_hosts(State(s): State<Shared>) -> ApiResult<Json<Value>> {
             v["api_compat"] = json!(ver.api_compat);
             v["commit"] = json!(ver.commit);
             v["agents"] = json!(ver.agents);
+            v["updates_from"] = json!(ver.updates_from);
             // Pings keep this recent on a live link: a while ago means the link is about to be dropped.
             v["last_message_at"] = json!(c.last_message_at());
         }
@@ -1028,19 +1033,25 @@ pub async fn copy_claude_config(State(s): State<Shared>, Json(b): Json<CopyConfi
     Ok(Json(json!({"ok": true, "files": archive["files"], "target": result})))
 }
 
-/// Send this hub's code to a linked host, which fast-forwards its checkout and restarts.
+/// Send this hub's code to a linked host, which fast-forwards its checkout and restarts. A host installed from a
+/// release (API 89) goes by the version instead, and updates to that release.
 pub async fn update_host(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     if id == s.host_id {
         return Err(ApiError::bad("use Rebuild & restart for this host"));
     }
     // A hub with a checkout sends its code; one deployed without (a container) sends its
     // commit and the host fetches it from its own origin.
-    let body = if s.meta.source_dir.is_some() {
+    let mut body = if s.meta.source_dir.is_some() {
         crate::admin::bundle(&s).await?
-    } else {
-        let commit = s.meta.running_commit.clone().ok_or_else(|| ApiError::bad("this hub doesn't know which commit it runs (set IA_COMMIT)"))?;
+    } else if let Some(commit) = &s.meta.running_commit {
         json!({"commit": commit})
+    } else if crate::admin::updates_from(&s.meta) == Some("releases") {
+        // A release install knows its version but not its commit, which only a release host can go by.
+        json!({})
+    } else {
+        return Err(ApiError::bad("this hub doesn't know which commit it runs (set IA_COMMIT)"));
     };
+    body["version"] = json!(env!("CARGO_PKG_VERSION"));
     Ok(Json(host_request(&s, &id, "POST", "/api/admin/update", Some(body)).await?))
 }
 
@@ -1133,6 +1144,47 @@ mod tests {
             assert_eq!(e.0, StatusCode::NOT_FOUND);
             assert!(!e.1.contains("update it"), "{}", e.1);
             std::fs::remove_dir_all(&ui).ok();
+        })
+    }
+
+    #[test]
+    fn update_sends_the_hubs_commit_and_version() {
+        crate::testing::run(async || {
+            let sent = Arc::new(Mutex::new(vec![]));
+            let host = |sent: Arc<Mutex<Vec<Value>>>| {
+                let update = move |Json(b): Json<Value>| async move {
+                    sent.lock().unwrap().push(b);
+                    Json(json!({"ok": true}))
+                };
+                Router::new().route("/api/admin/update", axum::routing::post(update))
+            };
+            let hub = |commit: Option<&str>, release: bool| {
+                let mut meta = crate::testing::meta();
+                meta.running_commit = commit.map(String::from);
+                meta.release = release.then(|| crate::release::Config::from_env("o/r").unwrap());
+                crate::testing::state_with(meta)
+            };
+            // A hub deployed without a checkout sends its commit, and its version for a release host.
+            let s = hub(Some("abc"), false);
+            link_http(&s, "host", host(sent.clone()), API_VERSION).await;
+            let app = crate::api::router(s.clone());
+            assert_eq!(call(&app, "POST", "/api/hosts/host/update").await, (200, json!({"ok": true})));
+            // One that runs a release only has its version.
+            let s = hub(None, true);
+            link_http(&s, "host", host(sent.clone()), API_VERSION).await;
+            assert_eq!(call(&crate::api::router(s.clone()), "POST", "/api/hosts/host/update").await.0, 200);
+            let version = env!("CARGO_PKG_VERSION");
+            assert_eq!(*sent.lock().unwrap(), [json!({"commit": "abc", "version": version}), json!({"version": version})]);
+            // Neither: it can't say what to update to.
+            let s = hub(None, false);
+            link_http(&s, "host", host(sent.clone()), API_VERSION).await;
+            let (code, v) = call(&crate::api::router(s.clone()), "POST", "/api/hosts/host/update").await;
+            assert_eq!(code, 400);
+            assert!(v["error"].as_str().unwrap().contains("set IA_COMMIT"), "{v}");
+            assert_eq!(sent.lock().unwrap().len(), 2);
+            // The hosts list says how each host updates.
+            let s = hub(None, true);
+            assert_eq!(call(&crate::api::router(s.clone()), "GET", "/api/hosts").await.1[0]["updates_from"], "releases");
         })
     }
 
