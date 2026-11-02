@@ -2,16 +2,17 @@ import assert from "node:assert/strict";
 import { register } from "node:module";
 import { mock, test } from "node:test";
 
-// The app's modules import each other without extensions, as Vite allows.
+// The app's modules import each other without extensions (and folders by their index.ts), as Vite allows.
 const hook = `export async function resolve(spec, ctx, next) {
   if (spec.startsWith(".") && !/\\.[cm]?[jt]sx?$/.test(spec)) {
     try { return await next(spec + ".ts", ctx); } catch {}
+    try { return await next(spec + "/index.ts", ctx); } catch {}
   }
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
 const { useStore, retainThread, withMessage } = await import("../src/store.ts");
-const { api } = await import("../src/api.ts");
+const { api } = await import("../src/api/index.ts");
 
 const msg = (id, text = `m${id}`) => ({ id, task_id: "t", kind: "user", data: { text }, created_at: "" });
 const ids = (list) => list.map((m) => m.id);

@@ -1,6 +1,6 @@
 import type { Status, Task } from "../../api";
 // With its extension, for the unit tests (which run it in node).
-import { documentsOnly, taskLabels } from "../../labels.ts";
+import { documentsOnly, taskLabels } from "../../api/labels.ts";
 
 /**
  * What a board shows: its search, filters and sort, which apply to the kanban board and the list

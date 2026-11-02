@@ -1,6 +1,6 @@
 import type { Task } from "../../api";
 // With its extension, for the unit tests (which run it in node).
-import { documentsOnly, taskLabels } from "../../labels.ts";
+import { documentsOnly, taskLabels } from "../../api/labels.ts";
 
 /**
  * A task's documents are ready for the user once there is one and its agent isn't working on them (running or queued)

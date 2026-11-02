@@ -1,4 +1,4 @@
-import type { Task } from "./api";
+import type { Task } from "./tasks";
 
 // Without imports of its own (but types), so that the unit tests can run it (and what imports it, with its extension).
 
