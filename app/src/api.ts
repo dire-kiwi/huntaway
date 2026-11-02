@@ -135,6 +135,8 @@ export interface Host {
   api_compat?: number;
   /** Commit the host runs, if it runs from a git checkout. */
   commit?: string | null;
+  /** How an Update reaches it (API 89): its source checkout, or releases (installed from one, with --release-updates). */
+  updates_from?: "checkout" | "releases" | null;
   last_seen?: string | null;
   /** When the hub last heard from a connected host (API 78); pings keep it within about 20s. */
   last_message_at?: string;
