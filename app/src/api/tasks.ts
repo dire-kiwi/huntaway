@@ -8,7 +8,7 @@ export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
 
 export type Resolution = "done" | "not_done" | "wont_fix";
 
-/** What a task's worktree starts from (API 95): its base branch, which its pull request targets, comes from it. */
+/** What a task's worktree starts from (API 96): its base branch, which its pull request targets, comes from it. */
 export type StartFrom =
   | { type: "branch"; branch: string }
   | { type: "task"; task_id: string }
@@ -16,7 +16,7 @@ export type StartFrom =
   | { type: "commit"; commit: string };
 
 /** The API that takes a task's start_from, and lists a project's branches. */
-export const START_FROM_API = 95;
+export const START_FROM_API = 96;
 
 export type Status = "todo" | "in_progress" | "needs_attention" | "in_review" | "ready_for_merge" | "done" | "backlog";
 
@@ -68,6 +68,8 @@ export const LIMITS_API = 81;
 
 /** Profiles and projects can have merges wait for the user's approval of a summary. */
 export const MERGE_APPROVAL_API = 92;
+/** Projects and profiles can require an approving GitHub review before a task goes to Ready for merge. */
+export const PR_APPROVAL_API = 95;
 
 export const isMerged = (t: Task) => t.status === "done" && (t.resolution ?? "done") === "done";
 
@@ -260,7 +262,7 @@ export interface Task {
   worktree_path: string | null;
   branch: string | null;
   base_branch: string | null;
-  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 95). */
+  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 96). */
   start_from?: StartFrom | null;
   worktree_state: "none" | "setting_up" | "ready" | "tearing_down" | "error";
   worktree_error: string | null;
@@ -503,7 +505,7 @@ export const tasksApi = {
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
-      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 95). */
+      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 96). */
       start_from?: string;
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),

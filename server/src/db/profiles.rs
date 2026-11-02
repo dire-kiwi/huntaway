@@ -101,6 +101,10 @@ pub struct Profile {
     /// only once the user approves (API 92, see review/merge_gate.rs). Its projects can say otherwise.
     #[serde(default)]
     pub merge_approval: bool,
+    /// A task can only go to "Ready for merge" once its pull request has an approving review on
+    /// GitHub (API 95). Its projects can say otherwise.
+    #[serde(default)]
+    pub require_pr_approval: bool,
     pub created_at: String,
 }
 
@@ -130,6 +134,7 @@ impl Profile {
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             merge_approval: r.get("merge_approval")?,
+            require_pr_approval: r.get("require_pr_approval")?,
             created_at: r.get("created_at")?,
         })
     }
@@ -311,7 +316,7 @@ pub fn task_is_codex(c: &Connection, task: &Task) -> Result<bool> {
     Ok(task_claude_config(c, task)?.is_some_and(|cfg| cfg.is_codex()))
 }
 
-const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer", "merge_approval"];
+const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer", "merge_approval", "require_pr_approval"];
 
 pub fn update_profile(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Profile>> {
     update_generic(c, "profiles", PROFILE_COLUMNS, id, fields)?;

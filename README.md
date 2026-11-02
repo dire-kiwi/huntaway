@@ -1225,7 +1225,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
-- **Starting from elsewhere** (API 95): a task's worktree can start from something other than the
+- **Starting from elsewhere** (API 96): a task's worktree can start from something other than the
   project's base branch, picked before it's made: type `from:` in the new task dialog's
   description (it suggests the project's open tasks and its branches), fill in *Starts from* in
   the task's *Worktree* details before its first run (or after a setup that failed before making
@@ -1519,7 +1519,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   its repository (and how much of that is `.git`), each task's worktree, its agent runs' folders
   (output and logs, kept 14 days after a run ends) and its scratch folders, as `du` counts them,
   and each host's database (API 59). Worktrees of done tasks, and worktrees of a project's repository in its
-  worktrees folder that no task on the host has, count as reclaimable; click a worktree to open its task and remove it there. The
+  worktrees folder that no task on the host has, count as reclaimable. **Reclaim space** (API 39) removes the done tasks' worktrees that are merged and clean, as *Remove
+  merged worktrees* does for each project, and lists what it removed, how much that freed and what it kept; click a worktree to open its task and
+  remove it there, which is also the way to remove a worktree no task has. The
   folders are measured when the tab first opens and again on refresh (API 35).
 - **Subagents:** each subagent Claude or Codex starts is a row in the thread
   showing whether it is running (in the foreground or background), done, failed or stopped. Expand
@@ -1537,7 +1539,7 @@ Each run gets the `huntaway` MCP server (`huntaway mcp`, configured per run):
 *Waiting*), plus the internal `permission_prompt`. Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
-`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 95, see
+`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see
 *Starting from elsewhere*), and task summaries say what a task started from.
 
 From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:

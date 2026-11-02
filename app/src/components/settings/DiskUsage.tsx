@@ -1,12 +1,12 @@
 import clsx from "clsx";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { STATUSES } from "../../api";
-import { baseName, bytes, loadDisk, reclaimable, type Disk, type DProject, type DWorktree } from "./disk";
+import { api, hostSupports, STATUSES } from "../../api";
+import { baseName, bytes, loadDisk, reclaimable, reclaimTargets, type Disk, type DProject, type DWorktree, type Reclaimed } from "./disk";
 import { navigate } from "../../router";
 import { useStore } from "../../store";
 import { Swatch, useTip } from "./chart";
-import { IconButton } from "../ui";
+import { Button, ConfirmModal, IconButton } from "../ui";
 
 /** How the parts of a project's bar are told apart: by how strong its colour is. */
 const PARTS = [
@@ -60,6 +60,33 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** The Disk tab: how much space projects and their worktrees take up. */
 export function DiskUsage() {
   const { data, at, loading, error, reload } = useDisk();
+  const hosts = useStore((s) => s.hosts);
+  const [confirming, setConfirming] = useState(false);
+  const [reclaimed, setReclaimed] = useState<{ results: Reclaimed[]; errors: string[] } | null>(null);
+  const targets = data ? reclaimTargets(data).filter((p) => hostSupports(hosts.find((h) => h.id === p.hostId), 39)) : [];
+  // Removes the done tasks' worktrees that are merged and clean, then measures again.
+  const reclaim = async () => {
+    if (!data) return;
+    const errors: string[] = [];
+    const results = (
+      await Promise.all(
+        targets.map(async (p) => {
+          try {
+            const { results } = await api.removeMergedWorktrees(p.hostId, p.id);
+            return results.flatMap((r): Reclaimed[] => {
+              const w = p.worktrees.find((w) => w.taskId === r.task_id);
+              return [{ taskId: r.task_id, key: w?.key ?? `#${r.number}`, title: r.title, removed: r.removed, detail: r.detail, bytes: w?.size.bytes ?? 0 }];
+            });
+          } catch (e) {
+            errors.push(`${p.name}: ${e instanceof Error ? e.message : String(e)}`);
+            return [];
+          }
+        }),
+      )
+    ).flat();
+    setReclaimed({ results, errors });
+    reload();
+  };
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2">
@@ -71,6 +98,9 @@ export function DiskUsage() {
               : ""}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" disabled={loading || targets.length === 0} onClick={() => setConfirming(true)}>
+            <Trash2 size={12} /> Reclaim space
+          </Button>
           <IconButton title="Measure again" onClick={reload}>
             <RefreshCw size={14} className={clsx(loading && "animate-spin")} />
           </IconButton>
@@ -84,6 +114,7 @@ export function DiskUsage() {
               {e}
             </div>
           ))}
+          {reclaimed && <ReclaimedList reclaimed={reclaimed} onClose={() => setReclaimed(null)} />}
           {data && (
             <>
               <Tiles data={data} />
@@ -94,7 +125,7 @@ export function DiskUsage() {
           <p className="text-[11.5px] leading-relaxed text-faint">
             Sizes are the space files take up on disk, as <span className="font-mono">du</span> counts them. Worktrees share their repository's{" "}
             <span className="font-mono">.git</span> folder, which counts toward the repository. Worktrees of done tasks, and worktrees of a project's repository
-            in its worktrees folder that no task on the host has, can usually go: remove a task's worktree from its details.
+            in its worktrees folder that no task on the host has, can usually go: Reclaim space removes the merged, clean worktrees of done tasks, or remove a task's worktree from its details.
             Agent runs are the folders with each run's output and logs, which a host removes some days after the run ends, and with its task.
             {data?.filesystems.map((f) => (
               <span key={f.hostName} className="block">
@@ -106,7 +137,62 @@ export function DiskUsage() {
           </p>
         </div>
       </div>
+      {confirming && (
+        <ConfirmModal
+          title="Reclaim space"
+          width="max-w-lg"
+          body={
+            <>
+              <p>
+                Removes the worktrees of done tasks in {plural(targets.length, "project")} whose work is merged and that have no uncommitted or untracked files
+                (ignored files, such as build output, go with them). The tasks and branches are kept, and a task's worktree is set up again if its agent runs
+                again.
+              </p>
+              <p>Worktrees that aren't merged, or that have changes in them, are left alone and listed with the reason.</p>
+            </>
+          }
+          action="Reclaim space"
+          danger
+          onConfirm={reclaim}
+          onClose={() => setConfirming(false)}
+        />
+      )}
     </>
+  );
+}
+
+/** What reclaiming removed, how much that frees, and what it kept and why. */
+function ReclaimedList({ reclaimed, onClose }: { reclaimed: { results: Reclaimed[]; errors: string[] }; onClose: () => void }) {
+  const { results, errors } = reclaimed;
+  const removed = results.filter((r) => r.removed);
+  return (
+    <div className="space-y-2 rounded-md border border-line bg-panel/60 px-3 py-2 text-[12.5px]">
+      <div className="flex items-center gap-2">
+        <span className="font-medium">
+          {results.length === 0 ? "No done tasks have worktrees." : `Removed ${removed.length}, kept ${results.length - removed.length}`}
+          {removed.length > 0 && `, freeing ${bytes(removed.reduce((n, r) => n + r.bytes, 0))}`}
+        </span>
+        <button className="ml-auto text-[11.5px] text-faint hover:text-fg" onClick={onClose}>
+          Dismiss
+        </button>
+      </div>
+      {errors.map((e) => (
+        <div key={e} className="text-red-300">
+          {e}
+        </div>
+      ))}
+      <ul className="space-y-0.5 text-[12px]">
+        {results.map((r) => (
+          <li key={r.taskId} className="flex gap-2">
+            <span className={clsx("shrink-0 font-mono", r.removed ? "text-emerald-400" : "text-faint")}>{r.key}</span>
+            <span className="min-w-0 truncate">{r.title}</span>
+            <span className="ml-auto max-w-[55%] shrink-0 truncate text-faint" title={r.detail}>
+              {r.removed ? `removed, ${bytes(r.bytes)}` : `kept: ${r.detail}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

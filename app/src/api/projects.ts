@@ -73,6 +73,8 @@ export interface Project {
   summarizer?: Reviewer | null;
   /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
   merge_approval?: boolean | null;
+  /** null follows the profile's (API 95). */
+  require_pr_approval?: boolean | null;
   /** The project's instructions for the prompts sent when a task's agent starts, when its work is
    * reviewed and when it's merged; null uses the host's default (API 27). */
   start_prompt?: string | null;
@@ -132,7 +134,7 @@ export const projectsApi = {
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
-  /** The branches of the project's repository, latest first; those only on a remote named with it (API 95). */
+  /** The branches of the project's repository, latest first; those only on a remote named with it (API 96). */
   projectBranches: (h: string, id: string) => on(h).get<{ branches: { name: string; remote: boolean }[] }>(`/projects/${enc(id)}/branches`),
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
   systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>

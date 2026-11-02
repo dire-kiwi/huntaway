@@ -315,6 +315,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "merge_approval",
+            "require_pr_approval",
             "github_account",
             "done_when_merged",
             "pull_requests",
@@ -408,6 +409,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             // null follows the profile's.
             "merge_approval" if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("merge_approval must be null, true or false")),
+            "require_pr_approval" if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("require_pr_approval must be null, true or false")),
             "use_worktrees" | "auto_review" | "auto_summary" | "done_when_merged" | "pull_requests" | "subproject_pull_requests" if !v.is_boolean() => {
                 return Err(ApiError::bad(format!("{k} must be true or false")));
             }
@@ -572,7 +574,7 @@ pub(super) fn remove_unused_dir(s: &Shared, dir: &std::path::Path, what: &str) -
     Ok(())
 }
 
-/// `GET /projects/{id}/branches` (API 95): the branches of the project's repository a task can
+/// `GET /projects/{id}/branches` (API 96): the branches of the project's repository a task can
 /// start from (see `check_start_from`), the latest commits first: `{branches: [{name, remote}]}`,
 /// local ones as `feature` and those only on a remote as `origin/feature`. Empty for a folder
 /// that isn't a git repository.

@@ -2,6 +2,7 @@ import { useShallow } from "zustand/react/shallow";
 import {
   hostSupports,
   MERGE_APPROVAL_API,
+  PR_APPROVAL_API,
   PROFILE_REVIEWERS_API,
   type Host,
   type Project,
@@ -83,6 +84,8 @@ export function ReviewTab({ form, host, set }: { form: Project; host: Host | und
         <ProjectMergeApproval project={form} onChange={(v) => set("merge_approval", v)} />
       )}
 
+      {hostSupports(host, PR_APPROVAL_API) && <ProjectPrApproval project={form} onChange={(v) => set("require_pr_approval", v)} />}
+
       {form.done_when_merged !== undefined && (
         <div className="space-y-1.5">
           <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
@@ -139,6 +142,28 @@ function ProjectMergeApproval({ project, onChange }: { project: Project; onChang
         <option value="profile">The profile's setting ({profile?.merge_approval ? "approve each merge first" : "merge without asking"})</option>
         <option value="on">Approve each merge first</option>
         <option value="off">Merge without asking</option>
+      </select>
+    </Field>
+  );
+}
+
+/** Whether a task needs an approving review on its pull request on GitHub to go to Ready for merge: the project's own say, or its profile's. */
+function ProjectPrApproval({ project, onChange }: { project: Project; onChange: (on: boolean | null) => void }) {
+  const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
+  const value = project.require_pr_approval == null ? "profile" : project.require_pr_approval ? "on" : "off";
+  return (
+    <Field
+      label="Require GitHub approval"
+      hint="A task can only be moved to Ready for merge once its pull request has an approving review on GitHub (and none asking for changes). Where the task gets a pull request but it has none yet, or GitHub can't be read, the move is refused. Tasks whose merges open no pull request (see the pull request settings above) aren't held."
+    >
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value === "profile" ? null : e.target.value === "on")}
+        className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+      >
+        <option value="profile">The profile's setting ({profile?.require_pr_approval ? "require an approving review" : "no review needed"})</option>
+        <option value="on">Require an approving review</option>
+        <option value="off">No review needed</option>
       </select>
     </Field>
   );

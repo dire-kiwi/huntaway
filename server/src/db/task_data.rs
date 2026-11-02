@@ -75,7 +75,7 @@ pub struct Context {
     pub detail_at: Option<String>,
 }
 
-/// What a task's worktree starts from instead of the project's base branch (API 95), stored on
+/// What a task's worktree starts from instead of the project's base branch (API 96), stored on
 /// it as JSON. Set before the worktree is made; worktree::setup turns it into the task's base
 /// branch (which its pull request targets and its changes are compared with) and the commit its
 /// branch starts at.

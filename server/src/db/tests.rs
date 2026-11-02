@@ -325,13 +325,15 @@ fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled()
 #[test]
 fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skipped() {
     // Builds of start_from had it as version 65 (skipping that version's limit columns), then 71
-    // (skipping restart_window), then 73 (skipping the runs' sessions), then 74 (skipping pr_checks);
-    // the first two had no merge_approval (72) either, and none before 74 had pr_checks.
+    // (skipping restart_window), then 73 (skipping the runs' sessions), then 74 (skipping pr_checks),
+    // then 75 (skipping require_pr_approval); the first two had no merge_approval (72) either, and
+    // none before 74 had pr_checks.
     let skipped = [
         (65, "ALTER TABLE tasks DROP COLUMN limit_reset_at; ALTER TABLE profiles DROP COLUMN limit_wait; ALTER TABLE profiles DROP COLUMN limit_switch; ALTER TABLE profiles DROP COLUMN merge_approval;"),
         (71, "ALTER TABLE claude_configs DROP COLUMN restart_window; ALTER TABLE profiles DROP COLUMN merge_approval;"),
         (73, "ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; ALTER TABLE tasks DROP COLUMN pr_checks;"),
         (74, "ALTER TABLE tasks DROP COLUMN pr_checks;"),
+        (75, "ALTER TABLE profiles DROP COLUMN require_pr_approval; ALTER TABLE projects DROP COLUMN require_pr_approval;"),
     ];
     for (version, dropped) in skipped {
         let path = crate::testing::temp_dir().join("huntaway.db");
@@ -351,6 +353,8 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
             ("runs", "session_id"),
             ("runs", "session_cost"),
             ("tasks", "pr_checks"),
+            ("profiles", "require_pr_approval"),
+            ("projects", "require_pr_approval"),
         ];
         for (table, column) in columns {
             let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();

@@ -41,6 +41,9 @@ pub(super) struct CreateProfile {
     /// See `db::Profile::merge_approval` (API 92).
     #[serde(default)]
     merge_approval: bool,
+    /// See `db::Profile::require_pr_approval` (API 95).
+    #[serde(default)]
+    require_pr_approval: bool,
 }
 
 pub(super) async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -59,6 +62,7 @@ pub(super) async fn create_profile(State(s): State<Shared>, Json(b): Json<Create
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
     fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
     fields.push(("merge_approval", json!(b.merge_approval)));
+    fields.push(("require_pr_approval", json!(b.require_pr_approval)));
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -106,7 +110,7 @@ pub(super) async fn update_profile(State(s): State<Shared>, Path(id): Path<Strin
     if let Some(v) = b.get("asana_enabled") {
         fields.push(("asana_enabled", json!(v.as_bool().ok_or_else(|| ApiError::bad("asana_enabled must be true or false"))?)));
     }
-    for key in ["limit_wait", "limit_switch", "merge_approval"] {
+    for key in ["limit_wait", "limit_switch", "merge_approval", "require_pr_approval"] {
         if let Some(v) = b.get(key) {
             fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
         }
