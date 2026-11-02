@@ -1074,7 +1074,10 @@ skipped. Auto-compacting idle sessions is Claude-only.
   Serious issues go back to the task's agent to fix, which it may push back on by asking you
   (`request_user_input`, so the task goes to *Needs attention*). When it finishes, the new commit
   is reviewed again. After the project's *Fix rounds* (default 2) in a row, a review that still
-  finds serious issues moves the task to *Needs attention* instead. A commit that was already
+  finds serious issues moves the task to *Needs attention* instead. There, *N more rounds of fixes*
+  (in the task's sidebar, under its status and on its *Review* tab) sends those issues to the agent
+  and gives the task as many rounds again, at least one: a project's 2 become 4, then 6 (API 93,
+  `POST /tasks/{id}/review/extend`). *Review again* starts afresh, with the project's rounds. A commit that was already
   reviewed isn't reviewed again (unless its review found issues and the branch has no commits, as
   the fixes are then elsewhere), and a review in progress is stopped when the task's agent
   starts working again. The card stays in *In review* while it's reviewed, and only goes back to

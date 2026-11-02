@@ -440,3 +440,105 @@ fn a_reviewer_started_just_before_a_restart_still_ends_its_part() {
         std::fs::remove_dir_all(&dir).unwrap();
     })
 }
+
+/// A task in a project with `rounds` rounds of fixes whose review found an issue after `fixes` of them.
+fn out_of_rounds(s: &Shared, rounds: u32, fixes: u32) -> Task {
+    let (task, dir) = reviewable(s);
+    std::fs::remove_dir_all(&dir).unwrap();
+    s.db().execute("UPDATE projects SET review_rounds=?1 WHERE id='pr'", [rounds]).unwrap();
+    let review = Review { thread_id: "r".into(), state: "issues".into(), issues: vec!["the bug".into()], fixes, updated_at: now(), ..Default::default() };
+    set_review(s, &task.id, &review).unwrap();
+    s.update_task(&task.id, &[("status", json!("needs_attention")), ("attention_reason", json!("found"))]).unwrap().unwrap()
+}
+
+#[test]
+fn a_task_out_of_rounds_of_fixes_can_be_given_as_many_again() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = crate::testing::state();
+        let task = out_of_rounds(&s, 2, 2);
+        let t = extend(&s, &task.id).map_err(|e| e.1).unwrap();
+        assert_eq!((t.status.as_str(), t.attention_reason.as_deref()), ("in_progress", None));
+        assert!(s.is_running(&task.id));
+        let r = review_of(&s, &task);
+        assert_eq!((r.fixes, r.extra_rounds), (3, 2));
+        let sent = db::list_messages(&s.db(), &task.id).unwrap().into_iter().rev().find(|m| m.kind == "user").unwrap();
+        assert_eq!(sent.data["review_round"], 3);
+        assert!(sent.data["text"].as_str().unwrap().contains("1. the bug"));
+        // Not twice.
+        assert!(extend(&s, &task.id).unwrap_err().1.contains("hasn't used up"));
+        runner::stop(&s, &task.id);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
+fn the_extra_rounds_of_fixes_count_until_theyre_used_up() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let task = out_of_rounds(&s, 2, 2);
+        s.update_task(&task.id, &[("status", json!("in_review"))]).unwrap();
+        let found = |fixes| Review { state: "issues".into(), issues: vec!["still".into()], fixes, extra_rounds: 2, updated_at: now(), ..Default::default() };
+        let save = |r: &Review| set_review(&s, &task.id, r).unwrap();
+        // A round left: it goes to the agent (which can't start here).
+        let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+        send_issues(&s, &t, found(3), 2, save);
+        assert_eq!(review_of(&s, &task).fixes, 4);
+        assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().status, "in_review");
+        // None left: it's left for the user.
+        let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+        send_issues(&s, &t, found(4), 2, save);
+        let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+        assert_eq!((t.status.as_str(), t.attention_reason.as_deref()), ("needs_attention", Some("The review found 1 serious issue after 4 rounds of fixes")));
+    })
+}
+
+#[test]
+fn rounds_of_fixes_are_given_back_if_the_agent_cant_start() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        // A project with no rounds of fixes gets one.
+        let task = out_of_rounds(&s, 0, 0);
+        assert!(extend(&s, &task.id).is_err(), "this host can't run agents");
+        let r = review_of(&s, &task);
+        assert_eq!((r.fixes, r.extra_rounds), (0, 0));
+        assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().status, "needs_attention");
+
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        extend(&s, &task.id).map_err(|e| e.1).unwrap();
+        let r = review_of(&s, &task);
+        assert_eq!((r.fixes, r.extra_rounds), (1, 1));
+        runner::stop(&s, &task.id);
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
+fn only_a_review_with_issues_left_after_its_rounds_can_be_extended() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = crate::testing::state();
+        let task = out_of_rounds(&s, 2, 1);
+        assert!(extend(&s, &task.id).unwrap_err().1.contains("hasn't used up"));
+        let passed = Review { state: "passed".into(), fixes: 2, updated_at: now(), ..Default::default() };
+        set_review(&s, &task.id, &passed).unwrap();
+        assert!(extend(&s, &task.id).unwrap_err().1.contains("didn't find issues"));
+        assert!(!s.is_running(&task.id));
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
+fn rounds_added_to_a_cycle_of_fixes_end_with_it() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 1);
+        let extended = Review { fixes: 3, extra_rounds: 2, ..review_of(&s, &task) };
+        set_review(&s, &task.id, &extended).unwrap();
+        submit(&s, &threads[0], "run", &json!({"verdict": "pass"})).unwrap();
+        finished(&s, &threads[0], "run", &Outcome::Ok, None);
+        let r = review_of(&s, &task);
+        // So the next automatic review, which carries both on, gets the project's rounds.
+        assert_eq!((r.state.as_str(), r.fixes, r.extra_rounds), ("passed", 0, 0));
+    })
+}

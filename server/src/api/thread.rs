@@ -81,6 +81,12 @@ pub(super) async fn review_task(State(s): State<Shared>, Path(id): Path<String>)
     Ok(Json(json!(t)))
 }
 
+/// Give a task that ran out of rounds of fixes as many again (API 93, see review::extend).
+pub(super) async fn extend_review(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let t = crate::review::extend(&s, &id)?;
+    Ok(Json(json!(t)))
+}
+
 pub(super) async fn setup_worktree(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     // Reviewers work in the worktree too.
     if worktree::agent_in_worktree(&s, &id) {

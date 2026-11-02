@@ -1,10 +1,10 @@
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, FileText, Loader2, MessageSquareText, ScanSearch } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, FileText, Loader2, MessageSquareText, RotateCw, ScanSearch } from "lucide-react";
 import { lazy, Suspense, useMemo, useState, type MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, type Review, type ReviewerRun, type ReviewState, type Task, type Turn, type TurnDiff } from "../../api";
+import { api, hostSupports, type Review, type ReviewerRun, type ReviewState, type Task, type Turn, type TurnDiff } from "../../api";
 import { openTask } from "../../router";
-import { useProject, useStore } from "../../store";
+import { useHost, useProject, useStore } from "../../store";
 import { turnStat, useTurns } from "./turns";
 import { Markdown } from "./thread/Markdown";
 import { Button, CARD_BADGE, Wide } from "../ui";
@@ -189,6 +189,46 @@ export function ReviewVerdict({ task }: { task: Task }) {
   );
 }
 
+/** Rounds of fixes a task's review gets: the project's, and any you added (API 93). */
+const roundsOf = (r: Review, rounds: number) => rounds + (r.extra_rounds ?? 0);
+
+/** A task whose review still found serious issues after its rounds of fixes: a button that sends them to its agent and
+ * gives it as many rounds again (at least one), so a project's 2 become 4 (HA-106, API 93). Nothing otherwise. */
+export function MoreFixRounds({ task, className }: { task: Task; className?: string }) {
+  const r = task.review;
+  const rounds = useProject(task.project_id)?.review_rounds;
+  const host = useHost(task.host_id);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const out = r?.state === "issues" && r.issues.length > 0 && rounds !== undefined && r.fixes >= roundsOf(r, rounds);
+  if (!r || !out || task.kind !== "task" || task.running || task.status === "done" || task.merging || !hostSupports(host, 93)) return null;
+  const more = Math.max(rounds, 1);
+  const extend = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.extendReview(task.host_id, task.id);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={clsx("flex flex-wrap gap-2", className)}>
+      <Button
+        size="sm"
+        disabled={busy}
+        onClick={extend}
+        title={`Send the review's ${plural(r.issues.length, "issue")} to the agent to fix, and review its changes again after each round, up to ${roundsOf(r, rounds) + more} rounds in all`}
+      >
+        {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCw size={12} />} {more === 1 ? "Another round of fixes" : `${more} more rounds of fixes`}
+      </Button>
+      {err && <div className="basis-full rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+    </div>
+  );
+}
+
 /** A task's review tab: the latest review and a way to run one. `threadId` is
  * the review thread it's shown beside, if any. */
 export function ReviewSummary({ task, threadId }: { task: Task; threadId?: string }) {
@@ -237,7 +277,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
           {r.state === "issues" && r.fixes > 0 && (
             <div className="text-[11.5px] text-faint">
               Sent to the agent to fix (round {r.fixes}
-              {rounds !== undefined && ` of ${rounds}`}).
+              {rounds !== undefined && ` of ${roundsOf(r, rounds)}`}).
             </div>
           )}
         </>
@@ -253,6 +293,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
             {busy ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />} {r ? "Review again" : "Review now"}
           </Button>
         )}
+        <MoreFixRounds task={task} className="contents" />
       </div>
       {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
       {!threadId && task.kind === "task" && <FixRounds task={task} />}
