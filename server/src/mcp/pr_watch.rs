@@ -290,7 +290,7 @@ impl Watcher {
         let first = row.is_none();
         let mut row = row.unwrap_or_default();
         let (quiet, news) = compare((!first).then_some(&row.seen), &pr, events);
-        row.pending = news.as_ref().map(|(_, told)| Pending { call_id: call_id.into(), told: told.clone() });
+        row.pending = news.as_ref().map(|(_, told)| Pending { call_id: call_id.into(), told: told.clone(), superseded: false });
         (row.seen, row.last, row.polled_at) = (quiet, summary(&pr), crate::util::now());
         store(&c, task_id, &key, &row).map_err(|e| format!("{e:#}"))?;
         Ok(news.map(|(report, _)| report))
@@ -487,6 +487,10 @@ struct Seen {
 struct Pending {
     call_id: String,
     told: Seen,
+    /// Whether the failures in an in-review wake's news were sent by hand (see `told_failures`)
+    /// before the wake was: it isn't sent then, and the next read works out what's still news.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    superseded: bool,
 }
 
 /// A `pr_watches` row.
@@ -1174,7 +1178,7 @@ fn still_wakes(s: &Shared, task_id: &str, key: &str, call_id: &str) -> bool {
     let on_pr = |t: &Task| t.pr_url.as_deref().and_then(|u| Target::parse(u, None).ok()).is_some_and(|t| t.key() == key);
     let task = db::get_task(&c, task_id).ok().flatten();
     task.is_some_and(|t| t.status == "in_review" && idle(&t) && on_pr(&t))
-        && load(&c, task_id, key).ok().flatten().and_then(|r| r.pending).is_some_and(|p| p.call_id == call_id)
+        && load(&c, task_id, key).ok().flatten().and_then(|r| r.pending).is_some_and(|p| p.call_id == call_id && !p.superseded)
 }
 
 /// The watcher of the pull request `url` of `task`, unless it can't be read as the task's
@@ -1236,7 +1240,7 @@ fn news_to_wake(s: &Shared, task_id: &str, mode: &str, key: &str, pr: &Pr) -> an
         }
         Some((news, told)) => {
             let call_id = format!("in_review:{}", crate::util::new_id());
-            row.pending = Some(Pending { call_id: call_id.clone(), told });
+            row.pending = Some(Pending { call_id: call_id.clone(), told, superseded: false });
             wake = Some(Wake { news, call_id, comments_only });
         }
         None => {}
@@ -1548,8 +1552,18 @@ fn told_failures(s: &Shared, task_id: &str, key: &str, pr: &Pr) {
         let row = load(&c, task_id, key)?;
         let first = row.is_none();
         let mut row = row.unwrap_or_default();
-        let (quiet, news) = compare((!first).then_some(&row.seen), pr, &["checks_failed".to_string()]);
-        row.seen = news.map_or(quiet, |(_, told)| told);
+        let failed = ["checks_failed".to_string()];
+        let told = |seen: Option<&Seen>| {
+            let (quiet, news) = compare(seen, pr, &failed);
+            news.map_or(quiet, |(_, told)| told)
+        };
+        row.seen = told((!first).then_some(&row.seen));
+        // News found before, but not told yet: once it is, the failures stay told. An in-review
+        // wake that's still fetching logs isn't sent with them again (see `still_wakes`).
+        if let Some(p) = &mut row.pending {
+            p.told = told(Some(&p.told));
+            p.superseded |= p.call_id.starts_with("in_review:");
+        }
         store(&c, task_id, key, &row)
     })();
     if let Err(e) = r {
@@ -2233,7 +2247,7 @@ mod tests {
     fn fix_broken_checks_sends_the_failures_with_their_logs_and_they_dont_wake_it_again() {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
-            let dir = std::env::temp_dir().join(format!("ia-fix-checks-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             fake_gh(&dir);
             let s = crate::testing::state();
             let (t, gh) = in_review(&s, "failures");
@@ -2294,7 +2308,6 @@ mod tests {
             assert_eq!(fix_checks(&s, &t.id).await.unwrap_err().0.as_u16(), 400);
             crate::mcp::gh_mcp::TEST_GH_PROGRAM.set(None);
             crate::runs::TEST_CAN_RUN.set(false);
-            std::fs::remove_dir_all(&dir).ok();
         });
     }
 
@@ -2302,7 +2315,7 @@ mod tests {
     fn failed_checks_wake_the_agent_with_the_ends_of_their_logs() {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
-            let dir = std::env::temp_dir().join(format!("ia-wake-logs-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             fake_gh(&dir);
             let s = crate::testing::state();
             let (t, gh) = in_review(&s, "failures");
@@ -2320,7 +2333,6 @@ mod tests {
             settle(&s, &t.id).await;
             crate::mcp::gh_mcp::TEST_GH_PROGRAM.set(None);
             crate::runs::TEST_CAN_RUN.set(false);
-            std::fs::remove_dir_all(&dir).ok();
         });
     }
 
@@ -2329,7 +2341,7 @@ mod tests {
     fn a_task_moved_out_of_review_while_its_logs_are_fetched_isnt_woken() {
         crate::testing::run(async || {
             crate::runs::TEST_CAN_RUN.set(true);
-            let dir = std::env::temp_dir().join(format!("ia-wake-moved-{}", crate::util::new_id()));
+            let dir = crate::testing::temp_dir();
             fake_gh(&dir);
             std::fs::write(dir.join("hold"), "").unwrap();
             let s = crate::testing::state();
@@ -2361,7 +2373,52 @@ mod tests {
             settle(&s, &t.id).await;
             crate::mcp::gh_mcp::TEST_GH_PROGRAM.set(None);
             crate::runs::TEST_CAN_RUN.set(false);
-            std::fs::remove_dir_all(&dir).ok();
+        });
+    }
+
+    // HA-53 review: the user can send the failures by hand while an automatic wake fetches their logs.
+    #[test]
+    fn failures_sent_by_hand_while_a_wake_fetches_their_logs_dont_wake_it_again() {
+        crate::testing::run(async || {
+            crate::runs::TEST_CAN_RUN.set(true);
+            let dir = crate::testing::temp_dir();
+            fake_gh(&dir);
+            std::fs::write(dir.join("hold"), "").unwrap();
+            let s = crate::testing::state();
+            let (t, gh) = in_review(&s, "all");
+            let (start, mut watched) = (Instant::now(), HashMap::new());
+            sweep_at(&s, &mut watched, start, 0).await;
+            sweep_at(&s, &mut watched, start, 1).await;
+            let mut v = response("me", "b2", &[("test", "COMPLETED", "FAILURE", true)], &[]);
+            actions_job(&mut v, 0, 42);
+            *gh.borrow_mut() = v;
+            set_comments(&gh, json!([comment("02:01", "alice", "User", "Why this?")]));
+            // Once the wake's log is asked for, the user clicks Fix broken checks (its gh answers at
+            // once), and that run ends with the task back in review before the wake's log comes.
+            let manual = async {
+                while !std::fs::read_to_string(dir.join("calls")).unwrap_or_default().contains("run view") {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                fake_gh(&crate::testing::temp_dir());
+                fix_checks(&s, &t.id).await.unwrap();
+                settle(&s, &t.id).await;
+                std::fs::remove_file(dir.join("hold")).unwrap();
+            };
+            tokio::join!(sweep_at(&s, &mut watched, start, 2), manual);
+            settle(&s, &t.id).await;
+            assert_eq!(users(&s, &t.id).len(), 1);
+            assert_eq!(wakes(&s, &t.id), Vec::<String>::new());
+            let runs: i64 = s.db().query_row("SELECT count(*) FROM runs WHERE task_id=?1", [&t.id], |r| r.get(0)).unwrap();
+            assert_eq!(runs, 1);
+            // A later read wakes it with the comment that came with them, but not with them.
+            sweep_at(&s, &mut watched, start, 3).await;
+            sweep_at(&s, &mut watched, start, 4).await;
+            let sent = wakes(&s, &t.id);
+            assert_eq!(sent.len(), 1, "{sent:?}");
+            assert!(sent[0].contains("had news: ") && sent[0].contains("alice") && !sent[0].contains("Failed checks"), "{}", sent[0]);
+            settle(&s, &t.id).await;
+            crate::mcp::gh_mcp::TEST_GH_PROGRAM.set(None);
+            crate::runs::TEST_CAN_RUN.set(false);
         });
     }
 
