@@ -2144,9 +2144,19 @@ mod tests {
                 let a_tip = commit_file(&a_wt, "more-parent-file");
                 sh(&b_wt, &["merge", "-q", "--no-edit", &a_branch]);
                 commit_file(&b_wt, "child-file");
+                // Until the board has moved Second's start on to First's latest.
+                let moved = async || {
+                    let moved = async { while commit(&repo, &start_ref(&b.id)).await.as_deref() != Some(a_tip.as_str()) { tokio::time::sleep(Duration::from_millis(20)).await } };
+                    tokio::time::timeout(Duration::from_secs(10), moved).await.unwrap_or_else(|_| panic!("Second's start didn't move on ({how})"));
+                };
                 if how == "run" {
-                    // As runner::finish does.
-                    keep_starts(&s, &b.id).await;
+                    // Second's agent did that, and its run ends.
+                    crate::agent::runs::TEST_CAN_RUN.set(true);
+                    crate::agent::runner::send(&s, &b.id, "take in First's work").unwrap();
+                    let run = s.runs.lock().unwrap().get(&b.id).unwrap().run_id.clone();
+                    crate::agent::runner::on_exit(&s, &run, Some(0), None, None, "");
+                    crate::agent::runs::TEST_CAN_RUN.set(false);
+                    moved().await;
                 }
 
                 // First is squashed into master, done, and its branch deleted (pushed and fetched too),
@@ -2157,8 +2167,7 @@ mod tests {
                 sh(&repo, &["fetch", "-q", "origin"]);
                 if how == "done" {
                     s.update_task(&a.id, &[("status", json!("done"))]).unwrap();
-                    let moved = async { while commit(&repo, &start_ref(&b.id)).await.as_deref() != Some(a_tip.as_str()) { tokio::time::sleep(Duration::from_millis(20)).await } };
-                    tokio::time::timeout(Duration::from_secs(10), moved).await.expect("Second's start moved on as First was done");
+                    moved().await;
                 } else {
                     db::update_task(&s.db(), &a.id, &[("status", json!("done"))]).unwrap();
                 }
