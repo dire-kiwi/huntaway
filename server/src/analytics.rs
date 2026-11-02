@@ -388,25 +388,23 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
 
     // The tasks the rows are for, with the tasks their threads review and the subprojects they're in.
     let mut ids: Vec<String> = usage.iter().map(|u| u.task_id.clone()).chain(reviews.iter().flat_map(|r| [r.task_id.clone(), r.thread_id.clone()])).collect();
+    let mut seen: std::collections::HashSet<String> = ids.iter().cloned().collect();
     let mut parent = c.prepare("SELECT parent_id FROM tasks WHERE id=?1 AND parent_id IS NOT NULL")?;
     let mut i = 0;
     while i < ids.len() {
         if let Some(p) = parent.query_row([&ids[i]], |r| r.get::<_, String>(0)).optional()? {
-            if !ids.contains(&p) {
+            if seen.insert(p.clone()) {
                 ids.push(p);
             }
         }
         i += 1;
     }
-    ids.sort_unstable();
-    ids.dedup();
 
-    let mut st = c.prepare("SELECT id, created_by, created_at FROM tasks WHERE created_by=?1 AND profile_id=?2")?;
-    let mut follow_ups = Vec::new();
-    for id in &ids {
-        let rows = st.query_map(params![id, profile_id], |r| Ok(FollowUp { task_id: r.get(0)?, created_by: r.get(1)?, at: r.get(2)? }))?;
-        follow_ups.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
-    }
+    let mut st = c.prepare("SELECT id, created_by, created_at FROM tasks WHERE created_by IS NOT NULL AND profile_id=?1")?;
+    let follow_ups: Vec<FollowUp> = st
+        .query_map([profile_id], |r| Ok(FollowUp { task_id: r.get(0)?, created_by: r.get(1)?, at: r.get(2)? }))?
+        .filter(|f| f.as_ref().map_or(true, |f| seen.contains(&f.created_by)))
+        .collect::<rusqlite::Result<_>>()?;
     let ids: Vec<&str> = ids.iter().map(String::as_str).chain(follow_ups.iter().map(|f| f.task_id.as_str())).collect();
     let (infos, projects) = tasks_and_projects(c, profile_id, ids.into_iter())?;
     let mut st = c.prepare(

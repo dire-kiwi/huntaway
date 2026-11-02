@@ -92,22 +92,27 @@ pub fn backfill(c: &Connection) -> anyhow::Result<()> {
          ORDER BY m.id",
     )?;
     let rows: Vec<(String, String, String, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
-    let mut refused = c.prepare(
-        "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND data LIKE '%nothing to submit%'",
+    // The calls the board refused: its answer says so.
+    let mut st = c.prepare(
+        "SELECT m.task_id, m.data FROM messages m JOIN tasks t ON t.id=m.task_id
+         WHERE t.kind='review' AND m.kind='claude' AND m.data LIKE '%nothing to submit%'",
     )?;
+    let mut refused = std::collections::HashSet::new();
+    for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+        let (thread_id, data) = row?;
+        let Ok(m) = serde_json::from_str::<Value>(&data) else { continue };
+        for id in refusals(&m) {
+            refused.insert((thread_id.clone(), id));
+        }
+    }
     let mut run = c.prepare("SELECT id FROM runs WHERE task_id=?1 AND created_at <= ?2 ORDER BY created_at DESC LIMIT 1")?;
     let mut parent_exists = c.prepare("SELECT review FROM tasks WHERE id=?1")?;
     for (thread_id, parent_id, at, data) in rows {
         let Ok(v) = serde_json::from_str::<Value>(&data) else { continue };
         let Some(blocks) = v["message"]["content"].as_array() else { continue };
         for b in blocks.iter().filter(|b| b["type"] == "tool_use" && b["name"].as_str().is_some_and(|n| n.ends_with("submit_review"))) {
-            let id = b["id"].as_str().unwrap_or("");
-            // The board's answer to a call it refused says so.
-            let was_refused = refused
-                .query_map([&thread_id], |r| r.get::<_, String>(0))?
-                .flatten()
-                .any(|d| serde_json::from_str::<Value>(&d).is_ok_and(|m| refuses(&m, id)));
-            if was_refused {
+            let id = b["id"].as_str().unwrap_or("").to_string();
+            if refused.contains(&(thread_id.clone(), id)) {
                 continue;
             }
             let Some(review) = parent_exists.query_row([&parent_id], |r| r.get::<_, Option<String>>(0)).optional()? else { continue };
@@ -134,10 +139,14 @@ pub fn backfill(c: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Whether thread message `m` is the board refusing tool call `id`.
-fn refuses(m: &Value, id: &str) -> bool {
+/// The tool calls thread message `m` has the board refusing.
+fn refusals(m: &Value) -> Vec<String> {
     let blocks = m["message"]["content"].as_array().map(Vec::as_slice).unwrap_or(&[]);
-    blocks.iter().any(|b| b["type"] == "tool_result" && b["tool_use_id"] == id && b.to_string().contains("nothing to submit"))
+    blocks
+        .iter()
+        .filter(|b| b["type"] == "tool_result" && b.to_string().contains("nothing to submit"))
+        .filter_map(|b| b["tool_use_id"].as_str().map(String::from))
+        .collect()
 }
 
 #[cfg(test)]

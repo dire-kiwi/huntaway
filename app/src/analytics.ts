@@ -1,5 +1,6 @@
 import { api, hostSupports, type AnalyticsReport, type Status } from "./api";
 import type { CCompaction, CTurn } from "./contextStats";
+import type { TokenData } from "./tokenStats";
 import { boardHosts, useStore } from "./store";
 
 /**
@@ -85,7 +86,7 @@ async function fromHosts<T>(minApi: number, errors: string[], ask: (host: string
       const profiles = s.profiles.filter((p) => p.host_id === h.id);
       if (!profiles.length) return [];
       if (!hostSupports(h, minApi)) {
-        errors.push(`${h.name} needs an update to report ${minApi > 16 ? "context sizes" : "analytics"}`);
+        errors.push(`${h.name} needs an update to report ${minApi > 86 ? "token usage" : minApi > 16 ? "context sizes" : "analytics"}`);
         return [];
       }
       return profiles.map(async (profile) => {
@@ -166,6 +167,54 @@ export async function loadContext(from: number, to: number): Promise<ContextData
   }
   out.turns.sort((a, b) => a.at - b.at);
   out.compactions.sort((a, b) => a.at - b.at);
+  return out;
+}
+
+/** The tokens runs that started in range used, and the reviews then (see tokenStats.ts). */
+export async function loadTokens(from: number, to: number): Promise<TokenData> {
+  const out: TokenData = { from, to, rows: [], reviews: [], followUps: [], ...named(), threads: {}, pending: 0, errors: [] };
+  const reports = await fromHosts(94, out.errors, (h, profile) => api.tokenStats(h, profile, new Date(from).toISOString(), new Date(to).toISOString()));
+  for (const r of reports) {
+    addNames(out, r.host, r.report);
+    for (const t of r.report.tasks) {
+      out.threads[t.id] = { parentId: t.parent_id, taskType: t.task_type, subproject: t.subproject, groupName: t.group_name, model: t.model, kind: t.kind };
+    }
+    for (const u of r.report.usage) {
+      out.rows.push({
+        at: Date.parse(u.at),
+        runId: u.run_id,
+        threadId: u.task_id,
+        runKind: u.kind,
+        model: u.model,
+        runtime: u.runtime,
+        input: u.input_tokens,
+        output: u.output_tokens,
+        cacheRead: u.cache_read_tokens,
+        cacheWrite: u.cache_write_tokens,
+        reasoning: u.reasoning_tokens,
+        cost: u.cost_usd,
+        estimated: u.estimated,
+      });
+    }
+    for (const v of r.report.reviews) {
+      out.reviews.push({
+        at: Date.parse(v.at),
+        taskId: v.task_id,
+        threadId: v.thread_id,
+        verdict: v.verdict,
+        serious: v.serious,
+        minor: v.minor,
+        minorNoted: v.minor_noted,
+        // A reviewer's label names its config, and its model only when it isn't the config's default.
+        reviewer: v.label ? (v.model && !v.label.includes(v.model) ? `${v.label} · ${v.model}` : v.label) : (v.model ?? "Unknown"),
+        model: v.model,
+      });
+    }
+    for (const f of r.report.follow_ups) out.followUps.push({ taskId: f.task_id, createdBy: f.created_by, at: Date.parse(f.at) });
+    out.pending += r.report.pending;
+  }
+  out.rows.sort((a, b) => a.at - b.at);
+  out.reviews.sort((a, b) => a.at - b.at);
   return out;
 }
 

@@ -34,6 +34,59 @@ export interface ContextStatsReport {
   projects: AnalyticsReport["projects"];
 }
 
+/** The tokens a profile's runs used, per run and model, what reviewers reported, and the follow-up tasks agents created (API 94). */
+export interface TokenStatsReport {
+  usage: {
+    run_id: string;
+    /** The thread the run was in: a task, or a review or summary thread. */
+    task_id: string;
+    /** The run's: `prompt`, `compact` or `review`. */
+    kind: string;
+    at: string;
+    model: string;
+    runtime: "claude" | "codex";
+    /** What wasn't read from or written to the cache. */
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    /** The part of the output the model thought in. */
+    reasoning_tokens: number;
+    /** Claude Code's; Codex doesn't say. */
+    cost_usd: number | null;
+    /** From the run's cost alone (its output was gone), or scaled to it. */
+    estimated: boolean;
+  }[];
+  reviews: {
+    /** The task reviewed. */
+    task_id: string;
+    thread_id: string;
+    at: string;
+    verdict: "pass" | "issues";
+    serious: number;
+    /** Null for reviews from before minor issues were listed. */
+    minor: number | null;
+    /** It listed minor issues, or its summary mentions some. */
+    minor_noted: boolean;
+    label: string | null;
+    /** The model the reviewer's run used most. */
+    model: string | null;
+  }[];
+  /** Tasks created by the agents of the tasks listed. */
+  follow_ups: { task_id: string; created_by: string; at: string }[];
+  tasks: (AnalyticsReport["tasks"][number] & {
+    parent_id: string | null;
+    task_type: string | null;
+    subproject: boolean;
+    group_name: string | null;
+    /** The model its own runs used most. */
+    model: string | null;
+  })[];
+  projects: AnalyticsReport["projects"];
+  /** Runs that have ended but whose tokens aren't counted yet. */
+  pending: number;
+}
+
 /** Bytes on disk and the number of files, as `du` counts them. */
 export interface DiskSize {
   bytes: number;
@@ -78,6 +131,10 @@ export const analyticsApi = {
   /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 86). */
   contextStats: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+
+  /** The tokens the profile's runs that started in [from, to) used, and its reviews then (API 94). */
+  tokenStats: (h: string, profileId: string, from: string, to: string) =>
+    on(h).get<TokenStatsReport>(`/profiles/${enc(profileId)}/token-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
   /** How much space the profile's projects and their worktrees take up (API 35). */
   diskUsage: (h: string, profileId: string) => on(h).get<DiskUsageReport>(`/profiles/${enc(profileId)}/disk-usage`),

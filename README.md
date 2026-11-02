@@ -1467,6 +1467,20 @@ skipped. Auto-compacting idle sessions is Claude-only.
   and each host's database (API 59). Worktrees of done tasks, and worktrees of a project's repository in its
   worktrees folder that no task on the host has, count as reclaimable; click a worktree to open its task and remove it there. The
   folders are measured when the tab first opens and again on refresh (API 35).
+  The *Tokens* tab (API 94) shows where agents' tokens go: in total and per day, by what they were
+  spent on (tasks' own agents, reviews, summaries, compactions, scratch and group tasks), by model
+  (Claude's and Codex's), and per task, with a review or summary thread's tokens counted towards
+  its task and a subproject's tasks' towards the subproject (expand it to see each). It can measure
+  all tokens (uncached input, cache reads and writes, and output), output tokens, or cost (Claude
+  Code's; Codex doesn't report one). Each run's tokens are counted per model, subagents' included,
+  from its output once it ends (see `server/src/agent/tokens.rs`): runs from before this was kept
+  are counted at startup from the output the board still keeps (14 days of it), and older ones
+  show only what they cost, as estimates. Its *Reviews* part counts each reviewer's submission:
+  how many found serious issues, how many tasks passed their first round, and how many rounds of
+  fixes each model's work took, by the model the task's agent used and by reviewer. Reviewers also
+  list minor issues (`submit_review`'s `minor_issues`); reviews from before that count as noting
+  minor issues when their summary mentions some, and the follow-ups are the tasks the reviewed
+  task's agent created after such a review. `GET /profiles/{id}/token-stats?from=&to=` has the data.
 - **Subagents:** each subagent Claude or Codex starts is a row in the thread
   showing whether it is running (in the foreground or background), done, failed or stopped. Expand
   the row to read its prompt and transcript. They are read-only: you reply to the parent thread,

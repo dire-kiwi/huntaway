@@ -10,6 +10,7 @@ import {
   HOUR,
   loadActivity,
   loadContext,
+  loadTokens,
   mergeSpans,
   NEUTRAL,
   SCRATCH,
@@ -33,6 +34,8 @@ import { navigate } from "../../router";
 import { useStore } from "../../store";
 import { Swatch, useTip } from "./chart";
 import { ContextStats } from "../task/ContextStats";
+import type { TokenData } from "../../tokenStats";
+import { TokenStats } from "./TokenStats";
 import { DiskUsage } from "./DiskUsage";
 import { Button, download, IconButton, MenuButton } from "../ui";
 
@@ -159,6 +162,31 @@ function useContext(range: Range, enabled: boolean, nonce: number) {
   return { data, loading, error };
 }
 
+function useTokens(range: Range, enabled: boolean, nonce: number) {
+  const profilesKey = useStore((s) => s.profiles.map((p) => `${p.host_id}:${p.id}`).join(","));
+  const hostsKey = useStore((s) => s.hosts.map((h) => `${h.id}:${h.connected}:${h.api_version}`).join(","));
+  const [data, setData] = useState<TokenData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    setLoading(true);
+    loadTokens(range.from, range.to)
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [range.from, range.to, profilesKey, hostsKey, nonce, enabled]);
+  return { data, loading, error };
+}
+
 /** What a range shows once the project filter is applied. */
 interface View {
   data: Activity;
@@ -209,7 +237,7 @@ function SpanTip({ a, s, label }: { a: Activity; s: Span; label: string }) {
 // ---------- page ----------
 
 export function Analytics() {
-  const [tab, setTab] = usePersisted<"report" | "calendar" | "context" | "disk">("ia.analytics.tab", "report");
+  const [tab, setTab] = usePersisted<"report" | "calendar" | "context" | "tokens" | "disk">("ia.analytics.tab", "report");
   const [preset, setPreset] = usePersisted<Preset>("ia.analytics.preset", "this_week");
   const [custom, setCustom] = usePersisted("ia.analytics.custom", { from: dayKey(addDays(Date.now(), -6)), to: dayKey(Date.now()) });
   const [rules, setRules] = usePersisted<Rules>("ia.analytics.rules", { idleMin: 30, leadMin: 5 });
@@ -219,7 +247,7 @@ export function Analytics() {
   const [selected, setSelected] = useState<number | null>(() => startOfDay(Date.now()));
 
   const range = useMemo<Range>(() => {
-    if (tab === "report" || tab === "context") return presetRange(preset, custom);
+    if (tab === "report" || tab === "context" || tab === "tokens") return presetRange(preset, custom);
     if (calMode === "week") {
       const from = startOfWeek(anchor);
       return { from, to: addDays(from, 7) };
@@ -232,9 +260,10 @@ export function Analytics() {
   const activity = useActivity(range, rules, tab === "report" || tab === "calendar");
   const [contextNonce, setContextNonce] = useState(0);
   const context = useContext(range, tab === "context", contextNonce);
-  const { data, error } = tab === "context" ? { data: context.data, error: context.error } : activity;
-  const loading = tab === "context" ? context.loading : activity.loading;
-  const reload = tab === "context" ? () => setContextNonce((n) => n + 1) : activity.reload;
+  const [tokensNonce, setTokensNonce] = useState(0);
+  const tokenStats = useTokens(range, tab === "tokens", tokensNonce);
+  const { data, error, loading } = tab === "context" ? context : tab === "tokens" ? tokenStats : activity;
+  const reload = tab === "context" ? () => setContextNonce((n) => n + 1) : tab === "tokens" ? () => setTokensNonce((n) => n + 1) : activity.reload;
   const view = useView(activity.data, rules, project);
   const projects = data ? Object.values(data.projects).filter((p) => p.id !== SCRATCH) : [];
 
@@ -260,12 +289,12 @@ export function Analytics() {
       <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:px-3">
         <MenuButton />
         <h1 className="text-[14px] font-semibold">Analytics</h1>
-        <div className="no-drag flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5">
-          {(["report", "calendar", "context", "disk"] as const).map((t) => (
+        <div className="no-drag flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg border border-line bg-panel p-0.5">
+          {(["report", "calendar", "context", "tokens", "disk"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={clsx("rounded-md px-2.5 py-1 text-[12px] capitalize", tab === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+              className={clsx("shrink-0 rounded-md px-2.5 py-1 text-[12px] capitalize", tab === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
             >
               {t}
             </button>
@@ -280,7 +309,7 @@ export function Analytics() {
         <>
           {/* Filters: one row above everything they apply to. */}
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2">
-            {tab === "report" || tab === "context" ? (
+            {tab === "report" || tab === "context" || tab === "tokens" ? (
               <>
                 <select className={selectClass} value={preset} onChange={(e) => setPreset(e.target.value as Preset)} title="Time range">
                   {PRESETS.map((p) => (
@@ -344,7 +373,7 @@ export function Analytics() {
               <option value={SCRATCH}>In no project</option>
             </select>
             <div className="ml-auto flex items-center gap-2">
-              {tab !== "context" && (
+              {tab !== "context" && tab !== "tokens" && (
                 <>
                   <label className="flex items-center gap-1.5 text-[12px] text-faint" title="A longer gap between prompts counts as a break">
                     Break after
@@ -389,6 +418,7 @@ export function Analytics() {
               ))}
               {view && tab === "report" && <Report view={view} />}
               {context.data && tab === "context" && <ContextStats data={context.data} project={project} />}
+              {tokenStats.data && tab === "tokens" && <TokenStats data={tokenStats.data} project={project} />}
               {view && tab === "calendar" && (
                 <>
                   {calMode === "month" ? (
@@ -399,7 +429,17 @@ export function Analytics() {
                   {selected !== null && selected >= range.from && selected < range.to && <DayDetail view={view} day={selected} />}
                 </>
               )}
-              {tab === "context" ? (
+              {tab === "tokens" ? (
+                <p className="text-[11.5px] leading-relaxed text-faint">
+                  Tokens are counted from each agent run's output once it ends, for the model that used them (subagents' included), and go to the day
+                  the run started. A review or summary thread's tokens count towards the task it's for, and a subproject's tasks' towards the
+                  subproject. Tokens are uncached input, cache reads and writes, and output. Cost is what Claude Code reports; Codex doesn't say.
+                  Runs from before this version are counted from the output the board still keeps (two weeks of it); older runs show only what they
+                  cost, marked *. Each submitted review counts once per reviewer, and a reviewer's thread is reviewed again each round. Minor issues
+                  are listed by reviews from this version on; earlier ones count as noting minor issues when their summary mentions some.
+                  Follow-ups are tasks the reviewed task's agent created after such a review.
+                </p>
+              ) : tab === "context" ? (
                 <p className="text-[11.5px] leading-relaxed text-faint">
                   A turn's context is what its agent's session held when the turn ended, which the next prompt starts from: the system prompt, tools and the
                   conversation so far. Compactions are Idle (the board's, after a session sat idle for a while), /compact (sent by someone) and the agent's
