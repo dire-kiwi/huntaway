@@ -510,6 +510,28 @@ pub fn update(state: &Shared, version: &str) -> ApiResult<()> {
     })
 }
 
+/// A hub's Update for a release install (API 89): restart onto the release the hub runs, as `update` does. When that
+/// isn't the latest release this server knows of (nor staged), it checks first: the hub may run one published since.
+pub async fn update_from_hub(state: &Shared, version: &str) -> ApiResult<Value> {
+    let target = semver::Version::parse(version.trim().trim_start_matches('v')).map_err(|_| ApiError::bad(format!("the board's version {version:?} isn't a version")))?;
+    if target == running() {
+        return Ok(json!({"ok": true, "up_to_date": true}));
+    }
+    if target < running() {
+        return Err(ApiError::bad(format!("this host runs {}, which is newer than the board's {target}", running())));
+    }
+    let v = target.to_string();
+    let latest = || state.release.last.lock().unwrap().latest.as_ref().map(|l| l.version.clone());
+    if latest().as_ref() != Some(&target) && !staging::is_staged(state, &v) {
+        check(state).await;
+        if let Some(newer) = latest().filter(|l| *l > target).filter(|_| !staging::is_staged(state, &v)) {
+            return Err(ApiError::bad(format!("the latest release is {newer}, newer than the board's {target}: update the board first, or this host from its own board")));
+        }
+    }
+    update(state, &v)?;
+    Ok(json!({"ok": true}))
+}
+
 /// Until `v` is staged: follow its download (starting one if none is running) in the restart's phases and log.
 async fn wait_for_staging(st: &Shared, v: &str, asset: Option<Asset>) -> Result<()> {
     let mut rx = st.release.download.subscribe();
@@ -1863,6 +1885,73 @@ mod tests {
             }
             let (code, _) = api(&testing::state(), "POST", "/api/admin/release/update", Some(json!({"version": "0.2.0"}))).await;
             assert_eq!(code, 400);
+        });
+    }
+
+    #[test]
+    fn a_hubs_update_checks_for_its_version_and_restarts_onto_it() {
+        testing::run(async || {
+            let (_, state) = setup_with(|f| json!([served(f, "v0.2.0", tarball("0.2.0", None, &[]), Serve::Whole)])).await;
+            assert_eq!(api(&state, "GET", "/api/info", None).await.1["updates_from"], "releases");
+            // No check yet, so 0.2.0 isn't known: the hub's Update checks first. Its commit and bundle are ignored.
+            let mut events = state.events.subscribe();
+            let body = json!({"commit": "abc", "bundle": "eA==", "branch": "master", "version": "0.2.0"});
+            let (code, v) = api(&state, "POST", "/api/admin/update", Some(body)).await;
+            assert_eq!(code, 200, "{v}");
+            assert_eq!(v, json!({"ok": true}));
+            let (phases, error) = job_fails(&mut events).await;
+            assert_eq!(phases.last().map(String::as_str), Some("failed"));
+            assert!(phases.contains(&"restarting".to_string()), "{phases:?}");
+            assert!(error.ends_with("0.2.0/huntaway: not in a test"), "{error}");
+            // A hub that runs a release sends no commit.
+            assert_eq!(staging::read(&staging::app_dir(&state)).staged.as_deref(), Some("0.2.0"));
+            let (code, v) = api(&state, "POST", "/api/admin/update", Some(json!({"version": "v0.2.0"}))).await;
+            assert_eq!(code, 200, "{v}");
+        });
+    }
+
+    #[test]
+    fn a_hubs_update_refuses_what_a_release_host_cant_go_to() {
+        testing::run(async || {
+            let (_, state) = setup_with(|f| json!([served(f, "v0.3.0", tarball("0.3.0", None, &[]), Serve::Whole), release("v0.2.0", false)])).await;
+            let update = async |b: Value| api(&state, "POST", "/api/admin/update", Some(b)).await;
+            // The same version is up to date, without a check.
+            let (code, v) = update(json!({"commit": "abc", "version": env!("CARGO_PKG_VERSION")})).await;
+            assert_eq!((code, v), (200, json!({"ok": true, "up_to_date": true})));
+            assert_eq!(status(&state).unwrap().unwrap()["checked_at"], Value::Null);
+            for (b, why) in [
+                (json!({"commit": "abc"}), "API 89"),
+                (json!({"commit": "abc", "version": "0.0.9"}), "newer than the board's 0.0.9"),
+                (json!({"commit": "abc", "version": "nope"}), "isn't a version"),
+                // A newer release than the hub's is out: this host doesn't go to the older one.
+                (json!({"commit": "abc", "version": "0.2.0"}), "the latest release is 0.3.0"),
+            ] {
+                let (code, v) = update(b.clone()).await;
+                assert_eq!(code, 400, "{b}: {v}");
+                assert!(v["error"].as_str().unwrap().contains(why), "{b}: {v}");
+            }
+            assert!(state.restart.lock().unwrap().is_none(), "nothing restarted");
+        });
+    }
+
+    #[test]
+    fn a_checkout_host_needs_the_hubs_commit() {
+        testing::run(async || {
+            let state = testing::state();
+            let (code, v) = api(&state, "GET", "/api/info", None).await;
+            assert_eq!((code, v["updates_from"].clone()), (200, Value::Null));
+            // Neither a checkout nor a release install.
+            let (code, v) = api(&state, "POST", "/api/admin/update", Some(json!({"commit": "abc", "version": "0.2.0"}))).await;
+            assert_eq!(code, 400);
+            assert!(v["error"].as_str().unwrap().contains("isn't running from a source checkout"), "{v}");
+            // A hub that runs a release can't update a checkout.
+            let mut meta = testing::meta();
+            meta.source_dir = Some(testing::temp_dir());
+            let state = testing::state_with(meta);
+            assert_eq!(api(&state, "GET", "/api/info", None).await.1["updates_from"], "checkout");
+            let (code, v) = api(&state, "POST", "/api/admin/update", Some(json!({"version": "0.2.0"}))).await;
+            assert_eq!(code, 400);
+            assert!(v["error"].as_str().unwrap().contains("runs a release rather than a checkout"), "{v}");
         });
     }
 
