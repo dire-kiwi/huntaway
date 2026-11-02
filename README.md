@@ -738,6 +738,22 @@ skipped. Auto-compacting idle sessions is Claude-only.
   out). A limit at 80% or more is marked in amber, and one that's used up in red, in the
   sidebar and where a config is picked (the new task dialog's config picker, a task's
   *Config* row), so you can pick another config before starting work.
+- **Restarting the 5-hour window** (API 91): a plan's session limit runs for five hours from
+  the first message after the last window ended, so a window that ends while nothing runs leaves
+  the next one to start whenever work does. Tick *Restart 5h window* on a config in Settings →
+  Agent configs (off by default) and the host sends one short prompt just after each window ends
+  (a minute late, for clocks that disagree): `claude -p` on Haiku with no tools, MCP servers or
+  saved session for Claude, a low-effort ephemeral turn for Codex, from the data dir. That starts
+  the next window straight away. Only plans with a 5-hour limit are sent anything: the host fetches
+  the config's usage when the setting is turned on (or the server starts), and a plan whose usage
+  has never shown a session limit (like a plan with only weekly limits) is left alone, as is a config
+  that's out of usage. (Where that fetch fails, as with a login that has expired, it waits for an
+  agent run on the config to report the window.) It fetches again before each prompt, in case a run or another host already
+  started the window, and takes the prompt's own `rate_limit_event`s in as an agent run's are; a
+  prompt whose rate limits show no 5-hour window stops the restarts until the setting is turned on
+  again. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
+  then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
+  has no session limit. See `server/src/window.rs`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
