@@ -58,3 +58,23 @@ test("the graph's subproject tasks follow Now and Later on their own, and can be
     assert.deepEqual(await nowIds(), [sp.id, a.id, b.id].sort());
   });
 });
+
+// HA-109 review: the status filter holds for a subproject's tasks in the graph too, whether or not their subproject shows.
+test("the graph's subproject tasks follow the status filter", async () => {
+  // A done task puts its subproject in review (its status follows its tasks'); the other task is still to do.
+  await server.api("PATCH", `/tasks/${a.id}`, { now: false, status: "done" });
+  assert.equal((await server.api("GET", `/tasks/${sp.id}`)).task.status, "in_review");
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, "wait Checkout rework", "click Graph view", "click Every task", "wait Child alpha", "wait Child beta"]);
+    const only = (id) => page.waitForFunction((id) => document.querySelectorAll("[data-task]").length === 1 && !!document.querySelector(`[data-task="${id}"]`), id);
+    const toggle = (status) => ui.run(["click Filter", `click css=[role=menuitemcheckbox] >> text=${status}`, "press Escape"]);
+    // Done: the done task shows though its subproject (in review) doesn't, and the other, to do, is left out.
+    await toggle("Done");
+    await only(a.id);
+    // In review instead: the subproject alone, as neither of its tasks is in review.
+    await toggle("Done");
+    await toggle("In review");
+    await only(sp.id);
+  });
+});

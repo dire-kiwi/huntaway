@@ -45,7 +45,7 @@ function layout(shown: Task[], all: Record<string, Task>, onBoard: ReadonlySet<s
   const nodes = new Map<string, { task: Task; ghost: boolean }>();
   for (const t of shown) nodes.set(t.id, { task: t, ghost: false });
   // A subproject's tasks aren't on its project's board, but they're what it's made of: those the board's search,
-  // filters and Now/Later choice keep, whether or not the subproject itself is shown (it's still linked, faded).
+  // filters (statuses too) and Now/Later choice keep, whether or not the subproject itself is shown (it's still linked, faded).
   const inSubproject = (t: Task) => !!t.parent_id && onBoard.has(t.parent_id) && !!all[t.parent_id]?.subproject;
   for (const t of Object.values(all)) if (t.kind === "task" && inSubproject(t) && !nodes.has(t.id) && keep(t)) nodes.set(t.id, { task: t, ghost: false });
   // One link between two tasks: waiting on it says the most, then being in it (a subproject's agent creates its tasks too).
@@ -227,7 +227,7 @@ export function GraphView({
   tasks: Task[];
   /** Every task on the board, shown or not: the subprojects among them show their tasks. */
   boardTasks: Task[];
-  /** Whether the board's search, filters and Now/Later choice keep a task, for the subprojects' tasks. */
+  /** Whether the board's search, filters (statuses too) and Now/Later choice keep a task, for the subprojects' tasks. */
   keep: (t: Task) => boolean;
   projectOf: (t: Task) => Project | undefined;
   progressOf: (t: Task) => Progress | undefined;

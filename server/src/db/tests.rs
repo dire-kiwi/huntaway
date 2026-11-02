@@ -693,14 +693,14 @@ fn a_database_at_version_67_gets_projects_pull_request_settings() {
 }
 
 #[test]
-fn a_database_at_version_72_has_every_task_in_later() {
-    // As master's build left it, with merge approval (72) and no now/later split yet.
+fn a_database_at_version_73_has_every_task_in_later() {
+    // As master's build left it, with run sessions (73) and no now/later split yet.
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
         c.execute_batch(
             "ALTER TABLE tasks DROP COLUMN now_at;
-                 PRAGMA user_version=72;
+                 PRAGMA user_version=73;
                  INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
                  INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
                    VALUES ('t','p','task',1,'t','todo','1','1','1');",
@@ -1263,4 +1263,108 @@ fn dependencies_stay_in_the_project_and_never_loop() {
     assert_eq!(drop_dependency(&c, &one.id).unwrap(), [two.id.clone()]);
     assert!(get_task(&c, &two.id).unwrap().unwrap().depends_on.is_empty());
     assert_eq!(get_task(&c, &three.id).unwrap().unwrap().depends_on, [two.id.clone()]);
+}
+
+// HA-108: a run that resumed a session was charged for the session's earlier runs again.
+#[test]
+fn a_database_from_version_72_counts_each_runs_cost_once() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (task, thread) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "me", &[], None).unwrap();
+        let new = |kind| NewTask { profile_id: &p.id, project_id: None, kind, title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (task, thread) = (insert_task(&c, new("task")).unwrap().id, insert_task(&c, new("review")).unwrap().id);
+        c.execute_batch("ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; PRAGMA user_version=72;").unwrap();
+        // Each run's cost was its session's total, and the task was charged each run's whole total.
+        // The task's runs: a session, then one that ended before its first result, then a new
+        // session (its total is lower). The thread's: two review rounds, the first with a reply.
+        let runs = [(&task, "a", "prompt", 1.0), (&task, "b", "prompt", 1.5), (&task, "c", "compact", 0.0), (&task, "d", "prompt", 0.4), (&task, "e", "prompt", 0.9)];
+        let runs = runs.into_iter().chain([(&thread, "f", "review", 0.5), (&thread, "g", "prompt", 0.7), (&thread, "h", "review", 0.6)]);
+        for (task_id, id, kind, cost) in runs {
+            c.execute("INSERT INTO runs (id,task_id,kind,status,cost_usd,created_at) VALUES (?1,?2,?3,'exited',?4,'1')", params![id, task_id, kind, cost]).unwrap();
+        }
+        // 0.2 of the task's is from runs before runs had a cost.
+        c.execute("UPDATE tasks SET cost_usd=4.0, session_id='s2' WHERE id=?1", [&task]).unwrap();
+        c.execute("UPDATE tasks SET cost_usd=1.8, session_id='r2' WHERE id=?1", [&thread]).unwrap();
+        for (run, cost) in [("b", 1.5), ("b", 0.1), ("e", 0.9)] {
+            c.execute("INSERT INTO context_stats (task_id,run_id,kind,at,cost_usd) VALUES (?1,?2,'turn','1',?3)", params![task, run, cost]).unwrap();
+        }
+        (task, thread)
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let costs = |sql: &str| -> Vec<f64> { c.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect() };
+    let runs = costs("SELECT cost_usd FROM runs ORDER BY rowid");
+    assert!(runs.iter().zip([1.0, 0.5, 0.0, 0.4, 0.5, 0.5, 0.2, 0.6]).all(|(a, b)| close(*a, b)), "{runs:?}");
+    let tasks = [get_task(&c, &task).unwrap().unwrap().cost_usd, get_task(&c, &thread).unwrap().unwrap().cost_usd];
+    assert!(close(tasks[0], 2.6) && close(tasks[1], 1.3), "{tasks:?}");
+    let turns = costs("SELECT cost_usd FROM context_stats ORDER BY id");
+    assert!(turns.iter().zip([0.5, 0.1, 0.5]).all(|(a, b)| close(*a, b)), "{turns:?}");
+    // The runs of each thread's current session are in it, for the next run's cost to go on from.
+    let sessions: Vec<(String, Option<String>, Option<f64>)> =
+        c.prepare("SELECT id, session_id, session_cost FROM runs ORDER BY rowid").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(|r| r.unwrap()).collect();
+    let s = |id: &str, session: Option<&str>, cost: Option<f64>| (id.to_string(), session.map(String::from), cost);
+    let none = |id| s(id, None, None);
+    assert_eq!(sessions, vec![none("a"), none("b"), none("c"), s("d", Some("s2"), Some(0.4)), s("e", Some("s2"), Some(0.9)), none("f"), none("g"), s("h", Some("r2"), Some(0.6))]);
+    let next = insert_run(&c, &task, "prompt").unwrap();
+    assert!(close(add_cost(&c, &next.id, Some("s2"), 1.2, true).unwrap(), 0.3));
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+// HA-108: a new session's runs that cost more than the old session's are a session of their own.
+#[test]
+fn a_database_from_version_72_keeps_new_sessions_apart() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (rewound, checkpointed) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "me", &[], None).unwrap();
+        let new = || NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (rewound, checkpointed) = (insert_task(&c, new()).unwrap().id, insert_task(&c, new()).unwrap().id);
+        c.execute_batch("ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; PRAGMA user_version=72;").unwrap();
+        // One task rewound to its first message between its runs, which started a new conversation
+        // (that cost more than the first); then a run of it that hadn't said its total yet. The
+        // other's checkpoints say its runs were in different sessions, then the same.
+        let runs = [(&rewound, "a", 1.0, "1"), (&rewound, "b", 2.0, "3"), (&rewound, "c", 0.0, "4"), (&checkpointed, "d", 1.0, "1"), (&checkpointed, "e", 2.0, "2")];
+        for (task_id, id, cost, at) in runs.into_iter().chain([(&checkpointed, "f", 2.5, "3")]) {
+            c.execute("INSERT INTO runs (id,task_id,kind,status,cost_usd,created_at) VALUES (?1,?2,'prompt','exited',?3,?4)", params![id, task_id, cost, at]).unwrap();
+        }
+        let text = "Rewound to before turn 1: 1 file restored, 0 files removed; the next message starts a new conversation";
+        c.execute("INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,'event',?2,'2')", params![rewound, json!({"level": "info", "text": text}).to_string()]).unwrap();
+        for (n, run, session) in [(1, "d", "k1"), (2, "e", "k2"), (3, "f", "k2")] {
+            c.execute(
+                "INSERT INTO checkpoints (task_id,n,kind,sha,tree,run_id,session,created_at) VALUES (?1,?2,'turn','s','t',?3,?4,'1')",
+                params![checkpointed, n, run, session],
+            )
+            .unwrap();
+        }
+        c.execute("UPDATE tasks SET cost_usd=3.0, session_id='new' WHERE id=?1", [&rewound]).unwrap();
+        c.execute("UPDATE tasks SET cost_usd=5.5, session_id='k2' WHERE id=?1", [&checkpointed]).unwrap();
+        (rewound, checkpointed)
+    };
+    let c = open(&path).unwrap();
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let runs: Vec<(String, f64, Option<String>, Option<f64>)> = c
+        .prepare("SELECT id, cost_usd, session_id, session_cost FROM runs ORDER BY rowid")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    let want = [("a", 1.0, None, None), ("b", 2.0, Some("new"), Some(2.0)), ("c", 0.0, Some("new"), None), ("d", 1.0, None, None), ("e", 2.0, Some("k2"), Some(2.0)), ("f", 0.5, Some("k2"), Some(2.5))];
+    assert_eq!(runs.len(), want.len());
+    for (got, want) in runs.iter().zip(want) {
+        assert!(got.0 == want.0 && close(got.1, want.1) && got.2.as_deref() == want.2 && got.3 == want.3, "{got:?} {want:?}");
+    }
+    let tasks = [get_task(&c, &rewound).unwrap().unwrap().cost_usd, get_task(&c, &checkpointed).unwrap().unwrap().cost_usd];
+    assert!(close(tasks[0], 3.0) && close(tasks[1], 3.5), "{tasks:?}");
+    // The run of the new conversation that was going during the upgrade starts from nothing.
+    assert!(close(add_cost(&c, "c", Some("new"), 0.25, true).unwrap(), 0.25));
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
 }

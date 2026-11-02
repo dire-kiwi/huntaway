@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type DiffResult, type GitCommitShown, type GitStatus, type TurnDiff } from "../../../api";
-import { parseDiff } from "../changes";
+import { parseDiff } from "../diffs";
 import type { CommentSource } from "../lineComments";
 import type { GitSelection } from "./useGitSelection";
 import { errText, short } from "./model";

@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Folder, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, hostSupports } from "../../api";
-import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "./githubRepos";
+import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "./repoSource";
 import { navigate } from "../../router";
 import { defaultAgentHost, profileNames, useHost, useStore } from "../../store";
 import { DirPicker } from "./DirPicker";

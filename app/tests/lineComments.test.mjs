@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { parseDiff } from "../src/components/changes/changes.ts";
+import { parseDiff } from "../src/components/changes/diffs.ts";
 
 // The review is kept in localStorage: a stand-in for node.
 const store = new Map();

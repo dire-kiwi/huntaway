@@ -1,7 +1,7 @@
 // The boxes the Changes tab is drawn with, as lazygit draws them, and the lists in them.
 import clsx from "clsx";
 import { useLayoutEffect, useRef, type ReactNode, type Ref } from "react";
-import { conflicted, hasStaged, hasUnstaged, untracked, type FileRow } from "../changes";
+import { conflicted, hasStaged, hasUnstaged, untracked, type FileRow } from "../diffs";
 
 /** A box with its title in its top border, as lazygit draws its panels. */
 export function Panel({

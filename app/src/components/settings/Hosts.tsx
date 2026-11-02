@@ -25,7 +25,7 @@ import {
 } from "../../api";
 import { useShallow } from "zustand/react/shallow";
 import { NOW_API } from "../../focus";
-import { defaultCloneDir } from "./githubRepos";
+import { defaultCloneDir } from "./repoSource";
 import { navigate } from "../../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../../store";
 import { compareVersions } from "./versions";

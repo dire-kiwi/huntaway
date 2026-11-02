@@ -253,6 +253,8 @@ export function TaskBoard({
     );
     return (t: Task) => inFocus(t, focus) && match(t);
   }, [query, focus, byId]);
+  // For the graph's subproject tasks, which no column holds: the status filter too.
+  const keepInGraph = useMemo(() => (t: Task) => showsStatus(query, t.status) && keep(t), [query, keep]);
   const { shown, shownArchived } = useMemo(() => {
     const shown = Object.fromEntries(Object.entries(columns).map(([k, ts]) => [k, sortTasks(ts.filter(keep), sort)])) as Record<Status, Task[]>;
     return { shown, shownArchived: sortTasks(archived.filter(keep), sort) };
@@ -621,7 +623,7 @@ export function TaskBoard({
       ) : view === "timeline" ? (
         <TimelineView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
       ) : view === "graph" ? (
-        <GraphView tasks={shownTasks} boardTasks={tasks} keep={keep} projectOf={projectOf} progressOf={progressOf} onMenu={onMenu} />
+        <GraphView tasks={shownTasks} boardTasks={tasks} keep={keepInGraph} projectOf={projectOf} progressOf={progressOf} onMenu={onMenu} />
       ) : view === "list" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-5 p-6 narrow:p-3">

@@ -3,7 +3,7 @@
 // grammar is fetched the first time a file in it is shown. Each hunk's old and new sides are highlighted as code
 // of their own (a hunk is all of the file there is), and the lines show plain until their colours come.
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import type { FileDiff } from "./changes";
+import type { FileDiff } from "./diffs";
 
 /** A highlighted line, in runs: how many characters, and their style (an index into the styles; 0 is the default). */
 export type Run = [length: number, style: number];
