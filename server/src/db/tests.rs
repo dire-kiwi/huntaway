@@ -1242,3 +1242,53 @@ fn dependencies_stay_in_the_project_and_never_loop() {
     assert!(get_task(&c, &two.id).unwrap().unwrap().depends_on.is_empty());
     assert_eq!(get_task(&c, &three.id).unwrap().unwrap().depends_on, [two.id.clone()]);
 }
+
+// HA-108: a run that resumed a session was charged for the session's earlier runs again.
+#[test]
+fn a_database_from_version_72_counts_each_runs_cost_once() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (task, thread) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "me", &[], None).unwrap();
+        let new = |kind| NewTask { profile_id: &p.id, project_id: None, kind, title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (task, thread) = (insert_task(&c, new("task")).unwrap().id, insert_task(&c, new("review")).unwrap().id);
+        c.execute_batch("ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; PRAGMA user_version=72;").unwrap();
+        // Each run's cost was its session's total, and the task was charged each run's whole total.
+        // The task's runs: a session, then one that ended before its first result, then a new
+        // session (its total is lower). The thread's: two review rounds, the first with a reply.
+        let runs = [(&task, "a", "prompt", 1.0), (&task, "b", "prompt", 1.5), (&task, "c", "compact", 0.0), (&task, "d", "prompt", 0.4), (&task, "e", "prompt", 0.9)];
+        let runs = runs.into_iter().chain([(&thread, "f", "review", 0.5), (&thread, "g", "prompt", 0.7), (&thread, "h", "review", 0.6)]);
+        for (task_id, id, kind, cost) in runs {
+            c.execute("INSERT INTO runs (id,task_id,kind,status,cost_usd,created_at) VALUES (?1,?2,?3,'exited',?4,'1')", params![id, task_id, kind, cost]).unwrap();
+        }
+        // 0.2 of the task's is from runs before runs had a cost.
+        c.execute("UPDATE tasks SET cost_usd=4.0, session_id='s2' WHERE id=?1", [&task]).unwrap();
+        c.execute("UPDATE tasks SET cost_usd=1.8, session_id='r2' WHERE id=?1", [&thread]).unwrap();
+        for (run, cost) in [("b", 1.5), ("b", 0.1), ("e", 0.9)] {
+            c.execute("INSERT INTO context_stats (task_id,run_id,kind,at,cost_usd) VALUES (?1,?2,'turn','1',?3)", params![task, run, cost]).unwrap();
+        }
+        (task, thread)
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let costs = |sql: &str| -> Vec<f64> { c.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect() };
+    let runs = costs("SELECT cost_usd FROM runs ORDER BY rowid");
+    assert!(runs.iter().zip([1.0, 0.5, 0.0, 0.4, 0.5, 0.5, 0.2, 0.6]).all(|(a, b)| close(*a, b)), "{runs:?}");
+    let tasks = [get_task(&c, &task).unwrap().unwrap().cost_usd, get_task(&c, &thread).unwrap().unwrap().cost_usd];
+    assert!(close(tasks[0], 2.6) && close(tasks[1], 1.3), "{tasks:?}");
+    let turns = costs("SELECT cost_usd FROM context_stats ORDER BY id");
+    assert!(turns.iter().zip([0.5, 0.1, 0.5]).all(|(a, b)| close(*a, b)), "{turns:?}");
+    // The runs of each thread's current session are in it, for the next run's cost to go on from.
+    let sessions: Vec<(String, Option<String>, Option<f64>)> =
+        c.prepare("SELECT id, session_id, session_cost FROM runs ORDER BY rowid").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(|r| r.unwrap()).collect();
+    let s = |id: &str, session: Option<&str>, cost: Option<f64>| (id.to_string(), session.map(String::from), cost);
+    let none = |id| s(id, None, None);
+    assert_eq!(sessions, vec![none("a"), none("b"), none("c"), s("d", Some("s2"), Some(0.4)), s("e", Some("s2"), Some(0.9)), none("f"), none("g"), s("h", Some("r2"), Some(0.6))]);
+    let next = insert_run(&c, &task, "prompt").unwrap();
+    assert!(close(add_cost(&c, &next.id, Some("s2"), 1.2).unwrap(), 0.3));
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}

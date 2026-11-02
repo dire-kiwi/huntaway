@@ -413,6 +413,71 @@ fn a_message_that_misses_the_turn_starts_the_next() {
     });
 }
 
+// HA-108: Claude Code's total for a session it resumes goes on from what the session's earlier
+// runs cost, which were charged to the task again.
+#[test]
+fn a_run_that_resumes_a_session_is_charged_only_what_it_adds() {
+    crate::testing::run(async || {
+        let (state, task, first) = running(true);
+        let init = |session: &str| json!({"type": "system", "subtype": "init", "session_id": session});
+        let total = |session: &str, total: f64| {
+            let mut r = result("success", total);
+            r["session_id"] = json!(session);
+            r
+        };
+        let next = |kind: &str| {
+            let run = db::insert_run(&state.db(), &task.id, kind).unwrap();
+            state.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
+            let dir = runs::run_dir(&state, &run.id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("out.jsonl"), "").unwrap();
+            run
+        };
+        let ended = |run: &Run| state.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let charged = |run: &Run| (reload(&state, &task.id).cost_usd, db::get_run(&state.db(), &run.id).unwrap().unwrap().cost_usd);
+        let last_result = || db::list_messages(&state.db(), &task.id).unwrap().into_iter().rev().find(|m| m.data["type"] == "result").unwrap().data;
+
+        // Two turns of a session.
+        output(&state, &first, &[init("s1"), total("s1", 1.0), total("s1", 1.5)]);
+        ended(&first);
+        let (t, r) = charged(&first);
+        assert!(close(t, 1.5) && close(r, 1.5), "{t} {r}");
+        // A run that resumes it: its first total goes on from 1.5.
+        let resumed = next("compact");
+        output(&state, &resumed, &[init("s1"), total("s1", 1.75)]);
+        ended(&resumed);
+        let (t, r) = charged(&resumed);
+        assert!(close(t, 1.75) && close(r, 0.25), "{t} {r}");
+        assert!(close(last_result()["total_cost_usd"].as_f64().unwrap(), 0.25));
+        let resumed = next("prompt");
+        output(&state, &resumed, &[init("s1"), total("s1", 2.0), total("s1", 2.5)]);
+        ended(&resumed);
+        let (t, r) = charged(&resumed);
+        assert!(close(t, 2.5) && close(r, 0.75), "{t} {r}");
+
+        // A new session (a review round's, a rewind's) starts from nothing, even after a run that
+        // started it and ended before its first result.
+        let killed = next("prompt");
+        output(&state, &killed, &[init("s2")]);
+        ended(&killed);
+        let fresh = next("prompt");
+        output(&state, &fresh, &[init("s2"), total("s2", 3.0)]);
+        ended(&fresh);
+        let (t, r) = charged(&fresh);
+        assert!(close(t, 5.5) && close(r, 3.0), "{t} {r}");
+        // So does a session whose total went down: Claude Code started counting again.
+        let again = next("prompt");
+        output(&state, &again, &[init("s2"), total("s2", 0.5)]);
+        let (t, r) = charged(&again);
+        assert!(close(t, 6.0) && close(r, 0.5), "{t} {r}");
+        // A result without a total charges nothing, and the next goes on from the last.
+        output(&state, &again, &[json!({"type": "result", "subtype": "success", "session_id": "s2"}), total("s2", 0.75)]);
+        let (t, r) = charged(&again);
+        assert!(close(t, 6.25) && close(r, 0.75), "{t} {r}");
+    });
+}
+
 #[test]
 fn messages_the_agent_never_took_in_go_to_the_next_run() {
     crate::testing::run(async || {
