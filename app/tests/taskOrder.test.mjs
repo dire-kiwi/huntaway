@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { dropPosition } from "../src/taskOrder.ts";
+import { dropPosition } from "../src/components/board/taskOrder.ts";
 
 const t = (id, position) => ({ id, position });
 // Sorts as the board does (ties keep the column's order, which is by creation).

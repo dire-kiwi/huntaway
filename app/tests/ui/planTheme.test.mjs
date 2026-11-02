@@ -4,12 +4,12 @@ import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
 import { after, before, test } from "node:test";
-import { frameDoc } from "../../src/htmlFrame.ts";
-import { themedPlan } from "../../src/planTheme.ts";
+import { frameDoc } from "../../src/components/task/htmlFrame.ts";
+import { themedPlan } from "../../src/components/task/planTheme.ts";
 import { launchOptions } from "../../../scripts/ui-check.mjs";
 
 const { chromium } = createRequire(import.meta.url)("playwright-core");
-const css = fs.readFileSync(new URL("../../src/planTheme.css", import.meta.url), "utf8");
+const css = fs.readFileSync(new URL("../../src/components/task/planTheme.css", import.meta.url), "utf8");
 
 let browser;
 before(async () => (browser = await chromium.launch(launchOptions())));

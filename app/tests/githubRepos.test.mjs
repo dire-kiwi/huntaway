@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { clonePath, defaultCloneDir, filterRepos, loadProjectSource, mergeRepos, repoFromInput, saveProjectSource } from "../src/githubRepos.ts";
+import { clonePath, defaultCloneDir, filterRepos, loadProjectSource, mergeRepos, repoFromInput, saveProjectSource } from "../src/components/settings/githubRepos.ts";
 
 const repo = (full_name) => ({ full_name, name: full_name.split("/")[1] });
 const names = (repos) => repos.map((r) => r.full_name);

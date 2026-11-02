@@ -2,14 +2,14 @@ import clsx from "clsx";
 import { lazy, Suspense, useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
 import { fetchOpenToken, getToken, setUnauthorizedHandler } from "./api";
-import { Analytics } from "./components/Analytics";
-import { ProjectApprovals } from "./components/Approvals";
-import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/Board";
-import { HostPage } from "./components/HostPage";
-import { Onboarding, ProjectSettings, Settings, TokenScreen } from "./components/Settings";
-import { Sidebar } from "./components/Sidebar";
-import { TaskPanel, TaskView } from "./components/TaskView";
-import { UnhandledErrors } from "./components/UnhandledErrors";
+import { Analytics } from "./components/settings/Analytics";
+import { ProjectApprovals } from "./components/task/Approvals";
+import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/board/Board";
+import { HostPage } from "./components/settings/HostPage";
+import { Onboarding, ProjectSettings, Settings, TokenScreen } from "./components/settings/Settings";
+import { Sidebar } from "./components/layout/Sidebar";
+import { TaskPanel, TaskView } from "./components/task/TaskView";
+import { UnhandledErrors } from "./components/layout/UnhandledErrors";
 import { useDrawer, useNarrow } from "./narrow";
 import { startNotifications } from "./notifier";
 import { startPush } from "./push";
@@ -17,7 +17,7 @@ import { boardTaskUrl, groupTaskUrl, hasPanel, navigate, profileTaskUrl, subproj
 import { connectEvents, isGroupTask, profileNames, useProfileName, useStore } from "./store";
 import { startToolKeepalive } from "./terminalTools";
 
-const CompareView = lazy(() => import("./components/Compare"));
+const CompareView = lazy(() => import("./components/changes/Compare"));
 
 export function App() {
   const authed = useStore((s) => s.authed);
