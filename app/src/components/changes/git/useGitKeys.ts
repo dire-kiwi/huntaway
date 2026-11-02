@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { hasUnstaged } from "../changes";
+import { hasUnstaged } from "../diffs";
 import type { GitActions } from "./useGitActions";
 import type { GitSelection } from "./useGitSelection";
 import type { Staging } from "./useStaging";

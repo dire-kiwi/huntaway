@@ -3,7 +3,7 @@
 // agent, all in one. They're kept in this browser, as composer drafts are, so another tab, task or a reload
 // doesn't lose them, and so are the comments still being written.
 import { useSyncExternalStore } from "react";
-import type { FileDiff } from "./changes";
+import type { FileDiff } from "./diffs";
 
 /** Which side of a diff a line number is on: the file before the change (`old`) or after it (`new`). */
 export type Side = "old" | "new";

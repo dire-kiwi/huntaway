@@ -17,7 +17,7 @@
 # Builds (in DIR/src, a copy of this checkout with its uncommitted changes, sharing app/node_modules and a cargo target
 # dir in DIR/target):
 #   0.9.0, 0.9.1  the app (AppImage, pacman), the server tarball and huntaway-<v>-release.json, as release.yml makes them
-#   0.9.3         the same, with a changed shell (a line added to electron/preload.cjs), so its manifest's stamp differs
+#   0.9.3         the same, with a changed frame (a line added to electron/boot.cjs), so its manifest's stamp differs
 #   0.9.2         a server tarball whose huntaway passes --version but exits at once on serve (0.9.1's shim and UI)
 #   0.9.4-rc.1    a prerelease tarball, like 0.9.2 but with a server that works (0.9.1's, saying it's 0.9.4-rc.1)
 #
@@ -80,9 +80,9 @@ build_release() {
   (cd "$src/app" && npx electron-builder --linux --x64 --publish never >> "$work/build-$v.log" 2>&1) ||
     { tail -20 "$work/build-$v.log" >&2; exit 1; }
   # The release manifest, as the workflow's step writes it.
-  (cd "$src/app" && VERSION=$v node -e 'const fs = require("node:fs"); const { shellStamp } = require("./electron/stamp.cjs");
+  (cd "$src/app" && VERSION=$v node -e 'const fs = require("node:fs"); const { frameStamp } = require("./electron/stamp.cjs");
     const electron = require("./node_modules/electron/package.json").version;
-    const manifest = { version: process.env.VERSION, shell: shellStamp("electron", electron), electron };
+    const manifest = { version: process.env.VERSION, shell: frameStamp("electron", electron), electron };
     fs.writeFileSync(`release/huntaway-${process.env.VERSION}-release.json`, JSON.stringify(manifest, null, 2) + "\n")')
   name="huntaway-server-$v-linux-x64"
   mkdir -p "$src/app/release/$name"
@@ -110,7 +110,7 @@ if [[ -n $build ]]; then
   copy_source
   build_release 0.9.0
   build_release 0.9.1
-  echo "// a changed shell for the e2e check's 0.9.3" >> "$work/src/app/electron/preload.cjs"
+  echo "// a changed frame for the e2e check's 0.9.3" >> "$work/src/app/electron/boot.cjs"
   build_release 0.9.3
   # 0.9.2 passes the smoke test (--version) and exits at once otherwise.
   fake_release 0.9.2 '[ "$1" = --version ] && { echo "huntaway 0.9.2"; exit 0; }

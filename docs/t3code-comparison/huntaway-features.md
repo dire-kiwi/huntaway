@@ -35,11 +35,11 @@ data model, how runs are launched).
   `--append-system-prompt` (the board's instructions), `--permission-mode`,
   `--permission-prompt-tool mcp__huntaway__permission_prompt`, `--resume <session>`, `--model`,
   `--effort`, `--mcp-config`, `--allowedTools`/`--disallowedTools` and `--add-dir`
-  (`server/src/runner.rs`). Partial messages stream to the UI token by token.
+  (`server/src/agent/runner.rs`). Partial messages stream to the UI token by token.
 - **Codex**: `huntaway codex-run` drives `codex app-server` over JSON-RPC (`thread/start|resume`,
   `turn/start|steer|interrupt`, `thread/compact/start`, `model/list`, `skills/list`,
   `account/rateLimits/read`) and answers Codex's approval requests through the board
-  (`server/src/codex.rs`). Its events are shown like Claude's: commands as Bash calls, file changes as
+  (`server/src/agent/codex.rs`). Its events are shown like Claude's: commands as Bash calls, file changes as
   diffs, the plan as a todo list, MCP calls under their server's name.
 - No other runtimes: no Cursor, OpenCode, Gemini/Antigravity, ACP agents or direct API models.
 

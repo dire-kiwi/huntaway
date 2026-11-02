@@ -100,32 +100,39 @@ jobs:
         working-directory: app
         run: npx electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
 
-      # What an installed app reads to update itself: the version, and the shell stamp (app/electron/stamp.cjs) and
-      # Electron of the desktop app, which say whether the update changes the app or only the server and the UI. The
-      # stamp is checked against the one the packaged app computes from its app.asar, with its own Electron.
+      # What an installed app reads to update itself: the version, and the shell stamp (the frame stamp of
+      # app/electron/stamp.cjs: boot.cjs and Electron) of the desktop app, which says whether the update needs a new
+      # package or only changes the server, the UI and the rest of the shell (boot.cjs loads that from the server's
+      # tarball). The stamp is checked against the one the packaged app computes from its app.asar, with its own Electron.
       - name: Release manifest
         if: matrix.os == 'linux'
         working-directory: app
         run: |
-          node -e 'const fs = require("node:fs"); const { shellStamp } = require("./electron/stamp.cjs");
+          node -e 'const fs = require("node:fs"); const { frameStamp } = require("./electron/stamp.cjs");
             const electron = require("./node_modules/electron/package.json").version;
-            const manifest = { version: process.env.VERSION, shell: shellStamp("electron", electron), electron };
+            const manifest = { version: process.env.VERSION, shell: frameStamp("electron", electron), electron };
             fs.writeFileSync(`release/huntaway-${process.env.VERSION}-release.json`, JSON.stringify(manifest, null, 2) + "\n")'
           cat "release/huntaway-$VERSION-release.json"
           asar="$PWD/release/linux-unpacked/resources/app.asar/electron"
           packaged=$(ELECTRON_RUN_AS_NODE=1 release/linux-unpacked/huntaway-desktop -e \
-            "console.log(require('$asar/stamp.cjs').shellStamp('$asar', process.versions.electron))")
+            "console.log(require('$asar/stamp.cjs').frameStamp('$asar', process.versions.electron))")
           node -e 'const m = require(process.argv[1]); if (m.shell !== process.argv[2]) {
             console.error(`the packaged app has stamp ${process.argv[2]}, the manifest ${m.shell}`); process.exit(1) }' \
             "./release/huntaway-$VERSION-release.json" "$packaged"
 
       # The server on its own, for hosts: huntaway and ia-shim with the UI in ui/ beside them, where the server looks.
+      # electron/ is the desktop shell of this release, which an installed app loads once it has updated to it
+      # (app/electron/boot.cjs); shell.json says which Electron it was written for and which boot.cjs it needs.
       - name: Package the server
         run: |
           name="huntaway-server-$VERSION-${{ matrix.os }}-${{ matrix.arch }}"
           mkdir -p "app/release/$name"
           cp server/target/release/huntaway server/target/release/ia-shim "app/release/$name/"
           cp -R app/dist "app/release/$name/ui"
+          mkdir "app/release/$name/electron"
+          cp app/electron/*.cjs "app/release/$name/electron/"
+          node -e 'const electron = require("./app/node_modules/electron/package.json").version;
+            require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ electron, boot: 1 }) + "\n")' "app/release/$name/electron/shell.json"
           tar -C app/release -czf "app/release/$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

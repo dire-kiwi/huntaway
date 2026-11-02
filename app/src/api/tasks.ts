@@ -125,6 +125,8 @@ export interface Review {
   issues: string[];
   /** Reviews in a row that sent issues back to the agent. */
   fixes: number;
+  /** Rounds of fixes you added, past the project's review_rounds, after the task ran out of them (API 93). */
+  extra_rounds?: number;
   updated_at: string;
   /** Each reviewer's part (API 29). */
   reviewers?: ReviewerRun[];
@@ -287,7 +289,7 @@ export interface Task {
   preview_url?: string | null;
   /** Its pull request, set by its agent or found with `gh` (API 26). */
   pr_url?: string | null;
-  /** How its pull request's checks stood when the board last read them (API 93); see `failedChecks`. */
+  /** How its pull request's checks stood when the board last read them (API 94); see `failedChecks`. */
   pr_checks?: PrChecks | null;
   /** The tasks elsewhere (Asana) it's for (API 57). */
   external_links?: ExternalLink[];
@@ -313,7 +315,7 @@ export interface Task {
   updated_at: string;
 }
 
-/** A pull request's head commit's checks, as a read found them (API 93): by a wait on it, while it's watched in review, when it's read for "Done when merged", or by Fix broken checks. */
+/** A pull request's head commit's checks, as a read found them (API 94): by a wait on it, while it's watched in review, when it's read for "Done when merged", or by Fix broken checks. */
 export interface PrChecks {
   /** The pull request read; the task's `pr_url` may have changed since. */
   url: string;
@@ -329,7 +331,7 @@ export interface PrChecks {
 }
 
 /** The host API version that reads tasks' checks and has Fix broken checks. */
-export const CHECKS_API = 93;
+export const CHECKS_API = 94;
 
 const prKey = (url: string) => url.match(/^https?:\/\/(?:www\.)?([^/]+\/[^/]+\/[^/]+)\/pull\/(\d+)/i)?.slice(1).join("#").toLowerCase();
 
@@ -508,8 +510,10 @@ export const tasksApi = {
   waitForLimit: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/wait-for-limit`),
   /** Review the task's work now (API 12). */
   review: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/review`),
+  /** A task whose review still found serious issues after its rounds of fixes gets as many again, starting with those issues (API 93). */
+  extendReview: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/review/extend`),
   summarize: (h: string, id: string) => on(h).post<Task | null>(`/tasks/${enc(id)}/summary`),
-  /** Sends the agent its pull request's failed checks, with the ends of their logs (API 93). */
+  /** Sends the agent its pull request's failed checks, with the ends of their logs (API 94). */
   fixChecks: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/fix_checks`),
   setupWorktree: (h: string, id: string) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/setup`),
   teardownWorktree: (h: string, id: string, b: { force?: boolean; delete_branch?: boolean }) => on(h).post<Task>(`/tasks/${enc(id)}/worktree/teardown`, b),

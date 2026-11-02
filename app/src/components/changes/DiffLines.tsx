@@ -4,7 +4,7 @@
 import clsx from "clsx";
 import { MessageSquare, MessageSquarePlus } from "lucide-react";
 import { createContext, Fragment, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
-import type { DiffLine, FileDiff } from "./changes";
+import type { DiffLine, FileDiff } from "./diffs";
 import { runStyle, useHighlight, type Run } from "./highlight";
 import { dropDraft, isUnder, lineRange, removeComments, saveDraft, setDraftNote, type CommentDraft, type CommentLines, type CommentSource, type LineComment, type Review } from "./lineComments";
 import { Button } from "../ui";

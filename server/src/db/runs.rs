@@ -15,7 +15,7 @@ pub struct Run {
     pub attention: Option<String>,
     pub result_error: Option<String>,
     pub saw_result: bool,
-    /// What the agent has cost so far, as it last reported.
+    /// What the agent has cost in this run so far (see `add_cost`).
     pub cost_usd: f64,
     /// Its last turn has ended, and no message has started another yet.
     #[serde(default)]
@@ -88,6 +88,44 @@ pub fn later_run(c: &Connection, task_id: &str, run_id: &str) -> Result<bool> {
         [task_id, run_id],
         |r| r.get(0),
     )?)
+}
+
+/// Add what run `run_id`'s agent has cost since it last said, from `total`, the `total_cost_usd`
+/// of a Claude Code `result` in `session`, and return that. The total is the session's: a run
+/// that resumes one starts from what its earlier runs cost (Claude Code keeps a session's cost
+/// for it), so what the run adds is the increase over the session's last total, the run's own or
+/// else its task's latest earlier run's in that session. A new session (a review round's, say)
+/// starts from nothing, as does one whose total went down in a result that `counted` the model's
+/// use (it has `modelUsage`): Claude Code started counting again. A lower total in a result that
+/// didn't (Claude Code's own for a turn that failed, with a total of 0) is no count at all, and
+/// charges nothing.
+pub fn add_cost(c: &Connection, run_id: &str, session: Option<&str>, total: f64, counted: bool) -> Result<f64> {
+    let before: Option<f64> = c
+        .query_row(
+            "SELECT o.session_cost FROM runs r JOIN runs o ON o.task_id=r.task_id AND o.rowid <= r.rowid
+             WHERE r.id=?1 AND o.session_cost IS NOT NULL AND (o.session_id=?2 OR (o.id=r.id AND ?2 IS NULL))
+             ORDER BY o.rowid DESC LIMIT 1",
+            params![run_id, session],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let before = match before {
+        Some(b) if b > total && !counted => return Ok(0.0),
+        Some(b) if b <= total => b,
+        _ => 0.0,
+    };
+    let cost = total - before;
+    c.execute(
+        "UPDATE runs SET cost_usd=cost_usd+?1, session_id=COALESCE(?2, session_id), session_cost=?3 WHERE id=?4",
+        params![cost, session, total, run_id],
+    )?;
+    Ok(cost)
+}
+
+/// The Claude Code session run `run_id` is in, from its `init` (see `add_cost`).
+pub fn set_run_session(c: &Connection, run_id: &str, session: &str) -> Result<()> {
+    c.execute("UPDATE runs SET session_id=?1 WHERE id=?2", params![session, run_id])?;
+    Ok(())
 }
 
 /// Whether a run on the task hasn't exited yet.

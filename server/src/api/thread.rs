@@ -81,7 +81,13 @@ pub(super) async fn review_task(State(s): State<Shared>, Path(id): Path<String>)
     Ok(Json(json!(t)))
 }
 
-/// Send the agent its pull request's failed checks, with the ends of their logs (API 93, see
+/// Give a task that ran out of rounds of fixes as many again (API 93, see review::extend).
+pub(super) async fn extend_review(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let t = crate::review::extend(&s, &id)?;
+    Ok(Json(json!(t)))
+}
+
+/// Send the agent its pull request's failed checks, with the ends of their logs (API 94, see
 /// mcp/pr_watch.rs's fix_checks).
 pub(super) async fn fix_checks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(crate::mcp::pr_watch::fix_checks(&s, &id).await?)))
