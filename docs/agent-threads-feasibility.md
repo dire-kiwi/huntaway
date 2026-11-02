@@ -10,9 +10,9 @@ Huntaway is described as of `master` at `716b056` (API 90, run format 2). Both c
 figures for the live board come from a read-only query of its database.
 
 **In one line:** it's feasible, and agent-threads is built for it: it has the same dependencies, the same run
-supervision and the same steering semantics. But Huntaway can't adopt it today. Four things block it: the repository
-is private, the Claude driver can't be configured per thread, several features Huntaway relies on are missing, and
-there's no way to carry over existing threads or runs. Fix the gaps upstream first, then move Huntaway over in stages.
+supervision and the same steering semantics. But Huntaway can't adopt it today. Three things block it: the Claude
+driver can't be configured per thread, several features Huntaway relies on are missing, and there's no way to carry
+over existing threads or runs. (The fourth, that the repository was private, is settled: it's now public under MIT.) Fix the gaps upstream first, then move Huntaway over in stages.
 A wholesale swap now would mean rewriting about 12k lines of server code and 2-3k lines of UI, with two message
 formats in use until every linked host upgrades.
 
@@ -51,10 +51,9 @@ What Huntaway would gain:
 
 These have to be settled before Huntaway can depend on the crate at all.
 
-1. **Visibility and licence.** `dire-kiwi/agent-threads` is private and has no licence. Huntaway is public (MIT), its
-   CI runs on GitHub-hosted runners, and `install.sh` builds from source. A git dependency on a private repository
-   breaks all three. Options: make agent-threads public with a licence (simplest), publish the crates, or vendor the
-   crate into Huntaway (which gives up the one shared implementation).
+1. **Visibility and licence.** *Settled since this was written:* `dire-kiwi/agent-threads` is now public under MIT.
+   It was private with no licence, and Huntaway is public (MIT), its CI runs on GitHub-hosted runners, and
+   `install.sh` builds from source, so a git dependency on a private repository would have broken all three.
 2. **Per-thread launch settings.** Huntaway sets these for each run (`runner.rs:1169-1257`, `runs.rs:83-144`). The
    crate takes them per harness instance or not at all:
    - `CLAUDE_CONFIG_DIR` / `CODEX_HOME` per profile (crate: `config_dir` per harness instance);
@@ -149,14 +148,14 @@ cards. It would add, upstream or through `renderItem`/`tools`:
 
 | | What | Cost | Verdict |
 |---|---|---|---|
-| A. Swap now | Replace the server thread layer and the UI thread in one go | Rewrite about 12k lines of server and 2-3k lines of UI, convert or dual-render old threads, drain runs, keep both formats for linked hosts. Blocked by 1-4 above | No |
+| A. Swap now | Replace the server thread layer and the UI thread in one go | Rewrite about 12k lines of server and 2-3k lines of UI, convert or dual-render old threads, drain runs, keep both formats for linked hosts. Blocked by 2-4 above | No |
 | B. Upstream first, then migrate in stages | Close the gaps in agent-threads with Huntaway as the driving client, then move Huntaway behind a per-task engine switch | The upstream work below, then a staged migration of a similar total size, without a big-bang release | **Recommended**, if one shared implementation matters |
 | C. Share the protocol only | Huntaway keeps its runner but emits agent-threads events (translating its own messages), and the UI moves to the protocol reducer and components | Gives the UI convergence and the normalized model without the run-layer risk, but keeps two driver implementations | A fallback if B stalls |
-| D. Don't adopt | Keep the two codebases separate and port fixes by hand | None now, and they drift from here on | Only if agent-threads stays private |
+| D. Don't adopt | Keep the two codebases separate and port fixes by hand | None now, and they drift from here on | Only if B and C both stall |
 
 ### Upstream work for B (agent-threads tasks)
 
-1. Make the repository public with a licence, or decide to publish the crates.
+1. ~~Make the repository public with a licence, or decide to publish the crates.~~ Done: public under MIT.
 2. Per-thread `args`, `env`, `add_dirs` and harness config (config dir / CODEX_HOME) in `CreateOptions`, kept with the
    thread.
 3. Create a thread from an existing session id, resume at a message (`--resume-session-at`), and Codex
@@ -192,8 +191,7 @@ implementations alive inside Huntaway.
 
 It is feasible, and the fit at the bottom of the stack is unusually good: same dependencies, same shim, same
 steering and stop semantics. So the right next step is option B's upstream list, which also makes agent-threads
-better for its other apps. Decide first whether agent-threads goes public: without that, Huntaway can't depend on
-it at all, and only option C or D are left.
+better for its other apps. agent-threads is now public under MIT, so nothing stops Huntaway depending on it.
 
 ## Not verified
 
