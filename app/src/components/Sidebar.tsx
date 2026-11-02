@@ -29,6 +29,7 @@ import { navigate, openTask, usePanel, type Route } from "../router";
 import { profileNames, taskKey, useStore } from "../store";
 import { ProfileAvatar } from "./Board";
 import { ReminderModal, reminderItems, starItem, useReminderClock } from "./Reminders";
+import { titleItem, TitleModal } from "./TitleModal";
 import { ReloadButton, UpdateButton } from "./Server";
 import { UsagePanel } from "./Usage";
 import { ArchiveProjectModal, NewProjectModal } from "./Settings";
@@ -134,9 +135,10 @@ function MarkedTasks({ route }: { route: Route }) {
   const [collapsed, setCollapsed] = useState(loadCollapsedSections);
   const [menu, setMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
   const [picking, setPicking] = useState<Task | null>(null);
+  const [renaming, setRenaming] = useState<Task | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Its error, menu and dialog stay when the last task leaves the sections (a failed clear, say).
-  if (!starred.length && !reminders.length && !err && !menu && !picking) return null;
+  if (!starred.length && !reminders.length && !err && !menu && !picking && !renaming) return null;
 
   const openId = route.name === "task" || route.name === "subproject" ? route.taskId : panelTask;
   const due = reminders.filter((t) => isDue(t, now)).length;
@@ -210,11 +212,12 @@ function MarkedTasks({ route }: { route: Route }) {
           x={menu.x}
           y={menu.y}
           title={`${taskKey(menu.task, projects)}${menu.task.reminder ? ` · ${menu.task.reminder}` : ""}`}
-          items={[starItem(menu.task, setErr), ...reminderItems(menu.task, () => setPicking(menu.task), setErr, true)]}
+          items={[starItem(menu.task, setErr), ...reminderItems(menu.task, () => setPicking(menu.task), setErr, true), titleItem(() => setRenaming(menu.task), true)]}
           onClose={() => setMenu(null)}
         />
       )}
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
+      {renaming && <TitleModal task={renaming} onClose={() => setRenaming(null)} />}
     </div>
   );
 }

@@ -650,6 +650,84 @@ function TitleEditor({ task, onError }: { task: Task; onError: (err: string | nu
   );
 }
 
+/** The task's title in its details, to rename by hand, and whether it follows the task's messages. */
+function TitleSection({ task }: { task: Task }) {
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState(task.title);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Kept while it's being edited, as in the header's editor.
+  useEffect(() => {
+    if (!editing) setV(task.title);
+  }, [task.title, editing]);
+  const save = () => {
+    const typed = v.trim();
+    if (!typed || busy) return;
+    if (typed === task.title) return setEditing(false);
+    setBusy(true);
+    setErr(null);
+    api
+      .updateTask(task.host_id, task.id, { title: typed })
+      .then(() => setEditing(false))
+      .catch((e) => setErr(`Couldn't rename the task: ${errorText(e)}`))
+      .finally(() => setBusy(false));
+  };
+  const unpin = () => {
+    setErr(null);
+    api.updateTask(task.host_id, task.id, { title_pinned: false }).catch((e) => setErr(`Couldn't unpin the title: ${errorText(e)}`));
+  };
+  return (
+    <Section
+      title="Title"
+      right={
+        !editing && (
+          <button className="text-[11.5px] text-faint hover:text-fg" aria-label="Edit title" onClick={() => (setV(task.title), setErr(null), setEditing(true))}>
+            Edit
+          </button>
+        )
+      }
+    >
+      {editing ? (
+        <div className="space-y-2" data-draft={v !== task.title || undefined}>
+          <Input
+            autoFocus
+            aria-label="Title"
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.preventDefault(), save());
+              if (e.key === "Escape") (e.stopPropagation(), setEditing(false));
+            }}
+          />
+          {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => (setErr(null), setEditing(false))}>
+              Cancel
+            </Button>
+            <Button size="sm" variant="primary" disabled={busy || !v.trim()} onClick={save}>
+              Save
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="text-[13px] break-words text-fg">{task.title}</div>
+          {task.title_pinned && (
+            <div className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-faint">
+              <Pin size={11} className="shrink-0" />
+              <span className="min-w-0 flex-1">Set by hand, so it doesn't follow your messages.</span>
+              <button className="shrink-0 hover:text-fg" onClick={unpin}>
+                Unpin
+              </button>
+            </div>
+          )}
+          {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+        </>
+      )}
+    </Section>
+  );
+}
+
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <section className="border-b border-line px-4 py-4">
@@ -820,11 +898,13 @@ function Details({ task, mode, className }: { task: Task; mode: Mode; className:
         {errs.status && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.status}</div>}
       </Section>
 
+      <TitleSection task={task} />
+
       <Section
         title="Description"
         right={
           !editingDesc && (
-            <button className="text-[11.5px] text-faint hover:text-fg" onClick={editDesc}>
+            <button className="text-[11.5px] text-faint hover:text-fg" aria-label="Edit description" onClick={editDesc}>
               Edit
             </button>
           )

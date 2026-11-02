@@ -26,6 +26,7 @@ import { useConfirmDone } from "./ConfirmDone";
 import { COMPARE_API } from "./Fanout";
 import { openCompare } from "../router";
 import { ReminderModal, reminderItems, starItem } from "./Reminders";
+import { titleItem, TitleModal } from "./TitleModal";
 import { REMINDERS_API } from "../reminders";
 import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
@@ -137,6 +138,7 @@ export function TaskBoard({
   const [dropErr, setDropErr] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; taskId: string; move?: boolean } | null>(null);
   const [picking, setPicking] = useState<Task | null>(null);
+  const [renaming, setRenaming] = useState<Task | null>(null);
   // Asks before a task whose work isn't merged goes into Done.
   const { confirmDone, dialog: doneDialog } = useConfirmDone();
   const [query, setQuery] = useState(() => loadQuery(boardKey));
@@ -790,6 +792,7 @@ export function TaskBoard({
             ...(hostSupports(hostOf(menuTask), REMINDERS_API)
               ? [starItem(menuTask, setDropErr, true), ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr)]
               : []),
+            titleItem(() => setRenaming(menuTask), true),
             ...(menuSiblings > 1 && hostSupports(hostOf(menuTask), COMPARE_API)
               ? [{ label: `Compare all ${menuSiblings} from its prompt`, divider: true, onSelect: () => openCompare(menuTask.id) }]
               : []),
@@ -799,6 +802,7 @@ export function TaskBoard({
         />
       )}
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
+      {renaming && <TitleModal task={renaming} onClose={() => setRenaming(null)} />}
       {doneDialog}
       {newIn && canAdd && ready && (
         <NewTaskModal
