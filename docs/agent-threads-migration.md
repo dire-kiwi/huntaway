@@ -42,6 +42,14 @@ question prompts keep their answers as the board stored them (a list for each qu
 - **API and live updates** (`threads/live.rs`, API 105): a task's thread in windows and pages, its saved events
   after a seq, `respond`/`compact`/`new_session`, and every thread's events on `/api/ws` as `thread_event`s,
   through the hub too. See [agent-threads-api.md](agent-threads-api.md). A staged import is read as saved.
+- **UI** (`app/src/components/task/agentThread/`, `app/src/agentThreads.ts`, HA-150): a task whose `run_engine` is
+  `agent_threads`, on a host from API 105, is drawn with agent-threads' React package (built at the crate's pin and
+  kept in `app/vendor/agent-threads`, see `scripts/vendor-agent-threads.sh`), in Huntaway's colours: its window of
+  100 items, earlier ones as it's scrolled up, and its events from `/api/ws`. Huntaway keeps its composer, its own
+  user messages (attachments, rewind marks), the board's own prompts, questions and events (which an agent-threads
+  run still records as messages) among the thread's rows by time, and a subagent's thread full screen. Thread
+  requests are answered with `respond`. Other tasks, and older hosts, keep the board's own thread. To look at staged
+  imports, set `ia.stagedThreads` to `1` in the browser's localStorage: any task with a thread is then shown with it.
 
 On a scrubbed copy of the live board (2026-11-03, a debug build), all 1,373 tasks converted: 243,246 messages
 (602 MB) gave 226,094 events (536 MB) in about a minute. 224,551 rows converted, 18,689 were redundant (mostly
@@ -69,8 +77,7 @@ For the release notes of the first release with it:
 > can be deleted once you won't go back.
 
 Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
-task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and
-the UI. Attachments are kept as the text that names them, and costs stay in Huntaway's runs.
+task, the cutover gate and `run_engine` marker, and loading an imported thread in a backend and continuing it. Attachments are kept as the text that names them, and costs stay in Huntaway's runs.
 
 ## Three different migrations
 

@@ -51,6 +51,12 @@ UI development with hot reload: run the server, then `npm run dev` in `app/` (Vi
 `/api` to `127.0.0.1:7878`, override with `IA_SERVER`). Use `npm run electron:dev` to load the
 dev server in Electron.
 
+The UI draws agent-threads tasks' threads with [agent-threads](https://github.com/dire-kiwi/agent-threads)'
+React components, which aren't published: they're built and kept in `app/vendor/agent-threads`, from the commit
+`server/Cargo.toml` pins the crate at. To move to another commit, change the pin, run
+`scripts/vendor-agent-threads.sh` (it needs git and pnpm) and `npm install` in `app/`, and commit `app/vendor` with
+the lock file.
+
 Faster Rust builds: install [sccache](https://github.com/mozilla/sccache) (`cargo install sccache
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building

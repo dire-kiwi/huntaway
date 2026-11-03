@@ -1,7 +1,7 @@
 // Tasks' agent-threads threads on the client (API 105, docs/agent-threads-api.md): their events from
 // /api/ws (`thread_event`), handed to the threads shown, and the ThreadSource each one's drawn from.
 // The package's ThreadStore applies the events, and asks the source to catch up when it sees a gap.
-import type { ItemPage, Snapshot, ThreadEvent } from "@dire-kiwi/agent-threads-protocol";
+import type { DeltaEvent, ItemPage, Snapshot, ThreadEvent } from "@dire-kiwi/agent-threads-protocol";
 import type { ThreadSource } from "@dire-kiwi/agent-threads-react";
 import { api, ApiError, hostSupports, AGENT_THREADS_API, type Host, type Task } from "./api";
 
@@ -94,14 +94,42 @@ export async function taskThreadSource(
   let early: ThreadEvent[] = [];
   // The latest seq known to be saved, for catching up after events may have been missed.
   let seq = 0;
-  const take = (e: ThreadEvent) => {
-    if (e.type !== "delta" && e.seq > seq) seq = e.seq;
+  const deliver = (e: ThreadEvent) => {
     if (!listeners.size) {
       early.push(e);
       if (early.length > 5000) early = early.slice(-5000);
       return;
     }
     for (const l of [...listeners]) l(e);
+  };
+  // Streamed text that came since the last frame: deltas that follow on from each other go to the
+  // thread as one, once a frame (as the board's own thread takes its tokens, see deltas.ts), and
+  // before the next saved event, so the order stays as it was.
+  let pending: DeltaEvent | null = null;
+  let frame = false;
+  const flush = () => {
+    frame = false;
+    const p = pending;
+    pending = null;
+    if (p) deliver(p);
+  };
+  const take = (e: ThreadEvent) => {
+    if (e.type === "delta") {
+      if (pending && pending.item_id === e.item_id && pending.kind === e.kind && pending.seq === e.seq && pending.offset + pending.text.length === e.offset)
+        pending = { ...pending, text: pending.text + e.text };
+      else {
+        flush();
+        pending = e;
+      }
+      if (!frame) {
+        frame = true;
+        nextFrame(flush);
+      }
+      return;
+    }
+    flush();
+    if (e.seq > seq) seq = e.seq;
+    deliver(e);
   };
   // Some may have been missed: fetch them from where the latest one heard of is, and hand them over
   // as the socket would have (the store drops those it has, and asks for any gap itself).
@@ -118,7 +146,10 @@ export async function taskThreadSource(
   const f = feed(hostId, taskId);
   f.events.add(take);
   f.missed.add(missed);
-  const close = () => unlisten(hostId, taskId, take, missed);
+  const close = () => {
+    pending = null;
+    unlisten(hostId, taskId, take, missed);
+  };
   let snapshot: Snapshot;
   try {
     snapshot = await loadWindow(limit);
@@ -127,6 +158,7 @@ export async function taskThreadSource(
     throw e;
   }
   if (snapshot.seq > seq) seq = snapshot.seq;
+  flush();
   early = early.filter((e) => e.type === "delta" || e.seq > snapshot.seq);
   return {
     snapshot,
@@ -142,6 +174,9 @@ export async function taskThreadSource(
     close,
   };
 }
+
+const nextFrame: (fn: () => void) => void =
+  typeof requestAnimationFrame === "function" ? (fn) => void requestAnimationFrame(fn) : (fn) => void setTimeout(fn, 16);
 
 /** The thread's saved events after `after`, every page of them. */
 async function fetchEvents(hostId: string, taskId: string, after: number): Promise<ThreadEvent[]> {

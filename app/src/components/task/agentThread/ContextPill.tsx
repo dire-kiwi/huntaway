@@ -13,9 +13,14 @@ export function TaskContextPill({ task }: { task: Task }) {
 }
 
 function ThreadContextPill({ task }: { task: Task }) {
-  const items = useThreadState((s) => s.snapshot.items);
+  // The latest turn's tokens, and when: numbers, so a streamed token doesn't redraw it.
+  const tokens = useThreadState((s) => threadContext(s.snapshot.items, null)?.tokens ?? 0);
+  const at = useThreadState((s) => threadContext(s.snapshot.items, null)?.updated_at ?? "");
   const model = useThreadState((s) => s.snapshot.thread.model);
-  const ctx = useMemo(() => threadContext(items, model ?? null), [items, model]);
+  const ctx = useMemo<ContextSummary | null>(
+    () => (tokens ? { tokens, max_tokens: null, compact_at: null, model: model ?? null, updated_at: at, detail_at: null } : null),
+    [tokens, at, model],
+  );
   const shown = useMemo(() => (ctx ? { ...task, context: ctx } : task), [task, ctx]);
   return <ContextPill task={shown} />;
 }

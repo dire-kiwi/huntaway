@@ -1,7 +1,7 @@
 // An agent-threads task's thread (API 105): its items drawn by agent-threads' React package, with
 // Huntaway's own user messages, the board's prompts and events among them, its composer, and a
 // subagent's own thread shown full screen in its place. Legacy tasks have Thread.tsx's.
-import type { RateLimit, ThreadRequest } from "@dire-kiwi/agent-threads-protocol";
+import type { RateLimit, ThreadRequest, UserMessage } from "@dire-kiwi/agent-threads-protocol";
 import {
   CodeBlock,
   groupRows,
@@ -30,7 +30,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { Message, Task, Turn } from "../../../api";
 import { useStore, useThreadMessages } from "../../../store";
 import { useSubagentView } from "../../../subagents";
-import { boardMessages, lastSentAt, mergeRows, movedOn, parseTime, userMessageIds } from "../../../threadRows";
+import { boardMessages, importedUpTo, lastSentAt, mainUserMessages, mergeRows, movedOn, parseTime, userMessageIds } from "../../../threadRows";
 import { Button, RunningDot, WaitReason, waitTitle } from "../../ui";
 import { RewindDialog } from "../Rewind";
 import { useTurns } from "../turns";
@@ -83,9 +83,11 @@ function ThreadView({ task, empty }: { task: Task; empty?: ReactNode }) {
 
   // The board's messages: its prompts, questions and events go among the thread's rows; its user messages say when the agent was last sent one.
   const messages = useThreadMessages(task.id) ?? NO_MESSAGES;
-  const items = useThreadState((s) => s.snapshot.items);
+  // Picked as what changes them, not the items themselves: those change with every streamed token.
+  const imported = useThreadState((s) => importedUpTo(s.snapshot.items, s.snapshot.requests));
   const requests = useThreadState((s) => s.snapshot.requests);
-  const board = useMemo(() => boardMessages(messages, { items, requests }), [messages, items, requests]);
+  const board = useMemo(() => boardMessages(messages, imported, requests), [messages, imported, requests]);
+  const users = useMainUsers();
   const lastSent = useMemo(() => messages.reduce((n, m) => (m.kind === "user" && m.id > n ? m.id : n), 0), [messages]);
 
   // Where the task can be rewound to (API 70), by the user message each turn started with.
@@ -97,12 +99,12 @@ function ThreadView({ task, empty }: { task: Task; empty?: ReactNode }) {
     const byMessage = new Map<number, Turn>();
     for (const t of list) if (t.message_id !== null && !byMessage.has(t.message_id)) byMessage.set(t.message_id, t);
     const out = new Map<string, Turn>();
-    for (const [item, id] of userMessageIds(items, messages)) {
+    for (const [item, id] of userMessageIds(users, messages)) {
       const t = byMessage.get(id);
       if (t) out.set(item, t);
     }
     return out;
-  }, [turns.data, items, messages]);
+  }, [turns.data, users, messages]);
   const rows = useMemo<TaskRows>(
     () => ({ hostId: task.host_id, taskId: task.id, turns: byItem, rewind: setRewinding, lastSent }),
     [task.host_id, task.id, byItem, lastSent],
@@ -183,11 +185,13 @@ function ThreadView({ task, empty }: { task: Task; empty?: ReactNode }) {
   const boardLoading = useStore((s) => s.threads[task.id]?.loading ?? false);
   const loadOlderMessages = useStore((s) => s.loadOlderMessages);
   const boardOldest = parseTime(messages[0]?.created_at);
+  const boardFirstId = messages[0]?.id ?? 0;
   useEffect(() => {
-    if (!boardMore || boardLoading || boardOldest === null) return;
+    // Not those an import has in the thread: the board's messages up to its last are all there.
+    if (!boardMore || boardLoading || boardOldest === null || (imported > 0 && boardFirstId <= imported)) return;
     // All of the thread is in, or the first of it is from before the board's first.
     if (threadFirst === null ? !more : threadFirst < boardOldest || !more) loadOlderMessages(task.id).catch(() => {});
-  }, [boardMore, boardLoading, boardOldest, threadFirst, more, loadOlderMessages, task.id]);
+  }, [boardMore, boardLoading, boardOldest, boardFirstId, imported, threadFirst, more, loadOlderMessages, task.id]);
 
   // Escape goes back from a subagent's thread (before the task panel takes it to close).
   const parentOfViewed = viewed?.parent ?? null;
@@ -241,6 +245,12 @@ function ThreadView({ task, empty }: { task: Task; empty?: ReactNode }) {
       )}
     </TaskRowsCtx.Provider>
   );
+}
+
+/** The main thread's user messages: the same list while they're the same, so what's worked out from them isn't again for each streamed token. */
+function useMainUsers() {
+  const prev = useRef<readonly UserMessage[]>(undefined);
+  return useThreadState((s) => (prev.current = mainUserMessages(s.snapshot.items, prev.current)));
 }
 
 /** When the first item loaded with a time was made. */
@@ -301,8 +311,7 @@ const ThreadList = memo(function ThreadList({ parentId, board }: { parentId: str
  */
 const OpenRequests = memo(function OpenRequests({ parentId }: { parentId?: string }) {
   const requests = useThreadState((s) => s.snapshot.requests);
-  const items = useThreadState((s) => s.snapshot.items);
-  const sentAt = useMemo(() => lastSentAt(items), [items]);
+  const sentAt = useThreadState((s) => lastSentAt(s.snapshot.items));
   const shown = requests.filter((r) => !r.resolution && (parentId === undefined || (r.parent_id ?? "") === parentId));
   if (!shown.length) return null;
   return (
@@ -359,9 +368,15 @@ function resetText(at: string): string {
   return today ? `at ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : `on ${d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
 }
 
-/** Whether the agent's working (or waiting on something), from the board's task. */
+/** Whether the agent's working (or waiting on something), from the board's task; or, once it's stopped, what went wrong with the thread, if something did. */
 function Working({ task }: { task: Task }) {
-  if (!task.running) return null;
+  const error = useThreadState((s) => (s.snapshot.thread.status === "error" ? (s.snapshot.thread.error ?? null) : null));
+  if (!task.running)
+    return error ? (
+      <div className="flex items-center gap-1.5 text-[12.5px] text-red-400">
+        <CircleAlert size={12} className="shrink-0" /> {error}
+      </div>
+    ) : null;
   const wait = task.agent_wait;
   return (
     <div className="flex items-center gap-2 text-[12.5px] text-muted">

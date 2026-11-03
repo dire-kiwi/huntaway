@@ -16,7 +16,7 @@ globalThis.localStorage = { getItem: (k) => stored.get(k) ?? null, setItem: (k, 
 const { handleEvent, useStore } = await import("../src/store.ts");
 const { api, ApiError } = await import("../src/api/index.ts");
 const { noThread, taskThreadSource, threadEngine } = await import("../src/agentThreads.ts");
-const { boardMessages, lastSentAt, mergeRows, movedOn, parseTime, userMessageIds } = await import("../src/threadRows.ts");
+const { boardMessages, importedUpTo, lastSentAt, mainUserMessages, mergeRows, movedOn, parseTime, userMessageIds } = await import("../src/threadRows.ts");
 
 const at = (n) => new Date(Date.UTC(2026, 10, 1, 10, 0, 0) + n * 60_000).toISOString();
 const sqlite = (n) => at(n).replace("T", " ").replace(/\.\d+Z$/, "");
@@ -70,6 +70,30 @@ test("a thread's source has the events that came while its window loaded, from /
   assert.equal(got.length, 3, "a closed source hears nothing");
 });
 
+test("a thread's streamed text comes once a frame, joined, and before the next saved event", async () => {
+  useStore.setState({ localHostId: "h", tasks: {} });
+  const source = await taskThreadSource("h", "task1", async () => snapshot(5), 100);
+  const got = [];
+  source.subscribe((e) => got.push(e));
+  const delta = (offset, text, item_id = "a", seq = 5) => ({ type: "delta", thread_id: "t", seq, item_id, kind: "text", offset, text });
+  const send = (event) => handleEvent({ type: "thread_event", task_id: "task1", event });
+  send(delta(0, "Hel"));
+  send(delta(3, "lo "));
+  send(delta(6, "there"));
+  assert.equal(got.length, 0, "none until the frame");
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(got.map((e) => [e.type, e.offset, e.text]), [["delta", 0, "Hello there"]]);
+  // Another item's, a gap in the text, and a saved event: each goes as it was, in order.
+  send(delta(11, "!"));
+  send(delta(0, "Thinking", "b"));
+  send(delta(20, "later"));
+  send(ev(6));
+  assert.deepEqual(got.slice(1).map((e) => (e.type === "delta" ? `${e.item_id}@${e.offset}:${e.text}` : `${e.type}@${e.seq}`)), ["a@11:!", "b@0:Thinking", "a@20:later", "item.updated@6"]);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(got.length, 5);
+  source.close();
+});
+
 test("a thread catches up from its latest seq when events may have been missed", async () => {
   useStore.setState({ localHostId: "h", tasks: {} });
   const asked = [];
@@ -121,9 +145,10 @@ test("the board's prompts, questions and events are drawn, unless an import has 
   ];
   // An import up to message 3 (its user message is legacy:1, its event legacy:2), and a request with a prompt's id.
   const snap = { items: [item("legacy:1", 0, "user_message"), item("legacy:2", 1, "notice"), item("x", 3)], requests: [{ id: "r-in-thread", type: "permission" }, { id: "legacy:3", type: "permission" }] };
-  assert.deepEqual(boardMessages(messages, snap).map((m) => m.id), [5, 7]);
-  assert.deepEqual(boardMessages(messages, { items: [], requests: [] }).map((m) => m.id), [2, 3, 5, 6, 7]);
-  assert.deepEqual(boardMessages(undefined, snap), []);
+  assert.equal(importedUpTo(snap.items, snap.requests), 3);
+  assert.deepEqual(boardMessages(messages, 3, snap.requests).map((m) => m.id), [5, 7]);
+  assert.deepEqual(boardMessages(messages, importedUpTo([], []), []).map((m) => m.id), [2, 3, 5, 6, 7]);
+  assert.deepEqual(boardMessages(undefined, 3, snap.requests), []);
 });
 
 const ids = (merged) => merged.map((r) => (r.kind === "row" ? (r.row.type === "tool_group" ? `g:${r.row.key}` : r.row.id) : `b${r.message.id}`));
@@ -154,6 +179,11 @@ test("the thread's user messages are matched to the board's, for rewinding to be
     { id: "u3", type: "user_message", text: "Fix it ", created_at: at(4) },
   ];
   const msgs = [board(4, "user", 0, { text: "legacy" }), board(10, "user", 1, { text: "Fix it" }), board(11, "event", 2), board(12, "user", 4, { text: "Fix it" })];
+  // The main thread's user messages, the same list while they're the same items.
+  const users = mainUserMessages(items);
+  assert.deepEqual(users.map((u) => u.id), ["legacy:4", "u1", "u2", "u3"]);
+  assert.equal(mainUserMessages([...items, item("a", 9)], users), users, "another item leaves the list as it was");
+  assert.notEqual(mainUserMessages(items.slice(1), users), users);
   assert.deepEqual([...userMessageIds(items, msgs)], [
     ["legacy:4", 4],
     ["u1", 10],

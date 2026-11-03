@@ -16,6 +16,10 @@
 // the folder's diffs, the next seconds (highlighting, which comes from a worker), going into the file, moving
 // the cursor through its lines, scrolling it, and switching it to the split layout and back.
 //
+// With --agent-threads the task is shown with agent-threads' components (HA-150), from its thread (give it one: a
+// task on agent-threads, or one staged with `huntaway threads-import --stage`, which it sets ia.stagedThreads to look
+// at), and the same load is fed as thread events: deltas into a new reply and its final text, and new items.
+//
 // Numbers vary from run to run and machine to machine: compare runs on the same machine, before and after.
 import { open, readEnv } from "./ui-check.mjs";
 
@@ -24,6 +28,7 @@ function args(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--cpu") o.cpu = true;
+    else if (a === "--agent-threads") o.agentThreads = true;
     else if (a === "--changes") o.changes = true;
     else if (["--env", "--task", "--chromium"].includes(a)) o[a.slice(2)] = argv[++i];
     else throw new Error(`unknown argument ${a} (see the top of ${import.meta.url})`);
@@ -39,6 +44,14 @@ const res = await fetch(`${env.url}/api/tasks/${o.task}`, { headers: { Authoriza
 if (!res.ok) throw new Error(`GET /api/tasks/${o.task}: ${res.status}`);
 const task = (await res.json()).task;
 if (!task.project_id) throw new Error("pick a task in a project");
+// The thread's id and latest seq, for the thread events made up here to follow on from.
+let thread = null;
+if (o.agentThreads) {
+  const r = await fetch(`${env.url}/api/tasks/${o.task}/thread?limit=1`, { headers: { Authorization: `Bearer ${env.token}` } });
+  if (!r.ok) throw new Error(`GET /api/tasks/${o.task}/thread: ${r.status} (stage the task's thread first)`);
+  const snap = await r.json();
+  thread = { id: snap.thread.id, seq: snap.seq, n: 0 };
+}
 
 const ui = await open({ url: env.url, token: env.token, timeout: 60000, log: () => {}, ...(o.chromium && { chromium: o.chromium }) });
 const page = ui.page;
@@ -48,6 +61,12 @@ await page.routeWebSocket(/\/api\/ws/, (ws) => {
   ws.connectToServer();
 });
 const send = (ev) => socket.send(JSON.stringify(ev));
+if (o.agentThreads) await page.addInitScript(() => localStorage.setItem("ia.stagedThreads", "1"));
+/** A thread event for the task's thread, with the next seq (a delta's is the latest). */
+const threadEvent = (event) => {
+  const seq = event.type === "delta" ? thread.seq : ++thread.seq;
+  send({ type: "thread_event", task_id: task.id, event: { thread_id: thread.id, seq, ...event } });
+};
 const cdp = await page.context().newCDPSession(page);
 await cdp.send("Performance.enable");
 if (o.cpu) {
@@ -96,6 +115,18 @@ const togglePanel = (id) =>
     dispatchEvent(new PopStateEvent("popstate"));
   }, id);
 const deltas = async (n, word = (i) => `word${i} `, ms = 20) => {
+  if (o.agentThreads) {
+    const id = `ui-profile-${++thread.n}`;
+    threadEvent({ type: "item.added", item: { id, type: "assistant_message", text: "", created_at: new Date().toISOString() } });
+    let text = "";
+    for (let i = 0; i < n; i++) {
+      threadEvent({ type: "delta", item_id: id, kind: "text", offset: text.length, text: word(i) });
+      text += word(i);
+      await sleep(ms);
+    }
+    threadEvent({ type: "item.updated", item_id: id, patch: { text } });
+    return;
+  }
   for (let i = 0; i < n; i++) {
     send({ type: "delta", task_id: task.id, text: word(i) });
     await sleep(ms);
@@ -156,7 +187,7 @@ await measure("load the board", async () => {
 });
 await measure("open the task", async () => {
   await togglePanel(task.id);
-  await page.locator(".prose-chat, :text('No agent has worked on this yet')").first().waitFor();
+  await page.locator(o.agentThreads ? ".ha-thread .ha-rows" : ".prose-chat, :text('No agent has worked on this yet')").first().waitFor();
 });
 await measure("300 streamed tokens, task open", () => deltas(300));
 await measure("a 1000-token markdown reply, task open", () => deltas(1000, markdownWord, 10));
@@ -164,6 +195,11 @@ await measure("100 task events, task open", () => taskEvents(100));
 await measure("50 new messages, task open", async () => {
   for (let i = 0; i < 50; i++) {
     const text = `Message ${i}: some **markdown** with \`code\`.`;
+    if (o.agentThreads) {
+      threadEvent({ type: "item.added", item: { id: `ui-profile-m${i}`, type: "assistant_message", text, created_at: new Date().toISOString() } });
+      await sleep(50);
+      continue;
+    }
     send({ type: "message", task_id: task.id, message: { id: 2 ** 40 + i, task_id: task.id, kind: "claude", created_at: new Date().toISOString(),
       data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } } } });
     await sleep(50);
