@@ -35,6 +35,9 @@ const OWNERS_TTL: Duration = Duration::from_secs(300);
 /// How long a clone may take.
 const CLONE_TIMEOUT: Duration = Duration::from_secs(3600);
 
+/// How long creating a repository and pushing a folder's commits to it may take.
+const CREATE_TIMEOUT: Duration = Duration::from_secs(900);
+
 /// The repositories `account` (gh's active one when None) can clone, for picking one:
 /// `{account, repos: [{full_name, name, description, private, fork, archived, pushed_at, url}],
 /// error}`, where `account` is who gh acts as. Without `query`, the ones it owns, collaborates on
@@ -197,7 +200,7 @@ async fn run_in_group(mut cmd: tokio::process::Command, limit: Duration) -> Resu
         Err(_) => {
             drop(group);
             let _ = child.wait().await;
-            Err(format!("it was still cloning after {} minutes, so it was stopped", limit.as_secs() / 60))
+            Err(format!("it was still running after {} minutes, so it was stopped", limit.as_secs() / 60))
         }
     }
 }
@@ -305,6 +308,153 @@ pub async fn clone(gh: &str, account: Option<&str>, repo: &str, dest: &Path) -> 
         remove_clone(dest, existed);
     }
     Err(format!("couldn't clone {repo}: {failed}"))
+}
+
+/// What `create` made.
+#[derive(Debug, PartialEq)]
+pub struct Created {
+    /// `OWNER/REPO`.
+    pub full_name: String,
+    /// Whether the folder's commits were pushed to it (a folder without commits has none to push).
+    pub pushed: bool,
+    /// Why they weren't, when the repository was made but the push failed.
+    pub push_error: Option<String>,
+}
+
+/// A repository name on GitHub: letters, digits, `-`, `_` and `.`, up to 100 of them.
+pub fn check_name(s: &str) -> Option<String> {
+    let s = s.trim();
+    let ok = !s.is_empty() && s.len() <= 100 && s != "." && s != ".." && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    ok.then(|| s.to_string())
+}
+
+/// Creates the GitHub repository `name` (under `owner`, the account's own login by default) as
+/// `account` (gh's active one when None) with `gh repo create`, `private` or public, from the
+/// folder `dir`: it becomes the repository's `origin`, and the folder's commits are pushed. A
+/// folder that isn't a git repository yet is made one (`git init`), and a new folder is made. A
+/// failure leaves the folder as it was. Hold the folder meanwhile (`reserve`).
+pub async fn create(gh: &str, account: Option<&str>, dir: &Path, owner: Option<&str>, name: &str, private: bool) -> Result<Created, String> {
+    let parsed = account.and_then(gh_mcp::Account::parse);
+    let host = parsed.as_ref().map_or_else(|| "github.com".to_string(), |a| a.host.clone());
+    let owner = owner.map(str::trim).filter(|o| !o.is_empty()).map(str::to_string).or_else(|| parsed.as_ref().map(|a| a.login.clone()));
+    if let Some(owner) = &owner
+        && check_repo(&format!("{owner}/{name}")).is_none()
+    {
+        return Err(format!("{owner}/{name} isn't a GitHub repository name"));
+    }
+    // The folder the path names, however it's written (`..`, symlinks), before anything's made or checked,
+    // so what's rolled back is what this call made and nothing that was there.
+    let resolved = folder(dir);
+    let dir = resolved.as_path();
+    // The folders this call makes, the destination first and then the ones above it that weren't there. A failure takes the
+    // destination away (all of it is this call's) and the others only while they're empty: another request can be making a
+    // folder next to this one, in the same new folder.
+    let created: Vec<PathBuf> = dir.ancestors().take_while(|a| std::fs::symlink_metadata(a).is_err()).map(Path::to_path_buf).collect();
+    let undo = |inited: bool| {
+        if let Some((dest, above)) = created.split_first() {
+            let _ = std::fs::remove_dir_all(dest);
+            for folder in above {
+                if std::fs::remove_dir(folder).is_err() {
+                    break;
+                }
+            }
+        } else if inited {
+            let _ = std::fs::remove_dir_all(dir.join(".git"));
+        }
+    };
+    if !created.is_empty()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        undo(false);
+        return Err(format!("couldn't create {}: {e}", dir.display()));
+    }
+    let probe = match worktree::git(dir, &["rev-parse", "--show-toplevel"]).await {
+        Ok(o) => o,
+        Err(e) => {
+            undo(false);
+            return Err(format!("{e:#}"));
+        }
+    };
+    let top = probe.ok.then(|| std::fs::canonicalize(probe.stdout.trim()).ok()).flatten();
+    // Git metadata that's there but that git won't open (another owner's, damaged) isn't initialized over,
+    // and isn't ours to take away if the repository can't be created.
+    if top.is_none() && std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+        undo(false);
+        return Err(format!("{} has a .git that git can't use, so no repository was created: {}", dir.display(), probe.stderr.trim()));
+    }
+    let inited = top.is_none();
+    if let Some(top) = &top {
+        if Some(top) != std::fs::canonicalize(dir).ok().as_ref() {
+            undo(false);
+            return Err(format!("{} is inside the repository {}: pick its top folder", dir.display(), top.display()));
+        }
+        if matches!(worktree::git(dir, &["remote", "get-url", "origin"]).await, Ok(o) if o.ok) {
+            undo(false);
+            return Err(format!("{} already has a remote called origin", dir.display()));
+        }
+    } else {
+        match worktree::git(dir, &["init", "-q"]).await {
+            Ok(o) if o.ok => {}
+            Ok(o) => {
+                undo(false);
+                return Err(format!("git init failed: {}", o.stderr.trim()));
+            }
+            Err(e) => {
+                undo(false);
+                return Err(format!("{e:#}"));
+            }
+        }
+    }
+    let env = match gh_mcp::account_env(account).await {
+        Ok(env) => env,
+        Err(e) => {
+            undo(inited);
+            return Err(format!("{e:#}"));
+        }
+    };
+    let has_commits = matches!(worktree::git(dir, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).await, Ok(o) if o.ok);
+    let mut target = owner.as_ref().map_or_else(|| name.to_string(), |o| format!("{o}/{name}"));
+    if host != "github.com" {
+        target = format!("{host}/{target}");
+    }
+    let mut cmd = tokio::process::Command::new(gh);
+    cmd.args(["repo", "create", &target, if private { "--private" } else { "--public" }, "--source"])
+        .arg(dir)
+        .args(["--remote", "origin"])
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .current_dir(dir)
+        .stdin(Stdio::null());
+    if has_commits {
+        cmd.arg("--push");
+    }
+    if let Some(env) = &env {
+        env.apply(&mut cmd);
+    }
+    let (stdout, failed) = match run_in_group(cmd, CREATE_TIMEOUT).await {
+        Ok(out) if out.status.success() => (String::from_utf8_lossy(&out.stdout).to_string(), None),
+        Ok(out) => (String::new(), Some(gh_error(&out.stderr))),
+        Err(e) => (String::new(), Some(e)),
+    };
+    // gh makes the repository and adds the remote before it pushes, so a push that fails leaves both.
+    let remote = worktree::git(dir, &["remote", "get-url", "origin"]).await.ok().filter(|o| o.ok).map(|o| o.stdout.trim().to_string());
+    let from_remote = remote.as_deref().and_then(worktree::remote_repo).map(|(_, r)| r);
+    let printed = stdout.lines().rev().find_map(|l| worktree::remote_repo(l.trim()).map(|(_, r)| r));
+    let full_name = match (&failed, printed.or(from_remote).or_else(|| owner.as_ref().map(|o| format!("{o}/{name}")))) {
+        (None, Some(full_name)) => full_name,
+        (Some(_), Some(full_name)) if remote.is_some() => full_name,
+        (failed, _) => {
+            undo(inited);
+            return Err(format!("couldn't create {target}: {}", failed.clone().unwrap_or_else(|| "gh didn't say what it made".into())));
+        }
+    };
+    // The account's own gh config (see GhEnv) adds an HTTPS remote, so SSH is asked for by URL when
+    // that's what gh is set up to use.
+    if env.is_some() && git_protocol(&host).await.as_deref() == Some("ssh") {
+        let _ = worktree::git(dir, &["remote", "set-url", "origin", &format!("git@{host}:{full_name}.git")]).await;
+    }
+    Ok(Created { full_name, pushed: has_commits && failed.is_none(), push_error: failed.map(|e| format!("couldn't push to {target}: {e}")) })
 }
 
 /// Whether the clone in `dir` is checked out whole: HEAD is a commit, and the index and working
@@ -434,6 +584,180 @@ esac
             assert!(clone("/nonexistent/gh", None, "o/r", &dest("no-gh")).await.unwrap_err().contains("isn't installed"));
             std::fs::remove_dir_all(&github).unwrap();
         });
+    }
+
+    /// A folder (for the caller to remove) with a fake `gh repo create TARGET --private|--public
+    /// --source DIR --remote origin [--push]`, as gh does it: it logs its arguments to `create.log`,
+    /// makes the bare repository `bare/NAME.git`, adds a GitHub URL as `origin` to DIR, prints that
+    /// URL and, with `--push`, pushes HEAD to it. `fails` can't be created (`slow-fails` after a second) and `push-fails` is made
+    /// but can't be pushed to.
+    pub(crate) fn fake_gh_create() -> PathBuf {
+        let dir = crate::testing::temp_dir();
+        let gh = format!(
+            r#"#!/bin/sh
+[ "$1 $2" = "repo create" ] || exit 99
+echo "$*" >> "{base}/create.log"
+target=$3 src= push=
+shift 3
+while [ $# -gt 0 ]; do
+  case $1 in
+    --source) src=$2; shift ;;
+    --push) push=1 ;;
+  esac
+  shift
+done
+name=${{target##*/}}
+case $target in */*) owner=${{target%/*}} ;; *) owner=me ;; esac
+[ "$name" = slow-fails ] && {{ sleep 1; echo "GraphQL: Name already exists on this account (createRepository)" >&2; exit 1; }}
+[ "$name" = fails ] && {{ echo "GraphQL: Name already exists on this account (createRepository)" >&2; exit 1; }}
+git init -q --bare "{base}/bare/$name.git"
+cd "$src" || exit 1
+git remote add origin "https://github.com/$owner/$name.git"
+echo "https://github.com/$owner/$name"
+if [ -n "$push" ]; then
+  [ "$name" = push-fails ] && {{ echo "remote: Permission denied" >&2; exit 1; }}
+  git -c "url.{base}/bare/$name.git.insteadOf=https://github.com/$owner/$name.git" push -q -u origin HEAD || exit 1
+fi
+"#,
+            base = path_str(&dir)
+        );
+        std::fs::write(dir.join("gh"), gh).unwrap();
+        std::fs::set_permissions(dir.join("gh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn creates_a_repository_for_a_folder() {
+        crate::testing::run(async || {
+            let fake = fake_gh_create();
+            let gh = path_str(&fake.join("gh"));
+            let log = || std::fs::read_to_string(fake.join("create.log")).unwrap_or_default();
+            let git = |dir: &Path, args: &[&str]| {
+                let ok = std::process::Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t"]).arg("-C").arg(dir).args(args).status().unwrap().success();
+                assert!(ok, "git {args:?}");
+            };
+
+            // A folder that isn't there: made a git repository, with the repository private and no push (nothing to push).
+            let new = fake.join("projects/new");
+            let made = create(&gh, None, &new, Some("o"), "new", true).await.unwrap();
+            assert_eq!(made, Created { full_name: "o/new".into(), pushed: false, push_error: None });
+            assert!(new.join(".git").exists());
+            assert!(log().contains("repo create o/new --private --source"), "{}", log());
+            assert!(!log().contains("--push"));
+            assert_eq!(worktree::git(&new, &["remote", "get-url", "origin"]).await.unwrap().stdout.trim(), "https://github.com/o/new.git");
+
+            // A repository with commits is pushed, and a public one says so. Without an owner gh picks it.
+            let old = fake.join("old");
+            std::fs::create_dir_all(&old).unwrap();
+            git(&old, &["init", "-q"]);
+            std::fs::write(old.join("f"), "x").unwrap();
+            git(&old, &["add", "-A"]);
+            git(&old, &["commit", "-qm", "init"]);
+            let made = create(&gh, None, &old, None, "old", false).await.unwrap();
+            assert_eq!(made, Created { full_name: "me/old".into(), pushed: true, push_error: None });
+            assert!(log().contains("repo create old --public --source"), "{}", log());
+            assert!(log().contains("--push"));
+            let pushed = worktree::git(&fake.join("bare/old.git"), &["rev-list", "--all", "--count"]).await.unwrap();
+            assert_eq!(pushed.stdout.trim(), "1");
+
+            // A push that fails leaves the repository and the remote, and says so.
+            let pf = fake.join("pf");
+            std::fs::create_dir_all(&pf).unwrap();
+            git(&pf, &["init", "-q"]);
+            git(&pf, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            let made = create(&gh, None, &pf, Some("o"), "push-fails", true).await.unwrap();
+            assert!(!made.pushed && made.push_error.unwrap().contains("Permission denied"));
+            assert_eq!(made.full_name, "o/push-fails");
+
+            // A repository gh can't create leaves the folder as it was: a new folder is taken away, and a folder that wasn't a repository isn't one.
+            let gone = fake.join("gone/fails");
+            let err = create(&gh, None, &gone, Some("o"), "fails", true).await.unwrap_err();
+            assert!(err.contains("Name already exists"), "{err}");
+            assert!(!gone.exists());
+            let plain = fake.join("plain");
+            std::fs::create_dir_all(&plain).unwrap();
+            std::fs::write(plain.join("f"), "x").unwrap();
+            assert!(create(&gh, None, &plain, Some("o"), "fails", true).await.is_err());
+            assert!(!plain.join(".git").exists() && plain.join("f").exists());
+
+            // A failure takes away only what this call made. A path that goes through a folder that isn't there
+            // and back out (`missing/../valuable`) names the folder that is, with what's in it.
+            let valuable = fake.join("valuable");
+            std::fs::create_dir_all(&valuable).unwrap();
+            std::fs::write(valuable.join("mine.txt"), "keep").unwrap();
+            let err = create(&gh, None, &fake.join("missing/../valuable"), Some("o"), "fails", true).await.unwrap_err();
+            assert!(err.contains("Name already exists"), "{err}");
+            assert_eq!(std::fs::read_to_string(valuable.join("mine.txt")).unwrap(), "keep");
+            assert!(!valuable.join(".git").exists() && !fake.join("missing").exists());
+            // Nor are the folders above a new one that were there.
+            let err = create(&gh, None, &fake.join("valuable/a/b"), Some("o"), "fails", true).await.unwrap_err();
+            assert!(err.contains("Name already exists"), "{err}");
+            assert!(!valuable.join("a").exists() && valuable.join("mine.txt").exists());
+
+            // Another request making a folder in the same new folder keeps it when this one fails: only what this made goes.
+            let shared = fake.join("shared/new");
+            let (a, b) = (shared.join("a"), shared.join("b"));
+            let (failed, other) = tokio::join!(create(&gh, None, &a, Some("o"), "slow-fails", true), async {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                let made = create(&gh, None, &b, Some("o"), "b", true).await;
+                std::fs::write(b.join("valuable.txt"), "keep").unwrap();
+                made
+            });
+            assert!(failed.unwrap_err().contains("Name already exists"));
+            assert!(other.is_ok());
+            assert!(shared.join("b/.git").exists() && shared.join("b/valuable.txt").exists());
+            assert!(!shared.join("a").exists());
+
+            // Git metadata git won't open (here a repository without its HEAD, as another owner's or a damaged one is) is neither
+            // initialized over nor taken away, whether or not gh would have created the repository.
+            let broken = fake.join("broken");
+            std::fs::create_dir_all(&broken).unwrap();
+            git(&broken, &["init", "-q"]);
+            git(&broken, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            std::fs::rename(broken.join(".git/HEAD"), broken.join(".git/HEAD.saved")).unwrap();
+            let objects = || {
+                let mut dirs: Vec<_> = std::fs::read_dir(broken.join(".git/objects")).unwrap().map(|e| e.unwrap().file_name()).filter(|n| n.len() == 2).collect();
+                dirs.sort();
+                dirs
+            };
+            let objects_before = objects();
+            assert!(!objects_before.is_empty());
+            let before = log();
+            for name in ["fails", "fine"] {
+                let err = create(&gh, None, &broken, Some("o"), name, true).await.unwrap_err();
+                assert!(err.contains("has a .git that git can't use"), "{err}");
+                assert!(broken.join(".git/HEAD.saved").exists() && !broken.join(".git/HEAD").exists(), "{name}");
+                assert_eq!(objects(), objects_before, "{name}");
+            }
+            assert_eq!(log(), before);
+
+            // A folder that isn't there inside a repository isn't left behind when it's turned down.
+            let err = create(&gh, None, &old.join("not/yet"), None, "yet", true).await.unwrap_err();
+            assert!(err.contains("is inside the repository"), "{err}");
+            assert!(!old.join("not").exists());
+
+            // Refused before gh runs: an origin already there, a folder inside a repository, a bad name.
+            let before = log();
+            let err = create(&gh, None, &old, None, "again", true).await.unwrap_err();
+            assert!(err.contains("already has a remote called origin"), "{err}");
+            std::fs::create_dir_all(old.join("sub")).unwrap();
+            let err = create(&gh, None, &old.join("sub"), None, "sub", true).await.unwrap_err();
+            assert!(err.contains("is inside the repository"), "{err}");
+            assert!(create(&gh, None, &fake.join("bad"), Some("-o"), "bad", true).await.is_err());
+            assert!(!fake.join("bad").exists());
+            assert_eq!(log(), before);
+            assert!(create("/nonexistent/gh", None, &fake.join("no-gh"), None, "x", true).await.unwrap_err().contains("isn't installed"));
+            assert!(!fake.join("no-gh").exists());
+            std::fs::remove_dir_all(&fake).unwrap();
+        });
+    }
+
+    #[test]
+    fn repository_names_are_letters_digits_and_a_few_marks() {
+        assert_eq!(check_name(" my-repo_1.x "), Some("my-repo_1.x".into()));
+        for bad in ["", ".", "..", "a b", "a/b", "é", &"a".repeat(101)] {
+            assert_eq!(check_name(bad), None, "{bad}");
+        }
     }
 
     #[test]

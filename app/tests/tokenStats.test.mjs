@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { byDay, byImplementer, byReviewer, byTask, groupBy, purposeOf, reviewsByTask, summarise, ticks, tokens, total } from "../src/tokenStats.ts";
+import { byDay, byImplementer, byReviewer, byTask, groupBy, issuesByModelAndEffort, purposeOf, reviewsByTask, summarise, ticks, tokens, total } from "../src/tokenStats.ts";
 
 const row = (threadId, at, model, output, extra = {}) => ({
   at,
@@ -20,7 +20,7 @@ const row = (threadId, at, model, output, extra = {}) => ({
   ...extra,
 });
 const thread = (kind, extra = {}) => ({ parentId: null, taskType: null, subproject: false, groupName: null, model: null, kind, ...extra });
-const review = (taskId, threadId, at, verdict, extra = {}) => ({ at, taskId, threadId, verdict, serious: verdict === "issues" ? 1 : 0, minor: null, minorNoted: false, reviewer: "Claude · opus", model: "opus", ...extra });
+const review = (taskId, threadId, at, verdict, extra = {}) => ({ at, taskId, threadId, verdict, serious: verdict === "issues" ? 1 : 0, minor: null, minorNoted: false, reviewer: "Claude · opus", model: "opus", effort: null, taskModel: null, ...extra });
 
 // A subproject S with task C, which has a review thread and a summary thread; and task T on its own.
 const data = (extra = {}) => ({
@@ -203,6 +203,41 @@ test("a first round before the range still counts as the task's first", () => {
   });
   const s = summarise(d.reviews, reviewsByTask(d));
   assert.deepEqual([s.reviews, s.tasks, s.firstPassed, s.roundsWithIssues], [1, 1, 0, 1]);
+});
+
+test("serious issues are counted by the model that did the work and its effort, and across either", () => {
+  const d = data();
+  const at = (taskId, effort, serious, extra = {}) => review(taskId, "R", 1, serious ? "issues" : "pass", { serious, effort, ...extra });
+  const r = issuesByModelAndEffort(d, [
+    at("C", "high", 2, { taskModel: "sonnet" }),
+    at("C", "high", 1, { taskModel: "sonnet" }),
+    at("C", "low", 0, { taskModel: "sonnet" }),
+    // The same task after its model changed.
+    at("C", "high", 4, { taskModel: "opus" }),
+    at("T", "xhigh", 3, { taskModel: "opus" }),
+    // No model of its own: its task's most used. No effort: the agent's default.
+    at("T", null, 1),
+    at("C", "max", 0, { taskModel: "opus" }),
+  ]);
+  assert.deepEqual(r.efforts, ["low", "high", "xhigh", "max", "default"]);
+  assert.deepEqual(
+    r.models.map((m) => [m.model, m.all.serious, m.all.reviews, m.all.tasks]),
+    [
+      ["opus", 7, 3, 2],
+      ["sonnet", 3, 3, 1],
+      ["gpt", 1, 1, 1],
+    ],
+  );
+  const sonnet = r.models.find((m) => m.model === "sonnet");
+  assert.deepEqual(sonnet.byEffort, {
+    low: { tasks: 1, reviews: 1, withIssues: 0, serious: 0 },
+    high: { tasks: 1, reviews: 2, withIssues: 2, serious: 3 },
+  });
+  // Any effort, across the models.
+  assert.deepEqual(r.total.byEffort.high, { tasks: 1, reviews: 3, withIssues: 3, serious: 7 });
+  assert.equal(r.total.byEffort.default.serious, 1);
+  assert.deepEqual(r.total.all, { tasks: 2, reviews: 7, withIssues: 5, serious: 11 });
+  assert.deepEqual(issuesByModelAndEffort(d, []), { efforts: [], models: [], total: { model: "All models", all: { tasks: 0, reviews: 0, withIssues: 0, serious: 0 }, byEffort: {} } });
 });
 
 test("axis ticks are round numbers", () => {

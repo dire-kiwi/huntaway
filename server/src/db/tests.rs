@@ -368,13 +368,14 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
 }
 
 #[test]
-fn a_database_that_had_the_agent_threads_tables_as_80_or_81_gets_what_it_skipped() {
+fn a_database_that_had_the_agent_threads_tables_as_an_earlier_version_gets_what_it_skipped() {
     // Builds of the agent-threads store had its tables as version 80 (skipping call_usage), then 81 (skipping
-    // call_usage's call ids).
+    // call_usage's call ids), then 82 (skipping the review and run efforts).
     let skipped = [
         (80, "DROP TABLE call_usage;"),
         (81, "INSERT INTO call_usage (at, purpose, model, runtime) VALUES ('2026-11-01T00:00:00Z', 'title', 'haiku', 'claude');
               ALTER TABLE call_usage DROP COLUMN call_id;"),
+        (82, "ALTER TABLE review_stats DROP COLUMN effort; ALTER TABLE runs DROP COLUMN effort;"),
     ];
     for (version, dropped) in skipped {
         let path = crate::testing::temp_dir().join("huntaway.db");
@@ -384,8 +385,10 @@ fn a_database_that_had_the_agent_threads_tables_as_80_or_81_gets_what_it_skipped
         }
         let c = open(&path).unwrap();
         assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
-        let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('call_usage') WHERE name='call_id'", [], |r| r.get(0)).unwrap();
-        assert!(has, "version {version}: call_usage.call_id");
+        for (table, column) in [("call_usage", "call_id"), ("review_stats", "effort"), ("runs", "effort")] {
+            let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();
+            assert!(has, "version {version}: {table}.{column}");
+        }
         let unset: i64 = c.query_row("SELECT COUNT(*) FROM call_usage WHERE call_id IS NULL", [], |r| r.get(0)).unwrap();
         assert_eq!(unset, 0, "version {version}");
         let tables: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'at\\_%' ESCAPE '\\'", [], |r| r.get(0)).unwrap();
@@ -689,6 +692,29 @@ fn a_database_from_version_80_gets_call_ids_shared_by_each_calls_rows() {
     assert_eq!(ids[0], ids[1]);
     let distinct: std::collections::HashSet<&String> = ids.iter().collect();
     assert_eq!(distinct.len(), 4, "{ids:?}");
+}
+
+#[test]
+fn a_database_from_version_81_gets_its_reviews_the_efforts_of_their_tasks() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (own, default) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        let new = || NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (a, b) = (insert_task(&c, new()).unwrap(), insert_task(&c, new()).unwrap());
+        c.execute("UPDATE tasks SET effort='high' WHERE id=?1", [&a.id]).unwrap();
+        set_setting(&c, "default_effort", Some("low")).unwrap();
+        c.execute_batch("ALTER TABLE review_stats DROP COLUMN effort; PRAGMA user_version=81;").unwrap();
+        for t in [&a, &b] {
+            c.execute("INSERT INTO review_stats (task_id, thread_id, round, at, verdict) VALUES (?1, 'r', '1', '1', 'pass')", [&t.id]).unwrap();
+        }
+        (a.id, b.id)
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let effort = |id: &str| c.query_row("SELECT effort FROM review_stats WHERE task_id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+    // Its own, or the host's default.
+    assert_eq!((effort(&own).as_deref(), effort(&default).as_deref()), (Some("high"), Some("low")));
 }
 
 #[test]

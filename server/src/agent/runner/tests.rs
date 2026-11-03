@@ -2112,3 +2112,24 @@ fn a_merge_out_of_usage_keeps_its_place_in_the_merge_queue() {
         assert_eq!(db::active_merge(&state.db(), Some("pr"), None).unwrap().map(|m| m.id), Some(task.id.clone()), "it still holds the merge slot");
     })
 }
+
+#[test]
+fn a_run_keeps_the_effort_its_agent_was_given() {
+    // Claude has no `minimal` or `ultra`.
+    assert_eq!((claude_effort("minimal"), claude_effort("ultra"), claude_effort("high")), ("low", "max", "high"));
+    crate::testing::run(async || {
+        let state = crate::testing::state();
+        let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
+        let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let task = db::insert_task(&state.db(), t).unwrap();
+        let effort = |id: &str| state.db().query_row("SELECT effort FROM runs WHERE id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+        let a = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+        let b = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+        // Not kept until it launches; the agent's own default is kept as an empty effort.
+        assert_eq!(effort(&a.id), None);
+        record_effort(&state, &a.id, Some(claude_effort("minimal")));
+        record_effort(&state, &b.id, None);
+        let (ea, eb) = (effort(&a.id), effort(&b.id));
+        assert_eq!((ea.as_deref(), eb.as_deref()), (Some("low"), Some("")));
+    })
+}

@@ -97,6 +97,17 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
+The *Folder* tab can also **create a GitHub repository** for the folder (API 102): tick *Create a GitHub
+repository for it*, pick *Private* (the default) or *Public*, and optionally an owner (an organization;
+the profile's GitHub account by default) and a repository name (the folder's by default). The
+repository is made with `gh repo create` as the profile's GitHub account and becomes the folder's `origin`.
+A folder that isn't a git repository yet is made one (a folder that doesn't exist is created), and a
+repository's commits are pushed; one that already has an `origin`, or is only a subfolder of a repository,
+is turned down, and a repository that can't be made leaves the folder as it was. A push that fails
+after the repository is made still adds the project (`github.push_error` says why).
+`POST /profiles/{id}/projects/github` (`repo_path`, `visibility`: `public` or `private`, `repo_name`,
+`owner`, `name`, `key`) does it and returns the project with `github: {full_name, pushed, push_error}`.
+
 The sidebar lists projects in alphabetical order, with each group in its place by its own name
 and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
 under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
@@ -954,7 +965,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
   `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
   (*Now*, *Later*, *All*, which starts on *All* and is kept for every board) applies to every
-  view: the board, list, triage, live, timeline and graph, with the search and filters. A task in
+  view: the board, list, triage and graph, with the search and filters. A task in
   Now has a bolt on its card and row, and the switch counts them. A task goes back to Later once
   nothing has happened on it for a day: no prompt from you, no message in its thread (the
   agent's included), and its agent not running. The day is the host's *Tasks in Now go back to
@@ -968,7 +979,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
     (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
     use a card's menu button.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
-  *Board* and *List*, the view switch has four more, which show the same tasks (the search and
+  *Board* and *List*, the view switch has two more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
   1500px the switch names only the current view, and below 1320px none.
   - *Triage*: what each task needs from you, most pressing first: an answer (*Needs
@@ -977,15 +988,6 @@ skipped. Auto-compacting idle sessions is Claude-only.
     (`GET /tasks/{id}`'s `last_message`); picking one (a click, or `j`/`k`) shows its pending
     permission prompts to allow or deny, its thread's composer (the same draft as its panel's)
     and, in review, *Ready for merge*. `Enter` opens its thread.
-  - *Live*: a tile for each agent that's working, needs you or was active in the last 30
-    minutes (12 at most): the tail of its thread (the user's messages, the agent's text, its tool
-    calls) with the text it's streaming, its permission prompts to allow or deny, and a field to
-    message it.
-  - *Timeline*: a lane for each task with activity in the last hour, 6 hours, day, 3, 7 or 30
-    days (‹ › go back a window at a time), most recent first: its agent's runs and reviews as
-    bars, your prompts as ticks, and since its agent stopped, how long it's waited on you. Above,
-    how many agents ran at once. It's the hosts' analytics report (API 16) for each profile on
-    the board.
   - *Graph*: tasks linked by how they came about: a task follows the task whose agent created
     it, the tasks it waits for (`depends_on`) and the subproject it's in, a column per step, and
     a link that a longer way round already makes is left out. Tasks made from one prompt are

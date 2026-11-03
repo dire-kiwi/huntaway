@@ -8,7 +8,7 @@ import { keyPrefix, useHost, useStore } from "../../store";
 import { isDue } from "../../reminders";
 import { Composer } from "../task/thread/Composer";
 import { Markdown } from "../task/thread/Markdown";
-import { PendingPrompts } from "./LiveView";
+import { PendingPrompts } from "./PendingPrompts";
 import { ReviewBadge } from "../task/Review";
 import { Button, ChecksMark, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "../ui";
 import type { OnMenu } from "./TaskCard";

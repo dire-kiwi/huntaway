@@ -853,14 +853,49 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=81; COMMIT;")?;
     }
     if version < 82 {
+        conn.execute_batch("BEGIN;")?;
+        review_efforts(&conn)?;
+        conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
+    }
+    if version < 83 {
+        conn.execute_batch("BEGIN;")?;
+        run_efforts(&conn)?;
+        conn.execute_batch("PRAGMA user_version=83; COMMIT;")?;
+    }
+    if version < 84 {
         // agent-threads' store (see threads/store.rs). IF NOT EXISTS, in case another migration takes this version first.
-        // Builds of this before it was version 82 had it as 80, then 81, so a database that took it then skipped
-        // 80's call_usage or 81's call ids, which are added here if they aren't there.
+        // Builds of this before it was version 84 had it as 80, 81 or 82, so a database that took it then skipped what
+        // those versions and the ones after them up to 83 add (call_usage and its call ids, and the review and run
+        // efforts), which is added here if it isn't there.
         conn.execute_batch("BEGIN;")?;
         call_usage_ids(&conn)?;
-        conn.execute_batch(&format!("{SCHEMA_V82} PRAGMA user_version=82; COMMIT;"))?;
+        review_efforts(&conn)?;
+        run_efforts(&conn)?;
+        conn.execute_batch(&format!("{SCHEMA_V84} PRAGMA user_version=84; COMMIT;"))?;
     }
     Ok(conn)
+}
+
+/// The effort the reviewed task's agent worked at when its review was submitted (see review/stats.rs). The rows
+/// from before are given the task's effort now, which is what it was unless the user changed it since. Added only
+/// if it isn't there: a `review_stats` made at version 79 or later by this build has it already.
+fn review_efforts(conn: &Connection) -> Result<()> {
+    let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('review_stats') WHERE name='effort'", [], |r| r.get(0))?;
+    if !has {
+        conn.execute_batch("ALTER TABLE review_stats ADD COLUMN effort TEXT;")?;
+        crate::review::stats::backfill_efforts(conn)?;
+    }
+    Ok(())
+}
+
+/// The effort each run was started with, as its agent was given it (see runner/launch.rs): an empty one is the
+/// agent's own default, and null a run from before this, whose reviews' efforts are their tasks' (see review/stats.rs).
+fn run_efforts(conn: &Connection) -> Result<()> {
+    let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name='effort'", [], |r| r.get(0))?;
+    if !has {
+        conn.execute_batch("ALTER TABLE runs ADD COLUMN effort TEXT;")?;
+    }
+    Ok(())
 }
 
 /// Which call each `call_usage` row is from (a call has a row for each model it used). The rows
@@ -880,12 +915,12 @@ fn call_usage_ids(conn: &Connection) -> Result<()> {
 }
 
 /// The latest database version (`PRAGMA user_version`).
-pub const VERSION: i64 = 82;
+pub const VERSION: i64 = 84;
 
 /// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
 /// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON
 /// text they were given. A thread can belong to a task (its `metadata.task_id`), and goes with it.
-const SCHEMA_V82: &str = r#"
+const SCHEMA_V84: &str = r#"
 CREATE TABLE IF NOT EXISTS at_threads (
   id TEXT PRIMARY KEY,
   task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
@@ -924,7 +959,8 @@ CREATE INDEX IF NOT EXISTS at_runs_active ON at_runs(active, started_at, id);
 /// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed,
 /// with when its review round started (`round`).
 /// `minor` is how many minor issues it listed, null for reviews from before they were listed;
-/// `minor_noted` whether it found any or its summary mentions them.
+/// `minor_noted` whether it found any or its summary mentions them. `effort` (version 82) is the effort
+/// the reviewed task's agent was set to work at, null for the agent's own default.
 const SCHEMA_V79: &str = r#"
 CREATE TABLE IF NOT EXISTS token_usage (
   run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -950,7 +986,8 @@ CREATE TABLE IF NOT EXISTS review_stats (
   serious INTEGER NOT NULL DEFAULT 0,
   minor INTEGER,
   minor_noted INTEGER NOT NULL DEFAULT 0,
-  label TEXT
+  label TEXT,
+  effort TEXT
 );
 CREATE INDEX IF NOT EXISTS review_stats_task ON review_stats(task_id, at);
 CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);

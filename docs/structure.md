@@ -114,7 +114,7 @@ Helpers several features use stay in `app/src/` (`store.ts`, `router.ts`, `threa
 
 | Folder | What's in it |
 |---|---|
-| `board/` | the board and its views (TaskBoard, TaskCard, BoardControls, Graph, Timeline, Triage and Live views, Fanout, Dependencies, ConfirmDone), `boardQuery.ts`, `taskOrder.ts`, `timeline.ts` |
+| `board/` | the board and its views (TaskBoard, TaskCard, BoardControls, Graph and Triage views, PendingPrompts, Fanout, Dependencies, ConfirmDone), `boardQuery.ts`, `taskOrder.ts` |
 | `task/` | the task panel (TaskView, and `view/` for its title, tabs and Details column), the thread (Thread, and `thread/` for its markdown, tool calls, subagents, items and the composer), Approvals, Questions, Review, Reviewers, Context, Rewind, Reminders, ExternalLinks, Attachments, Document, Terminal, WorktreeSetup, SkillMenu; `turns.ts`, `planTheme.ts`, `planAnswers.ts`, `openingTab.ts`, `htmlFrame.ts`, `mermaid.ts` |
 | `changes/` | the Changes tab (Changes, and `git/` for its parts), DiffLines, Compare; `changes.ts`, `lineComments.ts`, `highlight.ts` and its worker |
 | `settings/` | the settings page and its sections (Server, Hosts, HostPage, ClaudeConfigs, AgentTools, Automations, GithubRepos, Usage, DiskUsage, Analytics, chart), NewProjectModal, DirPicker, ArchivedProjects, Onboarding, TokenScreen, and `project/` for project settings, a file per tab; `disk.ts`, `githubRepos.ts`, `versions.ts`, `uiVersion.ts` |
