@@ -17,7 +17,7 @@ pub(super) fn project_or_own(s: &Shared, ctx: &Ctx, pid: Option<String>, profile
 /// prompted and reviewed, and what it's called and where on the board it is.
 pub(super) const AGENT_FIELDS: &[&str] = &[
     "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "auto_summary",
-    "summarizer", "group_name",
+    "summarizer", "summarizers", "group_name",
 ];
 
 /// The settings it only changes once the user approves: they run commands on the host, decide
@@ -36,7 +36,7 @@ pub(super) async fn update_project(s: &Shared, ctx: &Ctx, p: &db::Project, args:
     for k in AGENT_FIELDS.iter().chain(APPROVAL_FIELDS) {
         let v = &args[*k];
         // An explicit null summarizer or reviewers goes back to the profile's.
-        if v.is_null() && !(["reviewers", "summarizer"].contains(k) && args.get(*k).is_some()) {
+        if v.is_null() && !(["reviewers", "summarizer", "summarizers"].contains(k) && args.get(*k).is_some()) {
             continue;
         }
         if ["name", "key", "repo_path"].contains(k) && v.as_str().is_none_or(|v| v.trim().is_empty()) {
@@ -55,7 +55,8 @@ pub(super) async fn update_project(s: &Shared, ctx: &Ctx, p: &db::Project, args:
     let fields = api::project_fields(s, p, &body).await?;
     let after = db::preview_project_update(&s.db(), &p.id, &fields)?.ok_or_else(|| ToolError::NotFound(format!("project {}", p.id)))?;
     let (before, after) = (json!(p), json!(after));
-    let mut changed: Vec<&str> = fields.iter().map(|(k, _)| *k).filter(|k| before[*k] != after[*k]).collect();
+    // (Not what `project_fields` adds to them, the first summarizer that older clients read.)
+    let mut changed: Vec<&str> = fields.iter().map(|(k, _)| *k).filter(|k| body.contains_key(*k) && before[*k] != after[*k]).collect();
     // A new repository path has to be the project's folder, or where it can move to.
     let move_repo = args["move_repo"].as_bool().unwrap_or(false);
     if changed.contains(&"repo_path") {

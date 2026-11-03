@@ -17,9 +17,7 @@ export const summaryReady = (task: Task) =>
   task.status === "in_review" &&
   !task.running &&
   task.review?.state === "passed" &&
-  !!task.summary &&
-  (task.summary.state === "done" || task.summary.state === "running") &&
-  task.summary.head === task.review.head;
+  (task.summaries ?? (task.summary ? [task.summary] : [])).some((s) => (s.state === "done" || s.state === "running") && s.head === task.review?.head);
 
 /**
  * The tab a task opens on. A task with labels opens on its first label's document when it's ready, and one whose

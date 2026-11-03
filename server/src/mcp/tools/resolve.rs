@@ -33,9 +33,11 @@ pub(super) fn project_settings_json(s: &Shared, p: &db::Project, board: &db::Pro
     out["reviewers"] = json!(p.reviewers);
     out["auto_summary"] = json!(p.auto_summary);
     out["summarizer"] = json!(p.summarizer);
-    // What the project's empty reviewers and null summarizer use.
+    out["summarizers"] = json!(p.summarizers);
+    // What the project's empty reviewers and summarizers use.
     out["profile_reviewers"] = json!(board.reviewers);
     out["profile_summarizer"] = json!(board.summarizer);
+    out["profile_summarizers"] = json!(board.summarizers);
     out["group_name"] = json!(p.group_name);
     out["archived"] = json!(p.archived_at.is_some());
     let own = [&p.start_prompt, &p.review_prompt, &p.merge_prompt];

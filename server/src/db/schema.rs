@@ -882,12 +882,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=83; COMMIT;")?;
     }
+    if version < 84 {
+        // Several summarizers for a project or profile (see Project::summarizers). The `summarizer`
+        // saved before is read as the only one until they're saved again. Added only if they
+        // aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for table in ["projects", "profiles"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name='summarizers'", [table], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN summarizers TEXT;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=84; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 83;
+pub const VERSION: i64 = 84;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
