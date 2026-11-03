@@ -69,8 +69,10 @@ export interface Project {
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
-  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
+  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. From API 101 it's the first of `summarizers`. */
   summarizer?: Reviewer | null;
+  /** Who writes those summaries, each in a thread of its own (API 101); empty uses the profile's. */
+  summarizers?: Reviewer[];
   /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
   merge_approval?: boolean | null;
   /** null follows the profile's (API 95). */
@@ -114,6 +116,12 @@ export interface Reviewer {
   claude_config_id: string | null;
   model: string | null;
   effort: string | null;
+  /** Only for a summarizer (API 101): what to call it where its summary is shown. */
+  name?: string | null;
+  /** Only for a summarizer: skills its agent uses while writing the summary. */
+  skills?: string[];
+  /** Only for a summarizer: replaces the board's instructions on how to write the summary. */
+  prompt?: string | null;
 }
 
 export const projectsApi = {

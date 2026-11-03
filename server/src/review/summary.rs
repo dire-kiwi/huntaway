@@ -316,8 +316,8 @@ fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str
     if !spec.skills.is_empty() {
         let named: Vec<String> = spec.skills.iter().map(|s| format!("`{}{s}`", if codex { '$' } else { '/' })).collect();
         p.push_str(&format!(
-            "\nUse {} while you write the summary: {}{}. If one doesn't ask for something that's against the rest of this message \
-             (changing files, or ending with more than the summary), follow it; otherwise follow this message.\n",
+            "\nUse {} while you write the summary: {}{}. If a skill asks for something against the rest of this message \
+             (changing files, or ending with more than the summary), follow this message instead.\n",
             if spec.skills.len() == 1 { "this skill" } else { "these skills" },
             named.join(", "),
             if codex { "" } else { " (invoke each with the `Skill` tool)" },
