@@ -477,6 +477,45 @@ fn cloning_adds_a_clone_thats_there_already_and_checks_what_it_can_first() {
 }
 
 #[test]
+fn creates_a_github_repository_and_adds_the_folder_as_a_project() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let fake = crate::integrations::github::tests::fake_gh_create();
+        let gh = path_str(&fake.join("gh"));
+        let create = |b: Value| create_github_project_inner(&s, &profile.id, serde_json::from_value(b).unwrap(), gh.clone());
+        let path = |n: &str| path_str(&fake.join("projects").join(n));
+        let message = |r: ApiResult<Value>| r.unwrap_err().1;
+
+        let p = create(json!({"repo_path": path("one"), "owner": "o", "visibility": "private", "key": "ab"})).await.unwrap();
+        assert_eq!((p["name"].as_str(), p["key"].as_str(), p["github"]["full_name"].as_str()), (Some("one"), Some("AB"), Some("o/one")));
+        assert!(std::fs::read_to_string(fake.join("create.log")).unwrap().contains("repo create o/one --private"));
+        assert!(fake.join("projects/one/.git").exists());
+        // The repository can be named differently from the folder, and be public.
+        let p = create(json!({"repo_path": path("two"), "repo_name": "other", "owner": "o", "visibility": "public", "name": "Two"})).await.unwrap();
+        assert_eq!((p["name"].as_str(), p["github"]["full_name"].as_str()), (Some("Two"), Some("o/other")));
+        assert!(std::fs::read_to_string(fake.join("create.log")).unwrap().contains("repo create o/other --public"));
+
+        // Checked before anything is made: the visibility, the name, the key, and a project there already.
+        let before = std::fs::read_to_string(fake.join("create.log")).unwrap();
+        assert!(message(create(json!({"repo_path": path("x"), "visibility": "secret"})).await).contains("public or private"));
+        assert!(message(create(json!({"repo_path": path("x"), "visibility": "public", "repo_name": "a b"})).await).contains("repository's name"));
+        assert!(message(create(json!({"repo_path": "x", "visibility": "public"})).await).contains("absolute"));
+        assert!(message(create(json!({"repo_path": path("x"), "visibility": "public", "key": "AB"})).await).contains("already has the key AB"));
+        assert!(message(create(json!({"repo_path": path("one"), "visibility": "public"})).await).contains("already the project \"one\""));
+        assert_eq!(std::fs::read_to_string(fake.join("create.log")).unwrap(), before);
+        assert!(!fake.join("projects/x").exists());
+        // A repository GitHub refuses adds no project and leaves nothing behind.
+        let err = message(create(json!({"repo_path": path("fails"), "visibility": "public"})).await);
+        assert!(err.contains("Name already exists"), "{err}");
+        assert!(!fake.join("projects/fails").exists());
+        assert_eq!(db::list_projects(&s.db(), &profile.id).unwrap().len(), 2);
+        assert!(create_github_project_inner(&s, "nope", serde_json::from_value(json!({"repo_path": path("y"), "visibility": "public"})).unwrap(), gh.clone()).await.is_err());
+        std::fs::remove_dir_all(&fake).unwrap();
+    })
+}
+
+#[test]
 fn a_folder_being_cloned_into_waits_for_that_clone_and_isnt_added_twice() {
     crate::testing::run(async || {
         let s = crate::testing::state();

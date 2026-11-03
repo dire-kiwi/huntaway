@@ -131,6 +131,20 @@ export const projectsApi = {
   /** Clone a GitHub repository (`OWNER/REPO`) as the profile's GitHub account into `repo_path` and add it as a project (API 55). */
   cloneProject: (h: string, profileId: string, b: { repo: string; repo_path: string; name: string; key?: string }) =>
     on(h).post<Project>(`/profiles/${enc(profileId)}/projects/clone`, b),
+  /**
+   * Create a GitHub repository (public or private) as the profile's GitHub account for the folder `repo_path` (made a git repository,
+   * or created, if need be), make it the folder's `origin`, push its commits and add the folder as a project (API 102).
+   * `owner` is the account's own login by default, and `repo_name` the folder's name.
+   */
+  createGithubProject: (
+    h: string,
+    profileId: string,
+    b: { repo_path: string; visibility: "public" | "private"; repo_name?: string; owner?: string; name?: string; key?: string },
+  ) =>
+    on(h).post<Project & { github: { full_name: string; pushed: boolean; push_error: string | null } }>(
+      `/profiles/${enc(profileId)}/projects/github`,
+      b,
+    ),
   getProject: (h: string, id: string) => on(h).get<Project>(`/projects/${enc(id)}`),
   /** move_repo with a new repo_path moves the folder there (API 40). */
   /** `archived` archives the project or unarchives it (API 46). */
