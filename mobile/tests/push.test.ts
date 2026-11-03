@@ -72,12 +72,13 @@ describe("what a push carries", () => {
     expect(taskRoute({ board: "work" })).toBeNull();
   });
 
-  test("a reply and a routine's report open the assistant's thread", () => {
+  test("a reply opens the assistant's thread, and a report its routine's", () => {
     const reply = { board: "work", host: "h1", url: "/t/a1", tag: "h1:a1:reply", task_id: "a1", event: "reply" };
     expect(taskRoute(pushData(notification(reply))!)).toEqual({ pathname: "/task/[board]/[host]/[id]", params: { board: "work", host: "h1", id: "a1" } });
-    const report = { board: "work", host: "h1", url: "/t/a1", tag: "h1:a1:report:9", task_id: "a1", event: "report" };
+    // As the board sends it: the routine's thread (r7), whose report was posted on the assistant's (a1).
+    const report = { board: "work", host: "h1", url: "/t/r7", tag: "h1:r7:report:9", task_id: "r7", event: "report" };
     expect(pushData(notification(report))?.event).toBe("report");
-    expect(taskRoute(pushData(notification(report))!)?.params.id).toBe("a1");
+    expect(taskRoute(pushData(notification(report))!)).toEqual({ pathname: "/task/[board]/[host]/[id]", params: { board: "work", host: "h1", id: "r7" } });
   });
 });
 

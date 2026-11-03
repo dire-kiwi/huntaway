@@ -797,11 +797,11 @@ fn reports_go_by_push_telegram_or_both_as_chosen() {
             s.add_message(&a, "report", data).unwrap();
         };
 
-        // Both (Telegram's reports are on by default): pushed through Expo without what it says, opening the assistant.
+        // Both (Telegram's reports are on by default): pushed through Expo without what it says, opening the routine's thread.
         report("reported", "Two mails from the bank");
         let m = next_push(&mut pushed).await;
         assert_eq!((m["to"].as_str(), m["data"]["event"].as_str()), (Some("ExponentPushToken[phone]"), Some("report")), "{m}");
-        assert_eq!((m["data"]["task_id"].as_str(), m["data"]["url"].clone()), (Some(a.as_str()), json!(format!("/t/{a}"))));
+        assert_eq!((m["data"]["task_id"].as_str(), m["data"]["url"].as_str()), (Some("routine-thread"), Some("/t/routine-thread")), "{m}");
         assert_eq!((m["title"].as_str(), m["body"].as_str()), (Some("Inbox check"), Some("Posted a report")), "{m}");
         assert!(!m.to_string().contains("bank"), "the report's text was pushed: {m}");
         until("the report on Telegram", || f.sent_texts().iter().any(|t| t.contains("Two mails from the bank"))).await;
@@ -860,4 +860,46 @@ fn a_compactions_end_is_no_reply() {
         let texts = f.sent_texts();
         assert_eq!(texts.iter().filter(|t| t.contains("The plan for Monday") || t.contains("Compacted")).count(), 1, "{texts:?}");
     });
+}
+
+#[test]
+fn a_turn_that_failed_or_was_stopped_is_no_reply() {
+    testing::run(async || {
+        let (s, f, p, mut pushed) = pushing_board().await;
+        let a = assistant_id(&s, &p);
+        subscribe_phone(&s, "phone", json!({"replies": true, "reports": false})).await;
+        set_telegram_events(&s, &p, true, false).await;
+        let ended = |text: &str, result: Value| {
+            s.add_message(&a, "user", json!({"text": "q"})).unwrap();
+            s.add_message(&a, "claude", json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})).unwrap();
+            s.add_message(&a, "claude", result).unwrap();
+        };
+        // An error, the usage limit (a "success" that's an error), and a turn the user stopped: none is a reply, even
+        // one asked for on Telegram. Their needs attention says what happened.
+        ended("Broke", json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "Broke"}));
+        ended("You've hit your limit", json!({"type": "result", "subtype": "success", "is_error": true, "result": "You've hit your limit"}));
+        update_progress(&s, &p, |pr| pr.awaiting = true).unwrap();
+        ended("Half a thought", json!({"type": "result", "subtype": "success", "interrupted": true, "result": "Half a thought"}));
+        no_push(&mut pushed, "a turn that failed or was stopped").await;
+        // The one asked for on Telegram was answered (with its failure), so the next turn's from the board stays there.
+        assert!(!progress(&s.db(), &p).awaiting);
+        set_telegram_events(&s, &p, false, false).await;
+        turn(&s, &a, "A real reply");
+        assert_eq!(next_push(&mut pushed).await["data"]["event"], "reply");
+        set_telegram_events(&s, &p, false, true).await;
+        report(&s, &a, "Marker");
+        until("the marker", || f.sent_texts().iter().any(|t| t.contains("Marker"))).await;
+        let texts = f.sent_texts();
+        assert!(!texts.iter().any(|t| t.contains("Broke") || t.contains("limit") || t.contains("Half a thought") || t.contains("A real reply")), "{texts:?}");
+    });
+}
+
+#[test]
+fn how_a_turn_ended_is_read_from_its_result() {
+    let of = |v: Value| TurnEnd::of(&v);
+    assert_eq!(of(json!({"type": "result", "subtype": "success", "result": "Hi"})), TurnEnd::Reply);
+    assert_eq!(of(json!({"type": "result", "subtype": "success", "is_error": false, "compact": true})), TurnEnd::Compact);
+    assert_eq!(of(json!({"type": "result", "subtype": "error_max_turns"})), TurnEnd::Failed);
+    assert_eq!(of(json!({"type": "result", "subtype": "success", "is_error": true})), TurnEnd::Failed);
+    assert_eq!(of(json!({"type": "result", "subtype": "success", "interrupted": true})), TurnEnd::Failed);
 }

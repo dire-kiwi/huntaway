@@ -1094,7 +1094,7 @@ fn on_message(s: &Shared, m: &Value) {
         // Every assistant's, for push (push::REPLY_EVENT), whether or not it has a bot.
         let task = m["task_id"].as_str().and_then(|id| db::get_task(&s.db(), id).ok().flatten()).filter(Task::is_assistant);
         if let Some(task) = task {
-            on_turn_end(s, &task, m["id"].as_i64().unwrap_or_default(), data["compact"] == json!(true));
+            on_turn_end(s, &task, m["id"].as_i64().unwrap_or_default(), TurnEnd::of(data));
         }
         return;
     }
@@ -1124,13 +1124,36 @@ fn on_message(s: &Shared, m: &Value) {
     }
 }
 
+/// How the assistant's turn ended, from its `result`: only a turn that went as it should is a reply.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TurnEnd {
+    Reply,
+    /// A compaction's end (a `/compact` run's, the user's or the board's after the thread was idle a while), which
+    /// answers nothing.
+    Compact,
+    /// It failed (an error, or the usage limit) or was stopped part way: its needs attention says so.
+    Failed,
+}
+
+impl TurnEnd {
+    fn of(result: &Value) -> Self {
+        if result["compact"] == json!(true) {
+            TurnEnd::Compact
+        } else if result["is_error"] == json!(true) || result["interrupted"] == json!(true) || result["subtype"].as_str().is_some_and(|t| t.starts_with("error")) {
+            TurnEnd::Failed
+        } else {
+            TurnEnd::Reply
+        }
+    }
+}
+
 /// The assistant's turn ended (its `result`, message `message_id`): its reply goes back if a message
 /// from Telegram was waiting for one, or if every reply is to. Either way it's announced for push
-/// (`announce_reply`), which sends the replies that weren't asked for on Telegram. The end of a compaction
-/// (`compact`: a `/compact` run's, the user's or the board's after the thread was idle a while) is no reply: it's
-/// only noted as looked at, and leaves a message from Telegram waiting for the next turn.
-fn on_turn_end(s: &Shared, task: &Task, message_id: i64, compact: bool) {
-    let text = if compact { None } else { reply_text(s, task, message_id) };
+/// (`announce_reply`), which sends the replies that weren't asked for on Telegram. A turn that isn't a reply
+/// (`TurnEnd`) is only noted as looked at: a compaction leaves a message from Telegram waiting for the next turn, and a
+/// failed turn has answered it (with the attention it needs, see `on_attention`).
+fn on_turn_end(s: &Shared, task: &Task, message_id: i64, end: TurnEnd) {
+    let text = if end == TurnEnd::Reply { reply_text(s, task, message_id) } else { None };
     let Some((_, cfg, _)) = linked(&s.db(), &task.profile_id) else {
         // No bot: nothing came from Telegram, and the turn's result comes once.
         if text.is_some() {
@@ -1145,12 +1168,12 @@ fn on_turn_end(s: &Shared, task: &Task, message_id: i64, compact: bool) {
             return None;
         }
         p.replied = message_id;
-        if compact {
+        if end == TurnEnd::Compact {
             return None;
         }
         let asked = p.awaiting;
         p.awaiting = asked && more;
-        Some((asked || cfg.events.replies, asked))
+        (end == TurnEnd::Reply).then_some((asked || cfg.events.replies, asked))
     });
     let Ok(Some((send, asked))) = seen else { return };
     let Some(text) = text else { return };
@@ -1189,20 +1212,20 @@ fn run_ended(s: &Shared, task: &Task) {
     if !task.is_assistant() || linked(&s.db(), &task.profile_id).is_none() {
         return;
     }
-    let (last_result, compact): (i64, bool) = s
+    let (last_result, data): (i64, String) = s
         .db()
         .query_row(
-            "SELECT id, COALESCE(json_extract(data,'$.compact'), 0) FROM messages
-              WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result' ORDER BY id DESC LIMIT 1",
+            "SELECT id, data FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result' ORDER BY id DESC LIMIT 1",
             [&task.id],
-            |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .unwrap_or((0, false));
+        .unwrap_or((0, String::new()));
     let replied = progress(&s.db(), &task.profile_id).replied;
     if last_result > replied {
-        on_turn_end(s, task, last_result, compact);
+        let end = TurnEnd::of(&serde_json::from_str(&data).unwrap_or(Value::Null));
+        on_turn_end(s, task, last_result, end);
         // A compaction answered nothing: as a run that stopped without a turn's end.
-        if !compact {
+        if end != TurnEnd::Compact {
             return;
         }
     }

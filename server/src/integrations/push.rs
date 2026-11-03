@@ -1018,13 +1018,14 @@ pub fn report_text(data: &Value) -> Option<(String, String)> {
     Some((data["automation"].as_str().filter(|n| !n.is_empty()).unwrap_or("A routine").to_string(), body))
 }
 
-/// A thread message as it is now: a routine's report that's just been posted (one per run, so a brief pushes once) goes to
-/// the devices that want reports. A routine waiting on the user is pushed as its prompt or attention instead.
+/// A thread message as it is now: a routine's report that's just been posted on the assistant's thread (one per run, so a
+/// brief pushes once) goes to the devices that want reports. A routine waiting on the user is pushed as its prompt or attention instead.
 fn observe_report(s: &Shared, host: &str, m: &Value) {
     if m["kind"] != "report" {
         return;
     }
-    let Some(task_id) = m["task_id"].as_str() else { return };
+    // Tapping it opens the routine's thread (its run, with what it posted), or the assistant's for a report without one.
+    let Some(task_id) = m["data"]["task_id"].as_str().filter(|t| !t.is_empty()).or(m["task_id"].as_str()) else { return };
     let Some((title, body)) = report_text(&m["data"]) else { return };
     let failed = m["data"]["outcome"] == "failed";
     let (st, host, task_id, tag) = (s.clone(), host.to_string(), task_id.to_string(), m["id"].to_string());
