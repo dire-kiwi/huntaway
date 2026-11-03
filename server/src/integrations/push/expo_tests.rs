@@ -435,7 +435,7 @@ fn a_new_token_for_the_same_phone_keeps_its_subscription_and_events() {
     testing::run(async || {
         let s = board();
         let (phone, phone_id) = pair(&s, "phone").await;
-        let quiet = json!({"attention": false, "review": false, "merge": false, "done": false, "prompts": "off"});
+        let quiet = json!({"attention": false, "review": false, "merge": false, "done": false, "prompts": "off", "replies": false, "reports": false});
         let (_, first) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("old"), "name": "phone", "events": quiet}))).await;
         // Expo's token rotated: the app subscribes again with the new one, and no events (it keeps what's there).
         let (status, next) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("new"), "name": "phone"}))).await;
@@ -463,7 +463,7 @@ fn what_expo_says_of_an_old_token_doesnt_touch_the_new_one() {
         let mut fake = expo().await;
         s.push.set_expo_url(&fake.url);
         let (phone, _) = pair(&s, "phone").await;
-        let picked = json!({"attention": true, "review": false, "merge": true, "done": false, "prompts": "all"});
+        let picked = json!({"attention": true, "review": false, "merge": true, "done": false, "prompts": "all", "replies": false, "reports": false});
         let (_, sub) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("A"), "events": picked}))).await;
         let id = sub["id"].as_str().unwrap().to_string();
         // A push to A is taken...

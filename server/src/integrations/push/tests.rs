@@ -178,7 +178,7 @@ fn devices_subscribe_change_their_events_and_unsubscribe() {
         let endpoint = "https://push.example.com/send/abc";
         let (status, sub) = api(&s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": endpoint, "keys": keys, "name": "Pixel"}))).await;
         assert_eq!(status, 200, "{sub}");
-        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false, "prompts": "assistant"}));
+        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false, "prompts": "assistant", "replies": false, "reports": false}));
         assert_eq!(sub["name"], "Pixel");
         assert!(sub.get("auth").is_none() && sub.get("p256dh").is_none());
         let id = sub["id"].as_str().unwrap().to_string();

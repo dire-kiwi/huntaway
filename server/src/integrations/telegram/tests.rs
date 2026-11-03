@@ -656,3 +656,193 @@ fn the_bot_leaves_with_the_assistant() {
         assistant_moved(&s, "personal", &p, Some("elsewhere".into())).await;
     });
 }
+
+// ---------- push (push.rs) for replies and reports, beside Telegram ----------
+
+/// A fake of Expo's push service for the board's push, which takes every message: each one pushed, as Expo got it.
+async fn fake_expo(s: &Shared) -> tokio::sync::mpsc::UnboundedReceiver<Value> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = axum::Router::new().route(
+        "/send",
+        axum::routing::post(move |Json(body): Json<Value>| {
+            let tx = tx.clone();
+            async move {
+                let msgs = body.as_array().cloned().unwrap_or_default();
+                let tickets: Vec<Value> = msgs.iter().map(|m| json!({"status": "ok", "id": format!("ticket:{}", m["to"])})).collect();
+                for m in msgs {
+                    let _ = tx.send(m);
+                }
+                Json(json!({"data": tickets}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/send", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    s.push.set_expo_url(&url);
+    rx
+}
+
+/// Subscribes a phone (the app's Expo token `name`) to the board's push for `events`: its subscription's id.
+async fn subscribe_phone(s: &Shared, name: &str, events: Value) -> String {
+    let body = json!({"kind": "expo", "endpoint": format!("ExponentPushToken[{name}]"), "name": name, "events": events});
+    let sub = crate::integrations::push::subscribe(State(s.clone()), None, Json(serde_json::from_value(body).unwrap())).await.unwrap().0;
+    sub["id"].as_str().unwrap().to_string()
+}
+
+/// Changes some of a phone's events, as the board's settings and the app do.
+async fn set_phone_events(s: &Shared, id: &str, events: Value) -> Value {
+    let body = serde_json::from_value(json!({"events": events})).unwrap();
+    crate::integrations::push::update(State(s.clone()), None, Path(id.to_string()), Json(body)).await.unwrap().0["events"].clone()
+}
+
+/// The next push, to whichever phone.
+async fn next_push(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>) -> Value {
+    tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("nothing was pushed").unwrap()
+}
+
+/// That nothing more is pushed (what would have been is sent at once, with what Telegram got).
+async fn no_push(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>, what: &str) {
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    if let Ok(m) = rx.try_recv() {
+        panic!("{what} was pushed: {m}");
+    }
+}
+
+/// `linked_board`, with the board's push watching it (as the server starts it), to a fake Expo; and a phone whose
+/// subscription is from before replies and reports could be pushed, which the board has stored as it was.
+async fn pushing_board() -> (Shared, Arc<Fake>, String, tokio::sync::mpsc::UnboundedReceiver<Value>) {
+    let (s, f, p) = linked_board().await;
+    let rx = fake_expo(&s).await;
+    // The host's events reach the board's push once what passes them on is listening (it starts listening when it runs).
+    let listening = s.events.receiver_count();
+    crate::hosts::hub::start(&s).unwrap();
+    crate::integrations::push::start(&s);
+    until("the host's events to be passed on", || s.events.receiver_count() > listening).await;
+    let old = subscribe_phone(&s, "old", json!({})).await;
+    let before = json!({"attention": true, "review": true, "merge": true, "done": true, "prompts": "all"}).to_string();
+    s.db().execute("UPDATE push_subscriptions SET events=?1 WHERE id=?2", rusqlite::params![before, old]).unwrap();
+    (s, f, p, rx)
+}
+
+/// The Telegram events for profile `p`'s bot.
+async fn set_telegram_events(s: &Shared, p: &str, replies: bool, reports: bool) {
+    let events = json!({"events": {"replies": replies, "reports": reports, "prompts": true, "attention": true}});
+    let _ = update(State(s.clone()), Path(p.to_string()), Json(serde_json::from_value(events).unwrap())).await.unwrap();
+}
+
+#[test]
+fn replies_go_by_push_telegram_or_both_as_chosen() {
+    testing::run(async || {
+        let (s, f, p, mut pushed) = pushing_board().await;
+        let a = assistant_id(&s, &p);
+        let number = db::get_task(&s.db(), &a).unwrap().unwrap().number;
+        let phone = subscribe_phone(&s, "phone", json!({"replies": true})).await;
+
+        // Push only (Telegram's replies are off): a reply to the board's message is pushed, saying no more than that.
+        turn(&s, &a, "The secret plan is ready");
+        let m = next_push(&mut pushed).await;
+        assert_eq!((m["to"].as_str(), m["data"]["event"].as_str()), (Some("ExponentPushToken[phone]"), Some("reply")), "{m}");
+        assert_eq!((m["data"]["task_id"].as_str(), m["data"]["url"].clone()), (Some(a.as_str()), json!(format!("/t/{a}"))));
+        assert_eq!((m["title"].as_str(), m["body"].as_str()), (Some(format!("A-{number} Assistant").as_str()), Some("Replied")), "{m}");
+        assert!(!m.to_string().contains("secret"), "the reply's text was pushed: {m}");
+        no_push(&mut pushed, "a reply to the phone subscribed before replies, or one twice,").await;
+        assert!(!f.sent_texts().iter().any(|t| t.contains("secret plan")));
+
+        // Telegram only: a reply to a message sent on Telegram goes back there, and isn't pushed.
+        update_progress(&s, &p, |pr| pr.awaiting = true).unwrap();
+        turn(&s, &a, "Asked on Telegram");
+        until("the reply on Telegram", || f.sent_texts().iter().any(|t| t == "Asked on Telegram")).await;
+        no_push(&mut pushed, "a reply asked for on Telegram").await;
+
+        // Both: with every reply sent to Telegram, the board's go there and are pushed.
+        set_telegram_events(&s, &p, true, true).await;
+        turn(&s, &a, "Both ways");
+        assert_eq!(next_push(&mut pushed).await["data"]["event"], "reply");
+        until("the reply on Telegram", || f.sent_texts().iter().any(|t| t == "Both ways")).await;
+        no_push(&mut pushed, "a reply twice").await;
+
+        // Telegram only, with push turned off on the phone (from an older page, which doesn't send replies: kept).
+        assert_eq!(set_phone_events(&s, &phone, json!({"attention": false})).await["replies"], true);
+        assert_eq!(set_phone_events(&s, &phone, json!({"replies": false})).await["replies"], false);
+        turn(&s, &a, "Telegram alone");
+        until("the reply on Telegram", || f.sent_texts().iter().any(|t| t == "Telegram alone")).await;
+        no_push(&mut pushed, "a reply the phone turned off").await;
+
+        // A turn that said nothing isn't a reply.
+        set_phone_events(&s, &phone, json!({"replies": true})).await;
+        s.add_message(&a, "user", json!({"text": "q"})).unwrap();
+        s.add_message(&a, "claude", json!({"type": "result", "subtype": "success", "result": ""})).unwrap();
+        no_push(&mut pushed, "a turn with nothing said").await;
+
+        // Another profile's assistant, with no bot: its replies are pushed too.
+        let q = db::insert_profile(&s.db(), "work", &[], None).unwrap().id;
+        let b = assistant_id(&s, &q);
+        turn(&s, &b, "No bot here");
+        let m = next_push(&mut pushed).await;
+        assert_eq!((m["data"]["event"].as_str(), m["data"]["task_id"].as_str()), (Some("reply"), Some(b.as_str())));
+        no_push(&mut pushed, "the other assistant's reply twice").await;
+    });
+}
+
+#[test]
+fn reports_go_by_push_telegram_or_both_as_chosen() {
+    testing::run(async || {
+        let (s, f, p, mut pushed) = pushing_board().await;
+        let a = assistant_id(&s, &p);
+        let phone = subscribe_phone(&s, "phone", json!({"reports": true})).await;
+        // The routine's thread, which a report's tap opens.
+        let new = db::NewTask {
+            profile_id: &p,
+            project_id: None,
+            kind: "task",
+            title: "Inbox check · 4 Nov",
+            description: "",
+            status: "todo",
+            use_worktree: false,
+            model: None,
+            effort: None,
+            claude_config_id: None,
+        };
+        let thread = db::insert_task(&s.db(), new).unwrap();
+        s.db().execute("UPDATE tasks SET task_type='routine', parent_id=?1 WHERE id=?2", rusqlite::params![a, thread.id]).unwrap();
+        let report = |name: &str, outcome: &str, text: &str| {
+            let data = json!({"automation": name, "task_id": thread.id, "key": format!("A-{}", thread.number), "outcome": outcome, "text": text});
+            s.add_message(&a, "report", data).unwrap();
+        };
+
+        // Both (Telegram's reports are on by default).
+        report("Inbox check", "reported", "Two mails from the bank");
+        let m = next_push(&mut pushed).await;
+        assert_eq!((m["to"].as_str(), m["data"]["event"].as_str()), (Some("ExponentPushToken[phone]"), Some("report")), "{m}");
+        assert_eq!((m["data"]["task_id"].as_str(), m["data"]["url"].clone()), (Some(thread.id.as_str()), json!(format!("/t/{}", thread.id))));
+        let title = format!("A-{} Inbox check · 4 Nov", thread.number);
+        assert_eq!((m["title"].as_str(), m["body"].as_str()), (Some(title.as_str()), Some("Inbox check reported")), "{m}");
+        assert!(!m.to_string().contains("bank"), "the report's text was pushed: {m}");
+        until("the report on Telegram", || f.sent_texts().iter().any(|t| t.contains("Two mails from the bank"))).await;
+        no_push(&mut pushed, "a report to the phone subscribed before reports, or one twice,").await;
+
+        // Push only.
+        set_telegram_events(&s, &p, false, false).await;
+        report("Inbox check", "failed", "It broke");
+        let m = next_push(&mut pushed).await;
+        assert_eq!((m["body"].as_str(), m["priority"].as_str()), (Some("Inbox check failed"), Some("normal")), "{m}");
+        report("Inbox check", "asked", "Which account?");
+        let m = next_push(&mut pushed).await;
+        assert_eq!((m["body"].as_str(), m["priority"].as_str()), (Some("Inbox check needs you"), Some("high")), "{m}");
+        no_push(&mut pushed, "a report twice").await;
+
+        // Telegram only.
+        set_telegram_events(&s, &p, false, true).await;
+        set_phone_events(&s, &phone, json!({"reports": false})).await;
+        report("Inbox check", "reported", "Only on Telegram");
+        until("the report on Telegram", || f.sent_texts().iter().any(|t| t.contains("Only on Telegram"))).await;
+        no_push(&mut pushed, "a report the phone turned off").await;
+        assert!(!f.sent_texts().iter().any(|t| t.contains("It broke") || t.contains("Which account")));
+
+        // The old subscription has neither, as the board shows it.
+        let subs = crate::integrations::push::list(&s.db()).unwrap();
+        let old = subs.iter().find(|x| x.name == "old").unwrap();
+        assert_eq!((old.events.replies, old.events.reports, old.events.merge), (false, false, true));
+    });
+}
