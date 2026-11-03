@@ -52,6 +52,12 @@ export function splitAttachments(text: string): { text: string; files: Attachmen
   return files.length ? { text: rest.join("\n").trimEnd(), files } : { text, files };
 }
 
+/** A file saved on a host as an attachment (a path like the lists' have), or null for another path. */
+export function attachmentRef(path: string): AttachmentRef | null {
+  const m = LINE.exec(`- ${path}`);
+  return m ? { path: m[1], id: m[2], name: m[3] } : null;
+}
+
 export const isImage = (name: string) => /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(name);
 
 function readBase64(file: Blob): Promise<string> {

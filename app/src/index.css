@@ -1,5 +1,8 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+/* agent-threads' components, for tasks that run on it (components/task/agentThread). In the components layer, so
+   Tailwind's utilities on Huntaway's own elements in a thread win over its base rules (e.g. buttons' colour). */
+@import "@dire-kiwi/agent-threads-react/styles.css" layer(components);
 
 /* The narrow layout, for phones (see NARROW_QUERY in narrow.ts). */
 @custom-variant narrow {
@@ -167,4 +170,67 @@ body {
 [data-selected="true"] {
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
+}
+
+/*
+ * agent-threads' components drawn in Huntaway's colours: every --at-* variable points at the board's
+ * own tokens, on .at-root (each component's outer element, and the thread's), so they're the same
+ * whatever colour scheme the browser reports (the package's presets follow it).
+ */
+.at-root {
+  --at-font: var(--font-sans);
+  --at-mono: var(--font-mono);
+  --at-font-size: 14px;
+  --at-radius: 8px;
+  --at-max-width: 48rem;
+
+  --at-bg: var(--color-bg);
+  --at-panel: color-mix(in srgb, var(--color-panel) 60%, transparent);
+  --at-panel-2: var(--color-panel-2);
+  --at-raised: var(--color-raised);
+  --at-hover: rgb(255 255 255 / 0.03);
+  --at-fg: var(--color-fg);
+  --at-muted: var(--color-muted);
+  --at-faint: var(--color-faint);
+  --at-line: var(--color-line);
+  --at-line-strong: var(--color-line-strong);
+  --at-accent: var(--color-accent);
+  --at-accent-strong: var(--color-accent-strong);
+  --at-accent-fg: var(--color-white);
+  --at-accent-soft: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --at-attention: var(--color-st-attention);
+  --at-attention-soft: color-mix(in srgb, var(--color-st-attention) 6%, transparent);
+  --at-progress: var(--color-st-progress);
+  --at-good: var(--color-emerald-400);
+  --at-bad: var(--color-red-400);
+  --at-bad-soft: color-mix(in srgb, var(--color-red-500) 10%, transparent);
+  --at-warn: var(--color-amber-400);
+  --at-code-bg: #0e0e13;
+  --at-code-fg: #dcdce6;
+  --at-add-bg: color-mix(in srgb, var(--color-emerald-500) 10%, transparent);
+  --at-add-fg: var(--color-emerald-300);
+  --at-del-bg: color-mix(in srgb, var(--color-red-500) 10%, transparent);
+  --at-del-fg: var(--color-red-300);
+  --at-user-bg: var(--color-raised);
+  --at-user-border: var(--color-line-strong);
+}
+/* The thread's own background is the task panel's. */
+.ha-thread {
+  background: transparent;
+}
+/* Room for a subagent's "open its thread" button at the end of its row. */
+.ha-subagent-row > .at-subagent > .at-tool-head {
+  padding-right: 30px;
+}
+/* An open request the conversation has moved on from (the user has sent a message since). */
+.ha-moved-on > .at-card {
+  opacity: 0.6;
+}
+.ha-moved-on > .at-card:hover,
+.ha-moved-on > .at-card:focus-within {
+  opacity: 1;
+}
+/* A plan card's header has the plan's title: its first heading isn't shown again (as Huntaway's own plan card has it). */
+.ha-thread .at-plan > .prose-chat > :is(h1, h2):first-child {
+  display: none;
 }

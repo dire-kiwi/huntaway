@@ -11,7 +11,8 @@ import { openingTab } from "./openingTab";
 import { useSubagentView } from "../../subagents";
 import { AgentsPill } from "../layout/AgentsPill";
 import { AgentIcon } from "../ui/AgentIcon";
-import { ContextPill } from "./Context";
+import { TaskContextPill } from "./agentThread/ContextPill";
+import { TaskThreadProvider } from "./agentThread/Provider";
 import { openSubprojectBoard, useSubprojectProgress } from "../board/TaskCard";
 import { TaskTypeBadge } from "./Document";
 import { ReviewDot } from "./Review";
@@ -252,7 +253,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       )}
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
       <AgentsPill task={task} onReveal={() => setTab("thread")} />
-      <ContextPill task={task} />
+      <TaskContextPill task={task} />
       <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
         {tabs.map((t) => (
           <button
@@ -300,98 +301,101 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             : history.back();
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0 flex-col">
-      <header className={clsx("shrink-0 border-b border-line", mode === "page" && "drag")}>
-        <div className="flex h-12 items-center gap-2 px-3">
-          {(mode === "page" || narrow) && (
-            <IconButton className="no-drag narrow:-ml-1.5" title="Back" onClick={mode === "page" ? back : () => closeTask()}>
-              <ChevronLeft size={narrow ? 20 : 16} />
-            </IconButton>
-          )}
-          <button className={clsx("no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden", mode !== "page" && "pl-1")} onClick={toProject}>
-            {group ? (
-              <span className="flex items-center gap-1" title="A group task: it plans the work of the group's projects">
-                <Folder size={12} /> {group}
-              </span>
-            ) : profileScratch ? (
-              <span title="A scratch task: in no project, on its profile's board">{profileName}</span>
-            ) : (
-              project?.name
+    // The task's agent-threads thread, if it has one, for the thread and the pills above it.
+    <TaskThreadProvider task={task}>
+      <div ref={rootRef} className="flex h-full min-h-0 flex-col">
+        <header className={clsx("shrink-0 border-b border-line", mode === "page" && "drag")}>
+          <div className="flex h-12 items-center gap-2 px-3">
+            {(mode === "page" || narrow) && (
+              <IconButton className="no-drag narrow:-ml-1.5" title="Back" onClick={mode === "page" ? back : () => closeTask()}>
+                <ChevronLeft size={narrow ? 20 : 16} />
+              </IconButton>
             )}
-          </button>
-          <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
-          {subproject && (
-            <>
-              <button
-                className="no-drag flex shrink-0 items-center gap-1 font-mono text-[12px] text-faint hover:text-fg narrow:hidden"
-                title={subproject.title}
-                onClick={toSubproject}
-              >
-                <Layers size={12} className="text-accent" />
-                {project?.key ?? "T"}-{subproject.number}
-              </button>
-              <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
-            </>
-          )}
-          <AgentIcon task={task} />
-          <span className="-ml-1 shrink-0 font-mono text-[12px] text-faint">{key}</span>
-          {scratch && (
-            <span className="shrink-0 text-[11.5px]">
-              <TaskTypeBadge type="scratch" />
-            </span>
-          )}
-          <TitleEditor key={task.id} task={task} onError={setMarkErr} />
-          {canMark && (
-            <span className="no-drag -ml-1 shrink-0">
-              <StarButton task={task} onError={setMarkErr} />
-            </span>
-          )}
-          <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
-            {wide && controls}
-            {narrow && run}
-            {mode !== "page" && <PanelButtons expanded={mode === "expanded"} />}
+            <button className={clsx("no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden", mode !== "page" && "pl-1")} onClick={toProject}>
+              {group ? (
+                <span className="flex items-center gap-1" title="A group task: it plans the work of the group's projects">
+                  <Folder size={12} /> {group}
+                </span>
+              ) : profileScratch ? (
+                <span title="A scratch task: in no project, on its profile's board">{profileName}</span>
+              ) : (
+                project?.name
+              )}
+            </button>
+            <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
+            {subproject && (
+              <>
+                <button
+                  className="no-drag flex shrink-0 items-center gap-1 font-mono text-[12px] text-faint hover:text-fg narrow:hidden"
+                  title={subproject.title}
+                  onClick={toSubproject}
+                >
+                  <Layers size={12} className="text-accent" />
+                  {project?.key ?? "T"}-{subproject.number}
+                </button>
+                <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
+              </>
+            )}
+            <AgentIcon task={task} />
+            <span className="-ml-1 shrink-0 font-mono text-[12px] text-faint">{key}</span>
+            {scratch && (
+              <span className="shrink-0 text-[11.5px]">
+                <TaskTypeBadge type="scratch" />
+              </span>
+            )}
+            <TitleEditor key={task.id} task={task} onError={setMarkErr} />
+            {canMark && (
+              <span className="no-drag -ml-1 shrink-0">
+                <StarButton task={task} onError={setMarkErr} />
+              </span>
+            )}
+            <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
+              {wide && controls}
+              {narrow && run}
+              {mode !== "page" && <PanelButtons expanded={mode === "expanded"} />}
+            </div>
           </div>
-        </div>
-        {/* A phone's row scrolls sideways, with the tabs first (and Start or Stop in the row above), fading out at the edge. */}
-        {!wide && (
-          <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:pr-4 narrow:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] narrow:[scrollbar-width:none] narrow:*:shrink-0">
-            {controls}
-          </div>
-        )}
-        {markErr && (
-          <div className="no-drag flex items-start gap-1 px-3 pb-2 text-[11.5px] text-red-400">
-            <span className="min-w-0 flex-1">{markErr}</span>
-            <IconButton className="h-5 w-5" title="Dismiss" onClick={() => setMarkErr(null)}>
-              <X size={12} />
-            </IconButton>
-          </div>
-        )}
-      </header>
-      <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
-          {mounted.includes("terminal") && (
-            <div className={clsx("h-full", tab !== "terminal" && "hidden")}>
-              <Suspense fallback={null}>
-                <TerminalPane task={task} active={tab === "terminal"} />
-              </Suspense>
+          {/* A phone's row scrolls sideways, with the tabs first (and Start or Stop in the row above), fading out at the edge. */}
+          {!wide && (
+            <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:pr-4 narrow:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] narrow:[scrollbar-width:none] narrow:*:shrink-0">
+              {controls}
             </div>
           )}
-          {tools
-            .filter((t) => openIds.includes(t.id) && mounted.includes(toolTab(t.id)))
-            .map((t) => (
-              <div key={t.id} className={clsx("h-full", tab !== toolTab(t.id) && "hidden")}>
+          {markErr && (
+            <div className="no-drag flex items-start gap-1 px-3 pb-2 text-[11.5px] text-red-400">
+              <span className="min-w-0 flex-1">{markErr}</span>
+              <IconButton className="h-5 w-5" title="Dismiss" onClick={() => setMarkErr(null)}>
+                <X size={12} />
+              </IconButton>
+            </div>
+          )}
+        </header>
+        <div className="flex min-h-0 flex-1">
+          <main className="min-w-0 flex-1">
+            {mounted.includes("terminal") && (
+              <div className={clsx("h-full", tab !== "terminal" && "hidden")}>
                 <Suspense fallback={null}>
-                  <TerminalPane task={task} tool={t} active={tab === toolTab(t.id)} onClose={() => endTool(t)} />
+                  <TerminalPane task={task} active={tab === "terminal"} />
                 </Suspense>
               </div>
-            ))}
-          <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} onShowThread={() => setTab("thread")} />
-        </main>
-        {/* A document, and the changes' panels, get the room. */}
-        {wide && !isTerminalTab(tab) && !docShown && shown !== "changes" && (
-          <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
-        )}
+            )}
+            {tools
+              .filter((t) => openIds.includes(t.id) && mounted.includes(toolTab(t.id)))
+              .map((t) => (
+                <div key={t.id} className={clsx("h-full", tab !== toolTab(t.id) && "hidden")}>
+                  <Suspense fallback={null}>
+                    <TerminalPane task={task} tool={t} active={tab === toolTab(t.id)} onClose={() => endTool(t)} />
+                  </Suspense>
+                </div>
+              ))}
+            <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} onShowThread={() => setTab("thread")} />
+          </main>
+          {/* A document, and the changes' panels, get the room. */}
+          {wide && !isTerminalTab(tab) && !docShown && shown !== "changes" && (
+            <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
+          )}
+        </div>
       </div>
-    </div>
+    </TaskThreadProvider>
   );
 }

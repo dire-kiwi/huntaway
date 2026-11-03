@@ -300,6 +300,8 @@ export interface Task {
   steering?: Steer[];
   /** While it runs: its agent takes messages as it works (see `steering`) rather than queueing them (API 30). */
   steerable?: boolean;
+  /** What runs its agent: the board's own runner (`legacy`) or agent-threads, fixed when its first run starts; absent until then, and on older hosts. */
+  run_engine?: "legacy" | "agent_threads" | null;
   model: string | null;
   /** Overrides the host's default effort when set (API 14). */
   effort?: Effort | null;

@@ -89,10 +89,11 @@ export function PromptCard({ id, data, hostId }: { id: number; data: Any; hostId
   if (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length)
     return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} movedOn={movedOn} />;
   if (data.tool_name === "ExitPlanMode") return <PlanCard data={data} hostId={hostId} taskId={taskId} from={<PromptFrom data={data} />} movedOn={movedOn} />;
-  return <PermissionCard data={data} hostId={hostId} />;
+  return <PermissionCard data={data} hostId={hostId} from={<PromptFrom data={data} />} />;
 }
 
-const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: Any; hostId: string }) {
+/** A tool's permission prompt from the board's own flow (`/api/permissions`): allow it, always allow the tool, or deny it. `from` says which subagent asked. */
+export const PermissionCard = memo(function PermissionCard({ data, hostId, from }: { data: Any; hostId: string; from?: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const pending = data.status === "pending";
@@ -116,7 +117,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
           {pending ? `${data.agent === "codex" ? "Codex" : "Claude"} wants to use ` : "Permission for "}
           <span className="font-mono">{data.tool_name}</span>
         </span>
-        <PromptFrom data={data} />
+        {from}
         {!pending && (
           <span
             className={clsx(

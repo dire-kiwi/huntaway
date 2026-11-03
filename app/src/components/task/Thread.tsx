@@ -13,9 +13,28 @@ import { InMainThread, ThreadCtx, ThreadSource } from "./thread/context";
 import { SubagentBar, SubagentThread } from "./thread/subagents";
 import { ItemList, TurnsCtx } from "./thread/ItemList";
 import { Composer, rewound } from "./thread/Composer";
+import { AgentThread } from "./agentThread/AgentThread";
+import { TaskThreadProvider, useIsAgentThread } from "./agentThread/Provider";
 
-/** Memoized, so the task view redrawing leaves a long thread be: pass an `empty` that stays the same. */
-export const Thread = memo(function Thread({
+/**
+ * A task's thread and composer: drawn with agent-threads' components for a task that runs on
+ * agent-threads (see TaskThreadProvider), and the board's own way for the others. Memoized, so the
+ * task view redrawing leaves a long thread be: pass an `empty` that stays the same.
+ */
+export const Thread = memo(function Thread(props: { task: Task; cwd?: string | null; placeholder?: string; empty?: ReactNode }) {
+  return (
+    <TaskThreadProvider task={props.task}>
+      <EitherThread {...props} />
+    </TaskThreadProvider>
+  );
+});
+
+function EitherThread(props: { task: Task; cwd?: string | null; placeholder?: string; empty?: ReactNode }) {
+  return useIsAgentThread(props.task) ? <AgentThread task={props.task} placeholder={props.placeholder} empty={props.empty} /> : <LegacyThread {...props} />;
+}
+
+/** The board's own thread, from its messages. */
+const LegacyThread = memo(function LegacyThread({
   task,
   cwd,
   placeholder,

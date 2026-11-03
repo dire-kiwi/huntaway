@@ -22,6 +22,7 @@ import {
 } from "./api";
 import { forgetThreadModels } from "./threadModel";
 import { addDelta, clearDelta } from "./deltas";
+import { threadEvent, threadsMissed } from "./agentThreads";
 
 /**
  * The board spans every connected host and every profile on them. Each host has its own
@@ -695,6 +696,8 @@ export function connectEvents() {
     retry = 0;
     useStore.setState({ connected: true });
     useStore.getState().loadAll().catch(() => {});
+    // The agent-threads threads shown catch up on what was sent while it wasn't connected.
+    threadsMissed();
   };
   ws.onclose = () => {
     socket = null;
@@ -824,7 +827,16 @@ export function handleEvent(ev: any) {
       if (otherHost(ev.task_id)) break;
       clearDelta(ev.task_id);
       break;
+    case "thread_event":
+      // A task's agent-threads thread (API 105): for the thread shown, if it is.
+      if (ev.task_id && ev.event) threadEvent(h, ev.task_id, ev.event);
+      break;
+    case "thread_resync":
+      // The host dropped some thread events: every thread shown from it catches up.
+      threadsMissed(h);
+      break;
     case "resync":
+      threadsMissed(ev.host_id);
       if (ev.host_id) {
         s.refreshHost(ev.host_id).catch(() => {});
         s.loadApprovals(ev.host_id);

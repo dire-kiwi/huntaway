@@ -1,22 +1,68 @@
 import clsx from "clsx";
 import { Bot, ChevronDown, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { SubagentStatusBadge as ThreadSubagentBadge, subagentKind, subagentTitle as threadSubagentTitle, useThreadState } from "@dire-kiwi/agent-threads-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Message, Task } from "../../api";
 import { useStore, useThreadMessages } from "../../store";
 import { subagentTitle, useSubagentView } from "../../subagents";
 import { threadModel } from "../../threadModel";
+import { useIsAgentThread } from "../task/agentThread/Provider";
 import { SubagentStatusBadge } from "../task/thread/subagents";
 
 const NO_MESSAGES: Message[] = [];
 
 /** Running/finished counts of the thread's subagents; opens a list that shows each one's own thread. */
-export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal?: () => void; className?: string }) {
+export function AgentsPill(props: { task: Task; onReveal?: () => void; className?: string }) {
+  return useIsAgentThread(props.task) ? <ThreadAgentsPill {...props} /> : <LegacyAgentsPill {...props} />;
+}
+
+/** One of the pill's subagents. */
+interface PillAgent {
+  id: string;
+  title: string;
+  meta: string;
+  running: boolean;
+  badge: ReactNode;
+}
+
+/** The subagents of an agent-threads task's thread (from the thread's store, see TaskThreadProvider). */
+function ThreadAgentsPill({ task, onReveal, className }: { task: Task; onReveal?: () => void; className?: string }) {
+  const subagents = useThreadState((s) => s.view.subagents);
+  const agents = useMemo(
+    () =>
+      [...subagents.values()].map<PillAgent>((s) => ({
+        id: s.id,
+        title: threadSubagentTitle(s.call),
+        meta: [subagentKind(s.call), s.call.subagent?.model, s.background && "background", s.status === "running" ? s.call.subagent?.activity : null].filter(Boolean).join(" · "),
+        running: s.status === "running",
+        badge: <ThreadSubagentBadge status={s.status} waiting={s.waiting} />,
+      })),
+    [subagents],
+  );
+  return <Pill task={task} agents={agents} onReveal={onReveal} className={className} />;
+}
+
+function LegacyAgentsPill({ task, onReveal, className }: { task: Task; onReveal?: () => void; className?: string }) {
   // The thread's own (built once for both), kept while the pill shows, but only loaded by the thread.
   const messages = useThreadMessages(task.id, false);
   // With those started before the loaded part of a long thread (the same as the thread's, for the same model).
   const earlier = useStore((s) => s.threads[task.id]?.subagents);
   const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
-  const subagents = useMemo(() => [...model.subagents.values()], [model.subagents]);
+  const agents = useMemo(
+    () =>
+      [...model.subagents.values()].map<PillAgent>((s) => ({
+        id: s.id,
+        title: subagentTitle(s),
+        meta: [s.agentType, s.model, s.status === "running" ? s.activity : null].filter(Boolean).join(" · "),
+        running: s.status === "running",
+        badge: <SubagentStatusBadge s={s} compact />,
+      })),
+    [model.subagents],
+  );
+  return <Pill task={task} agents={agents} onReveal={onReveal} className={className} />;
+}
+
+function Pill({ task, agents: subagents, onReveal, className }: { task: Task; agents: PillAgent[]; onReveal?: () => void; className?: string }) {
   const viewing = useSubagentView((s) => s.open[task.id]);
   const show = useSubagentView((s) => s.show);
   const [open, setOpen] = useState(false);
@@ -42,10 +88,10 @@ export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal
   }, [open]);
 
   if (subagents.length === 0) return null;
-  const running = subagents.filter((s) => s.status === "running").length;
+  const running = subagents.filter((s) => s.running).length;
   const settled = subagents.length - running;
   // Newest first, running ones on top.
-  const list = [...subagents].reverse().sort((a, b) => Number(b.status === "running") - Number(a.status === "running"));
+  const list = [...subagents].reverse().sort((a, b) => Number(b.running) - Number(a.running));
 
   return (
     <div ref={root} className={clsx("relative", className)}>
@@ -80,12 +126,10 @@ export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal
             >
               <Bot size={13} className="shrink-0 text-muted" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[12.5px] text-fg">{subagentTitle(s)}</span>
-                <span className="block truncate text-[11px] text-faint">
-                  {[s.agentType, s.model, s.status === "running" ? s.activity : null].filter(Boolean).join(" · ")}
-                </span>
+                <span className="block truncate text-[12.5px] text-fg">{s.title}</span>
+                <span className="block truncate text-[11px] text-faint">{s.meta}</span>
               </span>
-              <SubagentStatusBadge s={s} compact />
+              {s.badge}
             </button>
           ))}
         </div>
