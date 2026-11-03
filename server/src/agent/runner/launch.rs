@@ -2,6 +2,24 @@
 
 use super::*;
 
+/// The nearest effort Claude has to one only Codex models offer.
+pub(super) fn claude_effort(e: &str) -> &str {
+    match e {
+        "ultra" => "max",
+        "minimal" => "low",
+        e => e,
+    }
+}
+
+/// Keep the effort a run was started with, as the agent is given it, for the statistics of the reviews of its work
+/// (see review/stats.rs). The agent's own default is kept as an empty effort, so it isn't taken for a run from before this.
+pub(super) fn record_effort(state: &Shared, run_id: &str, effort: Option<&str>) {
+    let effort = effort.map(str::trim).unwrap_or("");
+    if let Err(e) = state.db().execute("UPDATE runs SET effort=?2 WHERE id=?1", rusqlite::params![run_id, effort]) {
+        tracing::warn!(run = run_id, "recording a run's effort: {e:#}");
+    }
+}
+
 /// Prepare the working directory and start claude.
 pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     let task_id = run.task_id.as_str();
@@ -144,6 +162,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             Some(cfg) => codex_run_effort(cfg, model.as_deref(), effort.clone()).await,
             None => effort.clone(),
         };
+        record_effort(state, &run.id, effort.as_deref());
         let (approval_policy, approvals_reviewer, sandbox) = crate::agent::codex::policy(&permission_mode, task.kind == "review");
         let tools = match &project {
             Some(p) => crate::agent::agent_tools::for_run(state, &p.id)?,
@@ -291,13 +310,9 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     if let Some(m) = &model {
         push("--model", m);
     }
+    record_effort(state, &run.id, effort.as_deref().map(claude_effort));
     if let Some(e) = &effort {
-        // The nearest Claude has to an effort only Codex models offer.
-        push("--effort", match e.as_str() {
-            "ultra" => "max",
-            "minimal" => "low",
-            e => e,
-        });
+        push("--effort", claude_effort(e));
     }
     // Files attached to prompts (see attachments.rs).
     let attachments = crate::attachments::dir(state);

@@ -872,12 +872,22 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
     }
+    if version < 83 {
+        // The effort each run was started with, as its agent was given it (see runner/launch.rs): an empty one is the
+        // agent's own default, and null a run from before this, whose reviews' efforts are their tasks' (see review/stats.rs).
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name='effort'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE runs ADD COLUMN effort TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version=83; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 82;
+pub const VERSION: i64 = 83;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
