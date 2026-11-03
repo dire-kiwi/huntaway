@@ -1,5 +1,5 @@
-# Builds the desktop app (app/package.json's `build`) and the server for Linux and macOS when a GitHub release is
-# published, and attaches them to that release. The release's tag is the version (v1.2.3 → 1.2.3), so it must be
+# Builds the desktop app (app/package.json's `build`) and the server for Linux and macOS, and the mobile app's Android
+# APK, when a GitHub release is published, and attaches them to that release. The release's tag is the version (v1.2.3 → 1.2.3), so it must be
 # semver with an optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing
 # release's tag again and replaces its files. A pull request that changes the packaging builds it too, as an
 # artifact of the run, without a release. Only the attach job, which pull requests don't run, can write to the repository.
@@ -19,6 +19,13 @@ on:
       - app/package.json
       - app/package-lock.json
       - app/electron/**
+      - mobile/package.json
+      - mobile/package-lock.json
+      - mobile/app.json
+      - mobile/app.config.*
+      - mobile/eas.json
+      - mobile/scripts/release-version.js
+      - mobile/assets/**
 
 permissions:
   contents: read
@@ -148,11 +155,128 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ env.TAG && 1 || 7 }}
 
+  # The mobile app's Android APK (mobile/), built here with `expo prebuild` and Gradle rather than on EAS: it needs no
+  # Expo account or build quota, and the signing key stays in this repository's secrets. ANDROID_KEYSTORE_BASE64 is the
+  # keystore (base64 of the .jks), with ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD; Gradle
+  # gets them as android.injected.signing.* properties, as Android Studio passes them, so the generated build.gradle
+  # needs no changes. A release needs the key, since phones only update an app signed with the same one. A pull
+  # request's APK, an artifact of its run, is signed with the debug key of Expo's template instead: for trying, not for
+  # keeping. Only the 32- and 64-bit ARM builds are in it, which every phone runs; x86 is for emulators.
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || '' }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # React Native's Gradle plugin builds with a JDK 17 toolchain. The runner has the Android SDK and NDK; Gradle
+      # downloads the versions it's missing.
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.event_name != 'pull_request' }}
+
+      - name: npm ci
+        working-directory: mobile
+        run: npm ci --no-audit --no-fund
+
+      - name: Version
+        working-directory: mobile
+        run: |
+          version="${TAG#v}"
+          [ -n "$TAG" ] || version="0.0.0-pr.${{ github.event.number }}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          node scripts/release-version.js "$version"
+
+      # Firebase's config for push through FCM (Expo's push service hands Android pushes to it), from the optional
+      # secret GOOGLE_SERVICES_JSON (the google-services.json of a Firebase app for nz.net.ivan.huntaway). It isn't
+      # committed, so app.json names it only here, where it exists: prebuild fails on a missing file. Without it the
+      # app builds and runs, but can't register for push on Android.
+      - name: google-services.json
+        working-directory: mobile
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::warning::No GOOGLE_SERVICES_JSON secret: this APK can't register for push notifications"
+            exit 0
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
+          node -e 'const fs = require("node:fs"); JSON.parse(fs.readFileSync("google-services.json", "utf8"));
+            const config = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            config.expo.android.googleServicesFile = "./google-services.json";
+            fs.writeFileSync("app.json", JSON.stringify(config, null, 2) + "\n")'
+
+      - name: expo prebuild
+        working-directory: mobile
+        run: npx expo prebuild --platform android --no-install
+        env:
+          CI: "1"
+
+      # Only a release's APK gets the key, so a branch's code never runs with it. The properties go in the generated
+      # android/gradle.properties (escaped for a properties file), where nothing caches them.
+      - name: Signing key
+        if: env.TAG
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::A release's APK needs the signing key: set the repository secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD (README: The mobile app)"
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/release.jks"
+          printf '%s' "$KEYSTORE" | base64 -d > "$keystore"
+          node -e 'const [file, ...values] = process.argv.slice(1);
+            const esc = (v) => v.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/^\s/, "\\$&");
+            const keys = ["store.file", "store.password", "key.alias", "key.password"];
+            require("node:fs").appendFileSync(file, "\n" + keys.map((k, i) => `android.injected.signing.${k}=${esc(values[i])}\n`).join(""))' \
+            mobile/android/gradle.properties "$keystore" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"
+
+      - name: Gradle
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+
+      # The APK's signer, which must be the release key on a release (a Gradle that ignored the injected key would
+      # otherwise ship one signed with the debug key).
+      - name: APK
+        run: |
+          mkdir -p mobile/release
+          apk="mobile/release/huntaway-$VERSION.apk"
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk "$apk"
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+          if [ -n "$TAG" ] && grep -q "CN=Android Debug" "$RUNNER_TEMP/certs.txt"; then
+            echo "::error::The APK is signed with the debug key"
+            exit 1
+          fi
+          ls -l "$apk"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: huntaway-android
+          path: mobile/release/*.apk
+          if-no-files-found: error
+          retention-days: ${{ env.TAG && 1 || 7 }}
+
   # The builds' files, attached to the release (those that built, if one failed). On its own so that only this job,
   # which runs nothing from the repository, has write access.
   attach:
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -169,6 +293,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          files=(release/*.{AppImage,pacman,dmg,zip,tar.gz,json})
+          files=(release/*.{AppImage,pacman,dmg,zip,tar.gz,json,apk})
           ls -l "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
