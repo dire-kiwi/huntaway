@@ -245,23 +245,139 @@ pub async fn ensure(dir: &Path) -> Result<()> {
     }
     let old = dir.join(".git");
     if std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir()) {
-        // Its config was the assistant's to change, so it isn't kept (nor what it may have turned on there).
-        let format = git(dir, Who::Assistant, &["config", "--file", &crate::util::path_str(&old.join("config")), "extensions.objectformat"]).await?;
-        std::fs::rename(&old, &gd).with_context(|| format!("moving {} to {}", old.display(), gd.display()))?;
-        std::fs::remove_file(gd.join("config")).ok();
-        let format = format!("--object-format={}", format.stdout.trim());
-        let mut args = vec!["init", "-q"];
-        if format.len() > "--object-format=".len() {
-            args.push(&format);
+        match migrate(dir, &old, &gd).await {
+            Ok(()) => {
+                // What changed meanwhile, with what's ignored now left out.
+                commit_all_locked(dir, Who::Assistant, None).await?;
+                return Ok(());
+            }
+            Err(e) => {
+                // Its history stays in its `.git`, for the user to look at, and it starts again.
+                tracing::warn!("the assistant's history in {} couldn't be moved, so it starts again: {e:#}", old.display());
+                std::fs::remove_dir_all(&gd).ok();
+            }
         }
-        git_ok(dir, Who::Assistant, &args).await?;
-        tracing::info!("moved the assistant's history to {}", gd.display());
-        // What changed meanwhile, with what's ignored now left out.
-        commit_all_locked(dir, Who::Assistant, None).await?;
-        return Ok(());
     }
     git_ok(dir, Who::Assistant, &["init", "-q"]).await?;
     commit_all_locked(dir, Who::Assistant, Some("Start the assistant's memory")).await?;
+    Ok(())
+}
+
+/// Move a workspace's history from its own `.git` (as HA-121 made it) to `gd`, with the workspace's lock held. That
+/// `.git` was the assistant's to change, so no git command is run on it, and none of its files is kept:
+/// - One that points git elsewhere (`commondir`, `gitdir`, alternates) is refused, as HA-121 never wrote one.
+/// - `gd` is a new repository of the board's, into which the history's objects and refs are copied (as regular files,
+///   never through a symlink) and then written again by git (`repack`, `pack-refs`), with HEAD only as a branch or a
+///   commit. Its config, hooks, `info` and the rest are left behind.
+/// - The history must be whole. Then the old `.git` goes. An error leaves it, and `gd` to be removed.
+async fn migrate(dir: &Path, old: &Path, gd: &Path) -> Result<()> {
+    for elsewhere in ["commondir", "gitdir", "objects/info/alternates", "objects/info/http-alternates"] {
+        if std::fs::symlink_metadata(old.join(elsewhere)).is_ok() {
+            bail!("it has {elsewhere}, which points git at another folder");
+        }
+    }
+    for d in ["objects", "refs"] {
+        if !std::fs::symlink_metadata(old.join(d)).is_ok_and(|m| m.is_dir()) {
+            bail!("its {d} isn't a folder of its own");
+        }
+    }
+    // (`--file` reads that file only, not its includes, and runs nothing.)
+    let format = git(dir, Who::Assistant, &["config", "--file", &crate::util::path_str(&old.join("config")), "extensions.objectformat"]).await?;
+    let format = format.stdout.trim();
+    let mut init = vec!["init".to_string(), "-q".to_string()];
+    if matches!(format, "sha1" | "sha256") {
+        init.push(format!("--object-format={format}"));
+    }
+    let init: Vec<&str> = init.iter().map(String::as_str).collect();
+    git_ok(dir, Who::Assistant, &init).await?;
+    copy_objects(&old.join("objects"), &gd.join("objects"))?;
+    copy_tree(&old.join("refs"), &gd.join("refs"))?;
+    copy_file(&old.join("packed-refs"), &gd.join("packed-refs"))?;
+    // HEAD only as a branch or a commit, as git writes it.
+    let head = read_plain(&old.join("HEAD")).unwrap_or_default();
+    let head = String::from_utf8_lossy(&head);
+    let branch = head.trim().strip_prefix("ref: refs/heads/").filter(|b| !b.is_empty() && b.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_./".contains(&c)) && !b.contains(".."));
+    if let Some(b) = branch {
+        std::fs::write(gd.join("HEAD"), format!("ref: refs/heads/{b}\n"))?;
+    } else if head.trim().len() >= 40 && head.trim().bytes().all(|c| c.is_ascii_hexdigit()) {
+        std::fs::write(gd.join("HEAD"), format!("{}\n", head.trim()))?;
+    }
+    // The history must be whole, else it isn't used.
+    git_ok(dir, Who::Assistant, &["rev-parse", "--verify", "-q", "HEAD^{commit}"]).await?;
+    git_ok(dir, Who::Assistant, &["rev-list", "--objects", "--all", "--quiet"]).await?;
+    // Written again by git: the objects into a pack of its own (the copied files go), and the refs into packed-refs.
+    git_ok(dir, Who::Assistant, &["repack", "-a", "-d", "-q"]).await?;
+    git_ok(dir, Who::Assistant, &["pack-refs", "--all", "--prune"]).await?;
+    git_ok(dir, Who::Assistant, &["rev-list", "--objects", "--all", "--quiet"]).await?;
+    git_ok(dir, Who::Assistant, &["read-tree", "HEAD"]).await?;
+    tracing::info!("moved the assistant's history to {}", gd.display());
+    // From here the history is in `gd`, whatever happens to the old one.
+    if let Err(e) = std::fs::remove_dir_all(old) {
+        tracing::warn!("removing {}: {e}", old.display());
+    }
+    Ok(())
+}
+
+/// Copy a repository's objects: loose ones (`xx/…`) and packs with their indexes (`pack/*.pack`, `*.idx`), nothing else
+/// (not `info`, nor a pack's `.keep`, which would keep it from being written again).
+fn copy_objects(from: &Path, to: &Path) -> Result<()> {
+    for e in std::fs::read_dir(from)?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let is_dir = std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir());
+        if !is_dir {
+            continue;
+        }
+        if name.len() == 2 && name.bytes().all(|c| c.is_ascii_hexdigit()) {
+            copy_tree(&e.path(), &to.join(&name))?;
+        } else if name == "pack" {
+            std::fs::create_dir_all(to.join("pack"))?;
+            for f in std::fs::read_dir(e.path())?.flatten() {
+                let n = f.file_name().to_string_lossy().into_owned();
+                if n.starts_with("pack-") && (n.ends_with(".pack") || n.ends_with(".idx")) {
+                    copy_file(&f.path(), &to.join("pack").join(&n))?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The regular file at `path` (not a symlink), if there is one.
+fn read_plain(path: &Path) -> Option<Vec<u8>> {
+    let mut f = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut f, &mut out).ok()?;
+    Some(out)
+}
+
+/// Copy the regular file `from` to `to`, if it's one (not a symlink).
+fn copy_file(from: &Path, to: &Path) -> Result<()> {
+    let Ok(mut f) = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(from) else { return Ok(()) };
+    if !f.metadata()?.is_file() {
+        return Ok(());
+    }
+    let mut out = std::fs::OpenOptions::new().write(true).create(true).truncate(true).custom_flags(libc::O_NOFOLLOW).open(to)?;
+    std::io::copy(&mut f, &mut out).with_context(|| format!("copying {}", from.display()))?;
+    Ok(())
+}
+
+/// Copy the folder `from` into `to`: its folders and regular files, not symlinks.
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    if !std::fs::symlink_metadata(from).is_ok_and(|m| m.is_dir()) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)?.flatten() {
+        let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
+        if meta.is_dir() {
+            copy_tree(&e.path(), &to.join(e.file_name()))?;
+        } else if meta.is_file() {
+            copy_file(&e.path(), &to.join(e.file_name()))?;
+        }
+    }
     Ok(())
 }
 
@@ -345,6 +461,12 @@ async fn commit_file_locked(dir: &Path, who: Who, rel: &str, message: &str) -> R
     }
     git_ok(dir, who, &["commit", "-q", "--no-verify", "-m", message, "--", rel]).await?;
     Ok(Some(git_ok(dir, who, &["rev-parse", "HEAD"]).await?.trim().to_string()))
+}
+
+/// Whether the file `rel` is in the last commit as it is now.
+async fn in_history(dir: &Path, rel: &str) -> Result<bool> {
+    Ok(git(dir, Who::User, &["ls-files", "--error-unmatch", "--", rel]).await?.ok
+        && git(dir, Who::User, &["diff", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--", rel]).await?.ok)
 }
 
 #[cfg(test)]
@@ -733,29 +855,33 @@ pub async fn write(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b
     if b.content.len() > MAX_FILE {
         return Err(ApiError::bad("that's too big for a memory file"));
     }
-    let expected = (!b.force).then_some(b.expected.as_deref());
-    let commit = put(&dir, &path, &b.path, &b.content, expected, &format!("Edit {}", b.path)).await?;
+    let commit = put(&dir, &path, &b.path, &b.content, Some(b.expected.as_deref()), b.force, &format!("Edit {}", b.path)).await?;
     Ok(Json(json!({ "path": b.path, "content": b.content, "commit": commit })))
 }
 
 /// Write `content` to the file `rel` and commit it as the user's, with the workspace's lock held from the check to the
-/// commit. `expected`: what the file must say now (None: that it isn't there) for it to be written, else a 409; not
-/// given, it's written whatever it says. What it says now, if that isn't committed (the assistant's edit since its last
-/// turn, say), is committed first, as the assistant's, so a restore or an overwrite never loses it.
-async fn put(dir: &Path, path: &Path, rel: &str, content: &str, expected: Option<Option<&str>>, message: &str) -> ApiResult<Option<String>> {
+/// commit. `seen`: what the user's editor opened (None: that it isn't there), which it must still say unless `force`d,
+/// else a 409; not given for a restore. What the file says now, if that isn't committed (the assistant's edit since its
+/// last turn, say), is committed first, as the assistant's, so a restore or an overwrite never loses it. One that the
+/// history leaves out (it's in `.gitignore`) is only written over when it's what the user saw, forced or not.
+async fn put(dir: &Path, path: &Path, rel: &str, content: &str, seen: Option<Option<&str>>, force: bool, message: &str) -> ApiResult<Option<String>> {
     let lock = lock(dir);
     let _held = lock.lock().await;
     let now = match std::fs::symlink_metadata(path) {
         Ok(_) => Some(read_text(path, rel)?),
         Err(_) => None,
     };
-    if let Some(expected) = expected {
-        if now.as_deref() != expected {
-            return Err(ApiError::conflict(format!("{rel} changed since you opened it")));
-        }
+    if !force && seen != Some(now.as_deref()) {
+        return Err(ApiError::conflict(format!("{rel} changed since you opened it")));
     }
-    if now.is_some() {
+    if let Some(now) = now.as_deref().filter(|n| *n != content) {
         commit_file_locked(dir, Who::Assistant, rel, &format!("Update {rel}")).await?;
+        if is_repo(dir) && !in_history(dir, rel).await? && seen != Some(Some(now)) {
+            return Err(ApiError::conflict(format!(
+                "{rel} isn't kept in the memory's history (its .gitignore leaves it out), so what it says now couldn't be \
+                 restored, and that isn't what you opened: load it again first"
+            )));
+        }
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| ApiError::from(anyhow::anyhow!("making the folder for {rel}: {e}")))?;
@@ -846,7 +972,7 @@ pub async fn restore(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json
     let rev = check_rev(&b.rev)?;
     let content = at_rev(&dir, rev, &b.path).await?;
     let short = &rev[..rev.len().min(7)];
-    let commit = put(&dir, &path, &b.path, &content, None, &format!("Restore {} as it was in {short}", b.path)).await?;
+    let commit = put(&dir, &path, &b.path, &content, None, true, &format!("Restore {} as it was in {short}", b.path)).await?;
     Ok(Json(json!({ "path": b.path, "content": content, "commit": commit })))
 }
 

@@ -249,7 +249,8 @@ function FileEditor({
       written = (await api.writeMemoryFile(task.host_id, task.profile_id, path, content, base, force)).content;
       saved(key, written);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) conflicts.add(key);
+      // A forced save refused too (a file the history leaves out, changed since it was opened) says why.
+      if (e instanceof ApiError && e.status === 409 && !force) conflicts.add(key);
       else setError((e as Error).message);
     } finally {
       saving.delete(key);

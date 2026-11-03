@@ -228,15 +228,18 @@ yesterday's logs (their ends, if longer), and how to remember, forget and keep t
 is given these instructions in a file (`--append-system-prompt-file`, in the run's folder) rather than
 as an argument, which can't be longer than 128 KiB. The workspace has a git history: after each of the
 assistant's turns that changed it, the board commits it as *Assistant*. Its git folder is
-`<data dir>/assistants/<task id>.git`, next to the workspace rather than in it (a workspace from
-before has its `.git` moved there, without its config), so the assistant can't set the config,
-hooks or filters the board's git runs with; the board's git also ignores your own git config. What
+`<data dir>/assistants/<task id>.git`, next to the workspace rather than in it, so the assistant
+can't set the config, hooks or filters the board's git runs with. A workspace from before gets a new
+one, into which its old `.git`'s objects and refs are copied and written again by git, and the old
+`.git` goes; one with a `commondir`, `gitdir` or alternates, or whose history isn't whole, is left
+as it is and the history starts again; the board's git also ignores your own git config. What
 the workspace's `.gitignore` lists (made with common downloads, build output and secrets) and files
 over 1 MB aren't committed. The assistant's **Memory** tab lists the files (those loaded into every
 run highlighted, with their length against the cap), edits them (committed as *You*; a save over what
 the assistant wrote meanwhile asks whose to keep), shows each file's history with what each commit
 changed, and restores a version. A restore or a save over the assistant's edit first commits that
-edit, as the assistant's, if it isn't yet, so it's always in the history. Its **Import** gives a prompt to paste into another assistant
+edit, as the assistant's, if it isn't yet, so it's always in the history; a file the history leaves
+out is only written over (even when forced) if it's what the editor opened. Its **Import** gives a prompt to paste into another assistant
 (ChatGPT, Claude.ai…) for what it knows about you, and sends its answer to your assistant, as data,
 to fold into `USER.md` and `MEMORY.md`. The API is under `/api/profiles/<id>/assistant/memory`
 (`file`, `history`, `diff`, `restore`, `import`), and only reaches files in that profile's
