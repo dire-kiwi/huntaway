@@ -1567,3 +1567,33 @@ fn a_denied_merge_goes_back_to_review() {
         std::fs::remove_dir_all(&dir).ok();
     })
 }
+
+/// HA-153: the server says which file the database is in, and copies the older builds' one again only when an older
+/// build has changed it since (`db/file.rs` has the copying itself).
+#[test]
+fn the_database_is_copied_again_only_when_the_older_file_has_changed() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let app = router(s.clone());
+        let (code, v) = call(&app, "GET", "/api/admin/server").await;
+        assert_eq!((code, &v["database"]), (200, &json!({"file": "huntaway-2.db", "copied_from": null, "older_changed": null})));
+        assert_eq!(call(&app, "POST", "/api/admin/database/recopy").await.0, 400);
+        assert!(!s.data_dir.join("recopy-db").exists());
+
+        // An older build has made its own file since.
+        std::fs::write(s.data_dir.join("huntaway.db"), "").unwrap();
+        assert_eq!(call(&app, "GET", "/api/admin/server").await.1["database"]["older_changed"], "huntaway.db");
+        let mut events = s.events.subscribe();
+        let (code, v) = call(&app, "POST", "/api/admin/database/recopy").await;
+        assert_eq!(code, 200, "{v}");
+        // A restart, without a rebuild, which asks the next start to copy it.
+        loop {
+            let ev = events.recv().await.unwrap();
+            if ev["type"] == "restart" && ev["phase"] == "failed" {
+                assert!(ev["error"].as_str().unwrap().ends_with("not in a test"), "{ev}");
+                break;
+            }
+        }
+        assert!(s.data_dir.join("recopy-db").is_file());
+    })
+}

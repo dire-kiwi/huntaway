@@ -239,6 +239,7 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
+| `--recopy-db` / `IA_RECOPY_DB` | off | Copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see *The database file*) |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
 
 ### Agents survive restarts
@@ -265,6 +266,33 @@ up new code.
 One caveat under `systemd`: by default a service restart kills its whole process group,
 shims (and the tmux server behind terminals) included. Use `KillMode=process` (or run the shims in their own scope) to keep agents
 alive across service restarts.
+
+### The database file
+
+The board's database is `<data dir>/huntaway-2.db`. Builds from before the move onto agent-threads use
+`huntaway.db` (or `issue-agent.db`, from before the rename to Huntaway), and their database can't go
+back to them once a newer build has migrated it. So the first time a build with `huntaway-2.db` starts on a
+data dir, it copies the older file into `huntaway-2.db` (with what's still in its write-ahead log),
+migrates the copy, and uses that from then on. That's before it serves anything, so the first start
+takes longer on a big board (several seconds for a gigabyte). It only reads the older file, which stays
+as it was: a start that stops part-way leaves it in use and copies it again next time.
+
+- **Going back** to an older build (Roll back, an older package or a checkout from before) opens the
+  older file as it was at the switch. What was done in between (tasks, messages, runs and their
+  agent-threads records, which have a folder of their own that older builds don't know about) is only in
+  `huntaway-2.db`. Agents that were running at the switch carry on, as over any restart: their runs are in
+  the copy.
+- **Coming forward again** after an older build has run for a while: `huntaway-2.db` hasn't got what the
+  older build did. The server notices that the older file has changed since it was copied, logs a warning
+  and shows it in Settings → Server (and a linked host's page). **Copy again** there (or starting it with
+  `--recopy-db`) copies the older file again, discarding what's been done in `huntaway-2.db` since; that's
+  kept in `huntaway-2.db.replaced` until the next copy. Nothing is copied again without asking.
+- Each machine copies its own: linked hosts and a hub each have their own data dir, and copy theirs
+  when they first start a build with `huntaway-2.db`, whenever they update.
+- The copy takes as much disk space again as the older file, which isn't removed: delete `huntaway.db`
+  (with its `-wal` and `-shm`) once you won't go back to an older build.
+- `huntaway threads-import --db` takes the database file or a data dir (for its `huntaway-2.db`), and
+  `scripts/copy-live-board.sh` copies whichever file the live board uses now.
 
 ### Restarting after a merge
 
@@ -468,7 +496,9 @@ version is all a check does; quitting and starting the app again still runs the 
 - **Roll back.** Settings → Server → **Roll back** marks the running version bad and restarts onto
   the one before it, or onto the app's own server when there's none (or the one before it is older
   than the app's own server, which a newer package's takes over from). A newer server may have
-  updated the database; the older one runs on it as it is (the changes so far only add to it).
+  updated the database; the older one runs on it as it is (the changes so far only add to it). An older
+  version from before `huntaway-2.db` goes back to the database as it was when it was copied (see *The
+  database file*).
 - **Prereleases** are offered only with **Include prereleases** on in Settings → Server. Turning it
   off again withdraws a prerelease that was downloaded but not yet updated to.
 - **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a

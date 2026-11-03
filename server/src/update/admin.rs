@@ -98,6 +98,9 @@ pub async fn status(state: &Shared) -> Result<Value> {
         "running_agents": running_agents,
         "restart": job,
     });
+    // API 104: which file the database is in, and whether an older build has changed the one it was copied from.
+    let database = crate::db::file::status(&state.data_dir, &state.db())?;
+    v["database"] = json!(database);
     // API 88: with --release-updates, the release this server could update to.
     if let Some(release) = crate::update::release::status(state)? {
         v["release"] = release;
@@ -208,6 +211,20 @@ pub fn start(state: &Shared, rebuild: bool) -> ApiResult<()> {
         return Err(ApiError::bad("source checkout not found; start the server with --source-dir"));
     }
     begin(state, move |st| async move { run(&st, rebuild).await })
+}
+
+/// Copy the older builds' database into this build's again and restart onto it (see db/file.rs), as a restart job.
+/// Only when an older build has changed it since it was copied: that discards what's been done since in this one.
+pub fn recopy_database(state: &Shared) -> ApiResult<()> {
+    let status = crate::db::file::status(&state.data_dir, &state.db())?;
+    let Some(older) = status.older_changed else {
+        return Err(ApiError::bad("the older builds' database hasn't changed since it was copied"));
+    };
+    begin(state, move |st| async move {
+        log_line(&st, &format!("copying {older} into {} again as the server restarts", status.file));
+        crate::db::file::request_recopy(&st.data_dir)?;
+        run(&st, false).await
+    })
 }
 
 /// Start a restart job that runs `job` in the background, unless one is running. `job` only returns on failure,

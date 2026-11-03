@@ -10,6 +10,10 @@
 # runs to pick up, no repositories or worktrees (their paths are moved under /nonexistent), no
 # setup or status scripts, no Claude configs, no Asana tokens, no pending prompts and no linked hosts. Then the test
 # server restarts on it. IA_LIVE_DATA_DIR overrides where the live data is (~/.local/share/issue-agent).
+#
+# The copy goes in under the name of the live board's file: `huntaway-2.db` from a build that's moved onto it (see
+# server/src/db/file.rs), or `huntaway.db` (or `issue-agent.db`) from one before, which a test server of a newer build
+# copies into its `huntaway-2.db` as it starts, as the live board's will.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,9 +29,12 @@ grep -qx 'export IA_CLAUDE_BIN=/bin/false' "$dir/launch" && grep -qx 'export IA_
   { echo "start the test server with --no-agents: its agents would run on the live board's tasks" >&2; exit 1; }
 
 live=${IA_LIVE_DATA_DIR:-$HOME/.local/share/issue-agent}
-src=$live/huntaway.db
-[[ -f $src ]] || src=$live/issue-agent.db
-[[ -f $src ]] || { echo "no database in $live" >&2; exit 1; }
+src=
+for f in huntaway-2.db huntaway.db issue-agent.db; do
+  [[ -f $live/$f ]] && { src=$live/$f; break; }
+done
+[[ -n $src ]] || { echo "no database in $live" >&2; exit 1; }
+db=$dir/$(basename "$src")
 [[ "$(cd "$dir" && pwd -P)" != "$(cd "$live" && pwd -P)" ]] || { echo "that's the live data dir" >&2; exit 1; }
 
 pid="$(cat "$dir/server.pid" 2>/dev/null || true)"
@@ -36,9 +43,10 @@ if [[ -n $pid ]] && [[ -r /proc/$pid/cmdline ]] && tr '\0' ' ' < "/proc/$pid/cmd
   for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
   kill -0 "$pid" 2>/dev/null && kill -KILL "$pid"
 fi
-rm -f "$dir"/huntaway.db "$dir"/huntaway.db-wal "$dir"/huntaway.db-shm "$dir"/issue-agent.db*
-sqlite3 -readonly "$src" ".backup '$dir/huntaway.db'"
-sqlite3 "$dir/huntaway.db" <<'SQL'
+# Every database file the test server had (its own huntaway-2.db would be used over the copy), with their logs.
+rm -f "$dir"/huntaway.db "$dir"/huntaway.db-* "$dir"/huntaway-2.db "$dir"/huntaway-2.db-* "$dir"/huntaway-2.db.* "$dir"/issue-agent.db*
+sqlite3 -readonly "$src" ".backup '$db'"
+sqlite3 "$db" <<'SQL'
 UPDATE runs SET status='exited', ended_at=coalesce(ended_at, created_at) WHERE status<>'exited';
 UPDATE tasks SET running=0, merging=0, waiting=0, agent_wait=NULL,
   worktree_path='/nonexistent' || worktree_path, work_dir='/nonexistent' || work_dir;
@@ -56,7 +64,7 @@ DELETE FROM pr_watches;
 DELETE FROM pr_states;
 SQL
 # Nor the profiles' Asana tokens (in databases from API 57 on).
-if [[ -n $(sqlite3 "$dir/huntaway.db" "SELECT 1 FROM pragma_table_info('profiles') WHERE name='asana_token'") ]]; then
-  sqlite3 "$dir/huntaway.db" "UPDATE profiles SET asana_token=NULL, asana_user=NULL;"
+if [[ -n $(sqlite3 "$db" "SELECT 1 FROM pragma_table_info('profiles') WHERE name='asana_token'") ]]; then
+  sqlite3 "$db" "UPDATE profiles SET asana_token=NULL, asana_user=NULL;"
 fi
 "$root/scripts/test-server.sh" restart "$dir"

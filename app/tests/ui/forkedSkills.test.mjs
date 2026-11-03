@@ -26,7 +26,7 @@ c.execute("update tasks set kind='review', parent_id=? where id=?", (sys.argv[2]
 for m in json.load(sys.stdin):
  c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (m['task_id'], m['kind'], json.dumps(m['data'], separators=(',', ':')), m['created_at']))
 c.commit()
-`, `${server.dataDir}/huntaway.db`, parent.id, thread.id], { input: JSON.stringify(messages) });
+`, `${server.dataDir}/huntaway-2.db`, parent.id, thread.id], { input: JSON.stringify(messages) });
 
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;

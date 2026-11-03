@@ -62,7 +62,7 @@ c = sqlite3.connect(sys.argv[1])
 c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (sys.argv[2], 'question', sys.argv[3], '2026-10-31T07:00:00.000Z'))
 c.commit()
 `,
-      `${server.dataDir}/huntaway.db`,
+      `${server.dataDir}/huntaway-2.db`,
       task.id,
       JSON.stringify(card),
     ],
@@ -96,7 +96,7 @@ cur = c.execute("insert into messages (task_id,kind,data,created_at) values (?,?
 c.execute("insert into permission_requests (id,task_id,message_id,tool_name,input,status,created_at,kind) values (?,?,?,?,?,?,?,?)", ('ask-now', sys.argv[2], cur.lastrowid, 'AskUserQuestion', json.dumps(json.loads(sys.argv[3])['input']), 'expired', '2026-10-31T07:00:00.000Z', 'tool'))
 c.commit()
 `,
-      `${server.dataDir}/huntaway.db`,
+      `${server.dataDir}/huntaway-2.db`,
       task.id,
       JSON.stringify(ask),
     ],

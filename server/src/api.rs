@@ -212,6 +212,7 @@ fn host_routes() -> Router<Shared> {
         .route("/admin/release/check", post(check_releases))
         .route("/admin/release/update", post(update_to_release))
         .route("/admin/release/rollback", post(roll_back_release))
+        .route("/admin/database/recopy", post(recopy_database))
         .route("/host/ws", get(ws))
 }
 

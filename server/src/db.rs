@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::util::{new_id, now, path_str};
 
+pub mod file;
 mod links;
 mod messages;
 mod profiles;
