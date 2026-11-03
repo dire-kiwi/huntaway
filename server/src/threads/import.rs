@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 use crate::db::{Message, Task};
 
 /// Changes when what `convert` makes of the same messages does: imported threads record it.
-pub const CONVERTER_VERSION: u32 = 3;
+pub const CONVERTER_VERSION: u32 = 4;
 
 /// Tool results longer than this were cut short when they were stored (runner/output.rs's `slim`).
 const STORED_RESULT_MAX: usize = 30_000;
@@ -345,11 +345,6 @@ impl Builder {
         self.events.push(json!({"type": "request.resolved", "request_id": id, "resolution": resolution}));
     }
 
-    /// The next call with tool_use id `id` the thread hasn't come to.
-    fn next_occurrence(&self, id: &str) -> Option<&Occurrence> {
-        self.occurrences.get(id)?.get(self.seen.get(id).copied().unwrap_or(0))
-    }
-
     /// The calls with tool_use id `id` that `keep` keeps (it's told whether the thread has come to each).
     ///
     /// A thread can have several calls with one id (a resumed session, say). Prompts, results and a
@@ -386,25 +381,22 @@ impl Builder {
         None
     }
 
-    /// The call a prompt for tool_use id `id` (with `input`) is for: the only one with the id, or else of
-    /// those still waiting in the current session and the next one (prompts can come before their call),
-    /// the one with its input. None, with a warning, if there's no telling.
+    /// The call a prompt for tool_use id `id` (with `input`) is for: the only one with the id, or else, of
+    /// those that could still ask (waiting in the current session, or not come to yet: prompts can come
+    /// before their call), the one with its input. None, with a warning, if there's no telling.
     fn prompted(&mut self, message_id: i64, id: &str, input: &Value) -> Option<Occurrence> {
         if let [only] = self.occurrences.get(id)?.as_slice() {
             return Some(only.clone());
         }
-        let next = self.next_occurrence(id).map(|o| o.item.clone());
         let session = self.last_session.clone();
-        let mut found = self.candidates(id, |o, seen| {
-            if seen { self.waiting(o, true) && same_session(o.session.as_deref(), session.as_deref()) } else { next.as_ref() == Some(&o.item) }
-        });
+        let mut found = self.candidates(id, |o, seen| !seen || (self.waiting(o, true) && same_session(o.session.as_deref(), session.as_deref())));
         if found.len() > 1 {
             found.retain(|(o, _)| o.input == *input);
         }
         if let [(o, _)] = found.as_slice() {
             return Some(o.clone());
         }
-        let text = format!("a prompt for call {id}, which {} calls with the id could have asked", found.len());
+        let text = format!("a prompt for call {id}, which {} calls with the id and its input could have asked", found.len());
         self.warn(Some(message_id), "ambiguous_call", text);
         None
     }

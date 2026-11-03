@@ -26,8 +26,8 @@ tables yet: running agents, the API and the UI are unchanged.
   (converted, redundant or retained) and warnings. It follows the table below; turns aren't reconstructed (no
   `turn_id`, no turn events), and calls with no result are cancelled with a warning. A thread can have several
 calls with one tool_use id: each is its own item. Results go to the call with the id in the same subagent and
-session that's still waiting (or, stored before its call, the next one), prompts to the waiting or next call
-with their input, and a subagent's messages to its call in their session. Where more than one call fits, they
+session that's still waiting (or, stored before its call, the next one), prompts to the call with their input
+among those that could still ask (waiting in the current session, or not come to yet), and a subagent's messages to its call in their session. Where more than one call fits, they
 go to none, with a warning. The task_* messages the board
 writes for Codex's children (no `task_type`, by `tool_use_id`) are read as subagents, as are their compactions.
 - **Dry run and staging** (`threads/report.rs`): `huntaway threads-import --db <copy> [--json] [--stage]

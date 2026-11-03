@@ -445,3 +445,24 @@ fn a_result_before_its_agent_call_keeps_what_the_board_kept_of_it() {
     assert_eq!(early["subagent"], json!({"status": "stopped", "background": true, "model": "haiku", "agent_type": "Explore", "tool_uses": 3}));
     assert_eq!((&early["status"], &early["subagent"]), (&in_order["status"], &in_order["subagent"]));
 }
+
+#[test]
+fn a_prompt_before_two_calls_with_its_id_is_for_the_one_with_its_input() {
+    let c = convert_all(&[
+        assistant(1, None, json!([{"type": "tool_use", "id": "a", "name": "Agent", "input": {}}, {"type": "tool_use", "id": "b", "name": "Agent", "input": {}}])),
+        msg(2, "permission", json!({"tool_name": "Bash", "input": {"command": "ls b"}, "tool_use_id": "c", "request_id": "r", "status": "denied"})),
+        assistant(3, Some("a"), json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "ls a"}}])),
+        assistant(4, Some("b"), json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "ls b"}}])),
+        results(5, Some("a"), json!([{"type": "tool_result", "tool_use_id": "c", "content": "out a"}])),
+        results(6, Some("b"), json!([{"type": "tool_result", "tool_use_id": "c", "content": "Denied", "is_error": true}])),
+        // Neither call has this input: no telling.
+        msg(7, "permission", json!({"tool_name": "Bash", "input": {"command": "ls c"}, "tool_use_id": "c", "request_id": "r2", "status": "allowed"})),
+    ]);
+    let request = serde_json::to_value(&c.snapshot.requests[0]).unwrap();
+    assert_eq!((&request["tool_call_id"], &request["parent_id"]), (&json!("legacy:4:0"), &json!("b")));
+    let items = items(&c);
+    assert_eq!((&items["c"]["status"], &items["legacy:4:0"]["status"]), (&json!("completed"), &json!("denied")));
+    assert!(serde_json::to_value(&c.snapshot.requests[1]).unwrap().get("tool_call_id").is_none());
+    // The agents never got results.
+    assert_eq!(codes(&c), ["duplicate_call", "ambiguous_call", "no_result"]);
+}
