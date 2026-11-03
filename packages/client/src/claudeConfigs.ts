@@ -1,4 +1,4 @@
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 
 /** A Claude Code config directory (login, settings, history) on a host (API 20). Profiles and projects pick from them. */
 export interface ClaudeConfig {
@@ -68,7 +68,7 @@ export type Effort = (typeof EFFORTS)[number];
 
 export const MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
 
-export const claudeConfigsApi = {
+export const claudeConfigsApi = ({ on }: Http) => ({
   claudeConfigs: (h: string) => on(h).get<Omit<ClaudeConfig, "host_id">[]>("/claude-configs"),
   /** `agent` needs API 25. */
   createClaudeConfig: (h: string, b: { name: string; config_dir: string; agent?: Agent }) => on(h).post<ClaudeConfig>("/claude-configs", b),
@@ -79,4 +79,4 @@ export const claudeConfigsApi = {
   deleteClaudeConfig: (h: string, id: string) => on(h).del(`/claude-configs/${enc(id)}`),
   /** Claude usage for every Claude config (API 20; every profile before) on the host (API 9). */
   usage: (h: string, refresh = false) => on(h).get<Omit<Usage, "host_id">[]>(`/usage${refresh ? "?refresh=true" : ""}`),
-};
+});

@@ -12,7 +12,8 @@ server/src/          the huntaway binary: one module per feature, grouped in fol
 server/shim/         ia-shim, the per-run supervisor
 server/broker/       huntaway-broker
 app/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
-app/src/api/         the API's types and calls, a file per resource
+app/src/api/         the web board's client: packages/client's, for the page's own board
+packages/client/     the API's types and calls, a file per resource, shared with the mobile app
 app/src/components/  React components in a folder per feature (see App modules)
 app/tests/           unit tests (npm test); app/tests/ui/ browser tests (npm run test:ui)
 scripts/             test servers, ia-api, ui-check and other tools (see README.md)
@@ -111,11 +112,15 @@ Helpers several features use stay in `app/src/` (`store.ts`, `router.ts`, `threa
 
 - A feature may import from another (the composer sends line comments from `changes/`, the Changes
   tab reads turns from `task/`); what every feature needs goes in `ui/` or `app/src/`.
-- `app/src/api/` has a file per resource, as the server's `api/` has (`tasks`, `thread`, `git`,
-  `projects`, `hosts`…), with `http.ts` for the requests themselves. Each resource's calls are an
-  object (`tasksApi`), and `api/index.ts` re-exports the types and puts the calls together as
-  `api`, so `import { api, type Task } from "../../api"` works from anywhere. Tests stub calls on
-  that one `api` object.
+- `packages/client/src/` (`@huntaway/client`) has a file per resource, as the server's `api/` has
+  (`tasks`, `thread`, `git`, `projects`, `hosts`…), with `http.ts` for the requests themselves. It's
+  plain TypeScript with no DOM (`npm run typecheck` in `app/` checks it on its own), for the mobile
+  app too: each resource's calls are made from a board's `Http` (`tasksApi(http)`), and
+  `createClient(adapter)` puts them together for one board, whose address, token, storage and
+  websocket address the adapter gives (an app with several boards makes a client for each).
+  `app/src/api/index.ts` makes the web board's, for the page's own board with its token in
+  localStorage, as `api`, and re-exports the package's types, so `import { api, type Task } from
+  "../../api"` works from anywhere. Tests stub calls on that one `api` object.
 - When a component outgrows its file, it becomes a folder named after it beside it
   (`changes/git/`, `task/thread/`, `layout/newTask/`): its state in hooks (`useX.ts`, each owning
   one part of it), its sections or panes in components, and the file it had keeps the component

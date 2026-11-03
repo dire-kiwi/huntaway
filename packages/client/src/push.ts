@@ -1,4 +1,4 @@
-import { del, enc, get, patch, post } from "./http";
+import { enc, type Http } from "./http";
 
 /** Which of the board's notifications a device gets by push (see notifications.ts). */
 export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean>;
@@ -16,7 +16,7 @@ export interface PushDevice {
   last_error: string | null;
 }
 
-export const pushApi = {
+export const pushApi = ({ del, get, patch, post }: Http) => ({
   // Push to devices (API 74): the board's key to subscribe with, and the devices that have.
   push: () => get<{ public_key: string; subscriptions: PushDevice[] }>("/push"),
   /** Adds this browser's subscription (`PushSubscription.toJSON()`), or updates it; events are kept unless given. */
@@ -25,4 +25,4 @@ export const pushApi = {
   updatePushDevice: (id: string, b: { name?: string; events?: PushEvents }) => patch<PushDevice>(`/push/subscriptions/${enc(id)}`, b),
   removePushDevice: (id: string) => del(`/push/subscriptions/${enc(id)}`),
   testPush: (id: string) => post(`/push/subscriptions/${enc(id)}/test`),
-};
+});
