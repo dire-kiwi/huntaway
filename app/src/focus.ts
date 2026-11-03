@@ -7,7 +7,7 @@ export const NOW_API = 97;
 export type Focus = "now" | "later" | "all";
 
 export const FOCUSES: { id: Focus; label: string; title: string }[] = [
-  { id: "now", label: "Now", title: "Only the tasks in Now: those you've prompted lately, or moved there" },
+  { id: "now", label: "Now", title: "Only the tasks in Now: those you've prompted or updated lately, or moved there" },
   { id: "later", label: "Later", title: "Only the tasks in Later, where tasks start" },
   { id: "all", label: "All", title: "Every task" },
 ];

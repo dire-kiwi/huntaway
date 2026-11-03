@@ -580,6 +580,37 @@ fn created_tasks_start_in_now() {
 }
 
 #[test]
+fn updating_a_task_puts_it_in_now() {
+    testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let now_at = |id: &Value| db::get_task(&s.db(), id.as_str().unwrap()).unwrap().unwrap().now_at;
+        let later = async |title: &str, extra: Value| {
+            let mut args = json!({"title": title, "project_id": "KIW", "now": false});
+            args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            let t = call(&s, &me, "create_task", args).await.unwrap();
+            assert_eq!(now_at(&t["id"]), None);
+            t
+        };
+        let (edited, kept, first) = (later("Edited", json!({})).await, later("Kept in later", json!({})).await, later("First", json!({})).await);
+        // Any update puts it in Now, whoever makes it...
+        call(&s, &me, "update_task", json!({"task_id": edited["id"], "description": "More"})).await.unwrap();
+        assert!(now_at(&edited["id"]).is_some());
+        // ...unless the same call says where it goes.
+        call(&s, &me, "update_task", json!({"task_id": kept["id"], "description": "More", "now": false})).await.unwrap();
+        assert_eq!(now_at(&kept["id"]), None);
+        // A message from another agent (a parent starting its subproject's tasks) too. Held for what it depends on, so nothing runs.
+        let messaged = later("Messaged", json!({"depends_on": [first["id"]]})).await;
+        call(&s, &me, "send_to_task", json!({"task_id": messaged["id"], "message": "Go"})).await.unwrap();
+        assert!(now_at(&messaged["id"]).is_some());
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
 fn stars_and_sets_reminders() {
     testing::run(async || {
         let s = state();

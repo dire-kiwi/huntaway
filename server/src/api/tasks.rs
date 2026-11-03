@@ -42,7 +42,9 @@ pub(super) async fn get_task(State(s): State<Shared>, Path(id): Path<String>) ->
 }
 
 pub(super) async fn update_task(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(update_task_inner(&s, &id, &b).await?)))
+    let t = update_task_inner(&s, &id, &b).await?;
+    // Any update to a task puts it in "now" (see agent::focus).
+    Ok(Json(json!(crate::agent::focus::updated(&s, t, &b))))
 }
 
 pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> ApiResult<db::Task> {

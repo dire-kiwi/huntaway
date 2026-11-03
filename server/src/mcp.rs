@@ -311,7 +311,7 @@ fn board_tools() -> Value {
                 "starred": starred,
                 "remind_at": remind_at,
                 "reminder": reminder,
-                "now": {"type": "boolean", "description": "Put the task in the board's Now view (true) or send it back to Later (false). Tasks start in Now (create_task can start one in Later); a task with no activity for a day (the host's setting) goes back."}
+                "now": {"type": "boolean", "description": "Put the task in the board's Now view (true) or send it back to Later (false). Tasks start in Now (create_task can start one in Later), and any update to one (or a message to it) puts it back there; a task with no activity for a day (the host's setting) goes back."}
             }, "required": ["task_id"]}
         },
         {

@@ -166,6 +166,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             }
             body.extend(reminder_args(args)?);
             let t = api::update_task_inner(s, &t.id, &body).await?;
+            // Updated by an agent, the task is in "now" like one updated from the board (unless `now` says otherwise).
+            let t = crate::agent::focus::updated(s, t, &body);
             Ok(summarize(s, &t))
         }
         "delete_task" => {
@@ -185,6 +187,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
                 return Err(ToolError::Other("cannot send a message to your own task".into()));
             }
             let t = runner::send_from_agent(s, &t.id, &str_arg("message").unwrap_or_default())?;
+            // A task another agent has sent to (a parent starting its subproject's tasks, say) is in "now".
+            let t = crate::agent::focus::put_in_now(s, &t.id).unwrap_or(t);
             Ok(summarize(s, &t))
         }
         "get_project" | "update_project" => {
