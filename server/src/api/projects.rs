@@ -177,7 +177,7 @@ pub(super) async fn create_github_project(State(s): State<Shared>, Path(profile_
 
 /// Creates a GitHub repository, public or private, as the profile's GitHub account with `gh`, makes
 /// it the `origin` of the folder (a git repository is made of it first if it isn't one) and adds the
-/// folder as a project (API 101). The response is the project, and `github`: `{full_name, pushed,
+/// folder as a project (API 102). The response is the project, and `github`: `{full_name, pushed,
 /// push_error}`.
 pub async fn create_github_project_inner(s: &Shared, profile_id: &str, b: NewGithubProject, gh: String) -> ApiResult<Value> {
     let profile = db::get_profile(&s.db(), profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?;

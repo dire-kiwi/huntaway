@@ -31,8 +31,8 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
   const cloneDir = profileRow?.clone_dir?.trim() || defaultCloneDir(profileName);
   const [dest, setDest] = useState<string | null>(null);
   const clonePathNow = repo ? (dest ?? clonePath(cloneDir, repo.name)) : "";
-  // Folder tab: also create a GitHub repository for the folder (API 101).
-  const canCreateRepo = !fromGithub && hostSupports(hostRow, 101);
+  // Folder tab: also create a GitHub repository for the folder (API 102).
+  const canCreateRepo = !fromGithub && hostSupports(hostRow, 102);
   const [createRepo, setCreateRepo] = useState(false);
   const [repoName, setRepoName] = useState("");
   const [owner, setOwner] = useState("");

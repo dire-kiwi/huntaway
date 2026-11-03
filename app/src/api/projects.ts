@@ -126,7 +126,7 @@ export const projectsApi = {
     on(h).post<Project>(`/profiles/${enc(profileId)}/projects/clone`, b),
   /**
    * Create a GitHub repository (public or private) as the profile's GitHub account for the folder `repo_path` (made a git repository,
-   * or created, if need be), make it the folder's `origin`, push its commits and add the folder as a project (API 101).
+   * or created, if need be), make it the folder's `origin`, push its commits and add the folder as a project (API 102).
    * `owner` is the account's own login by default, and `repo_name` the folder's name.
    */
   createGithubProject: (

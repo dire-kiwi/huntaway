@@ -97,7 +97,7 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
-The *Folder* tab can also **create a GitHub repository** for the folder (API 101): tick *Create a GitHub
+The *Folder* tab can also **create a GitHub repository** for the folder (API 102): tick *Create a GitHub
 repository for it*, pick *Private* (the default) or *Public*, and optionally an owner (an organization;
 the profile's GitHub account by default) and a repository name (the folder's by default). The
 repository is made with `gh repo create` as the profile's GitHub account and becomes the folder's `origin`.
