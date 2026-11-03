@@ -895,12 +895,19 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=84; COMMIT;")?;
     }
+    if version < 85 {
+        // Git repositories that global skills come from (see agent/agent_tools/sources.rs). A guard
+        // for a database that got `agent_skills.source_id` and then lost its version.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('agent_skills') WHERE name='source_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { SCHEMA_V85_COLUMNS };
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V85} {add} PRAGMA user_version=85; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 84;
+pub const VERSION: i64 = 85;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
@@ -1225,6 +1232,25 @@ pub(super) fn migrate_claude_configs(conn: &Connection) -> Result<()> {
     }
     Ok(())
 }
+
+/// Skill sources: git repositories whose skills the host offers as global skills. `git_ref` is the
+/// branch or tag cloned (null: the default branch), `notes` a JSON list of what a refresh skipped, and
+/// `error` why the last refresh failed. A skill from one has `source_id` and its folder in the clone.
+const SCHEMA_V85: &str = r#"
+CREATE TABLE IF NOT EXISTS skill_sources (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  git_ref TEXT,
+  name TEXT NOT NULL,
+  commit_sha TEXT,
+  synced_at TEXT,
+  error TEXT,
+  notes TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+"#;
+const SCHEMA_V85_COLUMNS: &str = "ALTER TABLE agent_skills ADD COLUMN source_id TEXT REFERENCES skill_sources(id) ON DELETE CASCADE;
+ALTER TABLE agent_skills ADD COLUMN source_path TEXT;";
 
 /// Per-project skills and MCP servers (see agent/agent_tools.rs).
 const SCHEMA_V19: &str = r#"
