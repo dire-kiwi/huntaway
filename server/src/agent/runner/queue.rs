@@ -176,7 +176,7 @@ pub(super) fn requeue_steers(state: &Shared, task_id: &str, run_id: &str) -> Res
     let later = db::take_queued(&c, task_id)?;
     // Its routines' runs go with it, to the run that takes it in.
     for s in &mine {
-        db::queue(&c, task_id, db::Queued { routine_runs: s.routine_runs.clone(), ..db::Queued::new(&s.text, s.from_agent) })?;
+        db::queue(&c, task_id, db::Queued { routine: !s.routine_runs.is_empty(), routine_runs: s.routine_runs.clone(), ..db::Queued::new(&s.text, s.from_agent) })?;
     }
     if let Some(later) = later {
         db::queue(&c, task_id, later)?;

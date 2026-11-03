@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, hasBrief, hasMemory, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
+import { api, canRunAgents, dependencyQueued, documentsOnly, hasApprovalRules, hasBrief, hasMemory, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
 import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
@@ -186,7 +186,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
   const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
-  // The assistant's morning brief (API 102), its memory files (API 99), and its routines (API 101).
+  // The assistant's morning brief (API 103), its memory files (API 99), and its routines (API 101).
   if (assistant && hasBrief(host)) tabs.push("brief");
   if (assistant && hasMemory(host)) tabs.push("memory");
   if (assistant && hasRoutines(host)) tabs.push("routines");
@@ -195,6 +195,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
+  // The assistant's action log (API 102): what its approval rules asked about or blocked.
+  if (assistant && hasApprovalRules(host)) tabs.push("actions");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
   // Until the effect above drops it, a details tab while wide shows the thread beside the column.

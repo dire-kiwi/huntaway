@@ -1383,3 +1383,41 @@ fn a_denied_merge_goes_back_to_review() {
         std::fs::remove_dir_all(&dir).ok();
     })
 }
+
+#[test]
+fn approval_rules_with_a_pattern_twice_arent_saved_and_saved_ones_decide_as_they_were_shown() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let app = router(s.clone());
+        let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let path = format!("/api/profiles/{}/approval-rules", profile.id);
+        let post = |body: Value| {
+            let req = Request::builder()
+                .method("POST")
+                .uri(&path)
+                .header("authorization", "Bearer ")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap();
+            let app = app.clone();
+            async move {
+                let res = app.oneshot(req).await.unwrap();
+                let status = res.status().as_u16();
+                let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+                (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+            }
+        };
+        // Bash: never under Bash: allow (the dialog's Try a tool says never) isn't saved as allow: it isn't saved.
+        let (status, v) = post(json!({"rules": [{"tool": "Bash", "decision": "allow"}, {"tool": "bash", "decision": "never"}]})).await;
+        assert_eq!(status, 400, "{v}");
+        assert!(v["error"].as_str().unwrap().contains("more than one rule"), "{v}");
+        assert_eq!(call(&app, "GET", &path).await.1["is_default"], true);
+        // Saved with one, it reads back, and decides, as it was sent.
+        let (status, _) = post(json!({"rules": [{"tool": "Bash", "decision": "never"}, {"tool": "mcp__g", "decision": "allow"}]})).await;
+        assert_eq!(status, 200);
+        let (_, v) = call(&app, "GET", &path).await;
+        assert_eq!(v["rules"], json!([{"tool": "Bash", "decision": "never"}, {"tool": "mcp__g", "decision": "allow"}]));
+        let saved = crate::agent::approval_rules::get(&s.db(), &profile.id).unwrap();
+        assert_eq!(saved.decide("Bash").map(|r| r.decision), Some(crate::agent::approval_rules::Decision::Never));
+    })
+}

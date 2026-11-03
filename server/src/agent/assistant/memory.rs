@@ -10,11 +10,14 @@
 //! when it's cut), today's and yesterday's logs, and how to remember, forget and keep the log. The
 //! system prompt is rebuilt for every run, so it's always what the files say now.
 //!
-//! The workspace is a git repository (`ensure`), which the board commits to after each of the
+//! The workspace's history is a git repository (`ensure`), which the board commits to after each of the
 //! assistant's turns that changed it (`turn_ended`, authored as the assistant) and when the user
 //! edits a file from the Memory tab (authored as the user), so the tab can show each file's history
-//! and restore a version. The API here reads and writes only files in the workspace: a path that
-//! leads out of it, through `..` or a symlink, is refused.
+//! and restore a version. Its git folder is next to the workspace (`assistants/<task id>.git`, see
+//! `git_dir`), not in it, so the assistant can't set the config, hooks or filters the board's git runs
+//! with. Files that `.gitignore` lists (it's seeded with common bulky and secret ones) and files over
+//! `MAX_COMMITTED` aren't committed. The API here reads and writes only files in the workspace: a path
+//! that leads out of it, through `..` or a symlink, is refused.
 
 use std::collections::HashMap;
 use std::os::unix::fs::OpenOptionsExt;
@@ -39,6 +42,10 @@ pub const MEMORY_FILE: &str = "MEMORY.md";
 pub const LOG_DIR: &str = "memory";
 /// How many characters of each file a run is told (USER.md, MEMORY.md and each day's log).
 pub const CAP: usize = 8000;
+/// And how many bytes, so the four of them stay small in any script (8,000 characters of CJK are 24,000 bytes).
+pub const CAP_BYTES: usize = 16 * 1024;
+/// The biggest file a commit takes: bigger ones (downloads, say) are left out of the history.
+const MAX_COMMITTED: u64 = 1 << 20;
 /// The biggest file the API reads or writes.
 const MAX_FILE: usize = 1 << 20;
 /// The most an import may paste.
@@ -54,6 +61,16 @@ You can edit it too. -->\n";
 const MEMORY_SEED: &str = "# Memory\n\n\
 <!-- Lasting facts, decisions and things to keep in mind, a line each. Your assistant reads this at the start of every \
 conversation and keeps it up to date. You can edit it too. -->\n";
+/// What a workspace's history leaves out to begin with: what's bulky, made again or secret.
+const GITIGNORE_SEED: &str = "# What the board leaves out of the memory's history. You can change this.\n\
+\n\
+# Downloads, builds and installed packages\n\
+node_modules/\n.venv/\nvenv/\n__pycache__/\ntarget/\n.cache/\nDownloads/\ndownloads/\n\
+*.zip\n*.tar\n*.tar.gz\n*.tgz\n*.7z\n*.rar\n*.iso\n*.dmg\n*.mp4\n*.mov\n*.mkv\n*.mp3\n\
+\n\
+# Secrets\n\
+.env\n.env.*\n*.pem\n*.key\n*.p12\n*.pfx\nid_rsa*\nid_ed25519*\nid_ecdsa*\n.netrc\n.npmrc\n.pypirc\n\
+.aws/\n.ssh/\n.gnupg/\n*.kdbx\ncredentials.json\n";
 
 /// Who a commit is by.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -113,7 +130,7 @@ pub fn seed(dir: &Path) -> std::io::Result<()> {
             return Err(e);
         }
     }
-    for (name, text) in [(USER_FILE, USER_SEED), (MEMORY_FILE, MEMORY_SEED)] {
+    for (name, text) in [(USER_FILE, USER_SEED), (MEMORY_FILE, MEMORY_SEED), (".gitignore", GITIGNORE_SEED)] {
         let path = dir.join(name);
         // A dangling symlink is left too: writing through it would make its target, wherever that is.
         if std::fs::symlink_metadata(&path).is_ok() {
@@ -140,35 +157,59 @@ struct Out {
     stderr: String,
 }
 
-/// Run git in the workspace, as `who`, ignoring the user's hooks, fsmonitor and signing. The workspace's own
-/// repository and files, never others: GIT_DIR and GIT_WORK_TREE are the workspace's (whatever its config says), and
-/// GIT_CEILING_DIRECTORIES stops any search at its folder. Paths are taken literally, not as patterns.
+/// The workspace's git folder: `<workspace>.git` next to it (`assistants/<task id>.git`), outside it, so nothing the
+/// assistant writes in its workspace is git's config, hooks or filters.
+pub fn git_dir(dir: &Path) -> PathBuf {
+    let mut name = dir.file_name().unwrap_or_default().to_os_string();
+    name.push(".git");
+    dir.with_file_name(name)
+}
+
+/// Run git in the workspace, as `who`, with none of the user's config (hooks, filters, fsmonitor, signing) and no
+/// hooks or textconv of its own. The workspace's own repository and files, never others: GIT_DIR (`git_dir`, which only
+/// the board writes) and GIT_WORK_TREE are the workspace's, and GIT_CEILING_DIRECTORIES stops any search at its
+/// folder. Paths are taken literally, not as patterns.
 async fn git(dir: &Path, who: Who, args: &[&str]) -> Result<Out> {
+    git_in(dir, who, args, None).await
+}
+
+async fn git_in(dir: &Path, who: Who, args: &[&str], stdin: Option<&[u8]>) -> Result<Out> {
     let (name, email) = who.name_email();
     let ceiling = dir.parent().map(crate::util::path_str).unwrap_or_default();
-    let out = Command::new("git")
+    let mut child = Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"])
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_LITERAL_PATHSPECS", "1")
-        .env("GIT_DIR", dir.join(".git"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_DIR", git_dir(dir))
         .env("GIT_WORK_TREE", dir)
         .env("GIT_CEILING_DIRECTORIES", ceiling)
         .env("GIT_AUTHOR_NAME", name)
         .env("GIT_AUTHOR_EMAIL", email)
         .env("GIT_COMMITTER_NAME", name)
         .env("GIT_COMMITTER_EMAIL", email)
+        .env_remove("GIT_CONFIG")
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_OBJECT_DIRECTORY")
         .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_EXTERNAL_DIFF")
         .kill_on_drop(true)
-        .output()
-        .await
+        .spawn()
         .context("running git")?;
+    if let (Some(input), Some(mut w)) = (stdin, child.stdin.take()) {
+        tokio::io::AsyncWriteExt::write_all(&mut w, input).await.context("writing to git")?;
+    }
+    let out = child.wait_with_output().await.context("running git")?;
     Ok(Out { ok: out.status.success(), stdout: String::from_utf8_lossy(&out.stdout).into(), stderr: String::from_utf8_lossy(&out.stderr).into() })
 }
 
@@ -180,28 +221,165 @@ async fn git_ok(dir: &Path, who: Who, args: &[&str]) -> Result<String> {
     Ok(o.stdout)
 }
 
-/// Whether the workspace has a repository of its own: a real `.git` folder, not a symlink to another's.
+/// Whether the workspace has a repository of its own: a real folder at `git_dir`, not a symlink to another's.
 fn is_repo(dir: &Path) -> bool {
-    std::fs::symlink_metadata(dir.join(".git")).is_ok_and(|m| m.is_dir())
+    std::fs::symlink_metadata(git_dir(dir)).is_ok_and(|m| m.is_dir())
 }
 
-/// Seed the workspace and make it a git repository with a first commit, if it isn't one yet.
+/// Seed the workspace and give it a repository with a first commit, if it has none yet. A workspace from before the
+/// git folder moved out of it (HA-160) has its `.git` moved there, with a config of the board's in place of its own.
 pub async fn ensure(dir: &Path) -> Result<()> {
     seed(dir).with_context(|| format!("making the assistant's memory files in {}", dir.display()))?;
     if is_repo(dir) {
         return Ok(());
     }
-    // A `.git` file or symlink would point git at another repository: left for the user to look at.
-    if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
-        bail!("{}/.git isn't a folder of its own, so the workspace has no history", dir.display());
+    let gd = git_dir(dir);
+    // A symlink or a file there would point git at another repository: left for the user to look at.
+    if std::fs::symlink_metadata(&gd).is_ok() {
+        bail!("{} isn't a folder of its own, so the workspace has no history", gd.display());
     }
     let lock = lock(dir);
     let _held = lock.lock().await;
     if is_repo(dir) {
         return Ok(());
     }
+    let old = dir.join(".git");
+    if std::fs::symlink_metadata(&old).is_ok_and(|m| m.is_dir()) {
+        match migrate(dir, &old, &gd).await {
+            Ok(()) => {
+                // What changed meanwhile, with what's ignored now left out.
+                commit_all_locked(dir, Who::Assistant, None).await?;
+                return Ok(());
+            }
+            Err(e) => {
+                // Its history stays in its `.git`, for the user to look at, and it starts again.
+                tracing::warn!("the assistant's history in {} couldn't be moved, so it starts again: {e:#}", old.display());
+                std::fs::remove_dir_all(&gd).ok();
+            }
+        }
+    }
     git_ok(dir, Who::Assistant, &["init", "-q"]).await?;
     commit_all_locked(dir, Who::Assistant, Some("Start the assistant's memory")).await?;
+    Ok(())
+}
+
+/// Move a workspace's history from its own `.git` (as HA-121 made it) to `gd`, with the workspace's lock held. That
+/// `.git` was the assistant's to change, so no git command is run on it, and none of its files is kept:
+/// - One that points git elsewhere (`commondir`, `gitdir`, alternates) is refused, as HA-121 never wrote one.
+/// - `gd` is a new repository of the board's, into which the history's objects and refs are copied (as regular files,
+///   never through a symlink) and then written again by git (`repack`, `pack-refs`), with HEAD only as a branch or a
+///   commit. Its config, hooks, `info` and the rest are left behind.
+/// - The history must be whole. Then the old `.git` goes. An error leaves it, and `gd` to be removed.
+async fn migrate(dir: &Path, old: &Path, gd: &Path) -> Result<()> {
+    for elsewhere in ["commondir", "gitdir", "objects/info/alternates", "objects/info/http-alternates"] {
+        if std::fs::symlink_metadata(old.join(elsewhere)).is_ok() {
+            bail!("it has {elsewhere}, which points git at another folder");
+        }
+    }
+    for d in ["objects", "refs"] {
+        if !std::fs::symlink_metadata(old.join(d)).is_ok_and(|m| m.is_dir()) {
+            bail!("its {d} isn't a folder of its own");
+        }
+    }
+    // (`--file` reads that file only, not its includes, and runs nothing.)
+    let format = git(dir, Who::Assistant, &["config", "--file", &crate::util::path_str(&old.join("config")), "extensions.objectformat"]).await?;
+    let format = format.stdout.trim();
+    let mut init = vec!["init".to_string(), "-q".to_string()];
+    if matches!(format, "sha1" | "sha256") {
+        init.push(format!("--object-format={format}"));
+    }
+    let init: Vec<&str> = init.iter().map(String::as_str).collect();
+    git_ok(dir, Who::Assistant, &init).await?;
+    copy_objects(&old.join("objects"), &gd.join("objects"))?;
+    copy_tree(&old.join("refs"), &gd.join("refs"))?;
+    copy_file(&old.join("packed-refs"), &gd.join("packed-refs"))?;
+    // HEAD only as a branch or a commit, as git writes it.
+    let head = read_plain(&old.join("HEAD")).unwrap_or_default();
+    let head = String::from_utf8_lossy(&head);
+    let branch = head.trim().strip_prefix("ref: refs/heads/").filter(|b| !b.is_empty() && b.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_./".contains(&c)) && !b.contains(".."));
+    if let Some(b) = branch {
+        std::fs::write(gd.join("HEAD"), format!("ref: refs/heads/{b}\n"))?;
+    } else if head.trim().len() >= 40 && head.trim().bytes().all(|c| c.is_ascii_hexdigit()) {
+        std::fs::write(gd.join("HEAD"), format!("{}\n", head.trim()))?;
+    }
+    // The history must be whole, else it isn't used.
+    git_ok(dir, Who::Assistant, &["rev-parse", "--verify", "-q", "HEAD^{commit}"]).await?;
+    git_ok(dir, Who::Assistant, &["rev-list", "--objects", "--all", "--quiet"]).await?;
+    // Written again by git: the objects into a pack of its own (the copied files go), and the refs into packed-refs.
+    git_ok(dir, Who::Assistant, &["repack", "-a", "-d", "-q"]).await?;
+    git_ok(dir, Who::Assistant, &["pack-refs", "--all", "--prune"]).await?;
+    git_ok(dir, Who::Assistant, &["rev-list", "--objects", "--all", "--quiet"]).await?;
+    git_ok(dir, Who::Assistant, &["read-tree", "HEAD"]).await?;
+    // Before anything looks at the work tree (see drop_gitlinks).
+    drop_gitlinks(dir, Who::Assistant).await?;
+    tracing::info!("moved the assistant's history to {}", gd.display());
+    // From here the history is in `gd`, whatever happens to the old one.
+    if let Err(e) = std::fs::remove_dir_all(old) {
+        tracing::warn!("removing {}: {e}", old.display());
+    }
+    Ok(())
+}
+
+/// Copy a repository's objects: loose ones (`xx/…`) and packs with their indexes (`pack/*.pack`, `*.idx`), nothing else
+/// (not `info`, nor a pack's `.keep`, which would keep it from being written again).
+fn copy_objects(from: &Path, to: &Path) -> Result<()> {
+    for e in std::fs::read_dir(from)?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let is_dir = std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir());
+        if !is_dir {
+            continue;
+        }
+        if name.len() == 2 && name.bytes().all(|c| c.is_ascii_hexdigit()) {
+            copy_tree(&e.path(), &to.join(&name))?;
+        } else if name == "pack" {
+            std::fs::create_dir_all(to.join("pack"))?;
+            for f in std::fs::read_dir(e.path())?.flatten() {
+                let n = f.file_name().to_string_lossy().into_owned();
+                if n.starts_with("pack-") && (n.ends_with(".pack") || n.ends_with(".idx")) {
+                    copy_file(&f.path(), &to.join("pack").join(&n))?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The regular file at `path` (not a symlink), if there is one.
+fn read_plain(path: &Path) -> Option<Vec<u8>> {
+    let mut f = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut f, &mut out).ok()?;
+    Some(out)
+}
+
+/// Copy the regular file `from` to `to`, if it's one (not a symlink).
+fn copy_file(from: &Path, to: &Path) -> Result<()> {
+    let Ok(mut f) = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(from) else { return Ok(()) };
+    if !f.metadata()?.is_file() {
+        return Ok(());
+    }
+    let mut out = std::fs::OpenOptions::new().write(true).create(true).truncate(true).custom_flags(libc::O_NOFOLLOW).open(to)?;
+    std::io::copy(&mut f, &mut out).with_context(|| format!("copying {}", from.display()))?;
+    Ok(())
+}
+
+/// Copy the folder `from` into `to`: its folders and regular files, not symlinks.
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    if !std::fs::symlink_metadata(from).is_ok_and(|m| m.is_dir()) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)?.flatten() {
+        let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
+        if meta.is_dir() {
+            copy_tree(&e.path(), &to.join(e.file_name()))?;
+        } else if meta.is_file() {
+            copy_file(&e.path(), &to.join(e.file_name()))?;
+        }
+    }
     Ok(())
 }
 
@@ -217,8 +395,7 @@ pub async fn commit_all(dir: &Path, who: Who, message: Option<&str>) -> Result<O
 }
 
 async fn commit_all_locked(dir: &Path, who: Who, message: Option<&str>) -> Result<Option<String>> {
-    ignore_brief(dir);
-    git_ok(dir, who, &["add", "-A"]).await?;
+    stage(dir, who).await?;
     let changed = git_ok(dir, who, &["diff", "--cached", "--name-only"]).await?;
     let changed: Vec<&str> = changed.lines().filter(|l| !l.is_empty()).collect();
     if changed.is_empty() {
@@ -232,25 +409,66 @@ async fn commit_all_locked(dir: &Path, who: Who, message: Option<&str>) -> Resul
     Ok(Some(git_ok(dir, who, &["rev-parse", "HEAD"]).await?.trim().to_string()))
 }
 
-/// The morning brief (brief.rs) is written over each day and kept as the assistant's document, one version a day, so it's
-/// left out of the workspace's history: it's in the repository's own `info/exclude`, which isn't a file in the workspace.
-fn ignore_brief(dir: &Path) {
-    let info = dir.join(".git").join("info");
-    let exclude = info.join("exclude");
-    let line = format!("/{}", super::brief::FILE);
-    let now = std::fs::read_to_string(&exclude).unwrap_or_default();
-    if now.lines().any(|l| l.trim() == line) {
-        return;
+/// `git add -A` without the files over MAX_COMMITTED (which stay out of the history, as `.gitignore`'s do).
+async fn stage(dir: &Path, who: Who) -> Result<()> {
+    drop_gitlinks(dir, who).await?;
+    let listed = git_ok(dir, who, &["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard"]).await?;
+    // Not a repository in the workspace (`--others` gives it as `clone/`), which `add` would make a gitlink.
+    let mut paths: Vec<&str> = listed.split('\0').filter(|p| !p.is_empty() && !p.ends_with('/')).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    // A name that isn't UTF-8 (which reads back as another, with U+FFFD in it) would fail the whole `add`.
+    // The morning brief (brief.rs) is written over each day and kept as the assistant's document, one version a day.
+    paths.retain(|p| *p != super::brief::FILE);
+    let (big, paths): (Vec<&str>, Vec<&str>) = paths.into_iter().partition(|p| p.contains('\u{FFFD}') || too_big(dir, p));
+    if !big.is_empty() {
+        tracing::info!(dir = %dir.display(), "not committing files over {MAX_COMMITTED} bytes, or not named in UTF-8: {}", big.join(", "));
     }
-    // Only in the workspace's own repository (a real `.git` folder, see is_repo), and not through a symlink.
-    if !is_repo(dir) || std::fs::symlink_metadata(&info).is_ok_and(|m| !m.is_dir()) || std::fs::symlink_metadata(&exclude).is_ok_and(|m| !m.is_file()) {
-        return;
+    if paths.is_empty() {
+        // Not `add -A` with no paths, which is all of them.
+        return Ok(());
     }
-    let _ = std::fs::create_dir(&info);
-    let text = format!("{now}{}{line}\n", if now.is_empty() || now.ends_with('\n') { "" } else { "\n" });
-    if let Err(e) = std::fs::write(&exclude, text) {
-        tracing::warn!("leaving the brief out of the assistant's history in {}: {e}", dir.display());
+    let list: Vec<u8> = paths.iter().flat_map(|p| p.bytes().chain([0])).collect();
+    let o = git_in(dir, who, &["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], Some(&list)).await?;
+    if !o.ok {
+        bail!("git add failed: {}", o.stderr.trim());
     }
+    // One made a repository since it was listed.
+    drop_gitlinks(dir, who).await
+}
+
+/// Take the gitlinks (repositories in the workspace: an approved `git clone`, say, which HA-121 committed as such) out
+/// of the index, so the history never has one again. With one there, git looks in that repository for changes by
+/// running `git status` in it, with its own config, which the assistant can write: a filter there would run as the board.
+async fn drop_gitlinks(dir: &Path, who: Who) -> Result<()> {
+    let entries = git_ok(dir, who, &["ls-files", "-s", "-z"]).await?;
+    let links: Vec<u8> = entries
+        .split('\0')
+        .filter_map(|e| e.strip_prefix("160000 ").and_then(|e| e.split_once('\t')).map(|(_, path)| path))
+        .flat_map(|p| p.bytes().chain([0]))
+        .collect();
+    if links.is_empty() {
+        return Ok(());
+    }
+    let o = git_in(dir, who, &["update-index", "--force-remove", "-z", "--stdin"], Some(&links)).await?;
+    if !o.ok {
+        bail!("git update-index failed: {}", o.stderr.trim());
+    }
+    Ok(())
+}
+
+/// Whether `rel` is in a repository in the workspace (a folder on the way has a `.git`), whose files the history leaves out.
+fn in_nested_repo(dir: &Path, rel: &str) -> bool {
+    let mut p = dir.to_path_buf();
+    let parts: Vec<_> = Path::new(rel).components().collect();
+    parts.iter().take(parts.len().saturating_sub(1)).any(|c| {
+        p.push(c);
+        std::fs::symlink_metadata(p.join(".git")).is_ok()
+    })
+}
+
+fn too_big(dir: &Path, rel: &str) -> bool {
+    std::fs::symlink_metadata(dir.join(rel)).is_ok_and(|m| m.is_file() && m.len() > MAX_COMMITTED)
 }
 
 fn changed_message(files: &[&str]) -> String {
@@ -262,19 +480,38 @@ fn changed_message(files: &[&str]) -> String {
     m
 }
 
-/// Commit one file as it is now (other changes stay uncommitted, for the assistant's next commit).
-async fn commit_file(dir: &Path, who: Who, rel: &str, message: &str) -> Result<Option<String>> {
-    if !is_repo(dir) {
+/// Commit one file as it is now (other changes stay uncommitted, for the assistant's next commit), with the
+/// workspace's lock held. Not one that `.gitignore` leaves out, nor one in a repository in the workspace.
+async fn commit_file_locked(dir: &Path, who: Who, rel: &str, message: &str) -> Result<Option<String>> {
+    if !is_repo(dir) || in_nested_repo(dir, rel) {
         return Ok(None);
     }
-    let lock = lock(dir);
-    let _held = lock.lock().await;
+    drop_gitlinks(dir, who).await?;
+    let tracked = git(dir, who, &["ls-files", "--error-unmatch", "--", rel]).await?.ok;
+    // (Not `check-ignore`, which doesn't take paths literally.)
+    let ignored = async || git_ok(dir, who, &["ls-files", "--others", "--ignored", "--exclude-standard", "--", rel]).await.map(|o| !o.trim().is_empty());
+    if !tracked && (too_big(dir, rel) || ignored().await?) {
+        return Ok(None);
+    }
     git_ok(dir, who, &["add", "-A", "--", rel]).await?;
     if git(dir, who, &["diff", "--cached", "--quiet", "--", rel]).await?.ok {
         return Ok(None);
     }
     git_ok(dir, who, &["commit", "-q", "--no-verify", "-m", message, "--", rel]).await?;
     Ok(Some(git_ok(dir, who, &["rev-parse", "HEAD"]).await?.trim().to_string()))
+}
+
+/// Whether the file `rel` is in the last commit as it is now.
+async fn in_history(dir: &Path, rel: &str) -> Result<bool> {
+    Ok(git(dir, Who::User, &["ls-files", "--error-unmatch", "--", rel]).await?.ok
+        && git(dir, Who::User, &["diff", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--", rel]).await?.ok)
+}
+
+#[cfg(test)]
+async fn commit_file(dir: &Path, who: Who, rel: &str, message: &str) -> Result<Option<String>> {
+    let lock = lock(dir);
+    let _held = lock.lock().await;
+    commit_file_locked(dir, who, rel, message).await
 }
 
 /// One of the assistant's turns ended (or its run did): commit what it changed in the workspace, in the background.
@@ -298,15 +535,19 @@ pub fn turn_ended(state: &Shared, task_id: &str) {
 
 // ---------- what a run is told ----------
 
-/// At most `max` characters of `text`: its start, or with `tail` its end, cut at a line where one is
-/// near. Whether it was cut.
-pub fn cap(text: &str, max: usize, tail: bool) -> (String, bool) {
+/// At most `max` characters (and `max_bytes` bytes) of `text`: its start, or with `tail` its end, cut at a line where
+/// one is near. Whether it was cut.
+pub fn cap(text: &str, max: usize, max_bytes: usize, tail: bool) -> (String, bool) {
     let n = text.chars().count();
-    if n <= max {
+    if n <= max && text.len() <= max_bytes {
         return (text.to_string(), false);
     }
     if tail {
-        let start = text.char_indices().nth(n - max).map(|(i, _)| i).unwrap_or(0);
+        let mut start = text.char_indices().nth(n.saturating_sub(max)).map(|(i, _)| i).unwrap_or(0);
+        start = start.max(text.len().saturating_sub(max_bytes));
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
         let rest = &text[start..];
         // From the next whole line, if that loses less than a fifth.
         let rest = match rest.find('\n') {
@@ -315,7 +556,10 @@ pub fn cap(text: &str, max: usize, tail: bool) -> (String, bool) {
         };
         (rest.to_string(), true)
     } else {
-        let end = text.char_indices().nth(max).map(|(i, _)| i).unwrap_or(text.len());
+        let mut end = text.char_indices().nth(max).map(|(i, _)| i).unwrap_or(text.len()).min(max_bytes);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
         let head = &text[..end];
         let head = match head.rfind('\n') {
             Some(i) if i > head.len() * 4 / 5 => &head[..i + 1],
@@ -340,9 +584,16 @@ pub fn log_name(day: NaiveDate) -> String {
     format!("{LOG_DIR}/{}.md", day.format("%Y-%m-%d"))
 }
 
+/// The files a run is told on `today`: USER.md, MEMORY.md, and yesterday's and today's logs.
+fn loaded(today: NaiveDate) -> [String; 4] {
+    let yesterday = today.checked_sub_days(Days::new(1)).unwrap_or(today);
+    [USER_FILE.into(), MEMORY_FILE.into(), log_name(yesterday), log_name(today)]
+}
+
 /// What the assistant is told about its memory, with its files as they are now (`today`: the host's date).
 pub fn prompt(dir: &Path, today: NaiveDate) -> String {
     let cap_text = format_number(CAP);
+    let cap_kb = CAP_BYTES / 1024;
     let mut s = format!(
         "\n\n## Your memory\n\n\
          You remember things between conversations by keeping them in files in your workspace ({}), which the board reads \
@@ -359,8 +610,9 @@ pub fn prompt(dir: &Path, today: NaiveDate) -> String {
          what's still pending. Keep `{USER_FILE}` and `{MEMORY_FILE}` under {cap_text} characters each, since only that much of \
          them is loaded: keep details in other files in the workspace and a line here that points to them. Don't keep \
          passwords, tokens or other secrets in them. The user can read and edit these files in the board's Memory tab. \
-         The board commits the workspace to git after each of your turns, so don't commit or change its git history \
-         yourself.",
+         After each of your turns the board keeps a history of the workspace, in a git repository of its own outside it: \
+         the files that `.gitignore` lists and files over 1 MB are left out of it, so keep downloads and the like in a \
+         folder it lists.",
         crate::util::path_str(dir),
         today.format("%Y-%m-%d (%A)"),
     );
@@ -368,18 +620,18 @@ pub fn prompt(dir: &Path, today: NaiveDate) -> String {
         s.push_str(&format!("\n\n### {label}\n\n"));
         match read_for_prompt(dir, rel) {
             Some(text) if !text.trim().is_empty() => {
-                let (text, cut) = cap(&text, CAP, tail);
+                let total = format_number(text.chars().count());
+                let (text, cut) = cap(&text, CAP, CAP_BYTES, tail);
                 if cut {
-                    let total = format_number(read_for_prompt(dir, rel).map(|t| t.chars().count()).unwrap_or(0));
                     s.push_str(&if tail {
                         format!(
-                            "(`{rel}` is {total} characters, over the {cap_text} that are loaded: this is its end, and the start \
-                             is left out.)\n\n"
+                            "(`{rel}` is {total} characters, over the {cap_text} (or {cap_kb} KB) that are loaded: this is its \
+                             end, and the start is left out.)\n\n"
                         )
                     } else {
                         format!(
-                            "(`{rel}` is {total} characters, over the {cap_text} that are loaded: the rest is cut off below. \
-                             Make it shorter, moving details to other files.)\n\n"
+                            "(`{rel}` is {total} characters, over the {cap_text} (or {cap_kb} KB) that are loaded: the rest is \
+                             cut off below. Make it shorter, moving details to other files.)\n\n"
                         )
                     });
                 }
@@ -391,10 +643,8 @@ pub fn prompt(dir: &Path, today: NaiveDate) -> String {
     };
     file(USER_FILE, USER_FILE, false, &format!("`{USER_FILE}` isn't there: make it when you learn something about the user."));
     file(MEMORY_FILE, MEMORY_FILE, false, &format!("`{MEMORY_FILE}` isn't there: make it when there's something to keep."));
-    let yesterday = today.checked_sub_days(Days::new(1)).unwrap_or(today);
-    let y = log_name(yesterday);
+    let [_, _, y, t] = loaded(today);
     file(&y, &format!("Yesterday's log ({y})"), true, "There's no log for yesterday.");
-    let t = log_name(today);
     file(&t, &format!("Today's log ({t})"), true, "There's no log for today yet.");
     s
 }
@@ -446,8 +696,9 @@ pub fn resolve(dir: &Path, rel: &str) -> Result<PathBuf, String> {
         match c {
             Component::CurDir => {}
             Component::Normal(name) => {
-                if out == dir && name == ".git" {
-                    return Err("the workspace's .git folder is the board's".into());
+                // Git's, not a memory file (the history is in git_dir, but a `.git` from before that is git's too).
+                if name == ".git" {
+                    return Err("a .git folder isn't memory".into());
                 }
                 out.push(name);
                 // A symlink anywhere on the way could lead anywhere.
@@ -498,8 +749,10 @@ fn kind(rel: &str) -> &'static str {
 }
 
 /// The workspace's files (not .git, nor what's behind symlinks), as the Memory tab lists them: USER.md,
-/// MEMORY.md, the daily logs newest first, then the rest by name.
-pub fn list(dir: &Path) -> Vec<Value> {
+/// MEMORY.md, the daily logs newest first, then the rest by name. Only the files a run is told on `today` are read,
+/// for their length in characters (`chars`); the rest have their `size` in bytes.
+pub fn list(dir: &Path, today: NaiveDate) -> Vec<Value> {
+    let loaded = loaded(today);
     let mut found: Vec<(String, std::fs::Metadata)> = Vec::new();
     let mut walked = 0;
     let mut stack = vec![(dir.to_path_buf(), String::new())];
@@ -518,7 +771,7 @@ pub fn list(dir: &Path) -> Vec<Value> {
             }
             let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
             if meta.is_dir() {
-                if !(prefix.is_empty() && name == ".git") && rel.matches('/').count() < 4 {
+                if name != ".git" && rel.matches('/').count() < 4 {
                     stack.push((e.path(), rel));
                 }
             } else if meta.is_file() {
@@ -538,7 +791,7 @@ pub fn list(dir: &Path) -> Vec<Value> {
     found
         .into_iter()
         .map(|(rel, meta)| {
-            let chars = (meta.len() as usize <= MAX_FILE)
+            let chars = (loaded.contains(&rel) && meta.len() as usize <= MAX_FILE)
                 .then(|| std::fs::read(dir.join(&rel)).ok())
                 .flatten()
                 .and_then(|b| String::from_utf8(b).ok())
@@ -579,16 +832,18 @@ one fact per line, with dates where you know them. Include only what you actuall
 leave out passwords and other secrets.";
 
 /// `GET /profiles/{id}/assistant/memory` (API 99): the assistant's workspace and its files, how much of each memory file a
-/// run is told (`cap`, in characters), whether there's history, and the prompt for an import.
+/// run is told (`cap` characters, or `cap_bytes` bytes), whether there's history, and the prompt for an import.
 pub async fn overview(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> ApiResult<Json<Value>> {
     let (task, dir) = open(&s, &id).await?;
+    let today = Local::now().date_naive();
     Ok(Json(json!({
         "task_id": task.id,
         "dir": crate::util::path_str(&dir),
         "cap": CAP,
-        "today": log_name(Local::now().date_naive()),
+        "cap_bytes": CAP_BYTES,
+        "today": log_name(today),
         "history": is_repo(&dir),
-        "files": list(&dir),
+        "files": list(&dir, today),
         "import_prompt": IMPORT_PROMPT,
     })))
 }
@@ -614,7 +869,7 @@ pub async fn read(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q
 
 /// The file `rel` as it was in commit `rev`.
 async fn at_rev(dir: &Path, rev: &str, rel: &str) -> ApiResult<String> {
-    let o = git(dir, Who::User, &["show", &format!("{rev}:{rel}")]).await?;
+    let o = git(dir, Who::User, &["show", "--no-textconv", &format!("{rev}:{rel}")]).await?;
     if !o.ok {
         return Err(ApiError::not_found(&format!("{rel} in {rev}")));
     }
@@ -642,25 +897,40 @@ pub async fn write(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b
     if b.content.len() > MAX_FILE {
         return Err(ApiError::bad("that's too big for a memory file"));
     }
-    let now = match std::fs::symlink_metadata(&path) {
-        Ok(_) => Some(read_text(&path, &b.path)?),
-        Err(_) => None,
-    };
-    if !b.force && now != b.expected {
-        return Err(ApiError::conflict(format!("{} changed since you opened it", b.path)));
-    }
-    let message = format!("Edit {}", b.path);
-    let commit = put(&dir, &path, &b.path, &b.content, &message).await?;
+    let commit = put(&dir, &path, &b.path, &b.content, Some(b.expected.as_deref()), b.force, &format!("Edit {}", b.path)).await?;
     Ok(Json(json!({ "path": b.path, "content": b.content, "commit": commit })))
 }
 
-async fn put(dir: &Path, path: &Path, rel: &str, content: &str, message: &str) -> ApiResult<Option<String>> {
+/// Write `content` to the file `rel` and commit it as the user's, with the workspace's lock held from the check to the
+/// commit. `seen`: what the user's editor opened (None: that it isn't there), which it must still say unless `force`d,
+/// else a 409; not given for a restore. What the file says now, if that isn't committed (the assistant's edit since its
+/// last turn, say), is committed first, as the assistant's, so a restore or an overwrite never loses it. One that the
+/// history leaves out (it's in `.gitignore`) is only written over when it's what the user saw, forced or not.
+async fn put(dir: &Path, path: &Path, rel: &str, content: &str, seen: Option<Option<&str>>, force: bool, message: &str) -> ApiResult<Option<String>> {
+    let lock = lock(dir);
+    let _held = lock.lock().await;
+    let now = match std::fs::symlink_metadata(path) {
+        Ok(_) => Some(read_text(path, rel)?),
+        Err(_) => None,
+    };
+    if !force && seen != Some(now.as_deref()) {
+        return Err(ApiError::conflict(format!("{rel} changed since you opened it")));
+    }
+    if let Some(now) = now.as_deref().filter(|n| *n != content) {
+        commit_file_locked(dir, Who::Assistant, rel, &format!("Update {rel}")).await?;
+        if is_repo(dir) && !in_history(dir, rel).await? && seen != Some(Some(now)) {
+            return Err(ApiError::conflict(format!(
+                "{rel} isn't kept in the memory's history (its .gitignore leaves it out), so what it says now couldn't be \
+                 restored, and that isn't what you opened: load it again first"
+            )));
+        }
+    }
     write_file(dir, path, rel, content)?;
-    Ok(commit_file(dir, Who::User, rel, message).await?)
+    Ok(commit_file_locked(dir, Who::User, rel, message).await?)
 }
 
 /// Write file `rel` (at `path`, as `file_path` checked it) in the workspace, making its folders if need be.
-pub(super) fn write_file(dir: &Path, path: &Path, rel: &str, content: &str) -> ApiResult<()> {
+fn write_file(dir: &Path, path: &Path, rel: &str, content: &str) -> ApiResult<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| ApiError::from(anyhow::anyhow!("making the folder for {rel}: {e}")))?;
         // Made just now, so check the way again.
@@ -677,9 +947,23 @@ pub(super) fn write_file(dir: &Path, path: &Path, rel: &str, content: &str) -> A
     written.map_err(|e| ApiError::bad(format!("writing {rel}: {e}")))
 }
 
-/// Commit file `rel` as it is now, as the user's change.
-pub(super) async fn commit_as_user(dir: &Path, rel: &str, message: &str) -> ApiResult<Option<String>> {
-    Ok(commit_file(dir, Who::User, rel, message).await?)
+/// Change file `rel` (at `path`) with `edit`, given what it says now ("" if it isn't there), and commit it as the user's,
+/// with the workspace's lock held from the read to the commit, so nothing written meanwhile through the board is lost. As
+/// in `put`, what it says now is committed first, as the assistant's, if that isn't. Returns what it says, and the commit.
+pub(super) async fn change(dir: &Path, path: &Path, rel: &str, message: &str, edit: impl FnOnce(&str) -> String) -> ApiResult<(String, Option<String>)> {
+    let lock = lock(dir);
+    let _held = lock.lock().await;
+    let now = match std::fs::symlink_metadata(path) {
+        Ok(_) => Some(read_text(path, rel)?),
+        Err(_) => None,
+    };
+    if now.is_some() {
+        commit_file_locked(dir, Who::Assistant, rel, &format!("Update {rel}")).await?;
+    }
+    let content = edit(now.as_deref().unwrap_or(""));
+    write_file(dir, path, rel, &content)?;
+    let commit = commit_file_locked(dir, Who::User, rel, message).await?;
+    Ok((content, commit))
 }
 
 #[derive(Deserialize)]
@@ -693,7 +977,7 @@ pub struct HistoryQuery {
 pub async fn history(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q): Query<HistoryQuery>) -> ApiResult<Json<Value>> {
     let (_, dir) = open(&s, &id).await?;
     // Each commit's record starts with \x1e: its header line, then the files it changed (`--name-only`).
-    let mut args = vec!["log", "-n", "200", "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "--name-only"];
+    let mut args = vec!["log", "-n", "200", "--no-textconv", "--no-ext-diff", "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "--name-only"];
     let rel = q.path.as_deref().filter(|p| !p.is_empty());
     if let Some(rel) = rel {
         file_path(&dir, rel)?;
@@ -728,7 +1012,7 @@ pub struct DiffQuery {
 pub async fn diff(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q): Query<DiffQuery>) -> ApiResult<Json<Value>> {
     let (_, dir) = open(&s, &id).await?;
     let rev = check_rev(&q.rev)?;
-    let mut args = vec!["show", "--format=", "--no-color", "--no-ext-diff", rev];
+    let mut args = vec!["show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv", rev];
     let rel = q.path.as_deref().filter(|p| !p.is_empty());
     if let Some(rel) = rel {
         file_path(&dir, rel)?;
@@ -754,7 +1038,7 @@ pub async fn restore(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json
     let rev = check_rev(&b.rev)?;
     let content = at_rev(&dir, rev, &b.path).await?;
     let short = &rev[..rev.len().min(7)];
-    let commit = put(&dir, &path, &b.path, &content, &format!("Restore {} as it was in {short}", b.path)).await?;
+    let commit = put(&dir, &path, &b.path, &content, None, true, &format!("Restore {} as it was in {short}", b.path)).await?;
     Ok(Json(json!({ "path": b.path, "content": content, "commit": commit })))
 }
 

@@ -96,8 +96,15 @@ pub async fn run_adapter(spec_path: &str) -> Result<()> {
     let mut servers = Map::new();
     for (name, c) in mcp["mcpServers"].as_object().into_iter().flatten() {
         let disabled = spec.disabled_mcp_tools.get(name).map(Vec::as_slice).unwrap_or_default();
-        if let Some(cfg) = mcp_server_config(name, c, spec.approved_mcp_servers.contains(name), disabled, spec.review_waits) {
-            servers.insert(name.clone(), cfg);
+        if let Some(mut cfg) = mcp_server_config(name, c, spec.approved_mcp_servers.contains(name), disabled, spec.review_waits) {
+            // The user's approval rules (see agent/approval_rules.rs) may ask about its calls, or turn it off.
+            let on = match (&spec.approval_rules, cfg.as_object_mut()) {
+                (Some(rules), Some(cfg)) => crate::agent::approval_rules::codex_server(rules, name, cfg),
+                _ => true,
+            };
+            if on {
+                servers.insert(name.clone(), cfg);
+            }
         }
     }
     let cwd = expand_tilde(&spec.cwd);
@@ -493,7 +500,12 @@ pub(super) async fn answer(board: Arc<crate::mcp::Ctx>, reply: Responder, msg: V
                 reply.result(id, json!({"action": "accept", "content": {}}));
             } else {
                 let tool = format!("{}__{tool}", crate::agent::agent_tools::tool_prefix(server));
-                let ok = ask(&tool, json!({"message": message})).await;
+                // With what it's called with, when Codex says (for the user, and the action log).
+                let mut input = json!({"message": message});
+                if params.is_object() {
+                    input["arguments"] = params.clone();
+                }
+                let ok = ask(&tool, input).await;
                 reply.result(id, json!({"action": if ok { "accept" } else { "decline" }, "content": if ok { json!({}) } else { Value::Null }}));
             }
         }

@@ -81,6 +81,79 @@ pub(super) async fn send_to_assistant(
     Ok(Json(assistant::with_host(&s, &assistant::send(&s, &id, &b.text)?)))
 }
 
+/// A profile's approval rules as the UI shows them: the ones in force, whether they're the
+/// defaults, and the defaults to go back to.
+fn rules_view(c: &rusqlite::Connection, profile_id: &str) -> anyhow::Result<Value> {
+    let saved = approval_rules::saved(c, profile_id)?;
+    let defaults = approval_rules::Rules::default();
+    Ok(json!({
+        "rules": saved.as_ref().unwrap_or(&defaults).rules,
+        "expiry_minutes": saved.as_ref().unwrap_or(&defaults).expiry_minutes,
+        "is_default": saved.is_none(),
+        "defaults": defaults,
+        "board_server": runner::MCP_SERVER_NAME,
+        "google_server": approval_rules::GOOGLE_SERVER,
+        "create_task_tools": approval_rules::CREATE_TASK_TOOLS,
+    }))
+}
+
+/// `GET /profiles/{id}/approval-rules` (API 102): what the profile's assistant may do outside the
+/// board, asks first or never does (see agent/approval_rules.rs).
+pub(super) async fn get_approval_rules(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let c = s.db();
+    if db::get_profile(&c, &id)?.is_none() {
+        return Err(ApiError::not_found("profile"));
+    }
+    Ok(Json(rules_view(&c, &id)?))
+}
+
+#[derive(Deserialize)]
+pub(super) struct RulesBody {
+    #[serde(default)]
+    rules: Option<Vec<approval_rules::Rule>>,
+    #[serde(default)]
+    expiry_minutes: Option<u32>,
+    /// Back to the defaults.
+    #[serde(default)]
+    reset: bool,
+}
+
+/// `POST /profiles/{id}/approval-rules` (API 102) with `{rules, expiry_minutes}` (either may be left
+/// out, keeping it as it is), or `{reset: true}` for the defaults. They hold from the next run on.
+pub(super) async fn set_approval_rules(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<RulesBody>) -> ApiResult<Json<Value>> {
+    let c = s.db();
+    if db::get_profile(&c, &id)?.is_none() {
+        return Err(ApiError::not_found("profile"));
+    }
+    if b.reset {
+        approval_rules::set(&c, &id, None)?;
+    } else {
+        let now = approval_rules::get(&c, &id)?;
+        let rules = approval_rules::Rules { rules: b.rules.unwrap_or(now.rules), expiry_minutes: b.expiry_minutes.unwrap_or(now.expiry_minutes) };
+        let rules = rules.checked().map_err(ApiError::bad)?;
+        approval_rules::set(&c, &id, Some(&rules))?;
+    }
+    let view = rules_view(&c, &id)?;
+    drop(c);
+    s.emit(json!({"type": "approval_rules", "profile_id": id}));
+    Ok(Json(view))
+}
+
+#[derive(Deserialize)]
+pub(super) struct LogQuery {
+    limit: Option<i64>,
+}
+
+/// `GET /profiles/{id}/approval-log` (API 102): the calls the profile's rules asked about or turned
+/// away, newest first (see approval_rules::Action).
+pub(super) async fn approval_log(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<LogQuery>) -> ApiResult<Json<Value>> {
+    let c = s.db();
+    if db::get_profile(&c, &id)?.is_none() {
+        return Err(ApiError::not_found("profile"));
+    }
+    Ok(Json(json!(approval_rules::list(&c, &id, q.limit.unwrap_or(200))?)))
+}
+
 /// Answer a question an agent asked with request_user_input, from its card (API 64): the answer
 /// is sent as the user's message.
 pub(super) async fn answer_question(
@@ -342,6 +415,9 @@ pub(super) struct ResolveBody {
     /// The answers to a question, or how a plan is approved or what to change in it (API 64).
     #[serde(flatten)]
     reply: permissions::Reply,
+    /// `push` for an answer from a notification, which the hub passes on (API 102), for the action log.
+    #[serde(default)]
+    via: Option<String>,
 }
 
 pub(super) async fn resolve_permission(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<ResolveBody>) -> ApiResult<Json<Value>> {
@@ -350,7 +426,8 @@ pub(super) async fn resolve_permission(State(s): State<Shared>, Path(id): Path<S
         "deny" => false,
         _ => return Err(ApiError::bad("decision must be allow, allow_always or deny")),
     };
-    let status = permissions::answer(&s, &id, allow, b.decision == "allow_always", b.message, b.reply)?;
+    let by = if b.via.as_deref() == Some("push") { "push" } else { "user" };
+    let status = permissions::answer_by(&s, &id, allow, b.decision == "allow_always", b.message, b.reply, by)?;
     Ok(Json(json!({"ok": true, "status": status})))
 }
 

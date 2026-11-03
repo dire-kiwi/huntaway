@@ -240,12 +240,8 @@ fn the_brief_is_kept_as_the_assistants_document_one_version_a_day() {
         assert!(!m["files"].to_string().contains(FILE), "{m}");
         std::fs::write(dir.join(memory::MEMORY_FILE), "# Memory\n- changed\n").unwrap();
         memory::commit_all(&dir, memory::Who::Assistant, None).await.unwrap();
-        let tracked = std::process::Command::new("git").arg("-C").arg(&dir).args(["ls-files"]).output().unwrap();
+        let tracked = std::process::Command::new("git").arg("--git-dir").arg(memory::git_dir(&dir)).args(["ls-files"]).output().unwrap();
         let tracked = String::from_utf8_lossy(&tracked.stdout);
         assert!(tracked.contains("MEMORY.md") && !tracked.contains(FILE), "{tracked}");
-        // Done once.
-        memory::commit_all(&dir, memory::Who::Assistant, None).await.unwrap();
-        let exclude = std::fs::read_to_string(dir.join(".git/info/exclude")).unwrap();
-        assert_eq!(exclude.matches("/brief.html").count(), 1);
     })
 }

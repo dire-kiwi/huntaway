@@ -169,7 +169,7 @@ pub struct Events {
     /// Whose permission prompts it gets, with Allow and Deny (API 96).
     #[serde(default)]
     pub prompts: Prompts,
-    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 102).
+    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 103).
     #[serde(default = "yes")]
     pub reports: bool,
 }
@@ -834,7 +834,7 @@ async fn notify_prompt(s: &Shared, host: &str, task_id: &str, data: &Value) {
         return;
     }
     let answer = if super::push_answers::answerable(data) {
-        match super::push_answers::mint(&s.db(), host, request, task_id) {
+        match super::push_answers::mint(&s.db(), host, request, task_id, data["expires_at"].as_str()) {
             Ok(token) => Some(Answer { url: format!("/api/permissions/{request}/push-answer"), token }),
             Err(e) => {
                 tracing::warn!("push: minting a token for prompt {request}: {e:#}");

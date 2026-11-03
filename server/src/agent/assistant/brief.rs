@@ -1,4 +1,4 @@
-//! The morning brief (API 102): a routine template, its document, and the user's ratings of its items.
+//! The morning brief (API 103): a routine template, its document, and the user's ratings of its items.
 //!
 //! The template (`POST /profiles/{id}/assistant/brief`) makes a routine called "Morning brief" that runs on the weekdays
 //! and at the time picked, in a fresh thread. Its run reads today's calendar, unread and starred mail and Drive files changed
@@ -15,8 +15,6 @@
 //! What the run reads from mail, invitations and files is untrusted: its message tells it to only read and draft, until
 //! the approval rules (agent/approval_rules.rs) hold that for it. The page's own scripts don't run in the Brief tab (see
 //! app/src/components/task/Brief.tsx), so only the user's clicks rate items.
-
-use std::sync::Mutex;
 
 use axum::Json;
 use axum::extract::{Path as UrlPath, State};
@@ -211,9 +209,6 @@ pub fn apply(memory: &str, rating: Rating, kind: &str, topic: &str, date: &str) 
     text
 }
 
-/// One rating at a time per host, from reading MEMORY.md to writing it, so two at once both land.
-static RATING: Mutex<()> = Mutex::new(());
-
 /// `POST /profiles/{id}/assistant/brief/feedback` `{rating, kind?, topic?, text?}`: rate one of the brief's items, which
 /// becomes (or changes, or with `clear` drops) its line in MEMORY.md, committed as the user's. Returns the line and the commit.
 pub async fn feedback(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b): Json<FeedbackBody>) -> ApiResult<Json<Value>> {
@@ -223,18 +218,12 @@ pub async fn feedback(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Jso
     let topic = topic.ok_or_else(|| ApiError::bad("say what the item is (its topic or text)"))?;
     let date = Local::now().format("%Y-%m-%d").to_string();
     let path = memory::file_path(&dir, memory::MEMORY_FILE)?;
-    let text = {
-        let _one = RATING.lock().unwrap_or_else(|e| e.into_inner());
-        let now = std::fs::read_to_string(&path).unwrap_or_default();
-        let text = apply(&now, b.rating, &kind, &topic, &date);
-        memory::write_file(&dir, &path, memory::MEMORY_FILE, &text)?;
-        text
-    };
     let message = match b.rating {
         Rating::Clear => format!("Take back a rating of the morning brief ({kind}: {topic})"),
         r => format!("Rate the morning brief: {} {kind}: {topic}", if r == Rating::Up { "more" } else { "less" }),
     };
-    let commit = memory::commit_as_user(&dir, memory::MEMORY_FILE, &message).await?;
+    // Read, changed and committed under the workspace's lock, so two ratings at once (or an edit from the Memory tab) both land.
+    let (text, commit) = memory::change(&dir, &path, memory::MEMORY_FILE, &message, |now| apply(now, b.rating, &kind, &topic, &date)).await?;
     let line = (b.rating != Rating::Clear).then(|| line(b.rating, &kind, &topic, &date));
     Ok(Json(json!({ "line": line, "content": text, "commit": commit })))
 }

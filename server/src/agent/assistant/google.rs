@@ -1,4 +1,4 @@
-//! Google Workspace for the assistant (API 102): Gmail, Calendar and Drive through a Google Workspace MCP server on the
+//! Google Workspace for the assistant (API 103): Gmail, Calendar and Drive through a Google Workspace MCP server on the
 //! assistant's host, with an OAuth client the user makes, rather than the claude.ai connectors, which come with the Claude
 //! login and so would reach every agent on it, project tasks included.
 //!
@@ -334,7 +334,7 @@ pub struct StatusQuery {
     check: Option<String>,
 }
 
-/// `GET /profiles/{id}/assistant/google[?check=1]` (API 102): the Google card's status. With `check`, the account's refresh
+/// `GET /profiles/{id}/assistant/google[?check=1]` (API 103): the Google card's status. With `check`, the account's refresh
 /// token is tried with Google too (`verified`, or `verify_error` saying why it failed).
 pub async fn get(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q): Query<StatusQuery>) -> ApiResult<Json<Value>> {
     super::memory::elsewhere(&s, &id)?;
@@ -357,7 +357,7 @@ pub async fn get(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Query(q)
     Ok(Json(v))
 }
 
-/// `POST /profiles/{id}/assistant/google` (API 102): add the Google server to this host (if it hasn't one called `google`)
+/// `POST /profiles/{id}/assistant/google` (API 103): add the Google server to this host (if it hasn't one called `google`)
 /// and switch it on for the profile. A server that's there keeps its config. Returns the status.
 pub async fn setup(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> ApiResult<Json<Value>> {
     super::memory::elsewhere(&s, &id)?;

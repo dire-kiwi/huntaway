@@ -12,10 +12,10 @@ export const ASSISTANT_API = 97;
  *  commits after each turn that changed them (see server/src/agent/assistant/memory.rs). The Memory tab edits them. */
 export const MEMORY_API = 99;
 
-/** Google and the morning brief (API 102): the Google card (whether the assistant's Google Workspace server is connected), the
+/** Google and the morning brief (API 103): the Google card (whether the assistant's Google Workspace server is connected), the
  *  morning brief routine template, the assistant's `brief` document (one version a day) and ratings of its items, which go into
  *  MEMORY.md (see server/src/agent/assistant/google.rs and brief.rs). */
-export const BRIEF_API = 102;
+export const BRIEF_API = 103;
 
 /** Whether the host has the Google card, the brief template and the Brief tab. */
 export const hasBrief = (h: Host | undefined) => hostSupports(h, BRIEF_API);
@@ -132,7 +132,8 @@ export interface MemoryFile {
   path: string;
   kind: "user" | "memory" | "log" | "other";
   size: number;
-  /** Its length in characters, unless it's too big or isn't text. */
+  /** Its length in characters, for the files a run is told (USER.md, MEMORY.md, today's and yesterday's logs), unless
+   *  it's too big or isn't text. Null for the rest (from hosts before HA-160, it's there too). */
   chars: number | null;
   modified: string | null;
 }
@@ -143,9 +144,11 @@ export interface MemoryOverview {
   dir: string;
   /** How many characters of USER.md, MEMORY.md and each loaded daily log a run is told. */
   cap: number;
+  /** And how many bytes (from HA-160; older hosts don't say). */
+  cap_bytes?: number;
   /** Today's log's path, in the host's time zone. */
   today: string;
-  /** Whether the workspace has history (it's a git repository). */
+  /** Whether the workspace has history (a git repository of the board's, next to it). */
   history: boolean;
   files: MemoryFile[];
   /** What to paste into another assistant for it to write out what it knows about you. */
@@ -200,7 +203,7 @@ export const assistantApi = ({ on }: Http) => {
     restoreMemoryFile: (h: string, profileId: string, path: string, rev: string) => on(h).post<MemoryWrite>(`${memory(profileId)}/restore`, { path, rev }),
     /** Send another assistant's answer to the import prompt to the assistant, to fold into its memory. */
     importMemory: (h: string, profileId: string, text: string) => on(h).post<Task>(`${memory(profileId)}/import`, { text }),
-    /** Google and the brief (API 102), on the assistant's host too. */
+    /** Google and the brief (API 103), on the assistant's host too. */
     /** Whether Google is connected; `check` also tries the refresh token with Google. */
     googleStatus: (h: string, profileId: string, check = false) =>
       on(h).get<GoogleStatus>(`/profiles/${enc(profileId)}/assistant/google${check ? "?check=1" : ""}`),
