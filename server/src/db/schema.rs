@@ -848,19 +848,42 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V80} PRAGMA user_version=80; COMMIT;"))?;
     }
     if version < 81 {
+        conn.execute_batch("BEGIN;")?;
+        call_usage_ids(&conn)?;
+        conn.execute_batch("PRAGMA user_version=81; COMMIT;")?;
+    }
+    if version < 82 {
         // agent-threads' store (see threads/store.rs). IF NOT EXISTS, in case another migration takes this version first.
-        conn.execute_batch(&format!("BEGIN; {SCHEMA_V81} PRAGMA user_version=81; COMMIT;"))?;
+        // Builds of this before it was version 82 had it as 81, so a database that took it then skipped 81's
+        // call ids, which are added here if they aren't there.
+        conn.execute_batch("BEGIN;")?;
+        call_usage_ids(&conn)?;
+        conn.execute_batch(&format!("{SCHEMA_V82} PRAGMA user_version=82; COMMIT;"))?;
     }
     Ok(conn)
 }
 
+/// Which call each `call_usage` row is from (a call has a row for each model it used). The rows
+/// written before were one call's if they agree on all but the model. Only adds what isn't there.
+fn call_usage_ids(conn: &Connection) -> Result<()> {
+    let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('call_usage') WHERE name='call_id'", [], |r| r.get(0))?;
+    let add = if has { "" } else { "ALTER TABLE call_usage ADD COLUMN call_id TEXT;" };
+    conn.execute_batch(&format!(
+        "{add}
+         UPDATE call_usage SET call_id=lower(hex(randomblob(16))) WHERE call_id IS NULL AND id IN (SELECT MIN(id) FROM call_usage WHERE call_id IS NULL GROUP BY at, purpose, task_id, config_id);
+         UPDATE call_usage SET call_id=(SELECT c.call_id FROM call_usage c WHERE c.id=(SELECT MIN(d.id) FROM call_usage d WHERE d.at=call_usage.at
+           AND d.purpose=call_usage.purpose AND d.task_id IS call_usage.task_id AND d.config_id IS call_usage.config_id)) WHERE call_id IS NULL;"
+    ))?;
+    Ok(())
+}
+
 /// The latest database version (`PRAGMA user_version`).
-pub const VERSION: i64 = 81;
+pub const VERSION: i64 = 82;
 
 /// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
 /// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON
 /// text they were given. A thread can belong to a task (its `metadata.task_id`), and goes with it.
-const SCHEMA_V81: &str = r#"
+const SCHEMA_V82: &str = r#"
 CREATE TABLE IF NOT EXISTS at_threads (
   id TEXT PRIMARY KEY,
   task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
@@ -934,7 +957,8 @@ CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);
 /// What each model call that isn't a run used (see agent/tokens/calls.rs), counted as
 /// `token_usage` is: `purpose` `title` for a task's title, written for task `task_id`, and `window`
 /// for the prompt that restarts config `config_id`'s 5-hour window. `cost_usd` is null for Codex,
-/// which doesn't say.
+/// which doesn't say. From version 81, `call_id` says which call a row is from: a call has a row
+/// for each model it used, and they share it.
 const SCHEMA_V80: &str = r#"
 CREATE TABLE IF NOT EXISTS call_usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

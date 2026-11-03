@@ -183,6 +183,8 @@ export async function loadTokens(from: number, to: number): Promise<TokenData> {
       out.rows.push({
         at: Date.parse(u.at),
         runId: u.run_id,
+        // Hosts before API 100 don't say which call a row is from: a call's rows have its time.
+        callId: u.run_id === null ? (u.call_id ?? `${u.kind}\u0000${u.task_id}\u0000${u.at}`) : null,
         threadId: u.task_id,
         runKind: u.kind,
         model: u.model,

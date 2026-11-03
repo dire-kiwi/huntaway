@@ -42,6 +42,8 @@ export const PURPOSE_HINT: Record<Purpose, string> = {
 export interface URow {
   at: number;
   runId: string | null;
+  /** A call's that isn't a run: the rows of one call (one for each model it used) share it. */
+  callId: string | null;
   /** The thread it ran in: a task, or a review or summary thread. A title's task; null for a window restart. */
   threadId: string | null;
   runKind: string;
@@ -160,7 +162,7 @@ export function total(rows: URow[]): Totals {
   for (const r of rows) {
     add(t, r);
     if (r.runId !== null) runs.add(r.runId);
-    else calls.add(`${r.runKind}\u0000${r.threadId}\u0000${r.at}`);
+    else if (r.callId !== null) calls.add(r.callId);
   }
   t.runs = runs.size;
   t.calls = calls.size;

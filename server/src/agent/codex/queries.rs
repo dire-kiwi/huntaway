@@ -33,7 +33,8 @@ pub async fn task_title(codex_home: &str, cwd: &Path, instructions: &str, input:
             let p = &msg["params"];
             if p["threadId"].as_str() != Some(thread) { continue }
             match msg["method"].as_str() {
-                // Its thread's totals so far (see agent/tokens/calls.rs).
+                // Its thread's totals so far (see agent/tokens/calls.rs). Codex (0.166) sends the
+                // last of them just before `turn/completed`, and nothing for the thread after it.
                 Some("thread/tokenUsage/updated") => *spent = Some(Spent::codex(&model, &p["tokenUsage"])),
                 Some("item/completed") if p["item"]["type"] == "agentMessage" => {
                     title = p["item"]["text"].as_str().unwrap_or("").to_string();

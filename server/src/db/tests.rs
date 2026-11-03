@@ -368,6 +368,27 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
 }
 
 #[test]
+fn a_database_that_had_the_agent_threads_tables_as_81_gets_the_call_ids_it_skipped() {
+    // Builds of the agent-threads store had its tables as version 81, which master's call ids then took.
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "INSERT INTO call_usage (at, purpose, model, runtime, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
+             VALUES ('2026-11-01T00:00:00Z', 'title', 'haiku', 'claude', 1, 1, 0, 0, 0);
+             ALTER TABLE call_usage DROP COLUMN call_id; PRAGMA user_version=81;",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let ids: i64 = c.query_row("SELECT COUNT(call_id) FROM call_usage", [], |r| r.get(0)).unwrap();
+    assert_eq!(ids, 1);
+    let tables: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'at\\_%' ESCAPE '\\'", [], |r| r.get(0)).unwrap();
+    assert_eq!(tables, 4);
+}
+
+#[test]
 fn a_database_from_version_54_gets_automations() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
@@ -638,6 +659,27 @@ fn a_database_from_version_70_gets_restart_window_off() {
     assert_eq!((cfg.show_usage, cfg.restart_window), (true, false));
     let cfg = update_claude_config(&c, "c", &[("restart_window", json!(true))]).unwrap().unwrap();
     assert!(cfg.restart_window);
+}
+
+#[test]
+fn a_database_from_version_80_gets_call_ids_shared_by_each_calls_rows() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE call_usage DROP COLUMN call_id; PRAGMA user_version=80;
+             INSERT INTO call_usage (at, purpose, task_id, config_id, model, runtime) VALUES
+               ('1', 'window', NULL, 'c', 'opus', 'claude'), ('1', 'window', NULL, 'c', 'haiku', 'claude'),
+               ('1', 'window', NULL, 'd', 'haiku', 'claude'), ('2', 'window', NULL, 'c', 'haiku', 'claude'), ('1', 'title', NULL, 'c', 'haiku', 'claude');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let ids: Vec<String> = c.prepare("SELECT call_id FROM call_usage ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    assert_eq!(ids[0], ids[1]);
+    let distinct: std::collections::HashSet<&String> = ids.iter().collect();
+    assert_eq!(distinct.len(), 4, "{ids:?}");
 }
 
 #[test]

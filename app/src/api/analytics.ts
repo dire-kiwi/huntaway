@@ -40,6 +40,8 @@ export interface TokenStatsReport {
   usage: {
     /** Null for a call that isn't a run. */
     run_id: string | null;
+    /** A call's that isn't a run (API 100): the rows of one call, one for each model it used, share it. */
+    call_id?: string | null;
     /** The thread the run was in: a task, or a review or summary thread. A title's task; null for a window restart. */
     task_id: string | null;
     /** The run's: `prompt`, `compact` or `review`; or the call's: `title` or `window`. */
