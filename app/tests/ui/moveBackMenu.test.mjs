@@ -10,6 +10,7 @@ before(async () => {
 after(() => server?.stop());
 
 const DONE = "Merged and closed";
+const TODO = "Try dragging this card to another column";
 const ARCHIVED = "Shipped last week";
 
 const statusOf = async (title) => (await server.api("GET", `/projects/${project.id}/tasks`)).find((t) => t.title === title);
@@ -30,6 +31,21 @@ test("a done task moves back to To do or Backlog from its right-click menu", asy
     await ui.run(["click List view", "click css=#archived-tasks button", `wait ${ARCHIVED}`, `rclick ${ARCHIVED}`, "wait [role=menu]", "click [role=menu] >> text=To do"]);
     await expect_status(ARCHIVED, "todo");
     assert.equal((await statusOf(ARCHIVED)).resolution, null);
+  });
+});
+
+// The menu is taller with the moves in it: on a short desktop window it stays on screen and scrolls to its last item.
+test("the right-click menu scrolls on a short desktop window", async () => {
+  await withBrowser(server, { size: "1280x600" }, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, `wait ${TODO}`, `rclick ${TODO}`, "wait [role=menu]"]);
+    const box = await page.locator("[role=menu]").boundingBox();
+    assert.ok(box.y >= 0 && box.y + box.height <= 600, `the menu fits the window: ${JSON.stringify(box)}`);
+    const last = page.locator("[role=menu] [role^=menuitem]").last();
+    await last.scrollIntoViewIfNeeded();
+    const r = await last.boundingBox();
+    assert.ok(r.y >= box.y && r.y + r.height <= box.y + box.height + 1 && r.y + r.height <= 600, `the last item is reachable: ${JSON.stringify(r)}`);
+    assert.match(await last.textContent(), /Set title/);
   });
 });
 
