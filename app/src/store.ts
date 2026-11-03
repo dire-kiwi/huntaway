@@ -723,7 +723,7 @@ export function connectEvents() {
   };
 }
 
-/** `projectId` is null for a profile's routine, whose profile is `profileId` (API 98). */
+/** `projectId` is null for a profile's routine, whose profile is `profileId` (API 99). */
 type AutomationListener = (hostId: string, projectId: string | null, automationId: string, profileId?: string) => void;
 /** Told when a task's checkpoints change (API 70): a turn's was taken, or it was rewound. */
 type CheckpointListener = (hostId: string, taskId: string) => void;

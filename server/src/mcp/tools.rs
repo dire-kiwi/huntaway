@@ -57,6 +57,9 @@ pub struct Ctx {
     pub call_id: Option<String>,
     /// The original caller's helper advertises get_task_field (not just this host's build).
     pub task_fields: bool,
+    /// The linked host whose agent's call this is, passed up its link (see hosts/uplink.rs): it isn't
+    /// passed back down to that host, nor further up.
+    pub from_host: Option<String>,
 }
 
 impl Ctx {

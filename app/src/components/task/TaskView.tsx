@@ -128,7 +128,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     setTab(openingTab(useStore.getState().tasks[taskId]));
     setMounted([]);
   }, [taskId, found]);
-  // A thread off every list the board loads (a routine's run of the assistant, API 98) is fetched by itself, from the
+  // A thread off every list the board loads (a routine's run of the assistant, API 99) is fetched by itself, from the
   // hosts that have them, when it's opened by its link.
   const [seeking, setSeeking] = useState(false);
   useEffect(() => {

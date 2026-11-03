@@ -282,7 +282,9 @@ pub(super) fn system_prompt(
                  Hand code work to project tasks rather than doing it yourself: find the project with `list_projects`, \
                  then `create_task` there (with start=true to start its agent, when the user wants that), and follow it \
                  with `get_task` or `wait`. Don't change repositories, commit, push or open pull requests yourself. Tasks \
-                 you create are recorded as yours.\n\n\
+                 you create are recorded as yours. You may run on a host of your own, linked to the user's board: `wait` \
+                 only watches tasks on the host you run on, so follow tasks on other hosts with `get_task`, and if a project \
+                 you expect isn't there, its board may not let your host's agents in yet (the error says so).\n\n\
                  Routines wake you on a schedule or a webhook: they're this profile's automations (`list_automations` with \
                  routines=true, and `create_automation`, `update_automation`, `delete_automation` and `run_automation` with an \
                  action of kind `message_assistant`), and the user is asked to approve each change. By default a routine runs \

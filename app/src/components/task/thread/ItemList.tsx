@@ -104,7 +104,7 @@ function UserText({ text, hostId }: { text: string; hostId: string }) {
 
 const REPORT_SAYS: Record<string, string> = { reported: "reported", failed: "failed", asked: "is waiting for you" };
 
-/** A routine's report in the assistant's thread (API 98): what its run in a thread of its own found, with a link to it. */
+/** A routine's report in the assistant's thread (API 99): what its run in a thread of its own found, with a link to it. */
 function RoutineReport({ data }: { data: { automation?: string; task_id?: string; key?: string; outcome?: string; text?: string } }) {
   const outcome = data.outcome ?? "reported";
   return (

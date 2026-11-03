@@ -43,7 +43,7 @@ fn started_run(s: &Shared, task_id: &str) -> db::Run {
 }
 
 fn ctx(p: &db::Profile) -> Ctx {
-    Ctx { profile_id: Some(p.id.clone()), profile_name: p.name.clone(), task: None, call_id: None, task_fields: true }
+    Ctx { profile_id: Some(p.id.clone()), profile_name: p.name.clone(), task: None, call_id: None, task_fields: true, from_host: None }
 }
 
 async fn call(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> std::result::Result<Value, String> {
