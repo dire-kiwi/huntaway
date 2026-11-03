@@ -1,6 +1,6 @@
 import type { Agent } from "./claudeConfigs";
 import { type Host, hostSupports } from "./hosts";
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 import type { PermissionMode, Status, Task } from "./tasks";
 
 /** Whether a task counts as merged for the tasks that depend on it (server: db::is_merged). */
@@ -116,7 +116,7 @@ export interface Reviewer {
   effort: string | null;
 }
 
-export const projectsApi = {
+export const projectsApi = ({ on }: Http) => ({
   /** The profile's projects, or with `archived` its archived ones (API 46), which are left out otherwise. */
   projects: (h: string, profileId: string, archived = false) => on(h).get<Project[]>(`/profiles/${enc(profileId)}/projects${archived ? "?archived=true" : ""}`),
   createProject: (h: string, profileId: string, b: { name: string; repo_path: string; key?: string }) =>
@@ -139,4 +139,4 @@ export const projectsApi = {
     on(h).get<{ text: string; runtime: Agent; permission_mode: PermissionMode }>(
       `/projects/${enc(id)}/system-prompt?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))}`,
     ),
-};
+});

@@ -12,6 +12,8 @@ server/src/    the huntaway binary's modules, grouped in agent/, mcp/, git/, hos
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
+packages/client/ the board's API client, plain TypeScript with no DOM, shared by app/ (which links it, file:) and the
+               mobile app: createClient() makes a client for one board, from an adapter for its address and token
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)

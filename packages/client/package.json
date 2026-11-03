@@ -1,0 +1,12 @@
+{
+  "name": "@huntaway/client",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Huntaway's API client, shared by the web board (app/) and the mobile app (mobile/)",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./labels": "./src/labels.ts"
+  }
+}
