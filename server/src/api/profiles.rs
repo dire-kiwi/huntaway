@@ -35,10 +35,10 @@ pub(super) struct CreateProfile {
     /// See `db::Profile::reviewers` (API 87).
     #[serde(default)]
     reviewers: Value,
-    /// See `db::Profile::summarizer` (API 87); `summarizers` (API 101) is used instead if it's given.
+    /// See `db::Profile::summarizer` (API 87); `summarizers` (API 103) is used instead if it's given.
     #[serde(default)]
     summarizer: Value,
-    /// See `db::Profile::summarizers` (API 101).
+    /// See `db::Profile::summarizers` (API 103).
     #[serde(default)]
     summarizers: Value,
     /// See `db::Profile::merge_approval` (API 92).
@@ -61,7 +61,7 @@ pub(super) async fn create_profile(State(s): State<Shared>, Json(b): Json<Create
     let github_account = check_github_account(&b.github_account)?;
     let clone_dir = check_clone_dir(&b.clone_dir)?;
     let reviewers = reviewers_value(&c, &b.reviewers, true, &[])?;
-    let given = if b.summarizers.is_null() { legacy_summarizer(&b.summarizer) } else { b.summarizers.clone() };
+    let given = if b.summarizers.is_null() { legacy_summarizer(&[], &b.summarizer) } else { b.summarizers.clone() };
     let summarizers = summarizers_value(&c, &given, true, &[])?;
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
@@ -125,7 +125,7 @@ pub(super) async fn update_profile(State(s): State<Shared>, Path(id): Path<Strin
     if let Some(v) = b.get("reviewers") {
         fields.push(("reviewers", reviewers_value(&c, v, true, &saved)?));
     }
-    if let Some(v) = b.get("summarizers").cloned().or_else(|| b.get("summarizer").map(legacy_summarizer)) {
+    if let Some(v) = b.get("summarizers").cloned().or_else(|| b.get("summarizer").map(|v| legacy_summarizer(&current.summarizers, v))) {
         let value = summarizers_value(&c, &v, true, &saved)?;
         fields.push(("summarizer", summarizer_mirror(&value)));
         fields.push(("summarizers", value));
@@ -353,13 +353,23 @@ pub(super) fn summarizers_value(c: &rusqlite::Connection, v: &Value, defaults_to
     Ok(json!(list.map(|l| json!(l).to_string())))
 }
 
-/// A `summarizer` as clients from before API 101 send it (null, or the one) as a list of
-/// summarizers.
-pub(super) fn legacy_summarizer(v: &Value) -> Value {
-    if v.is_null() { Value::Null } else { json!([v]) }
+/// The `summarizers` a `summarizer` from a client from before API 103 (which only knows the first)
+/// means, over the `current` ones: null clears them; one that's still the first changes nothing,
+/// as such a client sends it with every save; another replaces just the first, and keeps the rest.
+pub(super) fn legacy_summarizer(current: &[db::Reviewer], v: &Value) -> Value {
+    if v.is_null() {
+        return Value::Null;
+    }
+    let Ok(given) = serde_json::from_value::<db::Reviewer>(v.clone()) else { return json!([v]) };
+    let same = |a: &db::Reviewer, b: &db::Reviewer| (&a.claude_config_id, &a.model, &a.effort) == (&b.claude_config_id, &b.model, &b.effort);
+    match current.split_first() {
+        Some((first, _)) if same(first, &given) => json!(current),
+        Some((_, rest)) => json!([vec![given], rest.to_vec()].concat()),
+        None => json!([given]),
+    }
 }
 
-/// What the `summarizer` column (the first of the summarizers, for clients from before API 101)
+/// What the `summarizer` column (the first of the summarizers, for clients from before API 103)
 /// has when `summarizers` is saved as `value` (see `summarizers_value`).
 pub(super) fn summarizer_mirror(value: &Value) -> Value {
     let first = value.as_str().and_then(|v| serde_json::from_str::<Vec<db::Reviewer>>(v).ok()).and_then(|l| l.into_iter().next());

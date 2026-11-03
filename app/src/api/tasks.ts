@@ -152,11 +152,11 @@ export interface ChangeSummary {
   thread_id: string;
   /** Who writes it, e.g. "Claude · haiku". */
   label: string;
-  /** Its summarizer's name, when it has one (API 101). */
+  /** Its summarizer's name, when it has one (API 103). */
   name?: string;
-  /** The skills its summarizer was asked to use (API 101). */
+  /** The skills its summarizer was asked to use (API 103). */
   skills?: string[];
-  /** Its summarizer had a prompt of its own (API 101). */
+  /** Its summarizer had a prompt of its own (API 103). */
   custom_prompt?: boolean;
   state: SummaryState;
   /** The commit summarised. */
@@ -199,7 +199,7 @@ export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
-/** A task's summaries: one from each summarizer (API 101), or the one a host from before then has. */
+/** A task's summaries: one from each summarizer (API 103), or the one a host from before then has. */
 export const summariesOf = (t: Pick<Task, "summary" | "summaries">): ChangeSummary[] => t.summaries ?? (t.summary ? [t.summary] : []);
 
 /** A review thread that summarises its task's changes rather than reviewing them (API 84): its type is "summary". */
@@ -330,7 +330,7 @@ export interface Task {
   review?: Review | null;
   /** The latest summary of its changes (API 84); the first of `summaries`. */
   summary?: ChangeSummary | null;
-  /** The latest summaries of its changes, one from each summarizer (API 101). */
+  /** The latest summaries of its changes, one from each summarizer (API 103). */
   summaries?: ChangeSummary[];
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;

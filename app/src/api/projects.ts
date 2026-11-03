@@ -69,9 +69,9 @@ export interface Project {
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
-  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. From API 101 it's the first of `summarizers`. */
+  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. From API 103 it's the first of `summarizers`. */
   summarizer?: Reviewer | null;
-  /** Who writes those summaries, each in a thread of its own (API 101); empty uses the profile's. */
+  /** Who writes those summaries, each in a thread of its own (API 103); empty uses the profile's. */
   summarizers?: Reviewer[];
   /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
   merge_approval?: boolean | null;
@@ -116,7 +116,7 @@ export interface Reviewer {
   claude_config_id: string | null;
   model: string | null;
   effort: string | null;
-  /** Only for a summarizer (API 101): what to call it where its summary is shown. */
+  /** Only for a summarizer (API 103): what to call it where its summary is shown. */
   name?: string | null;
   /** Only for a summarizer: skills its agent uses while writing the summary. */
   skills?: string[];
@@ -132,6 +132,20 @@ export const projectsApi = {
   /** Clone a GitHub repository (`OWNER/REPO`) as the profile's GitHub account into `repo_path` and add it as a project (API 55). */
   cloneProject: (h: string, profileId: string, b: { repo: string; repo_path: string; name: string; key?: string }) =>
     on(h).post<Project>(`/profiles/${enc(profileId)}/projects/clone`, b),
+  /**
+   * Create a GitHub repository (public or private) as the profile's GitHub account for the folder `repo_path` (made a git repository,
+   * or created, if need be), make it the folder's `origin`, push its commits and add the folder as a project (API 102).
+   * `owner` is the account's own login by default, and `repo_name` the folder's name.
+   */
+  createGithubProject: (
+    h: string,
+    profileId: string,
+    b: { repo_path: string; visibility: "public" | "private"; repo_name?: string; owner?: string; name?: string; key?: string },
+  ) =>
+    on(h).post<Project & { github: { full_name: string; pushed: boolean; push_error: string | null } }>(
+      `/profiles/${enc(profileId)}/projects/github`,
+      b,
+    ),
   getProject: (h: string, id: string) => on(h).get<Project>(`/projects/${enc(id)}`),
   /** move_repo with a new repo_path moves the folder there (API 40). */
   /** `archived` archives the project or unarchives it (API 46). */

@@ -176,6 +176,11 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         writing.push((plan, thread));
     }
     if writing.is_empty() {
+        // Nothing to write, but summarizers taken out or reordered since change which summaries it has.
+        if json!(summaries) != json!(previous) {
+            let _g = updating();
+            set_summaries(state, &task.id, &summaries)?;
+        }
         return Ok(None);
     }
     let commit = &head[..head.len().min(10)];
@@ -748,5 +753,33 @@ mod tests {
         s.db().execute("UPDATE projects SET summarizer=?1, summarizers=NULL WHERE id='pr'", [json!(haiku).to_string()]).unwrap();
         let p = db::get_project(&s.db(), "pr").unwrap().unwrap();
         assert_eq!(db::summarizers_for(&s.db(), &p).unwrap(), vec![haiku]);
+    }
+
+    #[test]
+    fn summarizers_taken_out_or_reordered_change_the_summaries_without_writing_again() {
+        crate::testing::run(async || {
+            crate::agent::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let task = passed(&s);
+            two_summarizers(&s);
+            start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().unwrap();
+            for t in both(&s, &task) {
+                reply(&s, &t, Some("Done."));
+            }
+            let names = |s: &Shared| db::get_task(&s.db(), &task.id).unwrap().unwrap().summaries.iter().map(|x| x.name.clone().unwrap()).collect::<Vec<_>>();
+            assert_eq!(names(&s), ["Plain", "Skilled"]);
+            // Reordered: the summaries follow, and the first (what older clients read) is the new first.
+            let plain = db::Reviewer { name: Some("Plain".into()), ..Default::default() };
+            let skilled = db::Reviewer { name: Some("Skilled".into()), skills: vec!["tldr".into()], prompt: Some("Be brief.".into()), ..Default::default() };
+            db::update_project(&s.db(), "pr", &[("summarizers", json!(json!([skilled, plain]).to_string()))]).unwrap();
+            assert!(start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().is_none());
+            assert_eq!(names(&s), ["Skilled", "Plain"]);
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().summary.unwrap().name.as_deref(), Some("Skilled"));
+            // One taken out: its summary goes.
+            db::update_project(&s.db(), "pr", &[("summarizers", json!(json!([plain]).to_string()))]).unwrap();
+            assert!(start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().is_none());
+            assert_eq!(names(&s), ["Plain"]);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
+        })
     }
 }

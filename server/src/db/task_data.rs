@@ -194,7 +194,7 @@ pub struct Reviewer {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
-    /// Only for a summarizer (API 101): what to call it where its summary is shown, so summarizers
+    /// Only for a summarizer (API 103): what to call it where its summary is shown, so summarizers
     /// that differ in their skills or prompt can be told apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,

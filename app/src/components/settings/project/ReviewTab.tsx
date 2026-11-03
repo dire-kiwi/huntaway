@@ -216,14 +216,14 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
   );
 }
 
-/** Who summarises each task's changes: the profile's summarizers (API 87), or the project's own; from API 101 there can be several. */
+/** Who summarises each task's changes: the profile's summarizers (API 87), or the project's own; from API 103 there can be several. */
 function ProjectSummarizer({ project, host, onChange }: { project: Project; host: Host | undefined; onChange: (v: Reviewer[]) => void }) {
   const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project.host_id)));
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
   const inherits = hostSupports(host, PROFILE_REVIEWERS_API);
   const several = hostSupports(host, MULTI_SUMMARIZER_API);
   const skills = useProjectSkillNames(project, several);
-  // A host from before API 101 has just the one.
+  // A host from before API 103 has just the one.
   const own = several ? !!project.summarizers?.length : project.summarizer != null;
   const profiles: Reviewer[] = several
     ? profile?.summarizers?.length

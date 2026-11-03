@@ -5,7 +5,7 @@ import type { ExternalLink } from "./tasks";
 /** Profiles choose reviewers and a summarizer for their projects that don't choose their own. */
 export const PROFILE_REVIEWERS_API = 87;
 /** Hosts from here on can have several summarizers, with skills and prompts of their own. */
-export const MULTI_SUMMARIZER_API = 101;
+export const MULTI_SUMMARIZER_API = 103;
 
 export interface Profile {
   /** Set by the UI from the host it was loaded from. */
@@ -35,7 +35,7 @@ export interface Profile {
   reviewers?: Reviewer[];
   /** Who summarises them, for its projects with no summarizer of their own; null is the task's config with the defaults (API 87). */
   summarizer?: Reviewer | null;
-  /** Who summarises them, each in a thread of its own, for its projects with no summarizers of their own; empty is one with the task's config (API 101). */
+  /** Who summarises them, each in a thread of its own, for its projects with no summarizers of their own; empty is one with the task's config (API 103). */
   summarizers?: Reviewer[];
   /** A task moved to Ready for merge has its agent summarise what it would merge, and merges once you approve (API 92). */
   merge_approval?: boolean;

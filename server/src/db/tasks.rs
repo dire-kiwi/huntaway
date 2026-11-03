@@ -213,7 +213,7 @@ pub struct Task {
     #[serde(default)]
     pub summary: Option<ChangeSummary>,
     /// The latest summaries of its changes, one from each summarizer, written once its review
-    /// passed (API 101, see review/summary.rs).
+    /// passed (API 103, see review/summary.rs).
     #[serde(default)]
     pub summaries: Vec<ChangeSummary>,
     /// How full its agent's context window is, as of its latest reply (see agent/context.rs).

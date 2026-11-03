@@ -78,7 +78,7 @@ pub struct Project {
     /// merging (see review/summary.rs).
     #[serde(default = "yes")]
     pub auto_summary: bool,
-    /// Who writes those summaries, each in a thread of its own (API 101). Empty uses the profile's
+    /// Who writes those summaries, each in a thread of its own (API 103). Empty uses the profile's
     /// (see `summarizers_for`).
     #[serde(default)]
     pub summarizers: Vec<Reviewer>,

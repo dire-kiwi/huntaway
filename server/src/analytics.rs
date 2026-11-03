@@ -292,6 +292,10 @@ pub struct ReviewRow {
     pub model: Option<String>,
     /// Which of its task's review rounds it was in, from 1 (see `rounds`).
     pub round: i64,
+    /// The effort the reviewed task's agent was set to work at when this was submitted (API 101); null is the agent's own default.
+    pub effort: Option<String>,
+    /// The model the reviewed task's agent used most in the run before this review (API 101), if its tokens are counted.
+    pub task_model: Option<String>,
 }
 
 /// One round of review of a task: its reviewers' submissions together.
@@ -358,6 +362,11 @@ pub async fn tokens(State(s): State<Shared>, Path(profile_id): Path<String>, Que
 /// The model a run used most, by output.
 const RUN_MODEL: &str = "(SELECT u.model FROM token_usage u WHERE u.run_id=?1 ORDER BY u.output_tokens DESC, u.cost_usd DESC LIMIT 1)";
 
+/// The model task `?1`'s own agent used most in its latest counted run that started before `?2`: the one whose work was reviewed.
+const TASK_MODEL: &str = "(SELECT u.model FROM token_usage u WHERE u.run_id=(
+    SELECT r.id FROM runs r WHERE r.task_id=?1 AND r.kind='prompt' AND r.created_at < ?2 AND EXISTS (SELECT 1 FROM token_usage x WHERE x.run_id=r.id)
+    ORDER BY r.created_at DESC LIMIT 1) ORDER BY u.output_tokens DESC, u.cost_usd DESC LIMIT 1)";
+
 pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow::Result<TokenReport> {
     let mut st = c.prepare(
         "SELECT u.run_id, r.task_id, r.kind, r.created_at, u.model, u.runtime, u.input_tokens, u.output_tokens, u.cache_read_tokens,
@@ -389,11 +398,12 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
     usage.sort_by(|a, b| a.at.cmp(&b.at));
 
     let mut st = c.prepare(
-        "SELECT s.task_id, s.thread_id, s.at, s.verdict, s.serious, s.minor, s.minor_noted, s.label, s.run_id, s.round
+        "SELECT s.task_id, s.thread_id, s.at, s.verdict, s.serious, s.minor, s.minor_noted, s.label, s.run_id, s.round, s.effort
          FROM review_stats s JOIN tasks t ON t.id=s.task_id
          WHERE t.profile_id=?1 AND s.at >= ?2 AND s.at < ?3 ORDER BY s.at",
     )?;
     let mut model = c.prepare(&format!("SELECT {RUN_MODEL}"))?;
+    let mut task_model = c.prepare(&format!("SELECT {TASK_MODEL}"))?;
     let mut reviews = Vec::new();
     let mut round_of = Vec::new();
     let mut rows = st.query(params![profile_id, from, to])?;
@@ -404,10 +414,12 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
             Some(id) => model.query_row([id], |r| r.get(0))?,
             None => None,
         };
+        let (task_id, at): (String, String) = (r.get(0)?, r.get(2)?);
+        let worked: Option<String> = task_model.query_row(params![task_id, at], |r| r.get(0))?;
         reviews.push(ReviewRow {
-            task_id: r.get(0)?,
+            task_id,
             thread_id: r.get(1)?,
-            at: r.get(2)?,
+            at,
             verdict: r.get(3)?,
             serious: r.get(4)?,
             minor: r.get(5)?,
@@ -415,6 +427,8 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
             label: r.get(7)?,
             model,
             round: 0,
+            effort: r.get(10)?,
+            task_model: worked,
         });
     }
     drop(rows);

@@ -94,7 +94,7 @@ pub struct Profile {
     #[serde(default)]
     pub reviewers: Vec<Reviewer>,
     /// Who summarises them, each in a thread of its own, for its projects with no summarizers of
-    /// their own (API 101, see `summarizers_for`). Empty is one summarizer with the task's config
+    /// their own (API 103, see `summarizers_for`). Empty is one summarizer with the task's config
     /// and the default model and effort.
     #[serde(default)]
     pub summarizers: Vec<Reviewer>,

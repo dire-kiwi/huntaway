@@ -662,6 +662,29 @@ fn a_database_from_version_80_gets_call_ids_shared_by_each_calls_rows() {
 }
 
 #[test]
+fn a_database_from_version_81_gets_its_reviews_the_efforts_of_their_tasks() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (own, default) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        let new = || NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (a, b) = (insert_task(&c, new()).unwrap(), insert_task(&c, new()).unwrap());
+        c.execute("UPDATE tasks SET effort='high' WHERE id=?1", [&a.id]).unwrap();
+        set_setting(&c, "default_effort", Some("low")).unwrap();
+        c.execute_batch("ALTER TABLE review_stats DROP COLUMN effort; PRAGMA user_version=81;").unwrap();
+        for t in [&a, &b] {
+            c.execute("INSERT INTO review_stats (task_id, thread_id, round, at, verdict) VALUES (?1, 'r', '1', '1', 'pass')", [&t.id]).unwrap();
+        }
+        (a.id, b.id)
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let effort = |id: &str| c.query_row("SELECT effort FROM review_stats WHERE task_id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+    // Its own, or the host's default.
+    assert_eq!((effort(&own).as_deref(), effort(&default).as_deref()), (Some("high"), Some("low")));
+}
+
+#[test]
 fn a_database_at_version_73_gets_tasks_pr_checks() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     let id = {
@@ -754,15 +777,15 @@ fn a_database_at_version_66_gets_the_summary_columns() {
 }
 
 #[test]
-fn a_database_at_version_81_keeps_its_summarizer_as_the_only_one() {
-    // As master's build left it (81), with a project and a profile each with a summarizer and no list of them yet.
+fn a_database_at_version_83_keeps_its_summarizer_as_the_only_one() {
+    // As master's build left it (83), with a project and a profile each with a summarizer and no list of them yet.
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
         c.execute_batch(
             "ALTER TABLE projects DROP COLUMN summarizers;
                  ALTER TABLE profiles DROP COLUMN summarizers;
-                 PRAGMA user_version=81;
+                 PRAGMA user_version=83;
                  INSERT INTO profiles (id,name,created_at,summarizer) VALUES ('p','p','1','{\"model\":\"haiku\"}');
                  INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at,summarizer)
                    VALUES ('pr','p','P','P','/x','/s','/w','1','{\"model\":\"sonnet\"}');",

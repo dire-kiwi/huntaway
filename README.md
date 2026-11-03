@@ -97,6 +97,17 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
+The *Folder* tab can also **create a GitHub repository** for the folder (API 102): tick *Create a GitHub
+repository for it*, pick *Private* (the default) or *Public*, and optionally an owner (an organization;
+the profile's GitHub account by default) and a repository name (the folder's by default). The
+repository is made with `gh repo create` as the profile's GitHub account and becomes the folder's `origin`.
+A folder that isn't a git repository yet is made one (a folder that doesn't exist is created), and a
+repository's commits are pushed; one that already has an `origin`, or is only a subfolder of a repository,
+is turned down, and a repository that can't be made leaves the folder as it was. A push that fails
+after the repository is made still adds the project (`github.push_error` says why).
+`POST /profiles/{id}/projects/github` (`repo_path`, `visibility`: `public` or `private`, `repo_name`,
+`owner`, `name`, `key`) does it and returns the project with `github: {full_name, pushed, push_error}`.
+
 The sidebar lists projects in alphabetical order, with each group in its place by its own name
 and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
 under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
@@ -1115,14 +1126,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
-- **A profile's reviewers and summarizers** (API 87, several summarizers in API 101): a profile's settings
+- **A profile's reviewers and summarizers** (API 87, several summarizers in API 103): a profile's settings
   (*Settings → Profiles → Edit*) pick the *Reviewers* and *Summarizers* for its projects, and each project's
   *Review* settings use *The profile's* until you switch to *This project's own*, which starts from the
   profile's and overrides them. A project's own can still be one reviewer with the task's config,
   over a profile's that differ. Through the API a project's `reviewers: []` and `summarizers: []`
   use the profile's (`reviewers` and `summarizers` on `PATCH /profiles/{id}`), and `get_project`
   shows the profile's as `profile_reviewers` and `profile_summarizers`. (`summarizer`, the first of
-  `summarizers`, is still read and written for clients from before API 101: `null` is `[]`.)
+  `summarizers`, is still read and written for clients from before API 103: `null` is `[]`.)
 - **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
   to read before merging: what changed and why, the main changes, and how to try it. It reads the
   pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
@@ -1134,7 +1145,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   config, model and effort; the profile's, and otherwise one with the task's config, by default), in the
   project's *Review* settings (`auto_summary` and `summarizers`, which `update_project` takes too). `POST /tasks/{id}/summary`
   summarises on demand.
-- **Several summarizers, to compare skills and prompts** (API 101): a project or profile can list up
+- **Several summarizers, to compare skills and prompts** (API 103): a project or profile can list up
   to six summarizers, each writing the summary in a thread of its own at the same time, and the task's
   *Summary* tab shows each one's, boxed and labelled. Besides its agent config, model and effort, a
   summarizer has a *name* (to tell them apart), the *skills* its agent is asked to use while it writes

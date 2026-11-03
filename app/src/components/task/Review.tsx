@@ -302,7 +302,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
 }
 
 /** A task's summary tab: the summaries of its changes written once its review passed (API 84), one from each summarizer
- * (API 101), and a way to write them. With `threadId`, just that summarizer's. */
+ * (API 103), and a way to write them. With `threadId`, just that summarizer's. */
 export function ChangeSummaryView({ task, threadId }: { task: Task; threadId?: string }) {
   const all = summariesOf(task);
   const list = threadId ? all.filter((s) => s.thread_id === threadId) : all;
