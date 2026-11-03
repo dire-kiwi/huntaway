@@ -103,6 +103,9 @@ pub struct Spec {
     /// Revert the thread to before this turn first (a rewind's, see checkpoints::Rewind).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revert_before_turn: Option<String>,
+    /// The user's approval rules, which its MCP servers' configs hold (see approval_rules::codex_server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_rules: Option<crate::agent::approval_rules::Rules>,
 }
 
 /// How a permission mode runs under Codex: (approval policy, approvals reviewer, sandbox).

@@ -152,6 +152,14 @@ async fn at_most_once(
 /// an automation can while the user hasn't approved what it asked (nothing is changed before
 /// then): it carries on waiting for them.
 fn rerunnable(s: &Shared, c: &McpCall) -> bool {
+    // One that was waiting for an approval rule's prompt (see check_rules) hasn't done anything yet.
+    let ruled: Option<String> = s
+        .db()
+        .query_row("SELECT status FROM permission_requests WHERE call_id=?1 AND kind='tool' AND rule IS NOT NULL", [&c.call_id], |r| r.get(0))
+        .ok();
+    if ruled.is_some_and(|status| status != "allowed") {
+        return true;
+    }
     let kind = match c.tool.as_str() {
         _ if RERUNNABLE.contains(&c.tool.as_str()) => return true,
         "update_project" | "create_project" => "project",
@@ -191,6 +199,11 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
     // subagents raise them too, and the agent's own tool calls end the wait before theirs.
     if !matches!(c.tool.as_str(), "wait" | "permission_prompt") {
         crate::mcp::wait::resumed(s, &task.id, &run.id);
+    }
+    // The user's approval rules hold for every board tool but the plumbing of prompts and questions,
+    // `wait` included (its command runs as the agent's own would).
+    if !matches!(c.tool.as_str(), "permission_prompt" | "request_user_input") {
+        check_rules(s, &task, &c.call_id, &c.tool, &c.args).await?;
     }
     match c.tool.as_str() {
         "permission_prompt" => {
@@ -234,8 +247,9 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             // The command runs as the agent's own Bash calls would, so it's approved like them: in
             // auto mode the agent's reviewer (Claude's or Codex's) has already reviewed this call,
             // otherwise the user (or the mode) decides.
+            // An approval rule on Bash holds for it whoever reviewed the call: a wait's command is a command.
             if let (Some(cmd), None) = (&command, crate::mcp::wait::resuming(&task, &c.call_id))
-                && !crate::agent::runner::agent_reviews_waits(s, &run.id)
+                && (!crate::agent::runner::agent_reviews_waits(s, &run.id) || ruled_bash(s, &task).map_err(|e| format!("{e:#}"))?)
             {
                 let cwd = crate::agent::runner::work_dir(s, &task).map_err(|e| format!("{e:#}"))?;
                 let description = format!("Run while waiting{}", reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default());
@@ -307,6 +321,35 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             dispatch(s, &ctx, tool, c.args.clone()).await
         }
     }
+}
+
+/// Whether the user's approval rules ask about or refuse Bash in `task`'s thread now (see agent/approval_rules.rs).
+fn ruled_bash(s: &Shared, task: &Task) -> anyhow::Result<bool> {
+    let Some(rules) = crate::agent::approval_rules::for_task(&s.db(), task)? else { return Ok(false) };
+    let mode = {
+        let project = task.project_id.as_deref().map(|p| db::get_project(&s.db(), p)).transpose()?.flatten();
+        task.effective_permission_mode(&s.db(), project.as_ref())?
+    };
+    Ok(rules.for_mode(&mode).decide("Bash").is_some_and(|r| r.decision != crate::agent::approval_rules::Decision::Allow))
+}
+
+/// The user's approval rules for the board's own tools, which the board holds as it runs them for
+/// either runtime (see agent/approval_rules.rs): a call a never rule matches is refused, and one an
+/// ask rule matches waits for the user's answer, as a permission prompt.
+async fn check_rules(s: &Shared, task: &Task, call_id: &str, tool: &str, args: &Value) -> std::result::Result<(), String> {
+    use crate::agent::approval_rules::{self, Decision};
+    let Some(rules) = approval_rules::for_task(&s.db(), task).map_err(|e| format!("{e:#}"))? else { return Ok(()) };
+    let Some((name, rule)) = approval_rules::board_rule(&rules, tool) else { return Ok(()) };
+    // The tools that ask the user themselves, whatever the mode, aren't asked about twice (their own
+    // request carries the rule, see permissions::approve); never still refuses them.
+    if rule.decision == Decision::Allow || (rule.decision == Decision::Ask && approval_rules::ASKS_ITSELF.contains(&tool)) {
+        return Ok(());
+    }
+    let answer = permissions::prompt(s, task, call_id, &name, args, None).await.map_err(|e| format!("{e:#}"))?;
+    if answer["behavior"] == "allow" {
+        return Ok(());
+    }
+    Err(answer["message"].as_str().unwrap_or("The user denied this action.").to_string())
 }
 
 /// Whether thread `task` is in plan mode now (its own mode, or the one it inherits).

@@ -402,3 +402,199 @@ fn lists_pending_prompts() {
     assert_eq!(only_a[0]["task_id"], a.as_str());
     assert_eq!(pending(&s, Some(&b), None).unwrap()[0]["input"], "not json");
 }
+
+// ---------- approval rules and expiry ----------
+
+/// `running_task`, made its profile's assistant (where the rules hold), with `rules`.
+fn assistant(s: &Shared, rules: &[(&str, Decision)], mode: &str) -> (Task, db::Run) {
+    let (task, run) = running_task(s, None);
+    s.db().execute("UPDATE tasks SET task_type='assistant' WHERE id=?1", [&task.id]).unwrap();
+    let r = approval_rules::Rules { rules: rules.iter().map(|(t, d)| Rule { tool: t.to_string(), decision: *d }).collect(), expiry_minutes: 30 };
+    approval_rules::set(&s.db(), &task.profile_id, Some(&r)).unwrap();
+    let task = s.update_task(&task.id, &[("permission_mode", json!(mode))]).unwrap().unwrap();
+    assert!(task.is_assistant());
+    (task, run)
+}
+
+fn log(s: &Shared, task: &Task) -> Vec<(String, String, String, Option<String>)> {
+    let mut l: Vec<_> = approval_rules::list(&s.db(), &task.profile_id, 100).unwrap().into_iter().map(|a| (a.tool_name, a.decision, a.outcome, a.answered_by)).collect();
+    l.reverse();
+    l
+}
+
+fn entry(tool: &str, decision: &str, outcome: &str, by: Option<&str>) -> (String, String, String, Option<String>) {
+    (tool.into(), decision.into(), outcome.into(), by.map(String::from))
+}
+
+/// Marks MCP call `call_id` as `run`'s, whose turn an automation started (with `routine`) or the user did.
+fn call_in_turn(s: &Shared, task: &Task, run: &db::Run, call_id: &str, routine: bool) {
+    let mut data = json!({"text": "check the mail"});
+    if routine {
+        data["routine"] = json!(true);
+    }
+    let m = s.add_message(&task.id, "user", data).unwrap();
+    s.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![m.id, run.id]).unwrap();
+    s.db()
+        .execute("INSERT INTO mcp_calls (id,run_id,task_id,tool,args,created_at) VALUES (?1,?2,?3,'permission_prompt','{}',?4)", rusqlite::params![call_id, run.id, task.id, now()])
+        .unwrap();
+}
+
+#[test]
+fn an_ask_rule_asks_the_user_even_in_bypass_and_each_time() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, _) = assistant(&s, &[("mcp__g__send*", Decision::Ask), ("mcp__g__get*", Decision::Allow)], "bypassPermissions");
+        // Bypass allows what no rule asks about, and what a rule allows.
+        assert_eq!(prompt(&s, &task, "a", "Bash", &json!({}), None).await.unwrap()["behavior"], "allow");
+        assert_eq!(prompt(&s, &task, "b", "mcp__g__get_mail", &json!({}), None).await.unwrap()["behavior"], "allow");
+        let input = json!({"to": "bob@example.com", "subject": "Hi"});
+        let (id, told) = asked(&s, &task, "c", "mcp__g__send_mail", input.clone()).await;
+        let shown = prompt_message(&s, &id);
+        assert_eq!(shown["rule"], json!({"tool": "mcp__g__send*", "decision": "ask"}));
+        assert!(shown["expires_at"].is_null(), "the user started this run");
+        // Switching to Bypass (again) doesn't answer it for the user.
+        apply_mode_to_pending(&s, &task).unwrap();
+        assert_eq!(s.db().query_row("SELECT status FROM permission_requests WHERE id=?1", [&id], |r| r.get::<_, String>(0)).unwrap(), "pending");
+        assert_eq!(log(&s, &task), vec![entry("mcp__g__send_mail", "ask", "pending", None)]);
+        // "Always allow" allows it this once: the rule asks next time too.
+        answer(&s, &id, true, true, None, Reply::default()).unwrap();
+        assert_eq!(told.await.unwrap(), json!({"behavior": "allow", "updatedInput": input}));
+        let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+        assert!(t.auto_allow.is_empty());
+        assert_eq!(log(&s, &task), vec![entry("mcp__g__send_mail", "ask", "allowed", Some("user"))]);
+        let (id2, told2) = asked(&s, &t, "d", "mcp__g__send_mail", json!({"to": "eve@example.com"})).await;
+        answer_by(&s, &id2, false, false, None, Reply::default(), "push").unwrap();
+        assert_eq!(told2.await.unwrap()["behavior"], "deny");
+        let l = approval_rules::list(&s.db(), &task.profile_id, 10).unwrap();
+        assert_eq!((l[0].outcome.as_str(), l[0].answered_by.as_deref(), l[0].summary.as_str()), ("denied", Some("push"), "to: eve@example.com"));
+        assert_eq!(l[0].request_id.as_deref(), Some(id2.as_str()));
+    });
+}
+
+#[test]
+fn never_rules_block_and_dont_ask_denies_what_a_rule_asks() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, _) = assistant(&s, &[("mcp__g__send*", Decision::Ask), ("mcp__g__*delete*", Decision::Never)], "default");
+        let told = prompt(&s, &task, "a", "mcp__g__delete_mail", &json!({"id": "m1"}), None).await.unwrap();
+        assert_eq!(told["behavior"], "deny");
+        assert!(told["message"].as_str().unwrap().starts_with(approval_rules::BLOCKED));
+        let task = s.update_task(&task.id, &[("permission_mode", json!("dontAsk"))]).unwrap().unwrap();
+        assert_eq!(prompt(&s, &task, "b", "mcp__g__send_mail", &json!({}), None).await.unwrap(), deny(DONT_ASK_DENIAL));
+        // Neither was asked.
+        assert_eq!(s.db().query_row("SELECT COUNT(*) FROM permission_requests", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            log(&s, &task),
+            vec![entry("mcp__g__delete_mail", "never", "blocked", Some("rule")), entry("mcp__g__send_mail", "ask", "denied", Some("mode"))]
+        );
+        // Another thread of the profile isn't the assistant's: its mode decides.
+        let (other, _) = running_task(&s, None);
+        s.db().execute("UPDATE tasks SET profile_id=?1 WHERE id=?2", [&task.profile_id, &other.id]).unwrap();
+        let other = s.update_task(&other.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap().unwrap();
+        assert_eq!(prompt(&s, &other, "c", "mcp__g__delete_mail", &json!({}), None).await.unwrap()["behavior"], "allow");
+    });
+}
+
+#[test]
+fn prompts_from_routine_runs_are_denied_once_they_expire() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, run) = assistant(&s, &[("mcp__g__send*", Decision::Ask)], "default");
+        call_in_turn(&s, &task, &run, "r1", true);
+        let before = chrono::Utc::now();
+        let (id, told) = asked(&s, &task, "r1", "mcp__g__send_mail", json!({"to": "bob@example.com"})).await;
+        let at: String = s.db().query_row("SELECT expires_at FROM permission_requests WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+        let at = chrono::DateTime::parse_from_rfc3339(&at).unwrap().with_timezone(&chrono::Utc);
+        // Thirty minutes from when it was asked (to the millisecond it is kept to).
+        assert!(at >= before + chrono::Duration::minutes(30) - chrono::Duration::milliseconds(1) && at <= chrono::Utc::now() + chrono::Duration::minutes(30));
+        assert_eq!(prompt_message(&s, &id)["expires_at"], json!(at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)));
+        // A tool no rule asks about expires too: background work never hangs on a card.
+        call_in_turn(&s, &task, &run, "r2", true);
+        let (bash, told_bash) = asked(&s, &task, "r2", "Bash", json!({"command": "make"})).await;
+        assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().status, "needs_attention");
+
+        // Not before its time (as the sweeper's clock has it).
+        assert_eq!(expire_due(&s, at - chrono::Duration::seconds(1)), 0);
+        assert_eq!(expire_due(&s, at + chrono::Duration::seconds(1)), 2);
+        assert_eq!(told.await.unwrap(), deny(EXPIRED_UNANSWERED));
+        assert_eq!(told_bash.await.unwrap(), deny(EXPIRED_UNANSWERED));
+        for id in [&id, &bash] {
+            let shown = prompt_message(&s, id);
+            assert_eq!((&shown["status"], &shown["note"]), (&json!("expired"), &json!(EXPIRED_UNANSWERED)));
+        }
+        // Back to work, and the log says nobody answered.
+        assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().status, "in_progress");
+        assert_eq!(log(&s, &task), vec![entry("mcp__g__send_mail", "ask", "expired", Some("expiry"))]);
+        // An answer after that is too late.
+        assert!(answer(&s, &id, true, false, None, Reply::default()).is_err());
+        assert_eq!(expire_due(&s, at + chrono::Duration::hours(1)), 0);
+    });
+}
+
+#[test]
+fn only_routine_runs_prompts_expire_and_only_if_the_profile_says_so() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, run) = assistant(&s, &[], "default");
+        // The user's own turn: it waits for them.
+        call_in_turn(&s, &task, &run, "u", false);
+        let (mine, _) = asked(&s, &task, "u", "Bash", json!({})).await;
+        // No expiry set.
+        let r = approval_rules::Rules { expiry_minutes: 0, ..approval_rules::get(&s.db(), &task.profile_id).unwrap() };
+        approval_rules::set(&s.db(), &task.profile_id, Some(&r)).unwrap();
+        call_in_turn(&s, &task, &run, "r", true);
+        let (routine, _) = asked(&s, &task, "r", "Bash", json!({})).await;
+        // A prompt from before prompts expired has no expiry either.
+        let (old, _) = asked(&s, &task, "o", "Bash", json!({})).await;
+        for id in [&mine, &routine, &old] {
+            assert_eq!(s.db().query_row("SELECT expires_at FROM permission_requests WHERE id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
+        }
+        assert_eq!(expire_due(&s, chrono::Utc::now() + chrono::Duration::days(365)), 0);
+        assert_eq!(pending(&s, Some(&task.id), None).unwrap().len(), 3);
+    });
+}
+
+#[test]
+fn a_prompt_that_expired_while_the_board_was_down_is_denied_when_its_call_comes_again() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, run) = assistant(&s, &[("mcp__g__send*", Decision::Ask)], "default");
+        call_in_turn(&s, &task, &run, "r", true);
+        let (id, told) = asked(&s, &task, "r", "mcp__g__send_mail", json!({})).await;
+        // The board stops: nobody waits on the prompt any more.
+        told.abort();
+        s.perm_waiters.lock().unwrap().clear();
+        // It starts again after the prompt's time: the sweeper's first pass denies it, and the agent's
+        // call, delivered again, gets the denial.
+        let at: String = s.db().query_row("SELECT expires_at FROM permission_requests WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+        let later = chrono::DateTime::parse_from_rfc3339(&at).unwrap().with_timezone(&chrono::Utc) + chrono::Duration::minutes(5);
+        assert_eq!(expire_due(&s, later), 1);
+        assert_eq!(prompt(&s, &task, "r", "mcp__g__send_mail", &json!({}), None).await.unwrap(), deny(EXPIRED_UNANSWERED));
+        assert_eq!(log(&s, &task), vec![entry("mcp__g__send_mail", "ask", "expired", Some("expiry"))]);
+    });
+}
+
+#[test]
+fn a_prompt_a_rule_asked_whose_run_ends_is_logged_as_expired() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, _) = assistant(&s, &[("mcp__g__send*", Decision::Ask)], "default");
+        let (_, told) = asked(&s, &task, "c", "mcp__g__send_mail", json!({})).await;
+        expire_for_task(&s, &task.id);
+        assert_eq!(told.await.unwrap()["behavior"], "deny");
+        assert_eq!(log(&s, &task), vec![entry("mcp__g__send_mail", "ask", "expired", Some("ended"))]);
+    });
+}
+
+#[test]
+fn a_project_tasks_prompts_dont_expire_even_when_an_automation_started_its_run() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        // A project automation's task (the rules, and expiry, are the assistant's).
+        let (task, run) = running_task(&s, None);
+        call_in_turn(&s, &task, &run, "r", true);
+        let (id, _) = asked(&s, &task, "r", "Bash", json!({"command": "make"})).await;
+        assert_eq!(s.db().query_row("SELECT expires_at FROM permission_requests WHERE id=?1", [&id], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
+        assert_eq!(expire_due(&s, chrono::Utc::now() + chrono::Duration::days(1)), 0);
+    });
+}
