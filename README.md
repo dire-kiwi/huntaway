@@ -1126,7 +1126,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
-- **Instructions and skills per reviewer** (API 102): each reviewer, and the summarizer, can have
+- **Instructions and skills per reviewer** (API 103): each reviewer, and the summarizer, can have
   instructions of its own and skills on in its thread (*Instructions and skills* beside it in the
   project's and the profile's settings; `prompt` and `skills` in each `reviewers` entry and in
   `summarizer`). A reviewer's instructions replace the project's *In review* prompt for it only (what

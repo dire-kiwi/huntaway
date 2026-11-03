@@ -26,7 +26,7 @@ export interface BoardSkill {
   description: string;
 }
 
-/** What a reviewer's instructions and skills are picked from, once the host takes them (API 102). */
+/** What a reviewer's instructions and skills are picked from, once the host takes them (API 103). */
 export interface ReviewerExtras {
   /** The board's skills: the project's own and the global ones. */
   skills: BoardSkill[];

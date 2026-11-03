@@ -114,14 +114,14 @@ export interface Reviewer {
   claude_config_id: string | null;
   model: string | null;
   effort: string | null;
-  /** Its own instructions, over the project's In review prompt (a summarizer's: over the default summary instructions). Unset follows the project's (API 102). */
+  /** Its own instructions, over the project's In review prompt (a summarizer's: over the default summary instructions). Unset follows the project's (API 103). */
   prompt?: string | null;
-  /** Names of board skills that are on in its thread whether or not they are for the project (API 102). */
+  /** Names of board skills that are on in its thread whether or not they are for the project (API 103). */
   skills?: string[];
 }
 
 /** From this API a reviewer and the summarizer can have instructions and skills of their own. */
-export const REVIEWER_OPTIONS_API = 102;
+export const REVIEWER_OPTIONS_API = 103;
 
 export const projectsApi = {
   /** The profile's projects, or with `archived` its archived ones (API 46), which are left out otherwise. */
