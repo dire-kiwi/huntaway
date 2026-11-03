@@ -8,7 +8,10 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "nz.net.ivan.huntaway"
+      "bundleIdentifier": "nz.net.ivan.huntaway",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -41,6 +44,15 @@
           "photosPermission": "Huntaway attaches the photos you pick to your tasks.",
           "cameraPermission": "Huntaway uses the camera to take photos for tasks.",
           "microphonePermission": false
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#0f0f13"
         }
       ]
     ],
