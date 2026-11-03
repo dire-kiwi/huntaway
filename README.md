@@ -259,7 +259,9 @@ ask and ask beats allow. They hold for the assistant and the threads under it, f
 A profile starts with rules for a Google Workspace MCP server named `google`: reading, searching and
 drafting are allowed; sending mail, making, changing or deleting events, sharing files or handing
 them over, changing files, mail filters and labels, and anything `manage_*` ask; deleting or
-trashing mail and files is never. A switch adds an *ask* on the board's `create_task`.
+trashing mail and files is never. They fit the tools of the server the Google card adds (see *Google on
+the assistant host*), workspace-mcp's; making a Drive file or a calendar is left to the thread's mode.
+A switch adds an *ask* on the board's `create_task`.
 
 - **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`) that allows, asks or denies the
   calls a rule matches. Its *ask* goes to the board's permission prompt in every mode, Bypass
