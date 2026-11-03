@@ -97,6 +97,17 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
+The *Folder* tab can also **create a GitHub repository** for the folder (API 102): tick *Create a GitHub
+repository for it*, pick *Private* (the default) or *Public*, and optionally an owner (an organization;
+the profile's GitHub account by default) and a repository name (the folder's by default). The
+repository is made with `gh repo create` as the profile's GitHub account and becomes the folder's `origin`.
+A folder that isn't a git repository yet is made one (a folder that doesn't exist is created), and a
+repository's commits are pushed; one that already has an `origin`, or is only a subfolder of a repository,
+is turned down, and a repository that can't be made leaves the folder as it was. A push that fails
+after the repository is made still adds the project (`github.push_error` says why).
+`POST /profiles/{id}/projects/github` (`repo_path`, `visibility`: `public` or `private`, `repo_name`,
+`owner`, `name`, `key`) does it and returns the project with `github: {full_name, pushed, push_error}`.
+
 The sidebar lists projects in alphabetical order, with each group in its place by its own name
 and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
 under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
