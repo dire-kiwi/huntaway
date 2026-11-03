@@ -590,6 +590,31 @@ pub async fn delete_global_mcp_server(State(s): State<Shared>, Path(id): Path<St
     delete_in(&s.db(), "agent_mcp_servers", None, &id)
 }
 
+/// The host's global MCP server called `name`, if it has one.
+pub fn global_mcp_server(c: &Connection, name: &str) -> rusqlite::Result<Option<McpServer>> {
+    Ok(list_mcp_servers(c, None)?.into_iter().find(|m| m.name == name))
+}
+
+/// Adds a global MCP server (as Settings → Agent tools does), checked as that is.
+pub fn add_global_mcp_server(c: &Connection, name: &str, config: Value) -> ApiResult<McpServer> {
+    create_mcp_server_in(c, None, McpServerBody { name: Some(name.into()), config: Some(config), enabled: Some(true), auto_allow: Some(false) })
+}
+
+/// Whether profile `profile_id` switches global item `item_id` on (None: it doesn't say, which is off).
+pub fn profile_switch(c: &Connection, profile_id: &str, item_id: &str) -> rusqlite::Result<Option<bool>> {
+    Ok(switches(c, "profile", profile_id)?.get(item_id).and_then(Value::as_bool))
+}
+
+/// Switches global item `item_id` on (or off) for profile `profile_id`'s runs.
+pub fn set_profile_switch(c: &Connection, profile_id: &str, item_id: &str, on: bool) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO agent_tool_switches (scope, scope_id, item_id, enabled) VALUES ('profile',?1,?2,?3)
+         ON CONFLICT(scope, scope_id, item_id) DO UPDATE SET enabled=?3",
+        params![profile_id, item_id, on],
+    )?;
+    Ok(())
+}
+
 // ---------- runs ----------
 
 /// What a run in a project gets on top of the board's own setup.
@@ -643,6 +668,10 @@ fn add_global(
         }
     }
     for g in list_mcp_servers(c, None)? {
+        // The Google server is the assistant's alone (see assistant/google.rs): a project's agents never get it.
+        if project_id.is_some() && crate::agent::assistant::google::is_google(&g.name) {
+            continue;
+        }
         if g.enabled && on(&g.id) && !servers.iter().any(|s| s.name == g.name) {
             servers.push(g);
         }

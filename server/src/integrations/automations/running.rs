@@ -21,7 +21,12 @@ pub(super) async fn run_action(s: &Shared, a: &Automation, run_id: &str, source:
     let event = delivery.and_then(Delivery::event_label);
     let result = match guards(s, a, source, now).await {
         Ok(precheck) => {
-            let vars = Vars { automation: a, source, delivery, count, now, precheck: precheck.as_deref() };
+            // Where Google stands for a routine that asks (see assistant/google.rs), as it starts.
+            let google = match &a.action {
+                Action::MessageAssistant { message, .. } if a.is_routine() && message.contains("{{google}}") => Some(crate::agent::assistant::google::status_line(s, &a.profile_id)),
+                _ => None,
+            };
+            let vars = Vars { automation: a, source, delivery, count, now, precheck: precheck.as_deref(), google: google.as_deref() };
             act(s, a, run_id, &vars, event.as_deref())
         }
         Err(o) => Err(o),
@@ -180,7 +185,7 @@ pub(super) async fn receive(s: &Shared, a: &Automation, delivery: Delivery, raw:
     if delivery.event() == Some("ping") && !filters.iter().any(takes_ping) {
         return record(Run { status: "filtered".into(), ..run }.with_detail("Ignored: GitHub's ping, sent when a webhook is added (a filter on event equal to ping takes it)"));
     }
-    let vars = Vars { automation: a, source, delivery: Some(&delivery), count: 1, now, precheck: None };
+    let vars = Vars { automation: a, source, delivery: Some(&delivery), count: 1, now, precheck: None, google: None };
     if let Some(why) = failed_filter(filters, &vars) {
         return record(Run { status: "filtered".into(), ..run }.with_detail(why));
     }

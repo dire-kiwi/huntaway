@@ -169,6 +169,9 @@ pub struct Events {
     /// Whose permission prompts it gets, with Allow and Deny (API 96).
     #[serde(default)]
     pub prompts: Prompts,
+    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 102).
+    #[serde(default = "yes")]
+    pub reports: bool,
 }
 
 /// Whose permission prompts a device gets pushed.
@@ -190,7 +193,7 @@ fn yes() -> bool {
 
 impl Default for Events {
     fn default() -> Self {
-        Self { attention: true, review: true, merge: false, done: false, prompts: Prompts::Assistant }
+        Self { attention: true, review: true, merge: false, done: false, prompts: Prompts::Assistant, reports: true }
     }
 }
 
@@ -203,6 +206,7 @@ impl Events {
             Event::Done => self.done,
             // Depends on the task: see wants_prompt.
             Event::Prompt => false,
+            Event::Report => self.reports,
         }
     }
 
@@ -392,6 +396,8 @@ pub enum Event {
     Done,
     /// A permission prompt was raised.
     Prompt,
+    /// A routine posted a report in the assistant's thread (see observe_report).
+    Report,
 }
 
 impl Event {
@@ -402,6 +408,8 @@ impl Event {
             Event::Review => "in_review",
             Event::Merge => "ready_for_merge",
             Event::Done => "done",
+            // Not about a column.
+            Event::Report => "",
         }
     }
 }
@@ -465,6 +473,7 @@ pub fn notification_text(e: Event, t: &Value, key: &str) -> (String, String) {
             _ => "Done".into(),
         },
         Event::Prompt => "Waiting for your answer".into(),
+        Event::Report => "Posted a report".into(),
     };
     let body = if body.chars().count() > 200 { format!("{}…", body.chars().take(199).collect::<String>()) } else { body };
     (format!("{key} {}", t["title"].as_str().unwrap_or("")), body)
@@ -575,7 +584,10 @@ pub fn start(s: &Shared) {
                         st.push.tasks.lock().unwrap().remove(&format!("{host}:{id}"));
                     }
                 }
-                Some("message") => observe_prompt(&st, &host, &ev["message"]),
+                Some("message") => {
+                    observe_prompt(&st, &host, &ev["message"]);
+                    observe_report(&st, &host, &ev["message"]);
+                }
                 Some("message_updated") => prompt_settled(&st, &host, &ev["message"]),
                 Some("resync") => sync_host(&st, &host).await,
                 Some("hosts_changed") => {
@@ -701,6 +713,51 @@ async fn notify(s: &Shared, host: &str, t: &Value, e: Event) {
     for sub in subs {
         let _ = send(s, &sub, &msg, e == Event::Attention).await;
     }
+}
+
+// ---------- routines' reports ----------
+
+/// What a routine's report notification says: its routine, and the report's first line (or why it failed).
+pub fn report_text(data: &Value) -> Option<(String, String)> {
+    let first = data["text"].as_str().unwrap_or("").lines().map(|l| l.trim().trim_start_matches(['#', '*', '-', ' '])).find(|l| !l.is_empty()).unwrap_or("");
+    let body = match data["outcome"].as_str() {
+        Some("reported") if !first.is_empty() => first.to_string(),
+        Some("reported") => "Posted a report".into(),
+        Some("failed") => format!("Failed: {first}"),
+        _ => return None,
+    };
+    let body = if body.chars().count() > 200 { format!("{}…", body.chars().take(199).collect::<String>()) } else { body };
+    Some((data["automation"].as_str().filter(|n| !n.is_empty()).unwrap_or("A routine").to_string(), body))
+}
+
+/// A thread message as it is now: a routine's report that's just been posted (one per run, so a brief pushes once) goes to
+/// the devices that want reports. A routine waiting on the user is pushed as its prompt or attention instead.
+fn observe_report(s: &Shared, host: &str, m: &Value) {
+    if m["kind"] != "report" {
+        return;
+    }
+    let Some(task_id) = m["task_id"].as_str() else { return };
+    let Some((title, body)) = report_text(&m["data"]) else { return };
+    let (st, host, task_id, tag) = (s.clone(), host.to_string(), task_id.to_string(), m["id"].to_string());
+    tokio::spawn(async move {
+        let subs = match list(&st.db()) {
+            Ok(subs) => subs.into_iter().filter(|x| x.events.wants(Event::Report)).collect::<Vec<_>>(),
+            Err(e) => return tracing::warn!("push: reading the subscriptions: {e:#}"),
+        };
+        let msg = Message {
+            title,
+            body,
+            url: format!("/t/{task_id}"),
+            tag: format!("{host}:{task_id}:report:{tag}"),
+            task_id: Some(task_id.clone()),
+            event: Some(Event::Report),
+            request_id: None,
+            answer: None,
+        };
+        for sub in subs {
+            let _ = send(&st, &sub, &msg, false).await;
+        }
+    });
 }
 
 // ---------- permission prompts ----------

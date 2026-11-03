@@ -54,6 +54,9 @@ pub(super) fn mcp_server_config(name: &str, c: &Value, approved: bool, disabled:
     } else if name == crate::mcp::gh_mcp::SERVER_NAME {
         // As can gh.
         out.insert("tool_timeout_sec".into(), json!(600));
+    } else if crate::agent::assistant::google::is_google(name) {
+        // uvx fetches workspace-mcp the first time, which takes longer than Codex's 10s default for a start.
+        out.insert("startup_timeout_sec".into(), json!(120));
     }
     if approved || name == MCP_SERVER_NAME {
         out.insert("default_tools_approval_mode".into(), json!("approve"));

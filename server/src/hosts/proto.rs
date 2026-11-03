@@ -19,7 +19,10 @@ pub const PROTOCOL: u32 = 1;
 /// `GET /permissions?profile_id=`.
 /// API 101: routines (a profile's automations, which wake its assistant): `/profiles/{id}/automations`, the `cron`
 /// and `at` triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, and `report` messages.
-pub const API_VERSION: u32 = 101;
+/// API 102: Google and the morning brief: `/profiles/{id}/assistant/google` (the Google card, and adding the Google
+/// server), `/profiles/{id}/assistant/brief` (the routine template) and `/brief/feedback` (ratings into MEMORY.md), the
+/// assistant's `brief` document, `{{google}}` in routines, and `reports` in a push subscription's events.
+pub const API_VERSION: u32 = 102;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.

@@ -217,6 +217,7 @@ pub async fn commit_all(dir: &Path, who: Who, message: Option<&str>) -> Result<O
 }
 
 async fn commit_all_locked(dir: &Path, who: Who, message: Option<&str>) -> Result<Option<String>> {
+    ignore_brief(dir);
     git_ok(dir, who, &["add", "-A"]).await?;
     let changed = git_ok(dir, who, &["diff", "--cached", "--name-only"]).await?;
     let changed: Vec<&str> = changed.lines().filter(|l| !l.is_empty()).collect();
@@ -229,6 +230,27 @@ async fn commit_all_locked(dir: &Path, who: Who, message: Option<&str>) -> Resul
     };
     git_ok(dir, who, &["commit", "-q", "--no-verify", "-m", &message]).await?;
     Ok(Some(git_ok(dir, who, &["rev-parse", "HEAD"]).await?.trim().to_string()))
+}
+
+/// The morning brief (brief.rs) is written over each day and kept as the assistant's document, one version a day, so it's
+/// left out of the workspace's history: it's in the repository's own `info/exclude`, which isn't a file in the workspace.
+fn ignore_brief(dir: &Path) {
+    let info = dir.join(".git").join("info");
+    let exclude = info.join("exclude");
+    let line = format!("/{}", super::brief::FILE);
+    let now = std::fs::read_to_string(&exclude).unwrap_or_default();
+    if now.lines().any(|l| l.trim() == line) {
+        return;
+    }
+    // Only in the workspace's own repository (a real `.git` folder, see is_repo), and not through a symlink.
+    if !is_repo(dir) || std::fs::symlink_metadata(&info).is_ok_and(|m| !m.is_dir()) || std::fs::symlink_metadata(&exclude).is_ok_and(|m| !m.is_file()) {
+        return;
+    }
+    let _ = std::fs::create_dir(&info);
+    let text = format!("{now}{}{line}\n", if now.is_empty() || now.ends_with('\n') { "" } else { "\n" });
+    if let Err(e) = std::fs::write(&exclude, text) {
+        tracing::warn!("leaving the brief out of the assistant's history in {}: {e}", dir.display());
+    }
 }
 
 fn changed_message(files: &[&str]) -> String {
@@ -440,7 +462,7 @@ pub fn resolve(dir: &Path, rel: &str) -> Result<PathBuf, String> {
 }
 
 /// The workspace and the file `rel` in it, as a 400 if it isn't one there.
-fn file_path(dir: &Path, rel: &str) -> ApiResult<PathBuf> {
+pub(super) fn file_path(dir: &Path, rel: &str) -> ApiResult<PathBuf> {
     resolve(dir, rel).map_err(ApiError::bad)
 }
 
@@ -490,6 +512,10 @@ pub fn list(dir: &Path) -> Vec<Value> {
             if walked > MAX_WALKED && !matches!(kind(&rel), "user" | "memory") {
                 continue;
             }
+            // The morning brief is the assistant's document (its Brief tab), not memory.
+            if prefix.is_empty() && name == super::brief::FILE {
+                continue;
+            }
             let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
             if meta.is_dir() {
                 if !(prefix.is_empty() && name == ".git") && rel.matches('/').count() < 4 {
@@ -526,7 +552,7 @@ pub fn list(dir: &Path) -> Vec<Value> {
 // ---------- the API ----------
 
 /// The profile's assistant and its workspace, made ready.
-async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
+pub(super) async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
     elsewhere(s, profile_id)?;
     let task = super::get_or_create(s, profile_id)?;
     let dir = checked(s, &task).map_err(|e| ApiError::conflict(format!("{e:#}")))?;
@@ -536,7 +562,7 @@ async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
 
 /// A profile whose assistant runs on another host (its `assistant_host`) keeps its memory there: asked here, it's a 409
 /// rather than a second assistant made on this host. (The board asks the assistant's host, by its task's host and profile.)
-fn elsewhere(s: &Shared, profile_id: &str) -> ApiResult<()> {
+pub(super) fn elsewhere(s: &Shared, profile_id: &str) -> ApiResult<()> {
     let p = crate::db::get_profile(&s.db(), profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?;
     match p.assistant_host.filter(|h| !h.is_empty() && *h != s.host_id) {
         Some(h) => Err(ApiError::conflict(format!("{}'s assistant runs on another host ({h}): its memory is there", p.name))),
@@ -629,6 +655,12 @@ pub async fn write(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b
 }
 
 async fn put(dir: &Path, path: &Path, rel: &str, content: &str, message: &str) -> ApiResult<Option<String>> {
+    write_file(dir, path, rel, content)?;
+    Ok(commit_file(dir, Who::User, rel, message).await?)
+}
+
+/// Write file `rel` (at `path`, as `file_path` checked it) in the workspace, making its folders if need be.
+pub(super) fn write_file(dir: &Path, path: &Path, rel: &str, content: &str) -> ApiResult<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| ApiError::from(anyhow::anyhow!("making the folder for {rel}: {e}")))?;
         // Made just now, so check the way again.
@@ -642,7 +674,11 @@ async fn put(dir: &Path, path: &Path, rel: &str, content: &str, message: &str) -
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes()));
-    written.map_err(|e| ApiError::bad(format!("writing {rel}: {e}")))?;
+    written.map_err(|e| ApiError::bad(format!("writing {rel}: {e}")))
+}
+
+/// Commit file `rel` as it is now, as the user's change.
+pub(super) async fn commit_as_user(dir: &Path, rel: &str, message: &str) -> ApiResult<Option<String>> {
     Ok(commit_file(dir, Who::User, rel, message).await?)
 }
 
