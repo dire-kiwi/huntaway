@@ -816,17 +816,15 @@ export function TaskBoard({
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          title={`${menu.move ? "Move" : "Complete"} ${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number} ${menu.move ? "to" : "as"}`}
+          title={`Move ${keyPrefix(menuTask, projectOf(menuTask))}-${menuTask.number} to`}
           items={[
-            ...(menu.move ? moveItems(menuTask) : []),
+            ...moveItems(menuTask),
             ...(hostSupports(hostOf(menuTask), 19)
               ? (Object.keys(RESOLUTION_LABELS) as Resolution[]).map((r, i) => ({
-                  label: menu.move ? (
+                  label: (
                     <span className="flex items-center gap-2">
                       <StatusIcon status="done" size={13} /> {RESOLUTION_LABELS[r]}
                     </span>
-                  ) : (
-                    RESOLUTION_LABELS[r]
                   ),
                   // An archived task isn't in Done: picking its resolution brings it back.
                   checked: menuTask.status === "done" && menuTask.resolution === r && !isArchived(menuTask, Date.now()),
