@@ -454,7 +454,7 @@ app then says it was unpaired. A device can't pair others or manage them (`POST
 list them and unpair itself, which removing the board in the app does. Pairing the same board again
 unpairs the phone's old token there. A device can only use the routes the app does (`HUB` and
 `HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, attachments,
-permission prompts, the board's events and hosts, and the devices list, on every profile, on the
+permission prompts, the board's events and hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
 and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
@@ -462,6 +462,33 @@ host), linking hosts, terminals (a shell on the host), settings and admin. A dev
 checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, an empty segment,
 `.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
 host linking and terminals refuse a device's request themselves.
+
+**Push to the app** (API 101). The app subscribes on each paired board (a board's hub watches all
+its hosts' events, so once per board) with its Expo push token, and the board sends its pushes
+through [Expo's push service](https://docs.expo.dev/push-notifications/sending-notifications/):
+one HTTPS call, with no Apple or Google keys kept on the board. Boards → a board → **Notifications**
+turns it on or off for that board and picks the events, as the web's Settings does for a browser
+(needs attention, ready to review, ready for merge, done, and whose permission prompts); tapping a
+notification opens the task on the board it came from. A prompt that can be answered from the
+notification has **Allow** and **Deny** (on iOS and Android, also on the lock screen; Allow asks to
+unlock the phone on iOS), which post the push's one-time token as the web's do, without opening the
+app or reading the keychain, and then show what came of it (allowed, denied, already answered,
+expired). Expo, Apple and Google can read these pushes (Web Push is encrypted for the browser;
+Expo's aren't), so they carry the task's key and title and the event, not the attention reason,
+what the agent wrote or a tool's input; the app fetches the rest over its own connection. As for the
+web, nothing is pushed for a move made from the app.
+
+The app's subscriptions are `push_subscriptions` rows with `kind` `expo` (`POST /push/subscriptions`
+with `{"kind": "expo", "endpoint": "ExponentPushToken[…]", "name", "events"}`), whose
+`device_id` is the paired device that made them: a device sees and changes only its own, and they
+go when it's revoked. The board batches pushes to Expo (100 a request), reads its tickets, and asks
+for the receipts about 15 minutes later: a phone Expo says isn't registered any more (the app was
+uninstalled) is dropped, and other failures show as the subscription's last error.
+`IA_EXPO_PUSH_URL` sends them somewhere else (a fake, for tests), and `IA_EXPO_ACCESS_TOKEN` is the
+token for a project with Expo's enhanced push security on. The app needs a build with its EAS
+project id (`extra.eas.projectId` in `app.json`, from `eas init`) for its push token, and Android
+builds need Firebase Cloud Messaging set up for it (a `google-services.json`, and FCM's key given
+to Expo).
 
 Revoking a phone stops the phone, not what was done with it before: whoever held it could have
 started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost

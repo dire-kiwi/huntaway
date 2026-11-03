@@ -1,5 +1,6 @@
-// Boards: the paired boards, each with its status and the profile picked on it; pair another, open one on the web
-// (for what the app leaves out: terminals, diffs, settings, analytics) or remove one, which unpairs the phone there.
+// Boards: the paired boards, each with its status and the profile picked on it; pair another, set what one pushes to
+// this phone, open one on the web (for what the app leaves out: terminals, diffs, settings, analytics) or remove one,
+// which unpairs the phone there.
 import type { Board } from "../../boards";
 import { useRouter } from "expo-router";
 import { useState } from "react";
@@ -65,6 +66,7 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
       )}
       <View style={[s.row, { marginTop: 6, flexWrap: "wrap" }]}>
         {status.unauthorized && <Button title="Pair again" small kind="primary" onPress={() => router.push("/pair")} />}
+        <Button title="Notifications" small onPress={() => router.push({ pathname: "/notifications/[board]", params: { board: board.id } })} />
         <Button title="Open on the web" small onPress={() => void Linking.openURL(board.url)} />
         <Button title="Remove" small kind="danger" busy={busy} onPress={remove} />
       </View>
