@@ -171,7 +171,7 @@ fn adds_updates_and_removes_a_skill_source() {
             (profile, project)
         };
         let skills_dir = state.data_dir.join("projects/pr/agent/.claude/skills/ste-writer");
-        assert!(for_run(&state, "pr").unwrap().skills_dir.is_none());
+        assert!(for_run(&state, "pr", None).unwrap().skills_dir.is_none());
         let on = |scope: &str, scope_id: &str, source: Option<&str>, item: Option<&str>, enabled: Option<bool>| {
             set_switch(
                 State(state.clone()),
@@ -180,13 +180,13 @@ fn adds_updates_and_removes_a_skill_source() {
         };
         let _ = on("profile", &profile.id, Some(&source_id), None, Some(true)).await.unwrap();
         assert_eq!(switches(&state.db(), "profile", &profile.id).unwrap().get(&skill_id), Some(&Value::Bool(true)));
-        assert!(for_run(&state, "pr").unwrap().skills_dir.is_some());
+        assert!(for_run(&state, "pr", None).unwrap().skills_dir.is_some());
         assert_eq!(std::fs::read_to_string(skills_dir.join("scripts/lint.py")).unwrap(), "print('lint')\n");
         assert_eq!(std::fs::read_to_string(skills_dir.join("references/rules.md")).unwrap(), "rules\n");
         assert!(!skills_dir.join(".git").exists());
         // The project can turn it off.
         let _ = on("project", &project.id, None, Some(&skill_id), Some(false)).await.unwrap();
-        assert!(for_run(&state, "pr").unwrap().skills_dir.is_none());
+        assert!(for_run(&state, "pr", None).unwrap().skills_dir.is_none());
         let _ = on("project", &project.id, None, Some(&skill_id), None).await.unwrap();
         assert!(on("profile", &profile.id, None, None, Some(true)).await.is_err());
         assert!(on("profile", &profile.id, Some("missing"), None, Some(true)).await.is_err());
@@ -209,7 +209,7 @@ fn adds_updates_and_removes_a_skill_source() {
         assert_eq!(v["skills"][0]["id"], skill_id, "the skill keeps its id, and so its switches");
         assert_eq!(v["skills"][0]["description"], "Writes better");
         assert_eq!(v["source"]["error"], Value::Null);
-        for_run(&state, "pr").unwrap();
+        for_run(&state, "pr", None).unwrap();
         assert_eq!(std::fs::read_to_string(skills_dir.join("scripts/lint.py")).unwrap(), "print('lint 2')\n");
         assert!(!skills_dir.join("references/rules.md").exists());
 
@@ -235,7 +235,7 @@ fn adds_updates_and_removes_a_skill_source() {
         assert_eq!(v["skills"][0]["id"], skill_id);
         assert_eq!(v["source"]["notes"], json!([]));
         assert_eq!(switches(&state.db(), "profile", &profile.id).unwrap().get(&skill_id), Some(&Value::Bool(true)));
-        assert!(for_run(&state, "pr").unwrap().skills_dir.is_some());
+        assert!(for_run(&state, "pr", None).unwrap().skills_dir.is_some());
         assert_eq!(std::fs::read_to_string(skills_dir.join("scripts/lint.py")).unwrap(), "print('lint 2')\n");
         git(&repo, &["mv", "skills/ste-writer/SKILL.md", "SKILL.md"]);
         git(&repo, &["mv", "skills/ste-writer/scripts", "scripts"]);
@@ -253,7 +253,7 @@ fn adds_updates_and_removes_a_skill_source() {
         assert_eq!(names, ["fresh"]);
         assert_eq!(v["source"]["error"], Value::Null);
         assert!(switches(&state.db(), "profile", &profile.id).unwrap().is_empty());
-        assert!(for_run(&state, "pr").unwrap().skills_dir.is_none());
+        assert!(for_run(&state, "pr", None).unwrap().skills_dir.is_none());
         assert!(!skills_dir.exists());
 
         // Removing the source takes its skills and clone.

@@ -148,6 +148,8 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     threads.retain(|t| !crate::review::summary::is_summary(t));
     let key = format!("{}-{}", project.key, task.number);
     let mut parts: Vec<ReviewerRun> = Vec::new();
+    // What each reviewer looks for: its own instructions, else the project's.
+    let mut instructions: Vec<String> = Vec::new();
     for spec in &specs {
         let config = match spec.claude_config_id.as_deref() {
             // A reviewer whose config was deleted reviews with the task's.
@@ -185,6 +187,19 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
             return Err(ApiError::conflict(format!("the review thread's agent ({label}) is busy; wait for it to finish or stop it")));
         }
         let after_run = Some(db::latest_run(&state.db(), &thread.id, None)?.unwrap_or_default());
+        db::set_thread_skills(&state.db(), &thread.id, &spec.skills)?;
+        let mut text = crate::agent::prompts::review_by(Some(&project), spec);
+        if !spec.skills.is_empty() {
+            let codex = config.as_ref().is_some_and(|c| c.is_codex());
+            let named: Vec<String> = spec.skills.iter().map(|s| format!("`{}{s}`", if codex { '$' } else { '/' })).collect();
+            text.push_str(&format!(
+                "\n\nUse {} while you review: {}{}.",
+                if spec.skills.len() == 1 { "this skill" } else { "these skills" },
+                named.join(", "),
+                if codex { "" } else { " (invoke each with the `Skill` tool)" },
+            ));
+        }
+        instructions.push(text);
         parts.push(ReviewerRun { thread_id: thread.id, label, state: "running".into(), after_run, ..Default::default() });
     }
 
@@ -220,9 +235,9 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     let commit = &head[..head.len().min(10)];
     let work = if elsewhere { Work::Elsewhere { last_message: db::last_assistant_text(&state.db(), &task.id)? } } else { Work::Branch { own_start } };
     let replies = db::user_replies(&state.db(), &task.id, Some(REPLIES))?;
-    let text = prompt(&key, &task, &branch, base.as_deref(), commit, &work, &fixed, &replies, crate::agent::prompts::review(Some(&project)));
     let (mut started, mut failed) = (0, None);
-    for part in &parts {
+    for (part, instructions) in parts.iter().zip(&instructions) {
+        let text = prompt(&key, &task, &branch, base.as_deref(), commit, &work, &fixed, &replies, instructions);
         // Each review starts from a clean slate; the thread keeps every round's messages.
         state.update_task(&part.thread_id, &[("session_id", Value::Null)])?;
         crate::agent::context::clear(state, &part.thread_id)?;

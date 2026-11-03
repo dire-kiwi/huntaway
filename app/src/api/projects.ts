@@ -118,11 +118,14 @@ export interface Reviewer {
   effort: string | null;
   /** Only for a summarizer (API 103): what to call it where its summary is shown. */
   name?: string | null;
-  /** Only for a summarizer: skills its agent uses while writing the summary. */
+  /** Skills its agent uses while it works, which are on in its thread if the board has them; for a reviewer from API 105. */
   skills?: string[];
-  /** Only for a summarizer: replaces the board's instructions on how to write the summary. */
+  /** Replaces the board's instructions on how to write the summary, or for a reviewer (API 105) the project's In review prompt. */
   prompt?: string | null;
 }
+
+/** From this API a reviewer can have instructions and skills of its own, like a summarizer. */
+export const REVIEWER_OPTIONS_API = 105;
 
 export const projectsApi = {
   /** The profile's projects, or with `archived` its archived ones (API 46), which are left out otherwise. */

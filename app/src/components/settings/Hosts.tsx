@@ -33,7 +33,7 @@ import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "..
 import { compareVersions } from "./versions";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "../task/ExternalLinks";
-import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow, SummarizerList } from "../task/Reviewers";
+import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow, SummarizerList, useReviewerExtras } from "../task/Reviewers";
 import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle, useAsyncAction, useConfirm } from "../ui";
 
 const MODE_LABEL: Record<Host["mode"], string> = {
@@ -619,6 +619,7 @@ export function ProfileForm({
   const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
   const gating = hostSupports(hosts.find((h) => h.id === host), PR_APPROVAL_API);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
+  const reviewExtras = useReviewerExtras(host);
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
   const submit = () =>
@@ -722,7 +723,7 @@ export function ProfileForm({
       {reviewing && (
         <>
           <Field label="Reviewers" hint="Who reviews the tasks of its projects, each in a thread of its own. A project can choose its own in its Review settings.">
-            <ReviewerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={reviewers} onChange={setReviewers} />
+            <ReviewerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={reviewers} onChange={setReviewers} extras={reviewExtras} />
           </Field>
           <Field
             label={severalSummarizers ? "Summarizers" : "Summarizer"}

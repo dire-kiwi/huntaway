@@ -566,6 +566,11 @@ pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) ->
     };
     s.db().execute("DELETE FROM tasks WHERE id=?1", [&t.id])?;
     runs::remove_finished(s, &runs);
+    for r in &reviews {
+        if let Some(project) = r.project_id.as_deref() {
+            crate::agent::agent_tools::remove_thread_skills(s, project, &r.id);
+        }
+    }
     crate::agent::task_tmp::deleted(s, &t.id).await;
     // Any agent asking to delete it is told it's gone (see tools::delete_task), so after that.
     permissions::expire_deletions_of(s, &t.id);

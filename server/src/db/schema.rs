@@ -902,12 +902,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let add = if has { "" } else { SCHEMA_V85_COLUMNS };
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V85} {add} PRAGMA user_version=85; COMMIT;"))?;
     }
+    if version < 86 {
+        // The board skills a review or summary thread was given on top of its project's (see review::start).
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V86} PRAGMA user_version=86; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 85;
+pub const VERSION: i64 = 86;
+
+/// The board skills (by name) a review or summary thread has on top of its project's, from its
+/// reviewer's `skills` when the review started (see agent/agent_tools.rs, `for_run`).
+const SCHEMA_V86: &str = r#"
+CREATE TABLE IF NOT EXISTS review_thread_skills (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  skills TEXT NOT NULL DEFAULT '[]'
+);
+"#;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model

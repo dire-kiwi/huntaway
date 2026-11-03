@@ -305,20 +305,23 @@ fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>, saved: &[&
         let mut checked = db::Reviewer { claude_config_id: blank(r.claude_config_id), model: blank(r.model), effort: blank(r.effort), ..Default::default() };
         if summarizers {
             checked.name = blank(r.name);
-            checked.prompt = blank(r.prompt);
-            for skill in r.skills {
-                let skill = skill.trim().trim_start_matches(['/', '$']).trim().to_string();
-                if skill.is_empty() || checked.skills.contains(&skill) {
-                    continue;
-                }
-                if skill.chars().any(char::is_whitespace) {
-                    return Err(ApiError::bad(format!("{skill:?} isn't a skill's name: skills are named without spaces")));
-                }
-                checked.skills.push(skill);
+        }
+        checked.prompt = blank(r.prompt);
+        if checked.prompt.as_ref().is_some_and(|p| p.chars().count() > MAX_PROMPT) {
+            return Err(ApiError::bad(format!("a prompt can be at most {MAX_PROMPT} characters")));
+        }
+        for skill in r.skills {
+            let skill = skill.trim().trim_start_matches(['/', '$']).trim().to_string();
+            if skill.is_empty() || checked.skills.contains(&skill) {
+                continue;
             }
-            if checked.skills.len() > MAX_SKILLS {
-                return Err(ApiError::bad(format!("a summarizer can use at most {MAX_SKILLS} skills")));
+            if skill.chars().any(char::is_whitespace) {
+                return Err(ApiError::bad(format!("{skill:?} isn't a skill's name: skills are named without spaces")));
             }
+            checked.skills.push(skill);
+        }
+        if checked.skills.len() > MAX_SKILLS {
+            return Err(ApiError::bad(format!("a {} can use at most {MAX_SKILLS} skills", if summarizers { "summarizer" } else { "reviewer" })));
         }
         if let Some(id) = &checked.claude_config_id {
             if !saved.iter().any(|s| s.claude_config_id.as_ref() == Some(id)) && db::get_claude_config(c, id)?.is_none() {
@@ -330,15 +333,16 @@ fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>, saved: &[&
     Ok(out)
 }
 
-/// The most skills a summarizer can be asked to use.
+/// The most skills a summarizer or reviewer can be asked to use, and the longest prompt it can have.
 const MAX_SKILLS: usize = 20;
+const MAX_PROMPT: usize = 20_000;
 
 /// A project's or profile's `reviewers` as saved: checked, and null when it's empty. With
 /// `defaults_too`, just one reviewer with the defaults is null too (a profile's, which is the same);
 /// a project's is kept, so it reviews with the task's config rather than the profile's reviewers.
 pub(super) fn reviewers_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
     let list: Option<Vec<db::Reviewer>> =
-        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort, prompt, skills}"))?;
     let list = list.map(|l| check_reviewers(c, l, saved, false)).transpose()?.filter(|l| !l.is_empty() && !(defaults_too && *l == [db::Reviewer::default()]));
     Ok(json!(list.map(|l| json!(l).to_string())))
 }

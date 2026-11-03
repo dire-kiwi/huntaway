@@ -649,10 +649,34 @@ fn skills_root(state: &Shared, project_id: &str) -> PathBuf {
     state.data_dir.join("projects").join(project_id).join("agent")
 }
 
+/// Where a review or summary thread with skills of its own (`thread_skills`) has its skills written, so
+/// that the project's other runs don't lose or gain them.
+fn thread_skills_root(state: &Shared, project_id: &str, thread_id: &str) -> PathBuf {
+    state.data_dir.join("projects").join(project_id).join("agent-threads").join(thread_id)
+}
+
+/// A deleted review or summary thread's skills folder goes with it.
+pub fn remove_thread_skills(state: &Shared, project_id: &str, thread_id: &str) {
+    let dir = thread_skills_root(state, project_id, thread_id);
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("removing {}: {e}", dir.display());
+        }
+    }
+}
+
 /// What's on in a project: its own enabled skills and servers, then the global ones switched on
 /// for it (its override, else its profile's default). A project's own one takes the name while
 /// it's on; switched off, the global one with that name is used if it's on.
 fn effective(c: &Connection, project: &crate::db::Project) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
+    effective_with(c, project, &[])
+}
+
+/// What's on in a project (see `effective`) and the skills of the board's called `extra`, which a review
+/// or summary thread has on top of the project's whether or not they're on for it: a project's own one
+/// before a global one of that name. A project's own skill switched off for the project's runs can still be picked
+/// for a thread; a global one that's switched off can't.
+fn effective_with(c: &Connection, project: &crate::db::Project, extra: &[String]) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
     let (profile, own) = (switches(c, "profile", &project.profile_id)?, switches(c, "project", &project.id)?);
     let on = |id: &str| own.get(id).or_else(|| profile.get(id)).and_then(|v| v.as_bool()).unwrap_or(false);
     let mut skills = list_skills(c, Some(&project.id))?;
@@ -669,28 +693,46 @@ fn effective(c: &Connection, project: &crate::db::Project) -> rusqlite::Result<(
             servers.push(g);
         }
     }
+    if !extra.is_empty() {
+        let mut more = list_skills(c, Some(&project.id))?;
+        more.extend(list_skills(c, None)?);
+        for name in extra {
+            // The project's own skill of a name comes first, and takes the place of a global one the project has on.
+            let Some(i) = more.iter().position(|s| (s.enabled || s.project_id.is_some()) && s.name == *name) else { continue };
+            match skills.iter().position(|s| s.name == *name) {
+                Some(at) if skills[at].id == more[i].id => {}
+                Some(at) => skills[at] = more.remove(i),
+                None => skills.push(more.remove(i)),
+            }
+        }
+    }
     Ok((skills, servers))
 }
 
-/// Set up a project's skills and servers for a run.
-pub fn for_run(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
-    run_tools(state, project_id, true)
+/// Set up a project's skills and servers for a run of thread `thread_id` (a review or summary thread has the
+/// board skills its reviewer asks for as well, see `db::thread_skills`).
+pub fn for_run(state: &Shared, project_id: &str, thread_id: Option<&str>) -> anyhow::Result<RunTools> {
+    run_tools(state, project_id, thread_id, true)
 }
 
 /// A project's skills and servers as a run would have them, without setting up its skills.
 pub fn for_preview(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
-    run_tools(state, project_id, false)
+    run_tools(state, project_id, None, false)
 }
 
-fn run_tools(state: &Shared, project_id: &str, sync: bool) -> anyhow::Result<RunTools> {
-    let (skills, servers, o) = {
+fn run_tools(state: &Shared, project_id: &str, thread_id: Option<&str>, sync: bool) -> anyhow::Result<RunTools> {
+    let (skills, servers, o, extra) = {
         let c = state.db();
         let project = crate::db::get_project(&c, project_id)?.ok_or_else(|| anyhow::anyhow!("project not found"))?;
-        let (skills, servers) = effective(&c, &project)?;
-        (skills, servers, get_overrides(&c, project_id)?)
+        let extra = thread_id.map(|t| crate::db::thread_skills(&c, t)).transpose()?.unwrap_or_default();
+        let (skills, servers) = effective_with(&c, &project, &extra)?;
+        (skills, servers, get_overrides(&c, project_id)?, extra)
     };
     let enabled: Vec<&Skill> = skills.iter().collect();
-    let root = skills_root(state, project_id);
+    let root = match thread_id.filter(|_| !extra.is_empty()) {
+        Some(t) => thread_skills_root(state, project_id, t),
+        None => skills_root(state, project_id),
+    };
     if sync {
         sync_skills(&root.join(".claude").join("skills"), &enabled, &sources_root(state))?;
     }
@@ -804,7 +846,8 @@ pub async fn for_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiRes
         let places = skill_places(&s, &c, &task, project.as_ref())?;
         let (board, board_off, o) = match &project {
             Some(p) => {
-                let on = effective(&c, p)?.0;
+                let extra = if task.kind == "review" { crate::db::thread_skills(&c, &task.id)? } else { Vec::new() };
+                let on = effective_with(&c, p, &extra)?.0;
                 let off = board_skills_off(&c, p, &on)?;
                 (on, off, get_overrides(&c, &p.id)?)
             }

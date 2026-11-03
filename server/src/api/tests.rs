@@ -210,9 +210,14 @@ fn profiles_and_projects_can_have_several_summarizers_with_skills() {
         assert!(update(json!({"summarizers": [{"skills": "tldr"}]})).await.is_err());
         assert!(update(json!({"summarizers": vec![json!({}); crate::review::MAX_REVIEWERS + 1]})).await.is_err());
         assert!(update(json!({"summarizers": [{"claude_config_id": "nope"}]})).await.is_err());
-        // Reviewers don't keep what only summarizers use.
-        let project = update(json!({"reviewers": [{"name": "x", "skills": ["tldr"], "prompt": "p"}]})).await.unwrap();
-        assert_eq!(project.reviewers, [db::Reviewer::default()]);
+        // Reviewers keep their prompt and skills, tidied (HA-142), but not the name only summarizers have.
+        let project = update(json!({"reviewers": [{"name": "x", "skills": [" /audit ", "audit", "b", ""], "prompt": "  Only security.\n"}]})).await.unwrap();
+        let own = db::Reviewer { skills: vec!["audit".into(), "b".into()], prompt: Some("Only security.".into()), ..Default::default() };
+        assert_eq!(project.reviewers, [own]);
+        assert!(update(json!({"reviewers": [{"prompt": "x".repeat(20_001)}]})).await.is_err());
+        assert!(update(json!({"reviewers": [{"skills": ["two words"]}]})).await.is_err());
+        let many: Vec<String> = (0..21).map(|i| format!("s{i}")).collect();
+        assert!(update(json!({"reviewers": [{"skills": many}]})).await.is_err());
     })
 }
 

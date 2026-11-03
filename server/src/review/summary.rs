@@ -161,6 +161,8 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
             return Err(ApiError::conflict(format!("the summary thread's agent ({}) is busy; wait for it to finish or stop it", plan.label)));
         }
         let after_run = Some(db::latest_run(&state.db(), &thread.id, None)?.unwrap_or_default());
+        // The board's skills it names are on in its thread, whether or not they are for the project.
+        db::set_thread_skills(&state.db(), &thread.id, &plan.spec.skills)?;
         summaries.push(ChangeSummary {
             thread_id: thread.id.clone(),
             label: plan.label.clone(),

@@ -333,6 +333,42 @@ fn reviewers_are_labelled_by_config_model_and_effort() {
     assert_eq!(label(None, None, None), "Claude");
 }
 
+#[test]
+fn each_reviewer_looks_for_what_its_own_instructions_say_and_has_its_own_skills() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = crate::testing::state();
+        let (task, dir) = reviewable(&s);
+        db::update_project(&s.db(), "pr", &[("review_prompt", json!("Check the project's rules."))]).unwrap();
+        let security = db::Reviewer { model: Some("opus".into()), prompt: Some(" Only look for security holes. ".into()), skills: vec!["audit".into()], ..Default::default() };
+        let plain = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
+        db::update_project(&s.db(), "pr", &[("reviewers", json!(json!([security, plain]).to_string()))]).unwrap();
+        start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().expect("it starts");
+        let r = review_of(&s, &task);
+        let text = |i: usize| {
+            let m = db::list_messages(&s.db(), &r.reviewers[i].thread_id).unwrap().into_iter().find(|m| m.kind == "user").unwrap();
+            m.data["text"].as_str().unwrap().to_string()
+        };
+        let (a, b) = (text(0), text(1));
+        assert!(a.contains("Only look for security holes.") && !a.contains("Check the project's rules."), "{a}");
+        assert!(a.contains("Use this skill while you review: `/audit` (invoke each with the `Skill` tool).") && !b.contains("while you review"), "{a}");
+        assert!(b.contains("Check the project's rules.") && !b.contains("security holes"), "{b}");
+        assert_eq!(db::thread_skills(&s.db(), &r.reviewers[0].thread_id).unwrap(), ["audit"]);
+        assert!(db::thread_skills(&s.db(), &r.reviewers[1].thread_id).unwrap().is_empty());
+
+        // Reviewed again with other settings, the same threads follow them.
+        supersede(&s, &task);
+        let security = db::Reviewer { model: Some("opus".into()), skills: vec![], ..Default::default() };
+        db::update_project(&s.db(), "pr", &[("reviewers", json!(json!([security]).to_string()))]).unwrap();
+        start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().expect("it starts again");
+        let r2 = review_of(&s, &task);
+        assert_eq!(r2.reviewers[0].thread_id, r.reviewers[0].thread_id);
+        assert!(db::thread_skills(&s.db(), &r.reviewers[0].thread_id).unwrap().is_empty());
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+        std::fs::remove_dir_all(&dir).unwrap();
+    })
+}
+
 /// A task in a project that reviews automatically, with a worktree branch with a commit.
 fn reviewable(s: &Shared) -> (Task, PathBuf) {
     let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();

@@ -368,6 +368,22 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
 }
 
 #[test]
+fn a_database_from_version_85_gets_review_thread_skills() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch("DROP TABLE review_thread_skills; PRAGMA user_version=85;").unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert!(c.query_row("SELECT COUNT(*) FROM pragma_table_info('review_thread_skills')", [], |r| r.get::<_, i64>(0)).unwrap() > 0);
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[test]
 fn a_database_from_version_54_gets_automations() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {

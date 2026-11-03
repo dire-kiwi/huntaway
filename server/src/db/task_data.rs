@@ -198,11 +198,13 @@ pub struct Reviewer {
     /// that differ in their skills or prompt can be told apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Only for a summarizer: skills its agent uses while writing the summary.
+    /// Skills its agent uses while it works: named in its prompt (for a reviewer too, API 105). The board's skills
+    /// (a project's own or global ones) among them are on in its thread whether or not they are for the project.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
-    /// Only for a summarizer: replaces the board's instructions on how to write the summary, so a
-    /// prompt can be tried against another's. None uses the board's.
+    /// Replaces the board's instructions on how to write the summary (for a summarizer), so a prompt can be
+    /// tried against another's, or the project's *In review* prompt, what to look for (for a reviewer, API 105).
+    /// None uses the board's, or the project's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
 }
