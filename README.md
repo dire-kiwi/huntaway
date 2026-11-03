@@ -223,13 +223,20 @@ The assistant **remembers** you (API 99) in files in its workspace: `USER.md` (w
 preferences), `MEMORY.md` (lasting facts) and a log for each day, `memory/YYYY-MM-DD.md` (in the
 host's time zone). The board, not the CLI, puts them into the instructions of every run, so it's
 the same on Claude Code and Codex and always what the files say now: `USER.md` and `MEMORY.md` up
-to 8,000 characters each (with a note to the assistant when one is cut), today's and yesterday's
-logs (their ends, if longer), and how to remember, forget and keep the log. The workspace is a git
-repository: after each of the assistant's turns that changed it, the board commits it as
-*Assistant*. The assistant's **Memory** tab lists the files (those loaded into every run
-highlighted, with their length against the cap), edits them (committed as *You*; a save over what the
-assistant wrote meanwhile asks whose to keep), shows each file's history with what each commit
-changed, and restores a version. Its **Import** gives a prompt to paste into another assistant
+to 8,000 characters (and 16 KB) each (with a note to the assistant when one is cut), today's and
+yesterday's logs (their ends, if longer), and how to remember, forget and keep the log. Claude Code
+is given these instructions in a file (`--append-system-prompt-file`, in the run's folder) rather than
+as an argument, which can't be longer than 128 KiB. The workspace has a git history: after each of the
+assistant's turns that changed it, the board commits it as *Assistant*. Its git folder is
+`<data dir>/assistants/<task id>.git`, next to the workspace rather than in it (a workspace from
+before has its `.git` moved there, without its config), so the assistant can't set the config,
+hooks or filters the board's git runs with; the board's git also ignores your own git config. What
+the workspace's `.gitignore` lists (made with common downloads, build output and secrets) and files
+over 1 MB aren't committed. The assistant's **Memory** tab lists the files (those loaded into every
+run highlighted, with their length against the cap), edits them (committed as *You*; a save over what
+the assistant wrote meanwhile asks whose to keep), shows each file's history with what each commit
+changed, and restores a version. A restore or a save over the assistant's edit first commits that
+edit, as the assistant's, if it isn't yet, so it's always in the history. Its **Import** gives a prompt to paste into another assistant
 (ChatGPT, Claude.ai…) for what it knows about you, and sends its answer to your assistant, as data,
 to fold into `USER.md` and `MEMORY.md`. The API is under `/api/profiles/<id>/assistant/memory`
 (`file`, `history`, `diff`, `restore`, `import`), and only reaches files in that profile's
