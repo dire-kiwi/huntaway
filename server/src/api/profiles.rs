@@ -144,6 +144,13 @@ pub(super) async fn update_profile(State(s): State<Shared>, Path(id): Path<Strin
     }
     let p = db::update_profile(&c, &id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
+    // The assistant moved: its Telegram bot stops on the host it left.
+    let here = |h: Option<&str>| h.filter(|h| !h.is_empty() && *h != s.host_id).map(String::from);
+    let left = here(current.assistant_host.as_deref());
+    if left != here(p.assistant_host.as_deref()) {
+        let (st, name) = (s.clone(), current.name.clone());
+        tokio::spawn(async move { crate::integrations::telegram::assistant_moved(&st, &name, &id, left).await });
+    }
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!(p)))
 }

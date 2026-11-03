@@ -11,23 +11,38 @@ use super::*;
 use crate::testing;
 
 const TOKEN: &str = "123456:ABCdefGHIjklMNOpqrSTUvwxYZ_0123456789";
+/// Another bot's.
+const TOKEN2: &str = "654321:QRSdefGHIjklMNOpqrSTUvwxYZ_0123456789";
 
-/// A fake Bot API: updates to hand out, files to serve, and the calls made to it.
+/// A fake Bot API for bots 123456 and 654321: updates to hand out (by token), files to serve, the
+/// calls made to it, and failures to give.
 #[derive(Default)]
 struct Fake {
-    updates: Mutex<Vec<Value>>,
+    updates: Mutex<HashMap<String, Vec<Value>>>,
     calls: Mutex<Vec<(String, Value)>>,
     files: Mutex<HashMap<String, Vec<u8>>>,
     next: AtomicI64,
+    /// How many more calls of a method for a chat fail (with a 502), by method and chat.
+    failing: Mutex<HashMap<(String, i64), usize>>,
 }
 
 impl Fake {
     fn push(&self, u: Value) {
-        let mut ups = self.updates.lock().unwrap();
+        self.push_to(TOKEN, u)
+    }
+
+    fn push_to(&self, token: &str, u: Value) {
+        let mut all = self.updates.lock().unwrap();
+        let ups = all.entry(token.to_string()).or_default();
         let id = 100 + ups.len() as i64;
         let mut u = u;
         u["update_id"] = json!(id);
         ups.push(u);
+    }
+
+    /// The next `n` calls of `method` for `chat` fail.
+    fn fail(&self, method: &str, chat: i64, n: usize) {
+        self.failing.lock().unwrap().insert((method.to_string(), chat), n);
     }
 
     fn calls(&self, method: &str) -> Vec<Value> {
@@ -50,18 +65,26 @@ async fn fake_api(AxState(f): AxState<Arc<Fake>>, uri: Uri, body: Bytes) -> axum
         };
     }
     let (token, method) = path.strip_prefix("/bot").unwrap().split_once('/').unwrap();
-    if token != TOKEN {
+    let Some(bot) = ["123456", "654321"].into_iter().find(|b| token.starts_with(&format!("{b}:"))) else {
         return Json(json!({"ok": false, "error_code": 401, "description": "Unauthorized"})).into_response();
-    }
+    };
     let body: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     f.calls.lock().unwrap().push((method.to_string(), body.clone()));
+    if let Some(n) = body["chat_id"].as_i64().and_then(|c| f.failing.lock().unwrap().get_mut(&(method.to_string(), c)).filter(|n| **n > 0).map(|n| {
+        *n -= 1;
+        *n
+    })) {
+        let _ = n;
+        return (axum::http::StatusCode::BAD_GATEWAY, Json(json!({"ok": false, "error_code": 502, "description": "Bad Gateway"}))).into_response();
+    }
     let result = match method {
-        "getMe" => json!({"id": 123456, "is_bot": true, "username": "test_bot"}),
+        "getMe" => json!({"id": bot.parse::<i64>().unwrap(), "is_bot": true, "username": format!("bot{bot}").replace("bot123456", "test_bot")}),
         "getUpdates" => {
             let offset = body["offset"].as_i64().unwrap_or(0);
             let deadline = tokio::time::Instant::now() + Duration::from_secs(body["timeout"].as_u64().unwrap_or(0));
             loop {
-                let ups: Vec<Value> = f.updates.lock().unwrap().iter().filter(|u| u["update_id"].as_i64().unwrap() >= offset).cloned().collect();
+                let ups: Vec<Value> =
+                    f.updates.lock().unwrap().get(token).into_iter().flatten().filter(|u| u["update_id"].as_i64().unwrap() >= offset).cloned().collect();
                 if !ups.is_empty() || tokio::time::Instant::now() >= deadline {
                     break json!(ups);
                 }
@@ -228,6 +251,13 @@ fn the_token_is_checked_and_never_shown() {
         let q = db::insert_profile(&s.db(), "work", &[], None).unwrap();
         let e = update(State(s.clone()), Path(q.id.clone()), Json(serde_json::from_value(json!({"token": TOKEN})).unwrap())).await.unwrap_err();
         assert_eq!(e.0.as_u16(), 409);
+        // Nor with a new token for it (the old one revoked): it's the same bot.
+        let replaced = "123456:NEWdefGHIjklMNOpqrSTUvwxYZ_0123456789";
+        let e = update(State(s.clone()), Path(q.id.clone()), Json(serde_json::from_value(json!({"token": replaced})).unwrap())).await.unwrap_err();
+        assert_eq!(e.0.as_u16(), 409);
+        // Another bot is fine.
+        let v = update(State(s.clone()), Path(q.id.clone()), Json(serde_json::from_value(json!({"token": TOKEN2})).unwrap())).await.unwrap().0;
+        assert_eq!(v["bot"]["id"], json!(654321));
         // Removing it stops the poller and forgets the bot.
         let v = update(State(s.clone()), Path(p.clone()), Json(serde_json::from_value(json!({"token": null})).unwrap())).await.unwrap().0;
         assert_eq!((v["configured"].clone(), v["bot"].clone(), v["polling"].clone()), (json!(false), Value::Null, json!(false)));
@@ -248,10 +278,9 @@ fn a_chat_links_with_the_boards_code_and_strangers_are_dropped() {
         assert_eq!(code.len(), 16);
         assert_eq!(link["url"], json!(format!("https://t.me/test_bot?start={code}")));
         assert!(get(State(s.clone()), Path(p.clone())).await.unwrap().0["linking"]["expires_at"].is_string());
-        // A wrong code links nothing, and says so.
+        // A wrong code links nothing, and isn't answered.
         f.push(text_update(5, 5, "/start nottheone"));
         until("the wrong code is dropped", || config(&s.db(), &p).dropped.is_some_and(|d| d.count == 2)).await;
-        until("the reply to a wrong code", || f.sent_texts().iter().any(|t| t.contains("isn't valid"))).await;
         // Nor does the right one from a group.
         f.push(json!({"message": {"message_id": 2, "from": user(7, "Pat"), "chat": {"id": -100, "type": "group"}, "text": format!("/start {code}")}}));
         until("the group is refused", || f.sent_texts().iter().any(|t| t.contains("private chat"))).await;
@@ -279,6 +308,8 @@ fn a_chat_links_with_the_boards_code_and_strangers_are_dropped() {
         f.push(text_update(7, 7, "still there?"));
         until("the unlinked chat is dropped", || config(&s.db(), &p).dropped.is_some_and(|d| d.count == 5)).await;
         assert!(!sent_to_assistant(&s, &p).iter().any(|m| m.contains("still there")));
+        // Strangers were never answered, a wrong code included.
+        assert!(f.calls("sendMessage").iter().all(|b| b["chat_id"] != 5), "{:?}", f.sent_texts());
     });
 }
 
@@ -439,9 +470,13 @@ fn replies_and_reports_go_back_to_the_chat() {
         };
         // A turn nobody asked for from Telegram stays on the board.
         turn("Board only");
-        // One that a Telegram message started comes back, formatted.
+        // One that a Telegram message started comes back, formatted. (Here its run fails to launch, so
+        // nothing waits for a reply once it has stopped: the turn is recorded as a run that's going.)
         f.push(text_update(7, 7, "Hi"));
-        until("the message", || progress(&s.db(), &p).awaiting).await;
+        until("the message", || sent_to_assistant(&s, &p).iter().any(|m| m == "Hi")).await;
+        until("its run to stop", || db::get_task(&s.db(), &a).unwrap().is_some_and(|t| !t.running)).await;
+        until("the wait to end", || !progress(&s.db(), &p).awaiting).await;
+        update_progress(&s, &p, |pr| pr.awaiting = true).unwrap();
         turn("**Done**: see `notes.md`");
         until("the reply", || f.sent_texts().iter().any(|t| t == "<b>Done</b>: see <code>notes.md</code>")).await;
         assert!(!progress(&s.db(), &p).awaiting);
@@ -494,5 +529,130 @@ fn a_profiles_bot_goes_with_it() {
         assert!(!polling(&s, &p));
         let c = s.db();
         assert!(token(&c, &p).is_none() && config(&c, &p).owner.is_none());
+    });
+}
+
+/// The assistant's turn, as its run records it: the user's message, its reply and the turn's end.
+fn turn(s: &Shared, a: &str, text: &str) {
+    s.add_message(a, "user", json!({"text": "q"})).unwrap();
+    s.add_message(a, "claude", json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})).unwrap();
+    s.add_message(a, "claude", json!({"type": "result", "subtype": "success", "result": text})).unwrap();
+}
+
+fn report(s: &Shared, a: &str, text: &str) {
+    s.add_message(a, "report", json!({"automation": "Inbox check", "outcome": "reported", "text": text})).unwrap();
+}
+
+#[test]
+fn sends_that_fail_are_kept_and_tried_again() {
+    testing::run(async || {
+        let (s, f, p) = linked_board().await;
+        let a = assistant_id(&s, &p);
+        // Telegram fails twice: the report goes on the third try, once.
+        f.fail("sendMessage", 7, 2);
+        report(&s, &a, "First report");
+        until("the report", || f.calls("sendMessage").iter().filter(|b| b["text"].as_str().unwrap().contains("First report")).count() == 3).await;
+        until("the queue to empty", || outbox(&s.db(), &p).items.is_empty()).await;
+        assert!(config(&s.db(), &p).last_error.is_none());
+        // What's queued behind it waits its turn, and goes in order.
+        f.fail("sendMessage", 7, 1);
+        report(&s, &a, "Second");
+        report(&s, &a, "Third");
+        until("both", || f.sent_texts().iter().any(|t| t.contains("Third"))).await;
+        let order: Vec<String> = f.sent_texts().into_iter().filter(|t| t.contains("Second") || t.contains("Third")).collect();
+        assert_eq!(order.len(), 3, "{order:?}");
+        assert!(order[2].contains("Third"));
+        // A prompt's edit that fails keeps its message, and is tried again until it's made.
+        raise_prompt(&s, &a, "req-1", None);
+        until("the prompt", || progress(&s.db(), &p).prompts.contains_key("req-1")).await;
+        f.fail("editMessageText", 7, 2);
+        permissions::answer_by(&s, "req-1", true, false, None, permissions::Reply::default(), "user").unwrap();
+        until("the edit", || f.calls("editMessageText").len() == 3).await;
+        until("its message to be forgotten", || !progress(&s.db(), &p).prompts.contains_key("req-1")).await;
+        assert!(f.calls("editMessageText")[2]["text"].as_str().unwrap().contains("✅ Allowed"));
+    });
+}
+
+#[test]
+fn queued_sends_and_prompts_settled_meanwhile_go_after_a_restart() {
+    testing::run(async || {
+        let (s, f, p) = linked_board().await;
+        let a = assistant_id(&s, &p);
+        // Telegram is down: the report waits in the queue, saved.
+        f.fail("sendMessage", 7, usize::MAX);
+        report(&s, &a, "While down");
+        until("a try", || f.sent_texts().iter().any(|t| t.contains("While down"))).await;
+        assert_eq!(outbox(&s.db(), &p).items.len(), 1);
+        assert!(config(&s.db(), &p).last_error.as_deref().is_some_and(|e| e.contains("502")));
+        // A prompt whose buttons were sent ended while the board was down (nobody heard).
+        s.db().execute("INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at) VALUES ('old',?1,0,'Bash','{}','denied',?2)", rusqlite::params![a, now()]).unwrap();
+        update_progress(&s, &p, |pr| pr.prompts.insert("old".into(), SentPrompt { message_id: 41, html: "🔐 old".into() })).unwrap();
+        // Starting again (as the server does), with Telegram back: both go.
+        f.fail("sendMessage", 7, 0);
+        restart(&s, &p);
+        until("the report", || f.calls("sendMessage").iter().filter(|b| b["text"].as_str().unwrap().contains("While down")).count() >= 2).await;
+        until("the edit", || f.calls("editMessageText").iter().any(|b| b["message_id"] == 41 && b["text"].as_str().unwrap().contains("❌ Denied"))).await;
+        until("the queue to empty", || outbox(&s.db(), &p).items.is_empty()).await;
+        assert!(progress(&s.db(), &p).prompts.is_empty());
+    });
+}
+
+#[test]
+fn one_profiles_failing_sends_dont_hold_up_anothers() {
+    testing::run(async || {
+        let (s, f, p) = linked_board().await;
+        let q = db::insert_profile(&s.db(), "work", &[], None).unwrap().id;
+        let _ = update(State(s.clone()), Path(q.clone()), Json(serde_json::from_value(json!({"token": TOKEN2})).unwrap())).await.unwrap();
+        let code = new_link(State(s.clone()), Path(q.clone())).await.unwrap().0["code"].as_str().unwrap().to_string();
+        f.push_to(TOKEN2, text_update(8, 8, &format!("/start {code}")));
+        until("linking the second", || config(&s.db(), &q).owner.is_some()).await;
+        f.fail("sendMessage", 7, usize::MAX);
+        report(&s, &assistant_id(&s, &p), "Stuck");
+        until("a try", || f.sent_texts().iter().any(|t| t.contains("Stuck"))).await;
+        report(&s, &assistant_id(&s, &q), "Through");
+        until("the other's report", || f.calls("sendMessage").iter().any(|b| b["chat_id"] == 8 && b["text"].as_str().unwrap().contains("Through"))).await;
+        assert_eq!(outbox(&s.db(), &p).items.len(), 1);
+    });
+}
+
+#[test]
+fn a_run_that_ends_without_a_reply_isnt_waited_on() {
+    testing::run(async || {
+        let (s, f, p) = linked_board().await;
+        let a = assistant_id(&s, &p);
+        update_progress(&s, &p, |pr| pr.awaiting = true).unwrap();
+        // Its run starts, and stops with no turn ended (it failed, or was stopped).
+        s.update_task(&a, &[("running", json!(true))]).unwrap();
+        s.update_task(&a, &[("running", json!(false))]).unwrap();
+        until("the wait to end", || !progress(&s.db(), &p).awaiting).await;
+        // So the next turn, from the board, stays there.
+        turn(&s, &a, "From the board");
+        report(&s, &a, "Marker");
+        until("the marker", || f.sent_texts().iter().any(|t| t.contains("Marker"))).await;
+        assert!(!f.sent_texts().iter().any(|t| t.contains("From the board")));
+        // A run whose turn ended is answered, even if its end is seen first.
+        update_progress(&s, &p, |pr| pr.awaiting = true).unwrap();
+        s.update_task(&a, &[("running", json!(true))]).unwrap();
+        turn(&s, &a, "Answered");
+        s.update_task(&a, &[("running", json!(false))]).unwrap();
+        until("the reply", || f.sent_texts().iter().any(|t| t == "Answered")).await;
+        assert_eq!(f.sent_texts().iter().filter(|t| *t == "Answered").count(), 1);
+    });
+}
+
+#[test]
+fn the_bot_leaves_with_the_assistant() {
+    testing::run(async || {
+        let (s, _f, p) = linked_board().await;
+        let _ = update(State(s.clone()), Path(p.clone()), Json(serde_json::from_value(json!({"events": {"replies": true, "reports": true, "prompts": false, "attention": true}})).unwrap())).await.unwrap();
+        // Moved to another host from this one: its bot here stops and goes, but its choices stay.
+        assistant_moved(&s, "personal", &p, None).await;
+        assert!(!polling(&s, &p));
+        let c = s.db();
+        assert!(token(&c, &p).is_none() && config(&c, &p).owner.is_none());
+        assert!(!config(&c, &p).events.prompts);
+        drop(c);
+        // One that left a host that's offline can't be reached to remove it.
+        assistant_moved(&s, "personal", &p, Some("elsewhere".into())).await;
     });
 }

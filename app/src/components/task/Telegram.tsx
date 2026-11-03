@@ -27,10 +27,16 @@ function useTelegram(hostId: string, profileId: string) {
   return { tg, setTg, error };
 }
 
-const EVENTS: { key: keyof TelegramEvents; label: string }[] = [
-  { key: "prompts", label: "Its prompts, with Allow and Deny, and its questions" },
-  { key: "reports", label: "Its routines' reports" },
+/** Events push sends too (to the devices that chose them in Settings → Notifications): each goes by push alone, or by
+ *  push and Telegram. */
+const PUSHED: { key: keyof TelegramEvents; label: string }[] = [
+  { key: "prompts", label: "Its prompts (Allow and Deny) and questions" },
   { key: "attention", label: "When it needs attention" },
+];
+
+/** Events push doesn't send: Telegram or nowhere. */
+const TELEGRAM_ONLY: { key: keyof TelegramEvents; label: string }[] = [
+  { key: "reports", label: "Its routines' reports" },
   { key: "replies", label: "Its replies to what you send from the board too" },
 ];
 
@@ -175,14 +181,34 @@ export function TelegramSection({ task }: { task: Task }) {
       )}
 
       <div className="space-y-1.5" aria-label="What it sends">
-        <div className="text-fg">Its replies to what you send there come back. It also sends:</div>
-        {EVENTS.map((e) => (
+        <div className="text-fg">Its replies to what you send there come back. Besides:</div>
+        {PUSHED.map((e) => (
+          <label key={e.key} className="flex items-center justify-between gap-2">
+            <span>{e.label}</span>
+            <select
+              className="h-7 shrink-0 rounded-md border border-line bg-panel px-1.5 text-[12px] text-fg outline-none"
+              value={tg.events[e.key] ? "both" : "push"}
+              aria-label={`Where ${e.label.toLowerCase()} go`}
+              onChange={(ev) => setEvent(e.key, ev.target.value === "both")}
+            >
+              <option value="push">Push</option>
+              <option value="both">Push and Telegram</option>
+            </select>
+          </label>
+        ))}
+        <div className="text-faint">Push goes to the devices that chose these in Settings → Notifications.</div>
+        <div className="pt-1 text-fg">On Telegram only (push doesn't send these):</div>
+        {TELEGRAM_ONLY.map((e) => (
           <Toggle key={e.key} checked={tg.events[e.key]} onChange={(on) => setEvent(e.key, on)} label={<span className="text-left text-[12.5px]">{e.label}</span>} />
         ))}
-        <div className="text-faint">Push notifications are chosen for each device in Settings → Notifications, so each of these can go to push, Telegram or both.</div>
       </div>
 
-      {tg.last_error && <div className="rounded bg-red-500/10 p-2 text-[12px] text-red-300">Telegram: {tg.last_error}</div>}
+      {tg.last_error && (
+        <div className="rounded bg-red-500/10 p-2 text-[12px] text-red-300">
+          Telegram: {tg.last_error}
+          {tg.queued > 0 && <> ({tg.queued} message{tg.queued === 1 ? "" : "s"} waiting, to be tried again)</>}
+        </div>
+      )}
       {tg.dropped && (
         <div className="text-faint">
           Turned away {tg.dropped.count} message{tg.dropped.count === 1 ? "" : "s"} or button press{tg.dropped.count === 1 ? "" : "es"} from others, the last

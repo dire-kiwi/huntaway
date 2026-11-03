@@ -15,16 +15,21 @@
 //!   questions and its permission prompts, the last with Allow and Deny buttons. Those are answered as the
 //!   board's own buttons answer (permissions::answer_by, `telegram` in the action log), so the approval
 //!   rules and expiry hold the same; the message is edited to say how the prompt ended, however it did.
-//!   Each kind of message can be turned off (`events`); push is chosen per device (push.rs), so each event
-//!   goes to push, Telegram or both.
+//!   Each kind of message can be turned off (`events`). Push (push.rs, chosen per device) sends prompts
+//!   and attention too, but not reports or replies.
+//! - **Sending** goes through a queue per profile, kept in the settings until Telegram takes each item:
+//!   one that fails for a while (Telegram unreachable, failing or rate-limiting) is tried again, waiting
+//!   longer each time, and after a restart; one Telegram refuses outright is dropped. One profile's queue
+//!   doesn't hold up another's.
+//! - **Moving the assistant** to another host removes the bot from the one it left (`assistant_moved`).
 //!
 //! Nothing here takes an address or a token from what arrives in a chat: the API's address is fixed (or
 //! `IA_TELEGRAM_API` in the server's environment, for tests), files are fetched by the ids Telegram gives,
 //! and replies go only to the owner's chat.
 //!
 //! Settings, by profile: the secret token; `telegram:<id>` (the bot, owner, events, pending code and the
-//! last error) and `telegram_state:<id>` (the update offset, so a restart carries on where it was, and the
-//! prompts sent with buttons, to edit when they end).
+//! last error), `telegram_state:<id>` (the update offset, so a restart carries on where it was, and the
+//! prompts sent with buttons, to edit when they end) and `telegram_outbox:<id>` (what's waiting to be sent).
 
 pub mod format;
 #[cfg(test)]
@@ -33,7 +38,7 @@ mod tests;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::Json;
@@ -41,7 +46,7 @@ use axum::extract::{Path, State};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::Notify;
 
 use crate::agent::assistant;
 use crate::db::{self, Task};
@@ -76,6 +81,15 @@ fn config_key(profile_id: &str) -> String {
 
 fn progress_key(profile_id: &str) -> String {
     format!("telegram_state:{profile_id}")
+}
+
+fn outbox_key(profile_id: &str) -> String {
+    format!("telegram_outbox:{profile_id}")
+}
+
+/// Every setting a profile's bot keeps.
+fn keys(profile_id: &str) -> [String; 4] {
+    [token_key(profile_id), config_key(profile_id), progress_key(profile_id), outbox_key(profile_id)]
 }
 
 // ---------- settings ----------
@@ -242,8 +256,11 @@ fn changed(s: &Shared, profile_id: &str) {
 
 /// What the board keeps for Telegram while it runs.
 pub struct TelegramState {
-    pollers: Mutex<HashMap<String, tokio::task::AbortHandle>>,
-    outbox: OnceLock<mpsc::UnboundedSender<Out>>,
+    /// Each profile's poller and sender, while it has a token.
+    pollers: Mutex<HashMap<String, [tokio::task::AbortHandle; 2]>>,
+    /// What wakes each profile's sender when something is queued for it.
+    wakers: Mutex<HashMap<String, Arc<Notify>>>,
+    started: OnceLock<()>,
     /// The Bot API's address: `API`, or `IA_TELEGRAM_API` (a fake one, in tests).
     api: Mutex<String>,
     poll_secs: AtomicU64,
@@ -255,7 +272,8 @@ impl Default for TelegramState {
         let api = std::env::var("IA_TELEGRAM_API").ok().filter(|a| !a.trim().is_empty()).unwrap_or_else(|| API.into());
         Self {
             pollers: Default::default(),
-            outbox: OnceLock::new(),
+            wakers: Default::default(),
+            started: OnceLock::new(),
             api: Mutex::new(api.trim_end_matches('/').to_string()),
             poll_secs: AtomicU64::new(POLL_SECS),
             client: reqwest::Client::builder().connect_timeout(Duration::from_secs(15)).build().unwrap_or_default(),
@@ -266,6 +284,10 @@ impl Default for TelegramState {
 impl TelegramState {
     fn api(&self) -> String {
         self.api.lock().unwrap().clone()
+    }
+
+    fn waker(&self, profile_id: &str) -> Arc<Notify> {
+        self.wakers.lock().unwrap().entry(profile_id.to_string()).or_default().clone()
     }
 
     /// Talks to a fake Bot API at `url` instead, polling for `poll_secs` at a time.
@@ -351,14 +373,6 @@ async fn say(s: &Shared, profile_id: &str, token: &str, chat: i64, text: &str) {
     }
 }
 
-/// Sends the assistant's Markdown to `chat`, in as many messages as it takes.
-async fn send_markdown(s: &Shared, token: &str, chat: i64, md: &str) -> Result<(), CallError> {
-    for piece in split(md, PIECE_CHARS) {
-        send_html(s, token, chat, &to_html(&piece), Some(&piece), None).await?;
-    }
-    Ok(())
-}
-
 /// Notes that talking to Telegram failed (or with None, that it works again): whether that's news.
 fn set_error(s: &Shared, profile_id: &str, error: Option<String>) -> bool {
     // Read first, as most polls have nothing to change.
@@ -389,11 +403,9 @@ fn note_error(s: &Shared, profile_id: &str, e: &CallError) {
 /// Starts Telegram for every profile with a bot: their pollers, and what passes the assistants'
 /// messages on to them.
 pub fn start(s: &Shared) {
-    let (tx, rx) = mpsc::unbounded_channel();
-    if s.telegram.outbox.set(tx).is_err() {
+    if s.telegram.started.set(()).is_err() {
         return;
     }
-    tokio::spawn(outbox(s.clone(), rx));
     tokio::spawn(watch(s.clone(), s.events.subscribe()));
     let profiles: Vec<String> = db::list_profiles(&s.db()).map(|ps| ps.into_iter().map(|p| p.id).collect()).unwrap_or_default();
     for p in profiles {
@@ -401,34 +413,87 @@ pub fn start(s: &Shared) {
     }
 }
 
-/// (Re)starts profile `profile_id`'s poller, or stops it if it has no token.
+/// (Re)starts profile `profile_id`'s poller and sender, or stops them if it has no token.
 pub fn restart(s: &Shared, profile_id: &str) {
     let has_token = token(&s.db(), profile_id).is_some();
     let mut pollers = s.telegram.pollers.lock().unwrap();
     if let Some(old) = pollers.remove(profile_id) {
-        old.abort();
+        old.iter().for_each(|h| h.abort());
     }
     if has_token {
-        let handle = tokio::spawn(poll(s.clone(), profile_id.to_string()));
-        pollers.insert(profile_id.to_string(), handle.abort_handle());
+        let poller = tokio::spawn(poll(s.clone(), profile_id.to_string()));
+        let sender = tokio::spawn(sender(s.clone(), profile_id.to_string()));
+        pollers.insert(profile_id.to_string(), [poller.abort_handle(), sender.abort_handle()]);
     }
 }
 
 /// Whether profile `profile_id`'s poller is running.
 fn polling(s: &Shared, profile_id: &str) -> bool {
-    s.telegram.pollers.lock().unwrap().get(profile_id).is_some_and(|h| !h.is_finished())
+    s.telegram.pollers.lock().unwrap().get(profile_id).is_some_and(|h| !h[0].is_finished())
 }
 
 /// Profile `profile_id` was deleted: its bot stops and its settings go.
 pub fn forget_profile(s: &Shared, profile_id: &str) {
     if let Some(h) = s.telegram.pollers.lock().unwrap().remove(profile_id) {
-        h.abort();
+        h.iter().for_each(|h| h.abort());
     }
     let c = s.db();
-    for key in [token_key(profile_id), config_key(profile_id), progress_key(profile_id)] {
+    for key in keys(profile_id) {
         let _ = db::set_setting(&c, &key, None);
     }
 }
+
+/// Removes profile `profile_id`'s bot from this host: its token, chat, offset and queued sends (its
+/// choice of events stays), and stops it.
+pub fn remove_bot(s: &Shared, profile_id: &str) -> anyhow::Result<()> {
+    {
+        let c = s.db();
+        let events = config(&c, profile_id).events;
+        for key in keys(profile_id) {
+            db::set_setting(&c, &key, None)?;
+        }
+        write(&c, &config_key(profile_id), &Config { events, ..Default::default() })?;
+    }
+    restart(s, profile_id);
+    changed(s, profile_id);
+    Ok(())
+}
+
+/// Profile `profile_id`'s assistant moved off `old_host` (None: this host): its bot there is removed, so
+/// that it doesn't go on reading the owner's messages for an assistant that's no longer there. It's set
+/// up again on the assistant's new host. A host that's offline (or too old for Telegram) keeps it.
+pub async fn assistant_moved(s: &Shared, name: &str, profile_id: &str, old_host: Option<String>) {
+    let Some(host) = old_host.filter(|h| !h.is_empty() && *h != s.host_id) else {
+        let has_token = token(&s.db(), profile_id).is_some();
+        if has_token {
+            tracing::info!(profile = profile_id, "telegram: the assistant moved to another host: removing its bot here");
+            if let Err(e) = remove_bot(s, profile_id) {
+                tracing::warn!(profile = profile_id, "telegram: removing the bot: {e:#}");
+            }
+        }
+        return;
+    };
+    let link = s.links.lock().unwrap().get(&host).cloned();
+    let api = link.map(|l| l.version.lock().unwrap().api_version);
+    if api.is_none_or(|v| v < TELEGRAM_API) {
+        if api.is_none() {
+            tracing::warn!(profile = profile_id, "telegram: {host}, which the assistant moved off, is offline: remove its bot there");
+        }
+        return;
+    }
+    let profiles = match crate::hosts::hub::host_request(s, &host, "GET", "/api/profiles", None).await {
+        Ok(p) => p,
+        Err(e) => return tracing::warn!(profile = profile_id, "telegram: reading {host}'s profiles to remove its bot: {}", e.1),
+    };
+    let Some(there) = profiles.as_array().into_iter().flatten().find(|r| r["name"] == name).and_then(|r| r["id"].as_str().map(String::from)) else { return };
+    let path = format!("/api/profiles/{there}/telegram");
+    if let Err(e) = crate::hosts::hub::host_request(s, &host, "PATCH", &path, Some(json!({"token": null}))).await {
+        tracing::warn!(profile = profile_id, "telegram: removing the bot on {host}: {}", e.1);
+    }
+}
+
+/// The API version from which a host has Telegram.
+pub const TELEGRAM_API: u32 = 103;
 
 /// Reads profile `profile_id`'s bot's updates for as long as it has its token, handling each in turn
 /// and noting after each that it's done, so that a restart carries on after it.
@@ -514,8 +579,8 @@ async fn handle(s: &Shared, profile_id: &str, token: &str, u: &Value) {
             return;
         }
         if !is_owner {
-            drop_stranger(s, profile_id, from, chat, "linking code that isn't valid");
-            return say(s, profile_id, token, chat_id, "That code isn't valid any more. Get a new one from the assistant's details on the board.").await;
+            // Silently, as anything else from a stranger: the bot doesn't say whose it is.
+            return drop_stranger(s, profile_id, from, chat, "linking code that isn't valid");
         }
     }
     if !is_owner {
@@ -553,8 +618,12 @@ async fn link(s: &Shared, profile_id: &str, token: &str, m: &Value, code: &str) 
         }
         Ok(true) => {
             tracing::info!(profile = profile_id, chat = chat_id, "telegram: linked to {}", owner.name);
-            // Prompts sent to a chat before are no longer for this one.
-            let _ = update_progress(s, profile_id, |p| p.prompts.clear());
+            // What was sent or queued for a chat before isn't for this one.
+            let _ = update_progress(s, profile_id, |p| {
+                p.prompts.clear();
+                p.awaiting = false;
+            });
+            let _ = update_outbox(s, profile_id, |o| o.items.clear());
             changed(s, profile_id);
             let name = db::get_profile(&s.db(), profile_id).ok().flatten().map(|p| p.name).unwrap_or_default();
             let text = format!("Linked to the {name} profile's assistant. What you send here goes to it, and it can reach you here.");
@@ -682,7 +751,7 @@ async fn button(s: &Shared, profile_id: &str, token: &str, cb: &Value) {
         Err(e) => {
             // It ended some other way: say how on its message, if it hasn't been.
             if let Some(settled) = settled_prompt(s, id) {
-                queue(profile_id, s, OutKind::Settled { request_id: id.to_string(), outcome: settled });
+                queue(profile_id, s, Item::Settled { request_id: id.to_string(), outcome: settled });
             }
             e
         }
@@ -731,84 +800,210 @@ fn outcome(status: &str, note: Option<&str>) -> String {
 
 // ---------- what goes out ----------
 
-/// Something to send to profile `profile`'s owner.
-pub struct Out {
-    profile: String,
-    kind: OutKind,
-}
-
-enum OutKind {
+/// Something to send to a profile's owner.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Item {
     /// The assistant's words, in Markdown.
-    Markdown(String),
+    Markdown { md: String },
     /// Made here, in Telegram's HTML.
-    Html(String),
+    Html { html: String },
     /// A permission prompt, with Allow and Deny if `buttons`.
     Prompt { request_id: String, html: String, buttons: bool },
-    /// A prompt sent before ended (`outcome`).
+    /// A prompt sent before ended (`outcome`): its message is edited to say so.
     Settled { request_id: String, outcome: String },
 }
 
-fn queue(profile: &str, s: &Shared, kind: OutKind) {
-    if let Some(tx) = s.telegram.outbox.get() {
-        let _ = tx.send(Out { profile: profile.to_string(), kind });
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Queued {
+    pub id: u64,
+    pub item: Item,
+    /// The pieces of a long message sent already.
+    #[serde(default)]
+    pub sent: usize,
+}
+
+/// A profile's sends that haven't gone yet, oldest first: kept (in `telegram_outbox:<id>`) until
+/// Telegram takes each, so that a failure or a restart doesn't lose them.
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct Outbox {
+    #[serde(default)]
+    pub next: u64,
+    #[serde(default)]
+    pub items: std::collections::VecDeque<Queued>,
+}
+
+/// The most sends kept for a profile while Telegram can't be reached: the oldest go past it.
+const MAX_QUEUED: usize = 300;
+
+/// The longest wait between tries of a send that failed.
+const MAX_BACKOFF: u64 = 300;
+
+pub fn outbox(c: &Connection, profile_id: &str) -> Outbox {
+    read(c, &outbox_key(profile_id))
+}
+
+fn update_outbox<R>(s: &Shared, profile_id: &str, f: impl FnOnce(&mut Outbox) -> R) -> anyhow::Result<R> {
+    let c = s.db();
+    let mut o = outbox(&c, profile_id);
+    let r = f(&mut o);
+    write(&c, &outbox_key(profile_id), &o)?;
+    Ok(r)
+}
+
+/// Queues `item` for profile `profile`'s owner, and wakes its sender.
+fn queue(profile: &str, s: &Shared, item: Item) {
+    let queued = update_outbox(s, profile, |o| {
+        o.next += 1;
+        o.items.push_back(Queued { id: o.next, item, sent: 0 });
+        while o.items.len() > MAX_QUEUED {
+            o.items.pop_front();
+        }
+    });
+    match queued {
+        Ok(()) => s.telegram.waker(profile).notify_one(),
+        Err(e) => tracing::warn!(profile, "telegram: queueing a send: {e:#}"),
     }
 }
 
-/// Sends what's queued, in order (a prompt's edit after the prompt), to the owner of each.
-async fn outbox(s: Shared, mut rx: mpsc::UnboundedReceiver<Out>) {
-    while let Some(out) = rx.recv().await {
-        let Some((token, _, owner)) = linked(&s.db(), &out.profile) else { continue };
-        let chat = owner.chat_id;
-        let sent = match out.kind {
-            OutKind::Markdown(md) => send_markdown(&s, &token, chat, &md).await,
-            OutKind::Html(html) => send_html(&s, &token, chat, &html, None, None).await.map(|_| ()),
-            OutKind::Prompt { request_id, html, buttons } => {
-                let markup = buttons.then(|| {
-                    json!({"inline_keyboard": [[
-                        {"text": "✅ Allow", "callback_data": format!("allow:{request_id}")},
-                        {"text": "❌ Deny", "callback_data": format!("deny:{request_id}")},
-                    ]]})
-                });
-                send_html(&s, &token, chat, &html, None, markup).await.map(|message_id| {
-                    if buttons {
-                        let _ = update_progress(&s, &out.profile, |p| {
-                            p.prompts.insert(request_id, SentPrompt { message_id, html });
-                            while p.prompts.len() > MAX_PROMPTS {
-                                let oldest = p.prompts.iter().min_by_key(|(_, v)| v.message_id).map(|(k, _)| k.clone());
-                                oldest.map(|k| p.prompts.remove(&k));
-                            }
-                        });
-                    }
-                })
+/// Whether a failed call may work if tried again later: Telegram unreachable or failing, too many
+/// requests, or a token that may be set again.
+fn transient(e: &CallError) -> bool {
+    match e {
+        CallError::Net(_) => true,
+        CallError::Api { code, .. } => *code == 429 || *code == 401 || *code >= 500,
+    }
+}
+
+/// Sends profile `profile_id`'s queue, in order (a prompt's edit after the prompt), for as long as it has
+/// a bot: each item stays queued until Telegram takes it, and one that failed for a while is tried again
+/// later, waiting longer each time. One Telegram refuses outright is dropped.
+async fn sender(s: Shared, profile_id: String) {
+    reconcile(&s, &profile_id);
+    let waker = s.telegram.waker(&profile_id);
+    let mut backoff = 1;
+    loop {
+        let next = outbox(&s.db(), &profile_id).items.front().cloned();
+        let Some(q) = next else {
+            waker.notified().await;
+            continue;
+        };
+        let Some((token, _, owner)) = linked(&s.db(), &profile_id) else {
+            // Nobody to send to: what was queued was for a chat that's gone.
+            let _ = update_outbox(&s, &profile_id, |o| o.items.clear());
+            continue;
+        };
+        match deliver(&s, &profile_id, &token, owner.chat_id, &q).await {
+            Ok(()) => {
+                backoff = 1;
+                set_error(&s, &profile_id, None);
+                let _ = update_outbox(&s, &profile_id, |o| o.items.retain(|x| x.id != q.id));
             }
-            OutKind::Settled { request_id, outcome } => {
-                let Ok(Some(sent)) = update_progress(&s, &out.profile, |p| p.prompts.remove(&request_id)) else { continue };
-                let body = json!({
-                    "chat_id": chat,
-                    "message_id": sent.message_id,
-                    "text": format!("{}\n\n<b>{}</b>", sent.html, escape(&outcome)),
-                    "parse_mode": "HTML",
-                    "reply_markup": {"inline_keyboard": []},
-                });
-                match call_patiently(&s, &token, "editMessageText", &body).await {
-                    Err(CallError::Api { code: 400, .. }) => Ok(()),
-                    r => r.map(|_| ()),
+            Err(e) if transient(&e) => {
+                note_error(&s, &profile_id, &e);
+                let wait = match &e {
+                    CallError::Api { retry_after: Some(r), .. } => (*r).clamp(1, MAX_BACKOFF),
+                    CallError::Api { code: 401, .. } => MAX_BACKOFF,
+                    _ => backoff,
+                };
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+                // Something newly queued doesn't hurry it: the queue goes in order.
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+            }
+            Err(e) => {
+                note_error(&s, &profile_id, &e);
+                tracing::warn!(profile = profile_id, "telegram: dropped a send Telegram refused: {e}");
+                let _ = update_outbox(&s, &profile_id, |o| o.items.retain(|x| x.id != q.id));
+                if let Item::Settled { request_id, .. } = &q.item {
+                    let _ = update_progress(&s, &profile_id, |p| p.prompts.remove(request_id));
                 }
             }
-        };
-        match sent {
-            Ok(()) => {
-                set_error(&s, &out.profile, None);
-            }
-            Err(e) => note_error(&s, &out.profile, &e),
         }
+    }
+}
+
+/// Sends one queued item.
+async fn deliver(s: &Shared, profile_id: &str, token: &str, chat: i64, q: &Queued) -> Result<(), CallError> {
+    match &q.item {
+        Item::Markdown { md } => {
+            // Carrying on after the pieces sent already.
+            for (i, piece) in split(md, PIECE_CHARS).iter().enumerate().skip(q.sent) {
+                send_html(s, token, chat, &to_html(piece), Some(piece), None).await?;
+                let _ = update_outbox(s, profile_id, |o| o.items.iter_mut().filter(|x| x.id == q.id).for_each(|x| x.sent = i + 1));
+            }
+            Ok(())
+        }
+        Item::Html { html } => send_html(s, token, chat, html, None, None).await.map(|_| ()),
+        Item::Prompt { request_id, html, buttons } => {
+            let markup = buttons.then(|| {
+                json!({"inline_keyboard": [[
+                    {"text": "✅ Allow", "callback_data": format!("allow:{request_id}")},
+                    {"text": "❌ Deny", "callback_data": format!("deny:{request_id}")},
+                ]]})
+            });
+            let message_id = send_html(s, token, chat, html, None, markup).await?;
+            if *buttons {
+                let _ = update_progress(s, profile_id, |p| {
+                    p.prompts.insert(request_id.clone(), SentPrompt { message_id, html: html.clone() });
+                    while p.prompts.len() > MAX_PROMPTS {
+                        let oldest = p.prompts.iter().min_by_key(|(_, v)| v.message_id).map(|(k, _)| k.clone());
+                        oldest.map(|k| p.prompts.remove(&k));
+                    }
+                });
+            }
+            Ok(())
+        }
+        Item::Settled { request_id, outcome } => {
+            // Its message is forgotten only once it's edited, so a failed edit is tried again.
+            let Some(sent) = progress(&s.db(), profile_id).prompts.get(request_id).cloned() else { return Ok(()) };
+            let body = json!({
+                "chat_id": chat,
+                "message_id": sent.message_id,
+                "text": format!("{}\n\n<b>{}</b>", sent.html, escape(outcome)),
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": []},
+            });
+            match call_patiently(s, token, "editMessageText", &body).await {
+                Err(CallError::Api { code: 400, description, .. }) if description.contains("not modified") => {}
+                r => {
+                    r?;
+                }
+            }
+            let _ = update_progress(s, profile_id, |p| p.prompts.remove(request_id));
+            Ok(())
+        }
+    }
+}
+
+/// Prompts whose messages still have their buttons but that ended while nobody was sending (the board
+/// was down, say): their edits are queued.
+fn reconcile(s: &Shared, profile_id: &str) {
+    let sent: Vec<String> = progress(&s.db(), profile_id).prompts.into_keys().collect();
+    let queued: Vec<String> = outbox(&s.db(), profile_id)
+        .items
+        .into_iter()
+        .filter_map(|q| match q.item {
+            Item::Prompt { request_id, .. } | Item::Settled { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .collect();
+    for id in sent.into_iter().filter(|id| !queued.contains(id)) {
+        let row: Option<(String, Option<String>)> =
+            s.db().query_row("SELECT status, note FROM permission_requests WHERE id=?1", [&id], |r| Ok((r.get(0)?, r.get(1)?))).ok();
+        let ended = match row {
+            Some((status, _)) if status == "pending" => continue,
+            Some((status, note)) => outcome(&status, note.as_deref()),
+            // Gone with its thread.
+            None => "Ended".to_string(),
+        };
+        queue(profile_id, s, Item::Settled { request_id: id, outcome: ended });
     }
 }
 
 /// Watches this host's events for what the assistants' owners hear of on Telegram.
 async fn watch(s: Shared, mut rx: tokio::sync::broadcast::Receiver<Value>) {
-    // The assistants' statuses, to tell when one comes to need attention.
-    let mut statuses: HashMap<String, String> = HashMap::new();
+    // The assistants' statuses and whether they run, to tell when one comes to need attention or stops.
+    let mut statuses: HashMap<String, (String, bool)> = HashMap::new();
     loop {
         let ev = match rx.recv().await {
             Ok(ev) => ev,
@@ -823,7 +1018,7 @@ async fn watch(s: Shared, mut rx: tokio::sync::broadcast::Receiver<Value>) {
 }
 
 /// What event `ev` sends to Telegram, if anything.
-pub(crate) fn observe(s: &Shared, ev: &Value, statuses: &mut HashMap<String, String>) {
+pub(crate) fn observe(s: &Shared, ev: &Value, statuses: &mut HashMap<String, (String, bool)>) {
     match ev["type"].as_str() {
         Some("message") => on_message(s, &ev["message"]),
         Some("message_updated") => {
@@ -835,7 +1030,7 @@ pub(crate) fn observe(s: &Shared, ev: &Value, statuses: &mut HashMap<String, Str
             let (Some(task_id), Some(request)) = (m["task_id"].as_str(), m["data"]["request_id"].as_str()) else { return };
             let Some(t) = assistants_task(s, task_id) else { return };
             let note = m["data"]["note"].as_str();
-            queue(&t.profile_id, s, OutKind::Settled { request_id: request.into(), outcome: outcome(status, note) });
+            queue(&t.profile_id, s, Item::Settled { request_id: request.into(), outcome: outcome(status, note) });
         }
         Some("task") => {
             let t = &ev["task"];
@@ -843,8 +1038,16 @@ pub(crate) fn observe(s: &Shared, ev: &Value, statuses: &mut HashMap<String, Str
                 return;
             }
             let (Some(id), Some(status)) = (t["id"].as_str(), t["status"].as_str()) else { return };
-            let before = statuses.insert(id.to_string(), status.to_string());
-            if status != "needs_attention" || before.as_deref().is_none_or(|b| b == "needs_attention") {
+            let running = t["running"] == json!(true);
+            let before = statuses.insert(id.to_string(), (status.to_string(), running));
+            let Some((was, ran)) = before else { return };
+            if ran && !running {
+                let task = db::get_task(&s.db(), id).ok().flatten();
+                if let Some(task) = task {
+                    run_ended(s, &task);
+                }
+            }
+            if status != "needs_attention" || was == "needs_attention" {
                 return;
             }
             let Ok(Some(task)) = db::get_task(&s.db(), id) else { return };
@@ -898,7 +1101,7 @@ fn on_message(s: &Shared, m: &Value) {
                 Some("asked") => format!("❓ **{name}** needs you:"),
                 _ => format!("📋 **{name}**"),
             };
-            queue(&task.profile_id, s, OutKind::Markdown(format!("{head}\n\n{text}")));
+            queue(&task.profile_id, s, Item::Markdown { md: format!("{head}\n\n{text}") });
         }
         "permission" if events.prompts => on_prompt(s, &task, data),
         "question" if events.prompts && task.is_assistant() => {
@@ -907,7 +1110,7 @@ fn on_message(s: &Shared, m: &Value) {
                 html.push_str(&format!("\n{}. {}", i + 1, escape(o["label"].as_str().unwrap_or_default())));
             }
             html.push_str("\n\n<i>Reply here to answer.</i>");
-            queue(&task.profile_id, s, OutKind::Html(html));
+            queue(&task.profile_id, s, Item::Html { html });
         }
         _ => {}
     }
@@ -939,7 +1142,32 @@ fn on_turn_end(s: &Shared, task: &Task, message_id: i64, events: Events) {
         db::last_assistant_text_after(&c, &task.id, asked).ok().flatten()
     };
     if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
-        queue(&task.profile_id, s, OutKind::Markdown(text));
+        queue(&task.profile_id, s, Item::Markdown { md: text });
+    }
+}
+
+/// The assistant's run ended. A turn it ended with is answered as its `result` comes (once, whichever is
+/// seen first), and a run that stopped without one (it failed, or was stopped) leaves nothing to answer:
+/// a message from Telegram no longer waits for a reply, so the next turn's isn't sent for it.
+fn run_ended(s: &Shared, task: &Task) {
+    if !task.is_assistant() || linked(&s.db(), &task.profile_id).is_none() {
+        return;
+    }
+    let last_result: i64 = s
+        .db()
+        .query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result'",
+            [&task.id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let replied = progress(&s.db(), &task.profile_id).replied;
+    if last_result > replied {
+        return on_turn_end(s, task, last_result, events_of(s, &task.profile_id));
+    }
+    let more = task.queued_message.is_some() || !task.steering.is_empty();
+    if !more {
+        let _ = update_progress(s, &task.profile_id, |p| p.awaiting = false);
     }
 }
 
@@ -962,7 +1190,7 @@ fn on_prompt(s: &Shared, task: &Task, data: &Value) {
     } else {
         html.push_str("\n<i>Answer it on the board.</i>");
     }
-    queue(&task.profile_id, s, OutKind::Prompt { request_id: request.into(), html, buttons });
+    queue(&task.profile_id, s, Item::Prompt { request_id: request.into(), html, buttons });
 }
 
 /// The assistant came to need attention: said, unless it's for a prompt or question that was sent
@@ -988,7 +1216,7 @@ fn on_attention(s: &Shared, task: &Task) {
         return;
     }
     let reason = if reason.is_empty() { String::new() } else { format!(": {}", escape(&cut(&reason, 300))) };
-    queue(&task.profile_id, s, OutKind::Html(format!("⚠️ <b>{}</b> needs attention{reason}", escape(&key(task)))));
+    queue(&task.profile_id, s, Item::Html { html: format!("⚠️ <b>{}</b> needs attention{reason}", escape(&key(task))) });
 }
 
 // ---------- API ----------
@@ -1009,6 +1237,7 @@ fn view(s: &Shared, profile_id: &str) -> Value {
         "last_error": cfg.last_error,
         "dropped": cfg.dropped,
         "polling": has_token && polling(s, profile_id),
+        "queued": outbox(&s.db(), profile_id).items.len(),
     })
 }
 
@@ -1045,9 +1274,11 @@ pub async fn update(State(s): State<Shared>, Path(id): Path<String>, Json(b): Js
             if !valid_token(&t) {
                 return Err(ApiError::bad("that isn't a bot token: @BotFather gives one like 123456789:AAH…"));
             }
-            // Another of this host's profiles already reads it: only one can.
+            // Another of this host's profiles already reads this bot (by its id, the token's first part, as a
+            // bot's token can be replaced): only one can.
+            let bot_id = |t: &str| t.split(':').next().unwrap_or_default().to_string();
             let profiles = db::list_profiles(&s.db())?;
-            if profiles.iter().any(|p| p.id != id && token(&s.db(), &p.id).is_some_and(|o| same_secret(&o, &t))) {
+            if profiles.iter().any(|p| p.id != id && token(&s.db(), &p.id).is_some_and(|o| bot_id(&o) == bot_id(&t))) {
                 return Err(ApiError::conflict("another profile's assistant already uses this bot: make one for each"));
             }
             let me = call(&s, &t, "getMe", &json!({}), Duration::from_secs(20)).await.map_err(|e| ApiError::bad(format!("checking the token: {e}")))?;
@@ -1063,6 +1294,7 @@ pub async fn update(State(s): State<Shared>, Path(id): Path<String>, Json(b): Js
                     cfg.link = None;
                     cfg.dropped = None;
                     write(&c, &progress_key(&id), &Progress::default())?;
+                    db::set_setting(&c, &outbox_key(&id), None)?;
                 }
                 cfg.bot = Some(bot);
                 cfg.last_error = None;
@@ -1070,16 +1302,7 @@ pub async fn update(State(s): State<Shared>, Path(id): Path<String>, Json(b): Js
             }
             restart(&s, &id);
         }
-        Some(None) => {
-            {
-                let c = s.db();
-                db::set_setting(&c, &token_key(&id), None)?;
-                let events = config(&c, &id).events;
-                write(&c, &config_key(&id), &Config { events, ..Default::default() })?;
-                db::set_setting(&c, &progress_key(&id), None)?;
-            }
-            restart(&s, &id);
-        }
+        Some(None) => remove_bot(&s, &id)?,
         None => {}
     }
     if let Some(events) = b.events {
@@ -1119,6 +1342,7 @@ pub async fn unlink(State(s): State<Shared>, Path(id): Path<String>) -> ApiResul
         p.prompts.clear();
         p.awaiting = false;
     })?;
+    update_outbox(&s, &id, |o| o.items.clear())?;
     changed(&s, &id);
     Ok(Json(view(&s, &id)))
 }

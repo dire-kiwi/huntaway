@@ -34,6 +34,8 @@ export type Telegram = {
   dropped: { count: number; last_from: string; last_at: string } | null;
   /** Its host is reading the bot's messages. */
   polling: boolean;
+  /** Messages waiting to be sent (kept, and tried again, while Telegram can't be reached). */
+  queued: number;
 };
 
 /** A one-time code to send the bot, which links the chat it's sent from. */

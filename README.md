@@ -867,13 +867,15 @@ keeps working while that host's link to the hub is down.
 
 What you send the bot (text, and photos, voice notes and files up to 10 MB, saved as attachments) goes
 to the assistant as your message, and its reply comes back, formatted for Telegram and split if it's
-long. Under **It also sends**, choose what else comes: the assistant's prompts with **Allow** and
-**Deny** buttons (and its questions, which you answer by replying), its routines' reports, when it
-needs attention, and its replies to what you send from the board. Push notifications are chosen for
-each device in Settings → Notifications, so each event can go to push, Telegram or both. A prompt
-answered from Telegram is answered as the board's buttons answer it (the approval rules and a
+long. Besides those, the assistant's prompts (with **Allow** and **Deny** buttons) and questions
+(answered by replying), and word that it needs attention, go by push (to the devices that chose them
+in Settings → Notifications) and, as you choose, Telegram too. Its routines' reports, and its replies
+to what you send from the board, go only to Telegram, if you turn them on: push doesn't send those. A
+prompt answered from Telegram is answered as the board's buttons answer it (the approval rules and a
 routine's expiry hold the same, and the action log says *on Telegram*), and its message is edited to
-say how it ended, however it did.
+say how it ended, however it did. What can't be sent while Telegram is unreachable is kept and tried
+again, across restarts. Moving the assistant to another host removes its bot from the host it left
+(if that host is online): set it up again on the new one.
 
 ### Reaching a host from anywhere
 
