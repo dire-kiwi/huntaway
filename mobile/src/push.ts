@@ -4,7 +4,7 @@
 // (`POST /api/permissions/{id}/push-answer`), which needs no device token, so they work from the lock screen, where
 // the keychain can't be read. Pushes pass through Expo, Apple and Google, so they carry the task's key and title and
 // the event only; the rest is fetched over the app's own connection. See notifications.ts for the Expo side.
-import { EXPO_PUSH_API, type Client, type Fetch, type PushDevice, type PushEvents, type PushPrompts } from "@huntaway/client";
+import { ASSISTANT_PUSH_EVENTS, EXPO_PUSH_API, type Client, type Fetch, type PushDevice, type PushEvents, type PushPrompts } from "@huntaway/client";
 import type { Board, SecretStore } from "./boards";
 
 /** The notification category of prompts that can be answered from the notification (the server's `categoryId`). */
@@ -21,6 +21,10 @@ export const PUSH_EVENTS: { id: "attention" | "review" | "merge" | "done"; label
   { id: "merge", label: "Ready for merge" },
   { id: "done", label: "Done" },
 ];
+
+/** The assistant's events (its replies and its routines' reports) a board can push here: those it has (HA-162: a board
+ *  from before shows none in the phone's events). */
+export const assistantPushEvents = (e: PushEvents) => ASSISTANT_PUSH_EVENTS.filter((x) => typeof e[x.id] === "boolean");
 
 export const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
   { id: "off", label: "None" },
@@ -79,7 +83,7 @@ export function pushData(notification: Any): PushData | null {
   return null;
 }
 
-/** The task screen a push opens, if it's about a task. */
+/** The task screen a push opens, if it's about a task: a reply's is the assistant's thread, a report's its routine's. */
 export function taskRoute(d: PushData): { pathname: "/task/[board]/[host]/[id]"; params: { board: string; host: string; id: string } } | null {
   if (!d.host || !d.task_id) return null;
   return { pathname: "/task/[board]/[host]/[id]", params: { board: d.board, host: d.host, id: d.task_id } };
@@ -480,6 +484,6 @@ export class PushRegistrar {
 }
 
 /** Events with one changed. */
-export function withEvent(e: PushEvents, id: (typeof PUSH_EVENTS)[number]["id"], on: boolean): PushEvents {
+export function withEvent(e: PushEvents, id: (typeof PUSH_EVENTS)[number]["id"] | (typeof ASSISTANT_PUSH_EVENTS)[number]["id"], on: boolean): PushEvents {
   return { ...e, [id]: on };
 }

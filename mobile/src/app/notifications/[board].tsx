@@ -5,7 +5,7 @@ import { Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import { Linking, ScrollView, Switch, Text, View } from "react-native";
 import { retryPush, setBoardEvents, setBoardPush, supported, usePushState } from "../../notifications";
-import { PUSH_EVENTS, PUSH_PROMPTS, subscriptionOn, withEvent } from "../../push";
+import { assistantPushEvents, PUSH_EVENTS, PUSH_PROMPTS, subscriptionOn, withEvent } from "../../push";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad } from "../../session";
 import { colors } from "../../theme";
 import { Button, Chip, Empty, ErrorText, s } from "../../ui";
@@ -121,6 +121,26 @@ export default function BoardNotifications() {
                   </View>
                 ))}
               </View>
+              {assistantPushEvents(device.events).length > 0 && (
+                <View style={[s.card, { marginHorizontal: 0 }]}>
+                  <Text style={s.title}>Assistant</Text>
+                  <Text style={s.faint}>Its replies open its thread, and a routine's report the routine's. Neither says what was written.</Text>
+                  {assistantPushEvents(device.events).map((e) => (
+                    <View key={e.id} style={[s.row, { minHeight: 40 }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.muted, { color: colors.fg }]}>{e.label}</Text>
+                        <Text style={s.faint}>{e.hint}</Text>
+                      </View>
+                      <Switch
+                        value={!!device.events[e.id]}
+                        onValueChange={(v) => change(withEvent(device.events, e.id, v))}
+                        accessibilityLabel={e.label}
+                        trackColor={{ true: colors.accentStrong, false: colors.line }}
+                      />
+                    </View>
+                  ))}
+                </View>
+              )}
               <View style={[s.card, { marginHorizontal: 0 }]}>
                 <Text style={s.title}>Permission prompts</Text>
                 <Text style={s.faint}>
