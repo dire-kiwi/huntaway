@@ -47,13 +47,13 @@ pub(super) async fn send_message(State(s): State<Shared>, Path(id): Path<String>
 
 /// Answer a question an agent asked with request_user_input, from its card (API 64): the answer
 /// is sent as the user's message.
-/// `GET /profiles/{id}/assistant` (API 96): the profile's assistant (see agent/assistant.rs),
+/// `GET /profiles/{id}/assistant` (API 97): the profile's assistant (see agent/assistant.rs),
 /// made the first time it's asked for.
 pub(super) async fn get_assistant(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(assistant::get_or_create(&s, &id)?)))
 }
 
-/// `POST /profiles/{id}/assistant` (API 96): send the user's message to the profile's assistant,
+/// `POST /profiles/{id}/assistant` (API 97): send the user's message to the profile's assistant,
 /// as `POST /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
 pub(super) async fn send_to_assistant(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
     Ok(Json(json!(assistant::send(&s, &id, &b.text)?)))

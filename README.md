@@ -204,7 +204,7 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
-Each profile has an **assistant** (API 96): one long-lived conversation outside every project,
+Each profile has an **assistant** (API 97): one long-lived conversation outside every project,
 opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
 It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
 `{"text": …}` sends it a message), keyed `A-<n>` (no project can use the key `A`; one that had it
@@ -382,6 +382,26 @@ on the board you use (a hub, for several machines). `IA_PUSH_SUBJECT` sets the c
 push services (a `mailto:` or `https:` URL; the default is this project's page). The installed app
 is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, so it always loads
 the board's current UI.
+
+**Permission prompts** (API 96) are pushed too, with **Allow** and **Deny** on the notification, so
+you can answer one from the lock screen. Each device picks whose: *None*, *The assistant's* (the
+default) or *Every task's*. A device that gets a task's prompt isn't also told the task needs
+attention. Questions, plans and approvals of changes to the board (projects, deletions,
+automations) are pushed without the buttons: tapping opens the thread. A push carries the task's
+key and title and the tool's name, but never the tool's input, as it passes through the push
+service. Android's Chrome shows the buttons; iOS doesn't show buttons on web notifications, so
+there you tap through to the board.
+
+The buttons don't use the board's token. Each push about a prompt carries a one-time token that
+answers only that prompt: the service worker posts it to `POST /api/permissions/{id}/push-answer`
+(`{"token", "decision": "allow" | "deny"}`, no `Authorization`), and shows what came of it in
+the notification's place (`result` is `allowed` or `denied`, or `answered`, `expired`, `closed`,
+`invalid`, `offline` or `failed`, with a `message`). The board that sends the push mints the
+token and keeps only its hash (`push_answer_tokens`), so that's where it's checked; a prompt on a
+linked host is then answered through the link, as the UI's `/api/h/<host>/permissions/{id}` is.
+The first answer settles it: a token stops working once its prompt has been answered (from a
+notification, the board or anywhere else) or has expired with its run. If the host is offline the
+token still works later, and the notification keeps its buttons.
 
 ### Desktop config
 

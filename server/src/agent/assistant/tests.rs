@@ -168,14 +168,14 @@ fn no_project_can_have_the_assistants_key() {
 }
 
 #[test]
-fn a_database_at_version_75_frees_the_key_a() {
+fn a_database_at_version_76_frees_the_key_a() {
     let path = testing::temp_dir().join("huntaway.db");
     {
         let c = db::open(&path).unwrap();
         let p = insert_profile(&c, "p", &[], None).unwrap();
         let new = NewProject { id: "apps", profile_id: &p.id, name: "Apps", key: "A", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
         insert_project(&c, new).unwrap();
-        c.execute_batch("DROP INDEX tasks_one_assistant; PRAGMA user_version=75;").unwrap();
+        c.execute_batch("DROP INDEX tasks_one_assistant; PRAGMA user_version=76;").unwrap();
     }
     let c = db::open(&path).unwrap();
     assert_eq!(db::get_project(&c, "apps").unwrap().unwrap().key, "AP");

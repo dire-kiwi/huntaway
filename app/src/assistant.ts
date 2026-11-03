@@ -1,4 +1,4 @@
-// Each profile's assistant (API 96): one long-lived thread in no project that the sidebar opens, full width, at
+// Each profile's assistant (API 97): one long-lived thread in no project that the sidebar opens, full width, at
 // `/assistant/<profile>` (see server/src/agent/assistant.rs). It's off the boards.
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -7,7 +7,7 @@ import { useStore } from "./store";
 
 /** Where a profile's assistant is: the one place the board looks for it. Profiles are merged across hosts by name, so
  *  it's this board's own host's profile of that name, else the first connected host with assistants that has one. Hosts
- *  before API 96 have none. */
+ *  before API 97 have none. */
 export function assistantHome(profiles: Profile[], hosts: Host[], name: string): { hostId: string; profileId: string } | undefined {
   const homes = profiles
     .filter((p) => p.name === name)

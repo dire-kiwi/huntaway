@@ -19,7 +19,7 @@ pub(super) async fn list_project_tasks(State(s): State<Shared>, Path(id): Path<S
 
 #[derive(Deserialize)]
 pub(super) struct ProfileTasksQuery {
-    /// With the profile's assistant (API 96), which is left out otherwise, being off the board.
+    /// With the profile's assistant (API 97), which is left out otherwise, being off the board.
     #[serde(default)]
     include_assistant: bool,
 }

@@ -2,9 +2,9 @@ import { enc, type Http } from "./http";
 import { type Host, hostSupports } from "./hosts";
 import type { Task } from "./tasks";
 
-/** Each profile has an assistant (API 96): one long-lived thread in no project, keyed `A-<n>`, that works in a folder of its
+/** Each profile has an assistant (API 97): one long-lived thread in no project, keyed `A-<n>`, that works in a folder of its
  *  own and never goes to review or merge (see server/src/agent/assistant.rs). The sidebar opens it; it's off the board. */
-export const ASSISTANT_API = 96;
+export const ASSISTANT_API = 97;
 
 /** Whether the host has assistants. An older one shows no Assistant entry. */
 export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_API);

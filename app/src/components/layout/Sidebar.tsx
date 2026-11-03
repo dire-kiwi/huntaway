@@ -225,7 +225,7 @@ function MarkedTasks({ route }: { route: Route }) {
   );
 }
 
-/** The active profile's assistant (API 96), which opens full width. Not there for a profile with no host that has one. */
+/** The active profile's assistant (API 97), which opens full width. Not there for a profile with no host that has one. */
 function AssistantEntry({ route, profile }: { route: Route; profile: string }) {
   const home = useStore(useShallow((s) => assistantHome(s.profiles, s.hosts, profile) ?? null));
   const task = useStore((s) =>
