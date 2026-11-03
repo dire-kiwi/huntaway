@@ -388,6 +388,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     task_tmp::start_sweeper(&state);
     mcp::permissions::start_sweeper(&state);
     automations::start(&state);
+    crate::integrations::telegram::start(&state);
     merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);

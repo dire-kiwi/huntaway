@@ -84,6 +84,8 @@ pub struct AppState {
     pub deleting: Mutex<HashMap<String, usize>>,
     /// Web Push to devices (see integrations/push.rs).
     pub push: crate::integrations::push::PushState,
+    /// The assistants' Telegram bots: their pollers and what they send (see integrations/telegram.rs).
+    pub telegram: crate::integrations::telegram::TelegramState,
     /// Pairing codes, and revocations of paired devices (see devices.rs).
     pub devices: crate::devices::Devices,
     /// A test state's `data_dir`, removed when the state goes (see testing::state).
@@ -132,6 +134,7 @@ impl AppState {
             relocating: Mutex::new(Default::default()),
             deleting: Mutex::new(HashMap::new()),
             push: Default::default(),
+            telegram: Default::default(),
             devices: Default::default(),
             #[cfg(test)]
             test_dir: OnceLock::new(),

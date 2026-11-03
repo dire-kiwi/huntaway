@@ -20,7 +20,7 @@ use crate::agent::{agent_tools, approval_rules, assistant, runner, title};
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::git::{git_view, relocate, worktree};
 use crate::hosts::{hub, terminal};
-use crate::integrations::{automations, github};
+use crate::integrations::{automations, github, telegram};
 use crate::mcp::{permissions, tools};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::update::admin;
@@ -127,6 +127,9 @@ fn host_routes() -> Router<Shared> {
         .route("/profiles/{id}/assistant/memory/import", post(assistant::memory::import))
         .route("/profiles/{id}/approval-rules", get(get_approval_rules).post(set_approval_rules))
         .route("/profiles/{id}/approval-log", get(approval_log))
+        .route("/profiles/{id}/telegram", get(telegram::get).patch(telegram::update))
+        .route("/profiles/{id}/telegram/link", post(telegram::new_link))
+        .route("/profiles/{id}/telegram/owner", axum::routing::delete(telegram::unlink))
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))
         .route("/profiles/{id}/context-stats", get(crate::analytics::context))
