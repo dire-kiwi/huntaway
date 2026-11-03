@@ -1137,7 +1137,16 @@ pub async fn subscribe(State(s): State<Shared>, device: Device, Json(b): Json<Su
     let name: String = b.name.trim().chars().take(100).collect();
     let device_id = device.as_ref().map(|d| d.id.clone());
     let c = s.db();
-    let old = c.query_row("SELECT id, kind FROM push_subscriptions WHERE endpoint=?1", [&b.endpoint], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).optional()?;
+    let mut old = c.query_row("SELECT id, kind FROM push_subscriptions WHERE endpoint=?1", [&b.endpoint], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).optional()?;
+    // The app's token changed (Expo's follows Apple's or Google's): it's the same phone, so its subscription, with the
+    // events it picked, takes the new token rather than a new one starting from the defaults.
+    if let (None, Kind::Expo, Some(dev)) = (&old, b.kind, &device_id) {
+        let mine = c.query_row("SELECT id FROM push_subscriptions WHERE device_id=?1 AND kind='expo' ORDER BY created_at LIMIT 1", [dev], |r| r.get::<_, String>(0)).optional()?;
+        if let Some(id) = mine {
+            c.execute("UPDATE push_subscriptions SET endpoint=?1 WHERE id=?2", params![b.endpoint, id])?;
+            old = Some((id, "expo".into()));
+        }
+    }
     let id = match old {
         Some((_, kind)) if kind != b.kind.as_str() => return Err(ApiError::bad("that endpoint is subscribed as another kind")),
         // The same phone paired again (its old pairing may not have been revoked) takes its subscription over.
@@ -1157,6 +1166,10 @@ pub async fn subscribe(State(s): State<Shared>, device: Device, Json(b): Json<Su
             id
         }
     };
+    // One app on a phone has one token: any other it subscribed with is gone.
+    if let (Kind::Expo, Some(dev)) = (b.kind, &device_id) {
+        c.execute("DELETE FROM push_subscriptions WHERE device_id=?1 AND kind='expo' AND id<>?2", params![dev, id])?;
+    }
     Ok(Json(json!(get(&c, &id)?.ok_or_else(|| ApiError::not_found("subscription"))?)))
 }
 

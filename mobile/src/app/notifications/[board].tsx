@@ -90,6 +90,11 @@ export default function BoardNotifications() {
               trackColor={{ true: colors.accentStrong, false: colors.line }}
             />
           </View>
+          {!on && push.pendingOff.includes(board.id) && (
+            <Text style={{ color: colors.amber, fontSize: 14 }}>
+              {board.name} couldn't be told yet, so it may still push here: it's told as soon as it can be reached.
+            </Text>
+          )}
           {on && push.problem && (
             <View style={{ gap: 8 }}>
               <Text style={{ color: colors.amber, fontSize: 14 }}>{problemText(push.problem)}</Text>

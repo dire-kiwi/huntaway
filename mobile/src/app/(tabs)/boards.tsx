@@ -6,6 +6,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { loadProfiles, pickedProfile, profilesOf } from "../../boardData";
+import { registrar } from "../../notifications";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad, type BoardStatus } from "../../session";
 import { colors } from "../../theme";
 import { Button, Chip, s } from "../../ui";
@@ -38,9 +39,8 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
   const remove = async () => {
     if (!(await confirm(`Remove ${board.name}?`, "The app forgets it, and this phone is unpaired from it.", "Remove"))) return;
     setBusy(true);
-    // Unpairs itself on the board too, if it can reach it.
-    if (board.deviceId && !status.unauthorized) await clientFor(board).revokeDevice(board.deviceId).catch(() => {});
-    await boards.remove(board.id);
+    // Unpairs itself on the board too (which ends its push), now or once it can reach it.
+    await registrar.removeBoard(board.id);
     setBusy(false);
   };
 

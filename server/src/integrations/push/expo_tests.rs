@@ -429,3 +429,29 @@ fn a_move_made_from_the_phone_isnt_pushed_to_it() {
         assert_eq!((m["data"]["event"].as_str(), m["body"].as_str()), (Some("attention"), Some("Needs attention")));
     })
 }
+
+#[test]
+fn a_new_token_for_the_same_phone_keeps_its_subscription_and_events() {
+    testing::run(async || {
+        let s = board();
+        let (phone, phone_id) = pair(&s, "phone").await;
+        let quiet = json!({"attention": false, "review": false, "merge": false, "done": false, "prompts": "off"});
+        let (_, first) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("old"), "name": "phone", "events": quiet}))).await;
+        // Expo's token rotated: the app subscribes again with the new one, and no events (it keeps what's there).
+        let (status, next) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("new"), "name": "phone"}))).await;
+        assert_eq!(status, 200, "{next}");
+        assert_eq!((&next["id"], next["endpoint"].as_str(), &next["events"]), (&first["id"], Some(token("new").as_str()), &quiet));
+        let all = subscriptions(&s);
+        assert_eq!((all.len(), all[0].device_id.as_deref()), (1, Some(phone_id.as_str())));
+        // Another phone's subscription is left alone, and a phone that had two (from before) is left with the one.
+        let (tablet, _) = pair(&s, "tablet").await;
+        call(&s, "POST", "/api/push/subscriptions", &tablet, Some(json!({"kind": "expo", "endpoint": token("tablet")}))).await;
+        s.db()
+            .execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at,kind,device_id) VALUES ('x',?1,'','','{}','0','expo',?2)", params![token("stale"), phone_id])
+            .unwrap();
+        call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("new")}))).await;
+        let mut left: Vec<String> = subscriptions(&s).into_iter().map(|x| x.endpoint).collect();
+        left.sort();
+        assert_eq!(left, vec![token("new"), token("tablet")]);
+    })
+}

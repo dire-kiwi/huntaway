@@ -123,6 +123,44 @@ export interface ResponseDeps {
   /** Shows how it went, in place of the notification answered. */
   show(title: string, body: string, data: PushData): Promise<void>;
   dismiss(notificationId: string): Promise<void>;
+  /** The taps handled before, kept over restarts (see handledStore). */
+  seen?: Handled;
+}
+
+/** The taps handled already, by notification and action. */
+export interface Handled {
+  has(key: string): Promise<boolean>;
+  add(key: string): Promise<void>;
+}
+
+export const HANDLED_KEY = "push.handled";
+
+/**
+ * The taps handled, kept in `store` (the last `max`): the tap that started the app is handed over again on every start
+ * (getLastNotificationResponseAsync), and mustn't open its task, or answer its prompt, each time.
+ */
+export function handledStore(store: SecretStore, max = 100): Handled {
+  let queue: Promise<unknown> = Promise.resolve();
+  const read = async (): Promise<string[]> => {
+    try {
+      const v = JSON.parse((await store.get(HANDLED_KEY)) ?? "[]");
+      return Array.isArray(v) ? v.filter((k) => typeof k === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    has: async (key) => (await read()).includes(key),
+    add: (key) => {
+      // One at a time, so that two taps at once both stay.
+      const next = queue.then(async () => {
+        const keys = (await read()).filter((k) => k !== key);
+        await store.set(HANDLED_KEY, JSON.stringify([...keys, key].slice(-max)));
+      });
+      queue = next.catch(() => {});
+      return next;
+    },
+  };
 }
 
 /** A tap on a notification, or on one of its actions (expo-notifications' `NotificationResponse`). */
@@ -145,6 +183,10 @@ export function responseHandler(deps: ResponseDeps) {
     if (id) handled.add(key);
     const d = pushData(r.notification);
     if (!d) return null;
+    if (id && deps.seen) {
+      if (await deps.seen.has(key).catch(() => false)) return null;
+      await deps.seen.add(key).catch(() => {});
+    }
     if (r.actionIdentifier !== ALLOW && r.actionIdentifier !== DENY) {
       const route = taskRoute(d);
       if (route && deps.open) deps.open(route);
@@ -194,35 +236,231 @@ export async function subscriptionOn(client: Pick<Client, "push">, token: string
 /** What subscribing came to on each board: its subscription, or why it failed. */
 export type Subscribed = Record<string, { device?: PushDevice; error?: string }>;
 
-/**
- * Subscribes this phone (Expo push token `token`, named `name`) on each board that can push to it, keeping the events
- * it had there. `done` holds the boards already subscribed with this token (by `subscribedKey`), which are skipped.
- */
-export async function subscribeAll(
-  list: Board[],
-  token: string,
-  name: string,
-  clientFor: (b: Board) => Pick<Client, "pushSubscribeApp">,
-  done: Set<string> = new Set(),
-): Promise<Subscribed> {
-  const out: Subscribed = {};
-  await Promise.all(
-    list.filter(pushable).map(async (b) => {
-      const key = subscribedKey(b, token);
-      if (done.has(key)) return;
-      try {
-        out[b.id] = { device: await clientFor(b).pushSubscribeApp({ token, name }) };
-        done.add(key);
-      } catch (e) {
-        out[b.id] = { error: e instanceof Error ? e.message : String(e) };
-      }
-    }),
-  );
-  return out;
-}
-
 /** A board's subscription is made again when the phone pairs again there (a new device) or its token changes. */
 export const subscribedKey = (b: Board, token: string) => `${b.id}|${b.deviceId}|${b.url}|${token}`;
+
+/**
+ * What's still to be undone on a board that couldn't be reached at the time: push turned off (`unsubscribe`: this
+ * phone's subscriptions there are deleted), or the board removed from the app (`revoke`: the phone is unpaired there,
+ * which deletes them too, with the token it had, which the app keeps only for this).
+ */
+export type Pending = { kind: "unsubscribe"; board: string } | { kind: "revoke"; board: string; url: string; deviceId: string; token: string };
+
+/** Kept with the boards' tokens (a `revoke` holds one). */
+export const PENDING_KEY = "push.pending";
+
+/** The few calls the registrar makes. */
+export type PushClient = Pick<Client, "push" | "pushSubscribeApp" | "removePushDevice" | "revokeDevice">;
+
+/** The paired boards, as the Boards store keeps them. */
+export interface BoardList {
+  get(): { boards: Board[] };
+  board(id: string): Board | undefined;
+  token(id: string): string;
+  update(id: string, change: Partial<Omit<Board, "id">>): Promise<void>;
+  remove(id: string): Promise<void>;
+}
+
+export interface RegistrarDeps {
+  boards: BoardList;
+  /** Where pending work is kept (the keychain). */
+  store: SecretStore;
+  /** This phone's Expo push token, or why there's none: `retry` if it may work later (it needs the network). */
+  expoToken(): Promise<{ token: string } | { retry: boolean }>;
+  name(): string;
+  /** A client for a board, with its token (or `token`, a removed board's). */
+  clientFor(b: Pick<Board, "id" | "url">, token?: string): PushClient;
+  /** Calls `fn` in `ms` (setTimeout), for retries. */
+  later(fn: () => void, ms: number): () => void;
+  onChange?(): void;
+}
+
+/** Retries after a failure wait this long, doubling, up to `RETRY_MAX`. */
+export const RETRY_FIRST = 30_000;
+export const RETRY_MAX = 15 * 60_000;
+
+/** Whether an error means the board turned the request down for good (it's gone, or the phone is unpaired there). */
+const final = (e: unknown) => typeof (e as { status?: number })?.status === "number" && [401, 403, 404].includes((e as { status: number }).status);
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Keeps this phone subscribed on each paired board that can push to it, and unsubscribed where it was turned off or
+ * the board removed. `sync` does what's still to do, and is called whenever it may now work: at start, when a board's
+ * websocket connects (so also once the network or the app comes back), and on its own after a failure, waiting
+ * longer each time.
+ */
+export class PushRegistrar {
+  subscribed: Subscribed = {};
+  pending: Pending[] = [];
+  /** The boards subscribed with the token (see subscribedKey). */
+  private done = new Set<string>();
+  private loaded: Promise<void> | null = null;
+  private failures = 0;
+  private cancelRetry: (() => void) | null = null;
+  private running: Promise<void> | null = null;
+  private again = false;
+
+  constructor(private deps: RegistrarDeps) {}
+
+  private load() {
+    this.loaded ??= (async () => {
+      try {
+        const v = JSON.parse((await this.deps.store.get(PENDING_KEY)) ?? "[]");
+        if (Array.isArray(v)) this.pending = [...v.filter((p) => p && typeof p.board === "string"), ...this.pending];
+      } catch {
+        /* none */
+      }
+    })();
+    return this.loaded;
+  }
+
+  private async save() {
+    await this.deps.store.set(PENDING_KEY, JSON.stringify(this.pending)).catch(() => {});
+  }
+
+  private changed() {
+    this.deps.onChange?.();
+  }
+
+  /** Whether push from board `id` was turned off here, but the board can't have been told yet. */
+  pendingOn(id: string) {
+    return this.pending.some((p) => p.kind === "unsubscribe" && p.board === id);
+  }
+
+  /** Does what's still to do; one run at a time (a call during one runs again after it). */
+  sync(): Promise<void> {
+    if (this.running) {
+      this.again = true;
+      return this.running;
+    }
+    this.running = (async () => {
+      do {
+        this.again = false;
+        await this.run();
+      } while (this.again);
+    })().finally(() => (this.running = null));
+    return this.running;
+  }
+
+  private async run() {
+    await this.load();
+    let failed = false;
+    // Undoing first: a board turned off and on again meanwhile has no pending unsubscribe (see setPush).
+    for (const p of [...this.pending]) {
+      try {
+        if (p.kind === "revoke") await this.deps.clientFor({ id: p.board, url: p.url }, p.token).revokeDevice(p.deviceId);
+        else {
+          const board = this.deps.boards.board(p.board);
+          if (board) {
+            const client = this.deps.clientFor(board);
+            for (const sub of (await client.push()).subscriptions.filter((x) => x.kind === "expo")) {
+              await client.removePushDevice(sub.id).catch((e) => {
+                if (!final(e)) throw e;
+              });
+            }
+          }
+        }
+        this.pending = this.pending.filter((x) => x !== p);
+      } catch (e) {
+        // Unpaired there already, or the board is gone: nothing left to undo.
+        if (final(e)) this.pending = this.pending.filter((x) => x !== p);
+        else failed = true;
+      }
+    }
+    await this.save();
+
+    const want = this.deps.boards.get().boards.filter((b) => pushable(b) && !this.pendingOn(b.id));
+    // (Kept once had, so this asks Expo only the first time.)
+    const got = want.length ? await this.deps.expoToken() : null;
+    if (got && "retry" in got && got.retry) failed = true;
+    const token = got && "token" in got ? got.token : null;
+    if (token) {
+      await Promise.all(
+        want.map(async (b) => {
+          const key = subscribedKey(b, token);
+          if (this.done.has(key)) return;
+          try {
+            const device = await this.deps.clientFor(b).pushSubscribeApp({ token, name: this.deps.name() });
+            // Turned off while it was being made: it goes again.
+            if (!pushable(this.deps.boards.board(b.id) ?? { ...b, push: false })) return;
+            this.done.add(key);
+            this.subscribed = { ...this.subscribed, [b.id]: { device } };
+          } catch (e) {
+            failed = true;
+            this.subscribed = { ...this.subscribed, [b.id]: { error: message(e) } };
+          }
+        }),
+      );
+    }
+    this.changed();
+    this.retry(failed);
+  }
+
+  /** After a failure, tries again by itself, waiting longer each time; after a success, stops. */
+  private retry(failed: boolean) {
+    this.cancelRetry?.();
+    this.cancelRetry = null;
+    if (!failed) {
+      this.failures = 0;
+      return;
+    }
+    const wait = Math.min(RETRY_FIRST * 2 ** this.failures, RETRY_MAX);
+    this.failures++;
+    this.cancelRetry = this.deps.later(() => {
+      this.cancelRetry = null;
+      void this.sync();
+    }, wait);
+  }
+
+  /** Starts again with a new token (it changed, or notifications were allowed since). */
+  tokenChanged() {
+    this.done.clear();
+    return this.sync();
+  }
+
+  /**
+   * Turns push from board `id` on or off. Off is kept at once and done on the board as soon as it can be: until then,
+   * the board's still pushing (see pendingOn).
+   */
+  async setPush(id: string, on: boolean) {
+    await this.load();
+    const board = this.deps.boards.board(id);
+    if (!board) return;
+    this.pending = this.pending.filter((p) => !(p.kind === "unsubscribe" && p.board === id));
+    for (const k of [...this.done]) if (k.startsWith(`${id}|`)) this.done.delete(k);
+    const { [id]: _, ...rest } = this.subscribed;
+    this.subscribed = rest;
+    if (!on) this.pending.push({ kind: "unsubscribe", board: id });
+    await this.save();
+    await this.deps.boards.update(id, { push: on });
+    this.changed();
+    await this.sync();
+  }
+
+  /** Removes a board from the app, and unpairs the phone there (now, or once it can be reached). */
+  async removeBoard(id: string) {
+    await this.load();
+    const board = this.deps.boards.board(id);
+    if (!board) return;
+    const token = this.deps.boards.token(id);
+    this.pending = this.pending.filter((p) => p.board !== id);
+    if (board.deviceId && token) this.pending.push({ kind: "revoke", board: id, url: board.url, deviceId: board.deviceId, token });
+    for (const k of [...this.done]) if (k.startsWith(`${id}|`)) this.done.delete(k);
+    const { [id]: _, ...rest } = this.subscribed;
+    this.subscribed = rest;
+    await this.save();
+    await this.deps.boards.remove(id);
+    this.changed();
+    await this.sync();
+  }
+
+  /** Notes a subscription changed elsewhere (its events). */
+  noteDevice(id: string, device: PushDevice) {
+    this.subscribed = { ...this.subscribed, [id]: { device } };
+    this.changed();
+  }
+}
 
 /** Events with one changed. */
 export function withEvent(e: PushEvents, id: (typeof PUSH_EVENTS)[number]["id"], on: boolean): PushEvents {
