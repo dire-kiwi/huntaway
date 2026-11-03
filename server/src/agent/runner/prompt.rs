@@ -167,6 +167,10 @@ pub fn key_prefix<'a>(task: &Task, project: Option<&'a Project>) -> &'a str {
 pub(super) fn start_prompt(task: &Task, project: Option<&Project>, text: &str) -> String {
     let key = key_prefix(task, project);
     let text = text.trim();
+    // The assistant is a conversation, not a task to start on: its first prompt is the user's message.
+    if task.is_assistant() {
+        return text.to_string();
+    }
     let mut p = String::new();
     if is_slash_command(text) {
         p.push_str(&format!("{text}\n\n"));

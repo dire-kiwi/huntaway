@@ -405,3 +405,87 @@ fn records_what_runs_had() {
     record_seen(&c, "p", Some("cfg"), &json!({"skills": ["beta"]})).unwrap();
     assert_eq!(names("skills"), ["beta", "zeta"]);
 }
+
+// HA-119 review: the assistant (in no project) had none of its profile's global skills and servers.
+#[test]
+fn a_profiles_assistant_gets_the_global_tools_its_profile_switches_on() {
+    crate::testing::run(async || {
+        use crate::db::{NewProject, insert_profile, insert_project};
+        let s = crate::testing::state();
+        let (me, other) = {
+            let c = s.db();
+            (insert_profile(&c, "me", &[], None).unwrap(), insert_profile(&c, "other", &[], None).unwrap())
+        };
+        // `unset` has no switch, so it's off for the profile.
+        let (on, off, _unset, server, quiet) = {
+            let c = s.db();
+            let skill = |name: &str| create_skill_in(&c, None, SkillBody { content: Some(format!("---\nname: {name}\ndescription: d {name}\n---\n")), enabled: None }).unwrap();
+            let server = |name: &str, auto: bool| {
+                let b = McpServerBody { name: Some(name.into()), config: Some(json!({"type": "http", "url": format!("https://{name}.example")})), enabled: None, auto_allow: Some(auto) };
+                create_mcp_server_in(&c, None, b).unwrap()
+            };
+            (skill("on"), skill("off"), skill("unset"), server("probe", true), server("quiet", false))
+        };
+        let set = |scope_id: &str, item: &str, v: bool| {
+            s.db().execute("INSERT OR REPLACE INTO agent_tool_switches VALUES ('profile',?1,?2,?3)", params![scope_id, item, v]).unwrap();
+        };
+        set(&me.id, &on.id, true);
+        set(&me.id, &off.id, false);
+        set(&me.id, &server.id, true);
+        set(&me.id, &quiet.id, false);
+        // Another profile's switches are its own.
+        set(&other.id, &off.id, true);
+        set(&other.id, &quiet.id, true);
+        let assistant = crate::agent::assistant::get_or_create(&s, &me.id).unwrap();
+        let tools = for_task_run(&s, &assistant, None).unwrap();
+        assert_eq!(tools.mcp_servers.keys().collect::<Vec<_>>(), ["probe"]);
+        assert_eq!(tools.allowed, [tool_prefix("probe")]);
+        assert!(tools.disallowed.is_empty());
+        let dir = PathBuf::from(tools.skills_dir.clone().expect("a skills folder"));
+        let written = |d: &PathBuf| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(d.join(".claude/skills")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into()).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(written(&dir), ["on"]);
+        // A skill switched off later is taken out of its folder on the next run.
+        set(&me.id, &on.id, false);
+        let tools = for_task_run(&s, &assistant, None).unwrap();
+        assert_eq!(tools.skills_dir, None);
+        assert!(written(&dir).is_empty());
+        set(&me.id, &on.id, true);
+        // A global one that's off everywhere (the item itself) isn't given either.
+        {
+            let c = s.db();
+            update_skill_in(&c, None, &on.id, SkillBody { content: None, enabled: Some(false) }).unwrap();
+        }
+        assert_eq!(for_task_run(&s, &assistant, None).unwrap().skills_dir, None);
+        {
+            let c = s.db();
+            update_skill_in(&c, None, &on.id, SkillBody { content: None, enabled: Some(true) }).unwrap();
+        }
+        // The other profile's assistant has its own.
+        let theirs = crate::agent::assistant::get_or_create(&s, &other.id).unwrap();
+        let tools = for_task_run(&s, &theirs, None).unwrap();
+        assert_eq!(tools.mcp_servers.keys().collect::<Vec<_>>(), ["quiet"]);
+        assert_eq!(written(&PathBuf::from(tools.skills_dir.unwrap())), ["off"]);
+        // A scratch task in no project still gets none.
+        let scratch = crate::api::create_scratch_task_inner(&s, &me.id, crate::api::CreateTask::default()).unwrap();
+        let tools = for_task_run(&s, &scratch, None).unwrap();
+        assert!(tools.mcp_servers.is_empty() && tools.skills_dir.is_none());
+        // A project's run is as it was.
+        let project = {
+            let c = s.db();
+            let new = NewProject { id: "web", profile_id: &me.id, name: "Web", key: "WEB", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+            insert_project(&c, new).unwrap()
+        };
+        let tools = for_task_run(&s, &scratch, Some(&project)).unwrap();
+        assert_eq!(tools.mcp_servers.keys().collect::<Vec<_>>(), ["probe"]);
+
+        // The composer's `/` menu lists the skills the assistant has, and not those that are off.
+        let Json(v) = for_task(State(s.clone()), Path(assistant.id.clone())).await.unwrap();
+        let names: Vec<&str> = v["skills"].as_array().unwrap().iter().filter_map(|s| s["name"].as_str()).collect();
+        assert!(names.contains(&"on"), "{v}");
+        assert!(!names.contains(&"off") && !names.contains(&"unset"), "{v}");
+    });
+}

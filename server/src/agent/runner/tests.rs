@@ -1072,7 +1072,9 @@ fn the_assistant_is_told_what_it_is() {
         assert!(text.contains("`create_task`") && text.contains("list_projects") && text.contains("request_user_input"), "{text}");
         assert!(!text.contains("In review\"."), "{text}");
         assert_paragraphs(&text);
-        assert!(start_prompt(&task, None, "Hi").starts_with("# A-1: Assistant\n"));
+        // Its first prompt is the user's message, not a task to start on.
+        assert_eq!(start_prompt(&task, None, " What's on today?\n"), "What's on today?");
+        assert!(!start_prompt(&task, None, "Hi").contains(crate::agent::prompts::DEFAULT_START));
     });
 }
 

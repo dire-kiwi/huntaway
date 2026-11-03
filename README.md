@@ -210,8 +210,10 @@ It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST`
 `{"text": …}` sends it a message), keyed `A-<n>` (no project can use the key `A`; one that had it
 moves to `AP`), and its agent works in `<data dir>/assistants/<task id>`, which it can write without
 asking and which lasts between conversations. It's told it's a personal assistant rather than a
-coding agent: it has the profile's skills and MCP servers (those set up for no project) and the
-board tools, and hands code work to project tasks with `create_task`. It never goes to review or
+coding agent: it has the global skills and MCP servers its profile switches on (its skills are written
+to `<data dir>/profiles/<profile id>/agent`), on Claude Code and Codex alike, and the board tools, and
+hands code work to project tasks with `create_task`. Your messages go to it as they are, with no
+"start working on this task" around the first. It never goes to review or
 merge: after each reply it's back in *To do*, and it can't be moved to *In review*, *Ready for
 merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and the profile's task
 lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
