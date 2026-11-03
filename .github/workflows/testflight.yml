@@ -1,0 +1,63 @@
+# Builds the mobile app for iOS on EAS (Expo's build service, so no Mac or Xcode is needed) from a release's tag, and
+# submits it to TestFlight with EAS Submit. Run it by hand (Actions → TestFlight → Run workflow, with the tag), or on
+# each published release once the repository variable TESTFLIGHT_ON_RELEASE is `true`. It needs the repository secret
+# EXPO_TOKEN (an Expo access token), and the Apple side kept on EAS: the distribution certificate and provisioning
+# profile, and an App Store Connect API key for submitting (README: The mobile app). The job only uploads the project
+# and starts the build (--no-wait): the build, then the submission, carry on at EAS, which shows them and emails a failure.
+name: TestFlight
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the release to build for TestFlight
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+concurrency:
+  group: testflight-${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  ios:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.TESTFLIGHT_ON_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: npm ci
+        working-directory: mobile
+        run: npm ci --no-audit --no-fund
+
+      # The release's version in app.json, committed here (not pushed) since EAS builds what's committed.
+      - name: Version
+        working-directory: mobile
+        run: |
+          node scripts/release-version.js "${TAG#v}" --ios
+          git -c user.name="GitHub Actions" -c user.email="actions@users.noreply.github.com" commit -q -m "Version ${TAG#v}" app.json
+
+      - name: EAS build and submit
+        working-directory: mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Set the repository secret EXPO_TOKEN (README: The mobile app)"
+            exit 1
+          fi
+          npx --yes eas-cli@27 build --platform ios --profile production --non-interactive --auto-submit --no-wait

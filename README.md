@@ -433,11 +433,36 @@ reply streaming in, the composer, photos from the camera or library as attachmen
 stop and move. A **Boards** tab lists the paired boards, picks the profile shown on each, and opens
 a board on the web for what the app leaves out (terminals, diffs and commits, settings,
 analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
-the network changes. A board older than API 100 says so rather than failing.
+the network changes.
 
-The phone reaches a board over **HTTPS**: iOS and Android refuse plain HTTP, and the app adds no
-exception. With Tailscale, run `tailscale serve --bg 7878` on the board's machine, as for push
-(see *Push notifications on a phone*). Then pair:
+**Installing it.** Nothing needs building:
+
+- **Android**: each GitHub release has the app as `huntaway-<version>.apk`. Open the release page on
+  the phone, download it, and allow your browser to install apps when Android asks (Settings →
+  Apps → Special app access → Install unknown apps). A later release's APK installs over it, keeping
+  the paired boards; Android refuses one signed with another key, or an older version.
+- **iPhone**: through TestFlight. Install Apple's TestFlight app, then open the invitation (an email
+  from App Store Connect, or a public TestFlight link if one is shared) and tap **Install**. TestFlight
+  offers each new build as it's uploaded, and a build lasts 90 days.
+
+The app works with a board of the same API or newer: a board older than the app's minimum (API 100,
+`MIN_API` in `mobile/src/pairing.ts`) says so in the app, both when pairing and on a paired board
+that's later found older (after a rollback, say), rather than failing somewhere later. Update that
+board's Huntaway to use it again.
+
+**HTTPS.** The phone reaches a board over HTTPS: iOS and Android refuse plain HTTP, and the app
+adds no exception. With [Tailscale](https://tailscale.com) on the board's machine and the phone,
+run this on the board's machine:
+
+```sh
+tailscale serve --bg 7878     # https://<machine>.<tailnet>.ts.net → 127.0.0.1:7878
+```
+
+(or put any TLS reverse proxy in front of port 7878, such as Caddy's `reverse_proxy`). The QR code
+carries the address the phone will use, so pair from the board opened at that URL, or type the URL
+into the pairing's address field.
+
+**Pairing.**
 
 1. On the board, Settings → Network access → **Pair a phone**, and check the address it shows
    (the host's public address if it has one, else the page's own if that's HTTPS).
@@ -447,13 +472,23 @@ The QR code holds `huntaway://pair?url=<board>&code=<code>`: a code that works o
 minutes, never the board's token. `POST /devices/pair` (which needs no token) swaps it and the
 phone's name for a token of the phone's own, which the app keeps in the keychain (Android's
 keystore). The board keeps only its SHA-256, in `device_tokens`, and takes it as it takes
-`auth_token`, on REST, `/ws` and `/api/h/<host>/…`. Settings lists the paired devices, with their
-last use, to rename or revoke; revoking one cuts it off at once, open websockets included, and the
-app then says it was unpaired. A device can't pair others or manage them (`POST
-/devices/pairing`, `PATCH` and `DELETE /devices/{id}` are for the board's own token), but it can
-list them and unpair itself, which removing the board in the app does. Pairing the same board again
-unpairs the phone's old token there. A device can only use the routes the app does (`HUB` and
-`HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, attachments,
+`auth_token`, on REST, `/ws` and `/api/h/<host>/…`.
+
+**Several boards.** Pair each board the same way (a work hub and a personal board, say): the app
+keeps a token for each, the Inbox shows them all together with each item labelled, and Boards
+lists them, with the profile shown on each, and removes one. A hub's linked hosts come with it, so
+pair the hub rather than each host. Pairing the same board again unpairs the phone's old token
+there.
+
+**Push.** The app doesn't push notifications yet. Until it does, install the board on the phone
+as a web app as well and turn on push there (see *Push notifications on a phone*).
+
+**Revoking a device.** Settings → Network access lists the paired devices, with their last use,
+to rename or revoke; revoking one cuts it off at once, open websockets included, and the app then
+says it was unpaired. A device can't pair others or manage them (`POST /devices/pairing`, `PATCH`
+and `DELETE /devices/{id}` are for the board's own token), but it can list them and unpair itself,
+which removing the board in the app does. A device can only use the routes the app does (`HUB`
+and `HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, attachments,
 permission prompts, the board's events and hosts, and the devices list, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
@@ -468,7 +503,68 @@ started an agent that read the board's files, `auth_token` among them, as any ag
 phone may have been used, replace `auth_token` as well: delete `<data-dir>/auth_token` and restart
 the server, which makes a new one (browsers, and hubs that link this host, then need the new one).
 
-To run it (Node 22.13 or later):
+#### Building the mobile app
+
+The app is `nz.net.ivan.huntaway` on both platforms, as the desktop app is, and takes the release's
+version: `mobile/scripts/release-version.js` writes it into `app.json` before a release build, with
+Android's `versionCode` worked out from it (1.2.3 → 10203999, 1.2.3-rc.2 → 10203002), so each
+release installs over the one before. The repository keeps 1.0.0. Its icons are rendered from the
+board's (`app/public/icon.svg`) by `mobile/scripts/icons.sh`.
+
+**Android** is built by the release workflow's `android` job (`.github/workflows/release.yml`) on
+GitHub's runner, with `npx expo prebuild` and Gradle, rather than on EAS: it needs no Expo account
+or EAS build quota, it's attached to the release with the other files, and the signing key stays
+in this repository's secrets. A pull request that changes the app's packaging (`mobile/app.json`,
+`eas.json`, its `package.json`) builds the APK too, as an artifact of its run, signed with the
+debug key of Expo's template: fine for trying, but it won't update a release's app or the other
+way round. A release's APK needs the release key, made once and kept:
+
+```sh
+keytool -genkeypair -v -storetype PKCS12 -keystore huntaway-release.jks -alias huntaway \
+  -keyalg RSA -keysize 4096 -validity 10000          # asks for its password
+gh secret set ANDROID_KEYSTORE_BASE64 --body "$(base64 -w0 huntaway-release.jks)"
+gh secret set ANDROID_KEYSTORE_PASSWORD             # each asks for its value
+gh secret set ANDROID_KEY_ALIAS --body huntaway
+gh secret set ANDROID_KEY_PASSWORD                  # a PKCS12 key's is the keystore's
+```
+
+Keep a copy of `huntaway-release.jks` and its password somewhere safe outside the repository
+(`*.jks` is ignored there): phones only update the app from an APK signed with the same key, so
+losing it means everyone uninstalling and pairing again. Only a release's build (a tag) uses the
+key, never a branch's; without it, the `android` job fails and the release gets the other files.
+
+**iOS** is built and sent to TestFlight by EAS (Expo's build service, so no Mac or Xcode), from
+`.github/workflows/testflight.yml`: by hand (Actions → TestFlight → Run workflow, with a release's
+tag), or on every published release once the repository variable `TESTFLIGHT_ON_RELEASE` is
+`true`. It starts the build with `eas build --platform ios --profile production --auto-submit`
+and returns; the build and the submission carry on at EAS, which emails a failure, and App Store
+Connect takes a few minutes more to process the build before TestFlight offers it. Setting it
+up, once:
+
+1. An [Apple Developer Program](https://developer.apple.com/programs/) membership (US$99 a year)
+   and an [Expo](https://expo.dev) account.
+2. In `mobile/`: `npx eas-cli login`, then `npx eas-cli init`, which makes the Expo project and
+   writes its `owner` and `extra.eas.projectId` into `app.json`; commit them.
+3. `npx eas-cli credentials --platform ios` (production): sign in with the Apple account, and let
+   it make the distribution certificate and provisioning profile, and an App Store Connect API key
+   for EAS Submit. EAS keeps them, not this repository.
+4. In App Store Connect, add the app (bundle id `nz.net.ivan.huntaway`), and put its Apple ID (the
+   number under App Information) and your team id in `eas.json`'s `submit.production.ios` as
+   `ascAppId` and `appleTeamId`.
+5. An Expo access token (expo.dev → Account settings → Access tokens) as the repository secret
+   `EXPO_TOKEN`.
+6. In App Store Connect → TestFlight, an internal testing group with yourself in it (testers in an
+   internal group get each build without Apple's review); external testers need a review of the
+   first build.
+
+The first build can also be run from a terminal, which asks for whatever is missing:
+`npx eas-cli build --platform ios --profile production --auto-submit` in `mobile/`.
+
+`eas.json`'s other profiles are for EAS builds by hand: `development` (a dev build, below) and
+`preview` (a release build for phones registered with `eas device:create`, and an APK on Android).
+EAS counts the iOS build numbers itself (`appVersionSource: "remote"`).
+
+**Developing** (Node 22.13 or later):
 
 ```sh
 cd mobile && npm ci
@@ -536,6 +632,7 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
+| `huntaway-<version>.apk` | The mobile app for Android (see *The mobile app*) |
 | `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
 | `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
