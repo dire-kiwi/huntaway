@@ -847,12 +847,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         // agent/tokens/calls.rs).
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V80} PRAGMA user_version=80; COMMIT;"))?;
     }
+    if version < 81 {
+        // Which call each `call_usage` row is from (a call has a row for each model it used). The
+        // rows written before were one call's if they agree on all but the model.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('call_usage') WHERE name='call_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE call_usage ADD COLUMN call_id TEXT;" };
+        conn.execute_batch(&format!(
+            "BEGIN; {add}
+             UPDATE call_usage SET call_id=lower(hex(randomblob(16))) WHERE call_id IS NULL AND id IN (SELECT MIN(id) FROM call_usage WHERE call_id IS NULL GROUP BY at, purpose, task_id, config_id);
+             UPDATE call_usage SET call_id=(SELECT c.call_id FROM call_usage c WHERE c.id=(SELECT MIN(d.id) FROM call_usage d WHERE d.at=call_usage.at
+               AND d.purpose=call_usage.purpose AND d.task_id IS call_usage.task_id AND d.config_id IS call_usage.config_id)) WHERE call_id IS NULL;
+             PRAGMA user_version=81; COMMIT;"
+        ))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 80;
+pub const VERSION: i64 = 81;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
@@ -899,7 +912,8 @@ CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);
 /// What each model call that isn't a run used (see agent/tokens/calls.rs), counted as
 /// `token_usage` is: `purpose` `title` for a task's title, written for task `task_id`, and `window`
 /// for the prompt that restarts config `config_id`'s 5-hour window. `cost_usd` is null for Codex,
-/// which doesn't say.
+/// which doesn't say. From version 81, `call_id` says which call a row is from: a call has a row
+/// for each model it used, and they share it.
 const SCHEMA_V80: &str = r#"
 CREATE TABLE IF NOT EXISTS call_usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

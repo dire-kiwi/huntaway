@@ -252,6 +252,8 @@ pub fn context_report(c: &Connection, profile_id: &str, from: &str, to: &str) ->
 pub struct UsageRow {
     /// Null for a call that isn't a run.
     pub run_id: Option<String>,
+    /// A call's that isn't a run (API 100): the rows of a call, one for each model it used, share it.
+    pub call_id: Option<String>,
     /// The thread the run was in: a task, or a review or summary thread. A title's task; null for a window's restart.
     pub task_id: Option<String>,
     /// The run's: `prompt`, `compact` or `review`; or the call's: `title` or `window`.
@@ -367,6 +369,7 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
         .query_map(params![profile_id, from, to], |r| {
             Ok(UsageRow {
                 run_id: r.get(0)?,
+                call_id: None,
                 task_id: r.get(1)?,
                 kind: r.get(2)?,
                 at: r.get(3)?,
@@ -468,7 +471,7 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
 fn call_usage(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow::Result<Vec<UsageRow>> {
     let mut st = c.prepare(
         "SELECT u.task_id, u.purpose, u.at, u.model, u.runtime, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens,
-           u.reasoning_tokens, u.cost_usd
+           u.reasoning_tokens, u.cost_usd, u.call_id
          FROM call_usage u LEFT JOIN tasks t ON t.id=u.task_id
          WHERE u.at >= ?2 AND u.at < ?3 AND (t.profile_id=?1 OR (u.task_id IS NULL AND ?1=COALESCE(
            (SELECT p.id FROM profiles p WHERE EXISTS (SELECT 1 FROM json_each(p.claude_config_ids) j WHERE j.value=u.config_id)
@@ -480,6 +483,7 @@ fn call_usage(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow:
         .query_map(params![profile_id, from, to], |r| {
             Ok(UsageRow {
                 run_id: None,
+                call_id: r.get(11)?,
                 task_id: r.get(0)?,
                 kind: r.get(1)?,
                 at: r.get(2)?,
