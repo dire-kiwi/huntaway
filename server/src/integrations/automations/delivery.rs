@@ -82,6 +82,8 @@ pub(super) struct Vars<'a> {
     pub(super) now: DateTime<Utc>,
     /// What the automation's precheck printed, if it has one (see routines::precheck).
     pub(super) precheck: Option<&'a str>,
+    /// For a routine that names `{{google}}`: where the assistant's Google server stands (assistant/google.rs's status_line).
+    pub(super) google: Option<&'a str>,
 }
 
 /// A path a template or filter names: letters, digits, `_`, `-`, `.` and `*`.
@@ -107,11 +109,15 @@ fn walk(v: &Value, path: &[&str]) -> Vec<Value> {
 /// request's or discussion's labels, and the label added or removed) and `delivery` (its id).
 /// From the board: `automation` (its name), `source`, `count` (deliveries in the run), `date`
 /// and `time` (the host's), and `now`. And `precheck`, what the automation's precheck printed,
-/// which counts as from outside: it's often what the command fetched.
+/// which counts as from outside: it's often what the command fetched. For a routine, `google`:
+/// whether the assistant's Google server is connected, as whom, or why not (the board's own words).
 fn lookup(vars: &Vars, path: &str) -> (Vec<Value>, bool) {
     let parts: Vec<&str> = path.split('.').collect();
     if path == "precheck" {
         return (vars.precheck.map(|p| json!(p)).into_iter().collect(), true);
+    }
+    if path == "google" {
+        return (vars.google.map(|g| json!(g)).into_iter().collect(), false);
     }
     let local = vars.now.with_timezone(&Local);
     let board = |v: Value| (vec![v], false);

@@ -105,10 +105,10 @@ pub const GOOGLE_SERVER: &str = "google";
 pub fn default_rules() -> Vec<Rule> {
     use Decision::*;
     let g = |p: &str| format!("mcp__{GOOGLE_SERVER}__{p}");
-    let allow = ["search*", "get*", "list*", "read*", "check*", "*draft*"].map(|p| rule(&g(p), Allow));
+    let allow = ["search*", "get*", "list*", "read*", "check*", "query*", "*draft*"].map(|p| rule(&g(p), Allow));
     let ask = [
         "*send*", "create*event*", "modify*event*", "update*event*", "delete*event*", "*share*", "*add*permission*", "*update*permission*",
-        "*remove*permission*", "*message*label*", "manage*", "update*file*", "create*filter*", "*transfer*",
+        "*remove*permission*", "set*permission*", "*message*label*", "manage*", "update*file*", "create*filter*", "*transfer*",
     ]
     .map(|p| rule(&g(p), Ask));
     let never = ["*trash*", "*delete*mail*", "*mail*delete*", "*delete*message*", "*delete*file*", "*delete*drive*", "*drive*delete*"].map(|p| rule(&g(p), Never));

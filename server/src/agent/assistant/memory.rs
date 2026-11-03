@@ -418,6 +418,8 @@ async fn stage(dir: &Path, who: Who) -> Result<()> {
     paths.sort_unstable();
     paths.dedup();
     // A name that isn't UTF-8 (which reads back as another, with U+FFFD in it) would fail the whole `add`.
+    // The morning brief and its items (brief.rs) are written over each day and kept as the assistant's documents, one version a day.
+    paths.retain(|p| *p != super::brief::FILE && *p != super::brief::ITEMS_FILE);
     let (big, paths): (Vec<&str>, Vec<&str>) = paths.into_iter().partition(|p| p.contains('\u{FFFD}') || too_big(dir, p));
     if !big.is_empty() {
         tracing::info!(dir = %dir.display(), "not committing files over {MAX_COMMITTED} bytes, or not named in UTF-8: {}", big.join(", "));
@@ -711,7 +713,7 @@ pub fn resolve(dir: &Path, rel: &str) -> Result<PathBuf, String> {
 }
 
 /// The workspace and the file `rel` in it, as a 400 if it isn't one there.
-fn file_path(dir: &Path, rel: &str) -> ApiResult<PathBuf> {
+pub(super) fn file_path(dir: &Path, rel: &str) -> ApiResult<PathBuf> {
     resolve(dir, rel).map_err(ApiError::bad)
 }
 
@@ -763,6 +765,10 @@ pub fn list(dir: &Path, today: NaiveDate) -> Vec<Value> {
             if walked > MAX_WALKED && !matches!(kind(&rel), "user" | "memory") {
                 continue;
             }
+            // The morning brief is the assistant's document (its Brief tab), not memory.
+            if prefix.is_empty() && (name == super::brief::FILE || name == super::brief::ITEMS_FILE) {
+                continue;
+            }
             let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
             if meta.is_dir() {
                 if name != ".git" && rel.matches('/').count() < 4 {
@@ -799,7 +805,7 @@ pub fn list(dir: &Path, today: NaiveDate) -> Vec<Value> {
 // ---------- the API ----------
 
 /// The profile's assistant and its workspace, made ready.
-async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
+pub(super) async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
     elsewhere(s, profile_id)?;
     let task = super::get_or_create(s, profile_id)?;
     let dir = checked(s, &task).map_err(|e| ApiError::conflict(format!("{e:#}")))?;
@@ -809,7 +815,7 @@ async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
 
 /// A profile whose assistant runs on another host (its `assistant_host`) keeps its memory there: asked here, it's a 409
 /// rather than a second assistant made on this host. (The board asks the assistant's host, by its task's host and profile.)
-fn elsewhere(s: &Shared, profile_id: &str) -> ApiResult<()> {
+pub(super) fn elsewhere(s: &Shared, profile_id: &str) -> ApiResult<()> {
     let p = crate::db::get_profile(&s.db(), profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?;
     match p.assistant_host.filter(|h| !h.is_empty() && *h != s.host_id) {
         Some(h) => Err(ApiError::conflict(format!("{}'s assistant runs on another host ({h}): its memory is there", p.name))),
@@ -919,6 +925,12 @@ async fn put(dir: &Path, path: &Path, rel: &str, content: &str, seen: Option<Opt
             )));
         }
     }
+    write_file(dir, path, rel, content)?;
+    Ok(commit_file_locked(dir, Who::User, rel, message).await?)
+}
+
+/// Write file `rel` (at `path`, as `file_path` checked it) in the workspace, making its folders if need be.
+fn write_file(dir: &Path, path: &Path, rel: &str, content: &str) -> ApiResult<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| ApiError::from(anyhow::anyhow!("making the folder for {rel}: {e}")))?;
         // Made just now, so check the way again.
@@ -932,8 +944,26 @@ async fn put(dir: &Path, path: &Path, rel: &str, content: &str, seen: Option<Opt
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes()));
-    written.map_err(|e| ApiError::bad(format!("writing {rel}: {e}")))?;
-    Ok(commit_file_locked(dir, Who::User, rel, message).await?)
+    written.map_err(|e| ApiError::bad(format!("writing {rel}: {e}")))
+}
+
+/// Change file `rel` (at `path`) with `edit`, given what it says now ("" if it isn't there), and commit it as the user's,
+/// with the workspace's lock held from the read to the commit, so nothing written meanwhile through the board is lost. As
+/// in `put`, what it says now is committed first, as the assistant's, if that isn't. Returns what it says, and the commit.
+pub(super) async fn change(dir: &Path, path: &Path, rel: &str, message: &str, edit: impl FnOnce(&str) -> String) -> ApiResult<(String, Option<String>)> {
+    let lock = lock(dir);
+    let _held = lock.lock().await;
+    let now = match std::fs::symlink_metadata(path) {
+        Ok(_) => Some(read_text(path, rel)?),
+        Err(_) => None,
+    };
+    if now.is_some() {
+        commit_file_locked(dir, Who::Assistant, rel, &format!("Update {rel}")).await?;
+    }
+    let content = edit(now.as_deref().unwrap_or(""));
+    write_file(dir, path, rel, &content)?;
+    let commit = commit_file_locked(dir, Who::User, rel, message).await?;
+    Ok((content, commit))
 }
 
 #[derive(Deserialize)]

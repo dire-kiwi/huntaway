@@ -89,6 +89,18 @@ enum Cmd {
         /// Task ids.
         tasks: Vec<String>,
     },
+    /// Sign in to Google for the assistant's Google server (Gmail, Calendar, Drive), on a headless host: it listens on
+    /// 127.0.0.1:<port>, which you forward with `ssh -L`, and keeps the token in ~/.google_workspace_mcp/credentials.
+    GoogleAuth {
+        /// The OAuth client's JSON, downloaded from Google Cloud (a Desktop app client).
+        #[arg(long)]
+        client_secret: Option<PathBuf>,
+        /// Where to keep the credentials (workspace-mcp's WORKSPACE_MCP_CREDENTIALS_DIR).
+        #[arg(long)]
+        credentials_dir: Option<PathBuf>,
+        #[arg(long, default_value_t = agent::assistant::google::CONSENT_PORT)]
+        port: u16,
+    },
     /// Print this host's access token (or, with --hub, the token hosts use to dial in).
     Token {
         #[arg(long, env = "IA_DATA_DIR")]
@@ -255,6 +267,7 @@ async fn main() -> Result<()> {
         Some(Cmd::ApprovalHook { rules }) => agent::approval_rules::hook(&rules),
         Some(Cmd::GhRun { args }) => std::process::exit(gh_mcp::gh_run(args).await?),
         Some(Cmd::CodexRun { spec }) => codex::run_adapter(&spec).await,
+        Some(Cmd::GoogleAuth { client_secret, credentials_dir, port }) => agent::assistant::google::consent::run(client_secret, credentials_dir, port).await,
         Some(Cmd::Token { data_dir, hub }) => {
             let dir = data_dir.unwrap_or_else(default_data_dir);
             std::fs::create_dir_all(&dir)?;

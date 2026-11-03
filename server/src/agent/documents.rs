@@ -22,6 +22,7 @@ use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::agent::assistant::brief;
 use crate::db::{self, Project, Task};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{now, path_str};
@@ -86,9 +87,21 @@ pub fn work_dir(state: &Shared, task: &Task) -> Option<PathBuf> {
     }
 }
 
-/// Where a task's agent writes the document for one of its labels.
+/// Where a task's agent writes the document for one of its labels, or the assistant its morning brief (see brief_path).
 pub fn path(state: &Shared, task: &Task, label: &str) -> Option<PathBuf> {
+    if label == brief::LABEL {
+        return brief_path(state, task);
+    }
+    if label == brief::ITEMS_LABEL {
+        return brief_path(state, task).map(|p| p.with_file_name(brief::ITEMS_FILE));
+    }
     Some(dir(state, &task.id).join(file_name(label)?))
+}
+
+/// The assistant's morning brief (assistant/brief.rs): `brief.html` in its workspace, which its routine threads work in too.
+/// Kept as its `brief` document, one version a day. None for any other task.
+pub fn brief_path(state: &Shared, task: &Task) -> Option<PathBuf> {
+    task.is_assistant().then(|| work_dir(state, task)).flatten().map(|d| d.join(brief::FILE))
 }
 
 /// The documents a task's agent writes, by label.
@@ -174,7 +187,7 @@ fn try_keep(state: &Shared, task_id: &str, end_of_turn: bool) -> anyhow::Result<
     let Some(task) = db::get_task(&state.db(), task_id)? else { return Ok(()) };
     let mut changed = false;
     for (label, file) in paths(state, &task) {
-        changed |= keep_one(state, task_id, label, &file, end_of_turn)?;
+        changed |= keep_one(state, task_id, label, &file, end_of_turn, false)?;
     }
     // A label taken off during the turn leaves its version as it was.
     if end_of_turn {
@@ -183,11 +196,43 @@ fn try_keep(state: &Shared, task_id: &str, end_of_turn: bool) -> anyhow::Result<
     if changed {
         state.update_task(task_id, &[("document_at", json!(now()))])?;
     }
+    keep_brief(state, &task, end_of_turn)
+}
+
+/// The assistant's morning brief, after a turn of the assistant or one of its routine threads (which write it): its
+/// version for the day follows the file (see brief_path).
+fn keep_brief(state: &Shared, task: &Task, end_of_turn: bool) -> anyhow::Result<()> {
+    let assistant = match (task.is_assistant(), task.is_routine(), task.parent_id.as_deref()) {
+        (true, _, _) => task.clone(),
+        (_, true, Some(p)) => match db::get_task(&state.db(), p)? {
+            Some(a) if a.is_assistant() && a.work_dir == task.work_dir => a,
+            _ => return Ok(()),
+        },
+        _ => return Ok(()),
+    };
+    let Some(file) = brief_path(state, &assistant) else { return Ok(()) };
+    // The brief, and its items (brief.json) beside it.
+    let mut changed = false;
+    for (label, file) in [(brief::LABEL, file.clone()), (brief::ITEMS_LABEL, file.with_file_name(brief::ITEMS_FILE))] {
+        changed |= keep_one(state, &assistant.id, label, &file, end_of_turn, true)?;
+        if end_of_turn {
+            state.db().execute("UPDATE documents SET open=0 WHERE task_id=?1 AND label=?2 AND open=1", [&assistant.id, label])?;
+        }
+    }
+    if changed {
+        state.update_task(&assistant.id, &[("document_at", json!(now()))])?;
+    }
     Ok(())
 }
 
-/// Keep the document for one label if it changed: whether it did.
-fn keep_one(state: &Shared, task_id: &str, label: &'static str, file: &FsPath, end_of_turn: bool) -> anyhow::Result<bool> {
+/// Whether a version made at `created_at` (RFC 3339) was made today, in the host's time zone.
+fn made_today(created_at: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(created_at).is_ok_and(|t| t.with_timezone(&chrono::Local).date_naive() == chrono::Local::now().date_naive())
+}
+
+/// Keep the document for one label if it changed: whether it did. With `daily`, a change goes into the day's version (one
+/// made today, in the host's time zone) rather than one for the turn.
+fn keep_one(state: &Shared, task_id: &str, label: &'static str, file: &FsPath, end_of_turn: bool, daily: bool) -> anyhow::Result<bool> {
     let stamp = std::fs::metadata(file).ok().map(|m| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
     let unchanged = {
         let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -216,14 +261,17 @@ fn keep_one(state: &Shared, task_id: &str, label: &'static str, file: &FsPath, e
     let c = state.db();
     let latest: Option<(i64, String, bool)> = c
         .query_row(
-            "SELECT version, content, open FROM documents WHERE task_id=?1 AND label=?2 ORDER BY version DESC LIMIT 1",
+            "SELECT version, content, open, created_at FROM documents WHERE task_id=?1 AND label=?2 ORDER BY version DESC LIMIT 1",
             [task_id, label],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, bool>(2)? || (daily && made_today(&r.get::<_, String>(3)?)))),
         )
         .optional()?;
     // (The end of the turn closes an open version that doesn't change, in try_keep.)
+    // A daily document written today, the same as the last day's (the same starred mail, say), is today's version all the
+    // same; a file left as it was isn't, as its time says.
+    let written_today = daily && stamp.is_some_and(|(_, at)| chrono::DateTime::<chrono::Local>::from(at).date_naive() == chrono::Local::now().date_naive());
     Ok(match (content, latest) {
-        (Some(new), Some((_, old, _))) if new == old => false,
+        (Some(new), Some((_, old, open))) if new == old && (open || !written_today) => false,
         // The turn's version follows the file.
         (Some(new), Some((v, _, true))) => {
             c.execute(
@@ -257,6 +305,8 @@ pub struct DocumentQuery {
 pub async fn get(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<DocumentQuery>) -> ApiResult<Json<Value>> {
     let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
     let label = match q.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        // The assistant's morning brief (API 105).
+        Some(l) if l == brief::LABEL && task.is_assistant() => brief::LABEL,
         Some(l) => *db::LABELS.iter().find(|x| **x == l).ok_or_else(|| ApiError::bad(format!("unknown label {l:?}")))?,
         None => labels(&task).first().copied().unwrap_or(db::LABELS[0]),
     };
@@ -284,13 +334,23 @@ pub async fn get(State(s): State<Shared>, Path(id): Path<String>, Query(q): Quer
     if q.version.is_some() && content.is_none() {
         return Err(ApiError::not_found("version"));
     }
-    Ok(Json(json!({
+    let mut out = json!({
         "label": label,
         "file": path(&s, &task, label).map(|p| path_str(&p)),
         "versions": versions,
         "version": version.filter(|_| content.is_some()),
         "content": content,
-    })))
+    });
+    // The brief's items to rate (API 105): those the run wrote the same day, in the host's time zone, as checked.
+    if label == brief::LABEL {
+        let day = |at: &str| chrono::DateTime::parse_from_rfc3339(at).ok().map(|t| t.with_timezone(&chrono::Local).date_naive());
+        let shown = versions.iter().find(|v| v["version"].as_i64() == version).and_then(|v| v["created_at"].as_str().and_then(day));
+        let mut st = c.prepare("SELECT content, created_at FROM documents WHERE task_id=?1 AND label=?2 ORDER BY version DESC")?;
+        let lists: Vec<(String, String)> = st.query_map([&id, brief::ITEMS_LABEL], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let items = shown.and_then(|d| lists.into_iter().find(|(_, at)| day(at) == Some(d))).map(|(text, _)| brief::items(&text)).unwrap_or_default();
+        out["items"] = json!(items);
+    }
+    Ok(Json(out))
 }
 
 /// What a task's agent is told to write and where, for a task that makes only documents (see

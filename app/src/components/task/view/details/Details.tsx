@@ -1,8 +1,9 @@
 import clsx from "clsx";
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, CHECKS_API, documentsOnly, hasApprovalRules, hasTelegram, hostSupports, isAssistant, isScratch, LABELS_API, taskLabels, type Host, type Task } from "../../../../api";
+import { api, CHECKS_API, documentsOnly, hasApprovalRules, hasBrief, hasTelegram, hostSupports, isAssistant, isScratch, LABELS_API, taskLabels, type Host, type Task } from "../../../../api";
 import { RulesSection } from "../../ApprovalRules";
+import { GoogleCard } from "../../GoogleCard";
 import { TelegramSection } from "../../Telegram";
 import { isGroupTask, useProject, useStore } from "../../../../store";
 import { Dependencies } from "../../../board/Dependencies";
@@ -105,6 +106,12 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             )}
             <AssistantPlace host={host} />
           </div>
+        </Section>
+      )}
+
+      {assistant && hasBrief(host) && (
+        <Section title="Google">
+          <GoogleCard assistant={task} />
         </Section>
       )}
 
