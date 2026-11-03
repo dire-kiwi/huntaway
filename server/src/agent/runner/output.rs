@@ -290,6 +290,7 @@ fn record_turn_end(state: &Shared, run: &Run, error: Option<String>, mut result:
     // A turn that ended isn't waiting any more, even if the agent gave up on the call.
     crate::mcp::wait::ended(state, &run.task_id, &run.id);
     crate::agent::documents::turn_ended(state, &run.task_id);
+    crate::agent::assistant::memory::turn_ended(state, &run.task_id);
     crate::agent::context::record_turn(state, run, result["total_cost_usd"].as_f64())?;
     state.add_message(&run.task_id, "claude", result)?;
     Ok(())
@@ -344,6 +345,7 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     crate::testing::reached("finish:exited");
     // What a stopped or failed run had written of its document.
     crate::agent::documents::turn_ended(state, task_id);
+    crate::agent::assistant::memory::turn_ended(state, task_id);
     state.emit(json!({"type": "delta_reset", "task_id": task_id}));
     let Ok(Some(task)) = db::get_task(&state.db(), task_id) else { return };
     if run.kind == "review" && crate::review::summary::is_summary(&task) {

@@ -307,6 +307,10 @@ fn load(state: &Shared, task_id: &str) -> Result<(Task, Option<Project>, Profile
 
 /// Where the running agent of `task` works, as `launch` picked it (its worktree is set up by now).
 pub fn work_dir(state: &Shared, task: &Task) -> Result<std::path::PathBuf> {
+    // The assistant's workspace, if it's its own (not a symlink to another's, see assistant::memory::checked).
+    if task.is_assistant() {
+        return crate::agent::assistant::memory::checked(state, task);
+    }
     if let Some(d) = crate::agent::documents::work_dir(state, task) {
         return Ok(d);
     }

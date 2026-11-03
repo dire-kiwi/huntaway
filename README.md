@@ -219,6 +219,24 @@ merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and th
 lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
 whatever access their profile has.
 
+The assistant **remembers** you (API 99) in files in its workspace: `USER.md` (who you are, your
+preferences), `MEMORY.md` (lasting facts) and a log for each day, `memory/YYYY-MM-DD.md` (in the
+host's time zone). The board, not the CLI, puts them into the instructions of every run, so it's
+the same on Claude Code and Codex and always what the files say now: `USER.md` and `MEMORY.md` up
+to 8,000 characters each (with a note to the assistant when one is cut), today's and yesterday's
+logs (their ends, if longer), and how to remember, forget and keep the log. The workspace is a git
+repository: after each of the assistant's turns that changed it, the board commits it as
+*Assistant*. The assistant's **Memory** tab lists the files (those loaded into every run
+highlighted, with their length against the cap), edits them (committed as *You*; a save over what the
+assistant wrote meanwhile asks whose to keep), shows each file's history with what each commit
+changed, and restores a version. Its **Import** gives a prompt to paste into another assistant
+(ChatGPT, Claude.ai…) for what it knows about you, and sends its answer to your assistant, as data,
+to fold into `USER.md` and `MEMORY.md`. The API is under `/api/profiles/<id>/assistant/memory`
+(`file`, `history`, `diff`, `restore`, `import`), and only reaches files in that profile's
+assistant's workspace: paths with `..`, in `.git` or through a symlink are refused, and so is a
+workspace (or `assistants` folder) that's been replaced by a symlink, whose memory isn't loaded or
+committed either.
+
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
@@ -1777,11 +1795,11 @@ new GitHub issue to triage. Each one has a trigger and an action, can be switche
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 99:
+  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 100:
   five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
-  the host's time zone); a moment (**at**, API 99: it runs once, late if the server was down then,
+  the host's time zone); a moment (**at**, API 100: it runs once, late if the server was down then,
   and turns itself off); or a **webhook**: a POST to `/api/hooks/<id>/<token>` on the host.
-- **Before each run** (API 99): **active hours** (a scheduled run outside them waits for them to
+- **Before each run** (API 100): **active hours** (a scheduled run outside them waits for them to
   start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
   command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
   exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
@@ -1858,7 +1876,7 @@ deliveries wait in the database and run after a restart. A time of day that the 
 (daylight saving starts) runs when they've gone forward; one they repeat runs once. An archived
 project's schedules don't run until it's unarchived.
 
-**Routines** (API 99) are a profile's automations, on the assistant's **Routines** tab
+**Routines** (API 100) are a profile's automations, on the assistant's **Routines** tab
 (`/api/profiles/<id>/automations`): they have no project, and their one action is
 `message_assistant`, which wakes the profile's assistant (on the host the routine is on). By
 default (`mode: fresh`) each run works in a thread of its own under the assistant (`task_type`

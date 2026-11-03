@@ -228,7 +228,7 @@ export interface Task {
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
   /** What the task is, if not a code task: a scratch task (API 47), the profile's assistant (API 97, see `isAssistant`) or
-   *  a routine's run of it (API 99, see `isRoutine`).
+   *  a routine's run of it (API 100, see `isRoutine`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
   task_type?: TaskType | "assistant" | "routine" | DocumentType | null;

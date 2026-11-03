@@ -148,7 +148,7 @@ const taskName = (t: { key?: string; title: string }) => (t.key ? `${t.key} ${t.
 
 /** What an agent asks to do to an automation, e.g. "wants to add an automation to". */
 const AUTOMATION_ASKS = { create: "wants to add an automation to", update: "wants to change an automation in", delete: "wants to delete an automation in" };
-/** The same for a profile's routine (API 99). */
+/** The same for a profile's routine (API 100). */
 const ROUTINE_ASKS = { create: "wants to add a routine for", update: "wants to change a routine of", delete: "wants to delete a routine of" };
 
 /** The question an approval asks, e.g. "IA-12 wants to change Issue Agent" or "IA-12 wants to delete IA-3". */

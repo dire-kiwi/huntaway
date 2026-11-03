@@ -673,3 +673,24 @@ fn a_day_field_that_starts_with_a_star_is_unrestricted() {
     assert_eq!(next("0 9 */2 * mon", nz("2026-09-25 10:00")), nz("2026-09-28 09:00"));
     assert_eq!(next("0 9 1 * */2", nz("2026-09-25 10:00")), nz("2026-10-01 09:00"));
 }
+
+#[test]
+fn a_routine_thread_has_its_assistants_workspace_and_memory() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let a = assistant::get_or_create(&s, &p.id).unwrap();
+        let t = db::insert_routine_task(&s.db(), &a, "Inbox").unwrap();
+        assert_eq!(assistant::whose_workspace(&t, Some(&a)).unwrap().map(|x| x.id), Some(a.id.clone()));
+        assert_eq!(assistant::whose_workspace(&a, None).unwrap().map(|x| x.id), Some(a.id.clone()));
+        // So its run is told the assistant's memory, as the assistant's are.
+        let told = crate::agent::assistant::memory::for_run(&s, &assistant::whose_workspace(&t, Some(&a)).unwrap().unwrap()).await;
+        assert!(told.contains("memory"), "{told}");
+        // Without its assistant, or in another folder, it doesn't run.
+        assert!(assistant::whose_workspace(&t, None).is_err());
+        let moved = db::Task { work_dir: Some("elsewhere".into()), ..t.clone() };
+        assert!(assistant::whose_workspace(&moved, Some(&a)).is_err());
+        let other = db::Task { task_type: None, ..t };
+        assert!(assistant::whose_workspace(&other, None).unwrap().is_none());
+    })
+}

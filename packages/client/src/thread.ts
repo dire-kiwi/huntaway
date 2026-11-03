@@ -50,7 +50,7 @@ export interface ContextDetail {
 export interface Message {
   id: number;
   task_id: string;
-  /** `question`: one asked with request_user_input (API 64). `report`: a routine's report in the assistant's thread (API 99). */
+  /** `question`: one asked with request_user_input (API 64). `report`: a routine's report in the assistant's thread (API 100). */
   kind: "user" | "claude" | "event" | "permission" | "question" | "report";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;

@@ -12,12 +12,29 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use crate::agent::runner;
+
+pub mod memory;
 use crate::db::{self, NewTask, Task};
 use crate::state::{ApiError, ApiResult, Shared};
 
 /// The API version from which a host can be a profile's assistant host: it takes the routed requests
 /// (`?local=1`) and passes its agents' board tool calls up its link (see hosts/uplink.rs).
 pub const ASSISTANT_HOST_API: u32 = 98;
+
+/// The assistant whose workspace and memory a run of `task` has: the assistant's own, and a routine
+/// thread's its parent's (`parent`), whose workspace it has to be in. None for any other thread.
+pub fn whose_workspace(task: &Task, parent: Option<&Task>) -> anyhow::Result<Option<Task>> {
+    if task.is_assistant() {
+        return Ok(Some(task.clone()));
+    }
+    if !task.is_routine() {
+        return Ok(None);
+    }
+    match parent {
+        Some(p) if p.is_assistant() && p.work_dir == task.work_dir => Ok(Some(p.clone())),
+        _ => anyhow::bail!("this routine thread's assistant, or its workspace, is gone"),
+    }
+}
 
 /// Where an assistant works, relative to the data dir (see documents::work_dir), so it moves with it.
 pub fn work_dir(task_id: &str) -> String {
@@ -53,11 +70,15 @@ pub fn get_or_create(s: &Shared, profile_id: &str) -> ApiResult<Task> {
             }
         }
     };
-    // Its workspace, which later steps keep memory files in. Made again if it went missing.
-    if let Some(dir) = crate::agent::documents::work_dir(s, &task) {
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            tracing::warn!(task = %task.id, "making the assistant's folder {}: {e}", dir.display());
+    // Its workspace, with its memory files (see memory.rs). Made again if it went missing. It's made a git
+    // repository before its first run, or when the Memory tab opens.
+    match memory::checked(s, &task) {
+        Ok(dir) => {
+            if let Err(e) = memory::seed(&dir) {
+                tracing::warn!(task = %task.id, "making the assistant's memory files in {}: {e}", dir.display());
+            }
         }
+        Err(e) => tracing::warn!(task = %task.id, "the assistant's folder: {e:#}"),
     }
     if made {
         s.emit_task(&task);
