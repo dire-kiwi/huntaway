@@ -1,7 +1,8 @@
 //! Cron expressions for the `cron` trigger: five fields, `minute hour day-of-month month
 //! day-of-week`, each `*`, a number or name, a range (`1-5`), a step (`*/15`, `8-18/2`) or a list
 //! of them (`mon,wed,fri`). Months and weekdays take their first three letters; Sunday is 0 or 7.
-//! As in Vixie cron, when both day fields are restricted (not starting with `*`) a day matching either runs. `@hourly`,
+//! As in Vixie cron, a day must match both day fields if either starts with `*` (as `*` or `*/2`
+//! do, which keep their steps), and either of them otherwise. `@hourly`,
 //! `@daily`, `@weekly`, `@monthly` and `@yearly` stand for theirs. Times are in the host's time zone.
 
 use super::*;
@@ -17,9 +18,9 @@ pub struct Cron {
     days: u32,
     months: u16,
     weekdays: u8,
-    /// The day-of-month and day-of-week fields were `*`.
-    any_day: bool,
-    any_weekday: bool,
+    /// The day-of-month or day-of-week field started with `*` (Vixie's star flags).
+    star_day: bool,
+    star_weekday: bool,
 }
 
 /// One field's values, as bits from `min` to `max` (a weekday 7 is 0, Sunday).
@@ -84,9 +85,8 @@ impl Cron {
             days: field(f[2], 1, 31, &[], "day of month")? as u32,
             months: field(f[3], 1, 12, MONTHS, "month")? as u16,
             weekdays: field(f[4], 0, 6, DAYS, "day of week")? as u8,
-            // `*/2` counts as unrestricted too, as in Vixie cron.
-            any_day: f[2].starts_with('*'),
-            any_weekday: f[4].starts_with('*'),
+            star_day: f[2].starts_with('*'),
+            star_weekday: f[4].starts_with('*'),
         })
     }
 
@@ -96,12 +96,9 @@ impl Cron {
         }
         let day = self.days & (1 << d.day()) != 0;
         let weekday = self.weekdays & (1 << d.weekday().num_days_from_sunday()) != 0;
-        match (self.any_day, self.any_weekday) {
-            (true, true) => true,
-            (true, false) => weekday,
-            (false, true) => day,
-            (false, false) => day || weekday,
-        }
+        // A field that starts with `*` matches every day (`*`) or its steps (`*/2`): both must match.
+        // Two restricted fields mean either day will do.
+        if self.star_day || self.star_weekday { day && weekday } else { day || weekday }
     }
 
     /// The first time after `after` that it matches, in `tz`; none if it never does (in the next

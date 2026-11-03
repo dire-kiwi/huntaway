@@ -35,18 +35,12 @@ pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how
     match mode {
         AssistantMode::Thread => {
             let text = format!("From your routine \"{}\", {how}:\n\n{note}{}", a.name, body.trim());
-            // The assistant's run that takes the message is the run's, for its cost: the next to start
-            // (see `claim_next`), unless the message is steered into the one going.
-            s.db().execute("UPDATE automation_runs SET task_id=?2, agent_run_id=?3 WHERE id=?1", params![run_id, assistant.id, NEXT_RUN]).map_err(db_fail)?;
-            let t = match crate::agent::runner::send_from_agent(s, &assistant.id, &text) {
-                Ok(t) => t,
-                Err(e) => {
-                    let _ = s.db().execute("UPDATE automation_runs SET task_id=NULL, agent_run_id=NULL WHERE id=?1", [run_id]);
-                    return Err(Outcome::Failed(None, e.1));
-                }
-            };
-            if let Some(steer) = t.steering.iter().rev().find(|st| st.text == text.trim()) {
-                let _ = s.db().execute("UPDATE automation_runs SET agent_run_id=?2 WHERE id=?1 AND agent_run_id=?3", params![run_id, steer.run_id, NEXT_RUN]);
+            // The assistant's run that takes the message in is the routine run's, for its cost: its id
+            // goes with the message, through steering and the queue (see `taken_in`).
+            s.db().execute("UPDATE automation_runs SET task_id=?2 WHERE id=?1", params![run_id, assistant.id]).map_err(db_fail)?;
+            if let Err(e) = crate::agent::runner::send_from_routine(s, &assistant.id, &text, run_id) {
+                let _ = s.db().execute("UPDATE automation_runs SET task_id=NULL WHERE id=?1", [run_id]);
+                return Err(Outcome::Failed(None, e.1));
             }
             Ok(Some(assistant.id))
         }
@@ -87,20 +81,26 @@ pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how
     }
 }
 
-/// What a thread-mode run's `agent_run_id` is until the assistant's next run takes its message.
-const NEXT_RUN: &str = "next";
-
-/// A run of the assistant `task_id` started (not a compaction): the thread-mode routine runs whose
-/// message waited for it are its, for their cost. Called in the transaction that records the run.
-pub fn claim_next(c: &Connection, task_id: &str, run_id: &str) -> rusqlite::Result<usize> {
-    c.execute("UPDATE automation_runs SET agent_run_id=?2 WHERE task_id=?1 AND agent_run_id=?3", params![task_id, run_id, NEXT_RUN])
+/// The assistant's run `run_id` took in a message carrying these automation runs' (see
+/// runner::send_from_routine): they're its, for its cost. Called as it's recorded.
+pub fn taken_in(c: &Connection, run_id: &str, automation_runs: &[String]) -> rusqlite::Result<()> {
+    for id in automation_runs {
+        c.execute("UPDATE automation_runs SET agent_run_id=?2 WHERE id=?1", params![id, run_id])?;
+    }
+    Ok(())
 }
 
-/// A run of the assistant ended: the thread-mode routine runs it took the messages of record what it cost.
+/// A run of the assistant ended: the thread-mode routine runs it took the messages of record what it
+/// cost, split evenly between them when it took several (its other work, such as the user's messages,
+/// counts too: a run can't be split by what each message cost).
 pub fn assistant_run_ended(s: &Shared, run_id: &str) {
     let ids: Vec<String> = {
         let c = s.db();
-        let _ = c.execute("UPDATE automation_runs SET cost_usd=(SELECT cost_usd FROM runs WHERE id=?1) WHERE agent_run_id=?1", [run_id]);
+        let _ = c.execute(
+            "UPDATE automation_runs SET cost_usd=(SELECT cost_usd FROM runs WHERE id=?1) / (SELECT COUNT(*) FROM automation_runs WHERE agent_run_id=?1)
+             WHERE agent_run_id=?1",
+            [run_id],
+        );
         let Ok(mut st) = c.prepare("SELECT DISTINCT automation_id FROM automation_runs WHERE agent_run_id=?1") else { return };
         st.query_map([run_id], |r| r.get(0)).map(|r| r.filter_map(Result::ok).collect()).unwrap_or_default()
     };
@@ -132,7 +132,7 @@ fn day_start<Tz: TimeZone>(now: DateTime<Utc>, tz: &Tz) -> DateTime<Utc> {
 /// message) is still working, as far as they've got.
 pub fn spent_today<Tz: TimeZone>(c: &Connection, automation_id: &str, now: DateTime<Utc>, tz: &Tz) -> rusqlite::Result<f64> {
     c.query_row(
-        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, x.cost_usd, 0)), 0) FROM automation_runs r
+        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, x.cost_usd / (SELECT COUNT(*) FROM automation_runs y WHERE y.agent_run_id = r.agent_run_id), 0)), 0) FROM automation_runs r
            LEFT JOIN tasks t ON t.id = r.task_id AND t.task_type = 'routine'
            LEFT JOIN runs x ON x.id = r.agent_run_id
          WHERE r.automation_id = ?1 AND r.created_at >= ?2",
@@ -144,7 +144,7 @@ pub fn spent_today<Tz: TimeZone>(c: &Connection, automation_id: &str, now: DateT
 /// What all of an automation's runs kept have cost.
 pub fn spent(c: &Connection, automation_id: &str) -> rusqlite::Result<f64> {
     c.query_row(
-        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, x.cost_usd, 0)), 0) FROM automation_runs r
+        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, x.cost_usd / (SELECT COUNT(*) FROM automation_runs y WHERE y.agent_run_id = r.agent_run_id), 0)), 0) FROM automation_runs r
            LEFT JOIN tasks t ON t.id = r.task_id AND t.task_type = 'routine'
            LEFT JOIN runs x ON x.id = r.agent_run_id
          WHERE r.automation_id = ?1",

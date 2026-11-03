@@ -111,10 +111,8 @@ fn start_run(
             None => message,
         };
         let run = db::insert_run(&tx, task_id, kind)?;
-        // Routines' messages waiting for the assistant's next run are this one's (for their cost).
-        if task.is_assistant() && !compact {
-            crate::integrations::automations::routines::claim_next(&tx, task_id, &run.id)?;
-        }
+        // The routines whose messages it starts with are this run's, for its cost.
+        crate::integrations::automations::routines::taken_in(&tx, &run.id, &message.routine_runs)?;
         let recorded = record(&tx, &task, &message)?;
         tx.commit()?;
         runs.insert(task_id.to_string(), RunHandle { run_id: run.id.clone(), cancel: Some(cancel_tx) });

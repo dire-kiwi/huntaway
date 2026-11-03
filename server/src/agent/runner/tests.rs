@@ -508,7 +508,7 @@ fn messages_the_agent_never_took_in_go_to_the_next_run() {
         assert!(t.steering.is_empty());
         assert_eq!(t.queued_message.as_deref(), Some("first\n\nsecond\n\nthird"));
         // Not all of it came from other agents, so it counts as the user's.
-        assert_eq!(db::take_queued(&state.db(), &task.id).unwrap(), Some(db::Queued { text: "first\n\nsecond\n\nthird".into(), from_agent: false, user_text: Some("first\n\nthird".into()) }));
+        assert_eq!(db::take_queued(&state.db(), &task.id).unwrap(), Some(db::Queued { text: "first\n\nsecond\n\nthird".into(), from_agent: false, user_text: Some("first\n\nthird".into()), routine_runs: vec![] }));
     });
 }
 
@@ -674,7 +674,7 @@ fn after_a_restart_messages_the_agent_wasnt_sent_are_sent() {
     crate::testing::run(async || {
         let (state, task, run) = running(true);
         // Sent as the turn ended, and kept, before the server stopped, to be written to its input.
-        let steer = db::Steer { id: "s1".into(), text: "one more thing".into(), from_agent: false, run_id: run.id.clone(), written: false };
+        let steer = db::Steer { id: "s1".into(), text: "one more thing".into(), from_agent: false, run_id: run.id.clone(), written: false, routine_runs: vec![] };
         state.update_task(&task.id, &[("steering", json!([steer]))]).unwrap();
         state.db().execute("UPDATE runs SET saw_result=1, between_turns=1 WHERE id=?1", [&run.id]).unwrap();
         restart(&state, &task);
@@ -2116,4 +2116,91 @@ fn a_merge_out_of_usage_keeps_its_place_in_the_merge_queue() {
         assert_eq!((t.status.as_str(), t.merging, t.waiting), ("needs_attention", true, false));
         assert_eq!(db::active_merge(&state.db(), Some("pr"), None).unwrap().map(|m| m.id), Some(task.id.clone()), "it still holds the merge slot");
     })
+}
+
+/// A profile's assistant whose agent is running `run`, which takes messages as it works, and a
+/// thread-mode routine of the profile with a budget of $1 a day.
+fn assistant_running_with_a_routine() -> (Shared, Task, Run, crate::integrations::automations::Automation) {
+    let state = crate::testing::state();
+    let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
+    let assistant = crate::agent::assistant::get_or_create(&state, &p.id).unwrap();
+    let run = db::insert_run(&state.db(), &assistant.id, "prompt").unwrap();
+    state.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
+    let dir = runs::run_dir(&state, &run.id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("out.jsonl"), "").unwrap();
+    std::fs::write(dir.join("input.jsonl"), "").unwrap();
+    state.runs.lock().unwrap().insert(assistant.id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
+    let assistant = state.update_task(&assistant.id, &[("running", json!(true))]).unwrap().unwrap();
+    let b = json!({"name": "Ping", "trigger": {"kind": "interval", "every_minutes": 60}, "budget_usd": 1.0,
+                   "action": {"kind": "message_assistant", "mode": "thread", "message": "ping"}});
+    let a = crate::integrations::automations::create_routine(&state, &p.id, b.as_object().unwrap()).unwrap();
+    (state, assistant, run, a)
+}
+
+/// The automation run's assistant run (whose cost it's charged), and its cost once that's ended.
+fn charged_to(state: &Shared, automation_run: &str) -> (Option<String>, Option<f64>) {
+    state.db().query_row("SELECT agent_run_id, cost_usd FROM automation_runs WHERE id=?1", [automation_run], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+}
+
+/// The routine's scheduled run, now: over its budget, it's skipped.
+async fn next_scheduled_is_over_budget(state: &Shared, a: &crate::integrations::automations::Automation) {
+    use crate::integrations::automations as au;
+    let now = chrono::Utc::now();
+    state.db().execute("UPDATE automations SET next_run_at=?2 WHERE id=?1", rusqlite::params![a.id, (now - chrono::TimeDelta::seconds(1)).to_rfc3339()]).unwrap();
+    au::tick(state, now).await;
+    let r = au::runs(&state.db(), &a.id, 1).unwrap().remove(0);
+    assert_eq!((r.source.as_str(), r.status.as_str()), ("schedule", "skipped"), "{:?}", r.detail);
+    assert!(r.detail.as_deref().unwrap().starts_with("Skipped: over budget"), "{:?}", r.detail);
+}
+
+// HA-122 review: a thread-mode routine's message steered into the assistant's run is charged to the
+// run that takes it in.
+#[test]
+fn a_routines_message_steered_into_the_assistants_run_is_charged_its_cost() {
+    crate::testing::run(async || {
+        let (state, assistant, run, a) = assistant_running_with_a_routine();
+        let r = crate::integrations::automations::run_now(&state, &a, Default::default()).await.unwrap();
+        let steer = reload(&state, &assistant.id).steering[0].clone();
+        assert_eq!(steer.routine_runs, [r.id.clone()]);
+        // Not until the agent takes it in.
+        assert_eq!(charged_to(&state, &r.id), (None, None));
+        output(&state, &run, &[replay(&steer.id, &steer.text)]);
+        assert_eq!(charged_to(&state, &r.id).0.as_deref(), Some(run.id.as_str()));
+        state.db().execute("UPDATE runs SET cost_usd=1.5 WHERE id=?1", [&run.id]).unwrap();
+        finish(&state, &run.id, Outcome::Ok);
+        assert_eq!(charged_to(&state, &r.id), (Some(run.id.clone()), Some(1.5)));
+        next_scheduled_is_over_budget(&state, &a).await;
+    });
+}
+
+// HA-122 review: one the run exited without taking in goes with its routine's run to the run that
+// takes it from the queue, which is charged, not the one it was steered to.
+#[test]
+fn a_routines_message_the_assistant_didnt_take_in_is_charged_to_the_run_that_does() {
+    crate::testing::run(async || {
+        runs::TEST_CAN_RUN.set(true);
+        let (state, assistant, first, a) = assistant_running_with_a_routine();
+        let r = crate::integrations::automations::run_now(&state, &a, Default::default()).await.unwrap();
+        assert_eq!(reload(&state, &assistant.id).steering[0].routine_runs, [r.id.clone()]);
+        // The agent exits without taking it in: it's queued again, and the next run starts with it.
+        state.db().execute("UPDATE runs SET cost_usd=0.1 WHERE id=?1", [&first.id]).unwrap();
+        runs::close_input(&state, &first.id);
+        finish(&state, &first.id, Outcome::Ok);
+        let next = state.runs.lock().unwrap().get(&assistant.id).map(|h| h.run_id.clone()).expect("the next run");
+        assert_ne!(next, first.id);
+        assert_eq!(charged_to(&state, &r.id).0.as_deref(), Some(next.as_str()));
+        // That run costs $2 (its launch fails here, ending it).
+        state.db().execute("UPDATE runs SET cost_usd=2 WHERE id=?1", [&next]).unwrap();
+        for _ in 0..200 {
+            if !state.is_running(&assistant.id) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!state.is_running(&assistant.id));
+        assert_eq!(charged_to(&state, &r.id), (Some(next.clone()), Some(2.0)));
+        next_scheduled_is_over_budget(&state, &a).await;
+        runs::TEST_CAN_RUN.set(false);
+    });
 }

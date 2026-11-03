@@ -524,71 +524,30 @@ fn deleting_the_assistant_stops_its_routine_threads_first() {
     })
 }
 
-/// Makes `task_id` look as if its agent were running a run (`run`) that takes messages as it works.
-fn steerable_run(s: &Shared, task_id: &str) -> crate::db::Run {
-    let run = db::insert_run(&s.db(), task_id, "prompt").unwrap();
-    s.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
-    let dir = crate::agent::runs::run_dir(s, &run.id);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("out.jsonl"), "").unwrap();
-    std::fs::write(dir.join("input.jsonl"), "").unwrap();
-    s.runs.lock().unwrap().insert(task_id.to_string(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
-    s.update_task(task_id, &[("running", json!(true))]).unwrap();
-    run
-}
-
 #[test]
-fn a_thread_mode_routines_runs_are_charged_what_the_assistants_run_cost() {
+fn an_assistant_run_that_took_several_routines_messages_splits_its_cost_between_them() {
     testing::run(async || {
         let s = testing::state();
         let p = profile(&s);
         let assistant = assistant::get_or_create(&s, &p.id).unwrap();
-        let a = routine(
-            &s,
-            &p.id,
-            json!({"name": "Ping", "trigger": {"kind": "interval", "every_minutes": 60}, "budget_usd": 1.0,
-                   "action": {"kind": "message_assistant", "mode": "thread", "message": "ping"}}),
-        )
-        .unwrap();
-        // Steered into the assistant's run that's going: that run is the routine run's.
-        let run = steerable_run(&s, &assistant.id);
-        let now = Utc::now();
-        set_next(&s, &a, now - chrono::TimeDelta::seconds(1));
-        tick(&s, now).await;
-        let r = last_run(&s, &a);
-        assert_eq!((r.status.as_str(), r.task_id.as_deref()), ("ok", Some(assistant.id.as_str())));
-        let linked = |id: &str| s.db().query_row("SELECT agent_run_id FROM automation_runs WHERE id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
-        assert_eq!(linked(&r.id).as_deref(), Some(run.id.as_str()));
-        // While it works, what it's cost so far counts (and not the assistant's earlier runs).
-        s.db().execute("UPDATE tasks SET cost_usd=50 WHERE id=?1", [&assistant.id]).unwrap();
-        s.db().execute("UPDATE runs SET cost_usd=0.4 WHERE id=?1", [&run.id]).unwrap();
-        assert!((routines::spent_today(&s.db(), &a.id, now, &Local).unwrap() - 0.4).abs() < 1e-9);
-        // It ends having cost $1.50, which the routine's run records.
-        s.db().execute("UPDATE runs SET cost_usd=1.5 WHERE id=?1", [&run.id]).unwrap();
-        crate::agent::runner::finish(&s, &run.id, RunOutcome::Ok);
-        assert_eq!(get_run(&s.db(), &r.id).unwrap().unwrap().cost_usd, Some(1.5));
-        let listed = list_routines_handler(State(s.clone()), Path(p.id.clone())).await.unwrap().0;
-        assert_eq!(listed["automations"][0]["cost_today_usd"], json!(1.5));
-        // So the next scheduled run is over budget.
-        set_next(&s, &a, now - chrono::TimeDelta::seconds(1));
-        tick(&s, now).await;
-        let r = last_run(&s, &a);
-        assert_eq!(r.status, "skipped");
-        assert!(r.detail.as_deref().unwrap().starts_with("Skipped: over budget"), "{:?}", r.detail);
-
-        // Queued behind a run that doesn't take messages, it's the next run's.
-        let b = routine(&s, &p.id, json!({"name": "Queued", "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "message_assistant", "mode": "thread", "message": "q"}}))
+        let a = routine(&s, &p.id, json!({"name": "Ping", "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "message_assistant", "mode": "thread", "message": "p"}}))
             .unwrap();
-        busy(&s, &assistant.id);
-        let q = run_handler(State(s.clone()), Path(b.id.clone()), None).await.unwrap().0;
-        let q = q["id"].as_str().unwrap().to_string();
-        assert_eq!(linked(&q).as_deref(), Some("next"));
-        let next = db::insert_run(&s.db(), &assistant.id, "prompt").unwrap();
-        routines::claim_next(&s.db(), &assistant.id, &next.id).unwrap();
-        assert_eq!(linked(&q).as_deref(), Some(next.id.as_str()));
-        s.db().execute("UPDATE runs SET cost_usd=0.25 WHERE id=?1", [&next.id]).unwrap();
-        routines::assistant_run_ended(&s, &next.id);
-        assert_eq!(get_run(&s.db(), &q).unwrap().unwrap().cost_usd, Some(0.25));
+        let run = db::insert_run(&s.db(), &assistant.id, "prompt").unwrap();
+        let ids: Vec<String> = (0..2)
+            .map(|_| {
+                let r = Run::new(&a.id, "schedule", "ok", Utc::now());
+                insert_run(&s.db(), &r).unwrap();
+                r.id
+            })
+            .collect();
+        routines::taken_in(&s.db(), &run.id, &ids).unwrap();
+        s.db().execute("UPDATE runs SET cost_usd=3 WHERE id=?1", [&run.id]).unwrap();
+        // While it works, and once it's ended.
+        assert!((routines::spent(&s.db(), &a.id).unwrap() - 3.0).abs() < 1e-9);
+        routines::assistant_run_ended(&s, &run.id);
+        for id in &ids {
+            assert_eq!(get_run(&s.db(), id).unwrap().unwrap().cost_usd, Some(1.5));
+        }
     })
 }
 
@@ -667,11 +626,21 @@ fn reports_stay_unread_until_the_assistant_has_started_with_them() {
 }
 
 #[test]
-fn a_day_field_that_starts_with_a_star_is_unrestricted() {
-    // 2026-09-28 is a Monday: `*/2` doesn't make every other day a match beside Mondays.
+fn a_day_field_that_starts_with_a_star_keeps_its_steps_and_must_match_too() {
     let next = |e: &str, after: DateTime<Utc>| next_after(&cron(e), after, &Nz).unwrap();
-    assert_eq!(next("0 9 */2 * mon", nz("2026-09-25 10:00")), nz("2026-09-28 09:00"));
+    // Stepped days of the month: the 1st, 3rd, … 27th, 29th (2026-09-25 is a Friday).
+    assert_eq!(next("0 9 */2 * *", nz("2026-09-25 10:00")), nz("2026-09-27 09:00"));
+    assert_eq!(next("0 9 */2 * *", nz("2026-09-29 10:00")), nz("2026-10-01 09:00"));
+    // Stepped weekdays: Sunday, Tuesday, Thursday and Saturday.
+    assert_eq!(next("0 9 * * */2", nz("2026-09-27 10:00")), nz("2026-09-29 09:00"));
+    // With the other field restricted, a day has to match both: an odd day that's a Monday (2026-10-05).
+    assert_eq!(next("0 9 */2 * mon", nz("2026-09-25 10:00")), nz("2026-10-05 09:00"));
+    // The 1st, on a Sunday, Tuesday, Thursday or Saturday: 2026-10-01 is a Thursday.
     assert_eq!(next("0 9 1 * */2", nz("2026-09-25 10:00")), nz("2026-10-01 09:00"));
+    // Two restricted fields: either will do, so the next Wednesday (2026-09-30) comes before the 1st.
+    assert_eq!(next("0 9 1 * wed", nz("2026-09-25 10:00")), nz("2026-09-30 09:00"));
+    // But `*/31` (the 1st) starts with `*`: the 1st when it's a Wednesday, not until 2027-09-01.
+    assert_eq!(next("0 9 */31 * wed", nz("2026-09-25 10:00")), nz("2027-09-01 09:00"));
 }
 
 #[test]

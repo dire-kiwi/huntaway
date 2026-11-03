@@ -1797,7 +1797,8 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
   changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 100:
   five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
-  the host's time zone); a moment (**at**, API 100: it runs once, late if the server was down then,
+  the host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
+  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 100: it runs once, late if the server was down then,
   and turns itself off); or a **webhook**: a POST to `/api/hooks/<id>/<token>` on the host.
 - **Before each run** (API 100): **active hours** (a scheduled run outside them waits for them to
   start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
@@ -1893,8 +1894,12 @@ next scheduled one is skipped. Routine threads are off the boards and the task l
 their report or run by their link, and are deleted 14 days after their last activity, whatever
 their status (done, failed, stopped or left asking; their runs and reports stay). With
 `mode: thread` the message goes to the assistant's own thread instead, as `send_to_task` does, and
-the run is charged what the assistant's run that took the message cost (the whole run, if it took
-other messages too), toward its budget. The automation tools take
+the run is charged what the assistant's run that takes the message in costs, toward its budget. The
+message carries its routine run with it, whether it starts a run, is steered into the one going or
+waits in the queue (also when a run ends without taking in a steered message, which is queued again
+for the next), so the run that actually takes it in is the one charged. A run that takes in several
+routines' messages splits its cost evenly between them; the user's messages in the same run aren't
+taken out. The automation tools take
 routines too (`routines: true`, or an action of kind `message_assistant`; the assistant's own calls
 are about its routines by default), for the caller's own profile only, and changing one asks the
 user as for any automation. The assistant is told to make "remind me…" an *at* routine.

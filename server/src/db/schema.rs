@@ -810,6 +810,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", [table, col], |r| r.get(0))
         };
         let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V79 };
+        // The routines' runs whose messages are in the one queued on a thread (see db::Queued::routine_runs).
+        let queued = if has("tasks", "queued_routine_runs")? { "" } else { "ALTER TABLE tasks ADD COLUMN queued_routine_runs TEXT;" };
         let mut runs = String::new();
         for col in ["outcome TEXT", "cost_usd REAL", "agent_run_id TEXT"] {
             if !has("automation_runs", col.split(' ').next().unwrap())? {
@@ -817,7 +819,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             }
         }
         conn.execute_batch(&format!(
-            "PRAGMA foreign_keys=OFF; BEGIN; {rebuild} {runs}
+            "PRAGMA foreign_keys=OFF; BEGIN; {rebuild} {runs} {queued}
              CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
              CREATE INDEX IF NOT EXISTS automation_runs_agent_run ON automation_runs(agent_run_id);
              PRAGMA user_version=79; COMMIT; PRAGMA foreign_keys=ON;"
