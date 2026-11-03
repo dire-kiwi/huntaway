@@ -57,7 +57,7 @@ pub fn router(state: Shared) -> Router {
         .route("/hosts/ssh-key", get(hub::ssh_key))
         .route("/hosts/ssh", post(hub::add_ssh_host))
         .route("/hosts/copy-claude-config", post(hub::copy_claude_config))
-        .route("/hosts/{id}", axum::routing::patch(hub::rename_host).delete(hub::remove_host))
+        .route("/hosts/{id}", axum::routing::patch(hub::change_host).delete(hub::remove_host))
         .route("/hosts/{id}/update", post(hub::update_host))
         .route("/preview-status", get(preview_status))
         .route("/push", get(crate::integrations::push::info))
@@ -279,8 +279,21 @@ async fn ws(State(s): State<Shared>, upgrade: WebSocketUpgrade) -> Response {
 async fn ws_loop(s: Shared, mut socket: WebSocket) {
     let mut rx = s.events.subscribe();
     let _ = socket.send(WsMessage::Text(json!({"type": "hello"}).to_string().into())).await;
+    // A hub that says hello here takes our agents' board tool calls (see hosts/uplink.rs), while this lasts.
+    let mut uplink: Option<(crate::hosts::uplink::Registered, tokio::sync::mpsc::UnboundedReceiver<crate::hosts::proto::ToolCall>)> = None;
     loop {
+        let call = async {
+            match uplink.as_mut() {
+                Some((_, calls)) => calls.recv().await,
+                None => std::future::pending().await,
+            }
+        };
         tokio::select! {
+            Some(c) = call => {
+                if socket.send(WsMessage::Text(crate::hosts::uplink::call_frame(&c).to_string().into())).await.is_err() {
+                    break;
+                }
+            }
             ev = rx.recv() => match ev {
                 Ok(v) => {
                     if socket.send(WsMessage::Text(v.to_string().into())).await.is_err() {
@@ -297,6 +310,24 @@ async fn ws_loop(s: Shared, mut socket: WebSocket) {
             },
             msg = socket.recv() => match msg {
                 Some(Ok(WsMessage::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(WsMessage::Text(t))) => {
+                    let Ok(v) = serde_json::from_str::<Value>(&t) else { continue };
+                    match v["type"].as_str() {
+                        Some("hub_hello") => {
+                            if let (Some(id), Some(name)) = (v["hub_id"].as_str(), v["name"].as_str()) {
+                                if id != s.host_id {
+                                    uplink = Some(crate::hosts::uplink::register(&s, id, name));
+                                }
+                            }
+                        }
+                        Some("hub_result") => {
+                            if let (Some((up, _)), Ok(a)) = (&uplink, serde_json::from_value(v)) {
+                                up.link.answer(a);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }

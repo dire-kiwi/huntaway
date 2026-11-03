@@ -462,3 +462,24 @@ fn the_list_keeps_the_memory_files_and_latest_logs_first() {
     assert_eq!(&paths[..4], ["USER.md", "MEMORY.md", "memory/2026-11-04.md", "memory/2026-11-03.md"]);
     assert_eq!(paths[4], "aaa/0000.md");
 }
+
+#[test]
+fn an_assistant_on_another_host_keeps_its_memory_there() {
+    testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        s.db().execute("UPDATE profiles SET assistant_host='elsewhere' WHERE id=?1", [&p.id]).unwrap();
+        let base = format!("/api/profiles/{}/assistant/memory", p.id);
+        for (method, path, body) in [
+            ("GET", base.clone(), None),
+            ("GET", format!("{base}/file?path=USER.md"), None),
+            ("POST", format!("{base}/import"), Some(json!({"text": "I'm Ivan."}))),
+        ] {
+            let (st, r) = call(&app, method, &path, body).await;
+            assert_eq!(st, 409, "{method} {path}: {r}");
+        }
+        // No assistant was made here for it.
+        assert!(crate::db::assistant_task(&s.db(), &p.id).unwrap().is_none());
+    });
+}

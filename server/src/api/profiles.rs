@@ -44,6 +44,9 @@ pub(super) struct CreateProfile {
     /// See `db::Profile::require_pr_approval` (API 95).
     #[serde(default)]
     require_pr_approval: bool,
+    /// See `db::Profile::assistant_host` (API 98).
+    #[serde(default)]
+    assistant_host: Value,
 }
 
 pub(super) async fn create_profile(State(s): State<Shared>, Json(b): Json<CreateProfile>) -> ApiResult<Json<Value>> {
@@ -58,11 +61,15 @@ pub(super) async fn create_profile(State(s): State<Shared>, Json(b): Json<Create
     let github_account = check_github_account(&b.github_account)?;
     let clone_dir = check_clone_dir(&b.clone_dir)?;
     let (reviewers, summarizer) = (reviewers_value(&c, &b.reviewers, true, &[])?, summarizer_value(&c, &b.summarizer, true, &[])?);
+    drop(c);
+    let assistant_host = assistant::check_host(&s, &b.assistant_host)?;
+    let c = s.db();
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
     fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
     fields.push(("merge_approval", json!(b.merge_approval)));
     fields.push(("require_pr_approval", json!(b.require_pr_approval)));
+    fields.push(("assistant_host", assistant_host));
     fields.extend(access.map(|a| ("agent_access", json!(a))));
     p = db::update_profile(&c, &p.id, &fields)?.ok_or_else(|| ApiError::not_found("profile"))?;
     drop(c);
@@ -80,9 +87,11 @@ pub(super) async fn update_profile(State(s): State<Shared>, Path(id): Path<Strin
         Some(v) => Some(check_asana_token(v).await?),
         None => None,
     };
+    let assistant_host = b.get("assistant_host").map(|v| assistant::check_host(&s, v)).transpose()?;
     let c = s.db();
     let current = db::get_profile(&c, &id)?.ok_or_else(|| ApiError::not_found("profile"))?;
     let mut fields = pick(&b, &["default_model"]);
+    fields.extend(assistant_host.map(|v| ("assistant_host", v)));
     if let Some(v) = b.get("name") {
         // Its name unchanged passes even if another profile has it in another case (allowed
         // before HA-37), since the profile form sends it with every save.

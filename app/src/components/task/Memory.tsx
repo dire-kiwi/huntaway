@@ -1,4 +1,4 @@
-// The assistant's Memory tab (API 98): its USER.md, MEMORY.md and daily logs, which the board loads into each of its runs
+// The assistant's Memory tab (API 99): its USER.md, MEMORY.md and daily logs, which the board loads into each of its runs
 // (see server/src/agent/assistant/memory.rs). Edit them, see each file's history and restore a version, or import what
 // another assistant knows about you.
 import clsx from "clsx";

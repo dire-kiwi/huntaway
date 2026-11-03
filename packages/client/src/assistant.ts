@@ -1,14 +1,15 @@
 import { enc, type Http } from "./http";
 import { type Host, hostSupports } from "./hosts";
+import type { Profile } from "./profiles";
 import type { Task } from "./tasks";
 
 /** Each profile has an assistant (API 97): one long-lived thread in no project, keyed `A-<n>`, that works in a folder of its
  *  own and never goes to review or merge (see server/src/agent/assistant.rs). The sidebar opens it; it's off the board. */
 export const ASSISTANT_API = 97;
 
-/** Its memory (API 98): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
+/** Its memory (API 99): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
  *  commits after each turn that changed them (see server/src/agent/assistant/memory.rs). The Memory tab edits them. */
-export const MEMORY_API = 98;
+export const MEMORY_API = 99;
 
 /** Whether the host has assistants. An older one shows no Assistant entry. */
 export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_API);
@@ -17,6 +18,47 @@ export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_A
 export const hasMemory = (h: Host | undefined) => hostSupports(h, MEMORY_API);
 
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "assistant";
+
+/** A profile can have its assistant run on a linked host of its own (`Profile.assistant_host`), and a linked host's agents can
+ *  use the board's tools up the link when Settings → Hosts lets them (`Host.uplink`), from API 98 on both. */
+export const ASSISTANT_HOST_API = 98;
+
+/** Where a profile's assistant is. `profileId` is its profile on that host, missing when it can't be opened there: the host
+ *  is `offline`, `old` (from before assistant hosts), or has `no_profile` of that name. */
+export interface AssistantHome {
+  hostId: string;
+  profileId?: string;
+  unavailable?: "offline" | "old" | "no_profile";
+}
+
+/** Where profile `name`'s assistant is: the one place a board looks for it. Profiles are merged across hosts by name. The board's
+ *  own host's profile can name an assistant host, which it's on then, whatever state that host is in; otherwise it's on the
+ *  board's own host, else the first connected host with assistants that has the profile. None when no host has one. */
+export function assistantHome(profiles: Profile[], hosts: Host[], name: string): AssistantHome | undefined {
+  const local = hosts.find((h) => h.local);
+  const picked = profiles.find((p) => p.name === name && p.host_id === local?.id)?.assistant_host;
+  if (picked && picked !== local?.id) {
+    const host = hosts.find((h) => h.id === picked);
+    if (!host?.connected) return { hostId: picked, unavailable: "offline" };
+    if (!hostSupports(host, ASSISTANT_HOST_API)) return { hostId: picked, unavailable: "old" };
+    const there = profiles.find((p) => p.name === name && p.host_id === picked);
+    return there ? { hostId: picked, profileId: there.id } : { hostId: picked, unavailable: "no_profile" };
+  }
+  const homes = profiles
+    .filter((p) => p.name === name)
+    .map((p) => ({ profile: p, host: hosts.find((h) => h.id === p.host_id) }))
+    .filter(({ host }) => !!host?.connected && hasAssistant(host));
+  const home = homes.find(({ host }) => host!.local) ?? homes[0];
+  return home && { hostId: home.profile.host_id, profileId: home.profile.id };
+}
+
+/** `here`: the assistant on host `h` itself, as assistantHome found it, rather than wherever that host's profile sends it
+ *  (`?local=1`, API 98; older hosts ignore it). Without it a host whose profile names another assistant host sends it on. */
+export interface AssistantOn {
+  here?: boolean;
+}
+
+const assistantPath = (profileId: string, opts?: AssistantOn) => `/profiles/${enc(profileId)}/assistant${opts?.here ? "?local=1" : ""}`;
 
 /** A file in the assistant's workspace. `kind`: USER.md, MEMORY.md, a daily log (`memory/YYYY-MM-DD.md`) or anything else. */
 export interface MemoryFile {
@@ -68,10 +110,12 @@ const q = (o: Record<string, string | undefined>) =>
 export const assistantApi = ({ on }: Http) => {
   const memory = (profileId: string) => `/profiles/${enc(profileId)}/assistant/memory`;
   return {
-    /** The profile's assistant, which the host makes the first time it's asked for. */
-    assistant: (h: string, profileId: string) => on(h).get<Task>(`/profiles/${enc(profileId)}/assistant`),
+    /** The profile's assistant, which the host makes the first time it's asked for. From API 98 it has `host_id`: a hub sends this to
+     *  the profile's assistant host, if it has one, so the task is there (go on to it through `on(host_id)`). */
+    assistant: (h: string, profileId: string, opts?: AssistantOn) => on(h).get<Task>(assistantPath(profileId, opts)),
     /** Send the user's message to the profile's assistant (made first if it has none), as a message in its thread does. */
-    sendToAssistant: (h: string, profileId: string, text: string) => on(h).post<Task>(`/profiles/${enc(profileId)}/assistant`, { text }),
+    sendToAssistant: (h: string, profileId: string, text: string, opts?: AssistantOn) => on(h).post<Task>(assistantPath(profileId, opts), { text }),
+    /** The rest are the assistant's memory (API 99), on the host it's on (its task's `host_id` and `profile_id`). */
     /** Its workspace's files and how much of each a run is told. */
     memory: (h: string, profileId: string) => on(h).get<MemoryOverview>(memory(profileId)),
     /** A file, now or as it was in commit `rev`. */

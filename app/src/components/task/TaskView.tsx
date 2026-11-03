@@ -168,7 +168,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
   const tabs: Tab[] = [...labels, ...(group || scratch || assistant || docsOnly ? ["thread"] : ["thread", "changes"])];
-  // The assistant's memory files (API 98).
+  // The assistant's memory files (API 99).
   if (assistant && hasMemory(host)) tabs.push("memory");
   const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant;
   if (reviews) tabs.push("review");

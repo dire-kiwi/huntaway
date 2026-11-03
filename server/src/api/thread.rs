@@ -45,18 +45,40 @@ pub(super) async fn send_message(State(s): State<Shared>, Path(id): Path<String>
     Ok(Json(json!(t)))
 }
 
-/// Answer a question an agent asked with request_user_input, from its card (API 64): the answer
-/// is sent as the user's message.
+#[derive(Deserialize)]
+pub(super) struct AssistantQuery {
+    /// Set by a hub that routed the request here (API 98): it's this host's, whatever its profile's `assistant_host`.
+    #[serde(default)]
+    local: Option<String>,
+}
+
 /// `GET /profiles/{id}/assistant` (API 97): the profile's assistant (see agent/assistant.rs),
-/// made the first time it's asked for.
-pub(super) async fn get_assistant(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(assistant::get_or_create(&s, &id)?)))
+/// made the first time it's asked for. API 98: with its `host_id`, which is the profile's assistant host's
+/// when it has one, where the request goes (see assistant::on_its_host).
+pub(super) async fn get_assistant(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<AssistantQuery>) -> ApiResult<Json<Value>> {
+    if q.local.is_none()
+        && let Some(t) = assistant::on_its_host(&s, &id, "GET", None).await?
+    {
+        return Ok(Json(t));
+    }
+    Ok(Json(assistant::with_host(&s, &assistant::get_or_create(&s, &id)?)))
 }
 
 /// `POST /profiles/{id}/assistant` (API 97): send the user's message to the profile's assistant,
-/// as `POST /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
-pub(super) async fn send_to_assistant(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(assistant::send(&s, &id, &b.text)?)))
+/// as `POST /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task,
+/// on its assistant host if it has one, as `GET` does.
+pub(super) async fn send_to_assistant(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    Query(q): Query<AssistantQuery>,
+    Json(b): Json<SendBody>,
+) -> ApiResult<Json<Value>> {
+    if q.local.is_none()
+        && let Some(t) = assistant::on_its_host(&s, &id, "POST", Some(json!({"text": b.text}))).await?
+    {
+        return Ok(Json(t));
+    }
+    Ok(Json(assistant::with_host(&s, &assistant::send(&s, &id, &b.text)?)))
 }
 
 /// Answer a question an agent asked with request_user_input, from its card (API 64): the answer

@@ -527,10 +527,21 @@ pub fn list(dir: &Path) -> Vec<Value> {
 
 /// The profile's assistant and its workspace, made ready.
 async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
+    elsewhere(s, profile_id)?;
     let task = super::get_or_create(s, profile_id)?;
     let dir = checked(s, &task).map_err(|e| ApiError::conflict(format!("{e:#}")))?;
     ensure(&dir).await?;
     Ok((task, dir))
+}
+
+/// A profile whose assistant runs on another host (its `assistant_host`) keeps its memory there: asked here, it's a 409
+/// rather than a second assistant made on this host. (The board asks the assistant's host, by its task's host and profile.)
+fn elsewhere(s: &Shared, profile_id: &str) -> ApiResult<()> {
+    let p = crate::db::get_profile(&s.db(), profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?;
+    match p.assistant_host.filter(|h| !h.is_empty() && *h != s.host_id) {
+        Some(h) => Err(ApiError::conflict(format!("{}'s assistant runs on another host ({h}): its memory is there", p.name))),
+        None => Ok(()),
+    }
 }
 
 /// What to paste into another assistant (ChatGPT, Claude.ai…) for it to write out what it knows about the user.
@@ -541,7 +552,7 @@ routines), my ongoing projects and goals, and anything else you keep in mind abo
 one fact per line, with dates where you know them. Include only what you actually know or remember, without guessing, and \
 leave out passwords and other secrets.";
 
-/// `GET /profiles/{id}/assistant/memory` (API 98): the assistant's workspace and its files, how much of each memory file a
+/// `GET /profiles/{id}/assistant/memory` (API 99): the assistant's workspace and its files, how much of each memory file a
 /// run is told (`cap`, in characters), whether there's history, and the prompt for an import.
 pub async fn overview(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> ApiResult<Json<Value>> {
     let (task, dir) = open(&s, &id).await?;
@@ -741,6 +752,7 @@ pub async fn import(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(
     if b.text.len() > MAX_IMPORT {
         return Err(ApiError::bad(format!("that's more than {} characters: paste the most useful part", format_number(MAX_IMPORT))));
     }
+    elsewhere(&s, &id)?;
     Ok(Json(json!(super::send(&s, &id, &import_message(&b.text))?)))
 }
 
