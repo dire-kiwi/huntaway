@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 use crate::db::{Message, Task};
 
 /// Changes when what `convert` makes of the same messages does: imported threads record it.
-pub const CONVERTER_VERSION: u32 = 1;
+pub const CONVERTER_VERSION: u32 = 2;
 
 /// Tool results longer than this were cut short when they were stored (runner/output.rs's `slim`).
 const STORED_RESULT_MAX: usize = 30_000;
@@ -209,6 +209,13 @@ struct Call {
     model: Option<String>,
 }
 
+/// A tool_use block: the item its call is, and the subagent call (tool_use id) it was made in.
+#[derive(Clone)]
+struct Occurrence {
+    item: String,
+    parent: Option<String>,
+}
+
 /// What a claude task_* message's `task_id` is about.
 enum Job {
     /// A subagent: its call's item.
@@ -229,16 +236,19 @@ struct Builder {
     call_items: BTreeMap<String, Call>,
     /// Claude's task ids (task_started) → what they are.
     jobs: HashMap<String, Job>,
-    /// tool_use ids whose permission prompt was denied: their error results are denials.
+    /// The calls (items) whose permission prompt was denied: their error results are denials.
     denied: HashSet<String>,
-    /// tool_use id → the subagent call it was made in, for prompts stored before their call.
-    call_parent: HashMap<String, String>,
-    /// Results that came before their call: added with it.
+    /// Every tool_use block with each id, in order: a thread can have several with one id.
+    occurrences: HashMap<String, Vec<Occurrence>>,
+    /// How many of each id's occurrences the thread has come to.
+    seen: HashMap<String, usize>,
+    /// The tool_use ids some tool_result names.
+    with_results: HashSet<String>,
+    /// Results that came before their call, by the call's item: added with it.
     early: HashMap<String, (i64, Value)>,
-    /// Ids of all the tool_use blocks.
-    tool_uses: HashSet<String>,
-    /// The latest item, if it's a compaction a synthetic summary goes into.
-    compaction: Option<String>,
+    /// By parent (None: the main conversation), the latest item if it's a compaction, which a synthetic
+    /// summary goes into.
+    compaction: HashMap<Option<String>, String>,
     /// The session the messages were last in.
     last_session: Option<String>,
     /// The row being converted.
@@ -260,29 +270,29 @@ impl Builder {
             call_items: BTreeMap::new(),
             jobs: HashMap::new(),
             denied: HashSet::new(),
-            call_parent: HashMap::new(),
+            occurrences: HashMap::new(),
+            seen: HashMap::new(),
+            with_results: HashSet::new(),
             early: HashMap::new(),
-            tool_uses: HashSet::new(),
-            compaction: None,
+            compaction: HashMap::new(),
             last_session: None,
             current: None,
         };
-        // Prompts can be stored before their call, and answers change prompts in place: index them all first.
-        for m in messages {
-            match m.kind.as_str() {
-                "permission" if m.data["status"] == "denied" => {
-                    if let Some(id) = str_arg(&m.data, "tool_use_id") {
-                        b.denied.insert(id.to_string());
+        // Prompts and results can be stored before their call: index the calls first. A call keeps its id
+        // as its item's, but for the first; one with an id an earlier call has is `legacy:<message>:<block>`.
+        for m in messages.iter().filter(|m| m.kind == "claude") {
+            let blocks = m.data["message"]["content"].as_array().into_iter().flatten();
+            match m.data["type"].as_str() {
+                Some("assistant") => {
+                    for (i, block) in blocks.enumerate().filter(|(_, x)| x["type"] == "tool_use") {
+                        let id = block["id"].as_str().unwrap_or_default();
+                        let list = b.occurrences.entry(id.to_string()).or_default();
+                        let item = if list.is_empty() && !id.is_empty() { id.to_string() } else { format!("legacy:{}:{i}", m.id) };
+                        list.push(Occurrence { item, parent: str_arg(&m.data, "parent_tool_use_id").map(String::from) });
                     }
                 }
-                "claude" if m.data["type"] == "assistant" => {
-                    for block in m.data["message"]["content"].as_array().into_iter().flatten().filter(|x| x["type"] == "tool_use") {
-                        let Some(id) = str_arg(block, "id") else { continue };
-                        b.tool_uses.insert(id.to_string());
-                        if let Some(parent) = str_arg(&m.data, "parent_tool_use_id") {
-                            b.call_parent.insert(id.to_string(), parent.to_string());
-                        }
-                    }
+                Some("user") => {
+                    b.with_results.extend(blocks.filter(|x| x["type"] == "tool_result").filter_map(|x| x["tool_use_id"].as_str()).map(String::from));
                 }
                 _ => {}
             }
@@ -305,7 +315,12 @@ impl Builder {
     fn add(&mut self, item: Value) {
         let id = item["id"].as_str().unwrap_or_default().to_string();
         assert!(self.items.insert(id.clone()), "item {id} added twice");
-        self.compaction = (item["type"] == "compaction").then(|| id.clone());
+        let parent = item["parent_id"].as_str().map(String::from);
+        if item["type"] == "compaction" {
+            self.compaction.insert(parent, id.clone());
+        } else {
+            self.compaction.remove(&parent);
+        }
         self.touch(&id);
         self.events.push(json!({"type": "item.added", "item": item}));
     }
@@ -322,11 +337,40 @@ impl Builder {
         self.events.push(json!({"type": "request.resolved", "request_id": id, "resolution": resolution}));
     }
 
+    /// The next call with tool_use id `id` the thread hasn't come to.
+    fn next_occurrence(&self, id: &str) -> Option<&Occurrence> {
+        self.occurrences.get(id)?.get(self.seen.get(id).copied().unwrap_or(0))
+    }
+
+    /// The latest call with tool_use id `id` the thread has come to that has no result yet.
+    fn running_occurrence(&self, id: &str) -> Option<&Occurrence> {
+        let seen = self.seen.get(id).copied().unwrap_or(0);
+        self.occurrences.get(id)?[..seen].iter().rev().find(|o| self.call_items.get(&o.item).is_some_and(|c| c.status == "running"))
+    }
+
+    /// The call a prompt for tool_use id `id` is for: the only one with the id, or else one still
+    /// waiting (a call can't ask once it has its result), or else the next (prompts can come before
+    /// their call). None if there's no telling.
+    fn prompted(&mut self, message_id: i64, id: &str) -> Option<Occurrence> {
+        let all = self.occurrences.get(id)?;
+        if let [only] = all.as_slice() {
+            return Some(only.clone());
+        }
+        let found = self.running_occurrence(id).or_else(|| self.next_occurrence(id)).cloned();
+        if found.is_none() {
+            self.warn(Some(message_id), "ambiguous_call", format!("a prompt for call {id}, which every call with the id had answered"));
+        }
+        found
+    }
+
     /// The item of a subagent call that `parent` (a tool_use id) names, for an item's `parent_id`.
     fn parent(&mut self, message_id: i64, parent: Option<&str>) -> Option<String> {
         let parent = parent?;
-        match self.calls.get(parent).cloned() {
-            Some(item) => {
+        // A subagent's messages can be stored before its call.
+        let later = self.next_occurrence(parent).map(|o| o.item.clone());
+        match self.calls.get(parent).cloned().map(Ok).or(later.map(Err)) {
+            Some(Err(item)) => Some(item),
+            Some(Ok(item)) => {
                 let kind = &self.call_items[&item].kind;
                 if kind != "subagent" {
                     let text = format!("its parent {parent} is a {kind} call, not a subagent's");
@@ -419,10 +463,17 @@ impl Builder {
         let call = str_arg(d, "tool_use_id").map(String::from);
         let mut request = json!({"id": id, "created_at": m.created_at});
         if let Some(c) = &call {
-            request["tool_call_id"] = json!(self.calls.get(c).unwrap_or(c));
-            let parent = self.call_parent.get(c).cloned();
-            if let Some(p) = self.parent(m.id, parent.as_deref()) {
-                request["parent_id"] = json!(p);
+            if !self.occurrences.contains_key(c) {
+                // A call the thread doesn't have (an ExitPlanMode Claude Code didn't store, say).
+                request["tool_call_id"] = json!(c);
+            } else if let Some(o) = self.prompted(m.id, c) {
+                request["tool_call_id"] = json!(o.item);
+                if let Some(p) = self.parent(m.id, o.parent.as_deref()) {
+                    request["parent_id"] = json!(p);
+                }
+                if d["status"] == "denied" {
+                    self.denied.insert(o.item);
+                }
             }
         }
         let mut resolution = self.resolution(m, "a prompt");
@@ -507,6 +558,10 @@ impl Builder {
             (Some("system"), Some("compact_boundary")) => {
                 let meta = &d["compact_metadata"];
                 let mut item = json!({"id": format!("legacy:{}", m.id), "type": "compaction", "created_at": m.created_at});
+                // A subagent's own conversation compacted (Codex's children).
+                if let Some(p) = self.parent(m.id, str_arg(d, "parent_tool_use_id")) {
+                    item["parent_id"] = json!(p);
+                }
                 if let Some(t) = meta["trigger"].as_str().filter(|t| matches!(*t, "auto" | "manual")) {
                     item["trigger"] = json!(t);
                 }
@@ -559,13 +614,12 @@ impl Builder {
                 Some("redacted_thinking") => {}
                 Some("tool_use") => {
                     let call_id = block["id"].as_str().unwrap_or_default();
-                    let id = if call_id.is_empty() || self.items.contains(call_id) {
-                        let text = format!("tool call {call_id:?} is there twice; this one is {key}");
-                        self.warn(Some(m.id), "duplicate_call", text);
-                        key
-                    } else {
-                        call_id.to_string()
-                    };
+                    let n = self.seen.entry(call_id.to_string()).or_default();
+                    let id = self.occurrences[call_id][*n].item.clone();
+                    *n += 1;
+                    if id != call_id {
+                        self.warn(Some(m.id), "duplicate_call", format!("tool call {call_id:?} is there twice; this one is {key}"));
+                    }
                     let name = block["name"].as_str().unwrap_or_default();
                     let mut item = Value::Object(tool_fields(name, &block["input"]));
                     let kind = item["kind"].as_str().unwrap_or("other").to_string();
@@ -577,8 +631,8 @@ impl Builder {
                     self.calls.insert(call_id.to_string(), id.clone());
                     let model = str_arg(&block["input"], "model").map(String::from);
                     self.call_items.insert(id.clone(), Call { kind, status: "running", subagent: None, model });
-                    if let Some((at, result)) = self.early.remove(call_id) {
-                        self.tool_result(at, &result, &Value::Null);
+                    if let Some((at, result)) = self.early.remove(&id) {
+                        self.tool_result(at, &id, &result, &Value::Null);
                     }
                     any = true;
                 }
@@ -593,8 +647,9 @@ impl Builder {
         let content = &d["message"]["content"];
         if let Some(text) = content.as_str() {
             // The summary a compacted conversation goes on from.
+            let parent = str_arg(d, "parent_tool_use_id").and_then(|p| self.calls.get(p).cloned());
             if d["isSynthetic"] == true
-                && let Some(id) = self.compaction.clone()
+                && let Some(id) = self.compaction.get(&parent).cloned()
             {
                 self.update(&id, json!({"summary": text}));
                 return Disposition::Converted;
@@ -605,12 +660,19 @@ impl Builder {
         for block in content.as_array().into_iter().flatten() {
             match block["type"].as_str() {
                 Some("tool_result") => {
+                    // The call still waiting with its id, else the next one (a result before its call),
+                    // else the latest (a second result).
                     let call = block["tool_use_id"].as_str().unwrap_or_default();
-                    if self.calls.contains_key(call) {
-                        self.tool_result(m.id, block, &d["tool_use_result"]);
+                    if let Some(o) = self.running_occurrence(call).cloned() {
+                        self.tool_result(m.id, &o.item, block, &d["tool_use_result"]);
                         any = true;
-                    } else if self.tool_uses.contains(call) {
-                        self.early.insert(call.to_string(), (m.id, block.clone()));
+                    } else if let Some(o) = self.next_occurrence(call).cloned() {
+                        if self.early.insert(o.item, (m.id, block.clone())).is_some() {
+                            self.warn(Some(m.id), "second_result", format!("call {call} has a result already; this one replaces it"));
+                        }
+                        any = true;
+                    } else if let Some(item) = self.calls.get(call).cloned() {
+                        self.tool_result(m.id, &item, block, &d["tool_use_result"]);
                         any = true;
                     } else {
                         self.warn(Some(m.id), "orphan_result", format!("a result for call {call:?}, which isn't in the thread"));
@@ -647,14 +709,14 @@ impl Builder {
         }
     }
 
-    /// A tool_result block for a call the thread has (`meta`: the message's tool_use_result).
-    fn tool_result(&mut self, message_id: i64, block: &Value, meta: &Value) {
+    /// A tool_result block for call `id`, an item the thread has (`meta`: the message's tool_use_result).
+    fn tool_result(&mut self, message_id: i64, id: &str, block: &Value, meta: &Value) {
         let call = block["tool_use_id"].as_str().unwrap_or_default();
-        let Some(id) = self.calls.get(call).cloned() else { return };
+        let id = id.to_string();
         let text = result_text(&block["content"]);
         let is_error = block["is_error"] == true;
         let status = match is_error {
-            true if self.denied.contains(call) => "denied",
+            true if self.denied.contains(&id) => "denied",
             true => "failed",
             false => "completed",
         };
@@ -680,20 +742,27 @@ impl Builder {
         self.update(&id, patch);
     }
 
-    /// A task_* system message: how a subagent (or a Bash command's run) is getting on.
+    /// A task_* system message: how a subagent (or a Bash command's run) is getting on. Claude Code's
+    /// say which task by `task_id` (and started ones which call, by `tool_use_id`); the ones the board
+    /// writes for Codex's subagents (agent/codex/output.rs) have no `task_type`, and say which call by
+    /// `tool_use_id` alone.
     fn job(&mut self, m: &Message, subtype: &str) -> Disposition {
         let d = &m.data;
         let task = d["task_id"].as_str().unwrap_or_default().to_string();
+        let call = d["tool_use_id"].as_str().unwrap_or_default().to_string();
         if subtype == "task_started" {
-            let call = d["tool_use_id"].as_str().unwrap_or_default();
             match d["task_type"].as_str() {
-                Some("local_agent") => {
-                    let Some(id) = self.calls.get(call).cloned() else {
+                None | Some("local_agent") => {
+                    let Some(id) = self.calls.get(&call).cloned() else {
                         self.jobs.insert(task, Job::Shown);
                         return self.retain(m, "missing_parent", format!("a subagent started by call {call:?}, which isn't in the thread"));
                     };
                     let c = self.call_items.get_mut(&id).unwrap();
-                    let s = subagent_started(c.subagent.as_ref(), d, c.model.as_deref());
+                    // Started again (Codex says so when a child's details come late): how it's getting on stays.
+                    let mut s = subagent_started(c.subagent.as_ref(), d, c.model.as_deref());
+                    if let Some(was) = &c.subagent {
+                        s["status"] = was["status"].clone();
+                    }
                     c.subagent = Some(s.clone());
                     let mut patch = json!({"subagent": s});
                     // A Skill forked into an agent has no Agent call: its call becomes the subagent's.
@@ -701,7 +770,15 @@ impl Builder {
                         c.kind = "subagent".into();
                         patch["kind"] = json!("subagent");
                     }
-                    self.jobs.insert(task, Job::Agent(id.clone()));
+                    // A background subagent's call is done once it has started it. Claude Code says so with a
+                    // result; the board's Codex children have none.
+                    if s["background"] == true && c.status == "running" && !self.with_results.contains(&call) {
+                        c.status = "completed";
+                        patch["status"] = json!("completed");
+                    }
+                    if !task.is_empty() {
+                        self.jobs.insert(task, Job::Agent(id.clone()));
+                    }
                     self.update(&id, patch);
                     return Disposition::Converted;
                 }
@@ -715,9 +792,17 @@ impl Builder {
                 }
             }
         }
-        match self.jobs.get(&task) {
+        let by_call = || {
+            let item = self.calls.get(&call)?;
+            self.call_items[item].subagent.is_some().then(|| Job::Agent(item.clone()))
+        };
+        let job = match self.jobs.get(&task) {
+            Some(Job::Agent(id)) => Some(Job::Agent(id.clone())),
+            Some(Job::Shown) => Some(Job::Shown),
+            None => by_call(),
+        };
+        match job {
             Some(Job::Agent(id)) => {
-                let id = id.clone();
                 let c = self.call_items.get_mut(&id).unwrap();
                 let Some(s) = c.subagent.as_ref() else { return Disposition::Redundant };
                 let next = subagent_task(s, d);
@@ -737,7 +822,7 @@ impl Builder {
         let d = &m.data;
         let ok = d["subtype"] == "success" && d["is_error"] != true;
         // A `/compact` run's turn is just its compaction.
-        if ok && d["num_turns"] == 0 && self.compaction.is_some() {
+        if ok && d["num_turns"] == 0 && self.compaction.contains_key(&None) {
             return Disposition::Redundant;
         }
         let mut item = json!({"id": format!("legacy:{}", m.id), "type": "turn_result", "ok": ok, "created_at": m.created_at});

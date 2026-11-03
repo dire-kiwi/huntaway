@@ -24,7 +24,10 @@ tables yet: running agents, the API and the UI are unchanged.
 - **Converter** (`threads/import.rs`): a pure function from a task's stored messages to a `Thread`, saved
   events from seq 1, the snapshot the crate's reducer folds them into, a disposition for every source row
   (converted, redundant or retained) and warnings. It follows the table below; turns aren't reconstructed (no
-  `turn_id`, no turn events), and calls with no result are cancelled with a warning.
+  `turn_id`, no turn events), and calls with no result are cancelled with a warning. A thread can have several
+calls with one tool_use id: each is its own item, and prompts and results go to the one still waiting (or, for
+one stored before its call, the next), with a warning where there's no telling. The task_* messages the board
+writes for Codex's children (no `task_type`, by `tool_use_id`) are read as subagents, as are their compactions.
 - **Dry run and staging** (`threads/report.rs`): `huntaway threads-import --db <copy> [--json] [--stage]
   [task ids or keys]` opens the database read-only and reports each task's conversion, its warnings and what
   stops it being switched over now (a run that's running or alive between turns, queued input, a merge, an open
@@ -33,12 +36,12 @@ tables yet: running agents, the API and the UI are unchanged.
   database must be at this build's version: run it on a copy a test server has opened, such as
   `scripts/copy-live-board.sh`'s.
 
-On a scrubbed copy of the live board (2026-11-03, a debug build), all 1,366 tasks converted: 242,276 messages
-(600 MB) gave 225,166 events (535 MB) in under a minute. 223,630 rows converted, 18,640 were redundant (mostly
+On a scrubbed copy of the live board (2026-11-03, a debug build), all 1,373 tasks converted: 243,246 messages
+(602 MB) gave 226,094 events (536 MB) in about a minute. 224,551 rows converted, 18,689 were redundant (mostly
 Bash commands' `task_*` messages and subagents' prompts) and 6 were retained with a warning (4 `task_*` messages
 for background tasks that never started, 2 `local_workflow` tasks). Other warnings: 32 calls with no result in 9
 tasks, one background subagent that never said it ended, and 14 unanswered questions. 15 tasks couldn't have been
-switched over then (14 open prompts, 1 queued message). Staging them all took the 744 MB database to 1.99 GB:
+switched over then (14 open prompts, 1 queued message). Staging them all (on an earlier copy) took the 744 MB database to 1.99 GB:
 saved events and their snapshot each hold a full copy of a thread, so a real cutover should expect about 2.5
 times the space, or keep fewer snapshots (the crate needs only the latest, and only to avoid folding every event
 on load).

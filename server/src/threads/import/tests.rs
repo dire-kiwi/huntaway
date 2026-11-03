@@ -287,3 +287,81 @@ fn staging_is_idempotent_and_replaces_an_older_import() {
         assert_eq!(store.last_seq(&t.id).await.unwrap(), 0);
     })
 }
+
+/// What the board stores for a Codex run whose child agent compacts and completes, written by its own
+/// Codex output handler (agent/codex/output.rs) from app-server notifications.
+#[test]
+fn codex_children_as_the_board_stores_them() {
+    use crate::agent::codex::handle_line;
+    let s = testing::state();
+    let t = testing::task(&s);
+    let run = crate::db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+    let send = |method: &str, thread: &str, mut params: Value| {
+        params["threadId"] = json!(thread);
+        handle_line(&s, &run, &json!({"method": method, "params": params})).unwrap();
+    };
+    let item = |thread: &str, item: Value| {
+        send("item/started", thread, json!({"item": item}));
+        send("item/completed", thread, json!({"item": item}));
+    };
+    handle_line(&s, &run, &json!({"method": "thread/started", "params": {"thread": {"id": "main"}}})).unwrap();
+    item("main", json!({"type": "collabAgentToolCall", "id": "spawn", "tool": "spawnAgent", "status": "completed", "senderThreadId": "main",
+        "receiverThreadIds": ["child"], "prompt": "Inspect config", "model": "gpt-6.1-sol", "agentsStates": {"child": {"status": "running"}}}));
+    item("child", json!({"type": "agentMessage", "id": "text", "text": "Reading"}));
+    item("child", json!({"type": "contextCompaction", "id": "squash"}));
+    item("main", json!({"type": "collabAgentToolCall", "id": "wait", "tool": "wait", "status": "completed", "senderThreadId": "main",
+        "receiverThreadIds": ["child"], "agentsStates": {"child": {"status": "completed", "message": "Config is fine"}}}));
+    let messages = crate::db::list_messages(&s.db(), &t.id).unwrap();
+    let c = convert(&Source { task: &t, harness: "codex", messages: &messages }).unwrap();
+    let items = items(&c);
+    let agent = &items["codex-agent-child"];
+    assert_eq!(agent["status"], "completed", "{agent}");
+    assert_eq!(agent["subagent"]["status"], "completed");
+    assert_eq!(agent["subagent"]["background"], true);
+    assert_eq!(agent["subagent"]["model"], "gpt-6.1-sol");
+    assert_eq!(agent["subagent"]["summary"], "Config is fine");
+    // The child's compaction stays in the child's conversation.
+    let compaction = items.values().find(|i| i["type"] == "compaction").unwrap();
+    assert_eq!(compaction["parent_id"], "codex-agent-child");
+    assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+    assert_eq!(c.count(Disposition::Retained), 0);
+}
+
+#[test]
+fn a_prompt_before_a_call_with_a_reused_id_is_for_that_call() {
+    let c = convert_all(&[
+        assistant(1, None, json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "ls"}}])),
+        results(2, None, json!([{"type": "tool_result", "tool_use_id": "c", "content": "a"}])),
+        msg(3, "permission", json!({"tool_name": "Bash", "input": {"command": "rm x"}, "tool_use_id": "c", "request_id": "r1", "status": "denied"})),
+        assistant(4, Some("ag"), json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "rm x"}}])),
+        results(5, Some("ag"), json!([{"type": "tool_result", "tool_use_id": "c", "content": "Denied", "is_error": true}])),
+        // A prompt after both have their results can't be told apart.
+        msg(6, "permission", json!({"tool_name": "Bash", "input": {}, "tool_use_id": "c", "request_id": "r2", "status": "allowed"})),
+    ]);
+    let items = items(&c);
+    assert_eq!((&items["c"]["status"], &items["c"]["result"]["content"]), (&json!("completed"), &json!("a")));
+    assert_eq!((&items["legacy:4:0"]["status"], &items["legacy:4:0"]["result"]["content"]), (&json!("denied"), &json!("Denied")));
+    let requests: Vec<Value> = c.snapshot.requests.iter().map(|r| serde_json::to_value(r).unwrap()).collect();
+    assert_eq!(requests[0]["tool_call_id"], "legacy:4:0");
+    // Its parent is the second call's, which isn't in the thread.
+    assert_eq!(requests[0]["parent_id"], "ag");
+    assert!(requests[1].get("tool_call_id").is_none());
+    let mut got = codes(&c);
+    got.sort();
+    assert_eq!(got, ["ambiguous_call", "duplicate_call", "missing_parent", "missing_parent"]);
+}
+
+#[test]
+fn a_subagents_compaction_and_its_summary_stay_in_it() {
+    let c = convert_all(&[
+        assistant(1, None, json!([{"type": "tool_use", "id": "ag", "name": "Agent", "input": {}}])),
+        msg(2, "claude", json!({"type": "system", "subtype": "compact_boundary", "parent_tool_use_id": "ag", "compact_metadata": {"trigger": "auto"}})),
+        assistant(3, None, json!([{"type": "text", "text": "Meanwhile"}])),
+        msg(4, "claude", json!({"type": "user", "isSynthetic": true, "parent_tool_use_id": "ag", "message": {"content": "Child summary"}})),
+        results(5, None, json!([{"type": "tool_result", "tool_use_id": "ag", "content": "done"}])),
+    ]);
+    let items = items(&c);
+    assert_eq!(items["legacy:2"]["parent_id"], "ag");
+    assert_eq!(items["legacy:2"]["summary"], "Child summary");
+    assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+}
