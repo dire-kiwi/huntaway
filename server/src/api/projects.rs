@@ -312,7 +312,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
         b,
         &[
             "name", "key", "repo_path", "base_branch", "setup_script", "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model",
-            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
+            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "summarizers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "merge_approval",
             "require_pr_approval",
@@ -329,8 +329,16 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
     // Configs deleted since they were saved, here or in the profile's (which the project's
     // settings start from when it takes its own), are kept (see check_reviewers).
     let profile = db::get_profile(&s.db(), &before.profile_id)?;
-    let from_profile = profile.iter().flat_map(|p| p.reviewers.iter().chain(&p.summarizer));
-    let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizer).chain(from_profile).collect();
+    let from_profile = profile.iter().flat_map(|p| p.reviewers.iter().chain(&p.summarizers));
+    let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizers).chain(from_profile).collect();
+    // A client from before API 101 sends the one `summarizer`: that's the only one, unless it also sends `summarizers`.
+    if !fields.iter().any(|(k, _)| *k == "summarizers") {
+        if let Some(i) = fields.iter().position(|(k, _)| *k == "summarizer") {
+            let (_, v) = fields.remove(i);
+            fields.push(("summarizers", legacy_summarizer(&v)));
+        }
+    }
+    fields.retain(|(k, _)| *k != "summarizer");
     for (k, v) in fields.iter_mut() {
         match *k {
             // null (or blank) uses the default (see agent/prompts.rs).
@@ -418,8 +426,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             // null (or an empty list) uses the profile's reviewers.
             "reviewers" => *v = reviewers_value(&s.db(), v, false, &saved_reviewers)?,
-            // null uses the profile's summarizer.
-            "summarizer" => *v = summarizer_value(&s.db(), v, false, &saved_reviewers)?,
+            // null (or an empty list) uses the profile's summarizers.
+            "summarizers" => *v = summarizers_value(&s.db(), v, false, &saved_reviewers)?,
             // A script per status; null or a blank script is none.
             "status_scripts" => {
                 let scripts: Option<BTreeMap<String, String>> =
@@ -439,6 +447,10 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             _ => {}
         }
+    }
+    // The first of the summarizers is also kept as the `summarizer` older clients read.
+    if let Some(value) = fields.iter().find(|(k, _)| *k == "summarizers").map(|(_, v)| summarizer_mirror(v)) {
+        fields.push(("summarizer", value));
     }
     // A relative worktrees folder would be made against the server's folder but used by git from
     // the repository's, which puts worktrees in the main checkout; and it can't be the checkout.

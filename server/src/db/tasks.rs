@@ -209,9 +209,13 @@ pub struct Task {
     pub now_at: Option<String>,
     /// The latest automatic review of the task's work.
     pub review: Option<Review>,
-    /// The latest summary of its changes, written once its review passed (see review/summary.rs).
+    /// The first of its `summaries`, for clients from before there could be several (API 84).
     #[serde(default)]
     pub summary: Option<ChangeSummary>,
+    /// The latest summaries of its changes, one from each summarizer, written once its review
+    /// passed (API 101, see review/summary.rs).
+    #[serde(default)]
+    pub summaries: Vec<ChangeSummary>,
     /// How full its agent's context window is, as of its latest reply (see agent/context.rs).
     #[serde(default)]
     pub context: Option<Context>,
@@ -238,6 +242,7 @@ impl Task {
 
     fn from_row(r: &Row) -> rusqlite::Result<Self> {
         let auto_allow: String = r.get("auto_allow")?;
+        let summaries = summaries_column(r.get("summary")?);
         Ok(Self {
             id: r.get("id")?,
             profile_id: r.get("profile_id")?,
@@ -296,7 +301,8 @@ impl Task {
             reminder: r.get("reminder")?,
             now_at: r.get("now_at")?,
             review: r.get::<_, Option<String>>("review")?.and_then(|v| serde_json::from_str(&v).ok()),
-            summary: r.get::<_, Option<String>>("summary")?.and_then(|v| serde_json::from_str(&v).ok()),
+            summary: summaries.first().cloned(),
+            summaries,
             context: r.get::<_, Option<String>>("context")?.and_then(|v| serde_json::from_str(&v).ok()),
             rewind: r.get::<_, Option<String>>("rewind")?.and_then(|v| serde_json::from_str(&v).ok()),
             cost_usd: r.get("cost_usd")?,

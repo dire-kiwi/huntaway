@@ -80,16 +80,13 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     let (Some(dir), Some(branch)) = (task.worktree_path.clone().filter(|_| task.worktree_state == "ready"), task.branch.clone()) else {
         return skip(manual, "the task has no worktree branch to summarise");
     };
-    let previous = task.summary.clone();
-    if previous.as_ref().is_some_and(|s| s.state == "running") {
+    let previous = task.summaries.clone();
+    if previous.iter().any(|s| s.state == "running") {
         return skip(manual, "a summary is already being written");
     }
     let dir = std::path::PathBuf::from(dir);
     let o = worktree::git(&dir, &["rev-parse", "--verify", "HEAD"]).await.ok().filter(|o| o.ok);
     let head = o.map(|o| o.stdout.trim().to_string()).filter(|h| !h.is_empty()).ok_or_else(|| ApiError::bad("couldn't read the worktree's HEAD commit"))?;
-    if !manual && previous.as_ref().is_some_and(|s| s.state == "done" && s.head.as_deref() == Some(head.as_str())) {
-        return Ok(None);
-    }
     // What the reviewers had as its work, too.
     let (base, own_start) = worktree::work_scope(state, &dir, &task, &project).await;
     let mut elsewhere = false;
@@ -98,82 +95,165 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         elsewhere = merge_base.as_deref() == Some(head.as_str());
     }
 
-    // The summarizer writes in a thread of its own, kept from one summary to the next while
-    // its config, model and effort stay the same.
-    let spec = db::summarizer_for(&state.db(), &project)?;
+    // Each summarizer writes in a thread of its own, kept from one summary to the next while
+    // its config, model, effort, name, skills and prompt stay the same.
     let task_config = db::task_claude_config(&state.db(), &task)?;
-    let config = match spec.claude_config_id.as_deref() {
-        // A summarizer whose config was deleted writes with the task's.
-        Some(id) => db::get_claude_config(&state.db(), id)?.or_else(|| task_config.clone()),
-        None => task_config.clone(),
-    };
-    let config_id = config.as_ref().map(|c| c.id.clone());
-    let model = spec.model.clone().filter(|m| !m.trim().is_empty());
-    let effort = spec.effort.clone().filter(|e| !e.trim().is_empty());
-    let label = crate::review::label(config.as_ref(), model.as_deref(), effort.as_deref());
     let key = format!("{}-{}", project.key, task.number);
-    let threads = db::summary_threads(&state.db(), &task.id)?;
-    let thread = match threads.into_iter().find(|t| t.claude_config_id == config_id && t.model == model && t.effort == effort) {
-        Some(t) => t,
-        None => {
-            let t = db::insert_task(
-                &state.db(),
-                NewTask {
-                    profile_id: &task.profile_id,
-                    project_id: Some(&project.id),
-                    kind: "review",
-                    title: &format!("Summary of {key}"),
-                    description: "",
-                    status: "todo",
-                    use_worktree: false,
-                    model: model.as_deref(),
-                    effort: effort.as_deref(),
-                    claude_config_id: config_id.as_deref(),
-                },
-            )?;
-            let fields = [("parent_id", json!(task.id)), ("task_type", json!(SUMMARY))];
-            state.update_task(&t.id, &fields)?.ok_or_else(|| ApiError::not_found("summary thread"))?
+    let mut plans: Vec<Plan> = Vec::new();
+    for spec in db::summarizers_for(&state.db(), &project)? {
+        let config = match spec.claude_config_id.as_deref() {
+            // A summarizer whose config was deleted writes with the task's.
+            Some(id) => db::get_claude_config(&state.db(), id)?.or_else(|| task_config.clone()),
+            None => task_config.clone(),
+        };
+        let config_id = config.as_ref().map(|c| c.id.clone());
+        let model = spec.model.clone().filter(|m| !m.trim().is_empty());
+        let effort = spec.effort.clone().filter(|e| !e.trim().is_empty());
+        let variant = variant_key(&spec);
+        // Two the same would share a thread.
+        if plans.iter().any(|p| p.config_id == config_id && p.model == model && p.effort == effort && p.variant == variant) {
+            continue;
         }
-    };
-    if state.is_running(&thread.id) {
-        return Err(ApiError::conflict(format!("the summary thread's agent ({label}) is busy; wait for it to finish or stop it")));
+        let label = crate::review::label(config.as_ref(), model.as_deref(), effort.as_deref());
+        plans.push(Plan { spec, codex: config.as_ref().is_some_and(|c| c.is_codex()), config_id, model, effort, variant, label });
     }
-    let after_run = Some(db::latest_run(&state.db(), &thread.id, None)?.unwrap_or_default());
-    let summary = ChangeSummary {
-        thread_id: thread.id.clone(),
-        label,
-        state: "running".into(),
-        head: Some(head.clone()),
-        text: None,
-        after_run,
-        updated_at: now(),
-    };
+    let threads = db::summary_threads(&state.db(), &task.id)?;
+    let mut writing: Vec<(Plan, Task)> = Vec::new();
+    let mut summaries: Vec<ChangeSummary> = Vec::new();
+    for plan in plans {
+        let title = match plan.spec.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            Some(name) => format!("Summary of {key} · {name}"),
+            None => format!("Summary of {key}"),
+        };
+        let thread = match threads.iter().find(|t| t.claude_config_id == plan.config_id && t.model == plan.model && t.effort == plan.effort && t.description == plan.variant) {
+            Some(t) => t.clone(),
+            None => {
+                let t = db::insert_task(
+                    &state.db(),
+                    NewTask {
+                        profile_id: &task.profile_id,
+                        project_id: Some(&project.id),
+                        kind: "review",
+                        title: &title,
+                        description: &plan.variant,
+                        status: "todo",
+                        use_worktree: false,
+                        model: plan.model.as_deref(),
+                        effort: plan.effort.as_deref(),
+                        claude_config_id: plan.config_id.as_deref(),
+                    },
+                )?;
+                let fields = [("parent_id", json!(task.id)), ("task_type", json!(SUMMARY))];
+                state.update_task(&t.id, &fields)?.ok_or_else(|| ApiError::not_found("summary thread"))?
+            }
+        };
+        // Already summarised at this commit, and not asked for again.
+        if !manual {
+            if let Some(done) = previous.iter().find(|s| s.thread_id == thread.id && s.state == "done" && s.head.as_deref() == Some(head.as_str())) {
+                summaries.push(done.clone());
+                continue;
+            }
+        }
+        if thread.title != title {
+            state.update_task(&thread.id, &[("title", json!(title))])?;
+        }
+        if state.is_running(&thread.id) {
+            return Err(ApiError::conflict(format!("the summary thread's agent ({}) is busy; wait for it to finish or stop it", plan.label)));
+        }
+        let after_run = Some(db::latest_run(&state.db(), &thread.id, None)?.unwrap_or_default());
+        summaries.push(ChangeSummary {
+            thread_id: thread.id.clone(),
+            label: plan.label.clone(),
+            name: plan.spec.name.clone().filter(|n| !n.trim().is_empty()),
+            skills: plan.spec.skills.clone(),
+            custom_prompt: plan.spec.prompt.is_some(),
+            state: "running".into(),
+            head: Some(head.clone()),
+            text: None,
+            after_run,
+            updated_at: now(),
+        });
+        writing.push((plan, thread));
+    }
+    if writing.is_empty() {
+        return Ok(None);
+    }
     let commit = &head[..head.len().min(10)];
     let last_message = if elsewhere { db::last_assistant_text(&state.db(), &task.id)? } else { None };
-    let text = prompt(&key, &task, &branch, base.as_deref(), commit, elsewhere, own_start, last_message.as_deref());
-    // A fresh conversation for each summary; the thread keeps every one's messages.
-    state.update_task(&thread.id, &[("session_id", Value::Null)])?;
-    crate::agent::context::clear(state, &thread.id)?;
-    let sent = {
+    let mut texts = Vec::new();
+    for (plan, thread) in &writing {
+        texts.push(prompt(&key, &task, &branch, base.as_deref(), commit, elsewhere, own_start, last_message.as_deref(), &plan.spec, plan.codex));
+        // A fresh conversation for each summary; the thread keeps every one's messages.
+        state.update_task(&thread.id, &[("session_id", Value::Null)])?;
+        crate::agent::context::clear(state, &thread.id)?;
+    }
+    let sent: Vec<Result<Task, ApiError>> = {
         let _g = updating();
         // The agent may have started again meanwhile (and `supersede` found nothing to stop).
         let later = db::later_run(&state.db(), &task.id, last_run.as_deref().unwrap_or_default())?;
         if later || state.is_running(&task.id) {
             return skip(manual, "the agent is working again");
         }
-        set_summary(state, &task.id, Some(&summary))?;
-        state.add_event(&thread.id, "info", format!("Summarising commit {commit}"), None);
-        crate::agent::runner::send_review(state, &thread.id, &text)
+        set_summaries(state, &task.id, &summaries)?;
+        let sent = writing
+            .iter()
+            .zip(&texts)
+            .map(|((_, thread), text)| {
+                state.add_event(&thread.id, "info", format!("Summarising commit {commit}"), None);
+                crate::agent::runner::send_review(state, &thread.id, text)
+            })
+            .collect::<Vec<_>>();
+        // Those that couldn't start have failed.
+        let failed: Vec<(&str, String)> = writing.iter().zip(&sent).filter_map(|((_, t), r)| r.as_ref().err().map(|e| (t.id.as_str(), e.1.clone()))).collect();
+        if !failed.is_empty() {
+            for s in summaries.iter_mut() {
+                if let Some((_, why)) = failed.iter().find(|(id, _)| *id == s.thread_id) {
+                    s.state = "failed".into();
+                    s.text = Some(format!("Couldn't start the summary: {why}"));
+                    s.updated_at = now();
+                }
+            }
+            set_summaries(state, &task.id, &summaries)?;
+        }
+        sent
     };
-    if let Err(e) = sent {
-        let _g = updating();
-        let failed = ChangeSummary { state: "failed".into(), text: Some(format!("Couldn't start the summary: {}", e.1)), updated_at: now(), ..summary };
-        set_summary(state, &task.id, Some(&failed))?;
-        return Err(e);
+    if sent.iter().all(Result::is_err) {
+        return Err(sent.into_iter().find_map(Result::err).expect("one failed"));
     }
     state.add_event(&task.id, "info", format!("Summarising the changes (commit {commit})"), None);
     Ok(db::get_task(&state.db(), &task.id)?)
 }
+
+/// One summarizer's part of a summary being started.
+struct Plan {
+    spec: db::Reviewer,
+    /// Whether its agent is Codex, which is asked for skills differently.
+    codex: bool,
+    config_id: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    /// What tells its thread from the others' with the same agent (see `variant_key`).
+    variant: String,
+    label: String,
+}
+
+/// What, besides its agent, tells a summarizer's thread from another's: its name, skills and prompt
+/// as text (empty if it has none, as the threads written before there could be several).
+fn variant_key(spec: &db::Reviewer) -> String {
+    let name = spec.name.as_deref().map(str::trim).unwrap_or_default();
+    let prompt = spec.prompt.as_deref().map(str::trim).unwrap_or_default();
+    if name.is_empty() && prompt.is_empty() && spec.skills.is_empty() {
+        return String::new();
+    }
+    json!({"name": name, "skills": spec.skills, "prompt": prompt}).to_string()
+}
+
+/// How the board asks for a summary to be written, unless the summarizer has a prompt of its own.
+const DEFAULT_WRITING: &str = "\nThe user reads your summary before they merge the work, to see what it does without reading the whole diff. Write \
+     it in Markdown, briefly: start with a sentence or two on what changed and why, then the main changes (grouped by \
+     area, naming the files or modules where it helps), any decisions or behaviour changes worth knowing about, and \
+     how to try it if that isn't obvious. Leave out what the diff makes plain at a glance, and don't review the work or \
+     pad it out.\n";
 
 /// How much of the agent's last message goes in the prompt.
 const LAST_MESSAGE_CHARS: usize = 6000;
@@ -182,7 +262,7 @@ const LAST_MESSAGE_CHARS: usize = 6000;
 /// the agent's `last_message` says where; `own_start` when it starts after where it left its base
 /// branch, at `base`, see worktree::work_scope), and how to write the summary.
 #[allow(clippy::too_many_arguments)]
-fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str, elsewhere: bool, own_start: bool, last_message: Option<&str>) -> String {
+fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str, elsewhere: bool, own_start: bool, last_message: Option<&str>, spec: &db::Reviewer, codex: bool) -> String {
     let mut p = format!("Summarise the changes made for task {key}: \"{}\".\n", task.title);
     if !task.description.trim().is_empty() {
         p.push_str(&format!("\nThe task's description:\n\n{}\n", task.description.trim()));
@@ -229,33 +309,45 @@ fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str
     if let Some(r) = task.review.as_ref().and_then(|r| r.summary.as_deref()).map(str::trim).filter(|s| !s.is_empty()) {
         p.push_str(&format!("\nIts review passed. The reviewer said:\n\n{}\n", r.lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n")));
     }
+    match spec.prompt.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        Some(custom) => p.push_str(&format!("\nThe user reads your summary before they merge the work. Write it as they ask:\n\n{custom}\n")),
+        None => p.push_str(DEFAULT_WRITING),
+    }
+    if !spec.skills.is_empty() {
+        let named: Vec<String> = spec.skills.iter().map(|s| format!("`{}{s}`", if codex { '$' } else { '/' })).collect();
+        p.push_str(&format!(
+            "\nUse {} while you write the summary: {}{}. If one doesn't ask for something that's against the rest of this message \
+             (changing files, or ending with more than the summary), follow it; otherwise follow this message.\n",
+            if spec.skills.len() == 1 { "this skill" } else { "these skills" },
+            named.join(", "),
+            if codex { "" } else { " (invoke each with the `Skill` tool)" },
+        ));
+    }
     p.push_str(
-        "\nThe user reads your summary before they merge the work, to see what it does without reading the whole diff. Write \
-         it in Markdown, briefly: start with a sentence or two on what changed and why, then the main changes (grouped by \
-         area, naming the files or modules where it helps), any decisions or behaviour changes worth knowing about, and \
-         how to try it if that isn't obvious. Leave out what the diff makes plain at a glance, and don't review the work or \
-         pad it out. Don't change anything. Your last message is the summary, shown as it is on the task: end your turn \
-         with only the summary, without a preamble.",
+        "\nDon't change anything. Your last message is the summary, shown as it is on the task: end your turn with only the \
+         summary, without a preamble.",
     );
     p
 }
 
-fn set_summary(state: &Shared, task_id: &str, summary: Option<&ChangeSummary>) -> anyhow::Result<()> {
-    state.update_task(task_id, &[("summary", json!(summary))])?;
+fn set_summaries(state: &Shared, task_id: &str, summaries: &[ChangeSummary]) -> anyhow::Result<()> {
+    let value = if summaries.is_empty() { Value::Null } else { json!(summaries) };
+    state.update_task(task_id, &[("summary", value)])?;
     Ok(())
 }
 
-/// The task's summary, if `thread_id`'s is in progress.
-fn in_progress(state: &Shared, task_id: &str, thread_id: &str) -> Option<ChangeSummary> {
+/// The summary `thread_id` is writing for the task, if it is.
+fn in_progress(state: &Shared, task_id: &str, thread_id: &str) -> Option<Vec<ChangeSummary>> {
     let task = db::get_task(&state.db(), task_id).ok().flatten()?;
-    task.summary.filter(|s| s.state == "running" && s.thread_id == thread_id)
+    task.summaries.iter().any(|s| s.state == "running" && s.thread_id == thread_id).then_some(task.summaries)
 }
 
 /// The summary thread's run `run_id` ended: its last message is the summary.
 pub fn finished(state: &Shared, thread: &Task, run_id: &str, outcome: &Outcome, attention: Option<&str>) {
     let Some(parent_id) = thread.parent_id.as_deref() else { return };
     let _g = updating();
-    let Some(mut summary) = in_progress(state, parent_id, &thread.id) else { return };
+    let Some(mut all) = in_progress(state, parent_id, &thread.id) else { return };
+    let Some(summary) = all.iter_mut().find(|s| s.thread_id == thread.id) else { return };
     // From an earlier run of the thread (one stopped late, say): this summary isn't its.
     if summary.after_run.as_deref().is_some_and(|after| !db::run_after(&state.db(), &thread.id, run_id, after).unwrap_or(false)) {
         return;
@@ -280,41 +372,53 @@ pub fn finished(state: &Shared, thread: &Task, run_id: &str, outcome: &Outcome, 
     summary.state = st.into();
     summary.text = text;
     summary.updated_at = now();
-    if let Err(e) = set_summary(state, parent_id, Some(&summary)) {
+    let (label, failed) = (summary.label.clone(), summary.text.clone());
+    if let Err(e) = set_summaries(state, parent_id, &all) {
         tracing::error!("failed to record a summary: {e:#}");
         return;
     }
+    // With several, the event says whose it is.
+    let several = all.len() > 1;
+    let title = |what: &str| if several { format!("{what} ({label})") } else { what.to_string() };
     match st {
-        "done" => state.add_event(parent_id, "info", "Changes summarised", None),
+        "done" => state.add_event(parent_id, "info", title("Changes summarised"), None),
         "stopped" => {}
-        _ => state.add_event(parent_id, "warn", "Couldn't summarise the changes", summary.text.clone()),
+        _ => state.add_event(parent_id, "warn", title("Couldn't summarise the changes"), failed),
     }
 }
 
-/// The task's agent started working again: the summary in progress is out of date.
+/// The task's agent started working again: the summaries in progress are out of date.
 pub fn supersede(state: &Shared, task: &Task) {
     stop_summary(state, &task.id, "Stopped because the agent started working on the task again.");
 }
 
-/// The user stopped the task: stop its summary too, if one is being written. Returns whether one was.
+/// The user stopped the task: stop its summaries too, if any are being written. Returns whether any was.
 pub fn stop(state: &Shared, task_id: &str) -> bool {
     stop_summary(state, task_id, "Stopped by the user.")
 }
 
 fn stop_summary(state: &Shared, task_id: &str, why: &str) -> bool {
-    let thread = {
+    let threads: Vec<String> = {
         let _g = updating();
-        let current = db::get_task(&state.db(), task_id).ok().flatten().and_then(|t| t.summary);
-        let Some(mut summary) = current.filter(|s| s.state == "running") else { return false };
-        summary.state = "stopped".into();
-        summary.text = Some(why.into());
-        summary.updated_at = now();
-        if let Err(e) = set_summary(state, task_id, Some(&summary)) {
+        let mut all = db::get_task(&state.db(), task_id).ok().flatten().map(|t| t.summaries).unwrap_or_default();
+        let mut running = Vec::new();
+        for summary in all.iter_mut().filter(|s| s.state == "running") {
+            summary.state = "stopped".into();
+            summary.text = Some(why.into());
+            summary.updated_at = now();
+            running.push(summary.thread_id.clone());
+        }
+        if running.is_empty() {
+            return false;
+        }
+        if let Err(e) = set_summaries(state, task_id, &all) {
             tracing::warn!("failed to update a summary: {e:#}");
         }
-        summary.thread_id
+        running
     };
-    crate::agent::runner::stop(state, &thread);
+    for thread in threads {
+        crate::agent::runner::stop(state, &thread);
+    }
     true
 }
 
@@ -329,12 +433,29 @@ mod tests {
         let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let mut task = db::insert_task(&c, t).unwrap();
         task.review = Some(db::Review { state: "passed".into(), summary: Some("Looks good.".into()), ..Default::default() });
-        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, false, None);
+        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, false, None, &db::Reviewer::default(), false);
         for want in ["task X-1: \"Fix it\"", "`pr_view` tool (pr `ia/x-1`)", "`git diff master...HEAD`", "> Looks good.", "end your turn with only the summary"] {
             assert!(text.contains(want), "{want:?} not in {text}");
         }
-        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", true, false, Some("Done in o/deploy#4."));
+        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", true, false, Some("Done in o/deploy#4."), &db::Reviewer::default(), false);
         assert!(text.contains("no commits of its own") && text.contains("> Done in o/deploy#4."), "{text}");
+        assert!(!text.contains("skill"), "{text}");
+    }
+
+    #[test]
+    fn the_prompt_asks_for_a_summarizers_skills_and_prompt() {
+        let c = db::open(std::path::Path::new(":memory:")).unwrap();
+        let p = db::insert_profile(&c, "p", &[], None).unwrap();
+        let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let task = db::insert_task(&c, t).unwrap();
+        let spec = db::Reviewer { skills: vec!["tldr".into(), "changelog".into()], prompt: Some("  Two bullets, no more.  ".into()), ..Default::default() };
+        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, false, None, &spec, false);
+        assert!(text.contains("these skills while you write the summary: `/tldr`, `/changelog` (invoke each with the `Skill` tool)"), "{text}");
+        // Its prompt is the board's instead of the default, and the board still asks for only the summary.
+        assert!(text.contains("Write it as they ask:\n\nTwo bullets, no more.\n") && !text.contains("Write it in Markdown, briefly"), "{text}");
+        assert!(text.contains("end your turn with only the summary"), "{text}");
+        let codex = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, false, None, &db::Reviewer { skills: vec!["tldr".into()], ..Default::default() }, true);
+        assert!(codex.contains("this skill while you write the summary: `$tldr`.") && codex.contains("Write it in Markdown, briefly"), "{codex}");
     }
 
     /// A task in review whose review passed, in a project that summarises, with a worktree branch with a commit.
@@ -517,5 +638,115 @@ mod tests {
             assert_ne!(review.reviewers[0].thread_id, thread.id);
             crate::agent::runs::TEST_CAN_RUN.set(false);
         })
+    }
+
+    /// Both of a task's summarizers' threads, in the order of its summaries.
+    fn both(s: &Shared, task: &Task) -> Vec<Task> {
+        let summaries = db::get_task(&s.db(), &task.id).unwrap().unwrap().summaries;
+        let threads = db::summary_threads(&s.db(), &task.id).unwrap();
+        summaries.iter().map(|sum| threads.iter().find(|t| t.id == sum.thread_id).unwrap().clone()).collect()
+    }
+
+    fn two_summarizers(s: &Shared) {
+        let plain = db::Reviewer { name: Some("Plain".into()), ..Default::default() };
+        let skilled = db::Reviewer { name: Some("Skilled".into()), skills: vec!["tldr".into()], prompt: Some("Be brief.".into()), ..Default::default() };
+        db::update_project(&s.db(), "pr", &[("summarizers", json!(json!([plain, skilled]).to_string()))]).unwrap();
+    }
+
+    #[test]
+    fn each_summarizer_writes_a_summary_in_a_thread_of_its_own() {
+        crate::testing::run(async || {
+            crate::agent::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let task = passed(&s);
+            two_summarizers(&s);
+            start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().expect("it starts");
+            let threads = both(&s, &task);
+            assert_eq!(threads.len(), 2);
+            assert_ne!(threads[0].id, threads[1].id);
+            let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            let names: Vec<_> = t.summaries.iter().map(|x| (x.name.as_deref(), x.state.as_str(), x.skills.clone(), x.custom_prompt)).collect();
+            assert_eq!(names, vec![(Some("Plain"), "running", vec![], false), (Some("Skilled"), "running", vec!["tldr".to_string()], true)]);
+            // What older clients read is the first.
+            assert_eq!(t.summary.as_ref().map(|x| x.thread_id.as_str()), Some(threads[0].id.as_str()));
+            assert_eq!(threads[1].title, "Summary of X-1 · Skilled");
+            let asked = |th: &Task| db::list_messages(&s.db(), &th.id).unwrap().into_iter().find(|m| m.kind == "user").unwrap().data["text"].as_str().unwrap().to_string();
+            assert!(!asked(&threads[0]).contains("/tldr") && asked(&threads[1]).contains("`/tldr`") && asked(&threads[1]).contains("Be brief."));
+
+            // They finish on their own.
+            reply(&s, &threads[1], Some("Short."));
+            let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.summaries[0].state.as_str(), t.summaries[1].state.as_str()), ("running", "done"));
+            assert_eq!(t.summaries[1].text.as_deref(), Some("Short."));
+            reply(&s, &threads[0], Some("Long."));
+            let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.summaries[0].text.as_deref(), t.summaries[1].text.as_deref()), (Some("Long."), Some("Short.")));
+
+            // Both have this commit's summary; asked for, both are written again in the same threads.
+            assert!(start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().is_none());
+            start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().unwrap();
+            assert_eq!(db::summary_threads(&s.db(), &task.id).unwrap().len(), 2);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_summarizer_added_later_is_written_without_redoing_the_others() {
+        crate::testing::run(async || {
+            crate::agent::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let task = passed(&s);
+            start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().unwrap();
+            let first = db::summary_threads(&s.db(), &task.id).unwrap().remove(0);
+            reply(&s, &first, Some("First."));
+            let skilled = db::Reviewer { skills: vec!["tldr".into()], ..Default::default() };
+            db::update_project(&s.db(), "pr", &[("summarizers", json!(json!([db::Reviewer::default(), skilled]).to_string()))]).unwrap();
+            start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().expect("the new one starts");
+            let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            assert_eq!((t.summaries.len(), t.summaries[0].state.as_str(), t.summaries[0].text.as_deref(), t.summaries[1].state.as_str()), (2, "done", Some("First."), "running"));
+            // The first's thread wasn't asked again.
+            assert_eq!(db::list_messages(&s.db(), &first.id).unwrap().iter().filter(|m| m.kind == "user").count(), 1);
+            // Without it, its summary goes.
+            let second = both(&s, &task).remove(1);
+            reply(&s, &second, Some("Second."));
+            db::update_project(&s.db(), "pr", &[("summarizers", json!(json!([skilled]).to_string()))]).unwrap();
+            start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().unwrap();
+            assert_eq!(db::get_task(&s.db(), &task.id).unwrap().unwrap().summaries.len(), 1);
+            crate::agent::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn stopping_or_working_again_stops_every_summary_in_progress() {
+        crate::testing::run(async || {
+            crate::agent::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let task = passed(&s);
+            two_summarizers(&s);
+            start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().unwrap();
+            let threads = both(&s, &task);
+            reply(&s, &threads[0], Some("Done."));
+            assert!(stop(&s, &task.id));
+            let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            // Only the one still being written is stopped.
+            assert_eq!((t.summaries[0].state.as_str(), t.summaries[1].state.as_str()), ("done", "stopped"));
+            assert!(!stop(&s, &task.id));
+            crate::agent::runs::TEST_CAN_RUN.set(false);
+        })
+    }
+
+    #[test]
+    fn a_summary_saved_before_there_could_be_several_is_its_tasks_only_one() {
+        let s = crate::testing::state();
+        let task = passed(&s);
+        let old = json!({"thread_id": "t", "label": "Claude · haiku", "state": "done", "head": "abc", "text": "Old.", "updated_at": "1"});
+        s.db().execute("UPDATE tasks SET summary=?2 WHERE id=?1", [&task.id, &old.to_string()]).unwrap();
+        let t = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+        assert_eq!((t.summaries.len(), t.summary.as_ref().and_then(|x| x.text.as_deref())), (1, Some("Old.")));
+        // And a project's one `summarizer` is its only summarizer.
+        let haiku = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
+        s.db().execute("UPDATE projects SET summarizer=?1, summarizers=NULL WHERE id='pr'", [json!(haiku).to_string()]).unwrap();
+        let p = db::get_project(&s.db(), "pr").unwrap().unwrap();
+        assert_eq!(db::summarizers_for(&s.db(), &p).unwrap(), vec![haiku]);
     }
 }

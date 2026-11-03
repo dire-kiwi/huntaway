@@ -754,6 +754,30 @@ fn a_database_at_version_66_gets_the_summary_columns() {
 }
 
 #[test]
+fn a_database_at_version_81_keeps_its_summarizer_as_the_only_one() {
+    // As master's build left it (81), with a project and a profile each with a summarizer and no list of them yet.
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE projects DROP COLUMN summarizers;
+                 ALTER TABLE profiles DROP COLUMN summarizers;
+                 PRAGMA user_version=81;
+                 INSERT INTO profiles (id,name,created_at,summarizer) VALUES ('p','p','1','{\"model\":\"haiku\"}');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at,summarizer)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1','{\"model\":\"sonnet\"}');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let p = get_project(&c, "pr").unwrap().unwrap();
+    assert_eq!(p.summarizers.iter().map(|r| r.model.as_deref()).collect::<Vec<_>>(), [Some("sonnet")]);
+    assert_eq!(get_profile(&c, "p").unwrap().unwrap().summarizers.len(), 1);
+    assert_eq!(summarizers_for(&c, &p).unwrap().len(), 1);
+}
+
+#[test]
 fn a_database_at_version_67_gets_projects_pull_request_settings() {
     // As master's build left it, with summaries (67) and no pull request settings yet: its projects keep opening them.
     let path = crate::testing::temp_dir().join("huntaway.db");

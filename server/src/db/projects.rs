@@ -78,8 +78,11 @@ pub struct Project {
     /// merging (see review/summary.rs).
     #[serde(default = "yes")]
     pub auto_summary: bool,
-    /// Who writes those summaries, in a thread of its own. None uses the profile's (see
-    /// `summarizer_for`).
+    /// Who writes those summaries, each in a thread of its own (API 101). Empty uses the profile's
+    /// (see `summarizers_for`).
+    #[serde(default)]
+    pub summarizers: Vec<Reviewer>,
+    /// The first of `summarizers`, for clients from before there could be several (API 87).
     #[serde(default)]
     pub summarizer: Option<Reviewer>,
     /// Whether its merges wait for the user's approval (see review/merge_gate.rs). None follows its
@@ -150,6 +153,7 @@ impl Project {
             review_rounds: r.get("review_rounds")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
             auto_summary: r.get("auto_summary")?,
+            summarizers: summarizers_column(r.get("summarizers")?, r.get("summarizer")?),
             summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             merge_approval: r.get("merge_approval")?,
             require_pr_approval: r.get("require_pr_approval")?,
@@ -220,7 +224,7 @@ pub fn insert_project(c: &Connection, p: NewProject) -> Result<Project> {
 const PROJECT_COLUMNS: &[&str] = &[
     "name", "key", "repo_path", "scratch_path", "worktrees_root", "base_branch", "setup_script",
     "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model", "auto_review", "review_rounds", "claude_config_ids",
-    "reviewers", "auto_summary", "summarizer", "merge_approval", "require_pr_approval", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
+    "reviewers", "auto_summary", "summarizer", "summarizers", "merge_approval", "require_pr_approval", "done_when_merged", "pull_requests", "subproject_pull_requests", "start_prompt", "review_prompt", "merge_prompt", "group_name", "former_keys", "repo_root",
     "archived_at", "github_account", "watch_pull_requests", "setup_task_id", "pr_preview_url",
     "copy_files", "link_folders",
 ];
