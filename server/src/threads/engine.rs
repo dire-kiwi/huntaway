@@ -334,7 +334,8 @@ pub async fn launch(state: &Shared, run: &Run, spec: Spec) -> Result<()> {
     if spec.compact {
         backend.compact(task_id).await.map_err(|e| anyhow!("{e}"))?;
     } else {
-        backend.send(task_id, &spec.text, SendOptions::default()).await.map_err(|e| anyhow!("{e}"))?;
+        let origin = run_origin(state, run);
+        backend.send(task_id, &spec.text, send_options(task_id, origin)).await.map_err(|e| anyhow!("{e}"))?;
     }
     started(state, run)?;
     // It may have ended already (before the run was marked running, which `settle` waits for).
@@ -386,7 +387,8 @@ fn sent(state: &Shared, task: &Task, text: &str, from_agent: bool) -> Result<()>
     let plan_file = crate::agent::documents::path(state, task, "plan").filter(|_| task.kind == "task").map(|p| path_str(&p));
     let plan = plan_file.as_deref().zip(crate::agent::documents::plan_command(text)).map(|(f, rest)| crate::agent::documents::plan_prompt(f, rest, false));
     let tx = SENDS.lock().unwrap().get(&key(state)).cloned().context("the agent-threads backend isn't running")?;
-    tx.send((task.id.clone(), plan.unwrap_or_else(|| text.to_string()))).map_err(|_| anyhow!("the agent-threads backend has stopped"))?;
+    let origin = Origin { from_agent, ..Default::default() };
+    tx.send((task.id.clone(), plan.unwrap_or_else(|| text.to_string()), origin)).map_err(|_| anyhow!("the agent-threads backend has stopped"))?;
     let mut msg = json!({"text": text, "steered": true});
     if from_agent {
         msg["from_agent"] = json!(true);
@@ -395,19 +397,73 @@ fn sent(state: &Shared, task: &Task, text: &str, from_agent: bool) -> Result<()>
     Ok(())
 }
 
+/// Who sent a message to a thread, where it isn't wholly the user's: the board's own (`auto`), another agent's
+/// (`from_agent`), or the user's with other agents' messages queued alongside (`user_text`, the user's part), as
+/// the board's thread has them (see runner::send_message). agent-threads' items don't say, so it's kept with
+/// the user_message item's id (see `record_origin`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Origin {
+    pub auto: bool,
+    pub from_agent: bool,
+    pub user_text: Option<String>,
+}
+
+impl Origin {
+    fn is_users(&self) -> bool {
+        self == &Origin::default()
+    }
+}
+
+/// The origins of messages sent to threads whose user_message items haven't been seen yet, by the message's
+/// client id (see `send_options`).
+static ORIGINS: LazyLock<Mutex<HashMap<String, Origin>>> = LazyLock::new(Default::default);
+
+/// A message's options: one that isn't wholly the user's gets a client id, which its user_message item has, to
+/// record its origin by (see `follow`).
+fn send_options(task_id: &str, origin: Origin) -> SendOptions {
+    if origin.is_users() {
+        return SendOptions::default();
+    }
+    let client_id = format!("ha-{task_id}-{}", crate::util::new_id());
+    ORIGINS.lock().unwrap().insert(client_id.clone(), origin);
+    SendOptions { client_id: Some(client_id), ..Default::default() }
+}
+
+/// The origin of the message run `run` started with: the board's user message it recorded (runs.turn_message_id).
+fn run_origin(state: &Shared, run: &Run) -> Origin {
+    let data: Option<String> = state
+        .db()
+        .query_row("SELECT m.data FROM runs r JOIN messages m ON m.id=r.turn_message_id WHERE r.id=?1", [&run.id], |r| r.get(0))
+        .ok();
+    let Some(v) = data.and_then(|d| serde_json::from_str::<Value>(&d).ok()) else { return Origin::default() };
+    Origin {
+        auto: v["auto"] == true,
+        from_agent: v["from_agent"] == true,
+        user_text: v["user_text"].as_str().map(String::from),
+    }
+}
+
+/// Keeps who sent user_message `item_id` of thread `thread_id`, for the board's readers of its items.
+// HA-144 (on its own branch) keeps these in `at_item_origins`: once both are in HA-128, this calls
+// `threads::history::record_origin(&conn, thread_id, item_id, &history::Origin { auto, from_agent, user_text, .. })`.
+fn record_origin(_state: &Shared, thread_id: &str, item_id: &str, origin: &Origin) -> Result<()> {
+    tracing::debug!(thread = thread_id, item = item_id, ?origin, "a message's origin (kept once HA-144's at_item_origins is in)");
+    Ok(())
+}
+
 /// Messages for each state's threads, sent one at a time in the order they were queued (see `sent`).
-static SENDS: LazyLock<Mutex<HashMap<usize, mpsc::UnboundedSender<(String, String)>>>> = LazyLock::new(Default::default);
+static SENDS: LazyLock<Mutex<HashMap<usize, mpsc::UnboundedSender<(String, String, Origin)>>>> = LazyLock::new(Default::default);
 
 /// A state's key in SENDS.
 fn key(state: &Shared) -> usize {
     Arc::as_ptr(state) as usize
 }
 
-async fn sender(state: Weak<AppState>, mut rx: mpsc::UnboundedReceiver<(String, String)>) {
-    while let Some((task_id, text)) = rx.recv().await {
+async fn sender(state: Weak<AppState>, mut rx: mpsc::UnboundedReceiver<(String, String, Origin)>) {
+    while let Some((task_id, text, origin)) = rx.recv().await {
         let Some(s) = state.upgrade() else { return };
         let Some(b) = backend(&s) else { continue };
-        if let Err(e) = b.send(&task_id, &text, SendOptions::default()).await {
+        if let Err(e) = b.send(&task_id, &text, send_options(&task_id, origin)).await {
             tracing::warn!(task = %task_id, "sending a message to the agent: {e}");
             s.add_event(&task_id, "error", "Couldn't send the message to the agent", Some(format!("{e}\n\n{text}")));
         }
@@ -512,6 +568,12 @@ async fn on_event(state: &Shared, event: ThreadEvent) -> Result<()> {
             }
         }
         ThreadEvent::ItemAdded(e) => {
+            if let Item::UserMessage(m) = &e.item
+                && let Some(origin) = m.client_id.as_deref().and_then(|c| ORIGINS.lock().unwrap().remove(c))
+            {
+                record_origin(state, &e.thread_id, &m.id, &origin)?;
+                return Ok(());
+            }
             let Item::TurnResult(r) = &e.item else { return Ok(()) };
             if r.parent_id.is_some() {
                 return Ok(());

@@ -263,3 +263,38 @@ fn an_abort_keeps_the_thread() {
         assert!(backend(&s).unwrap().get(&t.id).await.unwrap().is_some());
     })
 }
+
+/// The board's own messages and other agents' are sent with a client id, which their user_message items carry
+/// for their origin to be kept by; the user's own aren't.
+#[test]
+fn messages_not_wholly_the_users_carry_their_origin() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        start_fake(&s, &[("IA_FAKE_CLAUDE_SLEEP", "1")]);
+        let t = new_task(&s);
+        // Started with no message: the board's start message (auto).
+        runner::send_as(&s, &t.id, "", true).unwrap();
+        until(&s, &t.id, "its run going", |_| db::active_runs(&s.db()).unwrap().iter().any(|r| r.status == "running")).await;
+        runner::send_from_agent(&s, &t.id, "from another agent").unwrap();
+        until(&s, &t.id, "to in_review", |t| !t.running && t.status == "in_review").await;
+        runner::send(&s, &t.id, "the user's own").unwrap();
+        until(&s, &t.id, "running", |t| t.running).await;
+        until(&s, &t.id, "to in_review again", |t| !t.running && t.status == "in_review").await;
+        let snap = backend(&s).unwrap().snapshot(&t.id).await.unwrap();
+        let users: Vec<(String, Option<String>)> = snap
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::UserMessage(m) => Some((m.text.clone(), m.client_id.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users.len(), 3, "{users:?}");
+        assert!(users[0].0.contains("Start working on this task") && users[0].1.is_some(), "{users:?}");
+        assert!(users[1].0 == "from another agent" && users[1].1.is_some(), "{users:?}");
+        assert!(users[2].0 == "the user's own" && users[2].1.is_none(), "{users:?}");
+        let ids: Vec<String> = users.iter().filter_map(|u| u.1.clone()).collect();
+        let left = ORIGINS.lock().unwrap();
+        assert!(ids.iter().all(|c| !left.contains_key(c)), "the follower took their origins");
+    })
+}
