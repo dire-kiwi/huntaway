@@ -180,8 +180,9 @@ fn precheck_dir(s: &Shared, a: &Automation) -> Result<std::path::PathBuf, Outcom
             Ok(crate::util::expand_tilde(&p.repo_path))
         }
         None => {
+            // Only its own workspace: not one that's become a symlink, which could be another's (as a run checks).
             let t = assistant::get_or_create(s, &a.profile_id).map_err(|e| fail(e.1))?;
-            crate::agent::documents::work_dir(s, &t).ok_or_else(|| fail("the assistant has no workspace".into()))
+            crate::agent::assistant::memory::checked(s, &t).map_err(|e| fail(format!("the assistant's workspace: {e:#}")))
         }
     }
 }

@@ -302,7 +302,7 @@ pub async fn run_now(s: &Shared, a: &Automation, b: RunNow) -> ApiResult<Run> {
     } else {
         let r = Run::new(&a.id, "manual", "running", Utc::now());
         insert_run(&s.db(), &r)?;
-        run_action(s, a, &r.id, "manual", None, 1).await.unwrap_or(r)
+        run_action_detached(s, a, &r.id, "manual", None, 1).await.unwrap_or(r)
     })
 }
 

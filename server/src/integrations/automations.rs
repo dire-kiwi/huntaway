@@ -452,20 +452,27 @@ fn mark_interrupted(c: &Connection) -> rusqlite::Result<usize> {
 }
 
 /// Drops old runs (see KEEP_RUNS) and payloads.
+/// A routine's runs that woke its assistant in the last two days (its "today" in any time zone) are
+/// kept whatever the limits, as its budget a day counts their cost (see routines::spent_today), even
+/// while its agent is still at work.
 fn prune(c: &Connection, now: DateTime<Utc>) -> rusqlite::Result<()> {
     let cutoff = fmt(now - chrono::TimeDelta::days(DEDUPE_DAYS));
+    let costs_since = fmt(now - chrono::TimeDelta::days(2));
     let ids: Vec<String> = c.prepare("SELECT id FROM automations")?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
     for id in ids {
         let newest = "SELECT id FROM automation_runs WHERE automation_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2";
+        let costs = "(created_at >= ?4 AND (COALESCE(cost_usd, 0) > 0 OR (status='ok' AND task_id IS NOT NULL
+                       AND automation_id IN (SELECT id FROM automations WHERE project_id IS NULL))))";
         c.execute(
-            &format!("DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN ({newest})"),
-            params![id, KEEP_RUNS],
+            &format!("DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN ({newest}) AND NOT {costs}"),
+            params![id, KEEP_RUNS, Option::<String>::None, costs_since],
         )?;
         c.execute(
             &format!(
-                "DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND created_at < ?3 AND id NOT IN ({newest})"
+                "DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND created_at < ?3 AND id NOT IN ({newest})
+                   AND NOT {costs}"
             ),
-            params![id, KEEP_RECENT, cutoff],
+            params![id, KEEP_RECENT, cutoff, costs_since],
         )?;
         c.execute(
             "UPDATE automation_runs SET payload=NULL WHERE automation_id=?1 AND payload IS NOT NULL AND status NOT IN ('pending','running') AND id NOT IN

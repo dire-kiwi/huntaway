@@ -67,6 +67,14 @@ async fn guards(s: &Shared, a: &Automation, source: &str, now: DateTime<Utc>) ->
     }
 }
 
+/// `run_action` in a task of its own, waited for: the run is recorded, so a request that started it
+/// and is dropped meanwhile (a webhook sender that hung up during a slow precheck, say) can't cancel
+/// it half way, leaving it `running` with nothing done.
+pub(super) async fn run_action_detached(s: &Shared, a: &Automation, run_id: &str, source: &str, delivery: Option<&Delivery>, count: i64) -> Option<Run> {
+    let (s, a, run_id, source, delivery) = (s.clone(), a.clone(), run_id.to_string(), source.to_string(), delivery.cloned());
+    tokio::spawn(async move { run_action(&s, &a, &run_id, &source, delivery.as_ref(), count).await }).await.ok().flatten()
+}
+
 /// The task the automation's action made or messaged, or why it couldn't (with the task, if it
 /// made one but couldn't start it).
 fn act(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, event: Option<&str>) -> Result<Option<String>, Outcome> {
@@ -256,7 +264,7 @@ pub(super) async fn receive(s: &Shared, a: &Automation, delivery: Delivery, raw:
         insert_run(&c, &run)?;
     }
     changed(s, a);
-    Ok(run_action(s, a, &run.id, source, Some(&delivery), 1).await.unwrap_or(run))
+    Ok(run_action_detached(s, a, &run.id, source, Some(&delivery), 1).await.unwrap_or(run))
 }
 
 /// `POST /api/hooks/{id}/{token}`: a webhook delivery. It doesn't take the board's token: the

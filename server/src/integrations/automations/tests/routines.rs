@@ -663,3 +663,108 @@ fn a_routine_thread_has_its_assistants_workspace_and_memory() {
         assert!(assistant::whose_workspace(&other, None).unwrap().is_none());
     })
 }
+
+// HA-122 review: a webhook sender that hangs up during a slow precheck dropped the handler's future,
+// which killed the precheck and left the run `running` with nothing done.
+#[test]
+fn a_delivery_whose_sender_hangs_up_mid_precheck_still_runs() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        busy(&s, &assistant.id);
+        let a = routine(
+            &s,
+            &p.id,
+            json!({"name": "Hook", "trigger": {"kind": "webhook"}, "precheck": "sleep 1; echo found it",
+                   "action": {"kind": "message_assistant", "mode": "thread", "message": "{{precheck}}"}}),
+        )
+        .unwrap();
+        let delivery = Delivery { body: json!({}), ..Default::default() };
+        let body = b"{}".to_vec();
+        let hung_up = tokio::time::timeout(std::time::Duration::from_millis(200), receive(&s, &a, delivery, Some((&body, None)))).await;
+        assert!(hung_up.is_err(), "the precheck takes a second");
+        let mut r = last_run(&s, &a);
+        for _ in 0..100 {
+            if r.status != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            r = last_run(&s, &a);
+        }
+        assert_eq!((r.status.as_str(), r.task_id.as_deref()), ("ok", Some(assistant.id.as_str())), "{:?}", r.detail);
+        let queued = db::get_task(&s.db(), &assistant.id).unwrap().unwrap().queued_message.unwrap();
+        assert!(queued.contains("found it"), "{queued}");
+    })
+}
+
+// HA-122 review: a precheck ran wherever the assistant's workspace pointed, through a symlink.
+#[test]
+fn a_precheck_doesnt_run_through_a_workspace_thats_become_a_symlink() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        let ws = crate::agent::documents::work_dir(&s, &assistant).unwrap();
+        let elsewhere = testing::temp_dir().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::remove_dir_all(&ws).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &ws).unwrap();
+        let a = routine(
+            &s,
+            &p.id,
+            json!({"name": "Probe", "trigger": {"kind": "interval", "every_minutes": 60}, "precheck": "printf proof > precheck-marker; exit 1",
+                   "action": {"kind": "message_assistant", "message": "x"}}),
+        )
+        .unwrap();
+        let r = run_handler(State(s.clone()), Path(a.id.clone()), None).await.unwrap().0;
+        assert_eq!(r["status"], "failed", "{r}");
+        assert!(r["detail"].as_str().unwrap().contains("the assistant's workspace"), "{r}");
+        assert!(!elsewhere.join("precheck-marker").exists());
+    })
+}
+
+// HA-122 review: pruning kept only the latest 1000 runs, so a busy routine's skipped deliveries
+// pushed out today's paid runs, and its budget was forgotten.
+#[test]
+fn pruning_keeps_the_runs_that_count_toward_todays_budget() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        busy(&s, &assistant.id);
+        let a = routine(
+            &s,
+            &p.id,
+            json!({"name": "Busy", "trigger": {"kind": "interval", "every_minutes": 60}, "budget_usd": 1.0,
+                   "action": {"kind": "message_assistant", "mode": "thread", "message": "x"}}),
+        )
+        .unwrap();
+        let now = Utc::now();
+        let at = |m: i64| now - chrono::TimeDelta::minutes(m);
+        // A paid run, then one whose agent is still at work (no cost recorded yet, but its thread's counts).
+        let mut paid = Run::new(&a.id, "schedule", "ok", at(30));
+        paid.cost_usd = Some(2.0);
+        paid.task_id = Some(assistant.id.clone());
+        insert_run(&s.db(), &paid).unwrap();
+        let working = db::insert_routine_task(&s.db(), &assistant, "w").unwrap();
+        let mut going = Run::new(&a.id, "schedule", "ok", at(29));
+        going.task_id = Some(working.id.clone());
+        insert_run(&s.db(), &going).unwrap();
+        // Then more than KEEP_RUNS deliveries skipped, today.
+        for i in 0..(KEEP_RUNS + 5) {
+            let r = Run::new(&a.id, "webhook", "skipped", at(28) + chrono::TimeDelta::milliseconds(i));
+            insert_run(&s.db(), &r).unwrap();
+        }
+        prune(&s.db(), now).unwrap();
+        assert!(get_run(&s.db(), &paid.id).unwrap().is_some() && get_run(&s.db(), &going.id).unwrap().is_some());
+        assert!(runs(&s.db(), &a.id, 5000).unwrap().len() <= KEEP_RUNS as usize + 2);
+        assert!((routines::spent_today(&s.db(), &a.id, now, &Local).unwrap() - 2.0).abs() < 1e-9);
+        set_next(&s, &a, now - chrono::TimeDelta::seconds(1));
+        tick(&s, now).await;
+        assert!(last_run(&s, &a).detail.unwrap_or_default().starts_with("Skipped: over budget"));
+        // Two days on, they go as any other would.
+        prune(&s.db(), now + chrono::TimeDelta::days(3)).unwrap();
+        assert!(get_run(&s.db(), &paid.id).unwrap().is_none());
+    })
+}

@@ -1867,7 +1867,11 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
   exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
   the run as having nothing to do; any other exit fails it), and a **budget** a day in dollars
   (from the cost of its runs' agents today, in the host's time zone: once it's spent, runs are
-  skipped and say so; Run now isn't held to it).
+  skipped and say so; Run now isn't held to it). A routine's runs from the last two days that woke
+  its assistant are kept past the history limit, so a busy one's skipped deliveries can't push today's
+  costs out. A precheck runs in a task of its own once the run is recorded, so a webhook sender that
+  hangs up (GitHub waits 10 seconds) doesn't cancel it; a routine's precheck runs only in the
+  assistant's own workspace, not one that's become a symlink.
 - **Actions.** Create a task in the project from a template: title, description, type (code or
   scratch), labels (plan, artifact, diagram), agent config, model, effort, To do or Backlog, and whether to
   start its agent. Or send a message to one of the project's tasks (to its agent as it works, if
