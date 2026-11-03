@@ -1,5 +1,5 @@
 //! The tokens each run used, per model, for statistics (`GET /profiles/{id}/token-stats`, see
-//! analytics.rs), in `token_usage` (see db::SCHEMA_V78).
+//! analytics.rs), in `token_usage` (see db::SCHEMA_V79).
 //!
 //! They're counted from the run's output (`runs/<id>/out.jsonl`) once it has ended, rather than as
 //! it streams in, so runs from before this was kept are counted the same way while their folders
@@ -61,6 +61,11 @@ pub struct Counts {
 impl Counts {
     fn total(&self) -> i64 {
         self.input + self.output + self.cache_read + self.cache_write
+    }
+
+    /// The tokens fed in, which a Claude Code request's message has in full (its output count can be short).
+    fn fed(&self) -> i64 {
+        self.input + self.cache_read + self.cache_write
     }
 
     /// Whether every count is at least `o`'s: the same totals, gone on from there.
@@ -166,6 +171,39 @@ fn request_usage(v: &Value) -> Option<(String, String, Counts)> {
     Some((id.to_string(), model.to_string(), c))
 }
 
+/// The requests Claude Code `assistant` messages (`lines`) are of, by id, with their model: each request once, though its
+/// message comes once for each content block, with the most output any of them says.
+fn requests_of(lines: &[String]) -> BTreeMap<String, (String, Counts)> {
+    let mut requests: BTreeMap<String, (String, Counts)> = BTreeMap::new();
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        if v["type"] != "assistant" {
+            continue;
+        }
+        let Some((id, model, c)) = request_usage(&v) else { continue };
+        let r = requests.entry(id).or_insert((model, c));
+        r.1.output = r.1.output.max(c.output);
+    }
+    requests.retain(|_, (_, c)| c.total() > 0);
+    requests
+}
+
+/// Whether Claude Code didn't keep an earlier run's tail in a session's `totals`, which go on from both the totals with it
+/// (`with`) and those without it (`without`): which of them the requests the run made before its first result (`made`) are
+/// closer to having fed in, on the models the tail used. A guess (`estimated`) unless one is exact: the totals also have
+/// requests that print no message.
+fn tail_was_lost(totals: &BTreeMap<String, Counts>, with: &BTreeMap<String, Counts>, without: &BTreeMap<String, Counts>, made: &BTreeMap<String, (String, Counts)>, estimated: &mut bool) -> bool {
+    let tail_models: Vec<&String> = with.iter().filter(|(m, c)| without.get(*m) != Some(*c)).map(|(m, _)| m).collect();
+    let zero = Counts::default();
+    let fed_since = |from: &BTreeMap<String, Counts>| -> i64 { tail_models.iter().map(|m| totals.get(*m).unwrap_or(&zero).minus(from.get(*m).unwrap_or(&zero)).fed()).sum() };
+    let (from_with, from_without) = (fed_since(with), fed_since(without));
+    let fed: i64 = made.values().filter(|(m, _)| tail_models.contains(&m)).map(|(_, c)| c.fed()).sum();
+    if fed != from_with && fed != from_without {
+        *estimated = true;
+    }
+    (from_without - fed).abs() < (from_with - fed).abs()
+}
+
 /// What a Claude Code run used, from its output's lines.
 ///
 /// Requests after the run's last `result` (a turn stopped, or a run that failed or was killed
@@ -174,7 +212,8 @@ fn request_usage(v: &Value) -> Option<(String, String, Counts)> {
 /// and estimated (a message's output count can be short of the request's). They go in the
 /// session's totals too, as `tail`: Claude Code keeps them in its totals if it saved them as the
 /// run ended, so a run that resumes the session goes on from the totals with them, or else from
-/// the totals without them. A run with no result at all goes on from its earlier run's totals,
+/// the totals without them; when its totals go on from both, its own requests before its first
+/// result say which (see `tail_was_lost`). A run with no result at all goes on from its earlier run's totals,
 /// and its tail adds to that run's.
 pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) -> Counted {
     let mut out = Counted { runtime: "claude", ..Default::default() };
@@ -208,6 +247,7 @@ pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) 
             continue;
         }
         let Some(usage) = v["modelUsage"].as_object().filter(|m| !m.is_empty()) else { continue };
+        let made = requests_of(&since);
         since.clear();
         let sid = v["session_id"].as_str().map(String::from).or(session.clone());
         if !have_base || base_session != sid {
@@ -229,15 +269,14 @@ pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) 
         }
         let totals: BTreeMap<String, Counts> = usage.iter().map(|(m, u)| (m.clone(), Counts::from_claude(u))).collect();
         let covered = |before: &BTreeMap<String, Counts>| before.iter().all(|(m, b)| totals.get(m).is_some_and(|now| now.covers(b)));
-        if !covered(&out.snapshot) {
-            match without_tail.take() {
-                // Claude Code didn't keep the earlier run's tail.
-                Some(t) if covered(&t) => out.snapshot = t,
-                // Counting started again: a model it had is gone, or went down.
-                _ => out.snapshot.clear(),
-            }
+        match without_tail.take() {
+            // Claude Code didn't keep the earlier run's tail: the totals don't go on from it, or they go on from both and
+            // the run's own requests say which.
+            Some(t) if covered(&t) && (!covered(&out.snapshot) || tail_was_lost(&totals, &out.snapshot, &t, &made, &mut out.estimated)) => out.snapshot = t,
+            // Counting started again: a model it had is gone, or went down.
+            _ if !covered(&out.snapshot) => out.snapshot.clear(),
+            _ => {}
         }
-        without_tail = None;
         for (model, now) in &totals {
             let used = now.minus(out.snapshot.get(model).unwrap_or(&Counts::default()));
             out.models.entry(model.clone()).or_default().add(&used);
@@ -246,17 +285,7 @@ pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) 
         out.session = sid;
     }
     // The requests after the last result.
-    let mut requests: BTreeMap<String, (String, Counts)> = BTreeMap::new();
-    for line in since {
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
-        if v["type"] != "assistant" {
-            continue;
-        }
-        let Some((id, model, c)) = request_usage(&v) else { continue };
-        let r = requests.entry(id).or_insert((model, c));
-        r.1.output = r.1.output.max(c.output);
-    }
-    requests.retain(|_, (_, c)| c.total() > 0);
+    let requests = requests_of(&since);
     // No result set where the session's totals were: the run's requests go on from its earlier
     // run's (and from its tail, if that had one too, which a run that resumes it may not find).
     if !requests.is_empty() && !have_base {

@@ -211,8 +211,9 @@ fn a_claude_runs_requests_after_its_last_result_count_once() {
 
     // The next run resumes the session. Claude Code kept the stopped turn in its totals: it goes on from them.
     let mut earlier = |_: &str| Some(before.clone());
-    let kept = count_claude([result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))].into_iter(), &mut earlier);
+    let kept = count_claude([reply("m3", "claude-opus-5-5", 802, 30, None), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))].into_iter(), &mut earlier);
     assert_eq!(kept.models["claude-opus-5-5"].output, 30);
+    assert!(!kept.estimated);
     // It didn't: it goes on from the totals before it, not from nothing.
     let lost = count_claude([result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))].into_iter(), &mut earlier);
     assert_eq!(lost.models["claude-opus-5-5"].output, 30);
@@ -243,7 +244,7 @@ fn a_resumed_claude_run_with_no_result_goes_on_from_the_sessions_totals() {
     // Killed before its result.
     let b = vec![init(), reply("m1", "claude-opus-5-5", 2, 40, None)];
     // Claude Code kept B's request in its totals.
-    let c = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))];
+    let c = vec![init(), reply("m3", "claude-opus-5-5", 802, 30, None), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))];
     let out: Vec<i64> = in_turn(vec![a.clone(), b.clone(), c]).iter().map(|c| c.models["claude-opus-5-5"].output).collect();
     assert_eq!(out, [100, 40, 30]);
     // It didn't: C goes on from A's totals.
@@ -255,7 +256,7 @@ fn a_resumed_claude_run_with_no_result_goes_on_from_the_sessions_totals() {
     // Two runs in a row with no result: their tails add up, and are taken away together if they
     // weren't kept.
     let b2 = vec![init(), reply("m2", "claude-opus-5-5", 1, 20, None)];
-    let kept = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 190, 2000, 1.5)}))];
+    let kept = vec![init(), reply("m3", "claude-opus-5-5", 701, 30, None), result("s1", json!({"claude-opus-5-5": opus(9, 190, 2000, 1.5)}))];
     let lost = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))];
     for (c, want) in [(kept, 30), (lost, 30)] {
         let counted = in_turn(vec![a.clone(), b.clone(), b2.clone(), c]);
@@ -312,7 +313,7 @@ fn a_run_killed_before_its_result_doesnt_hide_its_sessions_totals() {
     let outputs = vec![
         vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))],
         vec![init(), reply("m1", "claude-opus-5-5", 2, 40, None)],
-        vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))],
+        vec![init(), reply("m2", "claude-opus-5-5", 802, 30, None), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))],
     ];
     assert_counted_in_db(outputs, 0.5, [(100, false), (40, true), (30, false)]);
     // The killed run used a model the session hadn't, and Claude Code didn't keep it.
@@ -322,4 +323,31 @@ fn a_run_killed_before_its_result_doesnt_hide_its_sessions_totals() {
         vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))],
     ];
     assert_counted_in_db(outputs, 0.5, [(100, false), (40, true), (30, false)]);
+}
+
+#[test]
+fn a_resumed_claude_runs_own_requests_say_whether_an_unkept_tail_is_in_totals_that_go_on_from_it() {
+    let init = || json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string();
+    // A's totals fed in 1015; B was killed after a request that fed in 102 and put out 40.
+    let a = vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))];
+    let b = vec![init(), reply("m1", "claude-opus-5-5", 2, 40, None)];
+    // C's request feeds in 1000 and puts out 100. Claude Code didn't keep B's: C's totals are A's and C's, which still
+    // go on from A's and B's (200 output tokens, past 140).
+    let lost = vec![init(), reply("m2", "claude-opus-5-5", 900, 100, None), result("s1", json!({"claude-opus-5-5": opus(905, 200, 1100, 1.5)}))];
+    // It did: they're all three's.
+    let kept = vec![init(), reply("m2", "claude-opus-5-5", 900, 100, None), result("s1", json!({"claude-opus-5-5": opus(907, 240, 1200, 1.5)}))];
+    for c in [lost.clone(), kept] {
+        let counted = in_turn(vec![a.clone(), b.clone(), c]);
+        assert_eq!(counted.iter().map(|c| c.models["claude-opus-5-5"].output).collect::<Vec<_>>(), [100, 40, 100]);
+        assert!(!counted[2].estimated);
+        assert!((counted[2].models["claude-opus-5-5"].cost - 0.5).abs() < 1e-9);
+    }
+    // Saved so, through the database.
+    assert_counted_in_db(vec![a.clone(), b.clone(), lost], 0.5, [(100, false), (40, true), (100, false)]);
+
+    // Requests that don't match either (the totals have some that print no message) go with the closer, estimated.
+    let unsure = vec![init(), reply("m2", "claude-opus-5-5", 600, 100, None), result("s1", json!({"claude-opus-5-5": opus(905, 200, 1100, 1.5)}))];
+    let counted = in_turn(vec![a, b, unsure]);
+    assert_eq!(counted[2].models["claude-opus-5-5"].output, 60);
+    assert!(counted[2].estimated);
 }

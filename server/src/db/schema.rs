@@ -800,14 +800,15 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=77; COMMIT;")?;
     }
-    if version < 78 {
+    if version < 79 {
         // The tokens each run used, per model (see agent/tokens.rs), counted from runs' output as
         // they end (and from older runs' that are still kept), and what reviewers reported (see
         // review/stats.rs), with the reviews threads already show. Added only if they aren't
         // there, in case another migration takes this version first. Builds of this before it was
-        // version 78 had it as version 74, 75 or 76, and skipped what those versions add (a database
-        // can have taken it as 75 and then as 76, skipping both): 74's, 75's and 76's columns are
-        // added here if they aren't there, and a `review_stats` from before its rounds were kept is
+        // version 79 had it as version 74, 75, 76 or 78, and skipped what the versions below theirs
+        // add (a database can have taken it as 75, then 76, then 78, skipping them all), or added
+        // less than this does: 74's, 75's and 76's columns are added here if they aren't there, as
+        // are the runs' usage columns, and a `review_stats` from before its rounds were kept is
         // made again.
         conn.execute_batch("BEGIN;")?;
         let cols = [
@@ -830,7 +831,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         if stale {
             conn.execute_batch("DROP TABLE review_stats;")?;
         }
-        conn.execute_batch(SCHEMA_V78)?;
+        conn.execute_batch(SCHEMA_V79)?;
         for column in ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT", "usage_tail TEXT"] {
             let name = column.split(' ').next().unwrap();
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [name], |r| r.get(0))?;
@@ -839,14 +840,14 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             }
         }
         crate::review::stats::backfill(&conn)?;
-        conn.execute_batch("PRAGMA user_version=78; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=79; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 78;
+pub const VERSION: i64 = 79;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
@@ -859,7 +860,7 @@ pub const VERSION: i64 = 78;
 /// with when its review round started (`round`).
 /// `minor` is how many minor issues it listed, null for reviews from before they were listed;
 /// `minor_noted` whether it found any or its summary mentions them.
-const SCHEMA_V78: &str = r#"
+const SCHEMA_V79: &str = r#"
 CREATE TABLE IF NOT EXISTS token_usage (
   run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
   model TEXT NOT NULL,
