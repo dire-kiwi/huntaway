@@ -186,3 +186,27 @@ fn a_fresh_data_dir_gets_only_the_new_file() {
     let (_, st) = open(&dir, false).unwrap();
     assert_eq!(st.older_changed.as_deref(), Some("huntaway.db"));
 }
+
+/// HA-153 review: copying again when asked, from an older file that can't be copied (not a database, or a full disk),
+/// went wrong on every start after, since the request stayed. The board carries on with the file it has, and the
+/// request goes.
+#[test]
+fn copying_again_that_fails_carries_on_with_the_new_file() {
+    let dir = crate::testing::temp_dir();
+    old_db(&dir.join("huntaway.db"));
+    let (c, _) = open(&dir, false).unwrap();
+    set_setting(&c, "from", Some("new")).unwrap();
+    drop(c);
+    std::fs::write(dir.join("huntaway.db"), "not a database").unwrap();
+    for recopy in [false, true] {
+        if !recopy {
+            request_recopy(&dir).unwrap();
+        }
+        let (c, st) = open(&dir, recopy).unwrap();
+        assert_eq!(setting(&c, "from").as_deref(), Some("new"));
+        // Still changed, so Settings → Server still offers it.
+        assert_eq!(st.older_changed.as_deref(), Some("huntaway.db"));
+        assert!(!dir.join(RECOPY).exists() && !dir.join(format!("{FILE}.partial")).exists());
+        assert!(!dir.join(format!("{FILE}.replaced")).exists());
+    }
+}

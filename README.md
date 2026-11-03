@@ -239,7 +239,7 @@ servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with
 | `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
-| `--recopy-db` / `IA_RECOPY_DB` | off | Copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see *The database file*) |
+| `--recopy-db` / `IA_RECOPY_DB` | off | Copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see *The database file*). Only for the start it's given to: a restart, Update or Roll back from the board leaves it out |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
 
 ### Agents survive restarts
@@ -286,13 +286,16 @@ as it was: a start that stops part-way leaves it in use and copies it again next
   older build did. The server notices that the older file has changed since it was copied, logs a warning
   and shows it in Settings → Server (and a linked host's page). **Copy again** there (or starting it with
   `--recopy-db`) copies the older file again, discarding what's been done in `huntaway-2.db` since; that's
-  kept in `huntaway-2.db.replaced` until the next copy. Nothing is copied again without asking.
+  kept in `huntaway-2.db.replaced` until the next copy. Nothing is copied again without asking. A copy that
+  fails (the older file isn't a database, or the disk is full) is logged, and the server carries on with
+  `huntaway-2.db` as it was.
 - Each machine copies its own: linked hosts and a hub each have their own data dir, and copy theirs
   when they first start a build with `huntaway-2.db`, whenever they update.
 - The copy takes as much disk space again as the older file, which isn't removed: delete `huntaway.db`
   (with its `-wal` and `-shm`) once you won't go back to an older build.
 - `huntaway threads-import --db` takes the database file or a data dir (for its `huntaway-2.db`), and
-  `scripts/copy-live-board.sh` copies whichever file the live board uses now.
+  `scripts/copy-live-board.sh` copies the file the live server has open (after a Roll back, both files are
+  there and the older one is in use).
 
 ### Restarting after a merge
 

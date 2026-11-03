@@ -174,6 +174,7 @@ struct ServeArgs {
     open_token: bool,
     /// Copy the database older builds use (`huntaway.db`) into this build's (`huntaway-2.db`) again, if an older build
     /// has changed it since it was first copied, discarding what's been done in `huntaway-2.db` since (see db/file.rs).
+    /// Only for this start: restarts, updates and Roll back leave it out.
     #[arg(long, env = "IA_RECOPY_DB")]
     recopy_db: bool,
     /// Make a profile NAME with the Claude config in DIR on start, unless there's a profile of

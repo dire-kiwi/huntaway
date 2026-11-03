@@ -13,10 +13,50 @@
 #
 # The copy goes in under the name of the live board's file: `huntaway-2.db` from a build that's moved onto it (see
 # server/src/db/file.rs), or `huntaway.db` (or `issue-agent.db`) from one before, which a test server of a newer build
-# copies into its `huntaway-2.db` as it starts, as the live board's will.
+# copies into its `huntaway-2.db` as it starts, as the live board's will. After a Roll back both are there, and
+# the older one is in use, so the source is the file a running process (the live server) has open; with none
+# open, the only file there, else IA_LIVE_DB (a file name in the live data dir) says which.
+# `copy-live-board.sh --source` only prints the file it would copy (scripts/copy-live-board-test.sh tests it).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+live=${IA_LIVE_DATA_DIR:-$HOME/.local/share/issue-agent}
+
+# The live board's database file: see above.
+live_db() {
+  local real files=() open=() f
+  real="$(cd "$live" && pwd -P)" || { echo "no data dir $live" >&2; return 1; }
+  if [[ -n ${IA_LIVE_DB:-} ]]; then
+    [[ -f $real/$IA_LIVE_DB ]] || { echo "no $IA_LIVE_DB in $live" >&2; return 1; }
+    echo "$real/$IA_LIVE_DB"
+    return
+  fi
+  for f in huntaway-2.db huntaway.db issue-agent.db; do
+    [[ -f $real/$f ]] && files+=("$f")
+  done
+  [[ ${#files[@]} -gt 0 ]] || { echo "no database in $live" >&2; return 1; }
+  # Each file that a process has open (fds link to the canonical path; the -wal and -shm files don't count). By what
+  # find prints: it fails on other users' processes, which it can't read.
+  for f in "${files[@]}"; do
+    if [[ -n $(find /proc/[0-9]*/fd -maxdepth 1 -type l -lname "$real/$f" -print -quit 2>/dev/null) ]]; then
+      open+=("$f")
+    fi
+  done
+  if [[ ${#open[@]} -eq 1 ]]; then
+    echo "$real/${open[0]}"
+  elif [[ ${#open[@]} -eq 0 && ${#files[@]} -eq 1 ]]; then
+    echo "$real/${files[0]}"
+  else
+    echo "$live has ${files[*]}, and ${#open[@]} of them are open (${open[*]:-none}), so it can't tell which the live" \
+      "board uses: say which with IA_LIVE_DB=<file>" >&2
+    return 1
+  fi
+}
+
+if [[ ${1:-} == --source ]]; then
+  live_db
+  exit
+fi
 where=${1:?usage: $0 <test-server env file or data dir>}
 if [[ -f $where ]]; then
   dir="$(sed -n 's/^export IA_TEST_DATA_DIR=//p' "$where")"
@@ -28,12 +68,7 @@ dir="${dir%/}"
 grep -qx 'export IA_CLAUDE_BIN=/bin/false' "$dir/launch" && grep -qx 'export IA_CODEX_BIN=/bin/false' "$dir/launch" ||
   { echo "start the test server with --no-agents: its agents would run on the live board's tasks" >&2; exit 1; }
 
-live=${IA_LIVE_DATA_DIR:-$HOME/.local/share/issue-agent}
-src=
-for f in huntaway-2.db huntaway.db issue-agent.db; do
-  [[ -f $live/$f ]] && { src=$live/$f; break; }
-done
-[[ -n $src ]] || { echo "no database in $live" >&2; exit 1; }
+src="$(live_db)"
 db=$dir/$(basename "$src")
 [[ "$(cd "$dir" && pwd -P)" != "$(cd "$live" && pwd -P)" ]] || { echo "that's the live data dir" >&2; exit 1; }
 

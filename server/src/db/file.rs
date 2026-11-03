@@ -141,7 +141,16 @@ pub fn open(data_dir: &Path, recopy: bool) -> Result<(Connection, Status)> {
             );
             return Ok((conn, st));
         }
-        let partial = copy(data_dir, &older)?;
+        // Asked once: a copy that fails isn't tried again on every start, and the board carries on with FILE as it is.
+        remove(&marker)?;
+        let partial = match copy(data_dir, &older) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("couldn't copy {older} into {FILE} again, so this build carries on with {FILE} as it was: {e:#}");
+                remove_db(&data_dir.join(format!("{FILE}.partial")))?;
+                return Ok((conn, st));
+            }
+        };
         // Set the current file aside in one piece: without its log, which would be applied to the new file.
         let mode: String = conn.query_row("PRAGMA journal_mode=DELETE", [], |r| r.get(0))?;
         ensure!(mode == "delete", "couldn't take {FILE} out of WAL mode to set it aside (it's {mode})");
@@ -150,7 +159,6 @@ pub fn open(data_dir: &Path, recopy: bool) -> Result<(Connection, Status)> {
         remove_db(&replaced)?;
         std::fs::rename(&path, &replaced).with_context(|| format!("setting {FILE} aside"))?;
         install(&partial, &path)?;
-        remove(&marker)?;
         tracing::warn!("copied {older} into {FILE} again; what {FILE} had before is in {}, until the next copy", path_str(&replaced));
     } else if let Some(older) = older(data_dir) {
         let started = std::time::Instant::now();

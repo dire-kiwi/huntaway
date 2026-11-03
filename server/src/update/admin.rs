@@ -331,22 +331,36 @@ pub(crate) async fn restart_into(state: &Shared, exe: &Path, env: &[(&str, OsStr
     // Give the websocket a moment to deliver the final events.
     tokio::time::sleep(Duration::from_millis(300)).await;
     tracing::info!("re-executing {}", exe.display());
-    exec(exe, &state.meta.args, env)
+    exec(exe, &restart_args(&state.meta.args), env)
+}
+
+/// The serve flag and its environment variable that ask the start they're given to for something once (copying the
+/// database again, see db/file.rs). A restart leaves them out: an older build that Roll back starts wouldn't know the
+/// flag and would exit, and a newer one would do it again.
+const ONE_SHOT_ARGS: &[&str] = &["--recopy-db"];
+const ONE_SHOT_ENV: &[&str] = &["IA_RECOPY_DB"];
+
+/// This server's arguments, for a restart: without `ONE_SHOT_ARGS`.
+fn restart_args(args: &[OsString]) -> Vec<OsString> {
+    args.iter().filter(|a| !ONE_SHOT_ARGS.iter().any(|o| a.as_os_str() == *o)).cloned().collect()
 }
 
 /// Replace this process with a fresh server. Only returns on failure.
 #[cfg(all(unix, not(test)))]
 fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
     use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(exe).args(args).envs(env.iter().map(|(k, v)| (k, v))).exec();
+    let mut cmd = std::process::Command::new(exe);
+    ONE_SHOT_ENV.iter().for_each(|k| _ = cmd.env_remove(k));
+    let err = cmd.args(args).envs(env.iter().map(|(k, v)| (k, v))).exec();
     anyhow!("failed to exec {}: {}", exe.display(), truncate(&err.to_string(), 500))
 }
 
 /// Tests don't replace themselves: they can see what would have been exec'd at `testing::reached("exec")` (and
-/// the environment it would have added in `exec_env`), and then it fails.
+/// the environment it would have added in `exec_env`, and its arguments in `exec_args`), and then it fails.
 #[cfg(test)]
-fn exec(exe: &Path, _args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
+fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
     EXEC_ENV.with_borrow_mut(|e| *e = Some(env.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()));
+    EXEC_ARGS.with_borrow_mut(|a| *a = Some(args.to_vec()));
     crate::testing::reached("exec");
     anyhow!("failed to exec {}: not in a test", exe.display())
 }
@@ -379,6 +393,13 @@ pub fn reap_inherited() {
 #[cfg(test)]
 thread_local! {
     static EXEC_ENV: std::cell::RefCell<Option<Vec<(String, OsString)>>> = const { std::cell::RefCell::new(None) };
+    static EXEC_ARGS: std::cell::RefCell<Option<Vec<OsString>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The arguments of the last exec on this thread (see `exec`).
+#[cfg(test)]
+pub(crate) fn exec_args() -> Option<Vec<OsString>> {
+    EXEC_ARGS.with_borrow(|a| a.clone())
 }
 
 /// The environment the last exec on this thread would have added (see `exec`).
@@ -389,7 +410,9 @@ pub(crate) fn exec_env() -> Option<Vec<(String, OsString)>> {
 
 #[cfg(all(not(unix), not(test)))]
 fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
-    match std::process::Command::new(exe).args(args).envs(env.iter().map(|(k, v)| (k, v))).spawn() {
+    let mut cmd = std::process::Command::new(exe);
+    ONE_SHOT_ENV.iter().for_each(|k| _ = cmd.env_remove(k));
+    match cmd.args(args).envs(env.iter().map(|(k, v)| (k, v))).spawn() {
         Ok(_) => std::process::exit(0),
         Err(e) => anyhow!("failed to start {}: {e}", exe.display()),
     }
