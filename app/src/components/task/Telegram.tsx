@@ -4,7 +4,7 @@ import { api, type Task, type Telegram, type TelegramEvents, type TelegramLink }
 import { onTelegram } from "../../store";
 import { Ago, Button, copyText, IconButton, Input, Toggle, useAsyncAction, useConfirm } from "../ui";
 
-/** A profile's Telegram bot on its assistant's host (API 103), loaded and kept up to date as it changes there. */
+/** A profile's Telegram bot on its assistant's host (API 104), loaded and kept up to date as it changes there. */
 function useTelegram(hostId: string, profileId: string) {
   const [tg, setTg] = useState<Telegram | null>(null);
   const [error, setError] = useState<string | null>(null);

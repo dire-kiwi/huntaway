@@ -745,7 +745,7 @@ export function onApprovalRules(fn: ApprovalRulesListener) {
   };
 }
 
-/** Told when a profile's Telegram bot changes on a host: linked, its settings, an error (API 103). */
+/** Told when a profile's Telegram bot changes on a host: linked, its settings, an error (API 104). */
 type TelegramListener = (hostId: string, profileId: string) => void;
 const telegramListeners = new Set<TelegramListener>();
 export function onTelegram(fn: TelegramListener) {
