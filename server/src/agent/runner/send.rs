@@ -32,11 +32,12 @@ pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<T
     send_run(state, task_id, text, false, true, "prompt")
 }
 
-/// Send a thread-mode routine's message (for its automation run `automation_run`), as another
-/// agent's: the run that takes it in, whether it starts with it, is steered it or takes it from the
-/// queue later, is charged to that automation run (see automations::routines::taken_in).
-pub fn send_from_routine(state: &Shared, task_id: &str, text: &str, automation_run: &str) -> ApiResult<Task> {
-    let message = db::Queued { routine_runs: vec![automation_run.to_string()], ..db::Queued::new(text, true) };
+/// Send an automation's message (for its run `automation_run`), as another agent's, or with no
+/// text, start a task it made: the agent run that takes it in, whether it starts with it, is steered
+/// it or takes it from the queue later, is charged to that automation run, for its budget (see
+/// automations::routines::taken_in).
+pub fn send_from_automation(state: &Shared, task_id: &str, text: &str, automation_run: &str) -> ApiResult<Task> {
+    let message = db::Queued { routine_runs: vec![automation_run.to_string()], ..db::Queued::new(text, !text.trim().is_empty()) };
     send_message(state, task_id, Some(message), false, "prompt", None)
 }
 

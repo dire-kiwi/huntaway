@@ -2204,3 +2204,90 @@ fn a_routines_message_the_assistant_didnt_take_in_is_charged_to_the_run_that_doe
         runs::TEST_CAN_RUN.set(false);
     });
 }
+
+/// A project's task whose agent is running `run`, which takes messages as it works, and an
+/// automation of the project that does `action`, with a budget of $1 a day.
+fn project_task_running_with_an_automation(action: Value) -> (Shared, Task, Run, crate::integrations::automations::Automation) {
+    let state = crate::testing::state();
+    let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
+    let project = db::NewProject {
+        id: "web",
+        profile_id: &p.id,
+        name: "Web",
+        key: "WEB",
+        repo_path: "/src/web",
+        scratch_path: "/s",
+        worktrees_root: "/w",
+        base_branch: None,
+        use_worktrees: false,
+    };
+    db::insert_project(&state.db(), project).unwrap();
+    let t = db::NewTask { profile_id: &p.id, project_id: Some("web"), kind: "task", title: "Inbox", description: "", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };
+    let task = db::insert_task(&state.db(), t).unwrap();
+    let run = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
+    state.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
+    let dir = runs::run_dir(&state, &run.id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("out.jsonl"), "").unwrap();
+    std::fs::write(dir.join("input.jsonl"), "").unwrap();
+    state.runs.lock().unwrap().insert(task.id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
+    let task = state.update_task(&task.id, &[("running", json!(true))]).unwrap().unwrap();
+    let action = if action["kind"] == "send_to_task" { json!({"kind": "send_to_task", "task_id": task.id, "message": "ping"}) } else { action };
+    let b = json!({"name": "Ping", "trigger": {"kind": "interval", "every_minutes": 60}, "budget_usd": 1.0, "action": action});
+    let a = crate::integrations::automations::create(&state, "web", b.as_object().unwrap()).unwrap();
+    (state, task, run, a)
+}
+
+// HA-161: a project automation's budget never filled up, as what the tasks it made or messaged cost
+// wasn't counted: the agent run that takes its message in is charged to it now, as a routine's is.
+#[test]
+fn a_project_automations_message_is_charged_the_run_that_takes_it_in() {
+    crate::testing::run(async || {
+        let (state, task, run, a) = project_task_running_with_an_automation(json!({"kind": "send_to_task"}));
+        let r = crate::integrations::automations::run_now(&state, &a, Default::default()).await.unwrap();
+        assert_eq!((r.status.as_str(), r.task_id.as_deref()), ("ok", Some(task.id.as_str())), "{:?}", r.detail);
+        let steer = reload(&state, &task.id).steering[0].clone();
+        assert_eq!(steer.routine_runs, [r.id.clone()]);
+        assert!(steer.from_agent);
+        output(&state, &run, &[replay(&steer.id, &steer.text)]);
+        assert_eq!(charged_to(&state, &r.id).0.as_deref(), Some(run.id.as_str()));
+        // While it works, its run shows what it's cost so far.
+        state.db().execute("UPDATE runs SET cost_usd=1.5 WHERE id=?1", [&run.id]).unwrap();
+        let shown = crate::integrations::automations::run_json(&state.db(), &r);
+        assert_eq!(shown["cost_usd"], 1.5);
+        finish(&state, &run.id, Outcome::Ok);
+        assert_eq!(charged_to(&state, &r.id), (Some(run.id.clone()), Some(1.5)));
+        next_scheduled_is_over_budget(&state, &a).await;
+    });
+}
+
+// HA-161: the task a project automation makes and starts has its first run charged to it (not the
+// task's later work, which the user asks for).
+#[test]
+fn a_project_automations_new_tasks_first_run_is_charged_to_it() {
+    crate::testing::run(async || {
+        runs::TEST_CAN_RUN.set(true);
+        let (state, _, _, a) = project_task_running_with_an_automation(json!({"kind": "create_task", "title": "Look", "start": true}));
+        let r = crate::integrations::automations::run_now(&state, &a, Default::default()).await.unwrap();
+        assert_eq!(r.status, "ok", "{:?}", r.detail);
+        let made = r.task_id.clone().unwrap();
+        let first = state.runs.lock().unwrap().get(&made).map(|h| h.run_id.clone()).expect("its first run");
+        assert_eq!(charged_to(&state, &r.id).0.as_deref(), Some(first.as_str()));
+        // It started as a task does, with the start prompt, not as another agent's message.
+        let started = user_messages(&state, &made);
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0]["start"], true, "{:?}", started);
+        // That run costs $2 (its launch fails here, ending it).
+        state.db().execute("UPDATE runs SET cost_usd=2 WHERE id=?1", [&first]).unwrap();
+        for _ in 0..200 {
+            if !state.is_running(&made) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!state.is_running(&made));
+        assert_eq!(charged_to(&state, &r.id), (Some(first.clone()), Some(2.0)));
+        next_scheduled_is_over_budget(&state, &a).await;
+        runs::TEST_CAN_RUN.set(false);
+    });
+}

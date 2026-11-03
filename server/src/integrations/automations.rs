@@ -20,7 +20,10 @@
 //! them, and a delivery outside them is skipped; Run now and `at` don't heed them), a `precheck`
 //! (a command run first, in the assistant's workspace or the project's folder: exit 1 skips the
 //! run, and what it prints fills in `{{precheck}}`) and a `budget_usd` a day (a run once its runs
-//! today have cost that much is skipped, and says so).
+//! today have cost that much is skipped, and says so). A run's cost is its agent's: a routine's
+//! thread, or the assistant's run that took its message in; for a project's automation, the agent
+//! run of the task it made that it started, or the run that took its message in (not the task's
+//! later work, which is the user's).
 //!
 //! **Actions.** Create a task from a template (title, description, type, agent config, model,
 //! effort, status, and whether to start it), or send a message to a task; a routine messages the
@@ -30,11 +33,18 @@
 //! message each one is wrapped in `<untrusted-data>` tags, with a note telling the agent that
 //! what's inside is data, not instructions.
 //!
+//! **Webhook responses.** A delivery that runs is answered as soon as its run is recorded (202,
+//! `running`), and its action goes on by itself, so a slow precheck doesn't outlast the sender's
+//! timeout. One turned away is answered with why: 401 rejected, 409 skipped (the automation is off),
+//! 200 for a duplicate, 202 for one filtered out, coalesced or waiting (`pending`), 429 past the rate.
+//!
 //! **Missed runs and restarts.** The scheduler (`tick`, every few seconds) claims a due run by
 //! moving the automation's `next_run_at` on, and records it, in one transaction before it does
 //! anything, so a restart can't run it twice. There's no backfill: an interval that came due while
 //! the server was down runs once, late; a time of day more than `LATE_GRACE` late is skipped (and
-//! recorded as missed). A run that was under way when the server stopped is marked as interrupted
+//! recorded as missed). Each automation's run goes on in a task of its own, so a slow one doesn't
+//! hold up the others; one that comes due again before its last run is over waits for it. A run
+//! that was under way when the server stopped is marked as interrupted
 //! on the next start, and isn't run again. Coalesced deliveries wait in the database, so they run
 //! after a restart.
 
@@ -452,17 +462,16 @@ fn mark_interrupted(c: &Connection) -> rusqlite::Result<usize> {
 }
 
 /// Drops old runs (see KEEP_RUNS) and payloads.
-/// A routine's runs that woke its assistant in the last two days (its "today" in any time zone) are
-/// kept whatever the limits, as its budget a day counts their cost (see routines::spent_today), even
-/// while its agent is still at work.
+/// The runs that made or messaged a task (a routine's, woke its assistant) in the last two days (its
+/// "today" in any time zone) are kept whatever the limits, as its budget a day counts their cost (see
+/// routines::spent_today), even while their agent is still at work.
 fn prune(c: &Connection, now: DateTime<Utc>) -> rusqlite::Result<()> {
     let cutoff = fmt(now - chrono::TimeDelta::days(DEDUPE_DAYS));
     let costs_since = fmt(now - chrono::TimeDelta::days(2));
     let ids: Vec<String> = c.prepare("SELECT id FROM automations")?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
     for id in ids {
         let newest = "SELECT id FROM automation_runs WHERE automation_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2";
-        let costs = "(created_at >= ?4 AND (COALESCE(cost_usd, 0) > 0 OR (status='ok' AND task_id IS NOT NULL
-                       AND automation_id IN (SELECT id FROM automations WHERE project_id IS NULL))))";
+        let costs = "(created_at >= ?4 AND (COALESCE(cost_usd, 0) > 0 OR (status='ok' AND task_id IS NOT NULL)))";
         c.execute(
             &format!("DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN ({newest}) AND NOT {costs}"),
             params![id, KEEP_RUNS, Option::<String>::None, costs_since],

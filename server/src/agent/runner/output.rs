@@ -368,10 +368,8 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         start_next_merge(state, task.project_id.as_deref());
         return;
     }
-    // What the routines whose messages it took cost (before a queued message carries on the thread).
-    if task.is_assistant() {
-        crate::integrations::automations::routines::assistant_run_ended(state, run_id);
-    }
+    // What the automation runs whose messages it took cost (before a queued message carries on the thread).
+    crate::integrations::automations::routines::agent_run_ended(state, run_id);
     let is_task = task.kind == "task";
     // It stopped because its config is out of usage, which resets then (see usage::ran_out).
     let limit = match &outcome {

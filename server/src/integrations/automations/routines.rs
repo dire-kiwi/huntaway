@@ -38,7 +38,7 @@ pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how
             // The assistant's run that takes the message in is the routine run's, for its cost: its id
             // goes with the message, through steering and the queue (see `taken_in`).
             s.db().execute("UPDATE automation_runs SET task_id=?2 WHERE id=?1", params![run_id, assistant.id]).map_err(db_fail)?;
-            if let Err(e) = crate::agent::runner::send_from_routine(s, &assistant.id, &text, run_id) {
+            if let Err(e) = crate::agent::runner::send_from_automation(s, &assistant.id, &text, run_id) {
                 let _ = s.db().execute("UPDATE automation_runs SET task_id=NULL WHERE id=?1", [run_id]);
                 return Err(Outcome::Failed(None, e.1));
             }
@@ -81,8 +81,8 @@ pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how
     }
 }
 
-/// The assistant's run `run_id` took in a message carrying these automation runs' (see
-/// runner::send_from_routine): they're its, for its cost. Called as it's recorded.
+/// The agent run `run_id` took in a message carrying these automation runs' (see
+/// runner::send_from_automation): they're its, for its cost. Called as it's recorded.
 pub fn taken_in(c: &Connection, run_id: &str, automation_runs: &[String]) -> rusqlite::Result<()> {
     for id in automation_runs {
         c.execute("UPDATE automation_runs SET agent_run_id=?2 WHERE id=?1", params![id, run_id])?;
@@ -90,10 +90,11 @@ pub fn taken_in(c: &Connection, run_id: &str, automation_runs: &[String]) -> rus
     Ok(())
 }
 
-/// A run of the assistant ended: the thread-mode routine runs it took the messages of record what it
-/// cost, split evenly between them when it took several (its other work, such as the user's messages,
-/// counts too: a run can't be split by what each message cost).
-pub fn assistant_run_ended(s: &Shared, run_id: &str) {
+/// An agent run ended: the automation runs it took the messages of (a thread-mode routine's, or a
+/// project automation's, which it started with or was sent) record what it cost, split evenly between
+/// them when it took several (its other work, such as the user's messages, counts too: a run can't be
+/// split by what each message cost).
+pub fn agent_run_ended(s: &Shared, run_id: &str) {
     let ids: Vec<String> = {
         let c = s.db();
         let _ = c.execute(
