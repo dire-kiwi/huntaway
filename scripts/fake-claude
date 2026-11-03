@@ -86,21 +86,31 @@ def message_text(msg):
     return str(content)
 
 
-def session_mode(first):
+def session_mode(first, leftover=b""):
     """agent-threads' driver: control requests and a turn for each user message, until stdin closes."""
     session = opt("--resume") or str(uuid.uuid4())
     model = opt("--model") or "fake"
     pending = [first]
     started = [False]
 
+    buf = bytearray(leftover)
+
     def read(timeout):
+        # Lines from stdin itself, not sys.stdin's buffer, which select can't see into.
         if pending:
             return pending.pop(0)
-        if not select.select([sys.stdin], [], [], timeout)[0]:
-            return None
-        line = sys.stdin.readline()
-        if not line:
-            sys.exit(int(os.environ.get("IA_FAKE_CLAUDE_EXIT", "0")))
+        deadline = None if timeout is None else time.time() + timeout
+        while b"\n" not in buf:
+            wait = None if deadline is None else max(0, deadline - time.time())
+            if not select.select([0], [], [], wait)[0]:
+                return None
+            chunk = os.read(0, 65536)
+            if not chunk:
+                sys.exit(int(os.environ.get("IA_FAKE_CLAUDE_EXIT", "0")))
+            buf.extend(chunk)
+        i = buf.index(b"\n")
+        line = bytes(buf[:i])
+        del buf[: i + 1]
         try:
             return json.loads(line)
         except ValueError:
@@ -193,18 +203,24 @@ def session_mode(first):
             turn(m)
 
 
-# agent-threads' driver starts with a control request (initialize) rather than a message.
-if opt("--input-format") == "stream-json" and select.select([sys.stdin], [], [], 10)[0]:
-    first_line = sys.stdin.readline()
+# agent-threads' driver starts with a control request (initialize) rather than a message. The first line is
+# read from stdin itself, so a session reads the rest of what came with it.
+_first_line = None
+if opt("--input-format") == "stream-json" and select.select([0], [], [], 10)[0]:
+    data = bytearray()
+    while b"\n" not in data:
+        chunk = os.read(0, 65536)
+        if not chunk:
+            break
+        data.extend(chunk)
+    first_line, _, rest = bytes(data).partition(b"\n")
     try:
         first = json.loads(first_line)
     except ValueError:
         first = None
     if isinstance(first, dict) and first.get("type") == "control_request":
-        session_mode(first)
-    _first_line = first_line
-else:
-    _first_line = None
+        session_mode(first, rest)
+    _first_line = first_line.decode()
 
 prompt = read_prompt()
 log = os.environ.get("IA_FAKE_CLAUDE_LOG")

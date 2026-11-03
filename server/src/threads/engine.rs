@@ -88,20 +88,26 @@ pub fn fix(state: &Shared, task: Task) -> Result<Task> {
 
 /// Builds the backend on the board's database, with Claude Code and Codex under ia-shim (see the module's doc).
 pub fn build(state: &Shared) -> AgentThreads {
-    let weak = Arc::downgrade(state);
-    let claude = agent_threads::claude_code(ClaudeCodeOptions {
+    let claude = ClaudeCodeOptions {
         bin: crate::agent::runs::claude_program(),
         // The profile's CLAUDE.md, settings, hooks, plugins and skills, as a legacy run has them.
         user_settings: true,
         ..Default::default()
-    });
-    let codex = agent_threads::codex(CodexOptions {
+    };
+    let codex = CodexOptions {
         bin: crate::agent::codex::program(),
         // The profile's CODEX_HOME (each thread's launch options give it), else the user's, as it is.
         user_config: true,
         login: None,
         ..Default::default()
-    });
+    };
+    let spawner = agent_threads::shim(state.exe.with_file_name("ia-shim"), ShimOptions::new(runs_dir(state)));
+    build_with(state, spawner, claude, codex)
+}
+
+/// `build`, with these processes and harnesses (for tests).
+pub(crate) fn build_with(state: &Shared, spawner: Arc<dyn agent_threads::Spawner>, claude: ClaudeCodeOptions, codex: CodexOptions) -> AgentThreads {
+    let weak = Arc::downgrade(state);
     let on_error: Arc<dyn Fn(agent_threads::Error) + Send + Sync> = Arc::new(|e| tracing::warn!("agent-threads: {e}"));
     let handler = {
         let weak = weak.clone();
@@ -113,8 +119,8 @@ pub fn build(state: &Shared) -> AgentThreads {
     };
     AgentThreads::new(Options {
         store: Some(Arc::new(HuntawayStore::new(weak.clone()))),
-        harnesses: vec![claude, codex],
-        spawner: Some(agent_threads::shim(state.exe.with_file_name("ia-shim"), ShimOptions::new(runs_dir(state)))),
+        harnesses: vec![agent_threads::claude_code(claude), agent_threads::codex(codex)],
+        spawner: Some(spawner),
         capabilities: Capabilities { permissions: Some(policy(weak)), ..Default::default() },
         on_error: Some(on_error),
         // A question left open when its turn ends stays answerable, as the board's are.
@@ -127,14 +133,18 @@ pub fn build(state: &Shared) -> AgentThreads {
 /// Sets up the backend in the state and starts following it, before the board's runs are loaded (see
 /// runner::load_active), which may start runs on it.
 pub fn start(state: &Shared) {
-    let backend = build(state);
+    start_with(state, build(state));
+}
+
+/// `start`, with this backend.
+pub(crate) fn start_with(state: &Shared, backend: AgentThreads) {
     let events = backend.subscribe();
     if !crate::threads::live::install(state, backend) {
         tracing::warn!("the agent-threads backend was set up twice; keeping the first");
         return;
     }
     let (tx, rx) = mpsc::unbounded_channel();
-    let _ = SENDS.set(tx);
+    SENDS.lock().unwrap().insert(key(state), tx);
     tokio::spawn(sender(Arc::downgrade(state), rx));
     tokio::spawn(follow(Arc::downgrade(state), events));
 }
@@ -371,7 +381,7 @@ fn sent(state: &Shared, task: &Task, text: &str, from_agent: bool) -> Result<()>
     // `/plan`, as a legacy run's steering has it (see runner::write_steers).
     let plan_file = crate::agent::documents::path(state, task, "plan").filter(|_| task.kind == "task").map(|p| path_str(&p));
     let plan = plan_file.as_deref().zip(crate::agent::documents::plan_command(text)).map(|(f, rest)| crate::agent::documents::plan_prompt(f, rest, false));
-    let tx = SENDS.get().context("the agent-threads backend isn't running")?;
+    let tx = SENDS.lock().unwrap().get(&key(state)).cloned().context("the agent-threads backend isn't running")?;
     tx.send((task.id.clone(), plan.unwrap_or_else(|| text.to_string()))).map_err(|_| anyhow!("the agent-threads backend has stopped"))?;
     let mut msg = json!({"text": text, "steered": true});
     if from_agent {
@@ -381,8 +391,13 @@ fn sent(state: &Shared, task: &Task, text: &str, from_agent: bool) -> Result<()>
     Ok(())
 }
 
-/// Messages for threads, sent one at a time in the order they were queued (see `sent`).
-static SENDS: std::sync::OnceLock<mpsc::UnboundedSender<(String, String)>> = std::sync::OnceLock::new();
+/// Messages for each state's threads, sent one at a time in the order they were queued (see `sent`).
+static SENDS: LazyLock<Mutex<HashMap<usize, mpsc::UnboundedSender<(String, String)>>>> = LazyLock::new(Default::default);
+
+/// A state's key in SENDS.
+fn key(state: &Shared) -> usize {
+    Arc::as_ptr(state) as usize
+}
 
 async fn sender(state: Weak<AppState>, mut rx: mpsc::UnboundedReceiver<(String, String)>) {
     while let Some((task_id, text)) = rx.recv().await {

@@ -15,7 +15,7 @@ measurement or a prediction of migration time.
 
 Huntaway now depends on agent-threads (a git dependency pinned to `b009454`, which adds no second copy of any crate)
 and has the first steps of the safe importer below, in `server/src/threads/`. Nothing in the server reads the new
-tables yet: running agents, the API and the UI are unchanged.
+tables yet: running agents, the API and the UI are unchanged. (Since then, see *Engine core* below.)
 
 - **Store** (`threads/store.rs`): agent-threads' `Store` on huntaway.db, in `at_threads`, `at_events`,
   `at_snapshots` and `at_runs` (migration 85). It passes the crate's store conformance cases
@@ -49,6 +49,43 @@ switched over then (14 open prompts, 1 queued message). Staging them all (on an 
 saved events and their snapshot each hold a full copy of a thread, so a real cutover should expect about 2.5
 times the space, or keep fewer snapshots (the crate needs only the latest, and only to avoid folding every event
 on load).
+
+**Engine core (HA-143)** (`threads/engine.rs`): a task's agent can run on agent-threads, chosen per task.
+`tasks.run_engine` (migration 86) is fixed when a task's first run starts: `agent_threads` when the host's
+*Run new tasks' agents on agent-threads* setting (host settings, Agent defaults; `agent_threads_new_tasks`) is on,
+for a task (not a review) with no conversation yet, and `legacy` otherwise. Every task from before is legacy.
+One backend in `AppState::agent_threads` runs them, on the store, with Claude Code and Codex under `ia-shim` in
+`<data>/at-runs` (agent-threads' shim spawner writes no `prompt` file, which ia-shim now allows).
+`recover()` at start re-attaches to their runs, and shutting down leaves them going.
+
+- The board's gates are unchanged: `runner::start_run` registers the run as it does for a legacy task (queued
+  messages, dependencies, usage limits, merges, archived projects), and `runner/launch.rs` prepares it the same way.
+  Only the last step goes to the engine. The task's thread (id = task id, `metadata.task_id`) gets the run's launch
+  options: the profile's config dir, `--add-dir`s (Codex: writable roots), `--settings` with the gh hook,
+  `--allowedTools`/`--disallowedTools` and `TMPDIR`. It also gets the model, effort and permission mode (Claude's
+  `auto` as an extra `--permission-mode auto`), the system prompt as its capability, and the board's `huntaway mcp`
+  and `gh-mcp` helpers (with the run's `IA_RUN_ID`) and the project's servers as MCP servers. Then it's sent the
+  message, or compacts.
+- It runs with `user_settings: true` (Codex: `user_config: true`). Skills behave as on a legacy run (checked
+  with Claude on a test server): the project's skills load through `--add-dir`, a disabled skill's
+  `Skill(name)` in `--disallowedTools` is refused, and the crate's own skills plugin isn't used. Codex gets the
+  project's skills as the crate's skills.
+- A board run covers one stretch of the thread's work, until the thread stops running. A message sent meanwhile
+  goes to the crate, which steers the turn or carries the message into its next one, and goes in the board's thread
+  as steered at once. A stop interrupts, and deleting the task deletes its thread. The thread's state is mirrored
+  onto the task: its session, a turn's outcome, and questions and plans (needs attention while one is open). The
+  run ends through `runner::finish`, as a legacy run's exit does. A turn the thread starts by itself (an answer to
+  a question kept open after its turn) gets a board run of its own.
+- Tool permissions go to the board's own prompts (`mcp::permissions::prompt`: auto-allow, the mode as it is now,
+  the permission card, `/api/permissions`). The crate's questions and plans stay its own requests, which the
+  thread API (HA-145) answers.
+- From the agent's own output (`on_harness_message`): the tools and skills it saw, rate limits, usage limits and
+  Claude's cost.
+- Not on the engine yet: rewinding (a rewind asked for is dropped with a notice), Codex's reviewer filesystem
+  profile, MCP approvals and `auto` mode, Codex rate limits and cost, and context usage. The board's readers of
+  raw messages (reviews' `changes_code`, summaries, titles, `last_message`) don't see the agent's items until
+  HA-144. A thread's harness process stays alive between turns (one idle process per task), until AT-31 lets
+  the board close it.
 
 Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
 task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and
