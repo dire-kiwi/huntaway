@@ -1452,7 +1452,7 @@ fn group_tasks_follow_their_group_when_its_renamed() {
     db::update_project(&c, "a", &[("group_name", Value::Null)]).unwrap();
     db::update_project(&c, "b", &[("group_name", Value::Null)]).unwrap();
     assert!(db::rename_group_tasks(&c, &p.id, "New", None).unwrap().is_empty());
-    assert_eq!(db::list_group_tasks(&c, &p.id).unwrap()[0].group_name.as_deref(), Some("New"));
+    assert_eq!(db::list_group_tasks(&c, &p.id, false).unwrap()[0].group_name.as_deref(), Some("New"));
 }
 
 #[test]

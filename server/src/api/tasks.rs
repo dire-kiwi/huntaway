@@ -32,8 +32,9 @@ pub(super) async fn list_profile_scratch(State(s): State<Shared>, Path(id): Path
     Ok(Json(json!(db::list_profile_scratch(&s.db(), &id)?)))
 }
 
-pub(super) async fn list_group_tasks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(db::list_group_tasks(&s.db(), &id)?)))
+/// The profile's tasks in no project: its group and scratch tasks, and with `include_assistant` its assistant.
+pub(super) async fn list_group_tasks(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ProfileTasksQuery>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(db::list_group_tasks(&s.db(), &id, q.include_assistant)?)))
 }
 
 pub(super) async fn get_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {

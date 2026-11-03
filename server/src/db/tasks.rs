@@ -345,12 +345,12 @@ pub fn project_threads(c: &Connection, project_id: &str) -> Result<Vec<Task>> {
 }
 
 /// A profile's group tasks (see Task::group_name), including any whose group is gone.
-pub fn list_group_tasks(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
-    // Not the profile's assistant, which is off the board (the sidebar opens it).
+/// With `assistant`, the profile's assistant too, which is off the board (the sidebar opens it).
+pub fn list_group_tasks(c: &Connection, profile_id: &str, assistant: bool) -> Result<Vec<Task>> {
     let mut st = c.prepare(
-        "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type IS NOT 'assistant' ORDER BY position",
+        "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY position",
     )?;
-    let rows = st.query_map([profile_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    let rows = st.query_map(params![profile_id, assistant], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 

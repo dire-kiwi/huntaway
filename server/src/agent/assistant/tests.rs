@@ -87,7 +87,8 @@ fn the_assistant_is_off_the_board_unless_asked_for() {
         let a = get_or_create(&s, &p.id).unwrap();
         let ids = |l: Vec<db::Task>| l.into_iter().map(|t| t.id).collect::<Vec<_>>();
         // The board's tasks in no project (group and scratch tasks).
-        assert_eq!(ids(db::list_group_tasks(&s.db(), &p.id).unwrap()), [scratch.id.clone()]);
+        assert_eq!(ids(db::list_group_tasks(&s.db(), &p.id, false).unwrap()), [scratch.id.clone()]);
+        assert_eq!(ids(db::list_group_tasks(&s.db(), &p.id, true).unwrap()), [scratch.id.clone(), a.id.clone()]);
         assert_eq!(ids(db::list_tasks_for_profile(&s.db(), &p.id, false).unwrap()), [scratch.id.clone()]);
         assert_eq!(db::list_tasks_for_profile(&s.db(), &p.id, true).unwrap().len(), 2);
         // Over the API.
@@ -98,6 +99,8 @@ fn the_assistant_is_off_the_board_unless_asked_for() {
         assert_eq!(list.as_array().unwrap().len(), 2);
         let (_, list) = crate::api::tests::call(&app, "GET", &format!("/api/profiles/{}/group-tasks", p.id)).await;
         assert_eq!(list.as_array().unwrap().iter().map(|t| t["id"].clone()).collect::<Vec<_>>(), [json!(scratch.id)]);
+        let (_, list) = crate::api::tests::call(&app, "GET", &format!("/api/profiles/{}/group-tasks?include_assistant=true", p.id)).await;
+        assert_eq!(list.as_array().unwrap().len(), 2);
         let (status, got) = crate::api::tests::call(&app, "GET", &format!("/api/profiles/{}/assistant", p.id)).await;
         assert_eq!((status, &got["id"], &got["task_type"]), (200, &json!(a.id), &json!("assistant")));
         assert_eq!(crate::api::tests::call(&app, "GET", "/api/profiles/nope/assistant").await.0, 404);

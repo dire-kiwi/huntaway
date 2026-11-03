@@ -1,8 +1,10 @@
 import clsx from "clsx";
-import { Bell, BellRing, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
+import { Bell, BellRing, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../activeProfile";
-import { api, hostCompat, hostSupports, readyToCheck, type Project, type Status, type Task } from "../../api";
+import { api, hostCompat, hostSupports, isAssistant, readyToCheck, type Project, type Status, type Task } from "../../api";
+import { assistantHome } from "../../assistant";
 import {
   groupKey,
   groupNames,
@@ -223,6 +225,33 @@ function MarkedTasks({ route }: { route: Route }) {
   );
 }
 
+/** The active profile's assistant (API 96), which opens full width. Not there for a profile with no host that has one. */
+function AssistantEntry({ route, profile }: { route: Route; profile: string }) {
+  const home = useStore(useShallow((s) => assistantHome(s.profiles, s.hosts, profile) ?? null));
+  const task = useStore((s) =>
+    home ? Object.values(s.tasks).find((t) => isAssistant(t) && t.host_id === home.hostId && t.profile_id === home.profileId) : undefined,
+  );
+  if (!home) return null;
+  return (
+    <nav className="pb-3" aria-label="Assistant">
+      <NavItem
+        active={route.name === "assistant" && route.profile === profile}
+        onClick={() => navigate({ name: "assistant", profile })}
+        title={`${profile}'s assistant: a lasting conversation, outside every project`}
+        icon={<Bot size={15} />}
+        right={
+          <span className="flex items-center gap-1.5">
+            {task?.running ? <RunningDot /> : null}
+            <Badge n={task?.status === "needs_attention" ? 1 : 0} title="Needs attention" />
+          </span>
+        }
+      >
+        Assistant
+      </NavItem>
+    </nav>
+  );
+}
+
 /** Names a new group, or renames one. */
 function GroupNameModal({ title, initial, onSave, onClose }: { title: string; initial: string; onSave: (name: string) => Promise<void>; onClose: () => void }) {
   const [name, setName] = useState(initial);
@@ -293,7 +322,8 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
     // Each profile's tasks by column, by profile name.
     const byProfile: Record<string, Partial<Record<Status, number>>> = {};
     for (const t of Object.values(tasks)) {
-      if (t.kind !== "task") continue;
+      // The assistant is off the board (see AssistantEntry).
+      if (t.kind !== "task" || isAssistant(t)) continue;
       const name = profileOf(t);
       if (name) {
         const counts = (byProfile[name] ??= {});
@@ -327,7 +357,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
           ? groupProjects(projects, route.hostId, route.group)
           : [];
   const active = activeProfile(names, savedProfile, (current) => {
-    if (route.name === "profile") return route.profile;
+    if (route.name === "profile" || route.name === "assistant") return route.profile;
     const listed = openProjects.some((p) => profileOf(p) === current || isPinned(p));
     if (route.name === "group") {
       // A profile lists a group for its projects in it, and for its group tasks in it (which can
@@ -548,6 +578,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
       </nav>
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
+        {active && <AssistantEntry route={route} profile={active} />}
         <MarkedTasks route={route} />
         {favoriteList.length > 0 && (
           <div className="pb-3">
