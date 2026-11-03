@@ -49,8 +49,8 @@ const report = {
     usage("r4", "solo", "claude-sonnet-5-5", 500),
   ],
   reviews: [
-    { task_id: "child", thread_id: "thread", at, verdict: "issues", serious: 2, minor: 1, minor_noted: true, label: "codex · xhigh", model: "gpt-6.1-sol", round: 2 },
-    { task_id: "solo", thread_id: "thread2", at, verdict: "pass", serious: 0, minor: null, minor_noted: false, label: null, model: "claude-opus-5-5", round: 1 },
+    { task_id: "child", thread_id: "thread", at, verdict: "issues", serious: 2, minor: 1, minor_noted: true, label: "codex · xhigh", model: "gpt-6.1-sol", round: 2, effort: "high", task_model: "claude-opus-5-5" },
+    { task_id: "solo", thread_id: "thread2", at, verdict: "pass", serious: 0, minor: null, minor_noted: false, label: null, model: "claude-opus-5-5", round: 1, effort: null, task_model: "claude-sonnet-5-5" },
   ],
   // Its task's first round was before the range.
   rounds: [
@@ -91,6 +91,13 @@ test("the Tokens tab shows where tokens went, a subproject's tasks and what revi
     // Its first round counts, though it was before the range: one of the two tasks passed its first, and it took two rounds of fixes.
     const byModel = page.locator("div", { has: page.getByText("By the model that did the work", { exact: true }) }).last();
     assert.match(await byModel.locator("tr", { hasText: "claude-opus-5-5" }).innerText(), /^claude-opus-5-5\t1\t0% · 0\t2\.0\t/);
+    // Serious issues, by the model that did the work and the effort: the first review's 2 are opus's at high effort, and the task that
+    // passed is sonnet's at the default effort.
+    const issues = page.locator("div", { has: page.getByText("Serious issues by model and effort", { exact: true }) }).last();
+    assert.match(await issues.locator("thead").innerText(), /Model\s+All efforts\s+high\s+Default/);
+    assert.match(await issues.locator("tr", { hasText: "claude-opus-5-5" }).innerText(), /^claude-opus-5-5\t2 · 2\.0\/task\t2 · 2\.0\/task\t–$/);
+    assert.match(await issues.locator("tr", { hasText: "claude-sonnet-5-5" }).innerText(), /^claude-sonnet-5-5\t0 · 0\.0\/task\t–\t0 · 0\.0\/task$/);
+    assert.match(await issues.locator("tr", { hasText: "All models" }).innerText(), /^All models\t2 · 1\.0\/task\t2 · 2\.0\/task\t0 · 0\.0\/task$/);
     // Cost: Codex has none.
     await ui.run(["click Cost", "wait Cost by day"]);
     assert.match(await page.locator("tr", { hasText: "gpt-6.1-sol · Codex" }).innerText(), /0%/);
