@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, FileText, Loader2, MessageSquareText, RotateCw, ScanSearch } from "lucide-react";
 import { lazy, Suspense, useMemo, useState, type MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, hostSupports, type Review, type ReviewerRun, type ReviewState, type Task, type Turn, type TurnDiff } from "../../api";
+import { api, hostSupports, summariesOf, type ChangeSummary, type Review, type ReviewerRun, type ReviewState, type Task, type Turn, type TurnDiff } from "../../api";
 import { openTask } from "../../router";
 import { useHost, useProject, useStore } from "../../store";
 import { turnStat, useTurns } from "./turns";
@@ -301,11 +301,12 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
   );
 }
 
-/** A task's summary tab: the summary of its changes written once its review passed (API 84), and a way to write one. */
-export function ChangeSummaryView({ task }: { task: Task }) {
-  const s = task.summary;
+/** A task's summary tab: the summaries of its changes written once its review passed (API 84), one from each summarizer
+ * (API 103), and a way to write them. With `threadId`, just that summarizer's. */
+export function ChangeSummaryView({ task, threadId }: { task: Task; threadId?: string }) {
+  const all = summariesOf(task);
+  const list = threadId ? all.filter((s) => s.thread_id === threadId) : all;
   const auto = useProject(task.project_id)?.auto_summary;
-  const thread = useStore((st) => (s ? st.tasks[s.thread_id] : undefined));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const summarize = async () => {
@@ -319,12 +320,10 @@ export function ChangeSummaryView({ task }: { task: Task }) {
       setBusy(false);
     }
   };
-  // Of an earlier commit than the one reviewed last (the agent has worked on it since).
-  const stale = !!s?.head && !!task.review?.head && s.head !== task.review.head;
-  const waiting = s?.state === "running" && thread?.running && thread.attention_reason;
+  const running = all.some((s) => s.state === "running");
   return (
     <div className="space-y-2.5 text-[12.5px]">
-      {!s ? (
+      {!list.length ? (
         <div className="text-muted">
           No summary yet.{" "}
           {auto === false
@@ -332,51 +331,75 @@ export function ChangeSummaryView({ task }: { task: Task }) {
             : "An agent summarises the changes here once the task's review passes."}
         </div>
       ) : (
-        <>
-          <div
-            className={clsx(
-              "flex items-center gap-1.5",
-              s.state === "running" && "text-st-review",
-              s.state === "done" && "text-muted",
-              (s.state === "failed" || s.state === "stopped") && "text-faint",
-            )}
-          >
-            {s.state === "running" ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-            <span>
-              {s.state === "running"
-                ? waiting
-                  ? "The summarizer is waiting for you"
-                  : "Summarising the changes…"
-                : s.state === "done"
-                  ? "Summary of the changes"
-                  : s.state === "failed"
-                    ? "Summary failed"
-                    : "Summary stopped"}
-            </span>
-            {s.label && <span className="text-faint">· {s.label}</span>}
-            {s.head && <span className="ml-auto font-mono text-[11px] text-faint">{s.head.slice(0, 7)}</span>}
-          </div>
-          {stale && <div className="text-[11.5px] text-st-attention">The agent has changed the work since this summary was written.</div>}
-          {s.text && s.state !== "running" && (
-            <div className={clsx(s.state === "done" ? "text-fg" : "text-muted")}>
-              <Markdown text={s.text} />
-            </div>
-          )}
-        </>
+        list.map((s) => <SummaryBlock key={s.thread_id} task={task} s={s} several={all.length > 1 && !threadId} link={!threadId} />)
       )}
       <div className="flex flex-wrap gap-2 pt-1">
-        {s && (
-          <Button size="sm" variant="ghost" onClick={() => openTask(s.thread_id)}>
-            <MessageSquareText size={12} /> Summary thread
-          </Button>
-        )}
-        {s?.state !== "running" && task.kind === "task" && (
+        {!running && task.kind === "task" && (
           <Button size="sm" disabled={busy || task.running} onClick={summarize} title={task.running ? "Wait for the agent to finish" : undefined}>
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />} {s ? "Summarise again" : "Summarise now"}
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />} {all.length ? (all.length > 1 ? "Summarise all again" : "Summarise again") : "Summarise now"}
           </Button>
         )}
       </div>
       {err && <div className="rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+    </div>
+  );
+}
+
+/** One summarizer's summary: who wrote it, how it went, and its text. With several, each is boxed and says what its summarizer was asked to do. */
+function SummaryBlock({ task, s, several, link }: { task: Task; s: ChangeSummary; several: boolean; link: boolean }) {
+  const thread = useStore((st) => st.tasks[s.thread_id]);
+  // Of an earlier commit than the one reviewed last (the agent has worked on it since).
+  const stale = !!s.head && !!task.review?.head && s.head !== task.review.head;
+  const waiting = s.state === "running" && thread?.running && thread.attention_reason;
+  return (
+    <div className={clsx("space-y-2", several && "rounded-md border border-line p-2.5")}>
+      <div
+        className={clsx(
+          "flex items-center gap-1.5",
+          s.state === "running" && "text-st-review",
+          s.state === "done" && "text-muted",
+          (s.state === "failed" || s.state === "stopped") && "text-faint",
+        )}
+      >
+        {s.state === "running" ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+        <span>
+          {s.state === "running"
+            ? waiting
+              ? "The summarizer is waiting for you"
+              : "Summarising the changes…"
+            : s.state === "done"
+              ? "Summary of the changes"
+              : s.state === "failed"
+                ? "Summary failed"
+                : "Summary stopped"}
+        </span>
+        {s.name && <span className="font-medium text-fg">· {s.name}</span>}
+        {s.label && <span className="text-faint">· {s.label}</span>}
+        {s.head && <span className="ml-auto font-mono text-[11px] text-faint">{s.head.slice(0, 7)}</span>}
+      </div>
+      {(!!s.skills?.length || s.custom_prompt) && (
+        <div className="flex flex-wrap items-center gap-1 text-[11px] text-faint">
+          {s.skills?.map((k) => (
+            <span key={k} className="rounded bg-panel px-1.5 py-0.5 font-mono" title="A skill this summarizer was asked to use">
+              {k}
+            </span>
+          ))}
+          {s.custom_prompt && <span className="rounded bg-panel px-1.5 py-0.5">own prompt</span>}
+        </div>
+      )}
+      {stale && <div className="text-[11.5px] text-st-attention">The agent has changed the work since this summary was written.</div>}
+      {s.text && s.state !== "running" && (
+        <div className={clsx(s.state === "done" ? "text-fg" : "text-muted")}>
+          <Markdown text={s.text} />
+        </div>
+      )}
+      {link && (
+        <div>
+          <Button size="sm" variant="ghost" onClick={() => openTask(s.thread_id)}>
+            <MessageSquareText size={12} /> Summary thread
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

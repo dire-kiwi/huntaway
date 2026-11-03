@@ -351,6 +351,7 @@ fn each_reviewer_looks_for_what_its_own_instructions_say_and_has_its_own_skills(
         };
         let (a, b) = (text(0), text(1));
         assert!(a.contains("Only look for security holes.") && !a.contains("Check the project's rules."), "{a}");
+        assert!(a.contains("Use this skill while you review: `/audit` (invoke each with the `Skill` tool).") && !b.contains("while you review"), "{a}");
         assert!(b.contains("Check the project's rules.") && !b.contains("security holes"), "{b}");
         assert_eq!(db::thread_skills(&s.db(), &r.reviewers[0].thread_id).unwrap(), ["audit"]);
         assert!(db::thread_skills(&s.db(), &r.reviewers[1].thread_id).unwrap().is_empty());

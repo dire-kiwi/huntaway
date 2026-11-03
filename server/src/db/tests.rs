@@ -368,11 +368,11 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
 }
 
 #[test]
-fn a_database_from_version_83_gets_review_thread_skills() {
+fn a_database_from_version_85_gets_review_thread_skills() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
-        c.execute_batch("DROP TABLE review_thread_skills; PRAGMA user_version=83;").unwrap();
+        c.execute_batch("DROP TABLE review_thread_skills; PRAGMA user_version=85;").unwrap();
     }
     let c = open(&path).unwrap();
     assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
@@ -790,6 +790,30 @@ fn a_database_at_version_66_gets_the_summary_columns() {
     assert_eq!(p.summarizer, None);
     let t = insert_task(&c, NewTask { profile_id: "p", project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
     assert!(t.summary.is_none());
+}
+
+#[test]
+fn a_database_at_version_83_keeps_its_summarizer_as_the_only_one() {
+    // As master's build left it (83), with a project and a profile each with a summarizer and no list of them yet.
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE projects DROP COLUMN summarizers;
+                 ALTER TABLE profiles DROP COLUMN summarizers;
+                 PRAGMA user_version=83;
+                 INSERT INTO profiles (id,name,created_at,summarizer) VALUES ('p','p','1','{\"model\":\"haiku\"}');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at,summarizer)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1','{\"model\":\"sonnet\"}');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let p = get_project(&c, "pr").unwrap().unwrap();
+    assert_eq!(p.summarizers.iter().map(|r| r.model.as_deref()).collect::<Vec<_>>(), [Some("sonnet")]);
+    assert_eq!(get_profile(&c, "p").unwrap().unwrap().summarizers.len(), 1);
+    assert_eq!(summarizers_for(&c, &p).unwrap().len(), 1);
 }
 
 #[test]

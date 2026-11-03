@@ -118,7 +118,7 @@ fn profiles_choose_reviewers_and_a_summarizer_that_projects_can_override() {
         };
         let summarizer = || {
             let p = project();
-            db::summarizer_for(&s.db(), &p).unwrap()
+            db::summarizers_for(&s.db(), &p).unwrap().remove(0)
         };
         let codex_reviewer = db::Reviewer { claude_config_id: Some(codex.id.clone()), ..Default::default() };
         let haiku = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
@@ -147,23 +147,77 @@ fn profiles_choose_reviewers_and_a_summarizer_that_projects_can_override() {
 }
 
 #[test]
-fn a_reviewers_prompt_and_skills_are_tidied_and_limited() {
+fn profiles_and_projects_can_have_several_summarizers_with_skills() {
     crate::testing::run(async || {
         let s = crate::testing::state();
         let create = |b: Value| create_profile(State(s.clone()), Json(serde_json::from_value(b).unwrap()));
-        let Json(p) = create(json!({"name": "work", "reviewers": [{"prompt": "  Only security.\n", "skills": [" b ", "a", "", "b"]}], "summarizer": {"prompt": "  ", "skills": ["c"]}}))
-            .await
-            .unwrap();
-        assert_eq!(p["reviewers"], json!([{"claude_config_id": null, "model": null, "effort": null, "prompt": "Only security.", "skills": ["a", "b"]}]));
-        assert_eq!(p["summarizer"], json!({"claude_config_id": null, "model": null, "effort": null, "skills": ["c"]}));
-        // Instructions or skills alone make a reviewer that isn't the default.
-        let Json(p) = create(json!({"name": "home", "reviewers": [{"skills": ["a"]}]})).await.unwrap();
-        assert_eq!(p["reviewers"].as_array().map(Vec::len), Some(1));
-        let long = "x".repeat(20_001);
-        assert!(create(json!({"name": "bad", "reviewers": [{"prompt": long}]})).await.is_err());
-        let many: Vec<String> = (0..51).map(|i| format!("s{i}")).collect();
-        assert!(create(json!({"name": "bad", "reviewers": [{"skills": many}]})).await.is_err());
-        assert!(create(json!({"name": "bad", "summarizer": {"skills": ["x".repeat(65)]}})).await.is_err());
+        let listed = json!([
+            {"name": " Baseline ", "model": "haiku"},
+            {"name": "Skilled", "skills": [" /tldr ", "changelog", "tldr", ""], "prompt": "  Be brief.  "},
+        ]);
+        let Json(p) = create(json!({"name": "work", "summarizers": listed})).await.unwrap();
+        let wanted = json!([
+            {"claude_config_id": null, "model": "haiku", "effort": null, "name": "Baseline"},
+            {"claude_config_id": null, "model": null, "effort": null, "name": "Skilled", "skills": ["tldr", "changelog"], "prompt": "Be brief."},
+        ]);
+        assert_eq!(p["summarizers"], wanted);
+        // Older clients read the first.
+        assert_eq!(p["summarizer"], wanted[0]);
+        let id = p["id"].as_str().unwrap().to_string();
+        let np = db::NewProject { id: "pr", profile_id: &id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+        db::insert_project(&s.db(), np).unwrap();
+        let summarizers = || {
+            let p = db::get_project(&s.db(), "pr").unwrap().unwrap();
+            db::summarizers_for(&s.db(), &p).unwrap()
+        };
+        assert_eq!(summarizers().len(), 2);
+        // A project's own, over the profile's, and back with an empty list.
+        let project = update_project_inner(&s, "pr", json!({"summarizers": [{"skills": ["x"]}]}).as_object().unwrap()).await.unwrap();
+        assert_eq!((project.summarizers.len(), project.summarizer.as_ref().map(|r| r.skills.clone())), (1, Some(vec!["x".to_string()])));
+        assert_eq!(summarizers()[0].skills, ["x"]);
+        let project = update_project_inner(&s, "pr", json!({"summarizers": []}).as_object().unwrap()).await.unwrap();
+        assert_eq!((project.summarizers.len(), project.summarizer.is_none()), (0, true));
+        assert_eq!(summarizers().len(), 2);
+        // A client from before there could be several sends the one, and `summarizers` wins when both are given.
+        update_project_inner(&s, "pr", json!({"summarizer": {"model": "sonnet"}}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers(), [db::Reviewer { model: Some("sonnet".into()), ..Default::default() }]);
+        update_project_inner(&s, "pr", json!({"summarizer": {"model": "sonnet"}, "summarizers": [{}, {}]}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers().len(), 2);
+        update_project_inner(&s, "pr", json!({"summarizer": null}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers().len(), 2, "the profile's again");
+        // A client from before API 103 sends the first as `summarizer` with every save: the rest stay.
+        update_project_inner(&s, "pr", json!({"summarizers": [{"name": "A", "model": "haiku"}, {"name": "B"}, {"name": "C"}]}).as_object().unwrap()).await.unwrap();
+        update_project_inner(&s, "pr", json!({"summarizer": {"claude_config_id": null, "model": "haiku", "effort": null}}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers().iter().map(|r| r.name.clone().unwrap()).collect::<Vec<_>>(), ["A", "B", "C"]);
+        // Changed, it replaces just the first.
+        update_project_inner(&s, "pr", json!({"summarizer": {"model": "sonnet"}}).as_object().unwrap()).await.unwrap();
+        let after = summarizers();
+        assert_eq!((after.len(), after[0].model.as_deref(), after[1].name.as_deref()), (3, Some("sonnet"), Some("B")));
+        update_project_inner(&s, "pr", json!({"summarizers": []}).as_object().unwrap()).await.unwrap();
+        let update_profile_body = |b: Value| update_profile(State(s.clone()), Path(id.clone()), Json(b.as_object().unwrap().clone()));
+        let first = json!({"claude_config_id": null, "model": "haiku", "effort": null});
+        // The same for a profile: a rename from an old UI that sends `summarizer` too keeps its two.
+        let Json(p) = update_profile_body(json!({"name": "renamed", "summarizer": first})).await.unwrap();
+        assert_eq!((p["name"].as_str(), p["summarizers"].as_array().map(Vec::len)), (Some("renamed"), Some(2)));
+        let Json(p) = update_profile_body(json!({"summarizer": null})).await.unwrap();
+        assert_eq!(p["summarizers"], json!([]));
+        // Bad ones.
+        let update = |b: Value| {
+            let s = s.clone();
+            async move { update_project_inner(&s, "pr", b.as_object().unwrap()).await }
+        };
+        assert!(update(json!({"summarizers": [{"skills": ["two words"]}]})).await.is_err());
+        assert!(update(json!({"summarizers": [{"skills": "tldr"}]})).await.is_err());
+        assert!(update(json!({"summarizers": vec![json!({}); crate::review::MAX_REVIEWERS + 1]})).await.is_err());
+        assert!(update(json!({"summarizers": [{"claude_config_id": "nope"}]})).await.is_err());
+        // Reviewers keep their prompt and skills, tidied (HA-142), but not the name only summarizers have.
+        let project = update(json!({"reviewers": [{"name": "x", "skills": [" /audit ", "audit", "b", ""], "prompt": "  Only security.\n"}]})).await.unwrap();
+        let own = db::Reviewer { skills: vec!["audit".into(), "b".into()], prompt: Some("Only security.".into()), ..Default::default() };
+        assert_eq!(project.reviewers, [own]);
+        assert!(update(json!({"reviewers": [{"prompt": "x".repeat(20_001)}]})).await.is_err());
+        assert!(update(json!({"reviewers": [{"skills": ["two words"]}]})).await.is_err());
+        let many: Vec<String> = (0..21).map(|i| format!("s{i}")).collect();
+        assert!(update(json!({"reviewers": [{"skills": many}]})).await.is_err());
     })
 }
 

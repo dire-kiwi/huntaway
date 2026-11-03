@@ -194,14 +194,19 @@ pub struct Reviewer {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
-    /// This reviewer's own instructions (API 103), replacing the project's *In review* prompt for it (what to look
-    /// for), or the default summary instructions for a summarizer. None follows the project's.
+    /// Only for a summarizer (API 103): what to call it where its summary is shown, so summarizers
+    /// that differ in their skills or prompt can be told apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
-    /// Names of board skills (a project's own or global ones) that are on in this reviewer's thread whether or not they
-    /// are for the project (API 103).
+    pub name: Option<String>,
+    /// Skills its agent uses while it works: named in its prompt (for a reviewer too, API 105). The board's skills
+    /// (a project's own or global ones) among them are on in its thread whether or not they are for the project.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+    /// Replaces the board's instructions on how to write the summary (for a summarizer), so a prompt can be
+    /// tried against another's, or the project's *In review* prompt, what to look for (for a reviewer, API 105).
+    /// None uses the board's, or the project's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 /// A task's latest review (see review.rs), stored on the task as JSON. With several reviewers,
@@ -246,6 +251,15 @@ pub struct ChangeSummary {
     /// Who writes it, e.g. "Claude · haiku".
     #[serde(default)]
     pub label: String,
+    /// The summarizer's name, when it has one (see `Reviewer::name`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The skills its summarizer was asked to use.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    /// Whether its summarizer had a prompt of its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom_prompt: bool,
     /// running, done, failed or stopped
     pub state: String,
     /// The commit summarised.
@@ -256,6 +270,17 @@ pub struct ChangeSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_run: Option<String>,
     pub updated_at: String,
+}
+
+/// A task's `summary` column: the list of its summaries, or the one summary saved before there
+/// could be several.
+pub fn summaries_column(v: Option<String>) -> Vec<ChangeSummary> {
+    let Some(v) = v.and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok()) else { return Vec::new() };
+    match v {
+        serde_json::Value::Array(_) => serde_json::from_value(v).unwrap_or_default(),
+        serde_json::Value::Object(_) => serde_json::from_value(v).ok().into_iter().collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// One reviewer's part of a review.

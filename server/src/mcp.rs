@@ -365,7 +365,7 @@ fn board_tools() -> Value {
                 "auto_review": {"type": "boolean", "description": "Review each task's changes when it moves to in_review"},
                 "review_rounds": {"type": "integer", "minimum": 0, "maximum": 20, "description": "How many times in a row a review's serious issues go back to the agent to fix before the task is left for the user"},
                 "group_name": {"type": "string", "description": "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group"},
-                "reviewers": {"type": ["array", "null"], "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list uses the profile's reviewers (by default one reviewer with the task's own config). claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults. prompt replaces the project's review_prompt for this reviewer (what it looks for), and skills are names of the board's skills (a project's own or global ones) that are on in its thread whether or not they are for the project.",
+                "reviewers": {"type": ["array", "null"], "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list uses the profile's reviewers (by default one reviewer with the task's own config). claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults. prompt replaces the project's review_prompt for this reviewer (what it looks for), and skills are names of skills it uses (named in its prompt); the board's own (a project's own or global ones) among them are on in its thread whether or not they are for the project.",
                     "items": {"type": "object", "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}, "prompt": {"type": "string"}, "skills": {"type": "array", "items": {"type": "string"}}}}},
                 "permission_mode": {"type": "string", "enum": permission_modes, "description": "Needs approval. What the project's agents may do without asking the user, over the host's default"},
                 "setup_script": {"type": "string", "description": "Needs approval. Runs in a task's new worktree"},
@@ -401,8 +401,16 @@ fn board_tools() -> Value {
         );
         props.insert("summarizer".into(), json!({
             "type": ["object", "null"],
-            "description": "Who writes those summaries: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; {} is the task's config with the defaults, and null uses the profile's summarizer.",
+            "description": "The one summarizer, for when there's only one: the same as summarizers with a list of one, and null the same as an empty list. Prefer summarizers.",
             "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}},
+        }));
+        props.insert("summarizers".into(), json!({
+            "type": ["array", "null"],
+            "description": "Who writes those summaries, each in a thread of its own, so which skills and prompts summarise best can be compared: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; name says which is which where the summaries are shown; skills are skills it uses while writing (their names, e.g. \"summarize-changes\"); prompt replaces the board's instructions on how to write the summary. [{}] is one with the task's config and the defaults; an empty list or null uses the profile's summarizers.",
+            "items": {"type": "object", "properties": {
+                "claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"},
+                "name": {"type": "string"}, "skills": {"type": "array", "items": {"type": "string"}}, "prompt": {"type": "string"}
+            }},
         }));
     }
     tools.as_array_mut().unwrap().extend(automation_tools(&profile, project_one));

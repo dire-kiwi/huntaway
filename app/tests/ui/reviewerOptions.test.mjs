@@ -34,7 +34,7 @@ test("a reviewer's own instructions and skills are saved, and kept when its othe
     const prompt = page.getByRole("textbox", { name: "What it looks for" });
     assert.match(await prompt.inputValue(), /^Look for correctness problems/);
     await prompt.fill("Only look for security holes.");
-    await page.getByRole("checkbox", { name: "audit" }).check();
+    await page.getByLabel("Skills it uses", { exact: true }).fill("audit, /security-review");
     // Changing its effort (or config or model) keeps them.
     await page.locator("select[title='Effort']").nth(1).selectOption({ index: 1 });
     await ui.run(["click Save changes"]);
@@ -42,7 +42,7 @@ test("a reviewer's own instructions and skills are saved, and kept when its othe
     assert.equal(reviewers.length, 2);
     assert.equal(reviewers[0].prompt, undefined);
     assert.equal(reviewers[1].prompt, "Only look for security holes.");
-    assert.deepEqual(reviewers[1].skills, ["audit"]);
+    assert.deepEqual(reviewers[1].skills, ["audit", "security-review"]);
     assert.equal(reviewers[1].model, "haiku");
 
     // After a reload they're there, and Reset to default takes the instructions off.
@@ -51,10 +51,10 @@ test("a reviewer's own instructions and skills are saved, and kept when its othe
     await toggles.first().waitFor();
     await toggles.nth(1).click();
     assert.equal(await page.getByRole("textbox", { name: "What it looks for" }).inputValue(), "Only look for security holes.");
-    assert.equal(await page.getByRole("checkbox", { name: "audit" }).isChecked(), true);
+    assert.equal(await page.getByLabel("Skills it uses", { exact: true }).inputValue(), "audit, security-review");
     await ui.run(["click Reset to default", "click Save changes"]);
     reviewers = await saved((r) => !r[1].prompt);
     assert.equal(reviewers[1].prompt, undefined);
-    assert.deepEqual(reviewers[1].skills, ["audit"]);
+    assert.deepEqual(reviewers[1].skills, ["audit", "security-review"]);
   });
 });

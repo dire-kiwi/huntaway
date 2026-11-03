@@ -188,7 +188,18 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         }
         let after_run = Some(db::latest_run(&state.db(), &thread.id, None)?.unwrap_or_default());
         db::set_thread_skills(&state.db(), &thread.id, &spec.skills)?;
-        instructions.push(crate::agent::prompts::review_by(Some(&project), spec));
+        let mut text = crate::agent::prompts::review_by(Some(&project), spec);
+        if !spec.skills.is_empty() {
+            let codex = config.as_ref().is_some_and(|c| c.is_codex());
+            let named: Vec<String> = spec.skills.iter().map(|s| format!("`{}{s}`", if codex { '$' } else { '/' })).collect();
+            text.push_str(&format!(
+                "\n\nUse {} while you review: {}{}.",
+                if spec.skills.len() == 1 { "this skill" } else { "these skills" },
+                named.join(", "),
+                if codex { "" } else { " (invoke each with the `Skill` tool)" },
+            ));
+        }
+        instructions.push(text);
         parts.push(ReviewerRun { thread_id: thread.id, label, state: "running".into(), after_run, ..Default::default() });
     }
 

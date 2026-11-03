@@ -101,7 +101,7 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
             </Section>
             {summary ? (
               <Section title="Latest summary">
-                <ChangeSummaryView task={parent} />
+                <ChangeSummaryView task={parent} threadId={thread.id} />
               </Section>
             ) : (
               <Section title="Latest review">

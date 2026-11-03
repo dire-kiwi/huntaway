@@ -69,8 +69,10 @@ export interface Project {
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
-  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
+  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. From API 103 it's the first of `summarizers`. */
   summarizer?: Reviewer | null;
+  /** Who writes those summaries, each in a thread of its own (API 103); empty uses the profile's. */
+  summarizers?: Reviewer[];
   /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
   merge_approval?: boolean | null;
   /** null follows the profile's (API 95). */
@@ -114,14 +116,16 @@ export interface Reviewer {
   claude_config_id: string | null;
   model: string | null;
   effort: string | null;
-  /** Its own instructions, over the project's In review prompt (a summarizer's: over the default summary instructions). Unset follows the project's (API 103). */
-  prompt?: string | null;
-  /** Names of board skills that are on in its thread whether or not they are for the project (API 103). */
+  /** Only for a summarizer (API 103): what to call it where its summary is shown. */
+  name?: string | null;
+  /** Skills its agent uses while it works, which are on in its thread if the board has them; for a reviewer from API 105. */
   skills?: string[];
+  /** Replaces the board's instructions on how to write the summary, or for a reviewer (API 105) the project's In review prompt. */
+  prompt?: string | null;
 }
 
-/** From this API a reviewer and the summarizer can have instructions and skills of their own. */
-export const REVIEWER_OPTIONS_API = 103;
+/** From this API a reviewer can have instructions and skills of its own, like a summarizer. */
+export const REVIEWER_OPTIONS_API = 105;
 
 export const projectsApi = {
   /** The profile's projects, or with `archived` its archived ones (API 46), which are left out otherwise. */
@@ -154,7 +158,7 @@ export const projectsApi = {
   startSetupThread: (h: string, id: string, message: string) => on(h).post<Task>(`/projects/${enc(id)}/setup-thread`, { message }),
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
-  defaultPrompts: (h: string) => on(h).get<Record<PromptField, string> & { summary_prompt?: string }>("/default-prompts"),
+  defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
   /** The branches of the project's repository, latest first; those only on a remote named with it (API 96). */
   projectBranches: (h: string, id: string) => on(h).get<{ branches: { name: string; remote: boolean }[] }>(`/projects/${enc(id)}/branches`),
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
