@@ -869,12 +869,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=81; COMMIT;",
         )?;
     }
+    if version < 82 {
+        // Native push (integrations/push.rs): a subscription's `kind`, `web` (Web Push, as all of them were before) or
+        // `expo` (the mobile app, through Expo's push service: `endpoint` is its Expo push token, and `p256dh` and `auth`
+        // are unused), and the paired device that made it, whose subscriptions go when it's revoked.
+        conn.execute_batch("BEGIN;")?;
+        for (column, kind) in [("kind", "TEXT NOT NULL DEFAULT 'web'"), ("device_id", "TEXT")] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('push_subscriptions') WHERE name=?1", [column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE push_subscriptions ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 81;
+pub const VERSION: i64 = 82;
 
 /// Automations get a profile, and a project only if they're a project's (none for a profile's
 /// routine), and the conditions a run is checked against first: the hours it may run in, a

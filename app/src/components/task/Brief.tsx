@@ -1,4 +1,4 @@
-// The assistant's Brief tab (API 103): the morning brief its routine writes (brief.html, one version a day), with a thumbs up and
+// The assistant's Brief tab (API 104): the morning brief its routine writes (brief.html, one version a day), with a thumbs up and
 // down on each item the run marked, which go into MEMORY.md as preferences (see server/src/agent/assistant/brief.rs). Without a
 // brief yet, it sets up the routine.
 import clsx from "clsx";

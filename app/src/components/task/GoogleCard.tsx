@@ -1,4 +1,4 @@
-// The assistant's Google card (API 103): whether its Google Workspace server (Gmail, Calendar and Drive, on the assistant's host)
+// The assistant's Google card (API 104): whether its Google Workspace server (Gmail, Calendar and Drive, on the assistant's host)
 // is connected and as whom, and if not, what's missing and how to set it up (see server/src/agent/assistant/google.rs).
 import clsx from "clsx";
 import { Copy, Loader2 } from "lucide-react";

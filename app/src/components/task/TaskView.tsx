@@ -186,7 +186,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
   const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
-  // The assistant's morning brief (API 103), its memory files (API 99), and its routines (API 101).
+  // The assistant's morning brief (API 104), its memory files (API 99), and its routines (API 101).
   if (assistant && hasBrief(host)) tabs.push("brief");
   if (assistant && hasMemory(host)) tabs.push("memory");
   if (assistant && hasRoutines(host)) tabs.push("routines");

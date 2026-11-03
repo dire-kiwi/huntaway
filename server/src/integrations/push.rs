@@ -11,6 +11,11 @@
 //! A permission prompt is pushed too (the assistant's, or any task's, as each device chooses), with
 //! a one-time token (push_answers.rs) for its Allow and Deny actions, which answer it from the
 //! notification without the board's token.
+//!
+//! The mobile app (mobile/, API 103) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and
+//! its pushes go through Expo's push service (see `deliver_expo`), which needs no keys kept here. Expo, Apple and
+//! Google can read those, so they say less (see `Message::summary`). A paired device sees and changes only the
+//! subscriptions it made, and they go when it's revoked.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, Weak, atomic::{AtomicBool, Ordering}};
@@ -169,7 +174,7 @@ pub struct Events {
     /// Whose permission prompts it gets, with Allow and Deny (API 96).
     #[serde(default)]
     pub prompts: Prompts,
-    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 103).
+    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 104).
     #[serde(default = "yes")]
     pub reports: bool,
 }
@@ -225,11 +230,35 @@ fn is_assistant(t: &Value) -> bool {
     t["kind"] == "task" && matches!(t["task_type"].as_str(), Some("assistant" | "routine"))
 }
 
+/// How a subscription is pushed to.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// Web Push, to a browser (RFC 8030), encrypted for it.
+    #[default]
+    Web,
+    /// The mobile app, through Expo's push service: the endpoint is its Expo push token.
+    Expo,
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::Web => "web",
+            Kind::Expo => "expo",
+        }
+    }
+}
+
 /// A device's subscription, as the API shows it: its endpoint's push service, but not its keys.
 #[derive(Serialize, Clone, Debug)]
 pub struct Subscription {
     pub id: String,
+    /// Its push service's URL for it, or (for `expo`) its Expo push token.
     pub endpoint: String,
+    pub kind: Kind,
+    /// The paired device (devices.rs) that subscribed, if one did.
+    pub device_id: Option<String>,
     /// What the device calls itself ("Chrome on Android"), to tell them apart.
     pub name: String,
     pub events: Events,
@@ -249,6 +278,8 @@ impl Subscription {
         Ok(Self {
             id: r.get("id")?,
             endpoint: r.get("endpoint")?,
+            kind: if r.get::<_, String>("kind")? == "expo" { Kind::Expo } else { Kind::Web },
+            device_id: r.get("device_id")?,
             name: r.get("name")?,
             events: serde_json::from_str(&events).unwrap_or_default(),
             created_at: r.get("created_at")?,
@@ -302,6 +333,13 @@ pub struct Message {
     /// the token that answers it (see push_answers.rs).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<Answer>,
+    /// The host of the task it's about (for the app, which opens it there; the web's `url` says).
+    #[serde(skip)]
+    pub host_id: Option<String>,
+    /// What it says where its push service can read it (Expo's), when `body` says more: an attention reason can
+    /// quote the agent, and Web Push is encrypted for the browser but Expo's isn't.
+    #[serde(skip)]
+    pub summary: Option<String>,
 }
 
 /// How a notification answers its prompt: `POST url` with `{"token", "decision"}`.
@@ -314,23 +352,45 @@ pub struct Answer {
 /// Sends `msg` to `sub`, and notes how it went. A subscription its push service says is gone (the
 /// device unsubscribed, or the browser's data was cleared) is deleted.
 pub async fn send(s: &Shared, sub: &Subscription, msg: &Message, urgent: bool) -> Result<()> {
+    if sub.kind == Kind::Expo {
+        return send_expo(s, &[sub], msg, urgent).await.pop().unwrap_or(Ok(()));
+    }
     let result = deliver(s, sub, msg, urgent).await;
+    noted(s, sub, &result)?;
+    result.map_err(|e| anyhow!("{}", e.message()))
+}
+
+/// Sends `msg` to each of `subs`: the browsers' one by one, the app's to Expo in batches.
+pub async fn send_all(s: &Shared, subs: &[Subscription], msg: &Message, urgent: bool) {
+    let (expo, web): (Vec<&Subscription>, Vec<&Subscription>) = subs.iter().partition(|x| x.kind == Kind::Expo);
+    for sub in web {
+        let _ = send(s, sub, msg, urgent).await;
+    }
+    for batch in expo.chunks(EXPO_BATCH) {
+        send_expo(s, batch, msg, urgent).await;
+    }
+}
+
+/// Notes how a push to `sub` went: when it last worked, why it didn't, or (gone) deletes it. Only while it still has
+/// the endpoint the push went to: the app's subscription takes its new token when Expo's changes (see `subscribe`),
+/// and what's said of the old one (its receipt, say, that it's no longer registered) isn't about the new.
+fn noted(s: &Shared, sub: &Subscription, result: &std::result::Result<(), Undelivered>) -> Result<()> {
     let c = s.db();
     match &result {
         Ok(()) => {
-            c.execute("UPDATE push_subscriptions SET last_sent_at=?1, last_error=NULL WHERE id=?2", params![now(), sub.id])?;
+            c.execute("UPDATE push_subscriptions SET last_sent_at=?1, last_error=NULL WHERE id=?2 AND endpoint=?3", params![now(), sub.id, sub.endpoint])?;
         }
         Err(Gone(_)) => {
-            tracing::info!("push subscription {} ({}) is gone; deleting it", sub.id, sub.name);
-            c.execute("DELETE FROM push_subscriptions WHERE id=?1", [&sub.id])?;
+            if c.execute("DELETE FROM push_subscriptions WHERE id=?1 AND endpoint=?2", params![sub.id, sub.endpoint])? > 0 {
+                tracing::info!("push subscription {} ({}) is gone; deleted it", sub.id, sub.name);
+            }
         }
         Err(Failed(e)) => {
             tracing::warn!("push to {} ({}) failed: {e}", sub.id, sub.name);
-            c.execute("UPDATE push_subscriptions SET last_error=?1 WHERE id=?2", params![e, sub.id])?;
+            c.execute("UPDATE push_subscriptions SET last_error=?1 WHERE id=?2 AND endpoint=?3", params![e, sub.id, sub.endpoint])?;
         }
     }
-    drop(c);
-    result.map_err(|e| anyhow!("{}", e.message()))
+    Ok(())
 }
 
 enum Undelivered {
@@ -382,6 +442,183 @@ async fn deliver(s: &Shared, sub: &Subscription, msg: &Message, urgent: bool) ->
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ---------- Expo (the mobile app) ----------
+
+/// Expo's push service, which hands the app's pushes to Apple's and Google's, so the board keeps no keys for them.
+/// `IA_EXPO_PUSH_URL` takes its place (a fake, for tests).
+const EXPO_PUSH_URL: &str = "https://exp.host/--/api/v2/push/send";
+
+/// Messages in one request to Expo, at most.
+const EXPO_BATCH: usize = 100;
+
+/// Receipts asked for in one request, at most (Expo takes up to 1000).
+const RECEIPTS_BATCH: usize = 300;
+
+/// How long after a push its receipt is asked for: Expo has them within about 15 minutes, and keeps them for a day.
+const RECEIPT_AFTER: Duration = Duration::from_secs(15 * 60);
+
+/// A receipt not had by then won't come.
+const RECEIPT_KEPT: Duration = Duration::from_secs(23 * 3600);
+
+/// How often the receipts due are asked for.
+const RECEIPTS_EVERY: Duration = Duration::from_secs(5 * 60);
+
+/// A push Expo took (its ticket), whose receipt says whether Apple or Google did.
+struct Ticket {
+    id: String,
+    subscription: String,
+    /// The token it went to, which the subscription may have changed since.
+    endpoint: String,
+    sent: Instant,
+}
+
+/// Whether `t` is an Expo push token (`ExponentPushToken[…]`, or `ExpoPushToken[…]`).
+fn is_expo_token(t: &str) -> bool {
+    let inner = t.strip_prefix("ExponentPushToken[").or_else(|| t.strip_prefix("ExpoPushToken[")).and_then(|r| r.strip_suffix(']'));
+    inner.is_some_and(|i| !i.is_empty() && i.len() <= 200 && i.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c)))
+}
+
+/// Expo's request for `msg` to `sub`. It carries the task's key and title and what happened, and for a prompt the
+/// token for Allow and Deny (category `prompt`, see mobile/src/notifications.ts), which answers only that prompt.
+fn expo_message(s: &Shared, sub: &Subscription, msg: &Message, urgent: bool) -> Value {
+    let mut data = json!({"board": s.host_id, "url": msg.url, "tag": msg.tag});
+    for (k, v) in [("host", json!(msg.host_id)), ("task_id", json!(msg.task_id)), ("event", json!(msg.event)), ("request_id", json!(msg.request_id)), ("answer", json!(msg.answer))] {
+        if !v.is_null() {
+            data[k] = v;
+        }
+    }
+    let prompt = msg.event == Some(Event::Prompt);
+    // A newer message about the same task replaces the one before it (`collapseId` on iOS, `tag` on Android).
+    let collapse = hex(&digest::digest(&digest::SHA256, msg.tag.as_bytes()).as_ref()[..16]);
+    let mut m = json!({
+        "to": sub.endpoint,
+        "title": msg.title,
+        "body": msg.summary.as_deref().unwrap_or(&msg.body),
+        "data": data,
+        // Kept for a day while the phone is offline.
+        "ttl": 86400,
+        "priority": if urgent { "high" } else { "normal" },
+        "sound": "default",
+        // Android's channels, which the app makes (prompts can be heads-up and loud apart from the rest).
+        "channelId": if prompt { "prompts" } else { "default" },
+        "collapseId": collapse,
+        "tag": collapse,
+    });
+    if msg.answer.is_some() {
+        m["categoryId"] = json!("prompt");
+    }
+    m
+}
+
+/// `IA_EXPO_ACCESS_TOKEN`: the Expo access token to send with, for a project with Expo's enhanced push security on.
+fn expo_access_token() -> Option<String> {
+    std::env::var("IA_EXPO_ACCESS_TOKEN").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// A POST to Expo, its answer's JSON, or why it failed.
+async fn expo_post(s: &Shared, url: &str, body: &Value) -> std::result::Result<Value, String> {
+    let mut req = s.push.client.post(url).header("Accept", "application/json").json(body);
+    if let Some(token) = expo_access_token() {
+        req = req.bearer_auth(token);
+    }
+    let res = req.send().await.map_err(|e| format!("couldn't reach Expo's push service: {e}"))?;
+    let status = res.status();
+    let text = res.text().await.unwrap_or_default();
+    let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if !status.is_success() {
+        let why = json["errors"][0]["message"].as_str().map(String::from).unwrap_or_else(|| text.trim().chars().take(300).collect());
+        return Err(format!("Expo's push service answered {status}{}", if why.is_empty() { String::new() } else { format!(": {why}") }));
+    }
+    Ok(json)
+}
+
+/// Why Expo didn't take or deliver a push, from a ticket's or receipt's error: the device being unregistered
+/// (the app was uninstalled, or its token replaced) means the subscription is gone.
+fn expo_error(r: &Value) -> Undelivered {
+    let code = r["details"]["error"].as_str().unwrap_or("");
+    let message = r["message"].as_str().unwrap_or("Expo couldn't deliver it");
+    let e = if code.is_empty() { message.to_string() } else { format!("{code}: {message}") };
+    if code == "DeviceNotRegistered" { Gone(e) } else { Failed(e) }
+}
+
+/// Sends `msg` to the app's subscriptions `subs` (at most `EXPO_BATCH`) in one request, notes how each went, and
+/// keeps the tickets of those Expo took, for their receipts.
+async fn send_expo(s: &Shared, subs: &[&Subscription], msg: &Message, urgent: bool) -> Vec<Result<()>> {
+    let url = s.push.expo_url();
+    let body = Value::Array(subs.iter().map(|sub| expo_message(s, sub, msg, urgent)).collect());
+    let tickets = match expo_post(s, &url, &body).await {
+        Ok(v) => match v["data"].as_array() {
+            Some(t) if t.len() == subs.len() => t.clone(),
+            _ => vec![json!({"status": "error", "message": format!("Expo's push service gave an answer it shouldn't have: {v}")}); subs.len()],
+        },
+        Err(e) => vec![json!({"status": "error", "message": e}); subs.len()],
+    };
+    let mut results = vec![];
+    for (sub, ticket) in subs.iter().zip(tickets) {
+        let result = if ticket["status"] == "ok" { Ok(()) } else { Err(expo_error(&ticket)) };
+        if let (Ok(()), Some(id)) = (&result, ticket["id"].as_str()) {
+            s.push.tickets.lock().unwrap().push(Ticket { id: id.into(), subscription: sub.id.clone(), endpoint: sub.endpoint.clone(), sent: Instant::now() });
+        }
+        if let Err(e) = noted(s, sub, &result) {
+            tracing::warn!("push: noting a push to {}: {e:#}", sub.id);
+        }
+        results.push(result.map_err(|e| anyhow!("{}", e.message())));
+    }
+    results
+}
+
+/// Asks Expo for the receipts of the pushes sent at least `after` ago (the push services' answers, which come after
+/// Expo took them), deletes the subscriptions whose device is no longer registered and notes other failures.
+pub async fn check_receipts(s: &Shared, after: Duration) {
+    let due: Vec<Ticket> = {
+        let mut tickets = s.push.tickets.lock().unwrap();
+        tickets.retain(|t| t.sent.elapsed() < RECEIPT_KEPT);
+        let (due, wait) = std::mem::take(&mut *tickets).into_iter().partition(|t| t.sent.elapsed() >= after);
+        *tickets = wait;
+        due
+    };
+    let url = receipts_url(&s.push.expo_url());
+    let mut due = due.into_iter().peekable();
+    while due.peek().is_some() {
+        let batch: Vec<Ticket> = due.by_ref().take(RECEIPTS_BATCH).collect();
+        let ids: Vec<&str> = batch.iter().map(|t| t.id.as_str()).collect();
+        let receipts = match expo_post(s, &url, &json!({"ids": ids})).await {
+            Ok(v) => v["data"].clone(),
+            Err(e) => {
+                tracing::warn!("push: reading Expo's receipts: {e}");
+                // Asked for again next time.
+                s.push.tickets.lock().unwrap().extend(batch);
+                continue;
+            }
+        };
+        for t in batch {
+            let r = &receipts[&t.id];
+            if r.is_null() {
+                // Not ready yet.
+                s.push.tickets.lock().unwrap().push(t);
+                continue;
+            }
+            if r["status"] == "ok" {
+                continue;
+            }
+            let Some(mut sub) = get(&s.db(), &t.subscription).ok().flatten() else { continue };
+            // About the token it went to: a new one since is left alone.
+            sub.endpoint = t.endpoint;
+            if let Err(e) = noted(s, &sub, &Err(expo_error(r))) {
+                tracing::warn!("push: noting a receipt for {}: {e:#}", sub.id);
+            }
+        }
+    }
+}
+
+/// Where the receipts are, beside where pushes go (`…/push/send` → `…/push/getReceipts`).
+fn receipts_url(send: &str) -> String {
+    match send.strip_suffix("/send") {
+        Some(base) => format!("{base}/getReceipts"),
+        None => format!("{}/getReceipts", send.trim_end_matches('/')),
+    }
 }
 
 // ---------- events ----------
@@ -513,6 +750,10 @@ pub struct PushState {
     moves: Mutex<HashMap<String, (String, Instant)>>,
     /// The permission prompts raised while the board watched that are still waiting, by `<host>:<task id>`.
     prompts: Mutex<HashMap<String, HashSet<String>>>,
+    /// Where pushes to the app go (see `EXPO_PUSH_URL`).
+    expo_url: Mutex<String>,
+    /// Pushes Expo took, whose receipts are still to be read.
+    tickets: Mutex<Vec<Ticket>>,
 }
 
 impl Default for PushState {
@@ -525,11 +766,23 @@ impl Default for PushState {
             pending: Default::default(),
             moves: Default::default(),
             prompts: Default::default(),
+            expo_url: Mutex::new(std::env::var("IA_EXPO_PUSH_URL").ok().filter(|u| !u.trim().is_empty()).unwrap_or_else(|| EXPO_PUSH_URL.into())),
+            tickets: Default::default(),
         }
     }
 }
 
 impl PushState {
+    fn expo_url(&self) -> String {
+        self.expo_url.lock().unwrap().clone()
+    }
+
+    /// Sends the app's pushes to `url` instead (a fake Expo, in tests).
+    #[cfg(test)]
+    pub(crate) fn set_expo_url(&self, url: &str) {
+        *self.expo_url.lock().unwrap() = url.into();
+    }
+
     pub(crate) fn link_ready(&self, link: &crate::hosts::hub::LinkHandle) -> bool {
         !self.watching.load(Ordering::Relaxed) || self.ready.lock().unwrap().get(&link.id)
             .and_then(Weak::upgrade).is_some_and(|old| std::sync::Arc::ptr_eq(&old, link))
@@ -553,6 +806,13 @@ pub fn start(s: &Shared) {
     if let Err(e) = super::push_answers::recover(&s.db()) {
         tracing::warn!("push: recovering prompts' answers: {e:#}");
     }
+    let st = s.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(RECEIPTS_EVERY).await;
+            check_receipts(&st, RECEIPT_AFTER).await;
+        }
+    });
     let st = s.clone();
     let mut rx = s.hub_events.subscribe();
     tokio::spawn(async move {
@@ -709,10 +969,21 @@ async fn notify(s: &Shared, host: &str, t: &Value, e: Event) {
         return;
     }
     let (title, body) = notification_text(e, t, &task_key(s, host, t).await);
-    let msg = Message { title, body, url: format!("/t/{id}"), tag: format!("{host}:{id}"), task_id: Some(id.into()), event: Some(e), request_id: None, answer: None };
-    for sub in subs {
-        let _ = send(s, &sub, &msg, e == Event::Attention).await;
-    }
+    // Without the reason, which can quote the agent.
+    let summary = (e == Event::Attention).then(|| "Needs attention".to_string()).filter(|s| *s != body);
+    let msg = Message {
+        title,
+        body,
+        url: format!("/t/{id}"),
+        tag: format!("{host}:{id}"),
+        task_id: Some(id.into()),
+        event: Some(e),
+        request_id: None,
+        answer: None,
+        host_id: Some(host.into()),
+        summary,
+    };
+    send_all(s, &subs, &msg, e == Event::Attention).await;
 }
 
 // ---------- routines' reports ----------
@@ -738,6 +1009,7 @@ fn observe_report(s: &Shared, host: &str, m: &Value) {
     }
     let Some(task_id) = m["task_id"].as_str() else { return };
     let Some((title, body)) = report_text(&m["data"]) else { return };
+    let failed = m["data"]["outcome"] == "failed";
     let (st, host, task_id, tag) = (s.clone(), host.to_string(), task_id.to_string(), m["id"].to_string());
     tokio::spawn(async move {
         let subs = match list(&st.db()) {
@@ -753,6 +1025,9 @@ fn observe_report(s: &Shared, host: &str, m: &Value) {
             event: Some(Event::Report),
             request_id: None,
             answer: None,
+            host_id: Some(host.clone()),
+            // Expo (and Apple and Google) can read what goes through it, and a report can quote mail.
+            summary: Some(if failed { "A routine failed".into() } else { "Posted a report".into() }),
         };
         for sub in subs {
             let _ = send(&st, &sub, &msg, false).await;
@@ -855,24 +1130,42 @@ async fn notify_prompt(s: &Shared, host: &str, task_id: &str, data: &Value) {
         event: Some(Event::Prompt),
         request_id: Some(request.into()),
         answer,
+        host_id: Some(host.into()),
+        summary: None,
     };
-    for sub in subs {
-        let _ = send(s, &sub, &msg, true).await;
-    }
+    send_all(s, &subs, &msg, true).await;
 }
 
 // ---------- API ----------
 
-/// The board's public key, to subscribe with, and the devices that have.
-pub async fn info(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+type Device = Option<axum::Extension<crate::devices::DeviceAuth>>;
+
+/// Whether the request may see or change `sub`: a paired device only its own.
+fn mine(device: &Device, sub: &Subscription) -> bool {
+    device.as_ref().is_none_or(|d| sub.device_id.as_deref() == Some(d.id.as_str()))
+}
+
+/// Subscription `id`, if the request may use it.
+fn get_for(c: &Connection, device: &Device, id: &str) -> ApiResult<Subscription> {
+    get(c, id)?.filter(|sub| mine(device, sub)).ok_or_else(|| ApiError::not_found("subscription"))
+}
+
+/// The board's public key, to subscribe with, and the devices that have (for a paired device, its own).
+pub async fn info(State(s): State<Shared>, device: Device) -> ApiResult<Json<Value>> {
     let c = s.db();
-    Ok(Json(json!({"public_key": vapid(&c)?.public_key(), "subscriptions": list(&c)?})))
+    let subs: Vec<Subscription> = list(&c)?.into_iter().filter(|sub| mine(&device, sub)).collect();
+    Ok(Json(json!({"public_key": vapid(&c)?.public_key(), "subscriptions": subs})))
 }
 
 #[derive(Deserialize)]
 pub struct Subscribe {
     endpoint: String,
-    keys: Keys,
+    /// `web` (the default) or `expo` (API 103).
+    #[serde(default)]
+    kind: Kind,
+    /// A browser's (not for `expo`).
+    #[serde(default)]
+    keys: Option<Keys>,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -885,35 +1178,66 @@ pub struct Keys {
     auth: String,
 }
 
-/// Adds a device's subscription (`PushSubscription.toJSON()`), or updates the one with its endpoint.
-pub async fn subscribe(State(s): State<Shared>, Json(b): Json<Subscribe>) -> ApiResult<Json<Value>> {
-    check_endpoint(&b.endpoint)?;
-    let valid = |k: &[u8]| k.len() == 65 && agreement::PrivateKey::generate(&ECDH_P256).is_ok_and(|key| ecdh(&key, k).is_ok());
-    let p256dh = B64.decode(b.keys.p256dh.trim_end_matches('=')).ok().filter(|k| valid(k));
-    let auth = B64.decode(b.keys.auth.trim_end_matches('=')).ok().filter(|a| a.len() == 16);
-    let (Some(p256dh), Some(auth)) = (p256dh, auth) else {
-        return Err(ApiError::bad("keys must have the subscription's p256dh public key and 16-byte auth secret"));
+/// Adds a device's subscription (`PushSubscription.toJSON()`, or the app's Expo push token with `kind` `expo`), or
+/// updates the one with its endpoint. A paired device can only add the app's, which is then its own.
+pub async fn subscribe(State(s): State<Shared>, device: Device, Json(b): Json<Subscribe>) -> ApiResult<Json<Value>> {
+    let (p256dh, auth) = match b.kind {
+        Kind::Web => {
+            if device.is_some() {
+                return Err(ApiError(axum::http::StatusCode::FORBIDDEN, "a paired device can only subscribe the app (kind expo)".into()));
+            }
+            check_endpoint(&b.endpoint)?;
+            let valid = |k: &[u8]| k.len() == 65 && agreement::PrivateKey::generate(&ECDH_P256).is_ok_and(|key| ecdh(&key, k).is_ok());
+            let p256dh = b.keys.as_ref().and_then(|k| B64.decode(k.p256dh.trim_end_matches('=')).ok()).filter(|k| valid(k));
+            let auth = b.keys.as_ref().and_then(|k| B64.decode(k.auth.trim_end_matches('=')).ok()).filter(|a| a.len() == 16);
+            let (Some(p256dh), Some(auth)) = (p256dh, auth) else {
+                return Err(ApiError::bad("keys must have the subscription's p256dh public key and 16-byte auth secret"));
+            };
+            (B64.encode(&p256dh), B64.encode(&auth))
+        }
+        Kind::Expo => {
+            if !is_expo_token(&b.endpoint) {
+                return Err(ApiError::bad("endpoint must be an Expo push token (ExponentPushToken[…])"));
+            }
+            (String::new(), String::new())
+        }
     };
     let name: String = b.name.trim().chars().take(100).collect();
+    let device_id = device.as_ref().map(|d| d.id.clone());
     let c = s.db();
-    let old = c.query_row("SELECT id FROM push_subscriptions WHERE endpoint=?1", [&b.endpoint], |r| r.get::<_, String>(0)).optional()?;
+    let mut old = c.query_row("SELECT id, kind FROM push_subscriptions WHERE endpoint=?1", [&b.endpoint], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).optional()?;
+    // The app's token changed (Expo's follows Apple's or Google's): it's the same phone, so its subscription, with the
+    // events it picked, takes the new token rather than a new one starting from the defaults.
+    if let (None, Kind::Expo, Some(dev)) = (&old, b.kind, &device_id) {
+        let mine = c.query_row("SELECT id FROM push_subscriptions WHERE device_id=?1 AND kind='expo' ORDER BY created_at LIMIT 1", [dev], |r| r.get::<_, String>(0)).optional()?;
+        if let Some(id) = mine {
+            c.execute("UPDATE push_subscriptions SET endpoint=?1 WHERE id=?2", params![b.endpoint, id])?;
+            old = Some((id, "expo".into()));
+        }
+    }
     let id = match old {
-        Some(id) => {
+        Some((_, kind)) if kind != b.kind.as_str() => return Err(ApiError::bad("that endpoint is subscribed as another kind")),
+        // The same phone paired again (its old pairing may not have been revoked) takes its subscription over.
+        Some((id, _)) => {
             c.execute(
-                "UPDATE push_subscriptions SET p256dh=?1, auth=?2, name=?3, events=COALESCE(?4, events), last_error=NULL WHERE id=?5",
-                params![B64.encode(&p256dh), B64.encode(&auth), name, b.events.map(|e| json!(e).to_string()), id],
+                "UPDATE push_subscriptions SET p256dh=?1, auth=?2, name=?3, events=COALESCE(?4, events), last_error=NULL, device_id=COALESCE(?5, device_id) WHERE id=?6",
+                params![p256dh, auth, name, b.events.map(|e| json!(e).to_string()), device_id, id],
             )?;
             id
         }
         None => {
             let id = crate::util::new_id();
             c.execute(
-                "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![id, b.endpoint, B64.encode(&p256dh), B64.encode(&auth), name, json!(b.events.unwrap_or_default()).to_string(), now()],
+                "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at,kind,device_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![id, b.endpoint, p256dh, auth, name, json!(b.events.unwrap_or_default()).to_string(), now(), b.kind.as_str(), device_id],
             )?;
             id
         }
     };
+    // One app on a phone has one token: any other it subscribed with is gone.
+    if let (Kind::Expo, Some(dev)) = (b.kind, &device_id) {
+        c.execute("DELETE FROM push_subscriptions WHERE device_id=?1 AND kind='expo' AND id<>?2", params![dev, id])?;
+    }
     Ok(Json(json!(get(&c, &id)?.ok_or_else(|| ApiError::not_found("subscription"))?)))
 }
 
@@ -924,11 +1248,9 @@ pub struct Change {
 }
 
 /// Changes a device's name or the events it gets.
-pub async fn update(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<Change>) -> ApiResult<Json<Value>> {
+pub async fn update(State(s): State<Shared>, device: Device, Path(id): Path<String>, Json(b): Json<Change>) -> ApiResult<Json<Value>> {
     let c = s.db();
-    if get(&c, &id)?.is_none() {
-        return Err(ApiError::not_found("subscription"));
-    }
+    get_for(&c, &device, &id)?;
     if let Some(name) = b.name {
         c.execute("UPDATE push_subscriptions SET name=?1 WHERE id=?2", params![name.trim().chars().take(100).collect::<String>(), id])?;
     }
@@ -938,8 +1260,10 @@ pub async fn update(State(s): State<Shared>, Path(id): Path<String>, Json(b): Js
     Ok(Json(json!(get(&c, &id)?.ok_or_else(|| ApiError::not_found("subscription"))?)))
 }
 
-pub async fn unsubscribe(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let n = s.db().execute("DELETE FROM push_subscriptions WHERE id=?1", [&id])?;
+pub async fn unsubscribe(State(s): State<Shared>, device: Device, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let c = s.db();
+    get_for(&c, &device, &id)?;
+    let n = c.execute("DELETE FROM push_subscriptions WHERE id=?1", [&id])?;
     if n == 0 {
         return Err(ApiError::not_found("subscription"));
     }
@@ -947,8 +1271,8 @@ pub async fn unsubscribe(State(s): State<Shared>, Path(id): Path<String>) -> Api
 }
 
 /// Pushes a test notification to a device, and says whether its push service took it.
-pub async fn test(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let sub = get(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("subscription"))?;
+pub async fn test(State(s): State<Shared>, device: Device, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let sub = get_for(&s.db(), &device, &id)?;
     let msg = Message {
         title: "Huntaway".into(),
         body: "Push notifications work on this device.".into(),
@@ -958,6 +1282,8 @@ pub async fn test(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<
         event: None,
         request_id: None,
         answer: None,
+        host_id: None,
+        summary: None,
     };
     send(&s, &sub, &msg, true).await.map_err(|e| ApiError(axum::http::StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
     Ok(Json(json!({"ok": true})))
@@ -965,3 +1291,5 @@ pub async fn test(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod expo_tests;

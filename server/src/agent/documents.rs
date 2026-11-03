@@ -295,7 +295,7 @@ pub struct DocumentQuery {
 pub async fn get(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<DocumentQuery>) -> ApiResult<Json<Value>> {
     let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
     let label = match q.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
-        // The assistant's morning brief (API 103).
+        // The assistant's morning brief (API 104).
         Some(l) if l == brief::LABEL && task.is_assistant() => brief::LABEL,
         Some(l) => *db::LABELS.iter().find(|x| **x == l).ok_or_else(|| ApiError::bad(format!("unknown label {l:?}")))?,
         None => labels(&task).first().copied().unwrap_or(db::LABELS[0]),

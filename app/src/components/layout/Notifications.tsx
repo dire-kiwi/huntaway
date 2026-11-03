@@ -226,7 +226,10 @@ function PushPanel() {
           {others.map((d) => (
             <div key={d.id} className="rounded-lg border border-line px-3 py-2">
               <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-fg">{d.name || "A device"}</span>
+                <span className="min-w-0 flex-1 truncate text-fg">
+                  {d.name || "A device"}
+                  {d.kind === "expo" && <span className="text-faint"> · Huntaway app</span>}
+                </span>
                 <span className="shrink-0 text-faint">{d.last_sent_at ? `last sent ${timeAgo(d.last_sent_at)}` : `added ${timeAgo(d.created_at)}`}</span>
                 <Button size="sm" variant="ghost" disabled={busy} onClick={() => test(d)} title={`Send ${d.name || "it"} a test notification`}>
                   Test
@@ -257,7 +260,7 @@ const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
 /** The events a device gets by push, and whose permission prompts. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   const prompts = device.events.prompts ?? "assistant";
-  // Pushes are the board's own host's (API 103 for reports).
+  // Pushes are the board's own host's (API 104 for reports).
   const reports = hasBrief(useStore((s) => s.hosts.find((h) => h.local)));
   return (
     <div className={clsx(compact ? "flex flex-wrap items-center gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>
