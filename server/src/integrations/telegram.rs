@@ -359,21 +359,29 @@ async fn send_markdown(s: &Shared, token: &str, chat: i64, md: &str) -> Result<(
     Ok(())
 }
 
-/// Notes that talking to Telegram failed (or with None, that it works again), if that's news.
-fn set_error(s: &Shared, profile_id: &str, error: Option<String>) {
+/// Notes that talking to Telegram failed (or with None, that it works again): whether that's news.
+fn set_error(s: &Shared, profile_id: &str, error: Option<String>) -> bool {
+    // Read first, as most polls have nothing to change.
+    if config(&s.db(), profile_id).last_error == error {
+        return false;
+    }
     let news = update_config(s, profile_id, |c| {
         let news = c.last_error != error;
         c.last_error = error;
         news
     });
-    if news.unwrap_or(false) {
+    let news = news.unwrap_or(false);
+    if news {
         changed(s, profile_id);
     }
+    news
 }
 
+/// Notes a failure, logged when it's a new one (not each retry of the same).
 fn note_error(s: &Shared, profile_id: &str, e: &CallError) {
-    tracing::warn!(profile = profile_id, "telegram: {e}");
-    set_error(s, profile_id, Some(e.to_string()));
+    if set_error(s, profile_id, Some(e.to_string())) {
+        tracing::warn!(profile = profile_id, "telegram: {e}");
+    }
 }
 
 // ---------- polling ----------
@@ -685,10 +693,16 @@ async fn button(s: &Shared, profile_id: &str, token: &str, cb: &Value) {
 /// Answers prompt `id` of profile `profile_id`'s assistant (or one of its routines), as the board's
 /// buttons do: a prompt that has expired by now is expired first, so it can't be allowed late.
 pub fn answer(s: &Shared, profile_id: &str, id: &str, allow: bool) -> Result<&'static str, String> {
-    let task: Option<String> = s.db().query_row("SELECT task_id FROM permission_requests WHERE id=?1", [id], |r| r.get(0)).ok();
-    let task = task.and_then(|t| db::get_task(&s.db(), &t).ok().flatten());
+    let row: Option<(String, String, String)> =
+        s.db().query_row("SELECT task_id, tool_name, kind FROM permission_requests WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).ok();
+    let Some((task_id, tool, kind)) = row else { return Err("That prompt isn't this assistant's.".into()) };
+    let task = db::get_task(&s.db(), &task_id).ok().flatten();
     if !task.is_some_and(|t| t.profile_id == profile_id && t.is_assistants()) {
         return Err("That prompt isn't this assistant's.".into());
+    }
+    // Only what its buttons were offered for: questions, plans and changes to the board are answered there.
+    if !super::push_answers::answerable(&json!({"tool_name": tool, "kind": kind})) {
+        return Err("Answer this one on the board.".into());
     }
     permissions::expire_due(s, chrono::Utc::now());
     permissions::answer_by(s, id, allow, false, None, permissions::Reply::default(), "telegram").map_err(|e| match e.0.as_u16() {
@@ -783,7 +797,9 @@ async fn outbox(s: Shared, mut rx: mpsc::UnboundedReceiver<Out>) {
             }
         };
         match sent {
-            Ok(()) => set_error(&s, &out.profile, None),
+            Ok(()) => {
+                set_error(&s, &out.profile, None);
+            }
             Err(e) => note_error(&s, &out.profile, &e),
         }
     }

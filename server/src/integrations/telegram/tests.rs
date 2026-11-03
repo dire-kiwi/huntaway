@@ -382,6 +382,19 @@ fn prompts_come_with_buttons_that_only_the_owner_can_press() {
         f.push(press(7, 7, "allow:req-3"));
         until("the refusal", || f.calls("answerCallbackQuery").iter().any(|b| b["text"].as_str().unwrap().contains("isn't this assistant's"))).await;
         assert_eq!(status_of(&s, "req-3"), "pending");
+        // Nor can a plan, which is read on the board (it gets no buttons).
+        let plan = s.add_message(&a, "permission", json!({"tool_name": "ExitPlanMode", "input": {"plan": "# Plan"}, "request_id": "plan-1", "status": "pending"})).unwrap();
+        s.db()
+            .execute(
+                "INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('plan-1',?1,?2,'ExitPlanMode','{}','pending',?3,'plan-1','tool')",
+                rusqlite::params![a, plan.id, now()],
+            )
+            .unwrap();
+        until("the plan's message", || f.sent_texts().iter().any(|t| t.contains("Plan ready for approval") && t.contains("Answer it on the board"))).await;
+        assert!(f.calls("sendMessage").iter().all(|b| b["reply_markup"]["inline_keyboard"][0][0]["callback_data"] != "allow:plan-1"));
+        f.push(press(7, 7, "allow:plan-1"));
+        until("the refusal", || f.calls("answerCallbackQuery").iter().any(|b| b["text"] == "Answer this one on the board.")).await;
+        assert_eq!(status_of(&s, "plan-1"), "pending");
         // The action log says who answered.
         assert_eq!((answered_by(&s, "req-1").as_deref(), answered_by(&s, "req-2").as_deref()), (Some("telegram"), Some("user")));
     });
@@ -455,8 +468,9 @@ fn a_restart_carries_on_from_the_saved_offset() {
         let (s, f, p) = linked_board().await;
         f.push(text_update(7, 7, "first"));
         until("the first message", || sent_to_assistant(&s, &p).iter().any(|m| m.contains("first"))).await;
-        let offset = progress(&s.db(), &p).offset;
-        assert_eq!(offset, 102);
+        // Saved once the update is handled (after it reaches the assistant).
+        until("the offset", || progress(&s.db(), &p).offset == 102).await;
+        let offset = 102;
         // As the server starting again does: a new poller, which asks from where the last stopped.
         let polls = f.calls("getUpdates").len();
         restart(&s, &p);
@@ -467,7 +481,7 @@ fn a_restart_carries_on_from_the_saved_offset() {
         // Nothing was passed on twice.
         let all = sent_to_assistant(&s, &p).join("\n");
         assert_eq!((all.matches("first").count(), all.matches("second").count()), (1, 1), "{all}");
-        assert_eq!(progress(&s.db(), &p).offset, 103);
+        until("the offset", || progress(&s.db(), &p).offset == 103).await;
     });
 }
 
