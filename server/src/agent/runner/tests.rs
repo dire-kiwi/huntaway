@@ -508,7 +508,7 @@ fn messages_the_agent_never_took_in_go_to_the_next_run() {
         assert!(t.steering.is_empty());
         assert_eq!(t.queued_message.as_deref(), Some("first\n\nsecond\n\nthird"));
         // Not all of it came from other agents, so it counts as the user's.
-        assert_eq!(db::take_queued(&state.db(), &task.id).unwrap(), Some(db::Queued { text: "first\n\nsecond\n\nthird".into(), from_agent: false, user_text: Some("first\n\nthird".into()), routine_runs: vec![] }));
+        assert_eq!(db::take_queued(&state.db(), &task.id).unwrap(), Some(db::Queued { text: "first\n\nsecond\n\nthird".into(), from_agent: false, user_text: Some("first\n\nthird".into()), routine: false, routine_runs: vec![] }));
     });
 }
 
@@ -674,7 +674,7 @@ fn after_a_restart_messages_the_agent_wasnt_sent_are_sent() {
     crate::testing::run(async || {
         let (state, task, run) = running(true);
         // Sent as the turn ended, and kept, before the server stopped, to be written to its input.
-        let steer = db::Steer { id: "s1".into(), text: "one more thing".into(), from_agent: false, run_id: run.id.clone(), written: false, routine_runs: vec![] };
+        let steer = db::Steer { id: "s1".into(), text: "one more thing".into(), from_agent: false, run_id: run.id.clone(), written: false, routine_runs: vec![], routine: false };
         state.update_task(&task.id, &[("steering", json!([steer]))]).unwrap();
         state.db().execute("UPDATE runs SET saw_result=1, between_turns=1 WHERE id=?1", [&run.id]).unwrap();
         restart(&state, &task);
@@ -2118,6 +2118,100 @@ fn a_merge_out_of_usage_keeps_its_place_in_the_merge_queue() {
     })
 }
 
+#[test]
+fn a_run_an_automation_starts_is_a_routine_run_and_one_the_user_starts_isnt() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let state = crate::testing::state();
+        let p = db::insert_profile(&state.db(), "me", &[], None).unwrap();
+        let new = |title: &str| {
+            db::insert_task(&state.db(), db::NewTask {
+                profile_id: &p.id, project_id: None, kind: "task", title, description: "", status: "todo", use_worktree: false, model: None,
+                effort: None, claude_config_id: None,
+            })
+            .unwrap()
+        };
+        let turn = |task: &Task| -> Value {
+            let run: i64 = state.db().query_row("SELECT turn_message_id FROM runs WHERE task_id=?1", [&task.id], |r| r.get(0)).unwrap();
+            let data: String = state.db().query_row("SELECT data FROM messages WHERE id=?1", [run], |r| r.get(0)).unwrap();
+            serde_json::from_str(&data).unwrap()
+        };
+        let (routine, started, mine) = (new("Routine"), new("Started"), new("Mine"));
+        send_from_routine(&state, &routine.id, "Check the mail", None).unwrap();
+        assert_eq!((turn(&routine)["text"].as_str(), &turn(&routine)["routine"]), (Some("Check the mail"), &json!(true)));
+        // An automation starting a task it made: its first prompt is the board's.
+        send_from_routine(&state, &started.id, "", None).unwrap();
+        assert_eq!((&turn(&started)["start"], &turn(&started)["routine"]), (&json!(true), &json!(true)));
+        send(&state, &mine.id, "Check the mail").unwrap();
+        assert!(turn(&mine).get("routine").is_none());
+        // A message the user had queued goes with it: someone's there.
+        let queued = new("Queued");
+        db::queue(&state.db(), &queued.id, db::Queued::new("and my note", false)).unwrap();
+        send_from_routine(&state, &queued.id, "Check the mail", None).unwrap();
+        assert!(turn(&queued).get("routine").is_none(), "{}", turn(&queued));
+    })
+}
+
+#[test]
+fn a_codex_assistant_with_a_never_rule_on_its_own_tools_doesnt_run() {
+    use crate::agent::approval_rules::{self, Decision, Rule, Rules};
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let state = crate::testing::state();
+        let codex = db::insert_claude_config(&state.db(), "Codex", "", "codex").unwrap();
+        let p = db::insert_profile(&state.db(), "me", std::slice::from_ref(&codex.id), None).unwrap();
+        let a = crate::agent::assistant::get_or_create(&state, &p.id).unwrap();
+        db::update_task(&state.db(), &a.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap();
+        let rules = vec![Rule { tool: "Bash".into(), decision: Decision::Never }];
+        approval_rules::set(&state.db(), &p.id, Some(&Rules { rules, expiry_minutes: 30 })).unwrap();
+        send(&state, &a.id, "list the files").unwrap();
+        while state.is_running(&a.id) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        // Refused before anything is started, saying why.
+        let why = reload(&state, &a.id).attention_reason.unwrap_or_default();
+        assert!(why.contains("\"Bash: never\"") && why.contains("Claude config"), "{why}");
+    })
+}
+
+#[test]
+fn an_automations_message_that_waits_in_the_queue_still_starts_a_routine_run() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let state = crate::testing::state();
+        let p = db::insert_profile(&state.db(), "me", &[], None).unwrap();
+        let new = |title: &str| {
+            db::insert_task(&state.db(), db::NewTask {
+                profile_id: &p.id, project_id: None, kind: "task", title, description: "", status: "todo", use_worktree: false, model: None,
+                effort: None, claude_config_id: None,
+            })
+            .unwrap()
+        };
+        let routine = |text: &str| db::Queued { routine: true, ..db::Queued::new(text, true) };
+        // Queued while a run couldn't take it (compacting, waiting for dependencies or a usage limit), from two
+        // automations: it's kept, in the database, as all automations'.
+        let queued = new("Queued");
+        db::queue(&state.db(), &queued.id, routine("New mail")).unwrap();
+        db::queue(&state.db(), &queued.id, routine("And more")).unwrap();
+        // Released: its run is a routine run, so a prompt it raises expires.
+        assert!(send_queued(&state, &queued.id));
+        let run: String = state.db().query_row("SELECT id FROM runs WHERE task_id=?1", [&queued.id], |r| r.get(0)).unwrap();
+        state.db().execute("INSERT INTO mcp_calls (id,run_id,task_id,tool,args,created_at) VALUES ('c',?1,?2,'permission_prompt','{}','1')", [&run, &queued.id]).unwrap();
+        assert!(crate::mcp::permissions::routine_call(&state.db(), "c").unwrap());
+
+        // With the user's message queued alongside, someone's there: it isn't.
+        let mixed = new("Mixed");
+        db::queue(&state.db(), &mixed.id, routine("New mail")).unwrap();
+        db::queue(&state.db(), &mixed.id, db::Queued::new("and reply to Bob", false)).unwrap();
+        assert!(!db::take_queued(&state.db(), &mixed.id).unwrap().unwrap().routine);
+        // Nor once the queue is cleared, for what's queued next.
+        db::queue(&state.db(), &mixed.id, routine("New mail")).unwrap();
+        db::clear_queued(&state.db(), &mixed.id).unwrap();
+        db::queue(&state.db(), &mixed.id, db::Queued::new("mine", false)).unwrap();
+        assert!(!db::take_queued(&state.db(), &mixed.id).unwrap().unwrap().routine);
+    })
+}
+
 /// A profile's assistant whose agent is running `run`, which takes messages as it works, and a
 /// thread-mode routine of the profile with a budget of $1 a day.
 fn assistant_running_with_a_routine() -> (Shared, Task, Run, crate::integrations::automations::Automation) {
@@ -2398,5 +2492,30 @@ fn an_automatic_prompt_leaves_a_queued_automation_message_its_run() {
         let charged = charged_to(&state, &r.id).0.expect("charged to the run that took its message in");
         assert_ne!(charged, fixes);
         assert!(reload(&state, &task.id).queued_message.is_none());
+    });
+}
+
+// HA-161 merge: a steered message that went back to the queue was taken for a routine's (one with
+// nobody there, whose prompts expire) if it carried automation runs, which a project automation's
+// does too.
+#[test]
+fn a_requeued_steer_is_a_routines_only_if_it_was_sent_as_one() {
+    crate::testing::run(async || {
+        let queued_routine = |state: &Shared, id: &str| -> bool { state.db().query_row("SELECT queued_routine FROM tasks WHERE id=?1", [id], |r| r.get(0)).unwrap() };
+        let (state, task, run, a) = project_task_running_with_an_automation(json!({"kind": "send_to_task"}));
+        crate::integrations::automations::run_now(&state, &a, Default::default()).await.unwrap();
+        assert!(!reload(&state, &task.id).steering[0].routine);
+        runs::close_input(&state, &run.id);
+        finish(&state, &run.id, Outcome::Ok);
+        assert!(reload(&state, &task.id).queued_message.is_some());
+        assert!(!queued_routine(&state, &task.id));
+
+        let (state, assistant, run, a) = assistant_running_with_a_routine();
+        crate::integrations::automations::run_now(&state, &a, Default::default()).await.unwrap();
+        assert!(reload(&state, &assistant.id).steering[0].routine);
+        runs::close_input(&state, &run.id);
+        finish(&state, &run.id, Outcome::Ok);
+        assert!(reload(&state, &assistant.id).queued_message.is_some());
+        assert!(queued_routine(&state, &assistant.id));
     });
 }

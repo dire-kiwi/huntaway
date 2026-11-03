@@ -53,6 +53,9 @@ enum Cmd {
     /// Claude Code hook that turns away gh in Bash, for the gh MCP server's tools (run by claude).
     #[command(hide = true)]
     GhHook,
+    /// Claude Code hook that holds the user's approval rules in the assistant's runs (see agent/approval_rules.rs).
+    #[command(hide = true)]
+    ApprovalHook { rules: String },
     /// gh for a wait's command, as its task's GitHub account (see gh_mcp::gh_run).
     #[command(hide = true)]
     GhRun {
@@ -249,6 +252,7 @@ async fn main() -> Result<()> {
         Some(Cmd::Mcp) => mcp::serve_stdio().await,
         Some(Cmd::GhMcp) => gh_mcp::serve_stdio().await,
         Some(Cmd::GhHook) => gh_mcp::bash_hook(),
+        Some(Cmd::ApprovalHook { rules }) => agent::approval_rules::hook(&rules),
         Some(Cmd::GhRun { args }) => std::process::exit(gh_mcp::gh_run(args).await?),
         Some(Cmd::CodexRun { spec }) => codex::run_adapter(&spec).await,
         Some(Cmd::Token { data_dir, hub }) => {
@@ -382,6 +386,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     attachments::start_pruner(&state);
     runs::start_pruner(&state);
     task_tmp::start_sweeper(&state);
+    mcp::permissions::start_sweeper(&state);
     automations::start(&state);
     merged::start(&state);
     relocate::start_recording(&state);

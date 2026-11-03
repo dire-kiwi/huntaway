@@ -163,7 +163,10 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             Some(cfg) => codex_run_effort(cfg, model.as_deref(), effort.clone()).await,
             None => effort.clone(),
         };
-        let (approval_policy, approvals_reviewer, sandbox) = crate::agent::codex::policy(&permission_mode, task.kind == "review");
+        // The user's approval rules (see agent/approval_rules.rs) may have Codex ask more, or keep it from running.
+        let approval_rules = crate::agent::approval_rules::for_task(&state.db(), &task)?.map(|r| r.for_mode(&permission_mode));
+        let policy = crate::agent::codex::policy(&permission_mode, task.kind == "review");
+        let (approval_policy, approvals_reviewer, sandbox) = crate::agent::approval_rules::codex_policy(approval_rules.as_ref(), policy).map_err(|e| anyhow!(e))?;
         let tools = crate::agent::agent_tools::for_task_run(state, &task, project.as_ref())?;
         let gh_tools = uses_gh_server(&tools);
         let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
@@ -222,6 +225,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             disabled_mcp_tools,
             review_waits: approvals_reviewer == "auto_review",
             revert_before_turn: rewind.as_ref().and_then(|r| r.before_turn.clone()),
+            approval_rules,
         };
         let launch = Launch {
             run_id: run.id.clone(),
@@ -267,13 +271,22 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         tmp: tmp.as_deref(),
         memory: &memory,
     };
-    push("--append-system-prompt", &instructions(base, &task, &to));
+    // In a file rather than an argument: the assistant's memory and a project's documents can make it longer than the
+    // most an argument may be (128 KiB on Linux).
+    let prompt_file = runs::run_dir(state, &run.id).join("system-prompt.md");
+    tokio::fs::create_dir_all(runs::run_dir(state, &run.id)).await?;
+    tokio::fs::write(&prompt_file, instructions(base, &task, &to)).await.context("writing the run's instructions")?;
+    push("--append-system-prompt-file", &path_str(&prompt_file));
     push("--permission-mode", &permission_mode);
-    if permission_mode != "bypassPermissions" {
+    // The user's approval rules (see agent/approval_rules.rs): a hook's ask goes to the permission
+    // prompt even in Bypass, which otherwise has none.
+    let approval_rules = crate::agent::approval_rules::for_task(&state.db(), &task)?.map(|r| r.for_mode(&permission_mode));
+    if permission_mode != "bypassPermissions" || approval_rules.as_ref().is_some_and(crate::agent::approval_rules::needs_prompt_tool) {
         push("--permission-prompt-tool", &format!("mcp__{MCP_SERVER_NAME}__permission_prompt"));
     }
-    if gh_tools {
-        push("--settings", &gh_hook_settings(&state.exe));
+    let rules_hook = approval_rules.as_ref().and_then(|r| crate::agent::approval_rules::claude_hook(&state.exe, r));
+    if gh_tools || rules_hook.is_some() {
+        push("--settings", &hook_settings(gh_tools.then_some(state.exe.as_path()), rules_hook));
     }
     // Our board tools never need approval, nor do some of the gh server's (see gh_allowed).
     args.push("--allowedTools".to_string());
@@ -285,6 +298,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     }
     args.extend(tools.allowed.iter().cloned());
     let mut disallowed = tools.disallowed.clone();
+    disallowed.extend(approval_rules.as_ref().map(crate::agent::approval_rules::claude_disallowed).unwrap_or_default());
     if task.kind == "review" {
         // Reviewers read and report; they don't change the work.
         args.extend(crate::review::ALLOWED_TOOLS.iter().map(|t| t.to_string()));

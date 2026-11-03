@@ -196,6 +196,13 @@ pub(super) fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
             if let Some(uuid) = v["uuid"].as_str().filter(|_| v["parent_tool_use_id"].is_null()) {
                 state.db().execute("UPDATE runs SET agent_at=?1 WHERE id=?2", rusqlite::params![uuid, run.id])?;
             }
+            // Calls the approval rules' hook blocked go in the action log.
+            if tool_result {
+                let task = db::get_task(&state.db(), task_id)?;
+                if let Some(task) = task.filter(|t| crate::agent::approval_rules::applies_to(&state.db(), t).unwrap_or(false)) {
+                    crate::agent::approval_rules::on_tool_results(state, &task, &v);
+                }
+            }
             state.add_message(task_id, "claude", v)?;
             // A tool call may have changed the task's document: the task shows it as it's written.
             if tool_result {

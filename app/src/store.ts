@@ -735,6 +735,16 @@ export function onCheckpoints(fn: CheckpointListener) {
   };
 }
 
+/** Told when a profile's approval rules (`rules`) or action log (`log`) change on a host (API 102). */
+type ApprovalRulesListener = (hostId: string, profileId: string, what: "rules" | "log") => void;
+const approvalRulesListeners = new Set<ApprovalRulesListener>();
+export function onApprovalRules(fn: ApprovalRulesListener) {
+  approvalRulesListeners.add(fn);
+  return () => {
+    approvalRulesListeners.delete(fn);
+  };
+}
+
 const automationListeners = new Set<AutomationListener>();
 
 /** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
@@ -796,6 +806,10 @@ export function handleEvent(ev: any) {
       break;
     case "automations_changed":
       for (const fn of automationListeners) fn(h, ev.project_id ?? null, ev.automation_id, ev.profile_id);
+      break;
+    case "approval_rules":
+    case "approval_log":
+      for (const fn of approvalRulesListeners) fn(h, ev.profile_id, ev.type === "approval_rules" ? "rules" : "log");
       break;
     case "checkpoints":
       for (const fn of checkpointListeners) fn(h, ev.task_id);

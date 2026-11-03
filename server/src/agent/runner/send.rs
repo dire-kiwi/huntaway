@@ -32,10 +32,21 @@ pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<T
     send_run(state, task_id, text, false, true, "prompt")
 }
 
-/// Send an automation's message (for its run `automation_run`), as another agent's, or with no
-/// text, start a task it made: the agent run that takes it in, whether it starts with it, is steered
-/// it or takes it from the queue later, is charged to that automation run, for its budget (see
-/// automations::routines::taken_in).
+/// Send a routine's message (see automations::routines) as another agent's: one that starts a run
+/// makes it a routine run, with nobody there, whose prompts expire if nobody answers them (see
+/// permissions::expiry), and a thread-mode routine's (for its automation run `automation_run`) is
+/// charged to that automation run by the run that takes it in, whether it starts with it, is steered
+/// it or takes it from the queue later (see automations::routines::taken_in).
+pub fn send_from_routine(state: &Shared, task_id: &str, text: &str, automation_run: Option<&str>) -> ApiResult<Task> {
+    let message = db::Queued { routine: true, routine_runs: automation_run.map(String::from).into_iter().collect(), ..db::Queued::new(text, true) };
+    send_message(state, task_id, Some(message), false, "prompt", None)
+}
+
+/// Send a project automation's message (for its run `automation_run`), as another agent's, or with
+/// no text, start a task it made: the agent run that takes it in, whether it starts with it, is
+/// steered it or takes it from the queue later, is charged to that automation run, for its budget
+/// (see automations::routines::taken_in). Unlike a routine's, it isn't a routine run: a project's
+/// task has the user's approval rules, not the assistant's.
 pub fn send_from_automation(state: &Shared, task_id: &str, text: &str, automation_run: &str) -> ApiResult<Task> {
     let message = db::Queued { routine_runs: vec![automation_run.to_string()], ..db::Queued::new(text, !text.trim().is_empty()) };
     send_message(state, task_id, Some(message), false, "prompt", None)
@@ -126,11 +137,18 @@ pub(super) fn send_message(state: &Shared, task_id: &str, message: Option<db::Qu
                 // Sent with other agents' messages queued alongside (see db::user_replies).
                 msg["user_text"] = json!(message.user_text);
             }
+            if message.routine {
+                msg["routine"] = json!(true);
+            }
             return Ok(vec![db::insert_message(c, task_id, "user", &msg)?]);
         } else if first_run && task.kind == "task" {
             let project = task.project_id.as_deref().map(|p| db::get_project(c, p)).transpose()?.flatten();
             let text = crate::agent::prompts::start_task(task, project.as_ref());
-            return Ok(vec![db::insert_message(c, task_id, "user", &json!({"text": text, "auto": true, "start": true}))?]);
+            let mut msg = json!({"text": text, "auto": true, "start": true});
+            if message.routine {
+                msg["routine"] = json!(true);
+            }
+            return Ok(vec![db::insert_message(c, task_id, "user", &msg)?]);
         }
         Ok(Vec::new())
     })?;

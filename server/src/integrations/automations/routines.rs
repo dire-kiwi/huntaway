@@ -38,7 +38,7 @@ pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how
             // The assistant's run that takes the message in is the routine run's, for its cost: its id
             // goes with the message, through steering and the queue (see `taken_in`).
             s.db().execute("UPDATE automation_runs SET task_id=?2 WHERE id=?1", params![run_id, assistant.id]).map_err(db_fail)?;
-            if let Err(e) = crate::agent::runner::send_from_automation(s, &assistant.id, &text, run_id) {
+            if let Err(e) = crate::agent::runner::send_from_routine(s, &assistant.id, &text, Some(run_id)) {
                 let _ = s.db().execute("UPDATE automation_runs SET task_id=NULL WHERE id=?1", [run_id]);
                 return Err(Outcome::Failed(None, e.1));
             }
@@ -69,7 +69,8 @@ pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how
                 thread.number,
                 body.trim()
             );
-            if let Err(e) = crate::agent::runner::send_from_agent(s, &thread.id, &text) {
+            // Nobody's there to answer its prompts, which expire (see permissions::expiry).
+            if let Err(e) = crate::agent::runner::send_from_routine(s, &thread.id, &text, None) {
                 // It never started (the host can't run agents, say): an empty thread would only be in the way.
                 let _ = s.db().execute("UPDATE automation_runs SET task_id=NULL WHERE id=?1", [run_id]);
                 let _ = s.db().execute("DELETE FROM tasks WHERE id=?1 AND running=0", [&thread.id]);
@@ -82,7 +83,7 @@ pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how
 }
 
 /// The agent run `run_id` took in a message carrying these automation runs' (see
-/// runner::send_from_automation): they're its, for its cost. Called as it's recorded.
+/// runner::send_from_routine and send_from_automation): they're its, for its cost. Called as it's recorded.
 pub fn taken_in(c: &Connection, run_id: &str, automation_runs: &[String]) -> rusqlite::Result<()> {
     for id in automation_runs {
         c.execute("UPDATE automation_runs SET agent_run_id=?2 WHERE id=?1", params![id, run_id])?;

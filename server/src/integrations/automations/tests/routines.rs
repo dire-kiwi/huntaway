@@ -813,3 +813,29 @@ fn pruning_keeps_the_runs_that_count_toward_todays_budget() {
         assert!(get_run(&s.db(), &paid.id).unwrap().is_none());
     })
 }
+
+#[test]
+fn a_routines_messages_start_routine_runs_whose_prompts_expire() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        busy(&s, &assistant.id);
+        let s2 = s.clone();
+        testing::when("routine:thread", move || {
+            let id: String = s2.db().query_row("SELECT id FROM tasks WHERE task_type='routine' ORDER BY created_at DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+            busy(&s2, &id);
+        });
+        let wake = |mode: &str| json!({"name": mode, "trigger": {"kind": "cron", "expr": "0 8 * * *"}, "action": {"kind": "message_assistant", "message": "Inbox?", "mode": mode}});
+        // Fresh: its thread's first message (waiting here, as no agent can start) is a routine's; so is a
+        // thread-mode routine's in the assistant's thread. The approval rules, and expiry, hold in both.
+        for mode in ["fresh", "thread"] {
+            let a = routine(&s, &p.id, wake(mode)).unwrap();
+            let r = run_handler(State(s.clone()), Path(a.id.clone()), None).await.unwrap().0;
+            let thread = db::get_task(&s.db(), r["task_id"].as_str().unwrap()).unwrap().unwrap();
+            assert!(crate::agent::approval_rules::applies_to(&s.db(), &thread).unwrap(), "{mode}");
+            let queued = db::take_queued(&s.db(), &thread.id).unwrap().unwrap();
+            assert!(queued.routine, "{mode}");
+        }
+    })
+}

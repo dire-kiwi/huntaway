@@ -19,7 +19,10 @@ pub const PROTOCOL: u32 = 1;
 /// `GET /permissions?profile_id=`.
 /// API 101: routines (a profile's automations, which wake its assistant): `/profiles/{id}/automations`, the `cron`
 /// and `at` triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, and `report` messages.
-pub const API_VERSION: u32 = 101;
+/// API 102: the assistant's approval rules and action log (`/profiles/{id}/approval-rules` and `/approval-log`,
+/// see agent/approval_rules.rs), prompts' `expires_at` and `rule`, and `via` on a prompt's answer.
+/// API 103: native push through Expo (`kind` `expo` on `/push/subscriptions`, which paired devices may use for their own).
+pub const API_VERSION: u32 = 103;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.

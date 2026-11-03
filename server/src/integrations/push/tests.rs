@@ -86,11 +86,11 @@ fn the_vapid_key_is_made_once_and_signs_tokens_for_the_push_service() {
     assert!(key.verify(b"something else", &b64(parts[2])).is_err());
 }
 
-fn task(status: &str) -> Value {
+pub(super) fn task(status: &str) -> Value {
     json!({"id": "t1", "kind": "task", "number": 3, "title": "Fix the login", "status": status, "running": false, "review": null, "attention_reason": null})
 }
 
-fn with(mut t: Value, fields: Value) -> Value {
+pub(super) fn with(mut t: Value, fields: Value) -> Value {
     for (k, v) in fields.as_object().unwrap() {
         t[k] = v.clone();
     }
@@ -127,7 +127,7 @@ fn task_changes_notify_as_the_ui_does() {
 }
 
 /// A push service on this machine: it takes what's posted to it, answering with `status`.
-async fn push_service(status: Arc<AtomicU16>) -> (String, mpsc::UnboundedReceiver<(HeaderMap, Bytes)>) {
+pub(super) async fn push_service(status: Arc<AtomicU16>) -> (String, mpsc::UnboundedReceiver<(HeaderMap, Bytes)>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let app = axum::Router::new().route(
         "/push/{id}",
@@ -145,7 +145,7 @@ async fn push_service(status: Arc<AtomicU16>) -> (String, mpsc::UnboundedReceive
     (url, rx)
 }
 
-async fn api(s: &Shared, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+pub(super) async fn api(s: &Shared, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let req = axum::http::Request::builder()
         .method(method)
         .uri(path)
@@ -159,7 +159,7 @@ async fn api(s: &Shared, method: &str, path: &str, body: Option<Value>) -> (u16,
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
-fn device() -> (agreement::PrivateKey, Value) {
+pub(super) fn device() -> (agreement::PrivateKey, Value) {
     let ua = device_key();
     let keys = json!({"p256dh": B64.encode(public_key(&ua).unwrap()), "auth": B64.encode([9u8; 16])});
     (ua, keys)
@@ -210,7 +210,7 @@ fn devices_subscribe_change_their_events_and_unsubscribe() {
 }
 
 /// The board's task event for task `t` on this host.
-fn emit(s: &Shared, t: &Value) {
+pub(super) fn emit(s: &Shared, t: &Value) {
     let _ = s.hub_events.send(json!({"type": "task", "task": t, "host_id": s.host_id}));
 }
 
@@ -415,7 +415,7 @@ fn a_subscription_its_push_service_has_dropped_is_deleted() {
 // ---------- permission prompts ----------
 
 /// A task with a run going (so it can raise prompts), of `task_type` if given.
-fn running_task(s: &Shared, task_type: Option<&str>) -> db::Task {
+pub(super) fn running_task(s: &Shared, task_type: Option<&str>) -> db::Task {
     let profile = db::insert_profile(&s.db(), &format!("p{}", crate::util::new_id()), &[], None).unwrap();
     let new = db::NewTask {
         profile_id: &profile.id,
@@ -440,7 +440,7 @@ fn running_task(s: &Shared, task_type: Option<&str>) -> db::Task {
 }
 
 /// Raises a prompt for `tool` from `task` and waits until it's asked: its request id, and what the agent is told.
-async fn raise(s: &Shared, task: &db::Task, call: &str, tool: &str, input: Value) -> (String, tokio::task::JoinHandle<Value>) {
+pub(super) async fn raise(s: &Shared, task: &db::Task, call: &str, tool: &str, input: Value) -> (String, tokio::task::JoinHandle<Value>) {
     let (s2, t2, call2, tool2) = (s.clone(), task.clone(), call.to_string(), tool.to_string());
     let told = tokio::spawn(async move { crate::mcp::permissions::prompt(&s2, &t2, &call2, &tool2, &input, None).await.unwrap() });
     loop {
@@ -452,19 +452,19 @@ async fn raise(s: &Shared, task: &db::Task, call: &str, tool: &str, input: Value
 }
 
 /// A device subscribed to `url` that wants `events`.
-async fn subscribe_device(s: &Shared, url: &str, events: Value) -> agreement::PrivateKey {
+pub(super) async fn subscribe_device(s: &Shared, url: &str, events: Value) -> agreement::PrivateKey {
     let (ua, keys) = device();
     let (status, sub) = api(s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": url, "keys": keys, "events": events}))).await;
     assert_eq!(status, 200, "{sub}");
     ua
 }
 
-async fn next_push(got: &mut mpsc::UnboundedReceiver<(HeaderMap, Bytes)>, ua: &agreement::PrivateKey) -> Value {
+pub(super) async fn next_push(got: &mut mpsc::UnboundedReceiver<(HeaderMap, Bytes)>, ua: &agreement::PrivateKey) -> Value {
     let (_, body) = tokio::time::timeout(Duration::from_secs(10), got.recv()).await.expect("no push").unwrap();
     serde_json::from_slice(&decrypt(ua, &[9u8; 16], &body)).unwrap()
 }
 
-async fn answer_from_push(s: &Shared, request: &str, token: &str, decision: &str) -> (u16, Value) {
+pub(super) async fn answer_from_push(s: &Shared, request: &str, token: &str, decision: &str) -> (u16, Value) {
     let req = axum::http::Request::builder()
         .method("POST")
         .uri(format!("/api/permissions/{request}/push-answer"))
@@ -478,7 +478,7 @@ async fn answer_from_push(s: &Shared, request: &str, token: &str, decision: &str
 }
 
 /// Waits until the board has noted prompt `request`'s tokens as `status`.
-async fn settled_as(s: &Shared, request: &str, status: &str) {
+pub(super) async fn settled_as(s: &Shared, request: &str, status: &str) {
     for _ in 0..500 {
         if crate::integrations::push_answers::status_of(&s.db(), request).as_deref() == Some(status) {
             return;
@@ -570,7 +570,7 @@ fn an_answer_the_board_missed_is_found_out_from_the_host() {
         let s = testing::state();
         let task = running_task(&s, None);
         let (request, told) = raise(&s, &task, "c1", "Bash", json!({})).await;
-        let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id).unwrap();
+        let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id, None).unwrap();
         assert_eq!(api(&s, "POST", &format!("/api/permissions/{request}"), Some(json!({"decision": "deny"}))).await.0, 200);
         told.await.unwrap();
         let (status, v) = answer_from_push(&s, &request, &token, "allow").await;
@@ -699,7 +699,7 @@ fn an_answer_cut_off_part_way_doesnt_hold_its_prompt_after_a_restart_or_its_leas
         crate::hosts::hub::link_http(&hub, "remote", signed_in, crate::hosts::proto::API_VERSION).await;
         let task = running_task(&remote, Some("assistant"));
         let (request, told) = raise(&remote, &task, "c1", "Bash", json!({})).await;
-        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id).unwrap();
+        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id, None).unwrap();
         // The hub claimed it to answer, and stopped before it could (the claim is in its database).
         let claim = |request: &str, at: String| {
             hub.db().execute("UPDATE push_answer_tokens SET status='answering', claimed_at=?1 WHERE request_id=?2", [at.as_str(), request]).unwrap()
@@ -715,10 +715,38 @@ fn an_answer_cut_off_part_way_doesnt_hold_its_prompt_after_a_restart_or_its_leas
 
         // A claim older than any answer takes runs out without a restart.
         let (request, told) = raise(&remote, &task, "c2", "Bash", json!({})).await;
-        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id).unwrap();
+        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id, None).unwrap();
         assert_eq!(claim(&request, (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339()), 1);
         let (status, v) = answer_from_push(&hub, &request, &token, "allow").await;
         assert_eq!((status, v["result"].as_str()), (200, Some("allowed")), "{v}");
         assert_eq!(told.await.unwrap()["behavior"], "allow");
+    })
+}
+
+#[test]
+fn a_notification_cant_answer_a_prompt_past_its_expiry_and_one_it_answers_is_logged_as_from_it() {
+    use crate::agent::approval_rules::{self, Decision, Rule, Rules};
+    testing::run(async || {
+        let s = testing::state();
+        let task = running_task(&s, Some("assistant"));
+        let ask = Rule { tool: "mcp__google__send*".into(), decision: Decision::Ask };
+        approval_rules::set(&s.db(), &task.profile_id, Some(&Rules { rules: vec![ask], expiry_minutes: 30 })).unwrap();
+        let (request, told) = raise(&s, &task, "c1", "mcp__google__send_gmail_message", json!({})).await;
+        // Its time is up, though the host hasn't said so (its sweeper hasn't run, or the link is down).
+        let past = (chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let late = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id, Some(&past)).unwrap();
+        let (status, v) = answer_from_push(&s, &request, &late, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (409, Some("expired")), "{v}");
+        assert!(v["message"].as_str().unwrap().contains("nobody answered it in time"), "{v}");
+        // Still waiting on the host: the late answer didn't go through.
+        assert_eq!(crate::mcp::permissions::pending(&s, Some(&task.id), None).unwrap().len(), 1);
+        // One in time does, and the action log says it came from a notification.
+        let future = (chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id, Some(&future)).unwrap();
+        let (status, v) = answer_from_push(&s, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (200, Some("allowed")), "{v}");
+        assert_eq!(told.await.unwrap()["behavior"], "allow");
+        let log = approval_rules::list(&s.db(), &task.profile_id, 10).unwrap();
+        assert_eq!((log[0].outcome.as_str(), log[0].answered_by.as_deref()), ("allowed", Some("push")));
     })
 }

@@ -539,6 +539,38 @@ fn a_database_from_version_61_gets_push_subscriptions() {
 }
 
 #[test]
+fn push_subscriptions_from_before_version_82_are_web_push() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        // As a board at version 81 left it: no kind or device_id, and a browser's subscription.
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "DROP TABLE push_subscriptions;
+             CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+               name TEXT NOT NULL DEFAULT '', events TEXT NOT NULL, created_at TEXT NOT NULL, last_sent_at TEXT, last_error TEXT);
+             INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES ('s','https://push.example.com/1','k','a','Chrome','{}','1');
+             PRAGMA user_version=81;",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let (kind, device): (String, Option<String>) = c.query_row("SELECT kind, device_id FROM push_subscriptions WHERE id='s'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((kind.as_str(), device), ("web", None));
+    let subs = crate::integrations::push::list(&c).unwrap();
+    assert_eq!((subs.len(), subs[0].kind, subs[0].name.as_str()), (1, crate::integrations::push::Kind::Web, "Chrome"));
+    // New rows are web unless they say otherwise.
+    c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('t','https://push.example.com/2','k','a','{}','1')", []).unwrap();
+    c.execute("INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at,kind,device_id) VALUES ('u','ExponentPushToken[x]','','','{}','1','expo','d')", []).unwrap();
+    let kinds: Vec<String> = c.prepare("SELECT kind FROM push_subscriptions ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    assert_eq!(kinds, ["web", "web", "expo"]);
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[test]
 fn a_database_from_version_53_gets_pull_request_watches() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
@@ -1364,4 +1396,31 @@ fn a_database_from_version_72_keeps_new_sessions_apart() {
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
+}
+
+#[test]
+fn a_database_from_version_80_keeps_its_prompts_waiting_without_an_expiry() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "PRAGMA foreign_keys=OFF; DROP INDEX permission_requests_expiry; ALTER TABLE permission_requests DROP COLUMN expires_at; ALTER TABLE permission_requests DROP COLUMN rule;
+             ALTER TABLE push_answer_tokens DROP COLUMN expires_at; ALTER TABLE tasks DROP COLUMN queued_routine; DROP TABLE approval_log;
+             INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('p','t',1,'Bash','{}','pending','1','c','tool');
+             PRAGMA user_version=80;",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    // A prompt from before has no expiry or rule, so it waits as it did.
+    let row: (String, Option<String>, Option<String>) =
+        c.query_row("SELECT status, expires_at, rule FROM permission_requests WHERE id='p'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    assert_eq!(row, ("pending".into(), None, None));
+    c.execute("INSERT INTO push_answer_tokens (token_hash,request_id,host_id,task_id,created_at,expires_at) VALUES ('h','p','x','t','1','2')", []).unwrap();
+    c.execute(
+        "INSERT INTO approval_log (id,profile_id,task_id,tool_name,summary,rule,decision,outcome,created_at) VALUES ('l','p','t','x','','x','ask','pending','1')",
+        [],
+    )
+    .unwrap();
 }

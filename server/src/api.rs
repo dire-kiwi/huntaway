@@ -16,7 +16,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::agent::{agent_tools, assistant, runner, title};
+use crate::agent::{agent_tools, approval_rules, assistant, runner, title};
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::git::{git_view, relocate, worktree};
 use crate::hosts::{hub, terminal};
@@ -125,6 +125,8 @@ fn host_routes() -> Router<Shared> {
         .route("/profiles/{id}/assistant/memory/diff", get(assistant::memory::diff))
         .route("/profiles/{id}/assistant/memory/restore", post(assistant::memory::restore))
         .route("/profiles/{id}/assistant/memory/import", post(assistant::memory::import))
+        .route("/profiles/{id}/approval-rules", get(get_approval_rules).post(set_approval_rules))
+        .route("/profiles/{id}/approval-log", get(approval_log))
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))
         .route("/profiles/{id}/context-stats", get(crate::analytics::context))

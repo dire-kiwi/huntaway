@@ -145,6 +145,9 @@ pub struct Steer {
     /// The automation runs whose messages it carries (see Queued::routine_runs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub routine_runs: Vec<String>,
+    /// A routine's (see Queued::routine): a project automation's carries its runs, but isn't.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub routine: bool,
 }
 
 /// One of a project's reviewers: the agent that reviews, in a review thread of its own.
