@@ -267,13 +267,15 @@ fn find_tool(s: &Shared, id: Option<&str>) -> ApiResult<Option<terminal::Tool>> 
     tool.map(Some).ok_or_else(|| ApiError::not_found("terminal tool"))
 }
 
-pub(super) async fn terminal_status(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+pub(super) async fn terminal_status(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "use terminals")?;
     let t = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
     let tool = find_tool(&s, q.tool.as_deref())?;
     Ok(Json(terminal::status(&s, &t, tool.as_ref()).await))
 }
 
-pub(super) async fn kill_terminal(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+pub(super) async fn kill_terminal(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "use terminals")?;
     if db::get_task(&s.db(), &id)?.is_none() {
         return Err(ApiError::not_found("task"));
     }
@@ -283,7 +285,8 @@ pub(super) async fn kill_terminal(State(s): State<Shared>, Path(id): Path<String
 }
 
 /// The board still has this tool open: keep its session (see `terminal::start_reaper`).
-pub(super) async fn terminal_keepalive(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+pub(super) async fn terminal_keepalive(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Path(id): Path<String>, Query(q): Query<ToolQuery>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "use terminals")?;
     let tool = q.tool.filter(|t| !t.is_empty()).ok_or_else(|| ApiError::bad("tool is required"))?;
     if db::get_task(&s.db(), &id)?.is_none() {
         return Err(ApiError::not_found("task"));
@@ -299,7 +302,14 @@ pub(super) struct TerminalQuery {
     tool: Option<String>,
 }
 
-pub(super) async fn terminal_ws(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<TerminalQuery>, upgrade: WebSocketUpgrade) -> ApiResult<Response> {
+pub(super) async fn terminal_ws(
+    State(s): State<Shared>,
+    device: Option<axum::Extension<crate::devices::DeviceAuth>>,
+    Path(id): Path<String>,
+    Query(q): Query<TerminalQuery>,
+    upgrade: WebSocketUpgrade,
+) -> ApiResult<Response> {
+    crate::devices::board_only(&device, "open terminals")?;
     let t = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
     if !terminal::available() {
         return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "tmux is not installed on this host".into()));
@@ -307,7 +317,7 @@ pub(super) async fn terminal_ws(State(s): State<Shared>, Path(id): Path<String>,
     let tool = find_tool(&s, q.tool.as_deref())?;
     let size = |v: Option<u16>, d: u16| v.filter(|v| (2..=1000).contains(v)).unwrap_or(d);
     let (cols, rows) = (size(q.cols, 80), size(q.rows, 24));
-    Ok(upgrade.on_upgrade(move |ws| terminal::serve(s, t, tool, cols, rows, ws)))
+    Ok(upgrade.on_upgrade(move |ws| crate::devices::until_revoked(s.clone(), device.map(|d| d.0), terminal::serve(s, t, tool, cols, rows, ws))))
 }
 
 // ---------- permissions ----------
@@ -315,11 +325,14 @@ pub(super) async fn terminal_ws(State(s): State<Shared>, Path(id): Path<String>,
 #[derive(Deserialize)]
 pub(super) struct PermissionsQuery {
     task_id: Option<String>,
+    /// API 100: only one profile's (the mobile app's inbox).
+    profile_id: Option<String>,
 }
 
-/// Pending permission prompts (`?task_id=` for one task's), so scripts can answer them.
+/// Pending permission prompts (`?task_id=` for one task's, `?profile_id=` for a profile's), so scripts and the mobile
+/// app can answer them.
 pub(super) async fn list_permissions(State(s): State<Shared>, Query(q): Query<PermissionsQuery>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(permissions::pending(&s, q.task_id.as_deref())?)))
+    Ok(Json(json!(permissions::pending(&s, q.task_id.as_deref(), q.profile_id.as_deref())?)))
 }
 
 #[derive(Deserialize)]

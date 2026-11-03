@@ -801,12 +801,16 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=78; COMMIT;")?;
     }
+    if version < 79 {
+        // Devices paired with the board, each with a token of its own (see devices.rs).
+        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=79; COMMIT;", crate::devices::TABLE))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 78;
+pub const VERSION: i64 = 79;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

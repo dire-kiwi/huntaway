@@ -395,10 +395,10 @@ fn lists_pending_prompts() {
     add("r3", &a, "{}", "allowed");
 
     let ids = |v: Vec<Value>| v.iter().map(|r| r["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
-    assert_eq!(ids(pending(&s, None).unwrap()), ["r1", "r2"]);
-    let only_a = pending(&s, Some(&a)).unwrap();
+    assert_eq!(ids(pending(&s, None, None).unwrap()), ["r1", "r2"]);
+    let only_a = pending(&s, Some(&a), None).unwrap();
     assert_eq!(ids(only_a.clone()), ["r1"]);
     assert_eq!(only_a[0]["input"]["command"], "ls");
     assert_eq!(only_a[0]["task_id"], a.as_str());
-    assert_eq!(pending(&s, Some(&b)).unwrap()[0]["input"], "not json");
+    assert_eq!(pending(&s, Some(&b), None).unwrap()[0]["input"], "not json");
 }

@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Huntaway",
+    "slug": "huntaway",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "nz.net.ivan.huntaway"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0f0f13",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "nz.net.ivan.huntaway"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Huntaway uses the camera to scan a board's pairing QR code and to take photos for tasks.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Huntaway attaches the photos you pick to your tasks.",
+          "cameraPermission": "Huntaway uses the camera to take photos for tasks.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "scheme": "huntaway",
+    "backgroundColor": "#0f0f13",
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

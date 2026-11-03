@@ -104,6 +104,35 @@ jobs:
         working-directory: app
         run: npm test
 
+  # The mobile app (mobile/): its typecheck, which covers the parts of packages/client it uses, and its Jest tests.
+  mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: npm ci
+        working-directory: mobile
+        run: npm ci --no-audit --no-fund
+
+      - name: package-lock.json is up to date
+        working-directory: mobile
+        run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
+
+      - name: Typecheck
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Jest
+        working-directory: mobile
+        run: npm test -- --ci
+
   # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
   # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time on a GitHub-hosted one
   # (it has 4 CPUs, and Chromium keeps them busy: more at once only made each check slower) and 2 on a self-hosted one
