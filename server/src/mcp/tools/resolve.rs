@@ -164,7 +164,8 @@ pub(super) fn resolve_task(s: &Shared, ctx: &Ctx, r: &str, profile: Option<&str>
     let boards = pick_boards(s, ctx, prefix.or(profile))?;
     // Not a review thread, as by its key: an agent's tools only reach tasks.
     // A profile's assistant is its own: other profiles' agents can't reach it (see agent/assistant.rs).
-    let reaches = |t: &Task| t.kind == "task" && boards.iter().any(|b| b.id == t.profile_id && (!t.is_assistant() || ctx.is_own(b)));
+    // So are its routine threads.
+    let reaches = |t: &Task| t.kind == "task" && boards.iter().any(|b| b.id == t.profile_id && (!t.is_assistants() || ctx.is_own(b)));
     if let Some(t) = db::get_task(&s.db(), id)?.filter(reaches) {
         return Ok(t);
     }

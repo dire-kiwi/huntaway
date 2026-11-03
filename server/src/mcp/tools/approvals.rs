@@ -28,7 +28,8 @@ fn approval_what(tool: &str, input: &Value) -> String {
             "update" => "changing",
             _ => "deleting",
         };
-        return format!("{verb} the automation \"{}\"", input["automation"]["name"].as_str().unwrap_or_default());
+        let what = if input["profile"].is_object() { "routine" } else { "automation" };
+        return format!("{verb} the {what} \"{}\"", input["automation"]["name"].as_str().unwrap_or_default());
     }
     let fields: Vec<&str> = input["changes"].as_array().into_iter().flatten().filter(|c| c["needs_approval"] == true).filter_map(|c| c["field"].as_str()).collect();
     format!("changing {}", fields.join(", "))
@@ -38,8 +39,11 @@ fn approval_what(tool: &str, input: &Value) -> String {
 /// automation tool) in the calling agent's thread, and waits for their answer: the input they approved.
 pub(super) async fn ask_user(s: &Shared, ctx: &Ctx, tool: &str, input: &Value) -> std::result::Result<Value, ToolError> {
     let what = approval_what(tool, input);
+    let routine = input["profile"].is_object();
     let (kind, of, instead, nothing) = match tool {
         "delete_task" => ("delete_task", "task", "ask the user to delete it on the board", "deleted"),
+        "create_automation" if routine => ("automation", "profile", "ask the user to add it on the assistant's Routines page", "created"),
+        "update_automation" | "delete_automation" if routine => ("automation", "profile", "ask the user to do it on the assistant's Routines page", "changed"),
         "create_automation" => ("automation", "project", "ask the user to add it in the project's settings (Automations)", "created"),
         "update_automation" | "delete_automation" => ("automation", "project", "ask the user to do it in the project's settings (Automations)", "changed"),
         "create_project" => ("project", "board", "ask the user to add it on the board", "added"),

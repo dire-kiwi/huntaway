@@ -67,7 +67,7 @@ pub fn dir(state: &Shared, task_id: &str) -> PathBuf {
 /// Whether a task makes only its documents, rather than changing code: one made as a plan,
 /// artifact or diagram task before they were labels, which works in its own folder.
 pub fn documents_only(task: &Task) -> bool {
-    task.kind == "task" && !task.is_scratch() && !task.is_assistant() && task.work_dir.is_some()
+    task.kind == "task" && !task.is_scratch() && !task.is_assistants() && task.work_dir.is_some()
 }
 
 /// Where a scratch task's agent works (and its shell and wait commands run): the task's own
@@ -112,7 +112,7 @@ pub fn remove(state: &Shared, task_id: &str) {
 /// Whether a tool call only writes to files in the task's own folder, which its agent may do
 /// without asking: that's where it writes its documents (and a scratch task its notes).
 pub fn writes_own_folder(state: &Shared, task: &Task, tool_name: &str, input: &Value) -> bool {
-    let own = task.kind == "task" && (!labels(task).is_empty() || task.is_scratch() || task.is_assistant() || documents_only(task));
+    let own = task.kind == "task" && (!labels(task).is_empty() || task.is_scratch() || task.is_assistants() || documents_only(task));
     if !own || !["Write", "Edit", "MultiEdit", "NotebookEdit"].contains(&tool_name) {
         return false;
     }
@@ -122,8 +122,8 @@ pub fn writes_own_folder(state: &Shared, task: &Task, tool_name: &str, input: &V
     if !file.is_absolute() || file.components().any(|c| c == Component::ParentDir) {
         return false;
     }
-    // The assistant's workspace is its own too (see agent/assistant.rs).
-    let workspace = task.is_assistant().then(|| work_dir(state, task)).flatten();
+    // The assistant's workspace is its own too (see agent/assistant.rs), and its routine threads'.
+    let workspace = task.is_assistants().then(|| work_dir(state, task)).flatten();
     let Some(f) = resolved(file) else { return false };
     [Some(dir(state, &task.id)), workspace].into_iter().flatten().any(|d| resolved(&d).is_some_and(|d| f.starts_with(&d)))
 }
