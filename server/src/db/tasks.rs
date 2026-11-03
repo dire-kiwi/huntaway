@@ -456,10 +456,11 @@ pub fn insert_routine_task(c: &Connection, assistant: &Task, title: &str) -> Res
     Ok(task)
 }
 
-/// A profile's routine threads that finished before `before` and aren't running: the old ones
-/// the board prunes (see automations::prune).
+/// Routine threads with nothing going on since before `before`, whatever their status (done, or
+/// failed, stopped or left asking): the old ones the board prunes (see routines::prune_threads).
+/// Not one whose agent is running, or waiting for its usage limit to reset.
 pub fn old_routine_tasks(c: &Connection, before: &str) -> Result<Vec<Task>> {
-    let mut st = c.prepare("SELECT * FROM tasks WHERE kind='task' AND task_type=?1 AND running=0 AND status='done' AND last_activity_at < ?2")?;
+    let mut st = c.prepare("SELECT * FROM tasks WHERE kind='task' AND task_type=?1 AND running=0 AND waiting=0 AND last_activity_at < ?2")?;
     let rows = st.query_map(params![ROUTINE, before], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }

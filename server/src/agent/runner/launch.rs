@@ -107,9 +107,13 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         text.to_string()
     };
     // The assistant reads its routines' reports since its last turn with the next message.
-    let prompt = match task.is_assistant() && run.kind != "compact" {
-        true => crate::integrations::automations::routines::unread_reports(state, &task.id).map(|r| format!("{r}{prompt}")).unwrap_or(prompt),
-        false => prompt,
+    // They're read once the agent has started with them.
+    let (prompt, reports) = match task.is_assistant() && run.kind != "compact" {
+        true => match crate::integrations::automations::routines::unread_reports(state, &task.id) {
+            Some((r, ids)) => (format!("{r}{prompt}"), ids),
+            None => (prompt, Vec::new()),
+        },
+        false => (prompt, Vec::new()),
     };
     // Every run but a `/compact` takes messages while it works (see `can_steer`); the prompt is
     // its first.
@@ -222,6 +226,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         };
         tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting codex");
         started(state, run, launch).await?;
+        crate::integrations::automations::routines::mark_read(state, &reports);
         rewound(state, task_id, rewind);
         return Ok(());
     }
@@ -322,6 +327,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     };
     tracing::info!(task = task_id, run = %run.id, kind = %run.kind, %cwd, resume = task.session_id.is_some(), "starting claude");
     started(state, run, launch).await?;
+    crate::integrations::automations::routines::mark_read(state, &reports);
     rewound(state, task_id, rewind);
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! Cron expressions for the `cron` trigger: five fields, `minute hour day-of-month month
 //! day-of-week`, each `*`, a number or name, a range (`1-5`), a step (`*/15`, `8-18/2`) or a list
 //! of them (`mon,wed,fri`). Months and weekdays take their first three letters; Sunday is 0 or 7.
-//! As in Vixie cron, when both day fields are restricted a day matching either runs. `@hourly`,
+//! As in Vixie cron, when both day fields are restricted (not starting with `*`) a day matching either runs. `@hourly`,
 //! `@daily`, `@weekly`, `@monthly` and `@yearly` stand for theirs. Times are in the host's time zone.
 
 use super::*;
@@ -84,8 +84,9 @@ impl Cron {
             days: field(f[2], 1, 31, &[], "day of month")? as u32,
             months: field(f[3], 1, 12, MONTHS, "month")? as u16,
             weekdays: field(f[4], 0, 6, DAYS, "day of week")? as u8,
-            any_day: f[2] == "*",
-            any_weekday: f[4] == "*",
+            // `*/2` counts as unrestricted too, as in Vixie cron.
+            any_day: f[2].starts_with('*'),
+            any_weekday: f[4].starts_with('*'),
         })
     }
 

@@ -23,22 +23,47 @@ pub const KEEP_THREAD_DAYS: i64 = 14;
 /// A report in the assistant's thread is cut to this.
 const MAX_REPORT_CHARS: usize = 20_000;
 
-/// Sends routine `a`'s message to its profile's assistant, `mode` deciding where: the thread it
-/// made or messaged.
-pub(super) fn message(s: &Shared, a: &Automation, vars: &Vars, how: &str, message: &str, mode: AssistantMode) -> Result<Option<String>, Outcome> {
+/// Sends routine `a`'s message (for its run `run_id`) to its profile's assistant, `mode` deciding
+/// where: the thread it made or messaged. The run is linked to that thread before its agent starts,
+/// so a run that ends at once still finds it (see `finished`).
+pub(super) fn message(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, how: &str, message: &str, mode: AssistantMode) -> Result<Option<String>, Outcome> {
     let fail = |e: ApiError| Outcome::Failed(None, e.1);
+    let db_fail = |e: rusqlite::Error| Outcome::Failed(None, format!("{e:#}"));
     let assistant = assistant::get_or_create(s, &a.profile_id).map_err(fail)?;
     let (body, untrusted) = render(message, vars, Out::Text);
     let note = if untrusted { untrusted_note(vars, false) } else { String::new() };
     match mode {
         AssistantMode::Thread => {
             let text = format!("From your routine \"{}\", {how}:\n\n{note}{}", a.name, body.trim());
-            crate::agent::runner::send_from_agent(s, &assistant.id, &text).map_err(|e| Outcome::Failed(Some(assistant.id.clone()), e.1))?;
+            // The assistant's run that takes the message is the run's, for its cost: the next to start
+            // (see `claim_next`), unless the message is steered into the one going.
+            s.db().execute("UPDATE automation_runs SET task_id=?2, agent_run_id=?3 WHERE id=?1", params![run_id, assistant.id, NEXT_RUN]).map_err(db_fail)?;
+            let t = match crate::agent::runner::send_from_agent(s, &assistant.id, &text) {
+                Ok(t) => t,
+                Err(e) => {
+                    let _ = s.db().execute("UPDATE automation_runs SET task_id=NULL, agent_run_id=NULL WHERE id=?1", [run_id]);
+                    return Err(Outcome::Failed(None, e.1));
+                }
+            };
+            if let Some(steer) = t.steering.iter().rev().find(|st| st.text == text.trim()) {
+                let _ = s.db().execute("UPDATE automation_runs SET agent_run_id=?2 WHERE id=?1 AND agent_run_id=?3", params![run_id, steer.run_id, NEXT_RUN]);
+            }
             Ok(Some(assistant.id))
         }
         AssistantMode::Fresh => {
             let when = vars.now.with_timezone(&Local).format("%a %-d %b %H:%M");
-            let thread = db::insert_routine_task(&s.db(), &assistant, &format!("{} · {when}", a.name)).map_err(|e| Outcome::Failed(None, format!("{e:#}")))?;
+            let thread = {
+                // Not under an assistant that's being deleted, which would take it along unstopped (see api::Deleting).
+                let deleting = s.deleting.lock().unwrap();
+                if deleting.contains_key(&assistant.id) {
+                    return Err(Outcome::Failed(None, "the assistant is being deleted".into()));
+                }
+                let c = s.db();
+                let thread = db::insert_routine_task(&c, &assistant, &format!("{} · {when}", a.name)).map_err(|e| Outcome::Failed(None, format!("{e:#}")))?;
+                c.execute("UPDATE automation_runs SET task_id=?2 WHERE id=?1", params![run_id, thread.id]).map_err(db_fail)?;
+                drop(deleting);
+                thread
+            };
             s.emit_task(&thread);
             #[cfg(test)]
             crate::testing::reached("routine:thread");
@@ -52,11 +77,36 @@ pub(super) fn message(s: &Shared, a: &Automation, vars: &Vars, how: &str, messag
             );
             if let Err(e) = crate::agent::runner::send_from_agent(s, &thread.id, &text) {
                 // It never started (the host can't run agents, say): an empty thread would only be in the way.
+                let _ = s.db().execute("UPDATE automation_runs SET task_id=NULL WHERE id=?1", [run_id]);
                 let _ = s.db().execute("DELETE FROM tasks WHERE id=?1 AND running=0", [&thread.id]);
                 s.emit(json!({"type": "task_deleted", "id": thread.id, "project_id": Value::Null}));
                 return Err(Outcome::Failed(None, e.1));
             }
             Ok(Some(thread.id))
+        }
+    }
+}
+
+/// What a thread-mode run's `agent_run_id` is until the assistant's next run takes its message.
+const NEXT_RUN: &str = "next";
+
+/// A run of the assistant `task_id` started (not a compaction): the thread-mode routine runs whose
+/// message waited for it are its, for their cost. Called in the transaction that records the run.
+pub fn claim_next(c: &Connection, task_id: &str, run_id: &str) -> rusqlite::Result<usize> {
+    c.execute("UPDATE automation_runs SET agent_run_id=?2 WHERE task_id=?1 AND agent_run_id=?3", params![task_id, run_id, NEXT_RUN])
+}
+
+/// A run of the assistant ended: the thread-mode routine runs it took the messages of record what it cost.
+pub fn assistant_run_ended(s: &Shared, run_id: &str) {
+    let ids: Vec<String> = {
+        let c = s.db();
+        let _ = c.execute("UPDATE automation_runs SET cost_usd=(SELECT cost_usd FROM runs WHERE id=?1) WHERE agent_run_id=?1", [run_id]);
+        let Ok(mut st) = c.prepare("SELECT DISTINCT automation_id FROM automation_runs WHERE agent_run_id=?1") else { return };
+        st.query_map([run_id], |r| r.get(0)).map(|r| r.filter_map(Result::ok).collect()).unwrap_or_default()
+    };
+    for id in ids {
+        if let Ok(Some(a)) = get(&s.db(), &id) {
+            changed(s, &a);
         }
     }
 }
@@ -78,11 +128,13 @@ fn day_start<Tz: TimeZone>(now: DateTime<Utc>, tz: &Tz) -> DateTime<Utc> {
 }
 
 /// What an automation's runs today (in `tz`) have cost: those that have ended as they recorded
-/// it, and those whose thread is still working, as far as they've got.
+/// it, and those whose thread (or for a thread-mode routine, the assistant's run that took its
+/// message) is still working, as far as they've got.
 pub fn spent_today<Tz: TimeZone>(c: &Connection, automation_id: &str, now: DateTime<Utc>, tz: &Tz) -> rusqlite::Result<f64> {
     c.query_row(
-        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, 0)), 0) FROM automation_runs r
+        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, x.cost_usd, 0)), 0) FROM automation_runs r
            LEFT JOIN tasks t ON t.id = r.task_id AND t.task_type = 'routine'
+           LEFT JOIN runs x ON x.id = r.agent_run_id
          WHERE r.automation_id = ?1 AND r.created_at >= ?2",
         params![automation_id, fmt(day_start(now, tz))],
         |r| r.get(0),
@@ -92,15 +144,17 @@ pub fn spent_today<Tz: TimeZone>(c: &Connection, automation_id: &str, now: DateT
 /// What all of an automation's runs kept have cost.
 pub fn spent(c: &Connection, automation_id: &str) -> rusqlite::Result<f64> {
     c.query_row(
-        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, 0)), 0) FROM automation_runs r
+        "SELECT COALESCE(SUM(COALESCE(r.cost_usd, t.cost_usd, x.cost_usd, 0)), 0) FROM automation_runs r
            LEFT JOIN tasks t ON t.id = r.task_id AND t.task_type = 'routine'
+           LEFT JOIN runs x ON x.id = r.agent_run_id
          WHERE r.automation_id = ?1",
         [automation_id],
         |r| r.get(0),
     )
 }
 
-/// A routine's thread from an earlier run that's still working, if any: another run waits for it.
+/// A routine's thread from an earlier run that's still working, or waiting for its usage limit
+/// to reset, if any: another run waits for it.
 pub(super) fn still_running(c: &Connection, a: &Automation) -> rusqlite::Result<Option<Task>> {
     if !matches!(a.action, Action::MessageAssistant { mode: AssistantMode::Fresh, .. }) {
         return Ok(None);
@@ -108,7 +162,7 @@ pub(super) fn still_running(c: &Connection, a: &Automation) -> rusqlite::Result<
     let id: Option<String> = c
         .query_row(
             "SELECT t.id FROM automation_runs r JOIN tasks t ON t.id = r.task_id
-             WHERE r.automation_id = ?1 AND t.task_type = 'routine' AND t.running = 1 ORDER BY r.created_at DESC LIMIT 1",
+             WHERE r.automation_id = ?1 AND t.task_type = 'routine' AND (t.running = 1 OR t.waiting = 1) ORDER BY r.created_at DESC LIMIT 1",
             [&a.id],
             |r| r.get(0),
         )
@@ -203,8 +257,9 @@ pub fn finished(s: &Shared, thread: &Task, outcome: &RunOutcome, attention: Opti
 }
 
 /// The reports posted in the assistant's thread since it last read them, as a preface for its
-/// next prompt, and marks them read; none if there are none.
-pub fn unread_reports(s: &Shared, assistant_id: &str) -> Option<String> {
+/// next prompt, and their messages, to mark read (`mark_read`) once that prompt has gone to its
+/// agent; none if there are none.
+pub fn unread_reports(s: &Shared, assistant_id: &str) -> Option<(String, Vec<i64>)> {
     let reports: Vec<db::Message> = {
         let c = s.db();
         let mut st = c
@@ -230,12 +285,20 @@ pub fn unread_reports(s: &Shared, assistant_id: &str) -> Option<String> {
             d["key"].as_str().unwrap_or(""),
             d["text"].as_str().unwrap_or("").trim()
         ));
-        let mut read = d.clone();
-        read["read"] = json!(true);
-        let _ = db::update_message_data(&s.db(), m.id, &read);
     }
     text.push_str("\n---\n\n");
-    Some(text)
+    Some((text, reports.iter().map(|m| m.id).collect()))
+}
+
+/// The assistant's agent has started with these reports (see `unread_reports`): they're read.
+pub fn mark_read(s: &Shared, ids: &[i64]) {
+    for id in ids {
+        let data: Option<String> = s.db().query_row("SELECT data FROM messages WHERE id=?1", [id], |r| r.get(0)).optional().ok().flatten();
+        if let Some(mut v) = data.and_then(|d| serde_json::from_str::<Value>(&d).ok()) {
+            v["read"] = json!(true);
+            let _ = db::update_message_data(&s.db(), *id, &v);
+        }
+    }
 }
 
 /// Deletes routine threads that finished more than KEEP_THREAD_DAYS ago (their runs and reports

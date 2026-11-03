@@ -811,7 +811,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         };
         let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V79 };
         let mut runs = String::new();
-        for col in ["outcome TEXT", "cost_usd REAL"] {
+        for col in ["outcome TEXT", "cost_usd REAL", "agent_run_id TEXT"] {
             if !has("automation_runs", col.split(' ').next().unwrap())? {
                 runs.push_str(&format!("ALTER TABLE automation_runs ADD COLUMN {col};"));
             }
@@ -819,6 +819,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!(
             "PRAGMA foreign_keys=OFF; BEGIN; {rebuild} {runs}
              CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
+             CREATE INDEX IF NOT EXISTS automation_runs_agent_run ON automation_runs(agent_run_id);
              PRAGMA user_version=79; COMMIT; PRAGMA foreign_keys=ON;"
         ))?;
     }

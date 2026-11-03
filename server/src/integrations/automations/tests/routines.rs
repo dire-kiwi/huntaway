@@ -243,7 +243,8 @@ fn a_quiet_run_posts_nothing_and_a_report_reaches_the_assistant_once() {
         assert_eq!(reports(&s, &assistant.id)[1]["outcome"], "failed");
         assert_eq!(reports(&s, &assistant.id)[1]["text"], "Out of usage");
         // The assistant reads them with its next prompt, once.
-        let unread = routines::unread_reports(&s, &assistant.id).unwrap();
+        let (unread, ids) = routines::unread_reports(&s, &assistant.id).unwrap();
+        routines::mark_read(&s, &ids);
         assert!(unread.contains("\"Inbox\" reported") && unread.contains("Two new mails from the bank") && unread.contains("\"Inbox\" failed"), "{unread}");
         assert_eq!(routines::unread_reports(&s, &assistant.id), None);
     })
@@ -411,24 +412,40 @@ fn deliveries_outside_active_hours_are_skipped_and_a_still_running_thread_holds_
 }
 
 #[test]
-fn old_routine_threads_are_pruned_and_the_workspace_stays() {
+fn old_routine_threads_are_pruned_whatever_their_status_and_the_workspace_stays() {
     testing::run(async || {
         let s = testing::state();
         let p = profile(&s);
         let assistant = assistant::get_or_create(&s, &p.id).unwrap();
         let ws = crate::agent::documents::work_dir(&s, &assistant).unwrap();
         std::fs::write(ws.join("MEMORY.md"), "remember").unwrap();
-        let old = db::insert_routine_task(&s.db(), &assistant, "old").unwrap();
-        let recent = db::insert_routine_task(&s.db(), &assistant, "recent").unwrap();
-        let stuck = db::insert_routine_task(&s.db(), &assistant, "stuck").unwrap();
+        let thread = |status: &str, reason: Option<&str>| {
+            let t = db::insert_routine_task(&s.db(), &assistant, status).unwrap();
+            s.db().execute("UPDATE tasks SET status=?2, attention_reason=?3 WHERE id=?1", params![t.id, status, reason]).unwrap();
+            t
+        };
+        let done = thread("done", None);
+        // A run that failed (out of usage, say), one stopped, and one that asked: all left in Needs attention.
+        let failed = thread("needs_attention", Some("Run failed: boom"));
+        let stopped = thread("needs_attention", Some("Stopped by user"));
+        let asked = thread("needs_attention", Some("Which inbox?"));
+        let recent = thread("needs_attention", Some("Run failed: boom"));
+        let running = thread("in_progress", None);
+        let waiting = thread("in_progress", None);
         let long_ago = fmt(Utc::now() - chrono::TimeDelta::days(routines::KEEP_THREAD_DAYS + 1));
-        s.db().execute("UPDATE tasks SET status='done' WHERE id IN (?1, ?2)", params![old.id, recent.id]).unwrap();
-        s.db().execute("UPDATE tasks SET last_activity_at=?2 WHERE id IN (?1, ?3)", params![old.id, long_ago, stuck.id]).unwrap();
+        for t in [&done, &failed, &stopped, &asked, &running, &waiting] {
+            s.db().execute("UPDATE tasks SET last_activity_at=?2 WHERE id=?1", params![t.id, long_ago]).unwrap();
+        }
+        s.db().execute("UPDATE tasks SET running=1 WHERE id=?1", [&running.id]).unwrap();
+        // Waiting for its usage limit to reset.
+        s.db().execute("UPDATE tasks SET waiting=1 WHERE id=?1", [&waiting.id]).unwrap();
         routines::prune_threads(&s, Utc::now()).await;
-        let left = |id: &str| db::get_task(&s.db(), id).unwrap().is_some();
-        assert!(!left(&old.id));
-        // Recent ones stay, and so do ones still waiting on the user.
-        assert!(left(&recent.id) && left(&stuck.id) && left(&assistant.id));
+        let left = |t: &db::Task| db::get_task(&s.db(), &t.id).unwrap().is_some();
+        for t in [&done, &failed, &stopped, &asked] {
+            assert!(!left(t), "{}", t.title);
+        }
+        // Recent ones stay, as do ones still going or waiting.
+        assert!(left(&recent) && left(&running) && left(&waiting) && left(&assistant));
         assert_eq!(std::fs::read_to_string(ws.join("MEMORY.md")).unwrap(), "remember");
     })
 }
@@ -505,4 +522,154 @@ fn deleting_the_assistant_stops_its_routine_threads_first() {
         // Its agent was stopped, not left running for a thread that's gone.
         assert!(!s.is_running(&t.id));
     })
+}
+
+/// Makes `task_id` look as if its agent were running a run (`run`) that takes messages as it works.
+fn steerable_run(s: &Shared, task_id: &str) -> crate::db::Run {
+    let run = db::insert_run(&s.db(), task_id, "prompt").unwrap();
+    s.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
+    let dir = crate::agent::runs::run_dir(s, &run.id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("out.jsonl"), "").unwrap();
+    std::fs::write(dir.join("input.jsonl"), "").unwrap();
+    s.runs.lock().unwrap().insert(task_id.to_string(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
+    s.update_task(task_id, &[("running", json!(true))]).unwrap();
+    run
+}
+
+#[test]
+fn a_thread_mode_routines_runs_are_charged_what_the_assistants_run_cost() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        let a = routine(
+            &s,
+            &p.id,
+            json!({"name": "Ping", "trigger": {"kind": "interval", "every_minutes": 60}, "budget_usd": 1.0,
+                   "action": {"kind": "message_assistant", "mode": "thread", "message": "ping"}}),
+        )
+        .unwrap();
+        // Steered into the assistant's run that's going: that run is the routine run's.
+        let run = steerable_run(&s, &assistant.id);
+        let now = Utc::now();
+        set_next(&s, &a, now - chrono::TimeDelta::seconds(1));
+        tick(&s, now).await;
+        let r = last_run(&s, &a);
+        assert_eq!((r.status.as_str(), r.task_id.as_deref()), ("ok", Some(assistant.id.as_str())));
+        let linked = |id: &str| s.db().query_row("SELECT agent_run_id FROM automation_runs WHERE id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+        assert_eq!(linked(&r.id).as_deref(), Some(run.id.as_str()));
+        // While it works, what it's cost so far counts (and not the assistant's earlier runs).
+        s.db().execute("UPDATE tasks SET cost_usd=50 WHERE id=?1", [&assistant.id]).unwrap();
+        s.db().execute("UPDATE runs SET cost_usd=0.4 WHERE id=?1", [&run.id]).unwrap();
+        assert!((routines::spent_today(&s.db(), &a.id, now, &Local).unwrap() - 0.4).abs() < 1e-9);
+        // It ends having cost $1.50, which the routine's run records.
+        s.db().execute("UPDATE runs SET cost_usd=1.5 WHERE id=?1", [&run.id]).unwrap();
+        crate::agent::runner::finish(&s, &run.id, RunOutcome::Ok);
+        assert_eq!(get_run(&s.db(), &r.id).unwrap().unwrap().cost_usd, Some(1.5));
+        let listed = list_routines_handler(State(s.clone()), Path(p.id.clone())).await.unwrap().0;
+        assert_eq!(listed["automations"][0]["cost_today_usd"], json!(1.5));
+        // So the next scheduled run is over budget.
+        set_next(&s, &a, now - chrono::TimeDelta::seconds(1));
+        tick(&s, now).await;
+        let r = last_run(&s, &a);
+        assert_eq!(r.status, "skipped");
+        assert!(r.detail.as_deref().unwrap().starts_with("Skipped: over budget"), "{:?}", r.detail);
+
+        // Queued behind a run that doesn't take messages, it's the next run's.
+        let b = routine(&s, &p.id, json!({"name": "Queued", "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "message_assistant", "mode": "thread", "message": "q"}}))
+            .unwrap();
+        busy(&s, &assistant.id);
+        let q = run_handler(State(s.clone()), Path(b.id.clone()), None).await.unwrap().0;
+        let q = q["id"].as_str().unwrap().to_string();
+        assert_eq!(linked(&q).as_deref(), Some("next"));
+        let next = db::insert_run(&s.db(), &assistant.id, "prompt").unwrap();
+        routines::claim_next(&s.db(), &assistant.id, &next.id).unwrap();
+        assert_eq!(linked(&q).as_deref(), Some(next.id.as_str()));
+        s.db().execute("UPDATE runs SET cost_usd=0.25 WHERE id=?1", [&next.id]).unwrap();
+        routines::assistant_run_ended(&s, &next.id);
+        assert_eq!(get_run(&s.db(), &q).unwrap().unwrap().cost_usd, Some(0.25));
+    })
+}
+
+#[test]
+fn a_fresh_run_that_ends_before_its_send_returns_still_records_how_it_went() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let a = routine(&s, &p.id, json!({"name": "Fast", "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "message_assistant", "message": "x"}})).unwrap();
+        // The thread's run ends (on another worker, say) before the send that started it has returned.
+        let s2 = s.clone();
+        testing::when("routine:thread", move || {
+            let id: String = s2.db().query_row("SELECT id FROM tasks WHERE task_type='routine'", [], |r| r.get(0)).unwrap();
+            busy(&s2, &id);
+            said(&s2, &id, "Done already.");
+            let t = db::get_task(&s2.db(), &id).unwrap().unwrap();
+            routines::finished(&s2, &t, &RunOutcome::Ok, None);
+        });
+        let r = run_handler(State(s.clone()), Path(a.id.clone()), None).await.unwrap().0;
+        let r = get_run(&s.db(), r["id"].as_str().unwrap()).unwrap().unwrap();
+        assert_eq!((r.status.as_str(), r.outcome.as_deref()), ("ok", Some("reported")));
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        assert_eq!(reports(&s, &assistant.id)[0]["automation_id"], json!(a.id));
+    })
+}
+
+#[test]
+fn a_routine_thread_waiting_on_its_usage_limit_holds_back_the_next_run() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        let a = routine(&s, &p.id, json!({"name": "Inbox", "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "message_assistant", "message": "x"}})).unwrap();
+        let t = db::insert_routine_task(&s.db(), &assistant, "w").unwrap();
+        s.db().execute("UPDATE tasks SET waiting=1, running=0 WHERE id=?1", [&t.id]).unwrap();
+        let mut r = Run::new(&a.id, "schedule", "ok", Utc::now());
+        r.task_id = Some(t.id.clone());
+        insert_run(&s.db(), &r).unwrap();
+        set_next(&s, &a, Utc::now() - chrono::TimeDelta::seconds(1));
+        tick(&s, Utc::now()).await;
+        let r = last_run(&s, &a);
+        assert_eq!((r.status.as_str(), r.detail), ("skipped", Some(format!("Skipped: its last run (A-{}) is still going", t.number))));
+    })
+}
+
+#[test]
+fn no_routine_thread_is_made_under_an_assistant_being_deleted() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        let a = routine(&s, &p.id, json!({"name": "Inbox", "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "message_assistant", "message": "x"}})).unwrap();
+        let deleting = api::Deleting::new(&s, &assistant.id);
+        let r = run_handler(State(s.clone()), Path(a.id.clone()), None).await.unwrap().0;
+        assert_eq!(r["status"], "failed");
+        assert!(r["detail"].as_str().unwrap().contains("being deleted"), "{r}");
+        assert_eq!(s.db().query_row("SELECT COUNT(*) FROM tasks WHERE task_type='routine'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        drop(deleting);
+    })
+}
+
+#[test]
+fn reports_stay_unread_until_the_assistant_has_started_with_them() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        s.add_message(&assistant.id, "report", json!({"automation": "Inbox", "key": "A-2", "outcome": "reported", "text": "New mail."})).unwrap();
+        // A launch that fails before the agent starts reads them again next time.
+        let (text, ids) = routines::unread_reports(&s, &assistant.id).unwrap();
+        assert!(text.contains("New mail."));
+        assert_eq!(routines::unread_reports(&s, &assistant.id).unwrap().1, ids);
+        routines::mark_read(&s, &ids);
+        assert_eq!(routines::unread_reports(&s, &assistant.id), None);
+    })
+}
+
+#[test]
+fn a_day_field_that_starts_with_a_star_is_unrestricted() {
+    // 2026-09-28 is a Monday: `*/2` doesn't make every other day a match beside Mondays.
+    let next = |e: &str, after: DateTime<Utc>| next_after(&cron(e), after, &Nz).unwrap();
+    assert_eq!(next("0 9 */2 * mon", nz("2026-09-25 10:00")), nz("2026-09-28 09:00"));
+    assert_eq!(next("0 9 1 * */2", nz("2026-09-25 10:00")), nz("2026-10-01 09:00"));
 }

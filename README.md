@@ -1870,10 +1870,13 @@ failed, or asks the user something, is posted too. The assistant reads the repor
 with your next message, so a routine's work stays out of its context. A routine's run is recorded
 with how its agent ended (`outcome`: quiet, reported, asked, stopped or failed) and what it cost;
 the tab shows each routine's next run, last result, cost today and in all, and Run now, pause, edit
-and delete. While a run's thread is still working, the next scheduled one is skipped. Routine
-threads are off the boards and the task lists, open from their report or run by their link, and are
-deleted 14 days after they finish (their runs and reports stay). With `mode: thread` the message
-goes to the assistant's own thread instead, as `send_to_task` does. The automation tools take
+and delete. While a run's thread is still working (or waiting for its usage limit to reset), the
+next scheduled one is skipped. Routine threads are off the boards and the task lists, open from
+their report or run by their link, and are deleted 14 days after their last activity, whatever
+their status (done, failed, stopped or left asking; their runs and reports stay). With
+`mode: thread` the message goes to the assistant's own thread instead, as `send_to_task` does, and
+the run is charged what the assistant's run that took the message cost (the whole run, if it took
+other messages too), toward its budget. The automation tools take
 routines too (`routines: true`, or an action of kind `message_assistant`; the assistant's own calls
 are about its routines by default), for the caller's own profile only, and changing one asks the
 user as for any automation. The assistant is told to make "remind me…" an *at* routine.

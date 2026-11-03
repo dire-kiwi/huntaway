@@ -22,7 +22,7 @@ pub(super) async fn run_action(s: &Shared, a: &Automation, run_id: &str, source:
     let result = match guards(s, a, source, now).await {
         Ok(precheck) => {
             let vars = Vars { automation: a, source, delivery, count, now, precheck: precheck.as_deref() };
-            act(s, a, &vars, event.as_deref())
+            act(s, a, run_id, &vars, event.as_deref())
         }
         Err(o) => Err(o),
     };
@@ -69,7 +69,7 @@ async fn guards(s: &Shared, a: &Automation, source: &str, now: DateTime<Utc>) ->
 
 /// The task the automation's action made or messaged, or why it couldn't (with the task, if it
 /// made one but couldn't start it).
-fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<Option<String>, Outcome> {
+fn act(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, event: Option<&str>) -> Result<Option<String>, Outcome> {
     let fail = |e: ApiError| Outcome::Failed(None, e.1);
     let how = how(vars.source, event);
     let project = match &a.project_id {
@@ -85,7 +85,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
             let Action::MessageAssistant { message, mode } = &a.action else {
                 return Err(Outcome::Failed(None, "a routine can only message the assistant".into()));
             };
-            return routines::message(s, a, vars, &how, message, *mode);
+            return routines::message(s, a, run_id, vars, &how, message, *mode);
         }
     };
     match &a.action {
