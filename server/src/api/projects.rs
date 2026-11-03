@@ -475,13 +475,18 @@ fn key_owner<'a>(projects: &'a [db::Project], project_id: Option<&str>, key: &st
     projects.iter().find(|p| Some(p.id.as_str()) != project_id && uses(p))
 }
 
-/// Group tasks' keys are `G-<n>` and scratch tasks' `S-<n>`, so no project can have the key G or S.
+/// Group tasks' keys are `G-<n>`, scratch tasks' `S-<n>` and assistants' `A-<n>`, so no project can
+/// have the key G, S or A.
 fn reserved(key: &str) -> bool {
-    key == runner::GROUP_TASK_KEY || key == db::SCRATCH_TASK_KEY
+    key == runner::GROUP_TASK_KEY || key == db::SCRATCH_TASK_KEY || key == db::ASSISTANT_TASK_KEY
 }
 
 fn reserved_key(key: &str) -> ApiError {
-    let by = if key == db::SCRATCH_TASK_KEY { "scratch tasks" } else { "group tasks" };
+    let by = match key {
+        db::SCRATCH_TASK_KEY => "scratch tasks",
+        db::ASSISTANT_TASK_KEY => "the assistant",
+        _ => "group tasks",
+    };
     ApiError::bad(format!("the key {key} is used by {by}; pick another"))
 }
 

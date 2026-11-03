@@ -17,8 +17,15 @@ pub(super) async fn list_project_tasks(State(s): State<Shared>, Path(id): Path<S
     Ok(Json(json!(db::list_tasks_for_project(&c, &id, &kind)?)))
 }
 
-pub(super) async fn list_profile_tasks(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(db::list_tasks_for_profile(&s.db(), &id)?)))
+#[derive(Deserialize)]
+pub(super) struct ProfileTasksQuery {
+    /// With the profile's assistant (API 96), which is left out otherwise, being off the board.
+    #[serde(default)]
+    include_assistant: bool,
+}
+
+pub(super) async fn list_profile_tasks(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ProfileTasksQuery>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(db::list_tasks_for_profile(&s.db(), &id, q.include_assistant)?)))
 }
 
 pub(super) async fn list_profile_scratch(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -47,10 +54,14 @@ pub(super) async fn update_task(State(s): State<Shared>, Path(id): Path<String>,
 
 pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> ApiResult<db::Task> {
     let current = db::get_task(&s.db(), id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    // The profile's assistant lasts: it's never reviewed, merged, done or parked (see agent/assistant.rs).
+    if current.is_assistant() && b.get("status").and_then(Value::as_str).is_some_and(|st| assistant::NOT_FOR_ASSISTANT.contains(&st) && st != current.status) {
+        return Err(ApiError::bad("the assistant can't go to review, merge, Done or Backlog"));
+    }
     // A task with no changes to merge (and so no pull request) skips the merge and is done.
     let to_merge = b.get("status").and_then(Value::as_str) == Some("ready_for_merge") && current.status != "ready_for_merge" && current.kind == "task";
     // A scratch task, or one that makes only documents (which the board keeps), has nothing to merge.
-    let own_folder = current.is_scratch() || documents::documents_only(&current);
+    let own_folder = current.is_scratch() || current.is_assistant() || documents::documents_only(&current);
     let nothing_to_merge = to_merge && (own_folder || !worktree::has_work_to_merge(s, &current).await);
     let mut fields = pick(
         b,

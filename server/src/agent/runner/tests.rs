@@ -1060,6 +1060,23 @@ fn a_group_task_is_told_its_groups_projects() {
 }
 
 #[test]
+fn the_assistant_is_told_what_it_is() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let task = crate::agent::assistant::get_or_create(&s, &p.id).unwrap();
+        let text = system_prompt(&task, None, None, &[], &[], None, true);
+        assert!(text.contains(&format!("thread A-1 (id {})", task.id)), "{text}");
+        assert!(text.contains("personal assistant") && text.contains("aren't a coding agent"), "{text}");
+        assert!(text.contains(&format!("(assistants/{} in the board's data dir)", task.id)), "{text}");
+        assert!(text.contains("`create_task`") && text.contains("list_projects") && text.contains("request_user_input"), "{text}");
+        assert!(!text.contains("In review\"."), "{text}");
+        assert_paragraphs(&text);
+        assert!(start_prompt(&task, None, "Hi").starts_with("# A-1: Assistant\n"));
+    });
+}
+
+#[test]
 fn previews_what_a_new_thread_in_a_project_is_told() {
     crate::testing::run(async || {
         let state = crate::testing::state();

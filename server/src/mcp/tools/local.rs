@@ -47,7 +47,9 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
                     let mut tasks = Vec::new();
                     for b in boards {
                         let archived: Vec<String> = db::list_projects(&s.db(), &b.id)?.into_iter().filter(|p| p.archived_at.is_some()).map(|p| p.id).collect();
-                        let list = db::list_tasks_for_profile(&s.db(), &b.id)?;
+                        // The assistant only when asked for, and only the caller's own (see agent/assistant.rs).
+                        let assistant = args["include_assistant"].as_bool() == Some(true) && ctx.is_own(&b);
+                        let list = db::list_tasks_for_profile(&s.db(), &b.id, assistant)?;
                         tasks.extend(list.into_iter().filter(|t| t.project_id.as_ref().is_none_or(|p| !archived.contains(p))));
                     }
                     tasks

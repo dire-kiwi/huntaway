@@ -578,7 +578,7 @@ fn scratch_tasks_get_their_marks_too() {
         assert!(t.starred && t.remind_at.is_some(), "{t:?}");
         assert_eq!(t.reminder.as_deref(), Some("Come back to this"));
         // Bad ones fail before it's made.
-        let count = || db::list_tasks_for_profile(&s.db(), &p.id).unwrap().len();
+        let count = || db::list_tasks_for_profile(&s.db(), &p.id, false).unwrap().len();
         let before = count();
         for bad in [json!({"remind_at": "whenever"}), json!({"reminder": "No time"}), json!({"starred": "yes"})] {
             assert!(call(&s, &me, "create_task", scratch(bad.clone())).await.is_err(), "{bad}");
@@ -1269,6 +1269,46 @@ fn scratch_tasks_are_made_in_no_project_unless_given_one() {
         let them = Ctx { task: Some(worker), ..ctx(&p) };
         let t = call(&s, &them, "create_task", json!({"title": "Elsewhere", "type": "scratch"})).await.unwrap();
         assert_eq!((t["key"].as_str(), &t["project_id"]), (Some("S-2"), &Value::Null));
+    });
+}
+
+#[test]
+fn only_its_own_profiles_agents_reach_the_assistant() {
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        let work = insert_profile(&s.db(), "work", &[], None).unwrap();
+        project(&s, &p, "web", "WEB");
+        project(&s, &work, "sd", "SD");
+        task(&s, "web", "build");
+        task(&s, "sd", "deploy");
+        let mine = crate::agent::assistant::get_or_create(&s, &p.id).unwrap();
+        let theirs = crate::agent::assistant::get_or_create(&s, &work.id).unwrap();
+        // Each lets the other's agents in.
+        grant(&s, &p, &["work"]);
+        grant(&s, &work, &["personal"]);
+        let me = ctx(&p);
+        // Off list_tasks unless it's asked for, and then only the caller's own.
+        assert_eq!(keys(&call(&s, &me, "list_tasks", json!({"project_id": "all"})).await.unwrap(), "key"), ["personal:WEB-1"]);
+        let all = call(&s, &me, "list_tasks", json!({"project_id": "all", "include_assistant": true})).await.unwrap();
+        assert_eq!(keys(&all, "key"), ["personal:A-1", "personal:WEB-1"]);
+        assert_eq!(all[0]["type"], "assistant");
+        let every = call(&s, &me, "list_tasks", json!({"project_id": "all", "profile": "all", "include_assistant": true})).await.unwrap();
+        assert_eq!(keys(&every, "key"), ["personal:A-1", "personal:WEB-1", "work:SD-1"]);
+        // By key or id, its own and not the other profile's.
+        assert_eq!(call(&s, &me, "get_task", json!({"task_id": "A-1"})).await.unwrap()["id"], json!(mine.id));
+        assert_eq!(call(&s, &me, "get_task", json!({"task_id": mine.id})).await.unwrap()["key"], "A-1");
+        for r in ["work:A-1", theirs.id.as_str()] {
+            assert!(call(&s, &me, "get_task", json!({"task_id": r})).await.is_err(), "{r}");
+            assert!(call(&s, &me, "send_to_task", json!({"task_id": r, "message": "hi"})).await.is_err(), "{r}");
+            assert!(call(&s, &me, "update_task", json!({"task_id": r, "title": "Mine now"})).await.is_err(), "{r}");
+            assert!(call(&s, &me, "delete_task", json!({"task_id": r})).await.is_err(), "{r}");
+        }
+        assert!(call(&s, &me, "get_task", json!({"task_id": "A-1", "profile": "work"})).await.is_err());
+        assert!(handle_remote(&s, "get_task", "personal", json!({"task_id": theirs.id}), true).await.is_err());
+        assert_eq!(db::get_task(&s.db(), &theirs.id).unwrap().unwrap().title, "Assistant");
+        // The other profile's own agents reach theirs.
+        assert_eq!(call(&s, &ctx(&work), "get_task", json!({"task_id": "A-1"})).await.unwrap()["id"], json!(theirs.id));
     });
 }
 
