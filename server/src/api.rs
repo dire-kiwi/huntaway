@@ -108,6 +108,7 @@ fn host_routes() -> Router<Shared> {
         .route("/claude-configs/{id}", axum::routing::patch(update_claude_config).delete(delete_claude_config))
         .route("/profiles/{id}/projects", get(list_projects).post(create_project))
         .route("/profiles/{id}/projects/clone", post(clone_project))
+        .route("/profiles/{id}/projects/github", post(create_github_project))
         .route("/profiles/{id}/tasks", get(list_profile_tasks).post(create_scratch_task))
         // Scratch chats, of which there are none since they became scratch tasks (for older boards).
         .route("/profiles/{id}/scratch", get(list_profile_scratch))
