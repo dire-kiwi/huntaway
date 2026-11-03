@@ -90,7 +90,7 @@ export interface AutomationView {
   signed: boolean;
   target?: { id: string; key: string; title: string; status: Status };
   config?: { id: string; name: string; agent: string };
-  /** API 100: what a run is checked against first. */
+  /** API 101: what a run is checked against first. */
   active_hours?: ActiveHours;
   precheck?: string;
   budget_usd?: number;
@@ -101,7 +101,7 @@ export interface AutomationChange {
   op: "create" | "update" | "delete";
   /** The project, for a project's automation. */
   project?: { id: string; key: string; name: string; host?: string };
-  /** The profile, for a routine (API 100). */
+  /** The profile, for a routine (API 101). */
   profile?: { id: string; name: string; host?: string };
   /** The thread that asked. */
   task: { id: string; key?: string; title: string } | null;

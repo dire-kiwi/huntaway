@@ -572,7 +572,7 @@ function inputOf(d: Draft, existing: Automation | null, labelling: boolean, rout
         ? { kind: "send_to_task", task_id: d.taskId, message: d.message }
         : { kind: "message_assistant", message: d.message, mode: d.mode };
   const b: AutomationInput = { name: d.name, enabled: d.enabled, trigger, action };
-  // A host before API 100 has none of these.
+  // A host before API 101 has none of these.
   if (routines) {
     b.active_hours = d.active ? { start: d.activeStart, end: d.activeEnd, weekdays: d.activeDays.length === 7 ? [] : WEEKDAYS.filter((w) => d.activeDays.includes(w)) } : null;
     b.precheck = d.precheck.trim() || null;
@@ -977,7 +977,7 @@ export function AutomationEditor({
   );
 }
 
-/** What a run is checked against first (API 100): the hours it may start in, a precheck command and a budget a day. */
+/** What a run is checked against first (API 101): the hours it may start in, a precheck command and a budget a day. */
 function GuardFields({ draft: d, set, routine }: { draft: Draft; set: <K extends keyof Draft>(k: K, v: Draft[K]) => void; routine: boolean }) {
   return (
     <div className="space-y-3 rounded-lg border border-line/70 p-3" data-testid="guards">

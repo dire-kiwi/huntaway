@@ -25,7 +25,7 @@ export type Item =
   | { type: "tools"; key: string; calls: Call[] }
   | { type: "result"; key: string; data: Any }
   | { type: "compact"; key: string; meta: Any; summary?: string; result?: Any }
-  /** A routine's report, posted in the assistant's thread (API 100). */
+  /** A routine's report, posted in the assistant's thread (API 101). */
   | { type: "report"; key: string; data: Any };
 
 export interface ThreadModel {

@@ -248,13 +248,15 @@ pub fn apply_mode_to_pending(s: &Shared, task: &Task) -> ApiResult<()> {
 }
 
 /// Prompts waiting for an answer, oldest first: all of this host's, or one task's.
-pub fn pending(s: &Shared, task_id: Option<&str>) -> ApiResult<Vec<Value>> {
+/// Pending prompts, of one task, or of one profile's tasks with `profile_id` (API 100).
+pub fn pending(s: &Shared, task_id: Option<&str>, profile_id: Option<&str>) -> ApiResult<Vec<Value>> {
     let c = s.db();
     let mut st = c.prepare(
         "SELECT id, task_id, tool_name, input, created_at FROM permission_requests
-         WHERE status='pending' AND (?1 IS NULL OR task_id=?1) ORDER BY created_at, rowid",
+         WHERE status='pending' AND (?1 IS NULL OR task_id=?1)
+           AND (?2 IS NULL OR task_id IN (SELECT id FROM tasks WHERE profile_id=?2)) ORDER BY created_at, rowid",
     )?;
-    let rows = st.query_map([task_id], |r| {
+    let rows = st.query_map([task_id, profile_id], |r| {
         let input: String = r.get(3)?;
         Ok(json!({
             "id": r.get::<_, String>(0)?,

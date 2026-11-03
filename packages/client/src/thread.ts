@@ -50,7 +50,7 @@ export interface ContextDetail {
 export interface Message {
   id: number;
   task_id: string;
-  /** `question`: one asked with request_user_input (API 64). `report`: a routine's report in the assistant's thread (API 100). */
+  /** `question`: one asked with request_user_input (API 64). `report`: a routine's report in the assistant's thread (API 101). */
   kind: "user" | "claude" | "event" | "permission" | "question" | "report";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
@@ -145,7 +145,20 @@ export interface RewindResult {
 /** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
 export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
 
+/** A permission prompt waiting for the user, as `GET /permissions` lists them. */
+export interface PendingPermission {
+  id: string;
+  task_id: string;
+  tool_name: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  input: any;
+  created_at: string;
+}
+
 export const threadApi = ({ on }: Http) => ({
+  /** Pending permission prompts, oldest first: a task's, or (API 100) one profile's; all of the host's without either. */
+  pendingPermissions: (h: string, q: { task_id?: string; profile_id?: string } = {}) =>
+    on(h).get<PendingPermission[]>(`/permissions?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null) as [string, string][])}`),
   messages: (h: string, id: string) => on(h).get<Message[]>(`/tasks/${enc(id)}/messages`),
   /**
    * The latest messages with ids between `after` and `before` (API 56): with a `limit`, that many of the

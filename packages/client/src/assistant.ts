@@ -19,7 +19,7 @@ export const hasMemory = (h: Host | undefined) => hostSupports(h, MEMORY_API);
 
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "assistant";
 
-/** A routine's run of the assistant (API 100): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
+/** A routine's run of the assistant (API 101): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
 export const isRoutine = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "routine";
 
 /** The assistant or one of its routine threads: off the board. */

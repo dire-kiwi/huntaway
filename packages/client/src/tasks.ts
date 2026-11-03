@@ -228,7 +228,7 @@ export interface Task {
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
   /** What the task is, if not a code task: a scratch task (API 47), the profile's assistant (API 97, see `isAssistant`) or
-   *  a routine's run of it (API 100, see `isRoutine`).
+   *  a routine's run of it (API 101, see `isRoutine`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
   task_type?: TaskType | "assistant" | "routine" | DocumentType | null;
@@ -449,6 +449,8 @@ export const tasksApi = ({ on, storage }: Http) => ({
       fanout_id?: string;
     },
   ) => on(h).post<Task>(`/profiles/${enc(profileId)}/tasks`, b),
+  /** All of the profile's tasks (not reviews), in every project and none. */
+  profileTasks: (h: string, profileId: string) => on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
    *  assistant (API 97), which is off the board. */
   groupTasks: (h: string, profileId: string, assistant = false) =>

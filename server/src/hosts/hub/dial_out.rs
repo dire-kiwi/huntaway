@@ -205,6 +205,12 @@ async fn relay_local(s: &Shared, id: u64, path: &str, mut from_hub: mpsc::Unboun
 
 /// Run a request against this node's own host API (as an authenticated caller).
 pub(super) async fn local_request(s: &Shared, method: &str, path: &str, body: Option<Vec<u8>>) -> Result<(u16, Value)> {
+    local_request_as(s, method, path, body, None).await
+}
+
+/// `local_request` for a paired device's request through the hub's proxy, which carries the device along, so the
+/// handlers that never serve one (`devices::board_only`) know it's one.
+pub(super) async fn local_request_as(s: &Shared, method: &str, path: &str, body: Option<Vec<u8>>, device: Option<crate::devices::DeviceAuth>) -> Result<(u16, Value)> {
     let router: Router = s.local_router.get().context("router not ready")?.clone();
     let mut req = axum::http::Request::builder()
         .method(method)
@@ -213,6 +219,9 @@ pub(super) async fn local_request(s: &Shared, method: &str, path: &str, body: Op
         .header("content-type", "application/json")
         .body(Body::from(body.unwrap_or_default()))?;
     req.extensions_mut().insert(axum::extract::ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], 0))));
+    if let Some(device) = device {
+        req.extensions_mut().insert(device);
+    }
     let res = router.oneshot(req).await?;
     let status = res.status().as_u16();
     let bytes = axum::body::to_bytes(res.into_body(), 64 << 20).await?;

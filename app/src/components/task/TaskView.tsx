@@ -128,7 +128,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     setTab(openingTab(useStore.getState().tasks[taskId]));
     setMounted([]);
   }, [taskId, found]);
-  // A thread off every list the board loads (a routine's run of the assistant, API 100) is fetched by itself, from the
+  // A thread off every list the board loads (a routine's run of the assistant, API 101) is fetched by itself, from the
   // hosts that have them, when it's opened by its link.
   const [seeking, setSeeking] = useState(false);
   useEffect(() => {
@@ -186,7 +186,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
   const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
-  // The assistant's memory files (API 99), and its routines (API 100).
+  // The assistant's memory files (API 99), and its routines (API 101).
   if (assistant && hasMemory(host)) tabs.push("memory");
   if (assistant && hasRoutines(host)) tabs.push("routines");
   const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant && !routine;

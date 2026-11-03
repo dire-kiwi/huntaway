@@ -451,7 +451,7 @@ fn old_routine_threads_are_pruned_whatever_their_status_and_the_workspace_stays(
 }
 
 #[test]
-fn a_database_at_version_78_keeps_its_automations_and_runs() {
+fn a_database_at_version_79_keeps_its_automations_and_runs() {
     let path = testing::temp_dir().join("huntaway.db");
     {
         let c = crate::db::open(&path).unwrap();
@@ -466,7 +466,7 @@ fn a_database_at_version_78_keeps_its_automations_and_runs() {
                id TEXT PRIMARY KEY, automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE, source TEXT NOT NULL,
                status TEXT NOT NULL, detail TEXT, task_id TEXT, delivery_id TEXT, event TEXT, count INTEGER NOT NULL DEFAULT 1,
                batch_key TEXT, batch_id TEXT, payload TEXT, due_at TEXT, created_at TEXT NOT NULL, finished_at TEXT);
-             PRAGMA user_version=78;
+             PRAGMA user_version=79;
              INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
              INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at) VALUES ('pr','p','P','P','/x','/s','/w','1');
              INSERT INTO automations VALUES ('a1','pr','Nightly',1,'{\"kind\":\"interval\",\"every_minutes\":60}','{\"kind\":\"create_task\",\"title\":\"x\"}',

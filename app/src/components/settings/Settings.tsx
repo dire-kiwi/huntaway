@@ -6,6 +6,7 @@ import { ArchivedProjectsPanel } from "./ArchivedProjects";
 import { ClaudeConfigsPanel } from "./ClaudeConfigs";
 import { HostsPanel, ProfilesPanel } from "./Hosts";
 import { NotificationsPanel } from "../layout/Notifications";
+import { DevicesPanel } from "./Devices";
 import { ServerPanel } from "./Server";
 import { Button, Input, MenuButton } from "../ui";
 
@@ -58,6 +59,7 @@ export function Settings() {
                   Copy
                 </Button>
               </div>
+              <DevicesPanel />
               {info && (
                 <div className="text-faint">
                   Data directory: <span className="font-mono">{info.data_dir}</span> · v{info.version}

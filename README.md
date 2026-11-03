@@ -14,6 +14,7 @@ server/broker/ huntaway-broker: public connection setup with managed tunnels, or
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 packages/client/ the board's API client, plain TypeScript with no DOM, shared by app/ (which links it, file:) and the
                mobile app: createClient() makes a client for one board, from an adapter for its address and token
+mobile/        the mobile app (Expo, React Native, Expo Router): your paired boards on Android and iOS
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)
@@ -420,6 +421,66 @@ linked host is then answered through the link, as the UI's `/api/h/<host>/permis
 The first answer settles it: a token stops working once its prompt has been answered (from a
 notification, the board or anywhere else) or has expired with its run. If the host is offline the
 token still works later, and the notification keeps its buttons.
+
+### The mobile app
+
+`mobile/` is an Expo app for Android and iOS (API 100) that follows and drives your tasks on several
+boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
+paired board together, each item labelled with its board (tasks that need attention, permission
+prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
+project's tasks by status and a sheet to add one; and each task's **thread**, with the agent's
+reply streaming in, the composer, photos from the camera or library as attachments, and start,
+stop and move. A **Boards** tab lists the paired boards, picks the profile shown on each, and opens
+a board on the web for what the app leaves out (terminals, diffs and commits, settings,
+analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
+the network changes. A board older than API 100 says so rather than failing.
+
+The phone reaches a board over **HTTPS**: iOS and Android refuse plain HTTP, and the app adds no
+exception. With Tailscale, run `tailscale serve --bg 7878` on the board's machine, as for push
+(see *Push notifications on a phone*). Then pair:
+
+1. On the board, Settings → Network access → **Pair a phone**, and check the address it shows
+   (the host's public address if it has one, else the page's own if that's HTTPS).
+2. In the app, Boards → **Pair a board**, and scan the QR code (or paste the link under it).
+
+The QR code holds `huntaway://pair?url=<board>&code=<code>`: a code that works once, for five
+minutes, never the board's token. `POST /devices/pair` (which needs no token) swaps it and the
+phone's name for a token of the phone's own, which the app keeps in the keychain (Android's
+keystore). The board keeps only its SHA-256, in `device_tokens`, and takes it as it takes
+`auth_token`, on REST, `/ws` and `/api/h/<host>/…`. Settings lists the paired devices, with their
+last use, to rename or revoke; revoking one cuts it off at once, open websockets included, and the
+app then says it was unpaired. A device can't pair others or manage them (`POST
+/devices/pairing`, `PATCH` and `DELETE /devices/{id}` are for the board's own token), but it can
+list them and unpair itself, which removing the board in the app does. Pairing the same board again
+unpairs the phone's old token there. A device can only use the routes the app does (`HUB` and
+`HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, attachments,
+permission prompts, the board's events and hosts, and the devices list, on every profile, on the
+board or through it on a linked host. Everything else gets a 403, so a new route is closed to
+devices until it's added there. That keeps out what would outlast revoking a device: the board's
+and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
+host), linking hosts, terminals (a shell on the host), settings and admin. A device's path is
+checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, an empty segment,
+`.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
+host linking and terminals refuse a device's request themselves.
+
+Revoking a phone stops the phone, not what was done with it before: whoever held it could have
+started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost
+phone may have been used, replace `auth_token` as well: delete `<data-dir>/auth_token` and restart
+the server, which makes a new one (browsers, and hubs that link this host, then need the new one).
+
+To run it (Node 22.13 or later):
+
+```sh
+cd mobile && npm ci
+npx expo start --web          # in a browser, to try it against a board (CORS is open)
+npx expo run:android          # a dev build on an emulator or a phone (needs the Android SDK)
+npx eas-cli build --profile development --platform ios   # or android: a dev build from EAS
+npm run typecheck && npm test # what CI's Tests / mobile runs
+```
+
+It uses native modules that Expo Go lacks (the camera's scanner, secure storage), so it runs as a
+dev build (`expo-dev-client`). A dev build lets the app pair with a board on plain HTTP (an
+emulator's `10.0.2.2`, say); release builds won't.
 
 ### Desktop config
 
@@ -1795,12 +1856,12 @@ new GitHub issue to triage. Each one has a trigger and an action, can be switche
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 100:
+  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 101:
   five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
   the host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
-  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 100: it runs once, late if the server was down then,
+  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 101: it runs once, late if the server was down then,
   and turns itself off); or a **webhook**: a POST to `/api/hooks/<id>/<token>` on the host.
-- **Before each run** (API 100): **active hours** (a scheduled run outside them waits for them to
+- **Before each run** (API 101): **active hours** (a scheduled run outside them waits for them to
   start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
   command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
   exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
@@ -1877,7 +1938,7 @@ deliveries wait in the database and run after a restart. A time of day that the 
 (daylight saving starts) runs when they've gone forward; one they repeat runs once. An archived
 project's schedules don't run until it's unarchived.
 
-**Routines** (API 100) are a profile's automations, on the assistant's **Routines** tab
+**Routines** (API 101) are a profile's automations, on the assistant's **Routines** tab
 (`/api/profiles/<id>/automations`): they have no project, and their one action is
 `message_assistant`, which wakes the profile's assistant (on the host the routine is on). By
 default (`mode: fresh`) each run works in a thread of its own under the assistant (`task_type`
