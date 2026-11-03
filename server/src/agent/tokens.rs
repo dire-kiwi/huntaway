@@ -104,7 +104,7 @@ impl Counts {
     }
 
     /// One model's part of a Claude Code `modelUsage`.
-    fn from_claude(m: &Value) -> Counts {
+    pub(crate) fn from_claude(m: &Value) -> Counts {
         let n = |k: &str| m[k].as_i64().unwrap_or(0);
         Counts {
             input: n("inputTokens"),
@@ -117,7 +117,7 @@ impl Counts {
     }
 
     /// A Codex `tokenUsage`'s `total` or `last`.
-    fn from_codex(u: &Value) -> Counts {
+    pub(crate) fn from_codex(u: &Value) -> Counts {
         let n = |k: &str| u[k].as_i64().unwrap_or(0);
         Counts {
             input: (n("inputTokens") - n("cachedInputTokens")).max(0),
@@ -559,5 +559,6 @@ pub fn on_run_ended(state: &Shared, task_id: &str) {
     });
 }
 
+pub mod calls;
 #[cfg(test)]
 mod tests;

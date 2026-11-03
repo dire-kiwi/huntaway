@@ -67,6 +67,7 @@ fn titles_use_the_tasks_runtime_and_login_for_generation_and_refresh() {
     for call in calls.iter().filter(|v| v["agent"] == "claude") {
         assert_eq!(call["home"], format!("{home}/.claude-title-test"));
         assert!(call["args"].as_array().unwrap().windows(2).any(|a| a == [json!("--model"), json!("haiku")]));
+        assert!(call["args"].as_array().unwrap().windows(2).any(|a| a == [json!("--output-format"), json!("json")]));
     }
     for mode in ["empty", "failed"] {
         let out = check(&dir, &["inherited"], mode);

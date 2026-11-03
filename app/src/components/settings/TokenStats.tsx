@@ -49,7 +49,8 @@ function openTask(t: ATask | undefined) {
 export function TokenStats({ data, project }: { data: TokenData; project: string }) {
   const [metric, setMetric] = useState<Metric>("tokens");
   const projectOf = (threadId: string) => data.tasks[topOf(data, ownerOf(data, threadId))]?.projectId ?? SCRATCH;
-  const keep = (threadId: string) => project === "all" || projectOf(threadId) === project;
+  // Window restarts are in no project.
+  const keep = (threadId: string | null) => project === "all" || (threadId !== null && projectOf(threadId) === project);
   const rows = data.rows.filter((r) => keep(r.threadId));
   const scoped = { ...data, rows, reviews: data.reviews.filter((r) => keep(r.taskId)) };
   return (
@@ -101,7 +102,11 @@ function Tiles({ rows }: { rows: URow[] }) {
       <Tile label="All tokens" value={tokens(t ? allTokens(t) : 0)} hint={t ? `${tokens(t.cacheRead)} of them cache reads` : "none counted"} />
       <Tile label="Output tokens" value={tokens(t?.output ?? 0)} hint={t ? `${tokens(t.input + t.cacheWrite)} input and cache writes` : "–"} />
       <Tile label="Cost" value={usd(t?.cost ?? 0)} hint={codex.length ? `Claude's; Codex used ${tokens(codexTokens)} tokens` : "as Claude Code reports it"} />
-      <Tile label="Runs" value={String(t?.runs ?? 0)} hint={`on ${plural(new Set(rows.map((r) => r.model)).size, "model")}`} />
+      <Tile
+        label="Runs"
+        value={String(t?.runs ?? 0)}
+        hint={`on ${plural(new Set(rows.map((r) => r.model)).size, "model")}${t?.calls ? `, and ${plural(t.calls, "title or window call")}` : ""}`}
+      />
     </div>
   );
 }
@@ -241,7 +246,7 @@ function ByPurpose({ data, metric }: { data: TokenData; metric: Metric }) {
                   <span className="flex items-center gap-2">
                     <Swatch color={COLOR[g.key]} />
                     {PURPOSE_LABEL[g.key]}
-                    <span className="text-faint">· {plural(g.totals.runs, "run")}</span>
+                    <span className="text-faint">· {g.totals.runs || !g.totals.calls ? plural(g.totals.runs, "run") : plural(g.totals.calls, "call")}</span>
                   </span>
                 </td>
                 <Cells t={g.totals} metric={metric} whole={whole} />
@@ -409,6 +414,7 @@ function sumParts(u: TaskUsage, ps: Purpose[]): Totals | undefined {
     reasoning: a.reasoning + b.reasoning,
     cost: a.cost + b.cost,
     runs: a.runs + b.runs,
+    calls: a.calls + b.calls,
     estimated: a.estimated || b.estimated,
   }));
 }
