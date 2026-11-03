@@ -5,7 +5,7 @@ import { loadProfiles } from "../src/boardData";
 import { memoryStorage } from "../src/pairing";
 import { fakeFetch } from "./helpers";
 
-const host = (id: string, extra: Partial<Host> = {}): Host => ({ id, name: id, local: false, connected: true, mode: "outbound", api_version: 102, ...extra });
+const host = (id: string, extra: Partial<Host> = {}): Host => ({ id, name: id, local: false, connected: true, mode: "outbound", api_version: 103, ...extra });
 const profile = (id: string, host_id: string, extra: Partial<Profile> = {}) => ({ id, host_id, name: "Ivan", claude_config_dir: "", default_model: null, ...extra }) as Profile;
 
 function profilesOn(hosts: Host[], list: Profile[]): BoardProfiles {
@@ -15,13 +15,13 @@ function profilesOn(hosts: Host[], list: Profile[]): BoardProfiles {
 }
 
 describe("the Assistant tab", () => {
-  test("shows on boards from API 102, which let a paired phone reach the assistant", () => {
+  test("shows on boards from API 103, which let a paired phone reach the assistant", () => {
     
-    expect(hasAssistantTab({ apiVersion: 101 })).toBe(false);
-    expect(hasAssistantTab({ apiVersion: 102 })).toBe(true);
+    expect(hasAssistantTab({ apiVersion: 102 })).toBe(false);
+    expect(hasAssistantTab({ apiVersion: 103 })).toBe(true);
     expect(hasAssistantTab(undefined)).toBe(false);
-    expect(showsAssistant({ apiVersion: 102 }, { unauthorized: true, tooOld: false })).toBe(false);
-    expect(showsAssistant({ apiVersion: 102 }, { unauthorized: false, tooOld: false })).toBe(true);
+    expect(showsAssistant({ apiVersion: 103 }, { unauthorized: true, tooOld: false })).toBe(false);
+    expect(showsAssistant({ apiVersion: 103 }, { unauthorized: false, tooOld: false })).toBe(true);
   });
 
   test("finds the assistant on the board's own host", () => {

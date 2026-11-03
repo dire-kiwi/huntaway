@@ -8,12 +8,17 @@ use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
+use crate::agent::approval_rules::{self, Decision, Rule};
 use crate::db::{self, Task};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{new_id, now};
 
 /// Why a request wasn't answered: its run ended or its thread was deleted first.
 const EXPIRED: &str = "Request expired";
+
+/// Why a request from a routine run wasn't answered: nobody did in time (see `expire_due`).
+pub const EXPIRED_UNANSWERED: &str =
+    "Nobody answered this in time, so it was denied. Carry on without this action, and say in your report what you couldn't do and why.";
 
 pub const DONT_ASK_DENIAL: &str = "Denied automatically: this thread is in \"Don't ask\" mode.";
 
@@ -37,22 +42,51 @@ pub fn is_question(tool: &str) -> bool {
 /// `tool_use_id` lets the UI tell which subagent (if any) made the call.
 pub async fn prompt(s: &Shared, task: &Task, call_id: &str, tool_name: &str, input: &Value, tool_use_id: Option<&str>) -> anyhow::Result<Value> {
     let question = is_question(tool_name);
-    // A labelled task's agent writes its documents in its own folder.
-    if !question && (task.auto_allow.iter().any(|t| t == tool_name) || crate::agent::documents::writes_own_folder(s, task, tool_name, input)) {
-        return Ok(allow(input));
-    }
-    // The run was started under an older mode; honour the one selected now.
-    match live_decision(s, task)? {
-        Some(true) if !question => return Ok(allow(input)),
-        Some(false) => return Ok(deny(DONT_ASK_DENIAL)),
-        _ => {}
+    let mode = mode_of(s, task)?;
+    // The user's approval rules come first, whatever the mode (see agent/approval_rules.rs).
+    let rules = approval_rules::for_task(&s.db(), task)?;
+    let rule = rules.map(|r| r.for_mode(&mode)).and_then(|r| r.decide(tool_name).cloned());
+    match rule.as_ref().map(|r| r.decision) {
+        Some(Decision::Never) => {
+            let r = rule.as_ref().unwrap();
+            approval_rules::log_decided(s, task, tool_name, input, r, "blocked", "rule")?;
+            return Ok(deny(&approval_rules::blocked_reason(&r.tool)));
+        }
+        Some(Decision::Allow) => return Ok(allow(input)),
+        // Don't ask never asks: it's denied, as anything it would have asked is.
+        Some(Decision::Ask) if mode == "dontAsk" => {
+            approval_rules::log_decided(s, task, tool_name, input, rule.as_ref().unwrap(), "denied", "mode")?;
+            return Ok(deny(DONT_ASK_DENIAL));
+        }
+        Some(Decision::Ask) => {}
+        None => {
+            // A labelled task's agent writes its documents in its own folder.
+            if !question && (task.auto_allow.iter().any(|t| t == tool_name) || crate::agent::documents::writes_own_folder(s, task, tool_name, input)) {
+                return Ok(allow(input));
+            }
+            // The run was started under an older mode; honour the one selected now.
+            match decision_in(&mode) {
+                Some(true) if !question => return Ok(allow(input)),
+                Some(false) => return Ok(deny(DONT_ASK_DENIAL)),
+                _ => {}
+            }
+        }
     }
     let data = json!({"tool_name": tool_name, "input": input, "tool_use_id": tool_use_id});
-    let id = request(s, task, call_id, "tool", tool_name, input, data, &reason(tool_name, input))?;
+    let id = request_ruled(s, task, call_id, "tool", tool_name, input, data, &reason(tool_name, input), rule.as_ref())?;
     Ok(match decision(s, &id).await? {
         Ok(()) => allowed(s, &id, &task.id, tool_name, input)?,
         Err(note) => deny(&note),
     })
+}
+
+/// Thread `task`'s permission mode now (its own, or the one it inherits).
+fn mode_of(s: &Shared, task: &Task) -> anyhow::Result<String> {
+    let project = match &task.project_id {
+        Some(pid) => db::get_project(&s.db(), pid)?,
+        None => None,
+    };
+    task.effective_permission_mode(&s.db(), project.as_ref())
 }
 
 /// What a task waiting on a prompt for `tool_name` says it's waiting for (its attention reason).
@@ -121,7 +155,13 @@ pub async fn approve(s: &Shared, task: &Task, call_id: &str, kind: &str, tool: &
         "project" if tool == "create_project" => "Add a project?",
         _ => "Approve a project change?",
     };
-    let id = request(s, task, call_id, kind, tool, input, data, question)?;
+    // An ask rule on the tool doesn't ask again (see dispatch's check_rules): this request is its asking,
+    // and goes in the action log.
+    let rule = match approval_rules::for_task(&s.db(), task)? {
+        Some(rules) if approval_rules::ASKS_ITSELF.contains(&tool) => approval_rules::board_rule(&rules, tool).map(|(_, r)| r).filter(|r| r.decision == Decision::Ask),
+        _ => None,
+    };
+    let id = request_ruled(s, task, call_id, kind, tool, input, data, question, rule.as_ref())?;
     if let Err(note) = decision(s, &id).await? {
         return Ok(Err(note));
     }
@@ -142,12 +182,18 @@ pub fn asked(s: &Shared, call_id: &str) -> anyhow::Result<Option<Value>> {
     Ok(input.map(|i| serde_json::from_str(&i)).transpose()?)
 }
 
-/// The request for MCP call `call_id`, raised (with `data` as its thread message) if it's new.
+/// The request for MCP call `call_id`, raised (with `data` as its thread message) if it's new. One
+/// that approval rule `rule` asks about is asked whatever the mode, and goes in the action log. A
+/// request from a routine run expires (see `expiry`).
 #[allow(clippy::too_many_arguments)]
-fn request(s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, input: &Value, mut data: Value, reason: &str) -> anyhow::Result<String> {
+fn request_ruled(
+    s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, input: &Value, mut data: Value, reason: &str, rule: Option<&Rule>,
+) -> anyhow::Result<String> {
+    // By tool too: one call can ask more than once, an approval rule first and then the tool itself
+    // (an update_project, or a wait's command), and each has its own answer.
     let existing: Option<String> = s
         .db()
-        .query_row("SELECT id FROM permission_requests WHERE call_id=?1", [call_id], |r| r.get(0))
+        .query_row("SELECT id FROM permission_requests WHERE call_id=?1 AND tool_name=?2", [call_id, tool_name], |r| r.get(0))
         .ok();
     if let Some(id) = existing {
         return Ok(id);
@@ -162,6 +208,13 @@ fn request(s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, 
     let id = new_id();
     data["request_id"] = json!(id);
     data["status"] = json!("pending");
+    let expires_at = expiry(s, task, call_id)?;
+    if let Some(at) = &expires_at {
+        data["expires_at"] = json!(at);
+    }
+    if let Some(r) = rule {
+        data["rule"] = json!(r);
+    }
     // So the thread names the agent that asked.
     let config = db::task_claude_config(&s.db(), task)?;
     if config.is_some_and(|c| c.agent == "codex") {
@@ -169,15 +222,46 @@ fn request(s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, 
     }
     let msg = s.add_message(&task.id, "permission", data)?;
     s.db().execute(
-        "INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES (?1,?2,?3,?4,?5,'pending',?6,?7,?8)",
-        rusqlite::params![id, task.id, msg.id, tool_name, input.to_string(), now(), call_id, kind],
+        "INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind,expires_at,rule)
+         VALUES (?1,?2,?3,?4,?5,'pending',?6,?7,?8,?9,?10)",
+        rusqlite::params![id, task.id, msg.id, tool_name, input.to_string(), now(), call_id, kind, expires_at, rule.map(|r| r.tool.clone())],
     )?;
+    if let Some(r) = rule {
+        // An approval of the board's own (a deletion, say) by the tool's name, as rules name it.
+        let logged = if kind == "tool" { tool_name.to_string() } else { format!("mcp__{}__{tool_name}", crate::agent::runner::MCP_SERVER_NAME) };
+        approval_rules::log_asked(&s.db(), task, &id, &logged, input, r)?;
+    }
     let mut fields = vec![("attention_reason", json!(reason))];
     if task.kind == "task" {
         fields.push(("status", json!("needs_attention")));
     }
     s.update_task(&task.id, &fields)?;
     Ok(id)
+}
+
+/// When a request raised by MCP call `call_id` in `task`'s thread is denied unanswered: for a call
+/// from a routine run, the profile's expiry after now (see approval_rules::Rules::expiry_minutes).
+fn expiry(s: &Shared, task: &Task, call_id: &str) -> anyhow::Result<Option<String>> {
+    // Only the assistant's and its threads' (where the rules hold): project tasks an automation starts
+    // wait for their prompts as they always did.
+    if !approval_rules::applies_to(&s.db(), task)? || !routine_call(&s.db(), call_id)? {
+        return Ok(None);
+    }
+    let minutes = approval_rules::get(&s.db(), &task.profile_id)?.expiry_minutes;
+    Ok((minutes > 0).then(|| (chrono::Utc::now() + chrono::Duration::minutes(minutes.into())).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)))
+}
+
+/// Whether MCP call `call_id` comes from a routine run: one whose turn an automation started,
+/// with nobody there to answer (its message is marked `routine`, see runner::send_from_routine).
+pub fn routine_call(c: &rusqlite::Connection, call_id: &str) -> anyhow::Result<bool> {
+    let data: Option<String> = c
+        .query_row(
+            "SELECT m.data FROM mcp_calls k JOIN runs r ON r.id=k.run_id JOIN messages m ON m.id=r.turn_message_id WHERE k.id=?1",
+            [call_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(data.and_then(|d| serde_json::from_str::<Value>(&d).ok()).is_some_and(|d| d["routine"] == true))
 }
 
 /// Waits for the user to decide request `id`: Ok(()) if they allowed it, else the reason.
@@ -215,32 +299,35 @@ fn deny(message: &str) -> Value {
 /// What a thread's current permission mode decides for any prompt without asking the user:
 /// approve everything (bypass), deny everything (don't ask), or ask (None).
 pub fn live_decision(s: &Shared, task: &Task) -> anyhow::Result<Option<bool>> {
-    let project = match &task.project_id {
-        Some(pid) => db::get_project(&s.db(), pid)?,
-        None => None,
-    };
-    Ok(match task.effective_permission_mode(&s.db(), project.as_ref())?.as_str() {
+    Ok(decision_in(&mode_of(s, task)?))
+}
+
+fn decision_in(mode: &str) -> Option<bool> {
+    match mode {
         "bypassPermissions" => Some(true),
         "dontAsk" => Some(false),
         _ => None,
-    })
+    }
 }
 
 /// After a thread's mode changes, settle the prompts it is waiting on that the new mode decides
-/// (not project changes or deletions, which only the user decides).
+/// (not project changes or deletions, which only the user decides, nor in Bypass what an approval
+/// rule asks).
 pub fn apply_mode_to_pending(s: &Shared, task: &Task) -> ApiResult<()> {
     let Some(allow) = live_decision(s, task)? else { return Ok(()) };
     let ids: Vec<String> = {
         let c = s.db();
-        let mut st = c.prepare("SELECT id, tool_name FROM permission_requests WHERE task_id=?1 AND status='pending' AND kind='tool'")?;
-        let rows = st.query_map([&task.id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut st = c.prepare("SELECT id, tool_name, rule IS NOT NULL FROM permission_requests WHERE task_id=?1 AND status='pending' AND kind='tool'")?;
+        let rows = st.query_map([&task.id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?)))?;
         // Bypass doesn't answer questions for the user (see prompt).
-        rows.filter(|r| r.as_ref().map_or(true, |(_, tool)| !(allow && is_question(tool)))).map(|r| r.map(|(id, _)| id)).collect::<rusqlite::Result<_>>()?
+        rows.filter(|r| r.as_ref().map_or(true, |(_, tool, ruled)| !(allow && (is_question(tool) || *ruled))))
+            .map(|r| r.map(|(id, _, _)| id))
+            .collect::<rusqlite::Result<_>>()?
     };
     let message = (!allow).then(|| DONT_ASK_DENIAL.to_string());
     for id in ids {
         // Another client may have answered it in the meantime.
-        if let Err(e) = decide(s, &id, allow, false, message.clone()) {
+        if let Err(e) = answer_by(s, &id, allow, false, message.clone(), Reply::default(), "mode") {
             tracing::debug!("skipping permission {id}: {}", e.1);
         }
     }
@@ -252,7 +339,7 @@ pub fn apply_mode_to_pending(s: &Shared, task: &Task) -> ApiResult<()> {
 pub fn pending(s: &Shared, task_id: Option<&str>, profile_id: Option<&str>) -> ApiResult<Vec<Value>> {
     let c = s.db();
     let mut st = c.prepare(
-        "SELECT id, task_id, tool_name, input, created_at FROM permission_requests
+        "SELECT id, task_id, tool_name, input, created_at, expires_at, rule FROM permission_requests
          WHERE status='pending' AND (?1 IS NULL OR task_id=?1)
            AND (?2 IS NULL OR task_id IN (SELECT id FROM tasks WHERE profile_id=?2)) ORDER BY created_at, rowid",
     )?;
@@ -264,11 +351,15 @@ pub fn pending(s: &Shared, task_id: Option<&str>, profile_id: Option<&str>) -> A
             "tool_name": r.get::<_, String>(2)?,
             "input": serde_json::from_str::<Value>(&input).unwrap_or(Value::String(input)),
             "created_at": r.get::<_, String>(4)?,
+            "expires_at": r.get::<_, Option<String>>(5)?,
+            "rule": r.get::<_, Option<String>>(6)?,
         }))
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// Answer request `id` as the user, on the board (see `answer_by`).
+#[cfg(test)]
 pub fn decide(s: &Shared, id: &str, allow: bool, always: bool, message: Option<String>) -> ApiResult<&'static str> {
     answer(s, id, allow, always, message, Reply::default())
 }
@@ -288,20 +379,28 @@ pub struct Reply {
     pub feedback: Option<String>,
 }
 
+/// `answer_by` the user, on the board.
+#[cfg(test)]
+pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<String>, reply: Reply) -> ApiResult<&'static str> {
+    answer_by(s, id, allow, always, message, reply, "user")
+}
+
 /// Allow or deny request `id`, with what the user answered (see Reply). Answering a question or a
 /// plan whose run ended first (expired) sends the answer to the agent as the user's message instead.
-/// Only the first answer counts: another (from another tab, say) is refused.
-pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<String>, reply: Reply) -> ApiResult<&'static str> {
-    let (task_id, message_id, tool_name, current, kind, input): (String, i64, String, String, String, String) = s
+/// Only the first answer counts: another (from another tab, say) is refused. `by` is who answered,
+/// for the action log (see approval_rules::Action::answered_by).
+pub fn answer_by(s: &Shared, id: &str, allow: bool, always: bool, message: Option<String>, reply: Reply, by: &str) -> ApiResult<&'static str> {
+    let (task_id, message_id, tool_name, current, kind, input, rule): (String, i64, String, String, String, String, Option<String>) = s
         .db()
-        .query_row("SELECT task_id, message_id, tool_name, status, kind, input FROM permission_requests WHERE id=?1", [id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        .query_row("SELECT task_id, message_id, tool_name, status, kind, input, rule FROM permission_requests WHERE id=?1", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
         })
         .map_err(|_| ApiError::not_found("permission request"))?;
     let question = is_question(&tool_name);
     let plan = tool_name == EXIT_PLAN && kind == "tool";
-    // Each project change and deletion is approved on its own, and each question answered.
-    let always = always && kind == "tool" && !question;
+    // Each project change and deletion is approved on its own, and each question answered. What an
+    // approval rule asks is asked each time.
+    let always = always && kind == "tool" && !question && rule.is_none();
     // A question or plan the agent's run ended on can still be answered, by message.
     let late = current == "expired" && (question || plan);
     if current != "pending" && !late {
@@ -338,6 +437,9 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
     )?;
     if taken == 0 {
         return Err(ApiError::conflict("this request is no longer pending"));
+    }
+    if rule.is_some() {
+        approval_rules::settle(s, id, status, by)?;
     }
     let task = db::get_task(&s.db(), &task_id)?;
     // Approving a plan ends plan mode for this thread, otherwise the next run would plan again (as the
@@ -401,20 +503,25 @@ pub fn answer(s: &Shared, id: &str, allow: bool, always: bool, message: Option<S
     if late {
         return Ok(status);
     }
-    // Back to work if no other prompt is waiting.
+    back_to_work(s, &task_id)?;
+    Ok(status)
+}
+
+/// A prompt of `task_id`'s was settled while its agent runs: it's back to work if no other prompt is waiting.
+fn back_to_work(s: &Shared, task_id: &str) -> anyhow::Result<()> {
     let still_pending: i64 = s.db().query_row(
         "SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending'",
-        [&task_id],
+        [task_id],
         |r| r.get(0),
     )?;
-    if still_pending == 0 && s.is_running(&task_id) {
+    if still_pending == 0 && s.is_running(task_id) {
         let mut fields = vec![("attention_reason", Value::Null)];
-        if let Some(t) = task.filter(|t| t.kind == "task") {
+        if let Some(t) = db::get_task(&s.db(), task_id)?.filter(|t| t.kind == "task") {
             fields.push(("status", json!(t.working_status())));
         }
-        s.update_task(&task_id, &fields)?;
+        s.update_task(task_id, &fields)?;
     }
-    Ok(status)
+    Ok(())
 }
 
 /// The permission mode thread `t` carries on in once its plan is approved, if it changes: the one the user
@@ -622,9 +729,56 @@ fn expire(s: &Shared, query: &str, arg: &str) {
         let expired = s.db().execute("UPDATE permission_requests SET status='expired', note=?2 WHERE id=?1 AND status='pending'", [id.as_str(), EXPIRED]);
         if expired.is_ok_and(|n| n > 0) {
             let _ = set_message_status(s, mid, "expired", None);
+            let _ = approval_rules::settle(s, &id, "expired", "ended");
             wake(s, &id);
         }
     }
+}
+
+/// Deny the prompts from routine runs that nobody answered before they expired (`expires_at`, see
+/// `expiry`) by `now`, telling their agents to carry on without them. Prompts raised before
+/// prompts expired have no `expires_at`, so they wait as they did. Returns how many it denied.
+pub fn expire_due(s: &Shared, now: chrono::DateTime<chrono::Utc>) -> usize {
+    let at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let rows: Vec<(String, i64, String)> = {
+        let c = s.db();
+        let Ok(mut st) = c.prepare("SELECT id, message_id, task_id FROM permission_requests WHERE status='pending' AND expires_at IS NOT NULL AND expires_at <= ?1")
+        else {
+            return 0;
+        };
+        st.query_map([&at], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default()
+    };
+    let mut denied = 0;
+    for (id, mid, task_id) in rows {
+        // Unless it was answered since it was looked up.
+        let n = s.db().execute("UPDATE permission_requests SET status='expired', note=?2 WHERE id=?1 AND status='pending'", [id.as_str(), EXPIRED_UNANSWERED]);
+        if n.is_ok_and(|n| n > 0) {
+            denied += 1;
+            let _ = set_message_status(s, mid, "expired", Some(EXPIRED_UNANSWERED));
+            let _ = approval_rules::settle(s, &id, "expired", "expiry");
+            wake(s, &id);
+            if let Err(e) = back_to_work(s, &task_id) {
+                tracing::warn!(task = task_id, "after a prompt expired: {e:#}");
+            }
+        }
+    }
+    denied
+}
+
+/// How often the sweeper looks for prompts that have expired.
+const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Denies prompts as they expire (see `expire_due`), from now on: at once, for those that expired
+/// while the board was down, and then every few seconds.
+pub fn start_sweeper(s: &Shared) {
+    let s = s.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(SWEEP_EVERY);
+        loop {
+            tick.tick().await;
+            expire_due(&s, chrono::Utc::now());
+        }
+    });
 }
 
 #[cfg(test)]
