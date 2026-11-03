@@ -1,6 +1,7 @@
 //! What reviewers reported, kept for statistics (`GET /profiles/{id}/token-stats`, see
 //! analytics.rs): a row in `review_stats` for each `submit_review`, for the task reviewed, with how
-//! many serious and minor issues it listed. A task's `review` only has its latest round.
+//! many serious and minor issues it listed, and the effort the task's agent was set to work at (`task_effort`),
+//! so issues can be told by model and effort. A task's `review` only has its latest round.
 //!
 //! Each row has its review's `round`: when the round started (Review::started_at), which every
 //! reviewer's submission in it shares, so a round's outcome is its reviewers' together. A reviewer
@@ -42,8 +43,9 @@ pub fn record(c: &Connection, s: &Submission, at: &str) -> rusqlite::Result<()> 
     if let Some(run_id) = s.run_id {
         c.execute("DELETE FROM review_stats WHERE thread_id=?1 AND run_id=?2", params![s.thread_id, run_id])?;
     }
+    let effort = task_effort(c, s.task_id)?;
     c.execute(
-        "INSERT INTO review_stats (task_id, thread_id, round, run_id, at, verdict, serious, minor, minor_noted, label) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        "INSERT INTO review_stats (task_id, thread_id, round, run_id, at, verdict, serious, minor, minor_noted, label, effort) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         params![
             s.task_id,
             s.thread_id,
@@ -54,9 +56,31 @@ pub fn record(c: &Connection, s: &Submission, at: &str) -> rusqlite::Result<()> 
             s.serious as i64,
             s.minor.map(|n| n as i64),
             noted,
-            s.label.filter(|l| !l.is_empty())
+            s.label.filter(|l| !l.is_empty()),
+            effort
         ],
     )?;
+    Ok(())
+}
+
+/// The effort a task's agent is set to work at: its own, else the host's default, as a run starts with
+/// (see runner/launch.rs). None is the agent's own default.
+pub fn task_effort(c: &Connection, task_id: &str) -> rusqlite::Result<Option<String>> {
+    let own: Option<String> = c.query_row("SELECT effort FROM tasks WHERE id=?1", [task_id], |r| r.get(0)).optional()?.flatten();
+    let effort = match own.filter(|e| !e.trim().is_empty()) {
+        Some(e) => Some(e),
+        None => c.query_row("SELECT value FROM settings WHERE key='default_effort'", [], |r| r.get::<_, String>(0)).optional()?,
+    };
+    Ok(effort.map(|e| e.trim().to_string()).filter(|e| !e.is_empty()))
+}
+
+/// Give the rows of `review_stats` the effort their task has now (see migration 82).
+pub fn backfill_efforts(c: &Connection) -> rusqlite::Result<()> {
+    let mut tasks = c.prepare("SELECT DISTINCT task_id FROM review_stats")?;
+    let ids: Vec<String> = tasks.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    for id in ids {
+        c.execute("UPDATE review_stats SET effort=?2 WHERE task_id=?1", params![id, task_effort(c, &id)?])?;
+    }
     Ok(())
 }
 

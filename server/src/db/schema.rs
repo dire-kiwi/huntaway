@@ -860,12 +860,24 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=81; COMMIT;"
         ))?;
     }
+    if version < 82 {
+        // The effort the reviewed task's agent worked at when its review was submitted (see review/stats.rs). The rows
+        // from before are given the task's effort now, which is what it was unless the user changed it since. Added only
+        // if it isn't there: a `review_stats` made at version 79 or later by this build has it already.
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('review_stats') WHERE name='effort'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE review_stats ADD COLUMN effort TEXT;")?;
+            crate::review::stats::backfill_efforts(&conn)?;
+        }
+        conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 81;
+pub const VERSION: i64 = 82;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
@@ -877,7 +889,8 @@ pub const VERSION: i64 = 81;
 /// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed,
 /// with when its review round started (`round`).
 /// `minor` is how many minor issues it listed, null for reviews from before they were listed;
-/// `minor_noted` whether it found any or its summary mentions them.
+/// `minor_noted` whether it found any or its summary mentions them. `effort` (version 82) is the effort
+/// the reviewed task's agent was set to work at, null for the agent's own default.
 const SCHEMA_V79: &str = r#"
 CREATE TABLE IF NOT EXISTS token_usage (
   run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -903,7 +916,8 @@ CREATE TABLE IF NOT EXISTS review_stats (
   serious INTEGER NOT NULL DEFAULT 0,
   minor INTEGER,
   minor_noted INTEGER NOT NULL DEFAULT 0,
-  label TEXT
+  label TEXT,
+  effort TEXT
 );
 CREATE INDEX IF NOT EXISTS review_stats_task ON review_stats(task_id, at);
 CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);

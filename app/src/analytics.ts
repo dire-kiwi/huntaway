@@ -211,6 +211,8 @@ export async function loadTokens(from: number, to: number): Promise<TokenData> {
         reviewer: v.label ? (v.model && !v.label.includes(v.model) ? `${v.label} · ${v.model}` : v.label) : (v.model ?? "Unknown"),
         model: v.model,
         round: v.round,
+        effort: v.effort ?? null,
+        taskModel: v.task_model ?? null,
       });
     }
     for (const x of r.report.rounds) {

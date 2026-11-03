@@ -77,6 +77,10 @@ export interface TokenStatsReport {
     model: string | null;
     /** Which of its task's rounds of review it was in, from 1. */
     round: number;
+    /** The effort the reviewed task's agent was set to work at (API 101); null is the agent's own default. Hosts before API 101 don't say. */
+    effort?: string | null;
+    /** The model the reviewed task's agent used most in the run before the review (API 101). */
+    task_model?: string | null;
   }[];
   /** Every round of review of the tasks `reviews` are for, those before the range included. */
   rounds: { task_id: string; round: number; at: string; verdict: "pass" | "issues"; serious: number; reviewers: number }[];

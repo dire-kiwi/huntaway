@@ -203,6 +203,34 @@ fn each_submission_is_kept_for_statistics() {
 }
 
 #[test]
+fn a_submission_keeps_the_effort_its_task_works_at() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 2);
+        let effort = |thread: &Task| s.db().query_row("SELECT effort FROM review_stats WHERE thread_id=?1", [&thread.id], |r| r.get::<_, Option<String>>(0)).unwrap();
+        // The host's default, while the task has none of its own.
+        db::set_setting(&s.db(), "default_effort", Some("medium")).unwrap();
+        submit(&s, &threads[0], "run1", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        s.update_task(&task.id, &[("effort", json!("xhigh"))]).unwrap();
+        submit(&s, &threads[1], "run2", &json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["x"]})).unwrap();
+        assert_eq!((effort(&threads[0]).as_deref(), effort(&threads[1]).as_deref()), (Some("medium"), Some("xhigh")));
+        // And the report has it, with the model the task's agent used before the review.
+        let c = s.db();
+        let run = |at: &str, kind: &str, model: &str, out: i64| {
+            let r = db::insert_run(&c, &task.id, kind).unwrap();
+            c.execute("UPDATE runs SET created_at=?1 WHERE id=?2", [at, &r.id]).unwrap();
+            c.execute("INSERT INTO token_usage (run_id, model, runtime, output_tokens) VALUES (?1, ?2, 'claude', ?3)", rusqlite::params![r.id, model, out]).unwrap();
+        };
+        run("2000-01-01T00:00:00.000Z", "prompt", "sonnet", 100);
+        run("2000-01-02T00:00:00.000Z", "prompt", "opus", 100);
+        run("2000-01-02T00:00:00.000Z", "compact", "haiku", 100);
+        run("2100-01-01T00:00:00.000Z", "prompt", "haiku", 100);
+        let r = crate::analytics::token_report(&c, &task.profile_id, "2000-01-01T00:00:00.000Z", "2200-01-01T00:00:00.000Z").unwrap();
+        assert_eq!(r.reviews.iter().map(|v| (v.effort.as_deref(), v.task_model.as_deref())).collect::<Vec<_>>(), [(Some("medium"), Some("opus")), (Some("xhigh"), Some("opus"))]);
+    })
+}
+
+#[test]
 fn a_review_started_before_rounds_were_kept_is_one_round() {
     crate::testing::run(async || {
         let s = crate::testing::state();
