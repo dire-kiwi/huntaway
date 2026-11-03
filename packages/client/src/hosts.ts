@@ -1,4 +1,4 @@
-import { del, enc, get, on, patch, post } from "./http";
+import { enc, type Http } from "./http";
 import { STATUSES } from "./tasks";
 
 /** The host API version this UI was built against (server: proto::API_VERSION). */
@@ -76,7 +76,7 @@ export interface HostInfo {
   home: string | null;
 }
 
-export const hostsApi = {
+export const hostsApi = ({ del, get, on, patch, post }: Http) => ({
   // Hub: the hosts on this board.
   hosts: () => get<Host[]>("/hosts"),
   addHost: (url: string, token: string) => post<Host>("/hosts", { url, token }),
@@ -98,4 +98,4 @@ export const hostsApi = {
   // Per host.
   info: (h: string) => on(h).get<HostInfo>("/info"),
   dirs: (h: string, path?: string) => on(h).get<DirListing>(`/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-};
+});

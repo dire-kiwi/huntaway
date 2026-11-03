@@ -1,5 +1,5 @@
 import type { AutomationAction, AutomationTrigger } from "./automations";
-import { on } from "./http";
+import { type Http } from "./http";
 import type { Status } from "./tasks";
 
 /** What an agent asked to change about a project, shown to the user to approve (API 44). */
@@ -120,8 +120,8 @@ export interface AutomationApproval extends ApprovalRequest {
 /** What only the user decides for an agent, whatever its thread's permission mode. */
 export type Approval = ProjectApproval | ProjectCreationApproval | DeletionApproval | AutomationApproval;
 
-export const approvalsApi = {
+export const approvalsApi = ({ on }: Http) => ({
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
   /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
   projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true"),
-};
+});

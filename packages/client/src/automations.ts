@@ -1,4 +1,4 @@
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 import type { DocumentType } from "./labels";
 import type { Status, TaskType } from "./tasks";
 
@@ -96,7 +96,7 @@ export interface AutomationInput {
   rotate_token?: boolean;
 }
 
-export const automationsApi = {
+export const automationsApi = ({ on }: Http) => ({
   /** The project's automations, and the time zone their times of day are in (API 63). */
   automations: (h: string, projectId: string) =>
     on(h).get<{ automations: Automation[]; time_zone: { name: string | null; offset: string } }>(`/projects/${enc(projectId)}/automations`),
@@ -108,4 +108,4 @@ export const automationsApi = {
   /** Its latest runs and deliveries, newest first, and the latest delivery's body and event. */
   automationRuns: (h: string, id: string) =>
     on(h).get<{ runs: AutomationRun[]; latest_delivery: { body: unknown; event: string | null } | null }>(`/automations/${enc(id)}/runs`),
-};
+});
