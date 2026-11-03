@@ -246,13 +246,15 @@ pub fn context_report(c: &Connection, profile_id: &str, from: &str, to: &str) ->
     Ok(ContextReport { stats, tasks, projects })
 }
 
-/// What one run used of one model (see agent/tokens.rs).
+/// What one run used of one model (see agent/tokens.rs), or one model call that isn't a run (see
+/// agent/tokens/calls.rs).
 #[derive(Serialize, Debug)]
 pub struct UsageRow {
-    pub run_id: String,
-    /// The thread the run was in: a task, or a review or summary thread.
-    pub task_id: String,
-    /// The run's: `prompt`, `compact` or `review`.
+    /// Null for a call that isn't a run.
+    pub run_id: Option<String>,
+    /// The thread the run was in: a task, or a review or summary thread. A title's task; null for a window's restart.
+    pub task_id: Option<String>,
+    /// The run's: `prompt`, `compact` or `review`; or the call's: `title` or `window`.
     pub kind: String,
     pub at: String,
     pub model: String,
@@ -361,7 +363,7 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
          FROM token_usage u JOIN runs r ON r.id=u.run_id JOIN tasks t ON t.id=r.task_id
          WHERE t.profile_id=?1 AND r.created_at >= ?2 AND r.created_at < ?3 ORDER BY r.created_at",
     )?;
-    let usage = st
+    let mut usage = st
         .query_map(params![profile_id, from, to], |r| {
             Ok(UsageRow {
                 run_id: r.get(0)?,
@@ -380,6 +382,8 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    usage.extend(call_usage(c, profile_id, from, to)?);
+    usage.sort_by(|a, b| a.at.cmp(&b.at));
 
     let mut st = c.prepare(
         "SELECT s.task_id, s.thread_id, s.at, s.verdict, s.serious, s.minor, s.minor_noted, s.label, s.run_id, s.round
@@ -417,7 +421,7 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
     }
 
     // The tasks the rows are for, with the tasks their threads review and the subprojects they're in.
-    let mut ids: Vec<String> = usage.iter().map(|u| u.task_id.clone()).chain(reviews.iter().flat_map(|r| [r.task_id.clone(), r.thread_id.clone()])).collect();
+    let mut ids: Vec<String> = usage.iter().filter_map(|u| u.task_id.clone()).chain(reviews.iter().flat_map(|r| [r.task_id.clone(), r.thread_id.clone()])).collect();
     let mut seen: std::collections::HashSet<String> = ids.iter().cloned().collect();
     let mut parent = c.prepare("SELECT parent_id FROM tasks WHERE id=?1 AND parent_id IS NOT NULL")?;
     let mut i = 0;
@@ -455,6 +459,43 @@ pub fn token_report(c: &Connection, profile_id: &str, from: &str, to: &str) -> a
         |r| r.get(0),
     )?;
     Ok(TokenReport { usage, reviews, rounds, follow_ups, tasks, projects, pending })
+}
+
+/// The model calls that weren't runs (see agent/tokens/calls.rs) in `[from, to)`: titles of the
+/// profile's tasks, and the restarts of the windows of the configs it's the first profile to use
+/// (each config's in one profile's report, though several use it; a config none uses, in the first
+/// profile's).
+fn call_usage(c: &Connection, profile_id: &str, from: &str, to: &str) -> anyhow::Result<Vec<UsageRow>> {
+    let mut st = c.prepare(
+        "SELECT u.task_id, u.purpose, u.at, u.model, u.runtime, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens,
+           u.reasoning_tokens, u.cost_usd
+         FROM call_usage u LEFT JOIN tasks t ON t.id=u.task_id
+         WHERE u.at >= ?2 AND u.at < ?3 AND (t.profile_id=?1 OR (u.task_id IS NULL AND ?1=COALESCE(
+           (SELECT p.id FROM profiles p WHERE EXISTS (SELECT 1 FROM json_each(p.claude_config_ids) j WHERE j.value=u.config_id)
+            ORDER BY p.created_at, p.id LIMIT 1),
+           (SELECT id FROM profiles ORDER BY created_at, id LIMIT 1))))
+         ORDER BY u.at",
+    )?;
+    let rows = st
+        .query_map(params![profile_id, from, to], |r| {
+            Ok(UsageRow {
+                run_id: None,
+                task_id: r.get(0)?,
+                kind: r.get(1)?,
+                at: r.get(2)?,
+                model: r.get(3)?,
+                runtime: r.get(4)?,
+                input_tokens: r.get(5)?,
+                output_tokens: r.get(6)?,
+                cache_read_tokens: r.get(7)?,
+                cache_write_tokens: r.get(8)?,
+                reasoning_tokens: r.get(9)?,
+                cost_usd: r.get(10)?,
+                estimated: false,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 /// Every round of review of `tasks`, and the number of each task's rounds by when they started.

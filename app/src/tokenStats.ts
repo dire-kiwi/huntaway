@@ -6,13 +6,15 @@ import type { ATask, AProject } from "./analytics";
  * models, and how often each model's work passes review.
  *
  * A review or summary thread's tokens count towards the task it's for, and a subproject's tasks'
- * towards the subproject, which lists them.
+ * towards the subproject, which lists them. The board's own model calls that aren't runs (task
+ * titles and 5-hour window restarts, see server agent/tokens/calls.rs) count in the totals, but
+ * not towards tasks.
  */
 
-/** What a run's tokens were spent on. */
-export type Purpose = "task" | "review" | "summary" | "compaction" | "scratch" | "group";
+/** What a run's (or a call's) tokens were spent on. */
+export type Purpose = "task" | "review" | "summary" | "compaction" | "scratch" | "group" | "title" | "window";
 
-export const PURPOSES: Purpose[] = ["task", "review", "summary", "compaction", "scratch", "group"];
+export const PURPOSES: Purpose[] = ["task", "review", "summary", "compaction", "scratch", "group", "title", "window"];
 
 export const PURPOSE_LABEL: Record<Purpose, string> = {
   task: "Tasks",
@@ -21,6 +23,8 @@ export const PURPOSE_LABEL: Record<Purpose, string> = {
   compaction: "Compactions",
   scratch: "Scratch",
   group: "Group tasks",
+  title: "Titles",
+  window: "Window restarts",
 };
 
 export const PURPOSE_HINT: Record<Purpose, string> = {
@@ -30,14 +34,16 @@ export const PURPOSE_HINT: Record<Purpose, string> = {
   compaction: "Compacting threads' conversations (the board's after a thread sat idle, and /compact)",
   scratch: "Scratch tasks, in no project",
   group: "Group tasks, planning the work across a group's projects",
+  title: "Writing tasks' titles, as they're created and on each message the user sends them",
+  window: "The short prompts that start a login's next 5-hour window as the last one ends",
 };
 
-/** What one run used of one model. */
+/** What one run used of one model, or one of the board's model calls that isn't a run (`runId` null). */
 export interface URow {
   at: number;
-  runId: string;
-  /** The thread it ran in: a task, or a review or summary thread. */
-  threadId: string;
+  runId: string | null;
+  /** The thread it ran in: a task, or a review or summary thread. A title's task; null for a window restart. */
+  threadId: string | null;
   runKind: string;
   model: string;
   runtime: "claude" | "codex";
@@ -119,11 +125,13 @@ export interface Totals {
   /** What Claude Code said it cost; Codex doesn't say. */
   cost: number;
   runs: number;
+  /** Model calls that aren't runs (titles and window restarts). */
+  calls: number;
   /** Some of it is estimated. */
   estimated: boolean;
 }
 
-export const zero = (): Totals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0, runs: 0, estimated: false });
+export const zero = (): Totals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0, runs: 0, calls: 0, estimated: false });
 
 /** Every token: uncached input, cache reads and writes, and output. */
 export const allTokens = (t: Pick<Totals, "input" | "output" | "cacheRead" | "cacheWrite">) => t.input + t.output + t.cacheRead + t.cacheWrite;
@@ -140,18 +148,22 @@ export function add(t: Totals, r: URow | Totals) {
   t.reasoning += r.reasoning;
   t.cost += r.cost ?? 0;
   t.runs += "runId" in r ? 0 : r.runs;
+  t.calls += "runId" in r ? 0 : r.calls;
   t.estimated ||= r.estimated;
 }
 
-/** Sums rows, counting each run once. */
+/** Sums rows, counting each run once, and each call's rows (one for each model it used) as a call. */
 export function total(rows: URow[]): Totals {
   const t = zero();
   const runs = new Set<string>();
+  const calls = new Set<string>();
   for (const r of rows) {
     add(t, r);
-    runs.add(r.runId);
+    if (r.runId !== null) runs.add(r.runId);
+    else calls.add(`${r.runKind}\u0000${r.threadId}\u0000${r.at}`);
   }
   t.runs = runs.size;
+  t.calls = calls.size;
   return t;
 }
 
@@ -180,8 +192,9 @@ export function format(n: number, m: Metric) {
   return m === "cost" ? usd(n) : tokens(n);
 }
 
-export function purposeOf(d: Pick<TokenData, "threads">, r: Pick<URow, "threadId" | "runKind">): Purpose {
-  const t = d.threads[r.threadId];
+export function purposeOf(d: Pick<TokenData, "threads">, r: Pick<URow, "runId" | "threadId" | "runKind">): Purpose {
+  if (r.runId === null) return r.runKind === "window" ? "window" : "title";
+  const t = r.threadId === null ? undefined : d.threads[r.threadId];
   if (t?.kind === "review") return t.taskType === "summary" ? "summary" : "review";
   if (r.runKind === "compact") return "compaction";
   if (t?.groupName) return "group";
@@ -239,6 +252,8 @@ export interface TaskUsage {
 export function byTask(d: TokenData, rows: URow[], metric: Metric): TaskUsage[] {
   const own = new Map<string, URow[]>();
   for (const r of rows) {
+    // Calls that aren't runs aren't the task's agents' work.
+    if (r.runId === null || r.threadId === null) continue;
     const id = ownerOf(d, r.threadId);
     const g = own.get(id);
     if (g) g.push(r);

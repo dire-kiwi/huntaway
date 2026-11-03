@@ -26,6 +26,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::Value;
 use tokio::process::Command;
 
+use crate::agent::tokens::calls::{self, Spent};
 use crate::agent::usage;
 use crate::db::{self, ClaudeConfig};
 use crate::state::Shared;
@@ -149,18 +150,28 @@ async fn check(s: &Shared, c: &ClaudeConfig, w: &mut Watch, now: DateTime<Utc>) 
 }
 
 /// Send the prompt that starts a window: whether its rate limits showed a 5-hour window, if it
-/// said. Claude's are taken in as an agent run's are.
+/// said. Claude's are taken in as an agent run's are. Its tokens are kept (see agent/tokens/calls.rs).
 async fn ping(s: &Shared, c: &ClaudeConfig) -> Result<Option<bool>> {
+    let mut spent = None;
+    let r = send(s, c, &mut spent).await;
+    if let Some(spent) = spent {
+        calls::record(s, "window", None, Some(&c.id), &spent);
+    }
+    r
+}
+
+async fn send(s: &Shared, c: &ClaudeConfig, spent: &mut Option<Spent>) -> Result<Option<bool>> {
     #[cfg(test)]
     {
         let out = TEST_OUTPUT.with_borrow_mut(|o| o.pop_front()).context("no prompt in tests")?;
         TEST_PINGS.set(TEST_PINGS.get() + 1);
+        *spent = out.as_deref().ok().and_then(Spent::claude_stream);
         return out.map(|o| read_output(s, &c.id, &o)).map_err(anyhow::Error::msg);
     }
     #[cfg_attr(test, allow(unreachable_code))]
     if c.is_codex() {
         // Away from any repository, as titles are.
-        crate::agent::codex::task_title(c.dir(), &s.data_dir, SYSTEM_PROMPT, PROMPT).await?;
+        crate::agent::codex::task_title(c.dir(), &s.data_dir, SYSTEM_PROMPT, PROMPT, spent).await?;
         return Ok(None);
     }
     let program = std::env::var("IA_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
@@ -179,6 +190,7 @@ async fn ping(s: &Shared, c: &ClaudeConfig) -> Result<Option<bool>> {
     drop(stdin);
     let out = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output()).await.context("timed out")??;
     let stdout = String::from_utf8_lossy(&out.stdout);
+    *spent = Spent::claude_stream(&stdout);
     let reported = read_output(s, &c.id, &stdout);
     if !out.status.success() {
         bail!("claude exited with {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim());
@@ -260,9 +272,18 @@ mod tests {
             assert_eq!(pings(), 0);
             let later = now + TimeDelta::hours(1) + TimeDelta::minutes(2);
             let next = later + TimeDelta::hours(5);
-            TEST_OUTPUT.with_borrow_mut(|o| o.push_back(Ok(format!("{}\n{{\"type\":\"result\"}}\n", five_hour(next)))));
+            let result = json!({"type": "result", "modelUsage": {"claude-haiku-5-5": {"inputTokens": 3, "outputTokens": 2, "cacheCreationInputTokens": 600, "costUSD": 0.0002}}});
+            TEST_OUTPUT.with_borrow_mut(|o| o.push_back(Ok(format!("{}\n{result}\n", five_hour(next)))));
             check(&s, &c, &mut w, later).await;
             assert_eq!(pings(), 1);
+            // Its tokens are kept, as the config's.
+            let kept: (String, String, Option<String>, String, i64, i64) = s
+                .db()
+                .query_row("SELECT purpose, config_id, task_id, model, output_tokens, cache_write_tokens FROM call_usage", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+                })
+                .unwrap();
+            assert_eq!(kept, ("window".into(), c.id.clone(), None, "claude-haiku-5-5".into(), 2, 600));
             assert_eq!(usage::session_reset(&s, &c.id), Some(DateTime::from_timestamp(next.timestamp(), 0)));
             check(&s, &c, &mut w, later + TimeDelta::minutes(1)).await;
             assert_eq!(pings(), 1, "the next window is running");

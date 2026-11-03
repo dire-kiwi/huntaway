@@ -96,3 +96,30 @@ test("the Tokens tab shows where tokens went, a subproject's tasks and what revi
     assert.match(await page.locator("tr", { hasText: "gpt-6.1-sol · Codex" }).innerText(), /0%/);
   });
 });
+
+test("titles and window restarts show as calls of their own, outside tasks' totals", async () => {
+  const calls = {
+    ...report,
+    usage: [
+      usage("r4", "solo", "claude-sonnet-5-5", 500),
+      usage(null, "solo", "claude-haiku-5-5", 30, { kind: "title" }),
+      usage(null, "solo", "claude-haiku-5-5", 20, { kind: "title", at: new Date(Date.now() - 1000).toISOString() }),
+      usage(null, null, "claude-haiku-5-5", 7, { kind: "window" }),
+    ],
+    reviews: [],
+    rounds: [],
+    follow_ups: [],
+    pending: 0,
+  };
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await page.route(/\/token-stats\?/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(calls) }));
+    await ui.run(["goto /analytics", "click tokens", "wait What they were spent on", "wait Window restarts"]);
+    const text = await page.locator("main, body").first().innerText();
+    assert.match(text, /on 2 models, and 3 title or window calls/);
+    assert.match(await page.locator("tr", { hasText: "Titles" }).innerText(), /Titles\s+· 2 calls/);
+    assert.match(await page.locator("tr", { hasText: "Window restarts" }).innerText(), /Window restarts\s+· 1 call/);
+    // The task's own row has its run alone (with its titles it would be 4k).
+    assert.match(await page.locator("tr", { hasText: "On its own" }).innerText(), /On its own\s+2k\s+2k\s+claude-sonnet-5-5$/);
+  });
+});

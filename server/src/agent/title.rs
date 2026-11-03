@@ -15,6 +15,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::agent::runner;
+use crate::agent::tokens::calls::{self, Spent};
 use crate::attachments;
 use crate::db::{self, Task};
 use crate::state::Shared;
@@ -266,7 +267,7 @@ pub async fn check(db_path: &Path, ids: &[String], steps: bool, show_input: bool
             if show_input {
                 println!("--- input\n{input}---");
             }
-            call_model(config.as_ref(), &cwd, system_prompt, &input).await
+            call_model(config.as_ref(), &cwd, system_prompt, &input, &mut None).await
         };
         if !steps {
             let reply = ask(REFRESH_PROMPT, refresh_input(&task, &replies, since.as_deref(), 0)).await?;
@@ -307,23 +308,32 @@ thread_local! {
     /// was asked.
     pub static TEST_REPLY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     pub static TEST_ASKED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// What each call says it used.
+    pub static TEST_SPENT: std::cell::RefCell<Option<Spent>> = const { std::cell::RefCell::new(None) };
     /// Replies for the next calls, in turn, before `TEST_REPLY`: each once its gate (if any) opens.
     pub static TEST_REPLIES: std::cell::RefCell<std::collections::VecDeque<(String, Option<std::sync::Arc<tokio::sync::Notify>>)>> =
         const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
 }
 
-/// Ask for a title using the same agent and login as the task.
+/// Ask for a title using the same agent and login as the task, and keep the tokens it took.
 async fn run_model(state: &Shared, task: &Task, system_prompt: &str, input: &str) -> Result<String> {
     let config = db::task_claude_config(&state.db(), task)?;
+    let mut spent = None;
     // Away from the task's repository and its project settings.
-    call_model(config.as_ref(), &state.data_dir, system_prompt, input).await
+    let title = call_model(config.as_ref(), &state.data_dir, system_prompt, input, &mut spent).await;
+    if let Some(spent) = spent {
+        calls::record(state, "title", Some(&task.id), config.as_ref().map(|c| c.id.as_str()), &spent);
+    }
+    title
 }
 
-async fn call_model(config: Option<&db::ClaudeConfig>, cwd: &Path, system_prompt: &str, input: &str) -> Result<String> {
+/// Ask for a title, with what the call used in `spent` (when it says, failed or not).
+async fn call_model(config: Option<&db::ClaudeConfig>, cwd: &Path, system_prompt: &str, input: &str, spent: &mut Option<Spent>) -> Result<String> {
     #[cfg(test)]
     {
         let _ = (config, cwd, system_prompt);
         TEST_ASKED.with_borrow_mut(|a| a.push(input.to_string()));
+        *spent = TEST_SPENT.with_borrow(Clone::clone);
         if let Some((reply, gate)) = TEST_REPLIES.with_borrow_mut(|r| r.pop_front()) {
             if let Some(gate) = gate {
                 gate.notified().await;
@@ -334,7 +344,7 @@ async fn call_model(config: Option<&db::ClaudeConfig>, cwd: &Path, system_prompt
     }
     #[cfg_attr(test, allow(unreachable_code))]
     if let Some(config) = config.filter(|c| c.is_codex()) {
-        let reply = crate::agent::codex::task_title(config.dir(), cwd, system_prompt, input).await?;
+        let reply = crate::agent::codex::task_title(config.dir(), cwd, system_prompt, input, spent).await?;
         let title = clean(&reply);
         if title.is_empty() {
             bail!("codex returned no title");
@@ -343,7 +353,7 @@ async fn call_model(config: Option<&db::ClaudeConfig>, cwd: &Path, system_prompt
     }
     let program = std::env::var("IA_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
     let mut cmd = Command::new(program);
-    cmd.args(["-p", "--model", "haiku", "--output-format", "text", "--tools", "", "--strict-mcp-config"])
+    cmd.args(["-p", "--model", "haiku", "--output-format", "json", "--tools", "", "--strict-mcp-config"])
         .args(["--no-session-persistence", "--disable-slash-commands", "--system-prompt", system_prompt])
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -358,10 +368,19 @@ async fn call_model(config: Option<&db::ClaudeConfig>, cwd: &Path, system_prompt
     stdin.write_all(input.as_bytes()).await?;
     drop(stdin);
     let out = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output()).await.context("timed out")??;
+    // Its `result`, with the title and the tokens it took.
+    let result: Option<serde_json::Value> = serde_json::from_slice(&out.stdout).ok().filter(|v: &serde_json::Value| v["type"] == "result");
+    if let Some(r) = &result {
+        *spent = Some(Spent::claude(r));
+    }
     if !out.status.success() {
         bail!("claude exited with {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim());
     }
-    let title = clean(&String::from_utf8_lossy(&out.stdout));
+    let result = result.context("claude's reply isn't a result")?;
+    if result["is_error"] == true {
+        bail!("claude failed: {}", result["result"].as_str().unwrap_or_default());
+    }
+    let title = clean(result["result"].as_str().unwrap_or_default());
     if title.is_empty() {
         bail!("claude returned no title");
     }
@@ -599,6 +618,38 @@ pub mod tests {
             refresh(&s, &task.id);
             settle().await;
             assert_eq!(title(), "Something else");
+        })
+    }
+
+    #[test]
+    fn each_title_call_keeps_its_tokens_for_the_task_failed_or_not() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+            let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix login", description: "The login page 500s", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+            let task = db::insert_task(&s.db(), t).unwrap();
+            let mut spent = Spent { runtime: "claude", ..Default::default() };
+            spent.models.insert("claude-haiku-5-5".into(), crate::agent::tokens::Counts { input: 2, output: 7, cache_write: 600, cost: 0.0002, ..Default::default() });
+            TEST_SPENT.set(Some(spent));
+            s.add_message(&task.id, "user", json!({"text": "Now add a logout button"})).unwrap();
+            reply("Add a logout button");
+            refresh(&s, &task.id);
+            settle().await;
+            // A failed one too: the tokens were spent.
+            TEST_REPLY.set(None);
+            s.add_message(&task.id, "user", json!({"text": "And a sign-up page"})).unwrap();
+            refresh(&s, &task.id);
+            settle().await;
+            let kept: Vec<(String, Option<String>, String, i64, Option<f64>)> = s
+                .db()
+                .prepare("SELECT purpose, task_id, model, output_tokens, cost_usd FROM call_usage ORDER BY id")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            let row = ("title".to_string(), Some(task.id.clone()), "claude-haiku-5-5".to_string(), 7, Some(0.0002));
+            assert_eq!(kept, vec![row.clone(), row]);
         })
     }
 

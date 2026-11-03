@@ -16,7 +16,8 @@ def emit(value):
 
 if sys.argv[1] != "app-server":
     record(agent="claude", home=os.environ.get("CLAUDE_CONFIG_DIR"), args=sys.argv[1:], input=sys.stdin.read())
-    print('"Fix the Claude title."')
+    usage = {"claude-haiku-5-5": {"inputTokens": 2, "outputTokens": 9, "cacheCreationInputTokens": 600, "costUSD": 0.0002}}
+    emit({"type": "result", "subtype": "success", "is_error": False, "result": '"Fix the Claude title."', "modelUsage": usage})
     sys.exit(0)
 
 record(agent="codex", home=os.environ.get("CODEX_HOME"))
@@ -37,6 +38,8 @@ for line in sys.stdin:
     if method == "turn/start":
         mode = os.environ.get("IA_TITLE_MODE", "success")
         text = "" if mode == "empty" else '"Fix Codex task naming."'
+        emit({"method": "thread/tokenUsage/updated", "params": {"threadId": "title", "turnId": "turn", "tokenUsage": {
+            "total": {"inputTokens": 900, "cachedInputTokens": 800, "outputTokens": 9}, "last": {}}}})
         emit({"method": "item/completed", "params": {"threadId": "title", "item": {
             "type": "agentMessage", "text": text}}})
         emit({"method": "turn/completed", "params": {"threadId": "title", "turn": {
