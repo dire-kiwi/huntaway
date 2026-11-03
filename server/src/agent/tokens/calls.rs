@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use super::Counts;
 use crate::state::Shared;
-use crate::util::now;
+use crate::util::{new_id, now};
 
 /// What a call used, by model.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -44,12 +44,14 @@ impl Spent {
 /// `config_id`. Logs rather than fails: the call's own work is done.
 pub fn record(state: &Shared, purpose: &str, task_id: Option<&str>, config_id: Option<&str>, spent: &Spent) {
     let at = now();
+    // The call's rows (one for each model) share it, so they're counted as one call.
+    let call_id = new_id();
     let c = state.db();
     for (model, n) in spent.models.iter().filter(|(_, n)| n.total() > 0 || n.cost > 0.0) {
         let r = c.execute(
             "INSERT INTO call_usage (at, purpose, task_id, config_id, model, runtime, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-               reasoning_tokens, cost_usd)
-             SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12 WHERE ?3 IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id=?3)",
+               reasoning_tokens, cost_usd, call_id)
+             SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13 WHERE ?3 IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id=?3)",
             params![
                 at,
                 purpose,
@@ -62,7 +64,8 @@ pub fn record(state: &Shared, purpose: &str, task_id: Option<&str>, config_id: O
                 n.cache_read,
                 n.cache_write,
                 n.reasoning,
-                (spent.runtime == "claude").then_some(n.cost)
+                (spent.runtime == "claude").then_some(n.cost),
+                call_id
             ],
         );
         if let Err(e) = r {
@@ -127,6 +130,18 @@ mod tests {
             record(&s, "window", None, Some(&cfg), &Spent { runtime: "claude", models: [("haiku".to_string(), Counts::default())].into() });
             // A task deleted while its title was written: no row.
             record(&s, "title", Some("gone"), None, &spent(16));
+            // A call on two models, and another just like it (in the same millisecond, maybe): a
+            // row for each model, which share their call's id.
+            let two = Spent { runtime: "claude", models: [("haiku".to_string(), Counts { output: 32, ..Default::default() }), ("opus".to_string(), Counts { output: 64, ..Default::default() })].into() };
+            record(&s, "window", None, Some(&unused), &two);
+            record(&s, "window", None, Some(&unused), &two);
+            let calls = {
+                let r = crate::analytics::token_report(&s.db(), &first.id, "2000-01-01T00:00:00.000Z", "2999-01-01T00:00:00.000Z").unwrap();
+                r.usage.iter().filter(|u| u.output_tokens >= 32).map(|u| u.call_id.clone().unwrap()).collect::<Vec<_>>()
+            };
+            assert_eq!(calls.len(), 4);
+            assert_eq!(calls.iter().collect::<std::collections::HashSet<_>>().len(), 2, "{calls:?}");
+            s.db().execute("DELETE FROM call_usage WHERE output_tokens >= 32", []).unwrap();
             let report = |p: &str| {
                 let r = crate::analytics::token_report(&s.db(), p, "2000-01-01T00:00:00.000Z", "2999-01-01T00:00:00.000Z").unwrap();
                 r.usage.iter().map(|u| (u.kind.clone(), u.task_id.clone(), u.run_id.clone(), u.output_tokens)).collect::<Vec<_>>()

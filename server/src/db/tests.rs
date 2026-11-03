@@ -641,6 +641,27 @@ fn a_database_from_version_70_gets_restart_window_off() {
 }
 
 #[test]
+fn a_database_from_version_80_gets_call_ids_shared_by_each_calls_rows() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE call_usage DROP COLUMN call_id; PRAGMA user_version=80;
+             INSERT INTO call_usage (at, purpose, task_id, config_id, model, runtime) VALUES
+               ('1', 'window', NULL, 'c', 'opus', 'claude'), ('1', 'window', NULL, 'c', 'haiku', 'claude'),
+               ('1', 'window', NULL, 'd', 'haiku', 'claude'), ('2', 'window', NULL, 'c', 'haiku', 'claude'), ('1', 'title', NULL, 'c', 'haiku', 'claude');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let ids: Vec<String> = c.prepare("SELECT call_id FROM call_usage ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    assert_eq!(ids[0], ids[1]);
+    let distinct: std::collections::HashSet<&String> = ids.iter().collect();
+    assert_eq!(distinct.len(), 4, "{ids:?}");
+}
+
+#[test]
 fn a_database_at_version_73_gets_tasks_pr_checks() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     let id = {

@@ -41,6 +41,8 @@ import { Swatch, useTip } from "./chart";
 const COLOR: Record<Purpose, string> = Object.fromEntries(PURPOSES.map((p, i) => [p, PALETTE[i]])) as Record<Purpose, string>;
 const pct = (n: number, of: number) => (of ? `${Math.round((n * 100) / of)}%` : "–");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** "3 runs", "2 calls" (for titles and window restarts), or both. */
+const uses = (t: Totals) => [t.runs || !t.calls ? plural(t.runs, "run") : "", t.calls ? plural(t.calls, "call") : ""].filter(Boolean).join(" and ");
 
 function openTask(t: ATask | undefined) {
   if (t) navigate({ name: "task", taskId: t.id });
@@ -246,7 +248,7 @@ function ByPurpose({ data, metric }: { data: TokenData; metric: Metric }) {
                   <span className="flex items-center gap-2">
                     <Swatch color={COLOR[g.key]} />
                     {PURPOSE_LABEL[g.key]}
-                    <span className="text-faint">· {g.totals.runs || !g.totals.calls ? plural(g.totals.runs, "run") : plural(g.totals.calls, "call")}</span>
+                    <span className="text-faint">· {uses(g.totals)}</span>
                   </span>
                 </td>
                 <Cells t={g.totals} metric={metric} whole={whole} />
@@ -280,7 +282,7 @@ function ByModel({ rows, metric }: { rows: URow[]; metric: Metric }) {
               const [runtime, model] = g.key.split("\u0000");
               return (
                 <tr key={g.key} className="bg-panel/60">
-                  <td className="truncate px-3 py-1.5" title={`${model}, in ${g.totals.runs} runs`}>
+                  <td className="truncate px-3 py-1.5" title={`${model}, in ${uses(g.totals)}`}>
                     {model} <span className="text-faint">· {runtime === "codex" ? "Codex" : "Claude"}</span>
                   </td>
                   <Cells t={g.totals} metric={metric} whole={whole} />

@@ -102,9 +102,10 @@ test("titles and window restarts show as calls of their own, outside tasks' tota
     ...report,
     usage: [
       usage("r4", "solo", "claude-sonnet-5-5", 500),
-      usage(null, "solo", "claude-haiku-5-5", 30, { kind: "title" }),
-      usage(null, "solo", "claude-haiku-5-5", 20, { kind: "title", at: new Date(Date.now() - 1000).toISOString() }),
-      usage(null, null, "claude-haiku-5-5", 7, { kind: "window" }),
+      // Two titles in the same millisecond are two calls.
+      usage(null, "solo", "claude-haiku-5-5", 30, { kind: "title", call_id: "c1" }),
+      usage(null, "solo", "claude-haiku-5-5", 20, { kind: "title", call_id: "c2" }),
+      usage(null, null, "claude-haiku-5-5", 7, { kind: "window", call_id: "c3" }),
     ],
     reviews: [],
     rounds: [],
@@ -119,6 +120,9 @@ test("titles and window restarts show as calls of their own, outside tasks' tota
     assert.match(text, /on 2 models, and 3 title or window calls/);
     assert.match(await page.locator("tr", { hasText: "Titles" }).innerText(), /Titles\s+· 2 calls/);
     assert.match(await page.locator("tr", { hasText: "Window restarts" }).innerText(), /Window restarts\s+· 1 call/);
+    // A model only titles and window restarts used was used in calls, not in no runs.
+    assert.equal(await page.locator("tr", { hasText: "claude-haiku-5-5 · Claude" }).locator("td").first().getAttribute("title"), "claude-haiku-5-5, in 3 calls");
+    assert.equal(await page.locator("tr", { hasText: "claude-sonnet-5-5 · Claude" }).locator("td").first().getAttribute("title"), "claude-sonnet-5-5, in 1 run");
     // The task's own row has its run alone (with its titles it would be 4k).
     assert.match(await page.locator("tr", { hasText: "On its own" }).innerText(), /On its own\s+2k\s+2k\s+claude-sonnet-5-5$/);
   });
