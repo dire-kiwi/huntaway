@@ -665,7 +665,7 @@ pub fn for_preview(state: &Shared, project_id: &str) -> anyhow::Result<RunTools>
 pub fn for_task_run(state: &Shared, task: &crate::db::Task, project: Option<&crate::db::Project>) -> anyhow::Result<RunTools> {
     match project {
         Some(p) => for_run(state, &p.id),
-        None if task.is_assistant() => run_tools(state, Scope::Profile(&task.profile_id), true),
+        None if task.is_assistants() => run_tools(state, Scope::Profile(&task.profile_id), true),
         None => Ok(RunTools::default()),
     }
 }
@@ -803,7 +803,7 @@ pub async fn for_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiRes
                 (on, off, get_overrides(&c, &p.id)?)
             }
             // A profile's assistant has the global skills its profile switches on (see for_task_run).
-            None if task.is_assistant() => {
+            None if task.is_assistants() => {
                 let on = effective_for_profile(&c, &task.profile_id)?.0;
                 let off = list_skills(&c, None)?.into_iter().map(|s| s.name).filter(|n| !on.iter().any(|s| s.name == *n)).collect();
                 (on, off, Overrides::default())

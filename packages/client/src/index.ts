@@ -4,6 +4,7 @@
 import { type ClientAdapter, createHttp } from "./http";
 import { hostsApi } from "./hosts";
 import { pushApi } from "./push";
+import { devicesApi } from "./devices";
 import { profilesApi } from "./profiles";
 import { claudeConfigsApi } from "./claudeConfigs";
 import { githubApi } from "./github";
@@ -18,10 +19,12 @@ import { approvalsApi } from "./approvals";
 import { automationsApi } from "./automations";
 import { serverApi } from "./server";
 import { assistantApi } from "./assistant";
+import { approvalRulesApi } from "./approvalRules";
 
 export { ApiError, type ClientAdapter, type Fetch, type FetchResponse, type KeyValueStorage } from "./http";
 export * from "./hosts";
 export * from "./push";
+export * from "./devices";
 export * from "./profiles";
 export * from "./claudeConfigs";
 export * from "./github";
@@ -36,6 +39,7 @@ export * from "./approvals";
 export * from "./automations";
 export * from "./server";
 export * from "./assistant";
+export * from "./approvalRules";
 
 /** A client for one board: its calls, and its token. An app with several boards makes one for each. */
 export function createClient(adapter: ClientAdapter) {
@@ -51,6 +55,7 @@ export function createClient(adapter: ClientAdapter) {
     wsUrl,
     ...hostsApi(http),
     ...pushApi(http),
+    ...devicesApi(http),
     ...profilesApi(http),
     ...claudeConfigsApi(http),
     ...githubApi(http),
@@ -65,6 +70,7 @@ export function createClient(adapter: ClientAdapter) {
     ...automationsApi(http),
     ...serverApi(http),
     ...assistantApi(http),
+    ...approvalRulesApi(http),
   };
 }
 

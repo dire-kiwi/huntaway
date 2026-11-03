@@ -315,7 +315,7 @@ impl Drop for KillGroup {
 /// Run a script in a process group of its own, which is killed if the script runs over `limit`
 /// or isn't waited for to the end (e.g. the server is shutting down), so nothing it started
 /// keeps running.
-async fn run_limited(mut cmd: Command, limit: Duration) -> Result<std::process::Output> {
+pub(crate) async fn run_limited(mut cmd: Command, limit: Duration) -> Result<std::process::Output> {
     cmd.process_group(0).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     let mut child = cmd.spawn().context("failed to run script")?;
     let pid = child.id().context("failed to run script")? as i32;

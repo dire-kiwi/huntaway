@@ -4,6 +4,14 @@ use super::*;
 
 /// `/api/h/{host_id}/{*rest}`: the UI's way of talking to any host.
 pub async fn proxy(State(s): State<Shared>, Path((host_id, rest)): Path<(String, String)>, req: Request) -> Response {
+    // A paired device's request was checked on its path as sent (in api::auth), and is again on the one forwarded
+    // with our token, as the router decoded it.
+    let device = req.extensions().get::<crate::devices::DeviceAuth>().cloned();
+    if device.is_some()
+        && let Some(why) = crate::devices::refused_on_host(req.method().as_str(), &rest)
+    {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": why}))).into_response();
+    }
     if is_websocket(&req) {
         return proxy_ws(s, host_id, rest, req).await;
     }
@@ -21,7 +29,7 @@ pub async fn proxy(State(s): State<Shared>, Path((host_id, rest)): Path<(String,
         s.push.note_move(&host_id, id, &status);
     }
     let result = if host_id == s.host_id {
-        local_request(&s, &method, &path, (!bytes.is_empty()).then(|| bytes.to_vec())).await
+        local_request_as(&s, &method, &path, (!bytes.is_empty()).then(|| bytes.to_vec()), device).await
     } else {
         let Some(link) = s.links.lock().unwrap().get(&host_id).cloned() else {
             let name = db::get_link(&s.db(), &host_id).ok().flatten().map(|l| l.name).unwrap_or(host_id);
@@ -56,6 +64,7 @@ fn is_websocket(req: &Request) -> bool {
 async fn proxy_ws(s: Shared, host_id: String, rest: String, req: Request) -> Response {
     let path = host_path(&rest, req.uri().query());
     let (mut parts, body) = req.into_parts();
+    let device = parts.extensions.get::<crate::devices::DeviceAuth>().cloned();
     if host_id == s.host_id {
         let Some(router) = s.local_router.get().cloned() else {
             return (StatusCode::SERVICE_UNAVAILABLE, "router not ready").into_response();
@@ -71,6 +80,10 @@ async fn proxy_ws(s: Shared, host_id: String, rest: String, req: Request) -> Res
         if let Some(upgrade) = parts.extensions.remove::<hyper::upgrade::OnUpgrade>() {
             local.extensions_mut().insert(upgrade);
         }
+        // So that a paired device's terminal closes when it's revoked.
+        if let Some(device) = device {
+            local.extensions_mut().insert(device);
+        }
         return router.oneshot(local).await.into_response();
     }
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &s).await {
@@ -81,7 +94,7 @@ async fn proxy_ws(s: Shared, host_id: String, rest: String, req: Request) -> Res
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "host is offline"}))).into_response();
     };
     match link.open_ws(&path).await {
-        Ok(pipe) => upgrade.on_upgrade(move |ws| relay::bridge(ws, pipe)),
+        Ok(pipe) => upgrade.on_upgrade(move |ws| crate::devices::until_revoked(s, device, relay::bridge(ws, pipe))),
         Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({"error": format!("{e:#}")}))).into_response(),
     }
 }
@@ -137,7 +150,8 @@ pub struct AddHost {
 }
 
 /// Link a host we can reach directly.
-pub async fn add_host(State(s): State<Shared>, Json(b): Json<AddHost>) -> ApiResult<Json<Value>> {
+pub async fn add_host(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Json(b): Json<AddHost>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "link hosts")?;
     let url = b.url.trim().trim_end_matches('/').to_string();
     let endpoint = crate::hosts::broker::resolve(&url, None).await.map_err(|e| ApiError::bad(format!("can't resolve {url}: {e:#}")))?;
     let info: Value = http()
@@ -204,13 +218,17 @@ pub async fn remove_host(State(s): State<Shared>, Path(id): Path<String>) -> Api
     Ok(Json(json!({"ok": true})))
 }
 
-/// What a host needs to dial in to this hub.
-pub async fn join_info(State(s): State<Shared>, headers: HeaderMap) -> Json<Value> {
+/// What a host needs to dial in to this hub: its tokens, which a paired device never gets (see devices::HUB).
+pub async fn join_info(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, headers: HeaderMap) -> Response {
+    if let Err(e) = crate::devices::board_only(&device, "get the board's tokens") {
+        return e.into_response();
+    }
     Json(json!({
         "hub_token": s.hub_token,
         "host_token": s.token,
         "command": format!("huntaway serve --hub {} --hub-token {}", hub_url(&s, &headers), s.hub_token),
     }))
+    .into_response()
 }
 
 /// The URL hosts dial this hub at, as the browser asking reaches it.
@@ -232,8 +250,8 @@ pub(super) fn hub_url(s: &Shared, headers: &HeaderMap) -> String {
 }
 
 /// Merged events from every host, for the UI.
-pub async fn ws(State(s): State<Shared>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| ui_loop(s, socket))
+pub async fn ws(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, upgrade: WebSocketUpgrade) -> Response {
+    upgrade.on_upgrade(move |socket| crate::devices::until_revoked(s.clone(), device.map(|d| d.0), ui_loop(s, socket)))
 }
 
 async fn ui_loop(s: Shared, mut socket: WebSocket) {

@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { lazy, Suspense, useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
-import { fetchOpenToken, getToken, isAssistant, setUnauthorizedHandler } from "./api";
+import { fetchOpenToken, getToken, isAssistant, isRoutine, setUnauthorizedHandler } from "./api";
 import { Analytics } from "./components/settings/Analytics";
 import { ProjectApprovals } from "./components/task/Approvals";
 import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/board/Board";
@@ -67,6 +67,8 @@ export function App() {
   useEffect(() => {
     // A profile's assistant has a page of its own.
     if (routeTask && isAssistant(routeTask)) return void (routeProfile && navigate({ name: "assistant", profile: routeProfile }, true));
+    // Its routines' threads too, being on no board.
+    if (routeTask && isRoutine(routeTask)) return;
     if (routeTask && routeGroup) return navigate(groupTaskUrl(routeTask.host_id, routeGroup, routeTask.id), true);
     if (routeTask?.kind === "task" && !routeTask.project_id && routeProfile) return navigate(profileTaskUrl(routeProfile, routeTask.id), true);
     if (!routeTask?.project_id) return;

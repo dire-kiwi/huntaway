@@ -1365,3 +1365,30 @@ fn a_database_from_version_72_keeps_new_sessions_apart() {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
 }
+
+#[test]
+fn a_database_from_version_80_keeps_its_prompts_waiting_without_an_expiry() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "PRAGMA foreign_keys=OFF; DROP INDEX permission_requests_expiry; ALTER TABLE permission_requests DROP COLUMN expires_at; ALTER TABLE permission_requests DROP COLUMN rule;
+             ALTER TABLE push_answer_tokens DROP COLUMN expires_at; ALTER TABLE tasks DROP COLUMN queued_routine; DROP TABLE approval_log;
+             INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('p','t',1,'Bash','{}','pending','1','c','tool');
+             PRAGMA user_version=80;",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    // A prompt from before has no expiry or rule, so it waits as it did.
+    let row: (String, Option<String>, Option<String>) =
+        c.query_row("SELECT status, expires_at, rule FROM permission_requests WHERE id='p'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    assert_eq!(row, ("pending".into(), None, None));
+    c.execute("INSERT INTO push_answer_tokens (token_hash,request_id,host_id,task_id,created_at,expires_at) VALUES ('h','p','x','t','1','2')", []).unwrap();
+    c.execute(
+        "INSERT INTO approval_log (id,profile_id,task_id,tool_name,summary,rule,decision,outcome,created_at) VALUES ('l','p','t','x','','x','ask','pending','1')",
+        [],
+    )
+    .unwrap();
+}

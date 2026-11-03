@@ -196,6 +196,13 @@ pub(super) fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
             if let Some(uuid) = v["uuid"].as_str().filter(|_| v["parent_tool_use_id"].is_null()) {
                 state.db().execute("UPDATE runs SET agent_at=?1 WHERE id=?2", rusqlite::params![uuid, run.id])?;
             }
+            // Calls the approval rules' hook blocked go in the action log.
+            if tool_result {
+                let task = db::get_task(&state.db(), task_id)?;
+                if let Some(task) = task.filter(|t| crate::agent::approval_rules::applies_to(&state.db(), t).unwrap_or(false)) {
+                    crate::agent::approval_rules::on_tool_results(state, &task, &v);
+                }
+            }
             state.add_message(task_id, "claude", v)?;
             // A tool call may have changed the task's document: the task shows it as it's written.
             if tool_result {
@@ -368,6 +375,10 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         start_next_merge(state, task.project_id.as_deref());
         return;
     }
+    // What the routines whose messages it took cost (before a queued message carries on the thread).
+    if task.is_assistant() {
+        crate::integrations::automations::routines::assistant_run_ended(state, run_id);
+    }
     let is_task = task.kind == "task";
     // It stopped because its config is out of usage, which resets then (see usage::ran_out).
     let limit = match &outcome {
@@ -376,6 +387,7 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     };
     // Its profile has it wait for the reset rather than need attention.
     let wait = limit.is_some() && is_task && !task.merging && db::get_profile(&state.db(), &task.profile_id).ok().flatten().is_some_and(|p| p.limit_wait);
+    let attention = run.attention.clone();
     let (status, reason): (Option<&str>, Option<String>) = match (&outcome, run.attention) {
         (Outcome::Cancelled, _) => {
             state.add_event(task_id, "warn", "Run stopped", None);
@@ -405,6 +417,8 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         (Outcome::Ok, None) if task.remerge => (Some("ready_for_merge"), None),
         // The assistant never goes to review: it waits for the user's next message.
         (Outcome::Ok, None) if task.is_assistant() => (Some("todo"), None),
+        // A routine's run is done once it's reported (see automations::routines).
+        (Outcome::Ok, None) if task.is_routine() => (Some("done"), None),
         (Outcome::Ok, None) => (Some("in_review"), None),
     };
     // The queued message carries on the conversation, so the task stays where it is. Out of
@@ -434,6 +448,10 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
             None
         }
     };
+    // Its report goes to the assistant, unless the run was quiet.
+    if is_task && task.is_routine() {
+        crate::integrations::automations::routines::finished(state, updated.as_ref().unwrap_or(&task), &outcome, attention.as_deref());
+    }
     if is_task && reason.as_deref() == Some(APPROVAL) {
         if let Err(e) = crate::review::merge_gate::ask(state, task_id) {
             tracing::error!(task = task_id, "asking for a merge's approval: {e:#}");

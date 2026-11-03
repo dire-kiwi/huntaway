@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { History } from "lucide-react";
+import { History, Repeat } from "lucide-react";
 import { createContext, memo, useContext, useMemo } from "react";
 import type { Turn } from "../../../api";
 import { splitAttachments } from "../../../attachments";
 import type { Item } from "../../../threadModel";
+import { openTask } from "../../../router";
 import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard } from "../Approvals";
 import { AttachmentList } from "../Attachments";
 import { CompactLine, EventLine, PromptCard, QuestionRow, ResultLine, Thinking } from "./items";
@@ -85,6 +86,8 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       return <ResultLine data={it.data} />;
     case "compact":
       return <CompactLine meta={it.meta} summary={it.summary} result={it.result} />;
+    case "report":
+      return <RoutineReport data={it.data} />;
   }
 });
 
@@ -96,5 +99,31 @@ function UserText({ text, hostId }: { text: string; hostId: string }) {
       {body}
       <AttachmentList hostId={hostId} files={files} className={clsx(body && "mt-2")} />
     </>
+  );
+}
+
+const REPORT_SAYS: Record<string, string> = { reported: "reported", failed: "failed", asked: "is waiting for you" };
+
+/** A routine's report in the assistant's thread (API 101): what its run in a thread of its own found, with a link to it. */
+function RoutineReport({ data }: { data: { automation?: string; task_id?: string; key?: string; outcome?: string; text?: string } }) {
+  const outcome = data.outcome ?? "reported";
+  return (
+    <div
+      className={clsx("rounded-lg border px-3.5 py-2.5", outcome === "failed" ? "border-red-500/30" : outcome === "asked" ? "border-st-attention/40" : "border-line")}
+      data-testid="routine-report"
+    >
+      <div className="mb-1 flex items-center gap-1.5 text-[12px] text-muted">
+        <Repeat size={12} className="shrink-0" />
+        <span className="min-w-0 truncate">
+          Routine <span className="text-fg">{data.automation ?? "?"}</span> {REPORT_SAYS[outcome] ?? outcome}
+        </span>
+        {data.task_id && (
+          <button type="button" className="ml-auto shrink-0 font-mono text-faint hover:text-fg hover:underline" onClick={() => openTask(data.task_id!)} title="Open its thread">
+            {data.key}
+          </button>
+        )}
+      </div>
+      {outcome === "reported" ? <Markdown text={data.text ?? ""} /> : <div className="text-[13px] text-muted whitespace-pre-wrap">{data.text}</div>}
+    </div>
   );
 }

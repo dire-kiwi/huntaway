@@ -398,20 +398,28 @@ fn board_tools() -> Value {
     tools
 }
 
-/// The tools for a project's automations (see integrations/automations.rs).
+/// The tools for a project's automations and a profile's routines (see integrations/automations.rs).
 fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
     let automation_ref = json!({
         "type": "string",
-        "description": "The automation's id, or its name in project_id (see list_automations)"
+        "description": "The automation's id, or its name in project_id (or with routines=true, among your profile's routines; see list_automations)"
+    });
+    let routines = json!({
+        "type": "boolean",
+        "description": "Your own profile's routines (automations that wake its assistant) rather than a project's automations. The default for the assistant, and for an action of kind message_assistant"
     });
     let trigger = json!({
         "type": "object",
         "description": format!("What starts it: {{kind: 'interval', every_minutes}} ({} minutes to 31 days, counted from when it's turned on or changed); \
             {{kind: 'daily', time: 'HH:MM', weekdays}} (in the host's time zone, on those weekdays, or every day with none); \
+            {{kind: 'cron', expr}} (5 fields: minute hour day-of-month month day-of-week, in the host's time zone, e.g. '0 8 * * mon-fri'); \
+            {{kind: 'at', at}} (once, at a time like '2026-11-05 09:30' in the host's time zone or RFC 3339; then it turns itself off); \
             or {{kind: 'webhook', filters, coalesce_seconds, coalesce_key}}: each POST to its URL that passes all the filters. \
             Use the fields of its kind.", crate::integrations::automations::MIN_INTERVAL_MINUTES),
         "properties": {
-            "kind": {"type": "string", "enum": ["interval", "daily", "webhook"]},
+            "kind": {"type": "string", "enum": ["interval", "daily", "cron", "at", "webhook"]},
+            "expr": {"type": "string", "description": "For cron: the expression"},
+            "at": {"type": "string", "description": "For at: when it runs"},
             "every_minutes": {"type": "integer", "minimum": crate::integrations::automations::MIN_INTERVAL_MINUTES},
             "time": {"type": "string", "description": "A time of day like 09:30"},
             "weekdays": {"type": "array", "items": {"type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}},
@@ -429,11 +437,14 @@ fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
     let action = json!({
         "type": "object",
         "description": "What it does: {kind: 'create_task', title, description, task_type, labels, claude_config_id, model, effort, status, start} creates a task in the automation's project, \
-            or {kind: 'send_to_task', task_id, message} sends a message to one of the project's tasks. Title, description and message are templates: \
-            {{body.<path>}}, {{headers.<name>}}, {{query.<name>}}, {{event}}, {{action}}, {{labels}} and {{delivery}} from a webhook delivery \
+            or {kind: 'send_to_task', task_id, message} sends a message to one of the project's tasks. A routine's (a profile's) is {kind: 'message_assistant', message, mode}: \
+            mode 'fresh' (the default) runs it in a new thread under the assistant, whose last message is posted to the assistant as a report unless it's NO_REPLY; \
+            'thread' sends it to the assistant's own thread. Title, description and message are templates: \
+            {{body.<path>}}, {{headers.<name>}}, {{query.<name>}}, {{event}}, {{action}}, {{labels}} and {{delivery}} from a webhook delivery, and {{precheck}} (what the precheck printed) \
             (marked as untrusted data for the agent), and {{date}}, {{time}}, {{now}}, {{automation}} and {{count}} from the board.",
         "properties": {
-            "kind": {"type": "string", "enum": ["create_task", "send_to_task"]},
+            "kind": {"type": "string", "enum": ["create_task", "send_to_task", "message_assistant"]},
+            "mode": {"type": "string", "enum": ["fresh", "thread"], "description": "For message_assistant: a fresh thread (default) or the assistant's own"},
             "title": {"type": "string"},
             "description": {"type": "string", "description": "Instructions for the new task's agent (markdown)"},
             "task_type": {"type": "string", "enum": crate::db::TASK_TYPES, "description": "Leave out for a code task"},
@@ -449,16 +460,29 @@ fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
         "required": ["kind"]
     });
     let asks = "It asks the user to approve it first (say why in reason): the call waits for their answer, and if they don't approve it nothing changes.";
+    let guards = |props: &mut Value| {
+        let p = props.as_object_mut().unwrap();
+        p.insert("routines".into(), routines.clone());
+        p.insert("active_hours".into(), json!({
+            "type": ["object", "null"],
+            "description": "The hours its scheduled runs may start in (host time zone; end may be past midnight), on weekdays (none for every day): a scheduled run waits for them, a delivery outside them is skipped. Not for at, nor Run now. null for any time",
+            "properties": {"start": {"type": "string", "description": "e.g. 08:00"}, "end": {"type": "string", "description": "e.g. 22:00"},
+                "weekdays": {"type": "array", "items": {"type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}}},
+            "required": ["start", "end"]
+        }));
+        p.insert("precheck".into(), json!({"type": ["string", "null"], "description": "A bash command run before each run, in the assistant's workspace (or the project's folder): exit 0 runs it, with what it printed as {{precheck}}; exit 1 skips the run (nothing new); anything else fails it. null or blank for none"}));
+        p.insert("budget_usd".into(), json!({"type": ["number", "null"], "description": "What its runs may cost a day (host time zone): once they have, it's skipped until tomorrow. null or 0 for no limit"}));
+    };
     let tools = json!([
         {
             "name": "list_automations",
-            "description": "List a project's automations: what starts each one (an interval, a time of day or a webhook), what it does (create a task or message one), whether it's on, when it next runs, and its latest run. The time zone the times of day are in comes with them.",
-            "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string", "description": project_one}, "profile": profile}}
+            "description": "List a project's automations, or with routines=true your profile's routines: what starts each one (an interval, a time of day, a cron expression, a time or a webhook), what it does (create a task or message one, or wake the assistant), whether it's on, when it next runs, its latest run and what its runs cost. The time zone the times are in comes with them.",
+            "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string", "description": project_one}, "profile": profile, "routines": routines}}
         },
         {
             "name": "create_automation",
             "description": format!("Add an automation to a project: it creates a task there, or sends a message to one of its tasks, on a schedule or whenever its webhook URL gets a delivery \
-                (e.g. from GitHub). Only when the user asks for one. {asks} \
+                (e.g. from GitHub). Or a routine to your profile (an action of kind message_assistant): it wakes the assistant. Only when the user asks for one. {asks} \
                 For a webhook, the result has its hook_path (and webhook_url, if the host's public address is set), which lets whoever has it start runs, so only give it to \
                 where the deliveries come from; with generate_secret, the secret to sign deliveries with is in the result, once."),
             "inputSchema": {"type": "object", "properties": {
@@ -512,7 +536,17 @@ fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
             }, "required": ["automation_id"]}
         }
     ]);
-    tools.as_array().cloned().unwrap_or_default()
+    let mut tools = tools.as_array().cloned().unwrap_or_default();
+    for t in tools.iter_mut() {
+        match t["name"].as_str() {
+            Some("create_automation" | "update_automation") => guards(&mut t["inputSchema"]["properties"]),
+            Some("delete_automation" | "run_automation") => {
+                t["inputSchema"]["properties"]["routines"] = routines.clone();
+            }
+            _ => {}
+        }
+    }
+    tools
 }
 
 /// Checks an agent's arguments against the tool's schema: an argument the tool doesn't have, or

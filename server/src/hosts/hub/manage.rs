@@ -44,7 +44,8 @@ async fn named(s: &Shared, host_id: &str, list: &str, name: &str) -> ApiResult<O
 
 /// Copy a Claude config's login and settings from one host to another, creating the config
 /// on the target if needed.
-pub async fn copy_claude_config(State(s): State<Shared>, Json(b): Json<CopyConfig>) -> ApiResult<Json<Value>> {
+pub async fn copy_claude_config(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Json(b): Json<CopyConfig>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "copy Claude logins between hosts")?;
     if b.from_host == b.to_host {
         return Err(ApiError::bad("pick two different hosts"));
     }
@@ -111,7 +112,8 @@ pub async fn ssh_key(State(s): State<Shared>) -> ApiResult<Json<Value>> {
 }
 
 /// Link a host over SSH: starts it on the target if needed, then keeps a tunnel to it.
-pub async fn add_ssh_host(State(s): State<Shared>, Json(t): Json<crate::hosts::ssh::Target>) -> ApiResult<Json<Value>> {
+pub async fn add_ssh_host(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Json(t): Json<crate::hosts::ssh::Target>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "link hosts")?;
     let t = crate::hosts::ssh::Target { target: t.target.trim().to_string(), ..t };
     if !t.target.contains('@') {
         return Err(ApiError::bad("enter the target as user@host"));

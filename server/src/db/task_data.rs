@@ -142,6 +142,9 @@ pub struct Steer {
     /// Written to the run's input. Until then it's waiting for the run to start.
     #[serde(default)]
     pub written: bool,
+    /// The automation runs whose messages it carries (see Queued::routine_runs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routine_runs: Vec<String>,
 }
 
 /// One of a project's reviewers: the agent that reviews, in a review thread of its own.

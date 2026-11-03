@@ -167,19 +167,23 @@ fn profile_config_files(s: &Shared, profile_id: &str) -> ApiResult<ConfigFiles> 
     Ok(ConfigFiles { dir: config_path(&p.claude_config_dir), entries: CLAUDE_CONFIG_ENTRIES, login: ".credentials.json" })
 }
 
-pub(super) async fn export_claude_config(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+pub(super) async fn export_claude_config(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "export Claude logins")?;
     Ok(Json(export_config(claude_config_files(&s, &id)?).await?))
 }
 
-pub(super) async fn import_claude_config(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<ImportConfig>) -> ApiResult<Json<Value>> {
+pub(super) async fn import_claude_config(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Path(id): Path<String>, Json(b): Json<ImportConfig>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "import Claude logins")?;
     Ok(Json(import_config(claude_config_files(&s, &id)?, b)?))
 }
 
-pub(super) async fn export_profile_config(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+pub(super) async fn export_profile_config(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "export Claude logins")?;
     Ok(Json(export_config(profile_config_files(&s, &id)?).await?))
 }
 
-pub(super) async fn import_profile_config(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<ImportConfig>) -> ApiResult<Json<Value>> {
+pub(super) async fn import_profile_config(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Path(id): Path<String>, Json(b): Json<ImportConfig>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "import Claude logins")?;
     Ok(Json(import_config(profile_config_files(&s, &id)?, b)?))
 }
 

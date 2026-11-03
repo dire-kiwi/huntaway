@@ -14,6 +14,7 @@ server/broker/ huntaway-broker: public connection setup with managed tunnels, or
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 packages/client/ the board's API client, plain TypeScript with no DOM, shared by app/ (which links it, file:) and the
                mobile app: createClient() makes a client for one board, from an adapter for its address and token
+mobile/        the mobile app (Expo, React Native, Expo Router): your paired boards on Android and iOS
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)
@@ -248,6 +249,52 @@ assistant's workspace: paths with `..`, in `.git` or through a symlink are refus
 workspace (or `assistants` folder) that's been replaced by a symlink, whose memory isn't loaded or
 committed either.
 
+**Approval rules** (API 102) say what the assistant may do outside the board (*allow*), asks you
+first each time (*ask*) or never does (*never*), whatever its thread's permission mode. Edit them
+under *Rules* in its details, or with `GET`/`POST /api/profiles/<id>/approval-rules` (`{"rules":
+[{"tool", "decision"}], "expiry_minutes"}`, or `{"reset": true}`). A rule names a tool
+(`mcp__google__send_gmail_message`, `Bash`), an MCP server for all its tools (`mcp__google`), or a
+pattern with `*` (`mcp__google__*delete*`), without regard to case; when several match, never beats
+ask and ask beats allow. They hold for the assistant and the threads under it, from their next run.
+A profile starts with rules for a Google Workspace MCP server named `google`: reading, searching and
+drafting are allowed; sending mail, making, changing or deleting events, sharing files or handing
+them over, changing files, mail filters and labels, and anything `manage_*` ask; deleting or
+trashing mail and files is never. A switch adds an *ask* on the board's `create_task`.
+
+- **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`) that allows, asks or denies the
+  calls a rule matches. Its *ask* goes to the board's permission prompt in every mode, Bypass
+  included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool
+  too; in *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are
+  left out of the run (`--disallowedTools`). The hook fails closed: while any rule asks or refuses,
+  a call it can't check (the hook failing, or its binary missing) is refused. A rule on `Bash`
+  holds for a `wait`'s command too, even in *Auto*, where Claude's classifier reviews the wait.
+- **Codex** can't hold an *ask* with a hook (its PreToolUse `ask` fails open, checked with Codex
+  0.166), so an MCP server a rule may match asks the board about each of its calls
+  (`default_tools_approval_mode = "prompt"`), and the board answers by the rules. In *Auto* its own
+  reviewer would answer, so the assistant's Codex runs in Auto have you answer instead, as in *Ask*.
+  In *Bypass* and *Don't ask* Codex can't ask at all: what a rule asks about is refused, as is a tool
+  only a pattern allows. Its own tools (`Bash`, `ApplyPatch`) can't be stopped before they run: an
+  *ask* rule on them launches it with the approval policy `untrusted` (and never full access), so it
+  asks about every command and file change in any mode, except commands it takes as safe (reading,
+  listing), which it runs without asking; a *never* rule on them (or `*`) can't hold, so the run is
+  refused, saying so.
+- **The board's own tools**, `wait` included, are held by the board as it runs them, for both, under
+  the server's current name or an older one (`mcp__issue_agent__…`). Deleting tasks, adding projects
+  and changing automations always ask you with their own card, so an *ask* rule doesn't ask about
+  them again: their own card is the rule's asking, and goes in the action log (a *never* rule still
+  refuses them).
+
+A prompt raised in the assistant or a thread under it by a **routine run** (one a routine started,
+in a thread of its own or with a message to the assistant, with nobody there: its message is marked
+`routine`, which a message that waits in the queue keeps, unless something of yours is queued with
+it) is denied if nobody answers it within the profile's expiry (30 minutes by default;
+`expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts raised before
+this, ones the user's own turns raise, and project tasks' (even ones an automation started) wait as
+they always did. Each call a rule asked about or blocked goes in the assistant's **Actions** tab
+(`GET /api/profiles/<id>/approval-log`): what it was called with, the rule, how it ended (allowed,
+denied, expired or blocked) and who answered (you on the board, a notification, nobody in time, the
+mode, the rule, or its run ending first).
+
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
@@ -429,8 +476,69 @@ the notification's place (`result` is `allowed` or `denied`, or `answered`, `exp
 token and keeps only its hash (`push_answer_tokens`), so that's where it's checked; a prompt on a
 linked host is then answered through the link, as the UI's `/api/h/<host>/permissions/{id}` is.
 The first answer settles it: a token stops working once its prompt has been answered (from a
-notification, the board or anywhere else) or has expired with its run. If the host is offline the
+notification, the board or anywhere else) or has expired with its run, or at its `expires_at` (a
+routine run's, see the assistant's approval rules) even if the hub hasn't heard yet. If the host is offline the
 token still works later, and the notification keeps its buttons.
+
+### The mobile app
+
+`mobile/` is an Expo app for Android and iOS (API 100) that follows and drives your tasks on several
+boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
+paired board together, each item labelled with its board (tasks that need attention, permission
+prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
+project's tasks by status and a sheet to add one; and each task's **thread**, with the agent's
+reply streaming in, the composer, photos from the camera or library as attachments, and start,
+stop and move. A **Boards** tab lists the paired boards, picks the profile shown on each, and opens
+a board on the web for what the app leaves out (terminals, diffs and commits, settings,
+analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
+the network changes. A board older than API 100 says so rather than failing.
+
+The phone reaches a board over **HTTPS**: iOS and Android refuse plain HTTP, and the app adds no
+exception. With Tailscale, run `tailscale serve --bg 7878` on the board's machine, as for push
+(see *Push notifications on a phone*). Then pair:
+
+1. On the board, Settings → Network access → **Pair a phone**, and check the address it shows
+   (the host's public address if it has one, else the page's own if that's HTTPS).
+2. In the app, Boards → **Pair a board**, and scan the QR code (or paste the link under it).
+
+The QR code holds `huntaway://pair?url=<board>&code=<code>`: a code that works once, for five
+minutes, never the board's token. `POST /devices/pair` (which needs no token) swaps it and the
+phone's name for a token of the phone's own, which the app keeps in the keychain (Android's
+keystore). The board keeps only its SHA-256, in `device_tokens`, and takes it as it takes
+`auth_token`, on REST, `/ws` and `/api/h/<host>/…`. Settings lists the paired devices, with their
+last use, to rename or revoke; revoking one cuts it off at once, open websockets included, and the
+app then says it was unpaired. A device can't pair others or manage them (`POST
+/devices/pairing`, `PATCH` and `DELETE /devices/{id}` are for the board's own token), but it can
+list them and unpair itself, which removing the board in the app does. Pairing the same board again
+unpairs the phone's old token there. A device can only use the routes the app does (`HUB` and
+`HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, attachments,
+permission prompts, the board's events and hosts, and the devices list, on every profile, on the
+board or through it on a linked host. Everything else gets a 403, so a new route is closed to
+devices until it's added there. That keeps out what would outlast revoking a device: the board's
+and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
+host), linking hosts, terminals (a shell on the host), settings and admin. A device's path is
+checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, an empty segment,
+`.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
+host linking and terminals refuse a device's request themselves.
+
+Revoking a phone stops the phone, not what was done with it before: whoever held it could have
+started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost
+phone may have been used, replace `auth_token` as well: delete `<data-dir>/auth_token` and restart
+the server, which makes a new one (browsers, and hubs that link this host, then need the new one).
+
+To run it (Node 22.13 or later):
+
+```sh
+cd mobile && npm ci
+npx expo start --web          # in a browser, to try it against a board (CORS is open)
+npx expo run:android          # a dev build on an emulator or a phone (needs the Android SDK)
+npx eas-cli build --profile development --platform ios   # or android: a dev build from EAS
+npm run typecheck && npm test # what CI's Tests / mobile runs
+```
+
+It uses native modules that Expo Go lacks (the camera's scanner, secure storage), so it runs as a
+dev build (`expo-dev-client`). A dev build lets the app pair with a board on plain HTTP (an
+emulator's `10.0.2.2`, say); release builds won't.
 
 ### Desktop config
 
@@ -1806,8 +1914,22 @@ new GitHub issue to triage. Each one has a trigger and an action, can be switche
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; or a **webhook**: a POST to
-  `/api/hooks/<id>/<token>` on the host.
+  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 101:
+  five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
+  the host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
+  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 101: it runs once, late if the server was down then,
+  and turns itself off); or a **webhook**: a POST to `/api/hooks/<id>/<token>` on the host.
+- **Before each run** (API 101): **active hours** (a scheduled run outside them waits for them to
+  start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
+  command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
+  exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
+  the run as having nothing to do; any other exit fails it), and a **budget** a day in dollars
+  (from the cost of its runs' agents today, in the host's time zone: once it's spent, runs are
+  skipped and say so; Run now isn't held to it). A routine's runs from the last two days that woke
+  its assistant are kept past the history limit, so a busy one's skipped deliveries can't push today's
+  costs out. A precheck runs in a task of its own once the run is recorded, so a webhook sender that
+  hangs up (GitHub waits 10 seconds) doesn't cancel it; a routine's precheck runs only in the
+  assistant's own workspace, not one that's become a symlink.
 - **Actions.** Create a task in the project from a template: title, description, type (code or
   scratch), labels (plan, artifact, diagram), agent config, model, effort, To do or Backlog, and whether to
   start its agent. Or send a message to one of the project's tasks (to its agent as it works, if
@@ -1877,6 +1999,33 @@ marked as interrupted (it may or may not have made its task) and isn't run again
 deliveries wait in the database and run after a restart. A time of day that the clocks skip
 (daylight saving starts) runs when they've gone forward; one they repeat runs once. An archived
 project's schedules don't run until it's unarchived.
+
+**Routines** (API 101) are a profile's automations, on the assistant's **Routines** tab
+(`/api/profiles/<id>/automations`): they have no project, and their one action is
+`message_assistant`, which wakes the profile's assistant (on the host the routine is on). By
+default (`mode: fresh`) each run works in a thread of its own under the assistant (`task_type`
+`routine`, `parent_id` the assistant, keyed `A-<n>` after it), in the assistant's workspace with its
+config, model, permission mode, skills and MCP servers, on Claude Code or Codex. When its agent
+stops, its last message is posted in the assistant's thread as a report (a `report` message), unless
+it's `NO_REPLY` (on its own or as its last line) or empty: a quiet run says nothing. A run that
+failed, or asks the user something, is posted too. The assistant reads the reports it hasn't seen
+with your next message, so a routine's work stays out of its context. A routine's run is recorded
+with how its agent ended (`outcome`: quiet, reported, asked, stopped or failed) and what it cost;
+the tab shows each routine's next run, last result, cost today and in all, and Run now, pause, edit
+and delete. While a run's thread is still working (or waiting for its usage limit to reset), the
+next scheduled one is skipped. Routine threads are off the boards and the task lists, open from
+their report or run by their link, and are deleted 14 days after their last activity, whatever
+their status (done, failed, stopped or left asking; their runs and reports stay). With
+`mode: thread` the message goes to the assistant's own thread instead, as `send_to_task` does, and
+the run is charged what the assistant's run that takes the message in costs, toward its budget. The
+message carries its routine run with it, whether it starts a run, is steered into the one going or
+waits in the queue (also when a run ends without taking in a steered message, which is queued again
+for the next), so the run that actually takes it in is the one charged. A run that takes in several
+routines' messages splits its cost evenly between them; the user's messages in the same run aren't
+taken out. The automation tools take
+routines too (`routines: true`, or an action of kind `message_assistant`; the assistant's own calls
+are about its routines by default), for the caller's own profile only, and changing one asks the
+user as for any automation. The assistant is told to make "remind me…" an *at* routine.
 
 **Reaching the webhook.** The board usually listens on localhost or a LAN, where GitHub can't
 reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the project:

@@ -1,12 +1,29 @@
 import { enc, type Http } from "./http";
+import { type Host, hostSupports } from "./hosts";
 import type { DocumentType } from "./labels";
 import type { Status, TaskType } from "./tasks";
 
-/** What starts an automation (API 63): an interval, a time of day (in the host's time zone) on some weekdays, or a webhook delivery. */
+/** Routines (API 101): a profile's automations, which wake its assistant (`message_assistant`), and for every automation
+ *  the `cron` and `at` triggers, active hours, a precheck and a budget a day (see server/src/integrations/automations.rs). */
+export const ROUTINES_API = 101;
+
+export const hasRoutines = (h: Host | undefined) => hostSupports(h, ROUTINES_API);
+
+/** What starts an automation (API 63): an interval, a time of day (in the host's time zone) on some weekdays, or a webhook
+ *  delivery; since API 101 a cron expression (5 fields, in the host's time zone) or a moment (`at`, once, then it's off). */
 export type AutomationTrigger =
   | { kind: "interval"; every_minutes: number }
   | { kind: "daily"; time: string; weekdays: Weekday[] }
+  | { kind: "cron"; expr: string }
+  | { kind: "at"; at: string }
   | { kind: "webhook"; filters: AutomationFilter[]; coalesce_seconds: number; coalesce_key: string };
+
+/** The hours an automation's scheduled runs may start in (`end` may be past midnight), on `weekdays` (none for every day). */
+export interface ActiveHours {
+  start: string;
+  end: string;
+  weekdays: Weekday[];
+}
 
 export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
@@ -40,7 +57,9 @@ export type AutomationAction =
       status: "todo" | "backlog";
       start: boolean;
     }
-  | { kind: "send_to_task"; task_id: string; message: string };
+  | { kind: "send_to_task"; task_id: string; message: string }
+  /** A routine's (API 101): in a fresh thread under the assistant, whose report is posted to it, or in its own thread. */
+  | { kind: "message_assistant"; message: string; mode: "fresh" | "thread" };
 
 export type AutomationRunStatus = "pending" | "coalesced" | "running" | "ok" | "failed" | "skipped" | "filtered" | "duplicate" | "rejected";
 
@@ -53,7 +72,7 @@ export interface AutomationRun {
   detail: string | null;
   task_id: string | null;
   /** The task it created or messaged, if it's still there. */
-  task?: { key: string; title: string; status: Status };
+  task?: { key: string; title: string; status: Status; running?: boolean };
   delivery_id: string | null;
   /** A delivery's event and action, e.g. `issues.opened`. */
   event: string | null;
@@ -63,12 +82,19 @@ export interface AutomationRun {
   due_at: string | null;
   created_at: string;
   finished_at: string | null;
+  /** A routine's run in a thread of its own, once its agent stopped (API 101): quiet (nothing to report), reported, asked
+   *  (it waits for the user), stopped or failed. */
+  outcome?: "quiet" | "reported" | "asked" | "stopped" | "failed" | null;
+  /** What its agent's runs cost: once they ended, or so far for a routine thread still working (API 101). */
+  cost_usd?: number | null;
 }
 
-/** A project's automation (API 63). */
+/** A project's automation (API 63), or a profile's routine (API 101, with no project). */
 export interface Automation {
   id: string;
-  project_id: string;
+  /** API 101. */
+  profile_id?: string;
+  project_id: string | null;
   name: string;
   enabled: boolean;
   trigger: AutomationTrigger;
@@ -83,6 +109,15 @@ export interface Automation {
   /** Whether a webhook checks deliveries' signatures (the secret itself is never sent back). */
   has_secret?: boolean;
   last_run: AutomationRun | null;
+  /** API 101. */
+  active_hours?: ActiveHours | null;
+  /** A bash command run first: exit 1 skips the run, and what it prints is `{{precheck}}` (API 101). */
+  precheck?: string | null;
+  /** What its runs may cost a day (API 101). */
+  budget_usd?: number | null;
+  /** What its runs kept cost, and today's (API 101). */
+  cost_usd?: number;
+  cost_today_usd?: number;
 }
 
 export interface AutomationInput {
@@ -94,6 +129,10 @@ export interface AutomationInput {
   secret?: string;
   /** A new webhook URL (the old one stops working). */
   rotate_token?: boolean;
+  /** API 101; null clears them. */
+  active_hours?: ActiveHours | null;
+  precheck?: string | null;
+  budget_usd?: number | null;
 }
 
 export const automationsApi = ({ on }: Http) => ({
@@ -101,6 +140,10 @@ export const automationsApi = ({ on }: Http) => ({
   automations: (h: string, projectId: string) =>
     on(h).get<{ automations: Automation[]; time_zone: { name: string | null; offset: string } }>(`/projects/${enc(projectId)}/automations`),
   createAutomation: (h: string, projectId: string, b: AutomationInput) => on(h).post<Automation>(`/projects/${enc(projectId)}/automations`, b),
+  /** The profile's routines, and the time zone their times are in (API 101). */
+  routines: (h: string, profileId: string) =>
+    on(h).get<{ automations: Automation[]; time_zone: { name: string | null; offset: string } }>(`/profiles/${enc(profileId)}/automations`),
+  createRoutine: (h: string, profileId: string, b: AutomationInput) => on(h).post<Automation>(`/profiles/${enc(profileId)}/automations`, b),
   updateAutomation: (h: string, id: string, b: AutomationInput) => on(h).patch<Automation>(`/automations/${enc(id)}`, b),
   deleteAutomation: (h: string, id: string) => on(h).del(`/automations/${enc(id)}`),
   /** Run it now; for a webhook, a test delivery of `payload` (else the latest delivery's) as `event`. */

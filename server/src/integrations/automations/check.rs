@@ -14,6 +14,29 @@ fn weekday(d: &str) -> Option<Weekday> {
     WEEKDAYS.iter().position(|w| w.eq_ignore_ascii_case(d.trim())).map(|i| Weekday::try_from(i as u8).unwrap())
 }
 
+fn check_weekdays(weekdays: &[String]) -> ApiResult<Vec<String>> {
+    let mut days = Vec::new();
+    for d in weekdays {
+        let w = weekday(d).ok_or_else(|| bad(format!("weekdays must be from {WEEKDAYS:?}")))?;
+        days.push(w.num_days_from_monday());
+    }
+    days.sort();
+    days.dedup();
+    Ok(if days.len() == 7 { vec![] } else { days.into_iter().map(|d| WEEKDAYS[d as usize].to_string()).collect() })
+}
+
+/// When an `at` trigger fires: a UTC RFC 3339 time, or a local `YYYY-MM-DD HH:MM` (or with a `T`)
+/// in `tz`.
+pub fn parse_at<Tz: TimeZone>(at: &str, tz: &Tz) -> Option<DateTime<Utc>> {
+    let at = at.trim();
+    parse_time(at).or_else(|| {
+        let local = ["%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"]
+            .iter()
+            .find_map(|f| chrono::NaiveDateTime::parse_from_str(at, f).ok())?;
+        tz.from_local_datetime(&local).earliest().map(|t| t.with_timezone(&Utc))
+    })
+}
+
 /// A trigger as it's stored: checked, and tidied (weekdays in order, each once).
 pub fn check_trigger(t: Trigger) -> ApiResult<Trigger> {
     Ok(match t {
@@ -23,15 +46,19 @@ pub fn check_trigger(t: Trigger) -> ApiResult<Trigger> {
         Trigger::Interval { every_minutes } => Trigger::Interval { every_minutes },
         Trigger::Daily { time, weekdays } => {
             let at = parse_daily_time(&time).ok_or_else(|| bad("time must be a time of day like 09:30"))?;
-            let mut days = Vec::new();
-            for d in &weekdays {
-                let w = weekday(d).ok_or_else(|| bad(format!("weekdays must be from {WEEKDAYS:?}")))?;
-                days.push(w.num_days_from_monday());
+            Trigger::Daily { time: at.format("%H:%M").to_string(), weekdays: check_weekdays(&weekdays)? }
+        }
+        Trigger::Cron { expr } => {
+            let expr = expr.split_whitespace().collect::<Vec<_>>().join(" ");
+            let cron = cron::Cron::parse(&expr).map_err(bad)?;
+            if cron.next_after(&Local, Utc::now()).is_none() {
+                return Err(bad(format!("the cron expression {expr} never matches")));
             }
-            days.sort();
-            days.dedup();
-            let weekdays = if days.len() == 7 { vec![] } else { days.into_iter().map(|d| WEEKDAYS[d as usize].to_string()).collect() };
-            Trigger::Daily { time: at.format("%H:%M").to_string(), weekdays }
+            Trigger::Cron { expr }
+        }
+        Trigger::At { at } => {
+            let when = parse_at(&at, &Local).ok_or_else(|| bad("at must be a time like 2026-11-05 09:30 (in the host's time zone) or 2026-11-04T20:30:00Z"))?;
+            Trigger::At { at: fmt(when) }
         }
         Trigger::Webhook { filters, coalesce_seconds, coalesce_key } => {
             if filters.len() > MAX_FILTERS {
@@ -58,10 +85,92 @@ pub fn check_trigger(t: Trigger) -> ApiResult<Trigger> {
     })
 }
 
+/// The hours a run may start in, as they're stored (none for any time).
+pub fn check_active_hours(v: &Value) -> ApiResult<Option<ActiveHours>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let h: ActiveHours = parse("active_hours", v)?;
+    let time = |t: &str| parse_daily_time(t).ok_or_else(|| bad("active_hours' start and end must be times of day like 08:00"));
+    let (start, end) = (time(&h.start)?, time(&h.end)?);
+    if start == end {
+        return Err(bad("active_hours' start and end can't be the same (leave active_hours out for any time)"));
+    }
+    Ok(Some(ActiveHours { start: start.format("%H:%M").to_string(), end: end.format("%H:%M").to_string(), weekdays: check_weekdays(&h.weekdays)? }))
+}
+
+/// A precheck command as it's stored (none for blank).
+pub fn check_precheck(v: &Value) -> ApiResult<Option<String>> {
+    match v {
+        Value::Null => Ok(None),
+        Value::String(s) if s.trim().is_empty() => Ok(None),
+        Value::String(s) if s.chars().count() <= 4000 => Ok(Some(s.trim().to_string())),
+        _ => Err(bad("precheck must be a command of up to 4000 characters")),
+    }
+}
+
+/// A budget a day as it's stored (none for no limit).
+pub fn check_budget(v: &Value) -> ApiResult<Option<f64>> {
+    match v {
+        Value::Null => Ok(None),
+        v => match v.as_f64() {
+            Some(n) if n == 0.0 => Ok(None),
+            Some(n) if n > 0.0 && n <= 10_000.0 => Ok(Some(n)),
+            _ => Err(bad("budget_usd must be a number of dollars from 0 (no limit) to 10000")),
+        },
+    }
+}
+
+/// What an automation belongs to: a project, or for a routine, a profile.
+#[derive(Clone, Debug)]
+pub enum Owner {
+    Project(db::Project),
+    Profile(String),
+}
+
+impl Owner {
+    pub fn profile_id(&self) -> &str {
+        match self {
+            Owner::Project(p) => &p.profile_id,
+            Owner::Profile(id) => id,
+        }
+    }
+
+    pub fn project_id(&self) -> Option<&str> {
+        match self {
+            Owner::Project(p) => Some(&p.id),
+            Owner::Profile(_) => None,
+        }
+    }
+}
+
+/// What `a` belongs to (its project must still be there).
+pub fn owner(c: &Connection, a: &Automation) -> ApiResult<Owner> {
+    Ok(match &a.project_id {
+        Some(id) => Owner::Project(db::get_project(c, id)?.ok_or_else(|| ApiError::not_found("project"))?),
+        None => Owner::Profile(a.profile_id.clone()),
+    })
+}
+
 /// An action as it's stored: checked against the automation's project, so it can only make tasks
-/// there, with its agent configs, and only message its tasks.
-pub fn check_action(c: &Connection, project: &db::Project, a: Action) -> ApiResult<Action> {
+/// there, with its agent configs, and only message its tasks. A routine's (a profile's) can only
+/// message its assistant, and a project's can't.
+pub fn check_action(c: &Connection, owner: &Owner, a: Action) -> ApiResult<Action> {
     let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let project = match (owner, &a) {
+        (Owner::Profile(_), Action::MessageAssistant { message, mode }) => {
+            if message.trim().is_empty() {
+                return Err(bad("the message can't be blank"));
+            }
+            if message.chars().count() > MAX_TEXT_CHARS {
+                return Err(bad("the message is too long"));
+            }
+            return Ok(Action::MessageAssistant { message: message.clone(), mode: *mode });
+        }
+        (Owner::Profile(_), _) => return Err(bad("a routine (a profile's automation) can only message the assistant (message_assistant)")),
+        (Owner::Project(_), Action::MessageAssistant { .. }) => return Err(bad("message_assistant is for a profile's routines, not a project's automations")),
+        (Owner::Project(p), _) => p,
+    };
     Ok(match a {
         Action::CreateTask { title, description, task_type, labels, claude_config_id, model, effort, status, start } => {
             if title.trim().is_empty() {
@@ -97,6 +206,7 @@ pub fn check_action(c: &Connection, project: &db::Project, a: Action) -> ApiResu
             let t = target_task(c, project, task_id.trim())?;
             Action::SendToTask { task_id: t.id, message }
         }
+        Action::MessageAssistant { .. } => unreachable!("checked above"),
     })
 }
 
@@ -118,7 +228,65 @@ pub fn next_after<Tz: TimeZone>(trigger: &Trigger, now: DateTime<Utc>, tz: &Tz) 
             let days: Vec<Weekday> = weekdays.iter().filter_map(|d| weekday(d)).collect();
             next_daily(tz, parse_daily_time(time)?, &days, now)
         }
+        Trigger::Cron { expr } => cron::Cron::parse(expr).ok()?.next_after(tz, now),
+        Trigger::At { at } => parse_time(at).filter(|t| *t > now),
         Trigger::Webhook { .. } => None,
+    }
+}
+
+/// When a schedule next runs after `now`, in its active hours (if it has them): see `align`.
+pub fn next_run<Tz: TimeZone>(trigger: &Trigger, active: Option<&ActiveHours>, now: DateTime<Utc>, tz: &Tz) -> Option<DateTime<Utc>> {
+    align(trigger, active, next_after(trigger, now, tz)?, tz)
+}
+
+/// `when`, or if it's outside the active hours, the schedule's first time in them: an interval
+/// starts again when they do, a time of day or cron expression waits for its next time in them.
+/// An `at` keeps its time.
+pub fn align<Tz: TimeZone>(trigger: &Trigger, active: Option<&ActiveHours>, when: DateTime<Utc>, tz: &Tz) -> Option<DateTime<Utc>> {
+    let Some(active) = active.filter(|_| !matches!(trigger, Trigger::At { .. } | Trigger::Webhook { .. })) else { return Some(when) };
+    let mut when = when;
+    // Each round moves on to the next window at least, so a year's worth is plenty.
+    for _ in 0..800 {
+        if active.contains(when, tz) {
+            return Some(when);
+        }
+        let start = active.next_start(when, tz)?;
+        when = match trigger {
+            Trigger::Interval { .. } => start,
+            _ => next_after(trigger, start - chrono::TimeDelta::seconds(1), tz)?,
+        };
+    }
+    None
+}
+
+impl ActiveHours {
+    fn times(&self) -> Option<(NaiveTime, NaiveTime, Vec<Weekday>)> {
+        Some((parse_daily_time(&self.start)?, parse_daily_time(&self.end)?, self.weekdays.iter().filter_map(|d| weekday(d)).collect()))
+    }
+
+    /// Whether `t` is in them. Hours past midnight belong to the day they started on.
+    pub fn contains<Tz: TimeZone>(&self, t: DateTime<Utc>, tz: &Tz) -> bool {
+        let Some((start, end, days)) = self.times() else { return true };
+        let local = t.with_timezone(tz).naive_local();
+        let (date, time) = (local.date(), local.time());
+        let on = |d: chrono::NaiveDate| days.is_empty() || days.contains(&d.weekday());
+        if start < end {
+            on(date) && time >= start && time < end
+        } else {
+            (time >= start && on(date)) || (time < end && on(date - chrono::TimeDelta::days(1)))
+        }
+    }
+
+    /// When they next start after `t`.
+    fn next_start<Tz: TimeZone>(&self, t: DateTime<Utc>, tz: &Tz) -> Option<DateTime<Utc>> {
+        let (start, _, days) = self.times()?;
+        next_daily(tz, start, &days, t)
+    }
+
+    /// As the deliveries list says them, e.g. `08:00–22:00 on Mon, Tue`.
+    pub fn text(&self) -> String {
+        let days = if self.weekdays.is_empty() { String::new() } else { format!(" on {}", self.weekdays.join(", ")) };
+        format!("{}–{}{days}", self.start, self.end)
     }
 }
 
