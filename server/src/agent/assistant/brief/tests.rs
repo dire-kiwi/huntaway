@@ -34,7 +34,7 @@ fn the_template_makes_a_valid_weekday_routine_in_a_fresh_thread() {
         assert_eq!((a["action"]["kind"].as_str(), a["action"]["mode"].as_str()), (Some("message_assistant"), Some("fresh")));
         assert!(a["next_run_at"].is_string(), "{a}");
         let message = a["action"]["message"].as_str().unwrap();
-        for part in ["Google: {{google}}", "brief.html", "data-brief-item", "data-brief-kind", "data-brief-topic", "list_tasks", "needs_attention", "NO_REPLY"] {
+        for part in ["Google: {{google}}", "mcp__google__", "brief.html", "data-brief-item", "data-brief-kind", "data-brief-topic", "list_tasks", "needs_attention", "NO_REPLY"] {
             assert!(message.contains(part), "{part}");
         }
         // It's read-only for now, and mail is data.
