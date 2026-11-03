@@ -155,7 +155,7 @@ pub fn key_prefix<'a>(task: &Task, project: Option<&'a Project>) -> &'a str {
         Some(p) => &p.key,
         None if task.group_name.is_some() => GROUP_TASK_KEY,
         None if task.is_scratch() => db::SCRATCH_TASK_KEY,
-        None if task.is_assistant() => db::ASSISTANT_TASK_KEY,
+        None if task.is_assistants() => db::ASSISTANT_TASK_KEY,
         None => "T",
     }
 }
@@ -167,8 +167,9 @@ pub fn key_prefix<'a>(task: &Task, project: Option<&'a Project>) -> &'a str {
 pub(super) fn start_prompt(task: &Task, project: Option<&Project>, text: &str) -> String {
     let key = key_prefix(task, project);
     let text = text.trim();
-    // The assistant is a conversation, not a task to start on: its first prompt is the user's message.
-    if task.is_assistant() {
+    // The assistant is a conversation, not a task to start on: its first prompt is the user's
+    // message. A routine thread's is the routine's (see automations::routines).
+    if task.is_assistants() {
         return text.to_string();
     }
     let mut p = String::new();
@@ -282,9 +283,38 @@ pub(super) fn system_prompt(
                  then `create_task` there (with start=true to start its agent, when the user wants that), and follow it \
                  with `get_task` or `wait`. Don't change repositories, commit, push or open pull requests yourself. Tasks \
                  you create are recorded as yours.\n\n\
+                 Routines wake you on a schedule or a webhook: they're this profile's automations (`list_automations` with \
+                 routines=true, and `create_automation`, `update_automation`, `delete_automation` and `run_automation` with an \
+                 action of kind `message_assistant`), and the user is asked to approve each change. By default a routine runs \
+                 in a fresh thread of its own under this one, whose report is posted here (it stays quiet when there's \
+                 nothing new); with mode `thread` its message comes straight to this thread. When the user asks you to \
+                 remind them of something, make it an `at` routine (one that runs once, then turns itself off) in mode \
+                 `thread`, whose message asks you to remind them. Routines' reports come with the user's next message.\n\n\
                  If you need a decision or information from the user before you can go on, call `request_user_input` \
                  with your question (and its `options`, when the choices are known), then end your turn. Otherwise just \
                  reply: this thread stays open and never goes to review or merge, so don't move it to another status.",
+                task.number, task.id
+            )
+        }
+        ("task", _) if task.is_routine() => {
+            let dir = task.work_dir.as_deref().unwrap_or("its workspace");
+            let parent = task.parent_id.as_deref().unwrap_or("");
+            format!(
+                "You are the personal assistant of this Huntaway profile, doing one run of one of its routines (a check or job \
+                 the user set up to run on a schedule or when a webhook is delivered) in thread A-{} (id {}), a thread of \
+                 its own under your main conversation with the user (id {parent}). Huntaway is a kanban board where each \
+                 task is worked by its own Claude agent, grouped into projects. You aren't a coding agent and you aren't in \
+                 a project or a repository.\n\n\
+                 Your working directory is your workspace folder ({dir} in the board's data dir), shared with your main \
+                 thread: read the notes and memory you keep there, and update them when the run finds something worth \
+                 remembering.\n\n\
+                 You can use the skills and MCP servers set up for this profile (beyond any project), and the board's tools.\n\n\
+                 {tools}\n\n\
+                 Do what the routine asks, then end with a short report for the user: your last message is posted to your \
+                 main thread, where they read it. Say what's new or needs them, not what you checked. If there's nothing \
+                 new or worth telling them, make your last message just NO_REPLY: nothing is posted, and the run is quiet. \
+                 The user isn't watching this thread: only call `request_user_input` if the run can't go on without them. \
+                 Don't move this thread to another status.",
                 task.number, task.id
             )
         }

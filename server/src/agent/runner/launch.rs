@@ -106,6 +106,11 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     } else {
         text.to_string()
     };
+    // The assistant reads its routines' reports since its last turn with the next message.
+    let prompt = match task.is_assistant() && run.kind != "compact" {
+        true => crate::integrations::automations::routines::unread_reports(state, &task.id).map(|r| format!("{r}{prompt}")).unwrap_or(prompt),
+        false => prompt,
+    };
     // Every run but a `/compact` takes messages while it works (see `can_steer`); the prompt is
     // its first.
     let input = run.kind != "compact";

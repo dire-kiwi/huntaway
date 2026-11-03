@@ -789,12 +789,54 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=77; COMMIT;",
         )?;
     }
+    if version < 78 {
+        // Routines: automations that belong to a profile rather than a project (see
+        // integrations/automations.rs). SQLite can't drop NOT NULL, so the table is rebuilt, with
+        // foreign keys off so dropping the old one doesn't take the runs with it; ids, runs and
+        // every column are kept, and each automation's profile is its project's.
+        conn.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; {SCHEMA_V78} PRAGMA user_version=78; COMMIT; PRAGMA foreign_keys=ON;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 77;
+pub const VERSION: i64 = 78;
+
+/// Automations get a profile, and a project only if they're a project's (none for a profile's
+/// routine), and the conditions a run is checked against first: the hours it may run in, a
+/// command to run first, and a budget a day. Their runs get how a routine's agent ended and what it cost.
+const SCHEMA_V78: &str = r#"
+CREATE TABLE automations_v78 (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  trigger TEXT NOT NULL,
+  action TEXT NOT NULL,
+  token TEXT NOT NULL,
+  secret TEXT,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  active_hours TEXT,
+  precheck TEXT,
+  budget_usd REAL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO automations_v78 (id, profile_id, project_id, name, enabled, trigger, action, token, secret, next_run_at, last_run_at, created_at, updated_at)
+  SELECT a.id, p.profile_id, a.project_id, a.name, a.enabled, a.trigger, a.action, a.token, a.secret, a.next_run_at, a.last_run_at, a.created_at, a.updated_at
+  FROM automations a JOIN projects p ON p.id = a.project_id;
+DROP TABLE automations;
+ALTER TABLE automations_v78 RENAME TO automations;
+CREATE INDEX IF NOT EXISTS automations_project ON automations(project_id);
+CREATE INDEX IF NOT EXISTS automations_profile ON automations(profile_id);
+DELETE FROM automation_runs WHERE automation_id NOT IN (SELECT id FROM automations);
+ALTER TABLE automation_runs ADD COLUMN outcome TEXT;
+ALTER TABLE automation_runs ADD COLUMN cost_usd REAL;
+CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
+"#;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

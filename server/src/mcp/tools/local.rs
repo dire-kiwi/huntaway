@@ -219,6 +219,12 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             let input = project_creation(s, ctx, &board, str_arg("name"), &str_arg("repo_path").unwrap_or_default(), str_arg("reason")).await?;
             create_project(s, ctx, &input).await
         }
+        "list_automations" if wants_routines(ctx, args) => {
+            let owner = own_routines(s, ctx, profile)?;
+            let list = crate::integrations::automations::list_routines(&s.db(), owner.profile_id())?;
+            let list: Vec<Value> = list.iter().map(|a| automation_json(s, a)).collect();
+            Ok(json!({"profile": ctx.profile_name, "routines": list, "time_zone": crate::integrations::automations::time_zone()}))
+        }
         "list_automations" => {
             let p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?;
             let list = crate::integrations::automations::list(&s.db(), &p.id)?;
@@ -232,8 +238,11 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             }
             let input = match tool {
                 "create_automation" => {
-                    let p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?;
-                    automation_creation(s, ctx, &p, args, profile)?
+                    let owner = match wants_routines(ctx, args) {
+                        true => own_routines(s, ctx, profile)?,
+                        false => crate::integrations::automations::Owner::Project(project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?),
+                    };
+                    automation_creation(s, ctx, &owner, args, profile)?
                 }
                 "update_automation" => {
                     let (a, p) = resolve_automation(s, ctx, args, profile, own_project)?;
@@ -248,7 +257,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
                 }
                 _ => {
                     let (a, p) = resolve_automation(s, ctx, args, profile, own_project)?;
-                    let mut input = automation_input(s, ctx, "delete", &p, automation_view(s, &a.id, &a.name, a.enabled, &a.trigger, &a.action, has_secret(&a)));
+                    let view = automation_view(s, &a.id, &a.name, a.enabled, &a.trigger, &a.action, has_secret(&a), &Guards::of(&a));
+                    let mut input = automation_input(s, ctx, "delete", &p, view);
                     input["reason"] = json!(str_arg("reason"));
                     input
                 }

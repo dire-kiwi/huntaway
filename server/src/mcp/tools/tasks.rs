@@ -113,7 +113,11 @@ pub(super) fn summarize(s: &Shared, t: &Task) -> Value {
     if t.is_assistant() {
         v["type"] = json!(db::ASSISTANT);
     }
-    if let Some(sp) = t.parent_id.as_deref().filter(|_| t.kind == "task").and_then(|id| db::get_task(&s.db(), id).ok().flatten()) {
+    if t.is_routine() {
+        v["type"] = json!(db::ROUTINE);
+    }
+    // (A routine thread's parent is the assistant.)
+    if let Some(sp) = t.parent_id.as_deref().filter(|_| t.kind == "task").and_then(|id| db::get_task(&s.db(), id).ok().flatten()).filter(|p| p.subproject) {
         v["subproject"] = json!(format!("{}-{}", project_key(s, &sp), sp.number));
     }
     v

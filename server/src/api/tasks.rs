@@ -62,7 +62,7 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
     // A task with no changes to merge (and so no pull request) skips the merge and is done.
     let to_merge = b.get("status").and_then(Value::as_str) == Some("ready_for_merge") && current.status != "ready_for_merge" && current.kind == "task";
     // A scratch task, or one that makes only documents (which the board keeps), has nothing to merge.
-    let own_folder = current.is_scratch() || current.is_assistant() || documents::documents_only(&current);
+    let own_folder = current.is_scratch() || current.is_assistants() || documents::documents_only(&current);
     let nothing_to_merge = to_merge && (own_folder || !worktree::has_work_to_merge(s, &current).await);
     let mut fields = pick(
         b,
