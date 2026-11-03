@@ -2395,3 +2395,64 @@ fn an_automation_approval_cut_short_by_a_restart_is_still_waited_for() {
         assert_eq!(asks(), 3);
     });
 }
+
+#[test]
+fn the_assistants_rules_can_make_creating_a_task_ask_first_whatever_its_mode() {
+    use crate::agent::approval_rules::{self, Decision, Rule, Rules};
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let assistant = crate::agent::assistant::get_or_create(&s, &p.id).unwrap();
+        db::update_task(&s.db(), &assistant.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap();
+        let ask = Rule { tool: "mcp__huntaway__create_task".into(), decision: Decision::Ask };
+        let never = Rule { tool: "mcp__huntaway__delete_task".into(), decision: Decision::Never };
+        approval_rules::set(&s.db(), &p.id, Some(&Rules { rules: vec![ask, never], expiry_minutes: 30 })).unwrap();
+        let run = started_run(&s, &assistant.id);
+        let mcp = |call_id: &str, tool: &str, args: Value| McpCall { task_fields: true, run_id: run.id.clone(), call_id: call_id.into(), tool: tool.into(), args };
+        let titles = |s: &Shared| db::list_tasks_for_project(&s.db(), "kiwicd", "task").unwrap().into_iter().map(|t| t.title).collect::<Vec<_>>();
+
+        // Asked, and denied: no task.
+        let (s2, call) = (s.clone(), mcp("c1", "create_task", json!({"project_id": "kiwicd", "title": "Book flights"})));
+        let denied = tokio::spawn(async move { handle_mcp(&s2, call).await });
+        let request = loop {
+            if let Some(p) = permissions::pending(&s, Some(&assistant.id)).unwrap().pop() {
+                break p;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
+        assert_eq!((&request["tool_name"], &request["rule"]), (&json!("mcp__huntaway__create_task"), &json!("mcp__huntaway__create_task")));
+        permissions::decide(&s, request["id"].as_str().unwrap(), false, false, None).unwrap();
+        assert!(denied.await.unwrap().is_err());
+        assert!(titles(&s).is_empty());
+
+        // Asked, and allowed: made.
+        let (s2, call) = (s.clone(), mcp("c2", "create_task", json!({"project_id": "kiwicd", "title": "Book flights"})));
+        let allowed = tokio::spawn(async move { handle_mcp(&s2, call).await });
+        let request = loop {
+            if let Some(p) = permissions::pending(&s, Some(&assistant.id)).unwrap().pop() {
+                break p;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
+        permissions::decide(&s, request["id"].as_str().unwrap(), true, false, None).unwrap();
+        allowed.await.unwrap().unwrap();
+        assert_eq!(titles(&s), vec!["Book flights".to_string()]);
+
+        // Never: refused without asking.
+        let t = db::list_tasks_for_project(&s.db(), "kiwicd", "task").unwrap().remove(0);
+        let err = handle_mcp(&s, mcp("c3", "delete_task", json!({"task_id": t.id}))).await.unwrap_err();
+        assert!(err.starts_with(approval_rules::BLOCKED), "{err}");
+        let log: Vec<(String, String)> = approval_rules::list(&s.db(), &p.id, 10).unwrap().into_iter().map(|a| (a.tool_name, a.outcome)).collect();
+        assert_eq!(
+            log,
+            vec![
+                ("mcp__huntaway__delete_task".to_string(), "blocked".to_string()),
+                ("mcp__huntaway__create_task".to_string(), "allowed".to_string()),
+                ("mcp__huntaway__create_task".to_string(), "denied".to_string()),
+            ]
+        );
+        // Other tools are as they were.
+        handle_mcp(&s, mcp("c4", "list_projects", json!({}))).await.unwrap();
+    });
+}

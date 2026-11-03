@@ -777,7 +777,7 @@ async fn notify_prompt(s: &Shared, host: &str, task_id: &str, data: &Value) {
         return;
     }
     let answer = if super::push_answers::answerable(data) {
-        match super::push_answers::mint(&s.db(), host, request, task_id) {
+        match super::push_answers::mint(&s.db(), host, request, task_id, data["expires_at"].as_str()) {
             Ok(token) => Some(Answer { url: format!("/api/permissions/{request}/push-answer"), token }),
             Err(e) => {
                 tracing::warn!("push: minting a token for prompt {request}: {e:#}");

@@ -570,7 +570,7 @@ fn an_answer_the_board_missed_is_found_out_from_the_host() {
         let s = testing::state();
         let task = running_task(&s, None);
         let (request, told) = raise(&s, &task, "c1", "Bash", json!({})).await;
-        let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id).unwrap();
+        let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id, None).unwrap();
         assert_eq!(api(&s, "POST", &format!("/api/permissions/{request}"), Some(json!({"decision": "deny"}))).await.0, 200);
         told.await.unwrap();
         let (status, v) = answer_from_push(&s, &request, &token, "allow").await;
@@ -699,7 +699,7 @@ fn an_answer_cut_off_part_way_doesnt_hold_its_prompt_after_a_restart_or_its_leas
         crate::hosts::hub::link_http(&hub, "remote", signed_in, crate::hosts::proto::API_VERSION).await;
         let task = running_task(&remote, Some("assistant"));
         let (request, told) = raise(&remote, &task, "c1", "Bash", json!({})).await;
-        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id).unwrap();
+        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id, None).unwrap();
         // The hub claimed it to answer, and stopped before it could (the claim is in its database).
         let claim = |request: &str, at: String| {
             hub.db().execute("UPDATE push_answer_tokens SET status='answering', claimed_at=?1 WHERE request_id=?2", [at.as_str(), request]).unwrap()
@@ -715,10 +715,38 @@ fn an_answer_cut_off_part_way_doesnt_hold_its_prompt_after_a_restart_or_its_leas
 
         // A claim older than any answer takes runs out without a restart.
         let (request, told) = raise(&remote, &task, "c2", "Bash", json!({})).await;
-        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id).unwrap();
+        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id, None).unwrap();
         assert_eq!(claim(&request, (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339()), 1);
         let (status, v) = answer_from_push(&hub, &request, &token, "allow").await;
         assert_eq!((status, v["result"].as_str()), (200, Some("allowed")), "{v}");
         assert_eq!(told.await.unwrap()["behavior"], "allow");
+    })
+}
+
+#[test]
+fn a_notification_cant_answer_a_prompt_past_its_expiry_and_one_it_answers_is_logged_as_from_it() {
+    use crate::agent::approval_rules::{self, Decision, Rule, Rules};
+    testing::run(async || {
+        let s = testing::state();
+        let task = running_task(&s, Some("assistant"));
+        let ask = Rule { tool: "mcp__google__send*".into(), decision: Decision::Ask };
+        approval_rules::set(&s.db(), &task.profile_id, Some(&Rules { rules: vec![ask], expiry_minutes: 30 })).unwrap();
+        let (request, told) = raise(&s, &task, "c1", "mcp__google__send_gmail_message", json!({})).await;
+        // Its time is up, though the host hasn't said so (its sweeper hasn't run, or the link is down).
+        let past = (chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let late = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id, Some(&past)).unwrap();
+        let (status, v) = answer_from_push(&s, &request, &late, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (409, Some("expired")), "{v}");
+        assert!(v["message"].as_str().unwrap().contains("nobody answered it in time"), "{v}");
+        // Still waiting on the host: the late answer didn't go through.
+        assert_eq!(crate::mcp::permissions::pending(&s, Some(&task.id)).unwrap().len(), 1);
+        // One in time does, and the action log says it came from a notification.
+        let future = (chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id, Some(&future)).unwrap();
+        let (status, v) = answer_from_push(&s, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (200, Some("allowed")), "{v}");
+        assert_eq!(told.await.unwrap()["behavior"], "allow");
+        let log = approval_rules::list(&s.db(), &task.profile_id, 10).unwrap();
+        assert_eq!((log[0].outcome.as_str(), log[0].answered_by.as_deref()), ("allowed", Some("push")));
     })
 }

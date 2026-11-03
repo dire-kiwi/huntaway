@@ -70,7 +70,8 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
             };
             let t = api::create_task_inner(s, &project.id, task).map_err(fail)?;
             if *start {
-                crate::agent::runner::send(s, &t.id, "").map_err(|e| (Some(t.id.clone()), format!("created the task, but couldn't start its agent: {}", e.1)))?;
+                crate::agent::runner::send_from_routine(s, &t.id, "")
+                    .map_err(|e| (Some(t.id.clone()), format!("created the task, but couldn't start its agent: {}", e.1)))?;
             }
             Ok(Some(t.id))
         }
@@ -79,7 +80,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
             let (body, untrusted) = render(message, vars, Out::Text);
             let note = if untrusted { untrusted_note(&a.name, false) } else { String::new() };
             let text = format!("From the automation \"{}\", {how}:\n\n{note}{}", a.name, body.trim());
-            crate::agent::runner::send_from_agent(s, &t.id, &text).map_err(|e| (Some(t.id.clone()), e.1))?;
+            crate::agent::runner::send_from_routine(s, &t.id, &text).map_err(|e| (Some(t.id.clone()), e.1))?;
             Ok(Some(t.id))
         }
     }

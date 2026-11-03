@@ -115,9 +115,21 @@ pub(super) fn gh_note(account: Option<&str>) -> String {
 /// `--settings` for a Claude run with our gh server: a PreToolUse hook that turns away gh in
 /// Bash (`huntaway gh-hook`), which may not reach GitHub from the sandbox or would act as gh's
 /// active account rather than the run's.
+#[cfg(test)]
 pub(super) fn gh_hook_settings(exe: &std::path::Path) -> String {
-    let command = format!("'{}' gh-hook", path_str(exe).replace('\'', r"'\''"));
-    json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}).to_string()
+    hook_settings(Some(exe), None)
+}
+
+/// `--settings` with a Claude run's PreToolUse hooks: the gh one (`gh_hook_settings`), with this
+/// binary, and the approval rules' (see approval_rules::claude_hook).
+pub(super) fn hook_settings(gh: Option<&std::path::Path>, rules: Option<Value>) -> String {
+    let mut hooks = Vec::new();
+    if let Some(exe) = gh {
+        let command = format!("'{}' gh-hook", path_str(exe).replace('\'', r"'\''"));
+        hooks.push(json!({"matcher": "Bash", "hooks": [{"type": "command", "command": command, "timeout": 10}]}));
+    }
+    hooks.extend(rules);
+    json!({"hooks": {"PreToolUse": hooks}}).to_string()
 }
 
 pub(super) async fn git_common_dir(cwd: &str) -> Option<String> {

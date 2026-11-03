@@ -35,16 +35,19 @@ pub struct Queued {
     pub from_agent: bool,
     /// The parts the user sent, if any.
     pub user_text: Option<String>,
+    /// An automation sent it, with nobody there to answer the run it starts: its prompts expire
+    /// (see permissions::expiry). Not kept when it's queued.
+    pub routine: bool,
 }
 
 impl Queued {
     pub fn new(text: &str, from_agent: bool) -> Self {
-        Self { text: text.to_string(), from_agent, user_text: (!from_agent).then(|| text.to_string()) }
+        Self { text: text.to_string(), from_agent, user_text: (!from_agent).then(|| text.to_string()), routine: false }
     }
 
     /// Nothing: what's queued goes as it is (see runner::send_queued).
     pub fn empty() -> Self {
-        Self { text: String::new(), from_agent: true, user_text: None }
+        Self { text: String::new(), from_agent: true, user_text: None, routine: false }
     }
 
     /// This message, then `next` after it.
@@ -58,7 +61,7 @@ impl Queued {
             (Some(a), Some(b)) => Some(join(a, b)),
             (a, b) => a.or(b),
         };
-        Self { text: join(self.text, next.text), from_agent: self.from_agent && next.from_agent, user_text }
+        Self { text: join(self.text, next.text), from_agent: self.from_agent && next.from_agent, user_text, routine: self.routine && next.routine }
     }
 }
 
@@ -66,7 +69,7 @@ impl Queued {
 pub fn queue(c: &Connection, task_id: &str, message: Queued) -> Result<Option<Task>> {
     let Some(task) = get_task(c, task_id)? else { return Ok(None) };
     let queued = match task.queued_message.filter(|q| !q.trim().is_empty()) {
-        Some(text) => Queued { text, from_agent: queued_from_agent(c, task_id)?, user_text: task.queued_user_text }.then(message),
+        Some(text) => Queued { text, from_agent: queued_from_agent(c, task_id)?, user_text: task.queued_user_text, routine: false }.then(message),
         None => message,
     };
     c.execute(
@@ -84,7 +87,7 @@ fn queued_from_agent(c: &Connection, task_id: &str) -> Result<bool> {
 pub fn take_queued(c: &Connection, task_id: &str) -> Result<Option<Queued>> {
     let queued = get_task(c, task_id)?
         .and_then(|t| Some((t.queued_message.filter(|q| !q.trim().is_empty())?, t.queued_user_text)))
-        .map(|(text, user_text)| Ok::<_, anyhow::Error>(Queued { text, from_agent: queued_from_agent(c, task_id)?, user_text }))
+        .map(|(text, user_text)| Ok::<_, anyhow::Error>(Queued { text, from_agent: queued_from_agent(c, task_id)?, user_text, routine: false }))
         .transpose()?;
     clear_queued(c, task_id)?;
     Ok(queued)

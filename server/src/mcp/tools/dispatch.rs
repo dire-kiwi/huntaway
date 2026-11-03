@@ -271,12 +271,29 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             Ok(result)
         }
         tool => {
+            check_rules(s, &task, &c.call_id, tool, &c.args).await?;
             let ctx = Ctx {
                 profile_id: Some(profile.id), profile_name: profile.name, task: Some(task), call_id: Some(c.call_id.clone()), task_fields: c.task_fields,
             };
             dispatch(s, &ctx, tool, c.args.clone()).await
         }
     }
+}
+
+/// The user's approval rules for the board's own tools, which the board holds as it runs them for
+/// either runtime (see agent/approval_rules.rs): a call a never rule matches is refused, and one an
+/// ask rule matches waits for the user's answer, as a permission prompt.
+async fn check_rules(s: &Shared, task: &Task, call_id: &str, tool: &str, args: &Value) -> std::result::Result<(), String> {
+    let rules = crate::agent::approval_rules::for_task(&s.db(), task).map_err(|e| format!("{e:#}"))?;
+    let name = format!("mcp__{}__{tool}", crate::agent::runner::MCP_SERVER_NAME);
+    if rules.as_ref().and_then(|r| r.decide(&name)).is_none_or(|r| r.decision == crate::agent::approval_rules::Decision::Allow) {
+        return Ok(());
+    }
+    let answer = permissions::prompt(s, task, call_id, &name, args, None).await.map_err(|e| format!("{e:#}"))?;
+    if answer["behavior"] == "allow" {
+        return Ok(());
+    }
+    Err(answer["message"].as_str().unwrap_or("The user denied this action.").to_string())
 }
 
 /// Whether thread `task` is in plan mode now (its own mode, or the one it inherits).

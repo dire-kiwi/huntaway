@@ -789,12 +789,45 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=77; COMMIT;",
         )?;
     }
+    if version < 78 {
+        // When a prompt from a routine run is denied if nobody has answered it, and the approval
+        // rule that asked it (see agent/approval_rules.rs); the notifications' answer tokens stop at
+        // the same time; and the action log of the calls that hit an ask or never rule. Columns are
+        // added only if they aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for (table, column) in [("permission_requests", "expires_at"), ("permission_requests", "rule"), ("push_answer_tokens", "expires_at")] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT;"))?;
+            }
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS permission_requests_expiry ON permission_requests(expires_at) WHERE status='pending' AND expires_at IS NOT NULL;
+             CREATE TABLE IF NOT EXISTS approval_log (
+               id TEXT PRIMARY KEY,
+               profile_id TEXT NOT NULL,
+               task_id TEXT NOT NULL,
+               request_id TEXT,
+               tool_name TEXT NOT NULL,
+               summary TEXT NOT NULL,
+               rule TEXT NOT NULL,
+               decision TEXT NOT NULL,
+               outcome TEXT NOT NULL,
+               answered_by TEXT,
+               created_at TEXT NOT NULL,
+               decided_at TEXT
+             );
+             CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, created_at);
+             CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
+             PRAGMA user_version=78; COMMIT;",
+        )?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 77;
+pub const VERSION: i64 = 78;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

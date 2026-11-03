@@ -32,6 +32,15 @@ pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<T
     send_run(state, task_id, text, false, true, "prompt")
 }
 
+/// Like `send_from_agent`, for a message an automation sent (or, with no text, an automation
+/// starting the agent of a task it made): a run it starts is a routine run, whose prompts expire
+/// if nobody answers them (see permissions::expiry). A message that goes to a run that's going, or
+/// waits in the queue, starts none.
+pub fn send_from_routine(state: &Shared, task_id: &str, text: &str) -> ApiResult<Task> {
+    let message = db::Queued { routine: true, ..db::Queued::new(text, true) };
+    send_message(state, task_id, Some(message), false, "prompt", None)
+}
+
 /// Start a review round on a review thread (see review.rs): a prompt whose outcome is the review's.
 pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Task> {
     send_run(state, thread_id, text, true, false, "review")
@@ -117,11 +126,18 @@ pub(super) fn send_message(state: &Shared, task_id: &str, message: Option<db::Qu
                 // Sent with other agents' messages queued alongside (see db::user_replies).
                 msg["user_text"] = json!(message.user_text);
             }
+            if message.routine {
+                msg["routine"] = json!(true);
+            }
             return Ok(vec![db::insert_message(c, task_id, "user", &msg)?]);
         } else if first_run && task.kind == "task" {
             let project = task.project_id.as_deref().map(|p| db::get_project(c, p)).transpose()?.flatten();
             let text = crate::agent::prompts::start_task(task, project.as_ref());
-            return Ok(vec![db::insert_message(c, task_id, "user", &json!({"text": text, "auto": true, "start": true}))?]);
+            let mut msg = json!({"text": text, "auto": true, "start": true});
+            if message.routine {
+                msg["routine"] = json!(true);
+            }
+            return Ok(vec![db::insert_message(c, task_id, "user", &msg)?]);
         }
         Ok(Vec::new())
     })?;

@@ -508,7 +508,7 @@ fn messages_the_agent_never_took_in_go_to_the_next_run() {
         assert!(t.steering.is_empty());
         assert_eq!(t.queued_message.as_deref(), Some("first\n\nsecond\n\nthird"));
         // Not all of it came from other agents, so it counts as the user's.
-        assert_eq!(db::take_queued(&state.db(), &task.id).unwrap(), Some(db::Queued { text: "first\n\nsecond\n\nthird".into(), from_agent: false, user_text: Some("first\n\nthird".into()) }));
+        assert_eq!(db::take_queued(&state.db(), &task.id).unwrap(), Some(db::Queued { text: "first\n\nsecond\n\nthird".into(), from_agent: false, user_text: Some("first\n\nthird".into()), routine: false }));
     });
 }
 
@@ -2091,5 +2091,39 @@ fn a_merge_out_of_usage_keeps_its_place_in_the_merge_queue() {
         let t = db::get_task(&state.db(), &task.id).unwrap().unwrap();
         assert_eq!((t.status.as_str(), t.merging, t.waiting), ("needs_attention", true, false));
         assert_eq!(db::active_merge(&state.db(), Some("pr"), None).unwrap().map(|m| m.id), Some(task.id.clone()), "it still holds the merge slot");
+    })
+}
+
+#[test]
+fn a_run_an_automation_starts_is_a_routine_run_and_one_the_user_starts_isnt() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let state = crate::testing::state();
+        let p = db::insert_profile(&state.db(), "me", &[], None).unwrap();
+        let new = |title: &str| {
+            db::insert_task(&state.db(), db::NewTask {
+                profile_id: &p.id, project_id: None, kind: "task", title, description: "", status: "todo", use_worktree: false, model: None,
+                effort: None, claude_config_id: None,
+            })
+            .unwrap()
+        };
+        let turn = |task: &Task| -> Value {
+            let run: i64 = state.db().query_row("SELECT turn_message_id FROM runs WHERE task_id=?1", [&task.id], |r| r.get(0)).unwrap();
+            let data: String = state.db().query_row("SELECT data FROM messages WHERE id=?1", [run], |r| r.get(0)).unwrap();
+            serde_json::from_str(&data).unwrap()
+        };
+        let (routine, started, mine) = (new("Routine"), new("Started"), new("Mine"));
+        send_from_routine(&state, &routine.id, "Check the mail").unwrap();
+        assert_eq!((turn(&routine)["text"].as_str(), &turn(&routine)["routine"]), (Some("Check the mail"), &json!(true)));
+        // An automation starting a task it made: its first prompt is the board's.
+        send_from_routine(&state, &started.id, "").unwrap();
+        assert_eq!((&turn(&started)["start"], &turn(&started)["routine"]), (&json!(true), &json!(true)));
+        send(&state, &mine.id, "Check the mail").unwrap();
+        assert!(turn(&mine).get("routine").is_none());
+        // A message the user had queued goes with it: someone's there.
+        let queued = new("Queued");
+        db::queue(&state.db(), &queued.id, db::Queued::new("and my note", false)).unwrap();
+        send_from_routine(&state, &queued.id, "Check the mail").unwrap();
+        assert!(turn(&queued).get("routine").is_none(), "{}", turn(&queued));
     })
 }
