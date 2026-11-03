@@ -39,7 +39,7 @@ question prompts keep their answers as the board stored them (a list for each qu
   snapshot before saving it; staging the same source again changes nothing, and an older import is replaced. The
   database must be at this build's version: run it on a copy a test server has opened, such as
   `scripts/copy-live-board.sh`'s.
-- **API and live updates** (`threads/live.rs`, API 104): a task's thread in windows and pages, its saved events
+- **API and live updates** (`threads/live.rs`, API 105): a task's thread in windows and pages, its saved events
   after a seq, `respond`/`compact`/`new_session`, and every thread's events on `/api/ws` as `thread_event`s,
   through the hub too. See [agent-threads-api.md](agent-threads-api.md). A staged import is read as saved.
 

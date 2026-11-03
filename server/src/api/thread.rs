@@ -333,7 +333,7 @@ pub(super) struct WindowQuery {
     limit: Option<usize>,
 }
 
-/// `GET /tasks/{id}/thread[?limit=N]` (API 104): the task's agent-threads thread as a `Snapshot`, or a
+/// `GET /tasks/{id}/thread[?limit=N]` (API 105): the task's agent-threads thread as a `Snapshot`, or a
 /// window of its last `limit` items (see threads/live.rs and docs/agent-threads-api.md). A 404 for a
 /// task without one, which runs on the legacy runner.
 pub(super) async fn get_agent_thread(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<WindowQuery>) -> ApiResult<Json<Value>> {
@@ -347,7 +347,7 @@ pub(super) struct ItemsQuery {
     limit: Option<usize>,
 }
 
-/// `GET /tasks/{id}/thread/items?before=I[&limit=N]` (API 104): an `ItemPage` of the thread's items
+/// `GET /tasks/{id}/thread/items?before=I[&limit=N]` (API 105): an `ItemPage` of the thread's items
 /// before index `before` (a window's `start`), 100 of them unless `limit` says.
 pub(super) async fn agent_thread_items(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<ItemsQuery>) -> ApiResult<Json<Value>> {
     let thread = crate::threads::live::TaskThread::open(&s, &id)?;
@@ -364,7 +364,7 @@ pub(super) struct EventsQuery {
 /// The most saved events one request returns.
 const MAX_EVENTS: usize = 1000;
 
-/// `GET /tasks/{id}/thread/events?after=SEQ[&limit=N]` (API 104): `{events, more, seq}`, the thread's saved
+/// `GET /tasks/{id}/thread/events?after=SEQ[&limit=N]` (API 105): `{events, more, seq}`, the thread's saved
 /// events after `after`, for a client that missed some. At most `limit` (and 1000) of them: with `more`,
 /// ask again after `seq`, which also goes past events of types this host doesn't know.
 pub(super) async fn agent_thread_events(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<EventsQuery>) -> ApiResult<Json<Value>> {
@@ -373,7 +373,7 @@ pub(super) async fn agent_thread_events(State(s): State<Shared>, Path(id): Path<
     Ok(Json(json!(thread.events_since(q.after, limit).await?)))
 }
 
-/// `POST /tasks/{id}/thread/commands` (API 104): a protocol command for the task's thread (its
+/// `POST /tasks/{id}/thread/commands` (API 105): a protocol command for the task's thread (its
 /// `thread_id` may be left out): `respond`, `compact` or `new_session` (see threads::live::parse_command).
 pub(super) async fn agent_thread_command(State(s): State<Shared>, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
     let thread = crate::threads::live::TaskThread::open(&s, &id)?;

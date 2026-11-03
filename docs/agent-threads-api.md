@@ -8,7 +8,7 @@ see its `spec/PROTOCOL.md` ("Windows", "Applying events", "Reconnecting") and `s
 
 ## Which hosts and tasks have one
 
-- A host serves these routes from **API 104** (`api_version` in `/api/info` and the hub's `/api/hosts`). For an
+- A host serves these routes from **API 105** (`api_version` in `/api/info` and the hub's `/api/hosts`). For an
   older host, keep using the legacy message API (`/tasks/{id}/messages`, the `message`, `message_updated`,
   `delta` and `delta_reset` events), which every host keeps serving.
 - A task has a thread once it runs on agent-threads (`tasks.run_engine` is `agent_threads`, set when its first

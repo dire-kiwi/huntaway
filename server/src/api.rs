@@ -151,7 +151,7 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}", get(get_task).patch(update_task).delete(delete_task))
         .route("/tasks/{id}/messages", get(list_messages).post(send_message))
         .route("/tasks/{id}/questions/{message_id}", post(answer_question))
-        // API 104: the task's agent-threads thread (see threads/live.rs, docs/agent-threads-api.md).
+        // API 105: the task's agent-threads thread (see threads/live.rs, docs/agent-threads-api.md).
         .route("/tasks/{id}/thread", get(get_agent_thread))
         .route("/tasks/{id}/thread/items", get(agent_thread_items))
         .route("/tasks/{id}/thread/events", get(agent_thread_events))
