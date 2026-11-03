@@ -900,6 +900,11 @@ fn a_bad_version_isnt_offered_or_staged() {
 
 /// A host running from `app/<running>/huntaway` in its own data dir, whose `app/` has these versions.
 fn host_at(cfg: Config, running: Option<&str>, versions: &[&str]) -> Shared {
+    host_with_args(cfg, running, versions, &[])
+}
+
+/// `host_at`, for a server started with `args`.
+fn host_with_args(cfg: Config, running: Option<&str>, versions: &[&str], args: &[&str]) -> Shared {
     let data_dir = temp_dir().canonicalize().unwrap();
     for v in versions.iter().chain(&running) {
         server_files(&data_dir.join("app").join(v), &format!("echo huntaway {v}"));
@@ -910,6 +915,7 @@ fn host_at(cfg: Config, running: Option<&str>, versions: &[&str]) -> Shared {
     };
     let mut meta = testing::meta();
     meta.release = Some(cfg);
+    meta.args = args.iter().map(Into::into).collect();
     testing::state_at(meta, data_dir, exe)
 }
 
@@ -1294,6 +1300,21 @@ fn a_newer_packages_server_takes_over_from_the_versions_downloaded_before_it() {
         let s = staging::read(&app);
         assert_eq!((s.current.as_deref(), s.previous.as_deref(), s.trying), (Some("9.0.0"), None, None));
         assert_eq!(release_status(&updated)["rollback_to"], "bundled");
+    });
+}
+
+/// HA-153 review: a server started with --recopy-db passed it on to the version Roll back started, which, from before
+/// the flag, exited on it. It's for the start it was given to, so no restart passes it on.
+#[test]
+fn rollback_leaves_out_flags_for_one_start() {
+    testing::run(async || {
+        let state = host_with_args(config("http://unused"), Some("0.2.0"), &["0.1.5"], &["serve", "--port", "7878", "--recopy-db", "--demo"]);
+        staging::write(&staging::app_dir(&state), &Installed { current: Some("0.2.0".into()), previous: Some("0.1.5".into()), ..Default::default() }).unwrap();
+        let mut events = state.events.subscribe();
+        assert_eq!(api(&state, "POST", "/api/admin/release/rollback", None).await.0, 200);
+        assert_eq!(job_fails(&mut events).await.0, ["restarting", "failed"]);
+        let args = crate::update::admin::exec_args().unwrap();
+        assert_eq!(args, ["serve", "--port", "7878", "--demo"].map(std::ffi::OsString::from));
     });
 }
 

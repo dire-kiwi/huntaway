@@ -17,7 +17,7 @@ Huntaway now depends on agent-threads (a git dependency pinned to `b009454`, whi
 and has the first steps of the safe importer below, in `server/src/threads/`. Nothing in the server reads the new
 tables yet: running agents, the API and the UI are unchanged.
 
-- **Store** (`threads/store.rs`): agent-threads' `Store` on huntaway.db, in `at_threads`, `at_events`,
+- **Store** (`threads/store.rs`): agent-threads' `Store` on the board's database, in `at_threads`, `at_events`,
   `at_snapshots` and `at_runs` (migration 85). It passes the crate's store conformance cases
   (`spec/conformance/store.json`, copied next to it at the pinned revision). A thread whose `metadata.task_id`
   names a task is deleted with it.
@@ -52,6 +52,21 @@ switched over then (14 open prompts, 1 queued message). Staging them all (on an 
 saved events and their snapshot each hold a full copy of a thread, so a real cutover should expect about 2.5
 times the space, or keep fewer snapshots (the crate needs only the latest, and only to avoid folding every event
 on load).
+
+- **A database file of its own** (`db/file.rs`, HA-153): these builds use `huntaway-2.db`, copied from
+  `huntaway.db` (or `issue-agent.db`) on their first start and migrated (version 86 records where it came from), so
+  going back to an older build just opens the older file as it was at the switch. When an older build has used
+  it since, the server warns, and copies it again only on request (`--recopy-db`, or Copy again in Settings →
+  Server). See *The database file* in the README.
+
+For the release notes of the first release with it:
+
+> **A new database file.** This version keeps the board in `huntaway-2.db` in the data dir, a copy of
+> `huntaway.db` (or `issue-agent.db`) made the first time it starts, which takes a few seconds on a big board.
+> The old file isn't changed, so going back to an earlier version (Roll back) returns to the board as it was
+> before this update: tasks, messages and runs from in between aren't there. Coming back to this version after
+> that shows a warning in Settings → Server, with **Copy again** to start over from the old file. The old file
+> can be deleted once you won't go back.
 
 Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
 task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and

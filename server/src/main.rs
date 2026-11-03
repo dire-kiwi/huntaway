@@ -90,7 +90,8 @@ enum Cmd {
     /// changes nothing, unless --stage.
     #[command(hide = true)]
     ThreadsImport {
-        /// The database, read-only unless --stage. It must be at this build's version (a copy a test server has opened).
+        /// The database, read-only unless --stage, or a data dir for its `huntaway-2.db`. It must be at this build's
+        /// version (a copy a test server has opened).
         #[arg(long)]
         db: PathBuf,
         /// Write the conversions to the database's agent-threads tables, which nothing reads yet. Use a copy.
@@ -171,6 +172,11 @@ struct ServeArgs {
     /// `?token=` (for LAN-only PR previews; anyone who can reach the server gets full control).
     #[arg(long, env = "IA_OPEN_TOKEN")]
     open_token: bool,
+    /// Copy the database older builds use (`huntaway.db`) into this build's (`huntaway-2.db`) again, if an older build
+    /// has changed it since it was first copied, discarding what's been done in `huntaway-2.db` since (see db/file.rs).
+    /// Only for this start: restarts, updates and Roll back leave it out.
+    #[arg(long, env = "IA_RECOPY_DB")]
+    recopy_db: bool,
     /// Make a profile NAME with the Claude config in DIR on start, unless there's a profile of
     /// that name already (repeatable, or comma-separated). For PR previews, with a login mounted in.
     #[arg(long = "profile", env = "IA_PROFILES", value_name = "NAME=DIR", value_delimiter = ',', value_parser = parse_profile)]
@@ -194,12 +200,6 @@ fn default_data_dir() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     let (dir, legacy) = (base.join("huntaway"), base.join("issue-agent"));
     if !dir.exists() && legacy.is_dir() { legacy } else { dir }
-}
-
-/// The database in a data dir: `huntaway.db`, or `issue-agent.db` from before the rename.
-fn db_path(data_dir: &std::path::Path) -> PathBuf {
-    let (db, legacy) = (data_dir.join("huntaway.db"), data_dir.join("issue-agent.db"));
-    if !db.exists() && legacy.is_file() { legacy } else { db }
 }
 
 /// A secret stored in the data dir, created on first use.
@@ -332,7 +332,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
     let host_name = args.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
         std::fs::read_to_string("/proc/sys/kernel/hostname").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "host".into()).trim().to_string()
     });
-    let conn = db::open(&db_path(&data_dir))?;
+    // Before serving: on the first start it copies the older builds' database, which takes a while for a big one.
+    let (conn, _) = db::file::open(&data_dir, args.recopy_db).context("opening the database")?;
     let listener = tokio::net::TcpListener::bind((args.host.as_str(), args.port))
         .await
         .with_context(|| format!("binding {}:{}", args.host, args.port))?;
@@ -481,17 +482,6 @@ mod tests {
         assert!(host("127.0.0.1:7878") && host("localhost:80") && host("LOCALHOST") && host("[::1]:9"));
         assert!(!host("attacker.example:7878") && !host("127.0.0.1.evil.test") && !host("localhost.evil.test:1"));
         assert!(!super::loopback_host(&axum::http::HeaderMap::new()));
-    }
-
-    #[test]
-    fn db_path_keeps_the_database_from_before_the_rename() {
-        let dir = crate::testing::temp_dir();
-        assert_eq!(super::db_path(&dir), dir.join("huntaway.db"));
-        std::fs::write(dir.join("issue-agent.db"), "").unwrap();
-        assert_eq!(super::db_path(&dir), dir.join("issue-agent.db"));
-        std::fs::write(dir.join("huntaway.db"), "").unwrap();
-        assert_eq!(super::db_path(&dir), dir.join("huntaway.db"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
