@@ -32,7 +32,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
 
 use crate::db::{self, Link};
-use crate::hosts::proto::{API_COMPAT, API_VERSION, BUILD_ID, Down, PROTOCOL, Up};
+use crate::hosts::proto::{API_COMPAT, API_VERSION, BUILD_ID, Down, PROTOCOL, ToolAnswer, ToolCall, Up};
 use crate::hosts::relay::{self, Frame, PING, Pipe, SILENCE};
 use crate::state::{ApiError, ApiResult, Shared};
 
@@ -246,6 +246,19 @@ pub async fn call_tool(_s: &Shared, link: &LinkConn, tool: &str, profile: &str, 
     }
 }
 
+/// A board tool call that linked host `host_id` passed up its link (see hosts/uplink.rs): run only if
+/// the user lets that host's agents use this board.
+pub async fn run_up_call(s: &Shared, host_id: &str, c: ToolCall) -> ToolAnswer {
+    let allowed = db::get_link(&s.db(), host_id).ok().flatten().is_some_and(|l| l.uplink);
+    if !allowed {
+        return ToolAnswer { id: c.id, result: None, error: None, off: true };
+    }
+    match crate::mcp::tools::handle_up_call(s, host_id, &c).await {
+        Ok(v) => ToolAnswer { id: c.id, result: Some(v), error: None, off: false },
+        Err(e) => ToolAnswer { id: c.id, result: None, error: Some(e), off: false },
+    }
+}
+
 fn changed(s: &Shared) {
     let _ = s.hub_events.send(json!({"type": "hosts_changed"}));
 }
@@ -360,6 +373,9 @@ pub async fn run_outbound(s: &Shared, link: &Link, mode: &str) -> Result<()> {
     let _registered = register(s, conn.clone());
     tracing::info!("connected to host {}", link.name);
     let (mut sink, mut stream) = ws.split();
+    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 98 ignore it).
+    sink.send(TMessage::Text(crate::hosts::uplink::hub_hello(s).to_string().into())).await?;
+    let (answers_tx, mut answers) = mpsc::unbounded_channel::<ToolAnswer>();
     // Anything missed while disconnected: tell the UI to reload this host.
     forward_event(s, &link.id, json!({"type": "resync"}));
     // Hosts answer websocket pings whatever their version, which keeps the events coming or ends the link.
@@ -372,13 +388,25 @@ pub async fn run_outbound(s: &Shared, link: &Link, mode: &str) -> Result<()> {
                 conn.heard();
                 quiet.as_mut().reset(tokio::time::Instant::now() + SILENCE);
                 match msg {
-                    Some(Ok(TMessage::Text(t))) => {
-                        if let Ok(ev) = serde_json::from_str::<Value>(&t) {
-                            forward_event(s, &link.id, ev);
+                    Some(Ok(TMessage::Text(t))) => match serde_json::from_str::<Value>(&t) {
+                        Ok(v) if v["type"] == "hub_call" => {
+                            if let Ok(c) = serde_json::from_value::<ToolCall>(v) {
+                                let (s, id, tx) = (s.clone(), link.id.clone(), answers_tx.clone());
+                                tokio::spawn(async move {
+                                    let _ = tx.send(run_up_call(&s, &id, c).await);
+                                });
+                            }
                         }
-                    }
+                        Ok(ev) => forward_event(s, &link.id, ev),
+                        Err(_) => {}
+                    },
                     Some(Ok(TMessage::Close(_)) | Err(_)) | None => break,
                     _ => {}
+                }
+            }
+            Some(a) = answers.recv() => {
+                if sink.send(TMessage::Text(crate::hosts::uplink::answer_frame(&a).to_string().into())).await.is_err() {
+                    break;
                 }
             }
             _ = ping.tick() => {

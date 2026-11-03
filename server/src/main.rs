@@ -312,6 +312,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
         std::fs::read_to_string("/proc/sys/kernel/hostname").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "host".into()).trim().to_string()
     });
     let conn = db::open(&db_path(&data_dir))?;
+    // Once it's open, with its -wal and -shm files.
+    #[cfg(unix)]
+    util::make_private(&data_dir);
     let listener = tokio::net::TcpListener::bind((args.host.as_str(), args.port))
         .await
         .with_context(|| format!("binding {}:{}", args.host, args.port))?;

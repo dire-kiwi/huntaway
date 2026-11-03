@@ -71,6 +71,7 @@ pub(super) async fn tunnel_to(s: &Shared, hub: &str, token: &str) -> Result<()> 
     };
     tracing::info!("connected to hub {hub}");
     let streams: HubStreams = Arc::default();
+    let mut uplink = None;
     let result = async {
         loop {
             let text = match tokio::time::timeout(SILENCE, stream.next()).await {
@@ -83,10 +84,13 @@ pub(super) async fn tunnel_to(s: &Shared, hub: &str, token: &str) -> Result<()> 
                     _ => continue,
                 },
             };
-            tunnel_message(s, &text, &tx, &streams);
+            tunnel_message(s, &text, &tx, &streams, &mut uplink);
         }
     }
     .await;
+    if let Some(up) = uplink.take() {
+        up.1.abort();
+    }
     // Dropping the senders closes the relayed websockets.
     streams.lock().unwrap().clear();
     events.abort();
@@ -97,9 +101,35 @@ pub(super) async fn tunnel_to(s: &Shared, hub: &str, token: &str) -> Result<()> 
 /// Websockets the hub opened on our API, by id.
 type HubStreams = Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<Frame>>>>;
 
+/// The hub as an up-link, while it's connected (see hosts/uplink.rs), with what passes it our calls.
+type TunnelUplink = (crate::hosts::uplink::Registered, tokio::task::JoinHandle<()>);
+
 /// Act on a message from the hub.
-fn tunnel_message(s: &Shared, text: &str, tx: &mpsc::UnboundedSender<Up>, streams: &HubStreams) {
+fn tunnel_message(s: &Shared, text: &str, tx: &mpsc::UnboundedSender<Up>, streams: &HubStreams, uplink: &mut Option<TunnelUplink>) {
     match serde_json::from_str::<Down>(text) {
+        Ok(Down::Hello { hub_id, name, .. }) => {
+            if hub_id == s.host_id {
+                return;
+            }
+            if let Some((_, old)) = uplink.take() {
+                old.abort();
+            }
+            let (up, mut calls) = crate::hosts::uplink::register(s, &hub_id, &name);
+            let tx = tx.clone();
+            let pass = tokio::spawn(async move {
+                while let Some(c) = calls.recv().await {
+                    if tx.send(Up::ToolCall(c)).is_err() {
+                        break;
+                    }
+                }
+            });
+            *uplink = Some((up, pass));
+        }
+        Ok(Down::ToolAnswer(a)) => {
+            if let Some((up, _)) = uplink {
+                up.link.answer(a);
+            }
+        }
         Ok(Down::Req { id, method, path, body }) => {
             let (s, tx) = (s.clone(), tx.clone());
             tokio::spawn(async move {

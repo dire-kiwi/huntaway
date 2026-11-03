@@ -182,3 +182,115 @@ fn a_database_at_version_76_frees_the_key_a() {
     let index: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='tasks_one_assistant'", [], |r| r.get(0)).unwrap();
     assert_eq!(index, 1);
 }
+
+#[test]
+fn an_assistant_host_must_be_a_linked_host_with_assistants() {
+    testing::run(async || {
+        use crate::hosts::uplink::tests::{api, link_by_url, node};
+        let (hub, host) = (node("hub", "desktop"), node("host", "homeserver"));
+        let p = insert_profile(&hub.db(), "personal", &[], None).unwrap();
+        link_by_url(&hub, &host).await;
+        // A host from before assistants, which is connected, so it can tell.
+        crate::hosts::hub::link_http(&hub, "old", axum::Router::new(), ASSISTANT_API - 1).await;
+        db::upsert_link(&hub.db(), "old", "old", "outbound", Some("http://x"), None).unwrap();
+        let path = format!("/api/profiles/{}", p.id);
+        let set = |v: Value| {
+            let (hub, path) = (hub.clone(), path.clone());
+            async move { api(&hub, "PATCH", &path, Some(json!({"assistant_host": v}))).await }
+        };
+        for (bad, why) in [(json!("nope"), "must be a linked host"), (json!(5), "must be a linked host's id or null"), (json!("old"), "older build without assistants")] {
+            let (status, v) = set(bad.clone()).await;
+            assert_eq!(status, 400, "{bad}");
+            assert!(v["error"].as_str().unwrap().contains(why), "{bad}: {v}");
+        }
+        assert_eq!(set(json!("host")).await.1["assistant_host"], "host");
+        // Unchanged by a save that doesn't send it, as from an older UI.
+        assert_eq!(api(&hub, "PATCH", &path, Some(json!({"default_model": "haiku"}))).await.1["assistant_host"], "host");
+        // This host is the same as none.
+        for none in [json!("hub"), json!(""), Value::Null] {
+            assert_eq!(set(json!("host")).await.0, 200);
+            assert_eq!(set(none.clone()).await.1["assistant_host"], Value::Null, "{none}");
+        }
+        // An offline host can't say, so it's taken.
+        hub.links.lock().unwrap().remove("old");
+        assert_eq!(set(json!("old")).await.1["assistant_host"], "old");
+        // Or given when the profile's made.
+        let (status, made) = api(&hub, "POST", "/api/profiles", Some(json!({"name": "other", "assistant_host": "host"}))).await;
+        assert_eq!((status, &made["assistant_host"]), (200, &json!("host")));
+        assert_eq!(api(&hub, "POST", "/api/profiles", Some(json!({"name": "third", "assistant_host": "nope"}))).await.0, 400);
+        assert!(db::list_profiles(&hub.db()).unwrap().iter().all(|p| p.name != "third"));
+    });
+}
+
+#[test]
+fn the_hub_sends_a_profiles_assistant_to_its_host() {
+    testing::run(async || {
+        use crate::hosts::uplink::tests::{api, link_by_url, node};
+        let (hub, host) = (node("hub", "desktop"), node("host", "homeserver"));
+        let p = insert_profile(&hub.db(), "personal", &[], None).unwrap();
+        link_by_url(&hub, &host).await;
+        db::update_profile(&hub.db(), &p.id, &[("assistant_host", json!("host"))]).unwrap();
+        let path = format!("/api/profiles/{}/assistant", p.id);
+        // The host has no personal profile yet.
+        let (status, v) = api(&hub, "GET", &path, None).await;
+        assert_eq!(status, 409);
+        assert!(v["error"].as_str().unwrap().contains("homeserver has no profile named personal"), "{v}");
+        let there = insert_profile(&host.db(), "personal", &[], None).unwrap();
+        // Its own profile's, on that host, which says so; none is made on the hub.
+        let (status, a) = api(&hub, "GET", &path, None).await;
+        assert_eq!((status, &a["host_id"], &a["task_type"]), (200, &json!("host"), &json!("assistant")));
+        assert_eq!(db::assistant_task(&host.db(), &there.id).unwrap().unwrap().id, a["id"].as_str().unwrap());
+        assert_eq!(count(&hub, &p.id), 0);
+        // Through the hub's proxy, as a client that's told the host goes on to the task there.
+        let (status, t) = api(&hub, "GET", &format!("/api/h/host/tasks/{}", a["id"].as_str().unwrap()), None).await;
+        assert_eq!((status, &t["task"]["id"]), (200, &a["id"]));
+        // Without the setting, it's the hub's own.
+        db::update_profile(&hub.db(), &p.id, &[("assistant_host", Value::Null)]).unwrap();
+        let (_, own) = api(&hub, "GET", &path, None).await;
+        assert_eq!((&own["host_id"], count(&hub, &p.id)), (&json!("hub"), 1));
+        // A host's profile that names the hub as its assistant's host doesn't send a routed request back.
+        db::upsert_link(&host.db(), "hub", "desktop", "outbound", Some("http://x"), None).unwrap();
+        db::update_profile(&host.db(), &there.id, &[("assistant_host", json!("hub"))]).unwrap();
+        db::update_profile(&hub.db(), &p.id, &[("assistant_host", json!("host"))]).unwrap();
+        let (status, a2) = api(&hub, "GET", &path, None).await;
+        assert_eq!((status, &a2["id"]), (200, &a["id"]));
+        // Offline: says so, rather than making one here.
+        hub.links.lock().unwrap().remove("host");
+        let (status, v) = api(&hub, "GET", &path, None).await;
+        assert_eq!(status, 503);
+        assert_eq!(v["error"], "personal's assistant runs on homeserver, which is offline");
+        let (status, _) = api(&hub, "POST", &path, Some(json!({"text": "hello"}))).await;
+        assert_eq!(status, 503);
+        assert_eq!(count(&hub, &p.id), 1);
+    });
+}
+
+#[test]
+fn a_message_to_the_assistant_goes_to_its_host() {
+    testing::run(async || {
+        use crate::hosts::uplink::tests::{api, node};
+        let hub = node("hub", "desktop");
+        let p = insert_profile(&hub.db(), "personal", &[], None).unwrap();
+        // A host that records what it's sent rather than starting an agent.
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, Value)>::new()));
+        let log = sent.clone();
+        let host = axum::Router::new()
+            .route("/api/profiles", axum::routing::get(|| async { axum::Json(json!([{"id": "pp", "name": "personal"}])) }))
+            .route(
+                "/api/profiles/{id}/assistant",
+                axum::routing::post(move |uri: axum::http::Uri, axum::Json(b): axum::Json<Value>| {
+                    let log = log.clone();
+                    async move {
+                        log.lock().unwrap().push((uri.to_string(), b));
+                        axum::Json(json!({"id": "a1", "task_type": "assistant"}))
+                    }
+                }),
+            );
+        crate::hosts::hub::link_http(&hub, "host", host, crate::hosts::proto::API_VERSION).await;
+        db::upsert_link(&hub.db(), "host", "homeserver", "outbound", Some("http://x"), None).unwrap();
+        db::update_profile(&hub.db(), &p.id, &[("assistant_host", json!("host"))]).unwrap();
+        let (status, t) = api(&hub, "POST", &format!("/api/profiles/{}/assistant", p.id), Some(json!({"text": "Remind me at 5"}))).await;
+        assert_eq!((status, &t["id"], &t["host_id"]), (200, &json!("a1"), &json!("host")));
+        assert_eq!(*sent.lock().unwrap(), [("/api/profiles/pp/assistant?local=1".to_string(), json!({"text": "Remind me at 5"}))]);
+    });
+}

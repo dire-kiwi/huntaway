@@ -164,12 +164,27 @@ pub async fn add_host(State(s): State<Shared>, Json(b): Json<AddHost>) -> ApiRes
 }
 
 #[derive(Deserialize)]
-pub struct RenameHost {
-    name: String,
+pub struct UpdateHost {
+    #[serde(default)]
+    name: Option<String>,
+    /// Whether its agents may use this board's tools, up the link (API 98, see hosts/uplink.rs).
+    #[serde(default)]
+    uplink: Option<bool>,
 }
 
-pub async fn rename_host(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<RenameHost>) -> ApiResult<Json<Value>> {
-    s.db().execute("UPDATE links SET name=?1 WHERE id=?2", rusqlite::params![b.name.trim(), id])?;
+/// Rename a linked host, or let its agents use this board (or not).
+pub async fn change_host(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<UpdateHost>) -> ApiResult<Json<Value>> {
+    let c = s.db();
+    if db::get_link(&c, &id)?.is_none() {
+        return Err(ApiError::not_found("host"));
+    }
+    if let Some(name) = b.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        c.execute("UPDATE links SET name=?1 WHERE id=?2", rusqlite::params![name, id])?;
+    }
+    if let Some(on) = b.uplink {
+        c.execute("UPDATE links SET uplink=?1 WHERE id=?2", rusqlite::params![on, id])?;
+    }
+    drop(c);
     changed(&s);
     Ok(Json(json!({"ok": true})))
 }

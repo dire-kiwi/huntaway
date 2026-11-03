@@ -16,6 +16,9 @@ pub struct Link {
     /// For `ssh` links: the target, as JSON.
     pub ssh: Option<String>,
     pub last_seen: Option<String>,
+    /// Its agents may use this board's tools, up the link (API 98, see hosts/uplink.rs). Off by default.
+    #[serde(default)]
+    pub uplink: bool,
     pub created_at: String,
 }
 
@@ -29,6 +32,7 @@ impl Link {
             token: r.get("token")?,
             ssh: r.get("ssh")?,
             last_seen: r.get("last_seen")?,
+            uplink: r.get("uplink")?,
             created_at: r.get("created_at")?,
         })
     }

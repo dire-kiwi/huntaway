@@ -2,6 +2,7 @@
 //! linked host that has its project or task (with the API version each tool needs there).
 
 use super::*;
+use crate::hosts::uplink::Outcome;
 
 /// What an agent's MCP helper sends. Helpers from older builds keep running after an
 /// upgrade, so this shape must stay backwards compatible (only add optional fields).
@@ -50,17 +51,40 @@ impl Drop for InFlight<'_> {
 /// An agent's tool call, at most once per call id: it's recorded as executing before it runs,
 /// and with its result once it has.
 pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, String> {
+    let task_id = db::get_run(&s.db(), &c.run_id).ok().flatten().map(|r| r.task_id).unwrap_or_default();
+    let record = Record { id: &c.call_id, run_id: &c.run_id, task_id: &task_id, tool: &c.tool, args: &c.args };
+    at_most_once(s, record, || rerunnable(s, &c), execute_mcp(s, &c)).await
+}
+
+/// How a call is recorded in `mcp_calls`.
+struct Record<'a> {
+    id: &'a str,
+    run_id: &'a str,
+    task_id: &'a str,
+    tool: &'a str,
+    args: &'a Value,
+}
+
+/// Run `exec` once for call `r.id`, however often it's delivered: a duplicate delivery while it runs
+/// waits for its result, and one after it ran gets the result recorded. A call that was executing
+/// when the server stopped runs again only if `rerun` says it can.
+async fn at_most_once(
+    s: &Shared,
+    r: Record<'_>,
+    rerun: impl FnOnce() -> bool,
+    exec: impl std::future::Future<Output = std::result::Result<Value, String>>,
+) -> std::result::Result<Value, String> {
     // A duplicate delivery while the first is still executing waits for its result.
     let rx = {
         let mut inflight = s.calls_inflight.lock().unwrap();
-        match inflight.get_mut(&c.call_id) {
+        match inflight.get_mut(r.id) {
             Some(waiters) => {
                 let (tx, rx) = oneshot::channel();
                 waiters.push(tx);
                 Some(rx)
             }
             None => {
-                inflight.insert(c.call_id.clone(), Vec::new());
+                inflight.insert(r.id.to_string(), Vec::new());
                 None
             }
         }
@@ -68,11 +92,11 @@ pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, St
     if let Some(rx) = rx {
         return rx.await.unwrap_or_else(|_| Err("call abandoned".into()));
     }
-    let call = InFlight { s, id: &c.call_id };
+    let call = InFlight { s, id: r.id };
     // Nothing runs unless the board knows it's running: a call it can't record may already have.
     let before: rusqlite::Result<Option<(String, Option<String>, Option<String>)>> = s
         .db()
-        .query_row("SELECT status, result, error FROM mcp_calls WHERE id=?1", [&c.call_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_row("SELECT status, result, error FROM mcp_calls WHERE id=?1", [r.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .optional();
     let record = |status: &str, result: Option<&std::result::Result<Value, String>>| -> rusqlite::Result<()> {
         let (res, err) = match result {
@@ -80,18 +104,17 @@ pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, St
             Some(Err(e)) => (None, Some(e.clone())),
             None => (None, None),
         };
-        let task_id = db::get_run(&s.db(), &c.run_id).ok().flatten().map(|r| r.task_id).unwrap_or_default();
         s.db().execute(
             "INSERT INTO mcp_calls (id,run_id,task_id,tool,args,status,result,error,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
              ON CONFLICT(id) DO UPDATE SET status=?6, result=?7, error=?8",
-            rusqlite::params![c.call_id, c.run_id, task_id, c.tool, c.args.to_string(), status, res, err, crate::util::now()],
+            rusqlite::params![r.id, r.run_id, r.task_id, r.tool, r.args.to_string(), status, res, err, crate::util::now()],
         )?;
         Ok(())
     };
-    let unrecorded = |e: rusqlite::Error| format!("The board couldn't record this {} call, so it wasn't run (call it again): {e}", c.tool);
+    let unrecorded = |e: rusqlite::Error| format!("The board couldn't record this {} call, so it wasn't run (call it again): {e}", r.tool);
     let done = |result: &std::result::Result<Value, String>| {
         if let Err(e) = record("done", Some(result)) {
-            tracing::error!(call = c.call_id, tool = c.tool, "recording an MCP call's result: {e}");
+            tracing::error!(call = r.id, tool = r.tool, "recording an MCP call's result: {e}");
         }
     };
     let result = match before {
@@ -101,11 +124,11 @@ pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, St
             None => Ok(result.and_then(|r| serde_json::from_str(&r).ok()).unwrap_or(Value::Null)),
         },
         // Executing when the server stopped.
-        Ok(Some(_)) if !rerunnable(s, &c) => {
+        Ok(Some(_)) if !rerun() => {
             let result = Err(format!(
                 "This {} call was interrupted (the board's server restarted while it ran), so it isn't run again: it may or may not have \
                  taken effect. Check (with get_task or list_tasks, say) before you call it again.",
-                c.tool
+                r.tool
             ));
             done(&result);
             result
@@ -113,7 +136,7 @@ pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, St
         Ok(_) => match record("executing", None) {
             Err(e) => Err(unrecorded(e)),
             Ok(()) => {
-                let result = execute_mcp(s, &c).await;
+                let result = exec.await;
                 #[cfg(test)]
                 crate::testing::reached("mcp:executed");
                 done(&result);
@@ -190,7 +213,9 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
         }
         "submit_review" => crate::review::submit(s, &task, &run.id, &c.args).map_err(|e| e.1),
         "wait" => {
-            let ctx = Ctx { profile_id: Some(profile.id), profile_name: profile.name, task: Some(task.clone()), call_id: None, task_fields: c.task_fields };
+            let ctx = Ctx {
+                profile_id: Some(profile.id), profile_name: profile.name, task: Some(task.clone()), call_id: None, task_fields: c.task_fields, from_host: None,
+            };
             let mut watched = Vec::new();
             // A call retried after a restart watches what it started with, even tasks since deleted.
             if crate::mcp::wait::resuming(&task, &c.call_id).is_none() {
@@ -272,7 +297,12 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
         }
         tool => {
             let ctx = Ctx {
-                profile_id: Some(profile.id), profile_name: profile.name, task: Some(task), call_id: Some(c.call_id.clone()), task_fields: c.task_fields,
+                profile_id: Some(profile.id),
+                profile_name: profile.name,
+                task: Some(task),
+                call_id: Some(c.call_id.clone()),
+                task_fields: c.task_fields,
+                from_host: None,
             };
             dispatch(s, &ctx, tool, c.args.clone()).await
         }
@@ -297,7 +327,7 @@ pub async fn handle_remote(s: &Shared, tool: &str, profile_name: &str, args: Val
     if own.is_none() && !profiles.iter().any(|p| p.grants(profile_name)) {
         return Err(format!("host {} has no profile named {profile_name}, and no profile there lets its agents in", s.host_name));
     }
-    let ctx = Ctx { profile_id: own.map(|p| p.id.clone()), profile_name: profile_name.to_string(), task: None, call_id: None, task_fields };
+    let ctx = Ctx { profile_id: own.map(|p| p.id.clone()), profile_name: profile_name.to_string(), task: None, call_id: None, task_fields, from_host: None };
     match local(s, &ctx, tool, &args).await {
         Ok(v) => Ok(v),
         Err(ToolError::NotFound(m)) => Err(format!("not found: {m}")),
@@ -305,15 +335,88 @@ pub async fn handle_remote(s: &Shared, tool: &str, profile_name: &str, args: Val
     }
 }
 
+/// The tools that act for the calling agent's own thread, which only its own host can run.
+const THREAD_TOOLS: &[&str] = &["permission_prompt", "request_user_input", "submit_review", "wait"];
+
+/// A board tool call from an agent on linked host `host_id` that it passed up its link (see hosts/uplink.rs),
+/// once that host is let in: run here with the access of this host's profile of the caller's name, as
+/// `handle_remote` does, and on this host's other links, but never up again, nor back down to that host. At
+/// most once per call id.
+pub async fn handle_up_call(s: &Shared, host_id: &str, c: &crate::hosts::proto::ToolCall) -> std::result::Result<Value, String> {
+    let (id, run_id) = (format!("up:{host_id}:{}", c.call_id), format!("up:{host_id}"));
+    let record = Record { id: &id, run_id: &run_id, task_id: "", tool: &c.tool, args: &c.args };
+    let rerun = || RERUNNABLE.contains(&c.tool.as_str());
+    at_most_once(s, record, rerun, async {
+        if THREAD_TOOLS.contains(&c.tool.as_str()) {
+            return Err(format!("{} only works on the host the agent runs on", c.tool));
+        }
+        crate::mcp::check_args(&c.tool, &c.args)?;
+        let profiles = db::list_profiles(&s.db()).map_err(|e| e.to_string())?;
+        let own = profiles.iter().find(|p| p.name == c.profile);
+        if own.is_none() && !profiles.iter().any(|p| p.grants(&c.profile)) {
+            return Err(format!("not found: {} has no profile named {}, and no profile there lets its agents in", s.host_name, c.profile));
+        }
+        let ctx = Ctx {
+            profile_id: own.map(|p| p.id.clone()),
+            profile_name: c.profile.clone(),
+            task: None,
+            call_id: Some(id.clone()),
+            task_fields: c.task_fields,
+            from_host: Some(host_id.to_string()),
+        };
+        dispatch(s, &ctx, &c.tool, c.args.clone()).await
+    })
+    .await
+}
+
+/// The hubs `ctx`'s call may go up to: none for a call that came up a link itself.
+fn uplinks(s: &Shared, ctx: &Ctx) -> Vec<std::sync::Arc<crate::hosts::uplink::Uplink>> {
+    if ctx.from_host.is_some() { Vec::new() } else { crate::hosts::uplink::hubs(s) }
+}
+
+/// The links `ctx`'s call may go down to: not back to the host it came up from.
+fn links_for(s: &Shared, ctx: &Ctx) -> Vec<hub::LinkHandle> {
+    hub::connected_links(s).into_iter().filter(|l| ctx.from_host.as_deref() != Some(l.id.as_str())).collect()
+}
+
+/// The id a call goes up a link with, by which the hub runs it at most once.
+fn up_call_id(ctx: &Ctx) -> String {
+    ctx.call_id.clone().unwrap_or_else(crate::util::new_id)
+}
+
+/// Why a hub that wasn't asked (or said no) might have had it.
+fn off_note(s: &Shared, off: &[String]) -> String {
+    if off.is_empty() {
+        return String::new();
+    }
+    format!(
+        " ({} {} this host's agents use {} board; the user can switch on \"Let this host's agents use this board\" for {} in Settings → Hosts there)",
+        off.join(", "),
+        if off.len() == 1 { "doesn't let" } else { "don't let" },
+        if off.len() == 1 { "its" } else { "their" },
+        s.host_name
+    )
+}
+
 /// Run a board tool here, falling back to (or fanning out over) linked hosts.
 pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> std::result::Result<Value, String> {
     if let Some(h) = args["host"].as_str().filter(|h| !h.is_empty()) {
         if h != s.host_name && h != s.host_id {
-            let link = hub::find_link(s, h).ok_or_else(|| format!("no linked host named {h}"))?;
-            if let Some(e) = too_old(&link.name, link.version.lock().unwrap().api_version, tool, &args) {
-                return Err(e);
+            if let Some(link) = hub::find_link(s, h) {
+                if let Some(e) = too_old(&link.name, link.version.lock().unwrap().api_version, tool, &args) {
+                    return Err(e);
+                }
+                return call_linked(s, &link, tool, &ctx.profile_name, &args, ctx.task_fields).await;
             }
-            return call_linked(s, &link, tool, &ctx.profile_name, &args, ctx.task_fields).await;
+            // A hub this host is linked to, or one of its hosts: it goes there with `host` as it is.
+            let ups = uplinks(s, ctx);
+            let up = ups.iter().find(|u| u.hub_id == h || u.hub_name.eq_ignore_ascii_case(h)).or(ups.first());
+            let Some(up) = up else { return Err(format!("no linked host named {h}")) };
+            return match up.call(&up_call_id(ctx), tool, &ctx.profile_name, &args, ctx.task_fields).await {
+                Outcome::Ok(v) => Ok(v),
+                Outcome::Err(e) => Err(e),
+                Outcome::Off => Err(format!("no linked host named {h}{}", off_note(s, std::slice::from_ref(&up.hub_name)))),
+            };
         }
         return local(s, ctx, tool, &args).await.map_err(msg);
     }
@@ -325,7 +428,7 @@ pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> 
             Err(ToolError::NotFound(m)) => (Vec::new(), Some(m)),
             Err(ToolError::Other(m)) => return Err(m),
         };
-        for link in hub::connected_links(s) {
+        for link in links_for(s, ctx) {
             match hub::call_tool(s, &link, tool, &ctx.profile_name, &args, ctx.task_fields).await {
                 Ok(Value::Array(items)) => {
                     all.extend(items);
@@ -333,6 +436,19 @@ pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> 
                 }
                 Ok(_) => {}
                 Err(e) => tracing::debug!("{tool} on {}: {e}", link.name),
+            }
+        }
+        // A hub's list covers its other hosts, which may be ours too: each item once.
+        let call_id = up_call_id(ctx);
+        for up in uplinks(s, ctx) {
+            match up.call(&call_id, tool, &ctx.profile_name, &args, ctx.task_fields).await {
+                Outcome::Ok(Value::Array(items)) => {
+                    let seen: std::collections::HashSet<String> = all.iter().filter_map(|i| i["id"].as_str().map(String::from)).collect();
+                    all.extend(items.into_iter().filter(|i| i["id"].as_str().is_none_or(|id| !seen.contains(id))));
+                    missing = None;
+                }
+                Outcome::Ok(_) | Outcome::Off => {}
+                Outcome::Err(e) => tracing::debug!("{tool} on {}: {e}", up.hub_name),
             }
         }
         return match missing {
@@ -346,7 +462,7 @@ pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> 
             // Why a host that has it couldn't do it (e.g. a change that needs approval), rather
             // than "not found".
             let (mut refused, mut skipped) = (None, Vec::new());
-            for link in hub::connected_links(s) {
+            for link in links_for(s, ctx) {
                 if too_old(&link.name, link.version.lock().unwrap().api_version, tool, &args).is_some() {
                     skipped.push(link.name.clone());
                     continue;
@@ -357,10 +473,21 @@ pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> 
                     Err(_) => {}
                 }
             }
+            // Then the hubs that take our calls, which look on their own boards and their other hosts.
+            let mut off = Vec::new();
+            for up in uplinks(s, ctx) {
+                match up.call(&up_call_id(ctx), tool, &ctx.profile_name, &args, ctx.task_fields).await {
+                    Outcome::Ok(v) => return Ok(v),
+                    Outcome::Off => off.push(up.hub_name.clone()),
+                    Outcome::Err(e) if !e.starts_with("not found") => refused = refused.or(Some(e)),
+                    Outcome::Err(_) => {}
+                }
+            }
+            let off = off_note(s, &off);
             Err(match (refused, skipped.is_empty()) {
                 (Some(e), _) => e,
-                (None, true) => format!("not found: {m}"),
-                (None, false) => format!("not found: {m} ({} run an older build that can't do this, so they weren't asked)", skipped.join(", ")),
+                (None, true) => format!("not found: {m}{off}"),
+                (None, false) => format!("not found: {m} ({} run an older build that can't do this, so they weren't asked){off}", skipped.join(", ")),
             })
         }
         Err(ToolError::Other(m)) => Err(m),

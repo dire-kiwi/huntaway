@@ -200,6 +200,7 @@ fn outbound_link(id: &str, url: &str, token: &str) -> Link {
         token: Some(token.into()),
         ssh: None,
         last_seen: None,
+        uplink: false,
         created_at: crate::util::now(),
     }
 }
