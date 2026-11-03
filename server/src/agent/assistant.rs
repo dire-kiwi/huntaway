@@ -13,6 +13,8 @@ use serde_json::{Value, json};
 
 use crate::agent::runner;
 
+pub mod brief;
+pub mod google;
 pub mod memory;
 use crate::db::{self, NewTask, Task};
 use crate::state::{ApiError, ApiResult, Shared};

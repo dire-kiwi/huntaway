@@ -1,12 +1,12 @@
 // The Assistant tab: the selected board's assistant for its picked profile, one long-lived thread outside every project
 // (server/src/agent/assistant.rs). Where it is comes from the client's assistantHome, as on the web board: a profile can
-// have it on an assistant host of its own (API 98), which may be offline. Paired devices reach it from API 105.
+// have it on an assistant host of its own (API 98), which may be offline. Paired devices reach it from API 106.
 import { assistantHome, type AssistantHome, type Client, type Profile, type Task } from "@huntaway/client";
 import type { Board } from "./boards";
 import type { BoardProfiles } from "./boardData";
 
 /** The board API from which a paired device may open the assistant (its routes joined the devices' allowlist). */
-export const ASSISTANT_TAB_API = 105;
+export const ASSISTANT_TAB_API = 106;
 
 /** Whether the app shows the Assistant tab for a board: on an older one a device can't reach it. */
 export const hasAssistantTab = (board: Pick<Board, "apiVersion"> | undefined) => !!board && board.apiVersion >= ASSISTANT_TAB_API;

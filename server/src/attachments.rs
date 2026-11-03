@@ -67,7 +67,7 @@ fn mime(name: &str) -> &'static str {
         "pdf" => "application/pdf",
         "json" => "application/json",
         "txt" | "md" | "log" | "csv" | "diff" | "patch" => "text/plain",
-        // Voice notes from the app (API 105), and audio shared into it.
+        // Voice notes from the app (API 106), and audio shared into it.
         "wav" => "audio/wav",
         "m4a" | "mp4a" => "audio/mp4",
         "aac" => "audio/aac",

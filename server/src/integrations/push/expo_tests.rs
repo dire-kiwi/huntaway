@@ -435,7 +435,7 @@ fn a_new_token_for_the_same_phone_keeps_its_subscription_and_events() {
     testing::run(async || {
         let s = board();
         let (phone, phone_id) = pair(&s, "phone").await;
-        let quiet = json!({"attention": false, "review": false, "merge": false, "done": false, "prompts": "off"});
+        let quiet = json!({"attention": false, "review": false, "merge": false, "done": false, "prompts": "off", "reports": true});
         let (_, first) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("old"), "name": "phone", "events": quiet}))).await;
         // Expo's token rotated: the app subscribes again with the new one, and no events (it keeps what's there).
         let (status, next) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("new"), "name": "phone"}))).await;
@@ -463,7 +463,7 @@ fn what_expo_says_of_an_old_token_doesnt_touch_the_new_one() {
         let mut fake = expo().await;
         s.push.set_expo_url(&fake.url);
         let (phone, _) = pair(&s, "phone").await;
-        let picked = json!({"attention": true, "review": false, "merge": true, "done": false, "prompts": "all"});
+        let picked = json!({"attention": true, "review": false, "merge": true, "done": false, "prompts": "all", "reports": true});
         let (_, sub) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("A"), "events": picked}))).await;
         let id = sub["id"].as_str().unwrap().to_string();
         // A push to A is taken...
@@ -484,5 +484,30 @@ fn what_expo_says_of_an_old_token_doesnt_touch_the_new_one() {
         noted(&s, &old, &Err(Failed("too late".into()))).unwrap();
         noted(&s, &old, &Err(Gone("too late".into()))).unwrap();
         assert_eq!(sub_for(&s, &token("B")).unwrap().last_error, None);
+    })
+}
+
+// HA-125: a routine's report reaches the app as well, without its text, which can quote mail, as Expo can read it.
+#[test]
+fn a_routines_report_reaches_the_app_without_what_it_says() {
+    testing::run(async || {
+        let s = testing::state();
+        let mut fake = expo().await;
+        s.push.set_expo_url(&fake.url);
+        subscribe_app(&s, &token("phone"), json!({"attention": false, "review": false, "merge": false, "done": false})).await;
+        let profile = db::insert_profile(&s.db(), "personal", &[], None).unwrap();
+        let assistant = crate::agent::assistant::get_or_create(&s, &profile.id).unwrap();
+        crate::hosts::hub::start(&s).unwrap();
+        start(&s);
+        while s.events.receiver_count() == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let data = json!({"automation": "Morning brief", "outcome": "reported", "text": "Kim's invoice 4411 for $1,250 is overdue"});
+        s.add_message(&assistant.id, "report", data).unwrap();
+        let sent = next(&mut fake.sent).await;
+        let m = &sent[0];
+        assert!(!sent.to_string().contains("invoice"), "{sent}");
+        assert_eq!((m["title"].as_str(), m["body"].as_str(), m["data"]["event"].as_str()), (Some("Morning brief"), Some("Posted a report"), Some("report")), "{m}");
+        assert_eq!((m["data"]["task_id"].as_str(), m["data"]["host"].as_str()), (Some(assistant.id.as_str()), Some(s.host_id.as_str())));
     })
 }

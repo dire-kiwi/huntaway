@@ -4,7 +4,11 @@ import { enc, type Http } from "./http";
 export type PushPrompts = "off" | "assistant" | "all";
 
 /** Which of the board's notifications a device gets by push (see notifications.ts), and its permission prompts (left as they are, or the default, without). */
-export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & { prompts?: PushPrompts };
+export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & {
+  prompts?: PushPrompts;
+  /** The reports the assistant's routines post, such as the morning brief's (API 105; on unless turned off). */
+  reports?: boolean;
+};
 
 /** The mobile app's push, through Expo's push service (API 103): its subscriptions are `kind` `expo`. */
 export const EXPO_PUSH_API = 103;

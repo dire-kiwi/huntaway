@@ -10,6 +10,7 @@ import type { Mode, Tab } from "./layout";
 const ChangesView = lazy(() => import("../../changes/Changes").then((m) => ({ default: m.ChangesView })));
 const MemoryView = lazy(() => import("../Memory").then((m) => ({ default: m.MemoryView })));
 const Routines = lazy(() => import("../Routines").then((m) => ({ default: m.Routines })));
+const BriefView = lazy(() => import("../Brief").then((m) => ({ default: m.BriefView })));
 
 // What empty threads show. The same elements every time, so the (memoized) thread doesn't redraw for them.
 const NOT_STARTED = (
@@ -78,6 +79,10 @@ export function TabContent({
     </div>
   ) : shown === "actions" ? (
     <ActionLog task={task} />
+  ) : shown === "brief" ? (
+    <Suspense fallback={null}>
+      <BriefView key={`${task.host_id}:${task.id}`} assistant={task} />
+    </Suspense>
   ) : shown === "routines" ? (
     <Suspense fallback={null}>
       <Routines assistant={task} />

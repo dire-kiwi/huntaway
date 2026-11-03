@@ -21,7 +21,7 @@ export default function Share() {
   if (!pending) return <Empty title="Nothing's waiting to be shared." />;
   if (!targets.length) {
     return (
-      <Empty title="None of your paired boards can take it: the assistant needs a board on Huntaway's API 105 or later. Update one, or pair another.">
+      <Empty title="None of your paired boards can take it: the assistant needs a board on Huntaway's API 106 or later. Update one, or pair another.">
         <Button title="Pair a board" kind="primary" onPress={() => router.replace("/pair")} />
         <Button title="Drop it" kind="ghost" onPress={drop} />
       </Empty>
