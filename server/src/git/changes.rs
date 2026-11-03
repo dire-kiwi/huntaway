@@ -19,11 +19,13 @@ pub fn changes_code(call: &ToolCall) -> bool {
     }
 }
 
-/// Whether a tool call was denied, so it never ran: its result says so (the board's prompt was
-/// refused, or the permission mode refused it without asking).
+/// Whether a tool call was denied, so it never ran: it says so (whatever its result, if it has one),
+/// or it failed with a result that says so (a legacy thread's call whose prompt was refused, or that the
+/// permission mode refused without asking).
 fn denied(call: &ToolCall) -> bool {
     const DENIALS: &[&str] = &["The command was declined.", "The user denied this action.", crate::mcp::permissions::DONT_ASK_DENIAL];
-    matches!(call.status, ToolStatus::Failed | ToolStatus::Denied) && call.result.as_ref().is_some_and(|r| DENIALS.iter().any(|d| r.content.contains(d)))
+    call.status == ToolStatus::Denied
+        || (call.status == ToolStatus::Failed && call.result.as_ref().is_some_and(|r| DENIALS.iter().any(|d| r.content.contains(d))))
 }
 
 /// A shell token: a word (unquoted) or an operator.

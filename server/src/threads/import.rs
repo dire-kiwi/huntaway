@@ -924,10 +924,12 @@ impl Builder {
             return Disposition::Redundant;
         }
         // What the turn ended by saying, if no message of its said it (Claude Code gives the result of a turn
-        // that a background subagent's report started that way, say).
+        // that a background subagent's report started that way, say). The readers have it from the turn's end.
         let said = std::mem::take(&mut self.last_text);
         if let Some(text) = str_arg(d, "result").filter(|t| ok && !t.trim().is_empty() && said.as_deref().map(str::trim) != Some(t.trim())) {
-            self.add(json!({"id": format!("legacy:{}:result", m.id), "type": "assistant_message", "text": text, "created_at": m.created_at}));
+            let id = format!("legacy:{}:result", m.id);
+            self.add(json!({"id": id, "type": "assistant_message", "text": text, "created_at": m.created_at}));
+            self.origins.get_mut(&id).unwrap().from_result = true;
         }
         let mut item = json!({"id": format!("legacy:{}", m.id), "type": "turn_result", "ok": ok, "created_at": m.created_at});
         if d["interrupted"] == true {
@@ -941,6 +943,8 @@ impl Builder {
             item["duration_ms"] = json!(ms);
         }
         self.add(item);
+        // What its result said, whichever way the turn went: the readers take it as what the agent said last there.
+        self.origins.get_mut(&format!("legacy:{}", m.id)).unwrap().result_text = str_arg(d, "result").map(String::from);
         Disposition::Converted
     }
 

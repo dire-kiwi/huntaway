@@ -333,7 +333,7 @@ fn a_database_that_had_the_agent_threads_tables_as_an_earlier_version_gets_what_
         let unset: i64 = c.query_row("SELECT COUNT(*) FROM call_usage WHERE call_id IS NULL", [], |r| r.get(0)).unwrap();
         assert_eq!(unset, 0, "version {version}");
         let tables: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'at\\_%' ESCAPE '\\'", [], |r| r.get(0)).unwrap();
-        assert_eq!(tables, 5, "version {version}");
+        assert_eq!(tables, 6, "version {version}");
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

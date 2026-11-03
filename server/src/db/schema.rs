@@ -972,8 +972,9 @@ CREATE INDEX IF NOT EXISTS at_runs_thread ON at_runs(thread_id);
 CREATE INDEX IF NOT EXISTS at_runs_active ON at_runs(active, started_at, id);
 "#;
 
-/// What the board knows about agent-threads threads' items that the items don't say (who sent a user message,
-/// say), as JSON (threads/history.rs's Origin), by item. It goes with its thread.
+/// What the board knows about agent-threads threads' items that the items don't say (see threads/history.rs):
+/// who sent a user message, say, as JSON (its Origin), and when each item was added (`at`, the time the store
+/// was given it, unless it said), by item. They go with their thread.
 const SCHEMA_V86: &str = r#"
 CREATE TABLE IF NOT EXISTS at_item_origins (
   thread_id TEXT NOT NULL REFERENCES at_threads(id) ON DELETE CASCADE,
@@ -981,6 +982,13 @@ CREATE TABLE IF NOT EXISTS at_item_origins (
   data TEXT NOT NULL,
   PRIMARY KEY (thread_id, item_id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS at_item_times (
+  thread_id TEXT NOT NULL REFERENCES at_threads(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  at TEXT NOT NULL,
+  PRIMARY KEY (thread_id, item_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS at_item_times_at ON at_item_times(thread_id, at);
 "#;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read

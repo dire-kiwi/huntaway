@@ -581,7 +581,11 @@ fn what_a_turn_ended_by_saying_and_where_items_came_from() {
     assert_eq!(items(&c)["legacy:5"]["error"], "Boom");
     let at = |m: i64| Origin { message_id: Some(m), ..Default::default() };
     assert_eq!(c.origins["legacy:1"], Origin { user_text: Some("Go".into()), ..at(1) });
-    assert_eq!(c.origins["legacy:4:result"], at(4));
+    assert_eq!(c.origins["legacy:4:result"], Origin { from_result: true, ..at(4) });
+    // Each turn's result's text, whichever way it went.
+    assert_eq!(c.origins["legacy:3"], Origin { result_text: Some("Done.".into()), ..at(3) });
+    assert_eq!(c.origins["legacy:4"], Origin { result_text: Some("The report is in.".into()), ..at(4) });
+    assert_eq!(c.origins["legacy:5"], Origin { result_text: Some("Boom".into()), ..at(5) });
     assert_eq!(c.origins["a1"], Origin { subagent_task: Some("t1".into()), ..at(6) });
     assert_eq!(c.origins["legacy:8"], Origin { auto: true, ..at(8) });
     assert_eq!(c.origins["legacy:9"], Origin { from_agent: true, ..at(9) });

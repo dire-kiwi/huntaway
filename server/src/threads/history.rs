@@ -78,6 +78,14 @@ pub struct Origin {
     /// its lifecycle notifications name it by.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_task: Option<String>,
+    /// Of a legacy turn_result, the text its result gave (what the turn ended by saying, or its error),
+    /// which is what the agent said last there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_text: Option<String>,
+    /// Of an assistant_message, it's a result's text that no message of its turn said (see import.rs):
+    /// its turn_result's `result_text` has it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_result: bool,
 }
 
 impl Origin {
@@ -286,10 +294,21 @@ fn stored(c: &Connection, task: &db::Task, window: Window) -> Result<History> {
     for e in st.query_map(params![task.id, state.seq.min(i64::MAX as u64) as i64], |r| r.get::<_, String>(0))? {
         reducer::apply_event(&mut state, &serde_json::from_str::<ThreadEvent>(&e?)?);
     }
+    // Of the items that don't say when they were made, those added after `Since`'s time, as the store recorded it.
+    let mut added_since = std::collections::HashSet::new();
+    if let Window::Since(at) = window {
+        let mut st = c.prepare_cached("SELECT item_id FROM at_item_times WHERE thread_id=?1 AND at>?2")?;
+        for id in st.query_map(params![task.id, at], |r| r.get::<_, String>(0))? {
+            added_since.insert(id?);
+        }
+    }
     let keep = |item: &Item| match window {
         Window::All => true,
         Window::Latest(_, part) => part.has(item),
-        Window::Since(at) => created_at(item).is_some_and(|t| t > at),
+        Window::Since(at) => match created_at(item) {
+            Some(t) => t > at,
+            None => added_since.contains(item.id()),
+        },
         Window::UserMessages => matches!(item, Item::UserMessage(_)),
     };
     let mut st = c.prepare_cached("SELECT item_id, data FROM at_item_origins WHERE thread_id=?1")?;
@@ -314,8 +333,10 @@ enum Said {
     /// One of the agent's messages (a legacy message's text blocks, joined by newlines), or an error
     /// the harness gave in its place (an error notice with a code: Claude's API errors, a usage limit).
     Agent(String),
-    /// The error a turn of the agent's ended with (see `turn_error`).
-    Failed(String),
+    /// What a turn ended by saying: a legacy turn's result (`Origin::result_text`), or the error an
+    /// agent-threads turn failed with (see `turn_error`). The user's replies aren't to it, but to the
+    /// messages before it.
+    Ended(String),
 }
 
 impl History {
@@ -328,7 +349,16 @@ impl History {
             let e = &self.entries[i];
             match &e.item {
                 Item::UserMessage(_) => out.extend(e.users_text().map(|t| (i, Said::User(t.to_string())))),
-                Item::TurnResult(r) => out.extend(turn_error(r).map(|t| (i, Said::Failed(t.to_string())))),
+                Item::TurnResult(r) => {
+                    let ended = match (&e.origin.result_text, e.origin.message_id) {
+                        (Some(text), _) => Some(text.as_str()).filter(|t| !t.is_empty()),
+                        // A legacy result with no text says nothing (its error is Claude's subtype).
+                        (None, Some(_)) => None,
+                        (None, None) => turn_error(r),
+                    };
+                    out.extend(ended.map(|t| (i, Said::Ended(t.to_string()))));
+                }
+                Item::AssistantMessage(_) if e.origin.from_result => {}
                 Item::Notice(n) if n.level == NoticeLevel::Error && n.code.is_some() => out.push((i, Said::Agent(n.text.clone()))),
                 Item::AssistantMessage(m) => {
                     let mut texts = vec![m.text.as_str()];
@@ -364,7 +394,7 @@ impl History {
     /// nothing there, which doesn't say it said nothing before).
     pub fn last_said(&self, after: Option<usize>) -> Option<String> {
         self.said(after.map_or(0, |a| a + 1)).into_iter().find_map(|(_, s)| match s {
-            Said::Agent(t) | Said::Failed(t) => Some(t),
+            Said::Agent(t) | Said::Ended(t) => Some(t),
             Said::User(_) => None,
         })
     }
@@ -387,14 +417,9 @@ impl History {
     }
 }
 
-/// A failed turn's error, as the last thing the agent said: what went wrong. Not when all that's
-/// known is how it ended (with no text in Claude's result, the converter gives its subtype, such as
-/// `error_during_execution`).
+/// An agent-threads turn's error, as the last thing the agent said: what went wrong.
 fn turn_error(r: &agent_threads::protocol::TurnResult) -> Option<&str> {
-    let e = r.error.as_deref().filter(|_| !r.ok && r.parent_id.is_none())?;
-    let t = e.trim();
-    let subtype = t == "error" || (t.starts_with("error_") && !t.contains(char::is_whitespace));
-    (!t.is_empty() && !subtype).then_some(e)
+    r.error.as_deref().filter(|e| !r.ok && r.parent_id.is_none() && !e.trim().is_empty())
 }
 
 /// The last thing the agent said in `task_id`'s thread: its latest message, or the error its last
@@ -470,7 +495,7 @@ impl History {
                         }
                     }
                 }
-                Said::Failed(_) => {}
+                Said::Ended(_) => {}
             }
         }
         if !self.whole {

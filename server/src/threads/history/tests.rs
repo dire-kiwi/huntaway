@@ -297,3 +297,71 @@ fn an_agent_threads_thread_has_the_origins_the_board_records() {
         assert_eq!(last_said(&s.db(), &t).unwrap(), None);
     })
 }
+
+#[test]
+fn a_turn_ends_with_what_its_result_says_though_a_subagent_spoke_after_the_message() {
+    testing::run(async || {
+        // A subagent's last messages after the main conversation's: fewer than a window, then more.
+        for children in [1, 30] {
+            let s = testing::state();
+            let t = testing::task(&s).id;
+            add(&s, &t, "user", json!({"text": "Go"}));
+            add(&s, &t, "claude", json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "d", "prompt": "p"}}]}}));
+            add(&s, &t, "claude", said("Main final answer"));
+            for i in 0..children {
+                add(&s, &t, "claude", json!({"type": "assistant", "parent_tool_use_id": "a1", "message": {"content": [{"type": "text", "text": format!("Child report {i}")}]}}));
+            }
+            add(&s, &t, "claude", json!({"type": "result", "subtype": "success", "is_error": false, "result": "Main final answer", "num_turns": 1}));
+            let last = |c: &Connection| (last_said(c, &t).unwrap(), said_since_asked(c, &t).unwrap());
+            let main = Some("Main final answer".to_string());
+            assert_eq!(both(&s, &t, last).await, (main.clone(), main.clone()), "{children} child messages");
+            // The user's reply is to the messages, not the result (as before): the subagent's last.
+            add(&s, &t, "user", json!({"text": "Thanks"}));
+            let r = both(&s, &t, |c| user_replies(c, &t, Some(1)).unwrap()).await;
+            assert_eq!(r.replies, [(Some(format!("Child report {}", children - 1)), "Thanks".to_string())], "{children} child messages");
+        }
+    })
+}
+
+#[test]
+fn a_result_no_message_said_is_said_but_isnt_what_the_user_answers() {
+    testing::run(async || {
+        let s = testing::state();
+        let t = testing::task(&s).id;
+        add(&s, &t, "claude", said("Waiting on the report."));
+        add(&s, &t, "claude", json!({"type": "result", "subtype": "success", "result": "Waiting on the report.", "num_turns": 1}));
+        add(&s, &t, "claude", json!({"type": "result", "subtype": "success", "result": "The report is in.", "num_turns": 1}));
+        assert_eq!(both(&s, &t, |c| last_said(c, &t).unwrap()).await.as_deref(), Some("The report is in."));
+        add(&s, &t, "user", json!({"text": "Good"}));
+        let r = both(&s, &t, |c| user_replies(c, &t, None).unwrap()).await;
+        assert_eq!(r.replies, [(Some("Waiting on the report.".to_string()), "Good".to_string())]);
+    })
+}
+
+#[test]
+fn agent_threads_items_that_dont_say_when_they_were_made_are_read_by_when_they_were_added() {
+    testing::run(async || {
+        use agent_threads::Store;
+        let s = testing::state();
+        let t = testing::task(&s).id;
+        let store = HuntawayStore::new(Arc::downgrade(&s));
+        store.create_thread(&json!({"id": t, "harness": "codex", "status": "idle", "created_at": "2026-11-01T00:00:00Z", "metadata": {"task_id": t}})).await.unwrap();
+        // As agent-threads' drivers add them: no created_at.
+        let items = [
+            json!({"id": "u1", "type": "user_message", "text": "Commit it"}),
+            json!({"id": "c1", "type": "tool_call", "kind": "shell", "name": "exec", "command": "git commit -am x", "input": {"command": "git commit -am x"}, "status": "running"}),
+        ];
+        let mut events: Vec<Value> = items.into_iter().enumerate().map(|(i, item)| json!({"type": "item.added", "thread_id": t, "seq": i + 1, "item": item})).collect();
+        events.push(json!({"type": "item.updated", "thread_id": t, "seq": 3, "item_id": "c1", "patch": {"status": "completed", "result": {"content": "1 file changed"}}}));
+        store.append_events(&t, &events, &[]).await.unwrap();
+        let read = |since: &str| {
+            on(Engine::AgentThreads, || {
+                let c = s.db();
+                let calls = tool_calls_since(&c, &t, Some(since)).unwrap();
+                (calls.iter().filter(|c| crate::git::changes::changes_code(c)).count(), user_wrote_since(&c, &t, since).unwrap())
+            })
+        };
+        assert_eq!(read("2000-01-01T00:00:00.000Z"), (1, true));
+        assert_eq!(read("2999-01-01T00:00:00.000Z"), (0, false));
+    })
+}

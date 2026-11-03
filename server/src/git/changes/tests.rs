@@ -211,6 +211,26 @@ fn failed_edits_dont_change_code_but_failed_shell_writes_may_have() {
 }
 
 #[test]
+fn a_denied_call_never_ran_whatever_its_result_says() {
+    // As agent-threads gives them: denied with no result, or with a reason of the policy's own.
+    let call = |result: Option<&str>| -> ToolCall {
+        let mut call = json!({"id": "t", "kind": "shell", "name": "Bash", "command": "rm src/main.rs", "input": {"command": "rm src/main.rs"}, "status": "denied"});
+        if let Some(text) = result {
+            call["result"] = json!({"content": text});
+        }
+        serde_json::from_value(call).unwrap()
+    };
+    assert!(!super::changes_code(&call(None)));
+    assert!(!super::changes_code(&call(Some("Not allowed in this mode"))));
+    let edit: ToolCall = serde_json::from_value(json!({"id": "e", "kind": "edit", "name": "Edit", "input": {}, "status": "denied"})).unwrap();
+    assert!(!super::changes_code(&edit));
+    // A shell command that failed with any other error may have written files.
+    let mut failed = call(Some("exit code 1"));
+    failed.status = ToolStatus::Failed;
+    assert!(super::changes_code(&failed));
+}
+
+#[test]
 fn commits_pushes_and_new_prs_change_code() {
     // Wrappers' option values can be any text (this used to panic).
     assert!(!bash("env -C/tmp/项目 pwd") && !bash("sudo -u用户 ls"));

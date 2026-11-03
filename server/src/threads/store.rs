@@ -181,7 +181,7 @@ impl<D: Db> Store for HuntawayStore<D> {
         self.db.with(|c| {
             let tx = c.transaction().map_err(failed)?;
             // Not left to ON DELETE CASCADE, which needs foreign_keys on.
-            for table in ["at_events", "at_snapshots", "at_runs"] {
+            for table in ["at_events", "at_snapshots", "at_runs", "at_item_origins", "at_item_times"] {
                 tx.execute(&format!("DELETE FROM {table} WHERE thread_id=?1"), [id]).map_err(failed)?;
             }
             let deleted = tx.execute("DELETE FROM at_threads WHERE id=?1", [id]).map_err(failed)?;
@@ -198,8 +198,14 @@ impl<D: Db> Store for HuntawayStore<D> {
             check_events(id, last(&tx, id)?, events, runs)?;
             {
                 let mut st = tx.prepare_cached("INSERT INTO at_events (thread_id, seq, data) VALUES (?1, ?2, ?3)").map_err(failed)?;
+                // When each item was added (as it says, or now), which agent-threads' items needn't say (see history.rs).
+                let mut added = tx.prepare_cached("INSERT OR IGNORE INTO at_item_times (thread_id, item_id, at) VALUES (?1, ?2, ?3)").map_err(failed)?;
+                let now = crate::util::now();
                 for e in events {
                     st.execute(params![id, e["seq"].as_i64(), e.to_string()]).map_err(failed)?;
+                    if let (Some("item.added"), Some(item)) = (e["type"].as_str(), e["item"]["id"].as_str()) {
+                        added.execute(params![id, item, e["item"]["created_at"].as_str().unwrap_or(&now)]).map_err(failed)?;
+                    }
                 }
             }
             for r in runs {
