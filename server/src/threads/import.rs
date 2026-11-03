@@ -22,10 +22,12 @@ use agent_threads::reducer;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+use super::history::Origin;
+use super::store::{Db, HuntawayStore};
 use crate::db::{Message, Task};
 
 /// Changes when what `convert` makes of the same messages does: imported threads record it.
-pub const CONVERTER_VERSION: u32 = 5;
+pub const CONVERTER_VERSION: u32 = 6;
 
 /// Tool results longer than this were cut short when they were stored (runner/output.rs's `slim`).
 const STORED_RESULT_MAX: usize = 30_000;
@@ -73,6 +75,8 @@ pub struct Conversion {
     /// What folding the events gives.
     pub snapshot: Snapshot,
     pub rows: Vec<Row>,
+    /// What the board knows about each item that the item doesn't say (history::Origin), by its id.
+    pub origins: BTreeMap<String, Origin>,
     pub warnings: Vec<Warning>,
     /// The source's fingerprint (its messages' ids, kinds and data): a source edited since shows.
     pub fingerprint: String,
@@ -134,7 +138,7 @@ pub fn convert(source: &Source) -> anyhow::Result<Conversion> {
     for e in &events {
         reducer::apply_event(&mut snapshot, e);
     }
-    Ok(Conversion { thread, events, snapshot, rows: b.rows, warnings: b.warnings, fingerprint })
+    Ok(Conversion { thread, events, snapshot, rows: b.rows, origins: b.origins, warnings: b.warnings, fingerprint })
 }
 
 /// What `stage` did.
@@ -147,11 +151,13 @@ pub enum Staged {
     Unchanged,
 }
 
-/// Writes `conv` to `store` as its own thread: the thread, its events, then (once the saved events
-/// fold into it) its snapshot, which is what says a staged import is whole. Staging the same
+/// Writes `conv` to `store` as its own thread: the thread, its events, its items' origins (those that say
+/// more than their message, which an imported item's id says: see history::Origin), then (once the saved events fold into it) its snapshot, which
+/// is what says a staged import is whole. Staging the same
 /// conversion again changes nothing; an import of an older source or converter is replaced. A thread
 /// with the id that wasn't imported is left as it is. It's only staged: nothing reads these threads yet.
-pub async fn stage(store: &dyn agent_threads::Store, conv: &Conversion) -> anyhow::Result<Staged> {
+pub async fn stage<D: Db>(store: &HuntawayStore<D>, conv: &Conversion) -> anyhow::Result<Staged> {
+    use agent_threads::Store;
     let id = conv.thread.id.as_str();
     let events = conv.events.iter().map(serde_json::to_value).collect::<Result<Vec<_>, _>>()?;
     let snapshot = serde_json::to_value(&conv.snapshot)?;
@@ -167,6 +173,7 @@ pub async fn stage(store: &dyn agent_threads::Store, conv: &Conversion) -> anyho
     }
     store.create_thread(&serde_json::to_value(&conv.thread)?).await?;
     store.append_events(id, &events, &[]).await?;
+    store.save_origins(id, conv.origins.iter().filter(|(_, o)| o.says_more()))?;
     let mut state = reducer::initial_state(conv.thread.clone());
     for e in store.read_events(id, 0, None).await? {
         reducer::apply_event(&mut state, &serde_json::from_value(e)?);
@@ -260,6 +267,10 @@ struct Builder {
     last_session: Option<String>,
     /// The row being converted.
     current: Option<Row>,
+    origins: BTreeMap<String, Origin>,
+    /// The text of the main conversation's latest message with some, since the last turn ended or the
+    /// user's last message: what a turn's result usually says again.
+    last_text: Option<String>,
 }
 
 fn str_arg<'a>(v: &'a Value, name: &str) -> Option<&'a str> {
@@ -283,6 +294,8 @@ impl Builder {
             compaction: HashMap::new(),
             last_session: None,
             current: None,
+            origins: BTreeMap::new(),
+            last_text: None,
         };
         // Prompts and results can be stored before their call: index the calls first. A call keeps its id
         // as its item's, but for the first; one with an id an earlier call has is `legacy:<message>:<block>`.
@@ -323,6 +336,7 @@ impl Builder {
     fn add(&mut self, item: Value) {
         let id = item["id"].as_str().unwrap_or_default().to_string();
         assert!(self.items.insert(id.clone()), "item {id} added twice");
+        self.origins.insert(id.clone(), Origin { message_id: self.current.as_ref().map(|r| r.message_id), ..Default::default() });
         let parent = item["parent_id"].as_str().map(String::from);
         if item["type"] == "compaction" {
             self.compaction.insert(parent, id.clone());
@@ -458,11 +472,16 @@ impl Builder {
     }
 
     fn user(&mut self, m: &Message) -> Disposition {
+        self.last_text = None;
         let mut item = json!({"id": format!("legacy:{}", m.id), "type": "user_message", "text": m.data["text"].as_str().unwrap_or_default(), "created_at": m.created_at});
         if m.data["steered"] == true {
             item["steered"] = json!(true);
         }
         self.add(item);
+        let o = self.origins.get_mut(&format!("legacy:{}", m.id)).unwrap();
+        o.auto = m.data["auto"] == true;
+        o.from_agent = m.data["from_agent"] == true;
+        o.user_text = m.data["user_text"].as_str().map(String::from);
         Disposition::Converted
     }
 
@@ -651,12 +670,14 @@ impl Builder {
             return Disposition::Converted;
         }
         let mut any = false;
+        let mut texts: Vec<&str> = Vec::new();
         for (i, block) in blocks.iter().enumerate() {
             let key = format!("legacy:{}:{i}", m.id);
             match block["type"].as_str() {
                 Some("text") => {
                     let Some(text) = block["text"].as_str().filter(|t| !t.trim().is_empty()) else { continue };
                     self.add(with_parent(json!({"id": key, "type": "assistant_message", "text": text, "created_at": m.created_at})));
+                    texts.push(text);
                     any = true;
                 }
                 Some("thinking") => {
@@ -682,6 +703,9 @@ impl Builder {
                     item["status"] = json!("running");
                     item["created_at"] = json!(m.created_at);
                     self.add(with_parent(item));
+                    if id != call_id {
+                        self.origins.get_mut(&id).unwrap().call_id = Some(call_id.to_string());
+                    }
                     let model = str_arg(&block["input"], "model").map(String::from);
                     self.call_items.insert(id.clone(), Call { kind, status: "running", subagent: None, model });
                     if let Some((at, result, meta)) = self.early.remove(&id) {
@@ -691,6 +715,9 @@ impl Builder {
                 }
                 other => self.warn(Some(m.id), "unknown_block", format!("an assistant block of type {other:?}")),
             }
+        }
+        if parent.is_none() && !texts.is_empty() {
+            self.last_text = Some(texts.join("\n"));
         }
         if any { Disposition::Converted } else { Disposition::Redundant }
     }
@@ -842,6 +869,7 @@ impl Builder {
                         patch["status"] = json!("completed");
                     }
                     if !task.is_empty() {
+                        self.origins.get_mut(&id).unwrap().subagent_task = Some(task.clone());
                         self.jobs.insert(task, Job::Agent(id.clone()));
                     }
                     self.update(&id, patch);
@@ -889,6 +917,12 @@ impl Builder {
         // A `/compact` run's turn is just its compaction.
         if ok && d["num_turns"] == 0 && self.compaction.contains_key(&None) {
             return Disposition::Redundant;
+        }
+        // What the turn ended by saying, if no message of its said it (Claude Code gives the result of a turn
+        // that a background subagent's report started that way, say).
+        let said = std::mem::take(&mut self.last_text);
+        if let Some(text) = str_arg(d, "result").filter(|t| ok && !t.trim().is_empty() && said.as_deref().map(str::trim) != Some(t.trim())) {
+            self.add(json!({"id": format!("legacy:{}:result", m.id), "type": "assistant_message", "text": text, "created_at": m.created_at}));
         }
         let mut item = json!({"id": format!("legacy:{}", m.id), "type": "turn_result", "ok": ok, "created_at": m.created_at});
         if d["interrupted"] == true {

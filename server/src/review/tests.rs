@@ -19,7 +19,7 @@ fn what_the_user_decided_goes_before_the_instructions() {
     let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
     let task = db::insert_task(&c, t).unwrap();
     let replies = vec![(Some("Should it be A or B?\nB is faster.".to_string()), "A, the gap is fine".to_string()), (None, "thanks".to_string())];
-    let replies = db::UserReplies { replies, ..Default::default() };
+    let replies = crate::threads::history::UserReplies { replies, ..Default::default() };
     let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch { own_start: false }, &[], &replies, "Check the docs too.");
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s:?} not in {text}"));
     assert!(at("`pr_view`") < at("decisions they made there stand") && at("decisions they made") < at("Check the docs too."));

@@ -114,7 +114,7 @@ pub(super) fn send_message(state: &Shared, task_id: &str, message: Option<db::Qu
             if from_agent {
                 msg["from_agent"] = json!(true);
             } else if message.user_text.as_deref().is_some_and(|u| u != text) {
-                // Sent with other agents' messages queued alongside (see db::user_replies).
+                // Sent with other agents' messages queued alongside (see threads::history::user_replies).
                 msg["user_text"] = json!(message.user_text);
             }
             return Ok(vec![db::insert_message(c, task_id, "user", &msg)?]);

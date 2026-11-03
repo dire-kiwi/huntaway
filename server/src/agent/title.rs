@@ -135,7 +135,7 @@ pub fn refresh(state: &Shared, task_id: &str) {
         let read = || -> Result<_> {
             let c = st.db();
             let Some(task) = db::get_task(&c, id)?.filter(|t| t.kind == "task" && !t.title_pinned) else { return Ok(None) };
-            Ok(Some((task, db::user_replies(&c, id, Some(MESSAGES))?)))
+            Ok(Some((task, crate::threads::history::user_replies(&c, id, Some(MESSAGES))?)))
         };
         let result = async {
             let Some((task, r)) = read()? else { return Ok(None) };
@@ -196,7 +196,7 @@ pub fn worth_asking(text: &str) -> bool {
 }
 
 /// What `refresh` asks the model about: the task's title and description, and the user's own
-/// messages (see db::user_replies, oldest first, after `earlier` ones left out), with those still
+/// messages (see threads::history::user_replies, oldest first, after `earlier` ones left out), with those still
 /// waiting for its agent to take them in (sent while it works, or the user's parts of what's
 /// queued for its next run) at the end, after what the agent has said `since` the last of the others.
 fn refresh_input(task: &Task, replies: &[(Option<String>, String)], since: Option<&str>, earlier: usize) -> String {
@@ -260,7 +260,7 @@ pub async fn check(db_path: &Path, ids: &[String], steps: bool, show_input: bool
     let cwd = std::env::temp_dir();
     for id in ids {
         let mut task = db::get_task(&c, id)?.with_context(|| format!("no task {id}"))?;
-        let db::UserReplies { replies, since, .. } = db::user_replies(&c, id, None)?;
+        let crate::threads::history::UserReplies { replies, since, .. } = crate::threads::history::user_replies(&c, id, None)?;
         let config = db::task_claude_config(&c, &task)?;
         println!("== {id}: {}", task.title);
         let ask = async |system_prompt: &str, input: String| {

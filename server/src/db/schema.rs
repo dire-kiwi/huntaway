@@ -879,6 +879,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         summarizers(&conn)?;
         conn.execute_batch(&format!("{SCHEMA_V85} PRAGMA user_version=85; COMMIT;"))?;
     }
+    if version < 86 {
+        // IF NOT EXISTS, in case another migration takes this version first.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V86} PRAGMA user_version=86; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
@@ -934,7 +938,7 @@ fn call_usage_ids(conn: &Connection) -> Result<()> {
 }
 
 /// The latest database version (`PRAGMA user_version`).
-pub const VERSION: i64 = 85;
+pub const VERSION: i64 = 86;
 
 /// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
 /// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON
@@ -966,6 +970,17 @@ CREATE TABLE IF NOT EXISTS at_runs (
 );
 CREATE INDEX IF NOT EXISTS at_runs_thread ON at_runs(thread_id);
 CREATE INDEX IF NOT EXISTS at_runs_active ON at_runs(active, started_at, id);
+"#;
+
+/// What the board knows about agent-threads threads' items that the items don't say (who sent a user message,
+/// say), as JSON (threads/history.rs's Origin), by item. It goes with its thread.
+const SCHEMA_V86: &str = r#"
+CREATE TABLE IF NOT EXISTS at_item_origins (
+  thread_id TEXT NOT NULL REFERENCES at_threads(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (thread_id, item_id)
+) WITHOUT ROWID;
 "#;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read

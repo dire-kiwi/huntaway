@@ -184,7 +184,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         return Ok(None);
     }
     let commit = &head[..head.len().min(10)];
-    let last_message = if elsewhere { db::last_assistant_text(&state.db(), &task.id)? } else { None };
+    let last_message = if elsewhere { crate::threads::history::last_said(&state.db(), &task.id)? } else { None };
     let mut texts = Vec::new();
     for (plan, thread) in &writing {
         texts.push(prompt(&key, &task, &branch, base.as_deref(), commit, elsewhere, own_start, last_message.as_deref(), &plan.spec, plan.codex));
@@ -357,14 +357,8 @@ pub fn finished(state: &Shared, thread: &Task, run_id: &str, outcome: &Outcome, 
     if summary.after_run.as_deref().is_some_and(|after| !db::run_after(&state.db(), &thread.id, run_id, after).unwrap_or(false)) {
         return;
     }
-    let written = || -> Option<String> {
-        // What it said after it was asked for this summary.
-        let asked: i64 = state
-            .db()
-            .query_row("SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='user'", [&thread.id], |r| r.get(0))
-            .ok()?;
-        db::last_assistant_text_after(&state.db(), &thread.id, asked).ok().flatten().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
-    };
+    // What it said after it was asked for this summary.
+    let written = || crate::threads::history::said_since_asked(&state.db(), &thread.id).ok().flatten();
     let (st, text) = match outcome {
         Outcome::Cancelled => ("stopped", Some("The summary was stopped.".to_string())),
         Outcome::Failed(e) => ("failed", Some(format!("The summary failed: {}", e.lines().next().unwrap_or("")))),

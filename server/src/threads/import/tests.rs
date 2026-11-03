@@ -560,3 +560,32 @@ fn a_prompt_matching_no_call_with_its_reused_id_is_for_none() {
     // (The test task's session is s1.)
     assert_eq!(codes(&c), ["ambiguous_call", "duplicate_call", "session_mismatch"]);
 }
+
+#[test]
+fn what_a_turn_ended_by_saying_and_where_items_came_from() {
+    let c = convert_all(&[
+        msg(1, "user", json!({"text": "Go\n\nFrom IA-2", "user_text": "Go"})),
+        assistant(2, None, json!([{"type": "text", "text": "Done."}])),
+        msg(3, "claude", json!({"type": "result", "subtype": "success", "result": "Done.", "num_turns": 1})),
+        // A turn a background subagent's report started: its result is all it said.
+        msg(4, "claude", json!({"type": "result", "subtype": "success", "result": "The report is in.", "num_turns": 1})),
+        msg(5, "claude", json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "Boom"})),
+        assistant(6, None, json!([{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "d"}}])),
+        msg(7, "claude", json!({"type": "system", "subtype": "task_started", "task_id": "t1", "tool_use_id": "a1", "task_type": "local_agent", "session_id": "s1"})),
+        msg(8, "user", json!({"text": "Start working on this task.", "auto": true})),
+        msg(9, "user", json!({"text": "Rebase", "from_agent": true})),
+    ]);
+    let ids: Vec<&str> = c.snapshot.items.iter().map(|i| i.id()).collect();
+    assert_eq!(ids, ["legacy:1", "legacy:2:0", "legacy:3", "legacy:4:result", "legacy:4", "legacy:5", "a1", "legacy:8", "legacy:9"]);
+    assert_eq!(items(&c)["legacy:4:result"], json!({"id": "legacy:4:result", "type": "assistant_message", "text": "The report is in.", "created_at": "2026-11-01T00:00:04.000Z"}));
+    assert_eq!(items(&c)["legacy:5"]["error"], "Boom");
+    let at = |m: i64| Origin { message_id: Some(m), ..Default::default() };
+    assert_eq!(c.origins["legacy:1"], Origin { user_text: Some("Go".into()), ..at(1) });
+    assert_eq!(c.origins["legacy:4:result"], at(4));
+    assert_eq!(c.origins["a1"], Origin { subagent_task: Some("t1".into()), ..at(6) });
+    assert_eq!(c.origins["legacy:8"], Origin { auto: true, ..at(8) });
+    assert_eq!(c.origins["legacy:9"], Origin { from_agent: true, ..at(9) });
+    // Most of that the ids say.
+    assert_eq!(Origin::implied("legacy:4:result"), at(4));
+    assert_eq!(Origin::implied("a1"), Origin::default());
+}

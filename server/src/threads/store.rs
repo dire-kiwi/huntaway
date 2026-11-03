@@ -45,6 +45,23 @@ impl<D: Db> HuntawayStore<D> {
     pub fn new(db: D) -> Self {
         Self { db }
     }
+
+    /// Saves what the board knows about items of thread `id` (see threads/history.rs), by item.
+    pub fn save_origins<'a>(&self, id: &str, origins: impl IntoIterator<Item = (&'a String, &'a crate::threads::history::Origin)>) -> StoreResult<()> {
+        self.db.with(|c| {
+            known(c, id)?;
+            let tx = c.transaction().map_err(failed)?;
+            for (item, origin) in origins {
+                let data = serde_json::to_string(origin).map_err(failed)?;
+                tx.execute(
+                    "INSERT INTO at_item_origins (thread_id, item_id, data) VALUES (?1, ?2, ?3) ON CONFLICT (thread_id, item_id) DO UPDATE SET data=excluded.data",
+                    params![id, item, data],
+                )
+                .map_err(failed)?;
+            }
+            tx.commit().map_err(failed)
+        })
+    }
 }
 
 fn failed(e: impl std::fmt::Display) -> StoreError {

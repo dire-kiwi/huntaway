@@ -6,7 +6,11 @@
 //!   without changing anything.
 //! - `report`: `huntaway threads-import`, a dry run of `import` over a board's tasks, which reports
 //!   what converts, what doesn't, and which tasks couldn't be switched over now.
+//! - `check`: `huntaway threads-readers`, what the board's thread readers make of tasks' threads, and
+//!   how long they take.
 
+pub mod check;
+pub mod history;
 pub mod import;
 pub mod report;
 pub mod store;

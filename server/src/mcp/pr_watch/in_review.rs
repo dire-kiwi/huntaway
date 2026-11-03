@@ -240,7 +240,7 @@ fn news_to_wake(s: &Shared, task_id: &str, mode: &str, key: &str, pr: &Pr) -> an
     let (quiet, news) = compare((!first).then_some(&row.seen), &pr, &wake_events(mode));
     (row.seen, row.last, row.polled_at) = (quiet, summary(&pr), crate::util::now());
     // The user writing to the agent lets comments wake it again.
-    if row.comment_wakes > 0 && row.woke_at.as_deref().is_some_and(|at| db::user_wrote_since(&c, task_id, at).unwrap_or(false)) {
+    if row.comment_wakes > 0 && row.woke_at.as_deref().is_some_and(|at| crate::threads::history::user_wrote_since(&c, task_id, at).unwrap_or(false)) {
         (row.comment_wakes, row.comments_paused) = (0, false);
     }
     // Being merged or closed isn't for the agent to deal with.

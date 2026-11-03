@@ -106,7 +106,7 @@ impl TaskReport {
 }
 
 /// Every task's id and key (`<project key>-<number>`, or the id for a task with no project).
-fn task_keys(c: &Connection) -> Result<Vec<(String, String)>> {
+pub(super) fn task_keys(c: &Connection) -> Result<Vec<(String, String)>> {
     let mut st = c.prepare(
         "SELECT t.id, COALESCE(p.key || '-' || t.number, t.id) FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.created_at, t.id",
     )?;
@@ -134,7 +134,7 @@ pub fn task_report(c: &Connection, task: &db::Task, key: String) -> Result<(Task
 }
 
 /// Opens `path` (read-only unless `write`), at the version this build would migrate it to.
-fn open(path: &Path, write: bool) -> Result<Connection> {
+pub(super) fn open(path: &Path, write: bool) -> Result<Connection> {
     let flags = if write { OpenFlags::SQLITE_OPEN_READ_WRITE } else { OpenFlags::SQLITE_OPEN_READ_ONLY } | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let c = Connection::open_with_flags(path, flags).with_context(|| format!("opening {}", path.display()))?;
     c.execute_batch(if write { "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;" } else { "PRAGMA busy_timeout=5000;" })?;

@@ -1,5 +1,24 @@
 use super::*;
-use serde_json::json;
+use serde_json::{Value, json};
+
+/// `changes_code` for a stored tool_use block and its tool_result block, if it has one, as a
+/// thread's history has them (converted into a tool_call item).
+fn changes_code(tool_use: &Value, result: Option<&Value>) -> bool {
+    let mut call = tool_use.clone();
+    call["type"] = json!("tool_use");
+    call["id"] = json!("t");
+    let message = |id: i64, data: Value| crate::db::Message { id, task_id: "t".into(), kind: "claude".into(), data, created_at: "2026-01-01T00:00:00Z".into() };
+    let mut messages = vec![message(1, json!({"type": "assistant", "message": {"content": [call]}}))];
+    if let Some(r) = result {
+        let mut r = r.clone();
+        r["type"] = json!("tool_result");
+        r["tool_use_id"] = json!("t");
+        messages.push(message(2, json!({"type": "user", "message": {"content": [r]}})));
+    }
+    let h = crate::threads::history::from_messages(&crate::testing::task(&crate::testing::state()), &messages).unwrap();
+    let [call] = h.tool_calls().collect::<Vec<_>>()[..] else { panic!("one call") };
+    super::changes_code(call)
+}
 
 #[test]
 fn substitutions_end_where_bash_ends_them() {

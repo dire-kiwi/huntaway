@@ -6,28 +6,24 @@
 //! code (`python3 -c '...'`, a script file). That's accepted: such a task can still be reviewed
 //! with Review now, and treating every script as a change would review most tasks again.
 
-use serde_json::Value;
+use agent_threads::protocol::{ToolCall, ToolKind, ToolStatus};
 
-/// Whether a tool call, given its result (`tool_result` block) if it has one, changed code. An
-/// edit is all or nothing, so it only did if it succeeded. A shell command may have written
-/// files before it failed or was cut short, so it did unless it was denied and never ran.
-pub fn changes_code(tool_use: &Value, result: Option<&Value>) -> bool {
-    match tool_use["name"].as_str().unwrap_or("") {
-        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "ApplyPatch" => result.is_some_and(|r| r["is_error"] != true),
-        "Bash" => !result.is_some_and(denied) && command_changes_code(tool_use["input"]["command"].as_str().unwrap_or(""), 0),
+/// Whether a tool call (an item of the task's thread, see threads/history.rs) changed code. An edit is
+/// all or nothing, so it only did if it succeeded. A shell command may have written files before it
+/// failed or was cut short, so it did unless it was denied and never ran.
+pub fn changes_code(call: &ToolCall) -> bool {
+    match call.kind {
+        ToolKind::Edit => call.status == ToolStatus::Completed,
+        ToolKind::Shell => !denied(call) && command_changes_code(call.command.as_deref().unwrap_or(""), 0),
         _ => false,
     }
 }
 
-/// Whether a tool call's result says it was denied, so it never ran.
-fn denied(result: &Value) -> bool {
+/// Whether a tool call was denied, so it never ran: its result says so (the board's prompt was
+/// refused, or the permission mode refused it without asking).
+fn denied(call: &ToolCall) -> bool {
     const DENIALS: &[&str] = &["The command was declined.", "The user denied this action.", crate::mcp::permissions::DONT_ASK_DENIAL];
-    let text = match &result["content"] {
-        Value::String(s) => s.clone(),
-        Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
-        _ => String::new(),
-    };
-    result["is_error"] == true && DENIALS.iter().any(|d| text.contains(d))
+    matches!(call.status, ToolStatus::Failed | ToolStatus::Denied) && call.result.as_ref().is_some_and(|r| DENIALS.iter().any(|d| r.content.contains(d)))
 }
 
 /// A shell token: a word (unquoted) or an operator.

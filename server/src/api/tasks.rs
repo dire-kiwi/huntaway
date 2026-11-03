@@ -32,7 +32,7 @@ pub(super) async fn list_group_tasks(State(s): State<Shared>, Path(id): Path<Str
 pub(super) async fn get_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let c = s.db();
     let t = db::get_task(&c, &id)?.ok_or_else(|| ApiError::not_found("task"))?;
-    let last = db::last_assistant_text(&c, &id)?;
+    let last = crate::threads::history::last_said(&c, &id)?;
     let pending: i64 = c.query_row(
         "SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending'",
         [&id],

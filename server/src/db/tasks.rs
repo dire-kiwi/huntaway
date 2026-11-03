@@ -668,16 +668,6 @@ pub fn tasks_to_watch(c: &Connection) -> Result<Vec<(Task, String)>> {
     Ok(rows)
 }
 
-/// Whether the user (not the board or another agent) sent `task_id`'s agent a message after `since`.
-pub fn user_wrote_since(c: &Connection, task_id: &str, since: &str) -> Result<bool> {
-    Ok(c.query_row(
-        "SELECT EXISTS (SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND created_at > ?2
-           AND json_extract(data, '$.auto') IS NULL AND json_extract(data, '$.from_agent') IS NULL)",
-        [task_id, since],
-        |r| r.get(0),
-    )?)
-}
-
 pub fn waiting_tasks(c: &Connection, project_id: Option<&str>) -> Result<Vec<Task>> {
     let mut st = c.prepare(
         "SELECT * FROM tasks WHERE waiting=1 AND kind='task' AND (?1 IS NULL OR project_id=?1)

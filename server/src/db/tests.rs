@@ -88,57 +88,6 @@ fn thread(c: &Connection) -> String {
 }
 
 #[test]
-fn user_replies_are_the_users_own_messages_after_what_the_agent_said() {
-    let c = open(std::path::Path::new(":memory:")).unwrap();
-    let t = thread(&c);
-    let said = |text: &str| json!({"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "hm"}, {"type": "text", "text": text}]}});
-    insert_message(&c, &t, "user", &json!({"text": "Start working on this task.", "auto": true, "start": true})).unwrap();
-    insert_message(&c, &t, "user", &json!({"text": "Also do the docs"})).unwrap();
-    insert_message(&c, &t, "claude", &said("Working on it.")).unwrap();
-    insert_message(&c, &t, "claude", &json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]}})).unwrap();
-    insert_message(&c, &t, "claude", &said("Should it be A or B?")).unwrap();
-    insert_message(&c, &t, "event", &json!({"level": "info", "text": "Needs attention"})).unwrap();
-    insert_message(&c, &t, "user", &json!({"text": " A is fine, B is too slow \n", "steered": true})).unwrap();
-    insert_message(&c, &t, "user", &json!({"text": "and keep the old flag"})).unwrap();
-    insert_message(&c, &t, "claude", &said("Done.")).unwrap();
-    insert_message(&c, &t, "user", &json!({"text": "Fix this from IA-2", "from_agent": true})).unwrap();
-    insert_message(&c, &t, "user", &json!({"text": "Serious issues found in your changes", "auto": true})).unwrap();
-    let all = vec![
-        (None, "Also do the docs".to_string()),
-        (Some("Should it be A or B?".to_string()), "A is fine, B is too slow".to_string()),
-        (None, "and keep the old flag".to_string()),
-    ];
-    let done = Some("Done.".to_string());
-    assert_eq!(user_replies(&c, &t, None).unwrap(), UserReplies { replies: all.clone(), since: done.clone(), earlier: 0 });
-    // Only the latest, with how many are left out.
-    for n in 0..=4 {
-        let skip = 3usize.saturating_sub(n);
-        assert_eq!(user_replies(&c, &t, Some(n)).unwrap(), UserReplies { replies: all[skip..].to_vec(), since: done.clone(), earlier: skip }, "limit {n}");
-    }
-    insert_message(&c, &t, "user", &json!({"text": "Ship it"})).unwrap();
-    let r = user_replies(&c, &t, Some(1)).unwrap();
-    assert_eq!(r, UserReplies { replies: vec![(done, "Ship it".to_string())], since: None, earlier: 3 });
-}
-
-#[test]
-fn user_replies_read_a_long_thread_only_back_to_the_latest() {
-    let c = open(std::path::Path::new(":memory:")).unwrap();
-    let t = thread(&c);
-    let said = |text: &str| json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}});
-    for i in 0..50 {
-        insert_message(&c, &t, "claude", &said(&format!("Question {i}?"))).unwrap();
-        insert_message(&c, &t, "user", &json!({"text": format!("Answer {i}")})).unwrap();
-        insert_message(&c, &t, "claude", &json!({"type": "user", "message": {"content": [{"type": "tool_result", "content": "x".repeat(1000)}]}})).unwrap();
-    }
-    let all = user_replies(&c, &t, None).unwrap();
-    assert_eq!((all.replies.len(), all.since, all.earlier), (50, None, 0));
-    let r = user_replies(&c, &t, Some(30)).unwrap();
-    assert_eq!(r.replies, all.replies[20..]);
-    assert_eq!((r.since, r.earlier), (None, 20));
-    assert_eq!(r.replies[0], (Some("Question 20?".to_string()), "Answer 20".to_string()));
-}
-
-#[test]
 fn queued_messages_remember_whether_an_agent_sent_them() {
     let c = open(std::path::Path::new(":memory:")).unwrap();
     let id = thread(&c);
@@ -168,16 +117,6 @@ fn queued_messages_remember_whether_an_agent_sent_them() {
     assert_eq!((t.queued_message, t.queued_user_text), (None, None));
     queue(&c, &id, Queued::new("mine", false)).unwrap();
     assert_eq!(taken(&c), Some(("mine".into(), false, mine("mine"))));
-}
-
-#[test]
-fn a_users_message_sent_with_other_agents_counts_only_their_part() {
-    let c = open(std::path::Path::new(":memory:")).unwrap();
-    let t = thread(&c);
-    insert_message(&c, &t, "user", &json!({"text": "Build a payment gateway\n\nAdd a search cache", "user_text": "Add a search cache"})).unwrap();
-    insert_message(&c, &t, "claude", &json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "A or B?"}]}})).unwrap();
-    let r = user_replies(&c, &t, None).unwrap();
-    assert_eq!((r.replies, r.since), (vec![(None, "Add a search cache".to_string())], Some("A or B?".to_string())));
 }
 
 #[test]
@@ -394,7 +333,7 @@ fn a_database_that_had_the_agent_threads_tables_as_an_earlier_version_gets_what_
         let unset: i64 = c.query_row("SELECT COUNT(*) FROM call_usage WHERE call_id IS NULL", [], |r| r.get(0)).unwrap();
         assert_eq!(unset, 0, "version {version}");
         let tables: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'at\\_%' ESCAPE '\\'", [], |r| r.get(0)).unwrap();
-        assert_eq!(tables, 4, "version {version}");
+        assert_eq!(tables, 5, "version {version}");
         drop(c);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

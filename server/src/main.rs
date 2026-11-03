@@ -105,6 +105,22 @@ enum Cmd {
         /// Task ids or keys (all tasks if none).
         tasks: Vec<String>,
     },
+    /// What the board's thread readers (review, summaries, titles, wait, last_message) make of tasks' threads,
+    /// and how long each took (see threads/check.rs). Reads the database and changes nothing.
+    #[command(hide = true)]
+    ThreadsReaders {
+        /// The database. It must be at this build's version (a copy a test server has opened).
+        #[arg(long)]
+        db: PathBuf,
+        /// Each task's answers as a JSON line, rather than a summary of the times.
+        #[arg(long)]
+        json: bool,
+        /// With --json, leave out the times, to compare the answers of two builds.
+        #[arg(long)]
+        no_times: bool,
+        /// Task ids or keys (all tasks if none).
+        tasks: Vec<String>,
+    },
     /// Print this host's access token (or, with --hub, the token hosts use to dial in).
     Token {
         #[arg(long, env = "IA_DATA_DIR")]
@@ -278,6 +294,7 @@ async fn main() -> Result<()> {
         }
         Some(Cmd::TitleCheck { db, steps, input, tasks }) => title::check(&db, &tasks, steps, input).await,
         Some(Cmd::ThreadsImport { db, json, examples, stage, tasks }) => threads::report::run(&db, &tasks, json, examples, stage).await,
+        Some(Cmd::ThreadsReaders { db, json, no_times, tasks }) => threads::check::run(&db, &tasks, json, !no_times),
         Some(Cmd::Serve(args)) => serve(args).await,
         Some(Cmd::SshHost { port, data_dir, name }) => ssh::ssh_host(port, data_dir.unwrap_or_else(default_data_dir), name).await,
         None => serve(ServeArgs::parse_from(["huntaway"])).await,

@@ -40,7 +40,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -416,25 +415,7 @@ pub fn subagent_finished(s: &Shared, run: &Run, event: &Value) -> Result<()> {
         let c = s.db();
         let waiting = db::get_task(&c, &run.task_id)?.and_then(|t| t.agent_wait);
         let Some(mut w) = waiting.filter(|w| w.run_id == run.id && w.subagent_finished.is_none()) else { return Ok(()) };
-        let id = match event["tool_use_id"].as_str() {
-            Some(id) => Some(id.to_string()),
-            None => c.query_row(
-                "SELECT json_extract(data,'$.tool_use_id') FROM messages WHERE task_id=?1 AND kind='claude'
-                 AND json_extract(data,'$.subtype')='task_started' AND json_extract(data,'$.task_id')=?2 ORDER BY id DESC LIMIT 1",
-                rusqlite::params![run.task_id, event["task_id"].as_str()], |r| r.get::<_, Option<String>>(0),
-            ).optional()?.flatten(),
-        };
-        let Some(id) = id else { return Ok(()) };
-        let known: bool = c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM messages m, json_each(m.data,'$.message.content') b
-             WHERE m.task_id=?1 AND m.kind='claude' AND json_extract(m.data,'$.type')='assistant'
-             AND json_extract(b.value,'$.type')='tool_use' AND json_extract(b.value,'$.name') IN ('Agent','Task')
-             AND json_extract(b.value,'$.id')=?2)",
-            rusqlite::params![run.task_id, id], |r| r.get(0),
-        )?;
-        if !known {
-            return Ok(());
-        }
+        let Some(id) = crate::threads::history::subagent_call(&c, &run.task_id, event)? else { return Ok(()) };
         w.subagent_finished = Some(json!({"tool_use_id": id, "task_id": event["task_id"], "status": status, "summary": event["summary"]}));
         db::update_task(&c, &run.task_id, &[("agent_wait", json!(w))])?
     };

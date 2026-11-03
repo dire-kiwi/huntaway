@@ -9,7 +9,7 @@ pub(super) fn task_details(s: &Shared, ctx: &Ctx, t: &Task) -> ToolResult {
     let mut out = summarize(s, t);
     out["description"] = json!(t.description);
     out["worktree_path"] = json!(t.worktree_path);
-    out["last_message"] = json!(db::last_assistant_text(&s.db(), &t.id)?);
+    out["last_message"] = json!(crate::threads::history::last_said(&s.db(), &t.id)?);
     // A task can create tasks on boards the caller cannot use (or no longer can use).
     let readable = boards(s, ctx)?;
     let created: Vec<Task> = db::created_tasks(&s.db(), &t.id)?.into_iter().filter(|c| readable.iter().any(|b| b.id == c.profile_id)).collect();

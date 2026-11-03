@@ -218,8 +218,8 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         set_review(state, &task.id, &review)?;
     }
     let commit = &head[..head.len().min(10)];
-    let work = if elsewhere { Work::Elsewhere { last_message: db::last_assistant_text(&state.db(), &task.id)? } } else { Work::Branch { own_start } };
-    let replies = db::user_replies(&state.db(), &task.id, Some(REPLIES))?;
+    let work = if elsewhere { Work::Elsewhere { last_message: crate::threads::history::last_said(&state.db(), &task.id)? } } else { Work::Branch { own_start } };
+    let replies = crate::threads::history::user_replies(&state.db(), &task.id, Some(REPLIES))?;
     let text = prompt(&key, &task, &branch, base.as_deref(), commit, &work, &fixed, &replies, crate::agent::prompts::review(Some(&project)));
     let (mut started, mut failed) = (0, None);
     for part in &parts {
@@ -291,7 +291,7 @@ async fn rev_parse(dir: &Path, rev: &str) -> Option<String> {
 /// first review, a pull request on the task.
 async fn changed_elsewhere(state: &Shared, task: &Task, dir: &Path, previous: Option<&Review>) -> ApiResult<bool> {
     let since = previous.filter(|r| ["passed", "issues"].contains(&r.state.as_str())).map(|r| r.updated_at.clone());
-    if db::tool_calls_since(&state.db(), &task.id, since.as_deref())?.iter().any(|(call, result)| crate::git::changes::changes_code(call, result.as_ref())) {
+    if crate::threads::history::tool_calls_since(&state.db(), &task.id, since.as_deref())?.iter().any(crate::git::changes::changes_code) {
         return Ok(true);
     }
     if since.is_none() && task.pr_url.as_deref().is_some_and(|u| !u.trim().is_empty()) {
@@ -323,7 +323,7 @@ const REPLIES_CHARS: usize = 12000;
 const REPLIES: usize = 100;
 
 /// `instructions` (the project's, or the default) say what to look for; the rest locates the
-/// work, says what the user decided in the task's thread (`replies`, see `db::user_replies`) and
+/// work, says what the user decided in the task's thread (`replies`, see `threads::history::user_replies`) and
 /// how to report the verdict.
 #[allow(clippy::too_many_arguments)]
 fn prompt(
@@ -334,7 +334,7 @@ fn prompt(
     commit: &str,
     work: &Work,
     fixed: &[String],
-    replies: &db::UserReplies,
+    replies: &crate::threads::history::UserReplies,
     instructions: &str,
 ) -> String {
     let mut p = format!("Review the work on task {key}: \"{}\".\n", task.title);
