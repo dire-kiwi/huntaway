@@ -230,6 +230,9 @@ fn the_brief_is_kept_as_the_assistants_document_one_version_a_day() {
         assert_eq!((d["versions"].as_array().unwrap().len(), d["content"].as_str()), (1, Some("<p>Monday, again</p>")));
         // The next day, a new one; the assistant's own turns keep it too.
         s.db().execute("UPDATE documents SET created_at='2020-01-01T07:30:00Z' WHERE task_id=?1", [&assistant.id]).unwrap();
+        // brief.json as it was left the day before.
+        let then = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
+        std::fs::File::options().write(true).open(dir.join(ITEMS_FILE)).unwrap().set_modified(then).unwrap();
         std::fs::write(&file, "<p>Tuesday</p>").unwrap();
         documents::turn_ended(&s, &assistant.id);
         let (_, d) = call(&app, "GET", &url, None).await;
@@ -282,4 +285,45 @@ fn a_briefs_items_are_checked_before_theyre_listed_to_rate() {
     assert_eq!(items(&json!(many).to_string()).len(), MAX_ITEMS);
     // Not JSON, or not a list: none.
     assert!(items("<p>oops</p>").is_empty() && items(r#"{"a": 1}"#).is_empty());
+}
+
+#[test]
+fn the_same_items_written_on_another_day_are_that_days_too() {
+    testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        let dir = memory::checked(&s, &assistant).unwrap();
+        let thread = db::insert_routine_task(&s.db(), &assistant, "Morning brief").unwrap();
+        let (page, list) = (dir.join(FILE), dir.join(ITEMS_FILE));
+        let same = r#"[{"kind": "mail", "topic": "Starred mail", "title": "The lease renewal"}]"#;
+        std::fs::write(&page, "<p>Monday</p>").unwrap();
+        std::fs::write(&list, same).unwrap();
+        documents::turn_ended(&s, &thread.id);
+        // A day on: Monday's versions are yesterday's, and so are the files as they were left.
+        s.db().execute("UPDATE documents SET created_at='2020-01-01T07:30:00Z' WHERE task_id=?1", [&assistant.id]).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
+        for f in [&page, &list] {
+            std::fs::File::options().write(true).open(f).unwrap().set_modified(old).unwrap();
+        }
+        // Tuesday's brief, with brief.json left as it was: not Tuesday's items.
+        std::fs::write(&page, "<p>Tuesday</p>").unwrap();
+        documents::turn_ended(&s, &thread.id);
+        let url = format!("/api/tasks/{}/document?label=brief", assistant.id);
+        let (_, d) = call(&app, "GET", &url, None).await;
+        assert_eq!((d["version"].as_i64(), d["items"].clone()), (Some(2), json!([])));
+        // Written again, the same as Monday's: Tuesday's.
+        std::fs::write(&list, same).unwrap();
+        documents::turn_ended(&s, &thread.id);
+        let (_, d) = call(&app, "GET", &url, None).await;
+        assert_eq!(d["items"][0]["title"], "The lease renewal", "{d}");
+        let (_, v1) = call(&app, "GET", &format!("{url}&version=1"), None).await;
+        assert_eq!(v1["items"][0]["title"], "The lease renewal", "{v1}");
+        // Once a day: written again the same today, still the one version.
+        std::fs::write(&list, same).unwrap();
+        documents::turn_ended(&s, &thread.id);
+        let n: i64 = s.db().query_row("SELECT COUNT(*) FROM documents WHERE task_id=?1 AND label=?2", [&assistant.id, ITEMS_LABEL], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+    })
 }

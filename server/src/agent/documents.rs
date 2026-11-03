@@ -267,8 +267,11 @@ fn keep_one(state: &Shared, task_id: &str, label: &'static str, file: &FsPath, e
         )
         .optional()?;
     // (The end of the turn closes an open version that doesn't change, in try_keep.)
+    // A daily document written today, the same as the last day's (the same starred mail, say), is today's version all the
+    // same; a file left as it was isn't, as its time says.
+    let written_today = daily && stamp.is_some_and(|(_, at)| chrono::DateTime::<chrono::Local>::from(at).date_naive() == chrono::Local::now().date_naive());
     Ok(match (content, latest) {
-        (Some(new), Some((_, old, _))) if new == old => false,
+        (Some(new), Some((_, old, open))) if new == old && (open || !written_today) => false,
         // The turn's version follows the file.
         (Some(new), Some((v, _, true))) => {
             c.execute(
