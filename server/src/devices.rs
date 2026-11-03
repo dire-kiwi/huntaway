@@ -7,8 +7,13 @@
 //! The code is good for five minutes and one pairing (`POST /devices/pair` swaps it and the device's name for its
 //! token), and is only kept in memory, so a restart forgets it. The QR code never holds `auth_token`.
 //!
-//! Paired devices can use the board as its token can, except pairing more devices or managing the others: they may
-//! only list them and unpair themselves.
+//! Paired devices can use the board as its token can, except what would outlast revoking them (see `forbidden`):
+//! the routes that hand out the board's or hub's token or a Claude login, and terminals, which are a shell on the host.
+//! Nor can they pair more devices or manage the others: they may only list them and unpair themselves.
+//!
+//! Revoking a device stops the device. It doesn't undo what was done with it before: whoever held it could have had an
+//! agent read the board's files (its `auth_token` among them), as any agent run can. After a phone is lost and may
+//! have been used, replace `auth_token` too (delete the file and restart: a new one is made).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -83,6 +88,27 @@ pub async fn until_revoked(s: Shared, device: Option<DeviceAuth>, work: impl Fut
                 _ = d.revoked(&s) => tracing::info!("closed a websocket of device {id}, which was revoked"),
             }
         }
+    }
+}
+
+/// Why a paired device can't make a request to `path` (an `/api/...` path, maybe through the hub as
+/// `/api/h/<host>/...`), if it can't: what it would get outlasts revoking the device.
+pub fn forbidden(path: &str) -> Option<&'static str> {
+    let path = path.strip_prefix("/api").unwrap_or(path);
+    // Through the hub, to a host: the host's own route.
+    let path = match path.strip_prefix("/h/") {
+        Some(rest) => rest.find('/').map_or("", |i| &rest[i..]),
+        None => path,
+    };
+    let parts: Vec<&str> = path.trim_end_matches('/').split('/').skip(1).collect();
+    match parts.as_slice() {
+        // The board's token and the hub's, which a host joins with.
+        ["hosts", "join", ..] => Some("a paired device can't get the board's tokens: link hosts from the board"),
+        // A shell on the host, which can read anything the board can.
+        ["tasks", _, "terminal", ..] => Some("a paired device can't open terminals: use the web board"),
+        // A Claude login, with its credentials.
+        ["claude-configs", _, "archive"] | ["profiles", _, "claude-config"] => Some("a paired device can't export or import Claude logins: use the web board"),
+        _ => None,
     }
 }
 

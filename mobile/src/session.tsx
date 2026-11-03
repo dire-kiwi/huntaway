@@ -2,10 +2,10 @@
 // signed out, too old), and its websocket's events, which screens listen to.
 import { createClient, type Client } from "@huntaway/client";
 import * as Network from "expo-network";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 import { Boards, type Board } from "./boards";
-import { BoardSocket, type BoardEvent } from "./live";
+import { BoardSocket, resume, type BoardEvent } from "./live";
 import { memoryStorage, tooOld } from "./pairing";
 import { secrets } from "./secrets";
 
@@ -175,12 +175,14 @@ export function LiveUpdates() {
     for (const b of listRef.current) void checkBoard(b);
     const app = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
-      for (const s of sockets.current.values()) s.socket.kick();
+      // A socket suspended in the background can look open and be dead: open a fresh one, which reads again
+      // (a resync) whatever happened meanwhile.
+      resume([...sockets.current.values()].map((s) => s.socket));
       for (const b of listRef.current) void checkBoard(b);
     });
     // A new network (Wi-Fi to cellular, say) leaves sockets that look open but go nowhere: open them again.
     const net = Network.addNetworkStateListener((state) => {
-      if (state.isConnected) for (const s of sockets.current.values()) s.socket.kick(true);
+      if (state.isConnected) resume([...sockets.current.values()].map((s) => s.socket));
     });
     return () => {
       app.remove();
@@ -190,28 +192,4 @@ export function LiveUpdates() {
   return null;
 }
 
-// ---------- reading ----------
-
-/** A value read with `load`, again on `reload()`; it keeps the last value while reloading. */
-export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
-  const [state, setState] = useState<{ data?: T; error?: string; loading: boolean }>({ loading: true });
-  const gen = useRef(0);
-  const loadRef = useRef(load);
-  loadRef.current = load;
-  const reload = useCallback(() => {
-    const g = ++gen.current;
-    setState((s) => ({ ...s, loading: true }));
-    loadRef
-      .current()
-      .then((data) => g === gen.current && setState({ data, loading: false }))
-      .catch((e) => g === gen.current && setState((s) => ({ ...s, error: e instanceof Error ? e.message : String(e), loading: false })));
-  }, []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(reload, deps);
-  const setData = useCallback((data: T | ((prev: T | undefined) => T)) => {
-    // A change made here outdates a read under way.
-    gen.current++;
-    setState((s) => ({ ...s, loading: false, data: typeof data === "function" ? (data as (prev: T | undefined) => T)(s.data) : data }));
-  }, []);
-  return { ...state, reload, setData };
-}
+export { useLoad } from "./load";

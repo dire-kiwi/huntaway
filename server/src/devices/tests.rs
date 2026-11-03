@@ -215,3 +215,45 @@ fn the_inbox_lists_one_profiles_prompts() {
         assert_eq!(ids_of(&theirs), ["perm-home"]);
     })
 }
+
+#[test]
+fn a_device_cant_get_the_boards_tokens_or_a_shell() {
+    crate::testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let (phone, phone_id) = pair_device(&app, "phone").await;
+        // The board's own token still gets them.
+        let (status, join) = call(&app, "GET", "/api/hosts/join", BOARD, None).await;
+        assert_eq!((status, &join["host_token"]), (200, &json!(BOARD)));
+        for path in [
+            "/api/hosts/join",
+            "/api/h/h/hosts/join",
+            "/api/tasks/t1/terminal",
+            "/api/tasks/t1/terminal/ws?cols=80",
+            "/api/h/h/tasks/t1/terminal/ws",
+            "/api/claude-configs/c1/archive",
+            "/api/h/other-host/claude-configs/c1/archive",
+            "/api/profiles/p1/claude-config",
+        ] {
+            let (status, body) = call(&app, "GET", path, &phone, None).await;
+            assert_eq!(status, 403, "{path}: {body}");
+            assert!(!body.to_string().contains(BOARD), "{path}");
+        }
+        // As ?token= too.
+        assert_eq!(call(&app, "GET", &format!("/api/hosts/join?token={phone}"), "", None).await.0, 403);
+        // Revoked, it has nothing left that works.
+        assert_eq!(call(&app, "DELETE", &format!("/api/devices/{phone_id}"), BOARD, None).await.0, 200);
+        assert_eq!(call(&app, "GET", "/api/hosts/join", &phone, None).await.0, 401);
+        assert_eq!(call(&app, "POST", "/api/devices/pairing", &phone, Some(json!({}))).await.0, 401);
+    })
+}
+
+#[test]
+fn forbidden_paths() {
+    for p in ["/api/hosts/join", "/hosts/join", "/api/h/x/hosts/join", "/api/tasks/a/terminal/keepalive", "/api/profiles/p/claude-config"] {
+        assert!(forbidden(p).is_some(), "{p}");
+    }
+    for p in ["/api/hosts", "/api/h/x/tasks/a/messages", "/api/tasks/terminal", "/api/claude-configs/c/models", "/api/profiles/p/tasks", "/api/h/hosts/join"] {
+        assert!(forbidden(p).is_none(), "{p}");
+    }
+}

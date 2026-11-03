@@ -4,7 +4,7 @@ import type { Board } from "../../boards";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
-import { loadProfiles, pickedProfile } from "../../boardData";
+import { loadProfiles, pickedProfile, profilesOf } from "../../boardData";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad, type BoardStatus } from "../../session";
 import { colors } from "../../theme";
 import { Button, Chip, s } from "../../ui";
@@ -28,7 +28,8 @@ function confirm(title: string, message: string, action: string): Promise<boolea
 function BoardCard({ board, status, selected }: { board: Board; status: BoardStatus; selected: boolean }) {
   const router = useRouter();
   const ok = usable(status);
-  const profiles = useLoad(async () => (ok ? loadProfiles(clientFor(board)) : undefined), [board.id, board.url, ok]);
+  const loaded = useLoad(async () => (ok ? loadProfiles(clientFor(board), board.id) : undefined), [board.id, board.url, ok]);
+  const profiles = { ...loaded, data: profilesOf(board, loaded.data) };
   const profile = pickedProfile(board, profiles.data);
   const [busy, setBusy] = useState(false);
   const st = statusText(status);

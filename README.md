@@ -398,8 +398,16 @@ keystore). The board keeps only its SHA-256, in `device_tokens`, and takes it as
 last use, to rename or revoke; revoking one cuts it off at once, open websockets included, and the
 app then says it was unpaired. A device can't pair others or manage them (`POST
 /devices/pairing`, `PATCH` and `DELETE /devices/{id}` are for the board's own token), but it can
-list them and unpair itself, which removing the board in the app does. A device sees the board as
-its token does: every profile on it, as a browser with the token would.
+list them and unpair itself, which removing the board in the app does. Pairing the same board again
+unpairs the phone's old token there. A device sees the board as its token does, every profile on
+it, except what would outlast revoking it: it can't get the board's or hub's tokens (`GET
+/hosts/join`), open a task's terminal (a shell on the host) or export or import a Claude login, on
+the board or through it on a linked host.
+
+Revoking a phone stops the phone, not what was done with it before: whoever held it could have
+started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost
+phone may have been used, replace `auth_token` as well: delete `<data-dir>/auth_token` and restart
+the server, which makes a new one (browsers, and hubs that link this host, then need the new one).
 
 To run it (Node 22.13 or later):
 

@@ -81,4 +81,27 @@ describe("the inbox", () => {
     const broken = await loadBoardInbox({ ...client, hosts: async () => Promise.reject(new Error("Unauthorized")) }, work, null);
     expect(broken).toEqual({ board: work, items: [], error: "Unauthorized" });
   });
+
+  test("a board with no profile picked uses its first profile by name on every host, as Projects shows it", async () => {
+    const asked: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client: any = {
+      hosts: async () => [
+        { id: "a", local: true, connected: true },
+        { id: "b", local: false, connected: true, agents: true },
+      ],
+      // The hosts list their profiles in different orders.
+      profiles: async (h: string) => (h === "a" ? [{ id: "w1", name: "Work" }, { id: "p1", name: "Personal" }] : [{ id: "p2", name: "Personal" }, { id: "w2", name: "Work" }]),
+      profileTasks: async (_h: string, p: string) => (asked.push(p), []),
+      projects: async () => [],
+      pendingPermissions: async (_h: string, q: { profile_id: string }) => (asked.push(`perms ${q.profile_id}`), []),
+      messagePage: async () => ({ messages: [], more: false, subagents: [] }),
+    };
+    await loadBoardInbox(client, work, null);
+    expect(asked.sort()).toEqual(["perms w1", "perms w2", "w1", "w2"]);
+    // A picked profile the board no longer has falls back the same way.
+    asked.length = 0;
+    await loadBoardInbox(client, work, "Gone");
+    expect(asked.sort()).toEqual(["perms w1", "perms w2", "w1", "w2"]);
+  });
 });

@@ -68,6 +68,27 @@ export async function pair(link: string, deviceName: string, opts: { fetch?: Fet
   }
 }
 
+/**
+ * After pairing a board again, unpairs this phone's previous device there, so the board doesn't keep a token the app
+ * has thrown away. A device may only unpair itself, so it's done with the old token, if that still works (it may have
+ * been revoked already). Resolves to whether it was unpaired.
+ */
+export async function unpairPrevious(
+  url: string,
+  previous: { deviceId: string; token: string } | null,
+  current: { deviceId: string },
+  opts: { fetch?: Fetch } = {},
+): Promise<boolean> {
+  if (!previous?.deviceId || !previous.token || previous.deviceId === current.deviceId) return false;
+  const client = createClient({ baseUrl: url, getToken: () => previous.token, setToken: () => {}, storage: memoryStorage(), fetch: opts.fetch });
+  try {
+    await client.revokeDevice(previous.deviceId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Storage for what a client remembers of a board besides its token, which the app doesn't need to keep. */
 export function memoryStorage() {
   const m = new Map<string, string>();

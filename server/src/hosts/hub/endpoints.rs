@@ -190,13 +190,17 @@ pub async fn remove_host(State(s): State<Shared>, Path(id): Path<String>) -> Api
     Ok(Json(json!({"ok": true})))
 }
 
-/// What a host needs to dial in to this hub.
-pub async fn join_info(State(s): State<Shared>, headers: HeaderMap) -> Json<Value> {
+/// What a host needs to dial in to this hub: its tokens, which a paired device never gets (see devices::forbidden).
+pub async fn join_info(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, headers: HeaderMap) -> Response {
+    if device.is_some() {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "a paired device can't get the board's tokens: link hosts from the board"}))).into_response();
+    }
     Json(json!({
         "hub_token": s.hub_token,
         "host_token": s.token,
         "command": format!("huntaway serve --hub {} --hub-token {}", hub_url(&s, &headers), s.hub_token),
     }))
+    .into_response()
 }
 
 /// The URL hosts dial this hub at, as the browser asking reaches it.

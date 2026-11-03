@@ -39,7 +39,10 @@ export class BoardSocket {
     this.open();
   }
 
-  /** Reconnects now (the app came to the front, or the network changed), unless it's connected. */
+  /**
+   * Reconnects now, unless it's connected and not `force`d. The app forces it when it comes back to the front or the
+   * network changes, where a socket can look open and be dead; the new one's `resync` reads again what was missed.
+   */
   kick(force = false) {
     if (this.closed || (this.connected && !force)) return;
     this.attempts = 0;
@@ -116,4 +119,9 @@ export class BoardSocket {
     this.connected = c;
     this.onStatus(c);
   }
+}
+
+/** The app came back to the front, or onto another network: every board's socket starts again, and so reads again. */
+export function resume(sockets: Iterable<BoardSocket>) {
+  for (const s of sockets) s.kick(true);
 }

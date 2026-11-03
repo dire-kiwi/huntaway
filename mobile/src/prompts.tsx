@@ -112,21 +112,38 @@ export function PermissionCard({ client, hostId, id, tool, input, onDone }: { cl
   );
 }
 
+/** An answer to a question being made: the options picked, and what's typed. */
+export type Answer = { picked: string[]; text: string };
+
+/**
+ * Picking `label`. Several options can be picked (and something typed besides) only where the question takes several
+ * answers; otherwise an option and a typed answer are one or the other (the board takes one answer), and picking the
+ * picked option again unpicks it.
+ */
+export function pickOption(a: Answer, label: string, multi: boolean): Answer {
+  if (multi) return { ...a, picked: a.picked.includes(label) ? a.picked.filter((l) => l !== label) : [...a.picked, label] };
+  return a.picked.includes(label) ? { ...a, picked: [] } : { picked: [label], text: "" };
+}
+
+/** Typing `text`: for a question with one answer, it takes the place of a picked option. */
+export function typeAnswer(a: Answer, text: string, multi: boolean): Answer {
+  return { picked: multi || !text.trim() ? a.picked : [], text };
+}
+
 /** A question asked with request_user_input: its options, and a typed answer if it takes one. */
-export function QuestionCard({ client, hostId, taskId, messageId, data, onDone }: { client: Client; hostId: string; taskId: string; messageId: number; data: Any; onDone: () => void }) {
+export function QuestionCard({ client, hostId, taskId, messageId, data, onDone }: { client: Pick<Client, "answerQuestion">; hostId: string; taskId: string; messageId: number; data: Any; onDone: () => void }) {
   const options: { label: string; description?: string }[] = Array.isArray(data?.options) ? data.options : [];
   const multi = data?.multi_select === true;
   const allowOther = data?.allow_other !== false;
-  const [picked, setPicked] = useState<string[]>([]);
-  const [text, setText] = useState("");
+  const [answer, setAnswer] = useState<Answer>({ picked: [], text: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const send = async (choices: string[]) => {
+  const send = async (a: Answer) => {
     setBusy(true);
     setErr(null);
     try {
-      await client.answerQuestion(hostId, taskId, messageId, { choices, text: text.trim() || null });
+      await client.answerQuestion(hostId, taskId, messageId, { choices: a.picked, text: a.text.trim() || null });
       onDone();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -141,25 +158,28 @@ export function QuestionCard({ client, hostId, taskId, messageId, data, onDone }
       {options.length > 0 && (
         <Options
           options={options}
-          picked={picked}
+          picked={answer.picked}
           onPick={(label) => {
-            if (multi) setPicked((p) => (p.includes(label) ? p.filter((l) => l !== label) : [...p, label]));
-            else if (!allowOther) void send([label]);
-            else setPicked([label]);
+            // With nothing else to give, a tap is the answer.
+            if (!multi && !allowOther) void send({ picked: [label], text: "" });
+            else setAnswer((a) => pickOption(a, label, multi));
           }}
         />
       )}
       {allowOther && (
         <TextInput
           style={[s.input, { minHeight: 44 }]}
-          value={text}
-          onChangeText={setText}
+          value={answer.text}
+          onChangeText={(t) => setAnswer((a) => typeAnswer(a, t, multi))}
           placeholder={options.length ? "Or type an answer" : "Your answer"}
           placeholderTextColor={colors.faint}
+          accessibilityLabel="Your answer"
           multiline
         />
       )}
-      {(multi || allowOther) && <Button title="Answer" kind="primary" small busy={busy} disabled={!picked.length && !text.trim()} onPress={() => send(picked)} />}
+      {(multi || allowOther) && (
+        <Button title="Answer" kind="primary" small busy={busy} disabled={!answer.picked.length && !answer.text.trim()} onPress={() => send(answer)} />
+      )}
       {err && <ErrorText>{err}</ErrorText>}
     </View>
   );

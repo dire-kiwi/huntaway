@@ -51,6 +51,7 @@
     "react-native-web": "^0.21.4"
   },
   "devDependencies": {
+    "@testing-library/react-native": "^14.1.0",
     "@types/jest": "^30.0.0",
     "@types/mdast": "^4.0.4",
     "@types/react": "~19.3.0",

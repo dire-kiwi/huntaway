@@ -2,7 +2,8 @@
 // board, its picked profile's tasks that need attention, their pending permission prompts (answered in place), and the
 // questions their agents asked with request_user_input (answered in place). A task with a prompt or a question shows
 // once, as that.
-import { isScratch, type Client, type Host, type Message, type PendingPermission, type Project, type Task } from "@huntaway/client";
+import { isScratch, type Client, type Message, type PendingPermission, type Project, type Task } from "@huntaway/client";
+import { loadProfiles, pickedProfile } from "./boardData";
 
 export interface BoardRef {
   id: string;
@@ -100,34 +101,33 @@ export function mergeInbox(inboxes: BoardInbox[]): { items: InboxItem[]; errors:
   return { items: unique, errors: inboxes.filter((i) => i.error).map((i) => ({ board: i.board, error: i.error! })) };
 }
 
-/** The hosts of a board whose profiles and projects show: this one, and the linked ones that are connected and run agents. */
-export const boardHosts = (hosts: Host[]) => hosts.filter((h) => h.connected && (h.local || h.agents !== false));
-
-/** Reads one board's inbox for its profile `profile` (a name; the first profile when null). */
+/**
+ * Reads one board's inbox for its profile `profile` (a name), resolved as everywhere else in the app (pickedProfile):
+ * that name if the board has it, else the first in its merged list, on every host that has it.
+ */
 export async function loadBoardInbox(client: Client, board: BoardRef, profile: string | null): Promise<BoardInbox> {
   try {
-    const hosts = boardHosts(await client.hosts());
+    const profiles = await loadProfiles(client, board.id);
+    const name = pickedProfile({ profile }, profiles);
+    const on = name ? (profiles.byName.get(name) ?? []) : [];
     const lists = await Promise.all(
-      hosts.map(async (h) => {
-        const profiles = await client.profiles(h.id).catch(() => []);
-        const p = profiles.find((x) => x.name === profile) ?? (profile === null ? profiles[0] : undefined);
-        if (!p) return [];
+      on.map(async ({ hostId, profile: p }) => {
         const [tasks, projects, permissions] = await Promise.all([
-          client.profileTasks(h.id, p.id),
-          client.projects(h.id, p.id).catch(() => [] as Project[]),
-          client.pendingPermissions(h.id, { profile_id: p.id }),
+          client.profileTasks(hostId, p.id),
+          client.projects(hostId, p.id).catch(() => [] as Project[]),
+          client.pendingPermissions(hostId, { profile_id: p.id }),
         ]);
         const questions = new Map<string, Message>();
         await Promise.all(
           tasks
             .filter((t) => t.status === "needs_attention")
             .map(async (t) => {
-              const page = await client.messagePage(h.id, t.id, { limit: 20 }).catch(() => null);
+              const page = await client.messagePage(hostId, t.id, { limit: 20 }).catch(() => null);
               const q = page && openQuestion(page.messages);
               if (q) questions.set(t.id, q);
             }),
         );
-        return hostItems(board, h.id, tasks, projects, permissions, questions);
+        return hostItems(board, hostId, tasks, projects, permissions, questions);
       }),
     );
     return { board, items: lists.flat() };

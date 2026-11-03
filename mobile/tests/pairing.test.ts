@@ -1,5 +1,5 @@
 import { pairingLink, parsePairingLink } from "@huntaway/client";
-import { isPlainHttp, MIN_API, pair, PairingError } from "../src/pairing";
+import { isPlainHttp, MIN_API, pair, PairingError, unpairPrevious } from "../src/pairing";
 import { fakeFetch } from "./helpers";
 
 const paired = {
@@ -76,5 +76,23 @@ describe("pair", () => {
     await expect(pair(pairingLink("http://work:7878", "abc"), "Pixel", { fetch: down })).rejects.toMatchObject({ problem: "insecure" });
     const { fetch } = board();
     await expect(pair(pairingLink("http://work:7878", "abc"), "Pixel", { fetch, allowHttp: true })).resolves.toMatchObject({ token: "device-token" });
+  });
+});
+
+describe("pairing a board again", () => {
+  test("unpairs the previous device with its own token", async () => {
+    const { fetch, calls } = fakeFetch((method, path, _b, headers) =>
+      method === "DELETE" && path === "/api/devices/old" && headers.Authorization === "Bearer old-token" ? { status: 200, body: { ok: true } } : { status: 401 },
+    );
+    expect(await unpairPrevious("https://b", { deviceId: "old", token: "old-token" }, { deviceId: "new" }, { fetch })).toBe(true);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["DELETE https://b/api/devices/old"]);
+  });
+
+  test("nothing to do the first time, or for the same device; an old token that's revoked already is fine", async () => {
+    const { fetch, calls } = fakeFetch(() => ({ status: 401 }));
+    expect(await unpairPrevious("https://b", null, { deviceId: "new" }, { fetch })).toBe(false);
+    expect(await unpairPrevious("https://b", { deviceId: "same", token: "t" }, { deviceId: "same" }, { fetch })).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(await unpairPrevious("https://b", { deviceId: "old", token: "revoked" }, { deviceId: "new" }, { fetch })).toBe(false);
   });
 });

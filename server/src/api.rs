@@ -227,6 +227,11 @@ async fn auth(State(s): State<Shared>, headers: HeaderMap, mut req: Request, nex
         return next.run(req).await;
     }
     if let Some(device) = tokens.find_map(|t| crate::devices::authenticate(&s, &t)) {
+        // The whole path: a nested router's own has its prefix taken off.
+        let path = req.extensions().get::<axum::extract::OriginalUri>().map_or_else(|| req.uri().path().to_string(), |u| u.path().to_string());
+        if let Some(why) = crate::devices::forbidden(&path) {
+            return (StatusCode::FORBIDDEN, Json(json!({"error": why}))).into_response();
+        }
         req.extensions_mut().insert(device);
         return next.run(req).await;
     }

@@ -1,7 +1,7 @@
 // Projects: the selected board's projects for its picked profile, with a switcher for the board and the profile.
 import { useRouter } from "expo-router";
 import { FlatList, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { loadProfiles, loadProjects, pickedProfile } from "../../boardData";
+import { loadProfiles, loadProjects, pickedProfile, profilesOf } from "../../boardData";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad, useRefetchOn } from "../../session";
 import { colors } from "../../theme";
 import { Button, Chip, Empty, ErrorText, s } from "../../ui";
@@ -14,9 +14,16 @@ export default function Projects() {
   const ok = !!board && usable(statusOf(statuses, board.id));
   const client = board && clientFor(board);
 
-  const profiles = useLoad(async () => (client && ok ? loadProfiles(client) : undefined), [board?.id, board?.url, ok]);
-  const profile = board ? pickedProfile(board, profiles.data) : null;
-  const projects = useLoad(async () => (client && profiles.data && profile ? loadProjects(client, profiles.data, profile) : []), [profiles.data, profile]);
+  const loadedProfiles = useLoad(async () => (board && client && ok ? loadProfiles(client, board.id) : undefined), [board?.id, board?.url, ok]);
+  // Only this board's: another's may still be there for the render after a switch, before its load starts.
+  const profileData = profilesOf(board, loadedProfiles.data);
+  const profiles = { ...loadedProfiles, data: profileData };
+  const profile = board ? pickedProfile(board, profileData) : null;
+  const loadedProjects = useLoad(
+    async () => (client && profileData && profile ? loadProjects(client, profileData, profile) : []),
+    [board?.id, board?.url, profileData, profile],
+  );
+  const projects = { ...loadedProjects, data: loadedProjects.data?.filter((p) => p.boardId === board?.id) };
   useRefetchOn((b, ev) => b === board?.id && ["project", "project_deleted", "resync", "hosts_changed"].includes(ev.type), projects.reload);
   useRefetchOn((b, ev) => b === board?.id && ev.type === "profiles_changed", profiles.reload);
 

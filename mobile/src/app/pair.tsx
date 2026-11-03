@@ -8,7 +8,7 @@ import * as Device from "expo-device";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from "react-native";
-import { pair, PairingError } from "../pairing";
+import { pair, PairingError, unpairPrevious } from "../pairing";
 import { boards, clearStatus } from "../session";
 import { colors } from "../theme";
 import { Button, ErrorText, s } from "../ui";
@@ -41,7 +41,11 @@ export default function Pair() {
     setErr(null);
     try {
       const { board, token } = await pair(link, name.trim() || defaultName(), { allowHttp: __DEV__ });
+      // Paired with it before: that device goes, once this one's in.
+      const before = boards.board(board.id);
+      const previous = before ? { deviceId: before.deviceId, token: boards.token(board.id) } : null;
       await boards.add(board, token);
+      void unpairPrevious(board.url, previous, board);
       clearStatus(board.id);
       router.replace("/");
     } catch (e) {

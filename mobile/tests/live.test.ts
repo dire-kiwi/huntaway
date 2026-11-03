@@ -1,4 +1,4 @@
-import { backoff, BoardSocket, type SocketLike } from "../src/live";
+import { backoff, BoardSocket, resume, type SocketLike } from "../src/live";
 
 class FakeSocket implements SocketLike {
   onopen: (() => void) | null = null;
@@ -60,5 +60,21 @@ describe("live updates", () => {
 
   test("the backoff grows to 30 seconds", () => {
     expect([0, 1, 2, 5, 10].map(backoff)).toEqual([1000, 2000, 4000, 30000, 30000]);
+  });
+
+  test("back in front, a socket that still looks open is opened again, and what was missed is read again", () => {
+    const sockets: FakeSocket[] = [];
+    const events: string[] = [];
+    const s = new BoardSocket(() => "u", (e) => events.push(e.type), (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]));
+    s.start();
+    sockets[0].onopen!();
+    // Suspended in the background: the connection died, but no close came.
+    expect(s.connected).toBe(true);
+    resume([s]);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0].closed).toBe(true);
+    sockets[1].onopen!();
+    expect(events).toEqual(["resync"]);
+    s.stop();
   });
 });
