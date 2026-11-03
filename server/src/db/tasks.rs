@@ -230,6 +230,20 @@ impl Task {
         self.kind == "task" && self.task_type.as_deref() == Some(ASSISTANT)
     }
 
+    /// A routine's run of a profile's assistant: a thread of its own under the assistant
+    /// (`parent_id`), in the assistant's workspace with its tools, whose last message the board
+    /// posts to the assistant as a report (see integrations/automations/routines.rs). Off the board.
+    pub fn is_routine(&self) -> bool {
+        self.kind == "task" && self.task_type.as_deref() == Some(ROUTINE)
+    }
+
+    /// The assistant or one of its routine threads: they work in the assistant's workspace, with
+    /// its profile's tools, are keyed `A-<n>`, never go to review or merge, and only their own
+    /// profile's agents reach them.
+    pub fn is_assistants(&self) -> bool {
+        self.is_assistant() || self.is_routine()
+    }
+
     /// The column a task sits in while its agent works.
     pub fn working_status(&self) -> &'static str {
         if self.merging { "ready_for_merge" } else { "in_progress" }
@@ -346,9 +360,11 @@ pub fn project_threads(c: &Connection, project_id: &str) -> Result<Vec<Task>> {
 
 /// A profile's group tasks (see Task::group_name), including any whose group is gone.
 /// With `assistant`, the profile's assistant too, which is off the board (the sidebar opens it).
+/// Never its routine threads (see Task::is_routine), which the Routines page lists.
 pub fn list_group_tasks(c: &Connection, profile_id: &str, assistant: bool) -> Result<Vec<Task>> {
     let mut st = c.prepare(
-        "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY position",
+        "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
+           ORDER BY position",
     )?;
     let rows = st.query_map(params![profile_id, assistant], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
@@ -403,9 +419,50 @@ pub fn assistant_task(c: &Connection, profile_id: &str) -> Result<Option<Task>> 
     Ok(c.query_row("SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND task_type=?2", params![profile_id, ASSISTANT], Task::from_row).optional()?)
 }
 
-/// A profile's assistant by number (its key is `A-<n>`).
+/// A profile's assistant or one of its routine threads by number (their keys are `A-<n>`).
 pub fn assistant_task_by_number(c: &Connection, profile_id: &str, number: i64) -> Result<Option<Task>> {
-    Ok(assistant_task(c, profile_id)?.filter(|t| t.number == number))
+    Ok(c.query_row(
+        "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?3) AND number=?4",
+        params![profile_id, ASSISTANT, ROUTINE, number],
+        Task::from_row,
+    )
+    .optional()?)
+}
+
+/// Adds a routine thread under `assistant` (see Task::is_routine), working in its workspace with
+/// its config, model, effort and permission mode, and numbered after it and its other threads (`A-<n>`).
+pub fn insert_routine_task(c: &Connection, assistant: &Task, title: &str) -> Result<Task> {
+    let new = NewTask {
+        profile_id: &assistant.profile_id,
+        project_id: None,
+        kind: "task",
+        title,
+        description: "",
+        status: "todo",
+        use_worktree: false,
+        model: assistant.model.as_deref(),
+        effort: assistant.effort.as_deref(),
+        claude_config_id: assistant.claude_config_id.as_deref(),
+    };
+    let tx = c.unchecked_transaction()?;
+    let task = insert_task(&tx, new)?;
+    tx.execute(
+        "UPDATE tasks SET task_type=?2, work_dir=?3, parent_id=?4, permission_mode=?5, title_pinned=1, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
+           WHERE profile_id=?6 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?7)) WHERE id=?1",
+        params![task.id, ROUTINE, assistant.work_dir, assistant.id, assistant.permission_mode, task.profile_id, ASSISTANT],
+    )?;
+    let task = get_task(&tx, &task.id)?.unwrap();
+    tx.commit()?;
+    Ok(task)
+}
+
+/// Routine threads with nothing going on since before `before`, whatever their status (done, or
+/// failed, stopped or left asking): the old ones the board prunes (see routines::prune_threads).
+/// Not one whose agent is running, or waiting for its usage limit to reset.
+pub fn old_routine_tasks(c: &Connection, before: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare("SELECT * FROM tasks WHERE kind='task' AND task_type=?1 AND running=0 AND waiting=0 AND last_activity_at < ?2")?;
+    let rows = st.query_map(params![ROUTINE, before], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
 }
 
 /// Adds a profile's assistant, keyed `A-<n>` and working in `work_dir(<its id>)` (relative to the
@@ -418,8 +475,8 @@ pub fn insert_assistant_task(c: &Connection, mut t: NewTask, work_dir: impl Fn(&
     let task = insert_task(&tx, t)?;
     tx.execute(
         "UPDATE tasks SET task_type=?2, work_dir=?4, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
-           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type=?2) WHERE id=?1",
-        params![task.id, ASSISTANT, task.profile_id, work_dir(&task.id)],
+           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?5)) WHERE id=?1",
+        params![task.id, ASSISTANT, task.profile_id, work_dir(&task.id), ROUTINE],
     )?;
     let task = get_task(&tx, &task.id)?.unwrap();
     tx.commit()?;
@@ -477,10 +534,12 @@ pub fn list_all_tasks(c: &Connection) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
-/// A profile's tasks, and with `assistant` its assistant (see Task::is_assistant), which is off the board.
+/// A profile's tasks, and with `assistant` its assistant (see Task::is_assistant), which is off the
+/// board. Never its routine threads (see Task::is_routine).
 pub fn list_tasks_for_profile(c: &Connection, profile_id: &str, assistant: bool) -> Result<Vec<Task>> {
     let mut st = c.prepare(
-        "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY project_id, position",
+        "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
+           ORDER BY project_id, position",
     )?;
     let rows = st.query_map(params![profile_id, assistant], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)

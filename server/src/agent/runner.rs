@@ -111,6 +111,8 @@ fn start_run(
             None => message,
         };
         let run = db::insert_run(&tx, task_id, kind)?;
+        // The routines whose messages it starts with are this run's, for its cost.
+        crate::integrations::automations::routines::taken_in(&tx, &run.id, &message.routine_runs)?;
         let recorded = record(&tx, &task, &message)?;
         tx.commit()?;
         runs.insert(task_id.to_string(), RunHandle { run_id: run.id.clone(), cancel: Some(cancel_tx) });

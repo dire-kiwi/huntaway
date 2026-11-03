@@ -404,8 +404,8 @@ pub mod tests {
         let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix login", description: "The login page 500s", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let mut task = db::insert_task(&state.db(), t).unwrap();
         task.steering = vec![
-            db::Steer { id: "a".into(), text: "and the logout page".into(), from_agent: false, run_id: "r".into(), written: true },
-            db::Steer { id: "b".into(), text: "from another agent".into(), from_agent: true, run_id: "r".into(), written: true },
+            db::Steer { id: "a".into(), text: "and the logout page".into(), from_agent: false, run_id: "r".into(), written: true, routine_runs: vec![] },
+            db::Steer { id: "b".into(), text: "from another agent".into(), from_agent: true, run_id: "r".into(), written: true, routine_runs: vec![] },
         ];
         task.queued_message = Some("an agent's request\n\nthen deploy it".into());
         task.queued_user_text = Some("then deploy it".into());

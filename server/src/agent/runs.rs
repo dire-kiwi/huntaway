@@ -305,7 +305,9 @@ pub fn codex_spec(state: &Shared, run_id: &str) -> Option<crate::agent::codex::S
 }
 
 pub fn claude_program() -> String {
-    std::env::var("IA_CLAUDE_BIN").unwrap_or_else(|_| "claude".into())
+    // Tests never start a real agent: a run they start fails to launch, as on CI, which has none.
+    let default = if cfg!(test) { "/nonexistent/claude-for-tests" } else { "claude" };
+    std::env::var("IA_CLAUDE_BIN").unwrap_or_else(|_| default.into())
 }
 
 fn on_path(name: &str) -> bool {

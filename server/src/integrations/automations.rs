@@ -1,8 +1,11 @@
 //! Automations: a project's tasks created (or messages sent to one of its tasks) on a schedule or
 //! when a webhook is delivered, so recurring work and outside events land on the board by themselves.
+//! A profile's automations, its **routines**, wake its assistant instead (see `routines`): they
+//! have a profile and no project, and their one action is `message_assistant`.
 //!
 //! **Triggers.** An interval (`every_minutes`, from when it's turned on), a time of day on some
-//! weekdays in the host's time zone, or a webhook: `POST /api/hooks/<id>/<token>`, which is the
+//! weekdays in the host's time zone, a cron expression (in the host's time zone), a moment (`at`,
+//! once: it turns itself off once it's run), or a webhook: `POST /api/hooks/<id>/<token>`, which is the
 //! one route that doesn't take the board's token. It reaches nothing but its own automation: an
 //! unknown id or a wrong token (compared in constant time) is the same 404, the payload only fills
 //! in templates (it can't pick the project, the task, the agent config or anything else), and a
@@ -13,8 +16,16 @@
 //! coalesced: those within a window (and with the same key) make one run, from the latest of them.
 //! Bodies are at most `MAX_BODY`, and an automation takes at most `RATE_PER_MINUTE` deliveries a minute.
 //!
+//! **Before a run.** An automation can have `active_hours` (a scheduled run outside them waits for
+//! them, and a delivery outside them is skipped; Run now and `at` don't heed them), a `precheck`
+//! (a command run first, in the assistant's workspace or the project's folder: exit 1 skips the
+//! run, and what it prints fills in `{{precheck}}`) and a `budget_usd` a day (a run once its runs
+//! today have cost that much is skipped, and says so).
+//!
 //! **Actions.** Create a task from a template (title, description, type, agent config, model,
-//! effort, status, and whether to start it), or send a message to a task. Templates take
+//! effort, status, and whether to start it), or send a message to a task; a routine messages the
+//! assistant, in a fresh thread of its own (its report is posted to the assistant unless it has
+//! nothing to say) or in the assistant's own thread. Templates take
 //! `{{body.issue.title}}`-style values from a delivery (see `lookup`); in a description or
 //! message each one is wrapped in `<untrusted-data>` tags, with a note telling the agent that
 //! what's inside is data, not instructions.
@@ -43,13 +54,16 @@ use serde_json::{Map, Value, json};
 
 use crate::api::{self, CreateTask};
 use crate::db;
+use crate::agent::assistant;
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{new_id, new_token, same_secret};
 
 mod check;
+mod cron;
 mod delivery;
 mod running;
 mod handlers;
+pub mod routines;
 
 pub use check::*;
 pub use delivery::*;
@@ -100,6 +114,12 @@ pub enum Trigger {
         #[serde(default)]
         weekdays: Vec<String>,
     },
+    /// When a cron expression (`minute hour day-of-month month day-of-week`, in the host's time
+    /// zone) matches; see cron.rs.
+    Cron { expr: String },
+    /// Once, at `at` (stored as UTC RFC 3339; given as that, or `YYYY-MM-DD HH:MM` in the host's
+    /// time zone). It turns itself off once it's run.
+    At { at: String },
     /// Each delivery to its URL that passes its `filters`.
     Webhook {
         #[serde(default)]
@@ -169,16 +189,46 @@ pub enum Action {
     },
     /// A message to a task in the automation's project.
     SendToTask { task_id: String, message: String },
+    /// A routine's message to its profile's assistant (see routines.rs).
+    MessageAssistant {
+        message: String,
+        #[serde(default)]
+        mode: AssistantMode,
+    },
+}
+
+/// Where a routine's message goes.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantMode {
+    /// A fresh thread under the assistant, whose last message is posted to the assistant as a
+    /// report, unless it's `NO_REPLY` or empty.
+    #[default]
+    Fresh,
+    /// The assistant's own thread, as `send_to_task` does.
+    Thread,
 }
 
 fn todo() -> String {
     "todo".into()
 }
 
+/// The hours a scheduled run may start in (from `start` up to `end`, which may be past midnight),
+/// on `weekdays` (none is every day), in the host's time zone.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ActiveHours {
+    pub start: String,
+    pub end: String,
+    #[serde(default)]
+    pub weekdays: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Automation {
     pub id: String,
-    pub project_id: String,
+    pub profile_id: String,
+    /// None for a profile's routine.
+    pub project_id: Option<String>,
     pub name: String,
     pub enabled: bool,
     pub trigger: Trigger,
@@ -190,6 +240,11 @@ pub struct Automation {
     /// When its schedule next runs (UTC); none for a webhook, or while it's off.
     pub next_run_at: Option<String>,
     pub last_run_at: Option<String>,
+    pub active_hours: Option<ActiveHours>,
+    /// A command run before each run (see routines::precheck).
+    pub precheck: Option<String>,
+    /// What its runs may cost a day (in the host's time zone), from their agents' runs.
+    pub budget_usd: Option<f64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -203,6 +258,7 @@ impl Automation {
     fn from_row(r: &Row) -> rusqlite::Result<Self> {
         Ok(Self {
             id: r.get("id")?,
+            profile_id: r.get("profile_id")?,
             project_id: r.get("project_id")?,
             name: r.get("name")?,
             enabled: r.get("enabled")?,
@@ -212,9 +268,17 @@ impl Automation {
             secret: r.get("secret")?,
             next_run_at: r.get("next_run_at")?,
             last_run_at: r.get("last_run_at")?,
+            active_hours: r.get::<_, Option<String>>("active_hours")?.and_then(|s| serde_json::from_str(&s).ok()),
+            precheck: r.get("precheck")?,
+            budget_usd: r.get("budget_usd")?,
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
         })
+    }
+
+    /// A profile's routine, rather than a project's automation.
+    pub fn is_routine(&self) -> bool {
+        self.project_id.is_none()
     }
 
     pub fn is_webhook(&self) -> bool {
@@ -235,9 +299,16 @@ pub struct Run {
     /// `schedule`, `webhook` or `manual` (Run now, or a test delivery).
     pub source: String,
     /// `pending` (waiting to coalesce), `coalesced` (into `batch_id`), `running`, `ok`, `failed`,
-    /// `skipped` (missed, the automation was off, or too many coalesced runs were waiting), `filtered` (or an ignored ping), `duplicate` or `rejected` (a bad signature).
+    /// `skipped` (missed, the automation was off, too many coalesced runs were waiting, outside its
+    /// active hours, its precheck found nothing, over its budget, or its last run is still going),
+    /// `filtered` (or an ignored ping), `duplicate` or `rejected` (a bad signature).
     pub status: String,
     pub detail: Option<String>,
+    /// For a routine's run in a fresh thread, once its agent has stopped: `quiet` (it had nothing to
+    /// report), `reported`, `asked` (it needs the user) or `failed`.
+    pub outcome: Option<String>,
+    /// What its agent's runs cost, once they've ended.
+    pub cost_usd: Option<f64>,
     /// The task it created or messaged.
     pub task_id: Option<String>,
     pub delivery_id: Option<String>,
@@ -264,6 +335,8 @@ impl Run {
             source: r.get("source")?,
             status: r.get("status")?,
             detail: r.get("detail")?,
+            outcome: r.get("outcome")?,
+            cost_usd: r.get("cost_usd")?,
             task_id: r.get("task_id")?,
             delivery_id: r.get("delivery_id")?,
             event: r.get("event")?,
@@ -284,6 +357,8 @@ impl Run {
             source: source.into(),
             status: status.into(),
             detail: None,
+            outcome: None,
+            cost_usd: None,
             task_id: None,
             delivery_id: None,
             event: None,
@@ -323,13 +398,19 @@ pub fn list(c: &Connection, project_id: &str) -> rusqlite::Result<Vec<Automation
     st.query_map([project_id], Automation::from_row)?.collect()
 }
 
+/// A profile's routines (its automations in no project).
+pub fn list_routines(c: &Connection, profile_id: &str) -> rusqlite::Result<Vec<Automation>> {
+    let mut st = c.prepare("SELECT * FROM automations WHERE profile_id=?1 AND project_id IS NULL ORDER BY created_at, id")?;
+    st.query_map([profile_id], Automation::from_row)?.collect()
+}
+
 fn insert_run(c: &Connection, r: &Run) -> rusqlite::Result<()> {
     c.execute(
-        "INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+        "INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at,outcome,cost_usd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
         params![
             r.id, r.automation_id, r.source, r.status, r.detail, r.task_id, r.delivery_id, r.event, r.count, r.batch_key, r.batch_id, r.payload, r.due_at,
-            r.created_at, r.finished_at
+            r.created_at, r.finished_at, r.outcome, r.cost_usd
         ],
     )?;
     Ok(())
@@ -345,11 +426,12 @@ pub fn runs(c: &Connection, automation_id: &str, limit: i64) -> rusqlite::Result
     st.query_map(params![automation_id, limit], Run::from_row)?.collect()
 }
 
-/// Ends a run: what it did, or why it didn't.
-fn finish(c: &Connection, run_id: &str, result: &Result<Option<String>, (Option<String>, String)>) -> rusqlite::Result<()> {
+/// Ends a run: what it did, or why it didn't (a run that was skipped says why).
+fn finish(c: &Connection, run_id: &str, result: &Result<Option<String>, Outcome>) -> rusqlite::Result<()> {
     let (status, task, detail) = match result {
         Ok(task) => ("ok", task.clone(), None),
-        Err((task, e)) => ("failed", task.clone(), Some(e.clone())),
+        Err(Outcome::Failed(task, e)) => ("failed", task.clone(), Some(e.clone())),
+        Err(Outcome::Skipped(why)) => ("skipped", None, Some(why.clone())),
     };
     c.execute(
         "UPDATE automation_runs SET status=?2, task_id=COALESCE(?3, task_id), detail=?4, finished_at=?5 WHERE id=?1",
@@ -370,20 +452,27 @@ fn mark_interrupted(c: &Connection) -> rusqlite::Result<usize> {
 }
 
 /// Drops old runs (see KEEP_RUNS) and payloads.
+/// A routine's runs that woke its assistant in the last two days (its "today" in any time zone) are
+/// kept whatever the limits, as its budget a day counts their cost (see routines::spent_today), even
+/// while its agent is still at work.
 fn prune(c: &Connection, now: DateTime<Utc>) -> rusqlite::Result<()> {
     let cutoff = fmt(now - chrono::TimeDelta::days(DEDUPE_DAYS));
+    let costs_since = fmt(now - chrono::TimeDelta::days(2));
     let ids: Vec<String> = c.prepare("SELECT id FROM automations")?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
     for id in ids {
         let newest = "SELECT id FROM automation_runs WHERE automation_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2";
+        let costs = "(created_at >= ?4 AND (COALESCE(cost_usd, 0) > 0 OR (status='ok' AND task_id IS NOT NULL
+                       AND automation_id IN (SELECT id FROM automations WHERE project_id IS NULL))))";
         c.execute(
-            &format!("DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN ({newest})"),
-            params![id, KEEP_RUNS],
+            &format!("DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN ({newest}) AND NOT {costs}"),
+            params![id, KEEP_RUNS, Option::<String>::None, costs_since],
         )?;
         c.execute(
             &format!(
-                "DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND created_at < ?3 AND id NOT IN ({newest})"
+                "DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND created_at < ?3 AND id NOT IN ({newest})
+                   AND NOT {costs}"
             ),
-            params![id, KEEP_RECENT, cutoff],
+            params![id, KEEP_RECENT, cutoff, costs_since],
         )?;
         c.execute(
             "UPDATE automation_runs SET payload=NULL WHERE automation_id=?1 AND payload IS NOT NULL AND status NOT IN ('pending','running') AND id NOT IN
@@ -394,8 +483,23 @@ fn prune(c: &Connection, now: DateTime<Utc>) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Why a run didn't do what it does.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Outcome {
+    /// It went wrong (with the task, if it made one).
+    Failed(Option<String>, String),
+    /// It was checked and not run, and why.
+    Skipped(String),
+}
+
+impl From<(Option<String>, String)> for Outcome {
+    fn from((task, e): (Option<String>, String)) -> Self {
+        Outcome::Failed(task, e)
+    }
+}
+
 fn changed(s: &Shared, a: &Automation) {
-    s.emit(json!({"type": "automations_changed", "project_id": a.project_id, "automation_id": a.id}));
+    s.emit(json!({"type": "automations_changed", "project_id": a.project_id, "profile_id": a.profile_id, "automation_id": a.id}));
 }
 
 #[cfg(test)]
