@@ -406,11 +406,11 @@ pub fn list_routines(c: &Connection, profile_id: &str) -> rusqlite::Result<Vec<A
 
 fn insert_run(c: &Connection, r: &Run) -> rusqlite::Result<()> {
     c.execute(
-        "INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+        "INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at,outcome,cost_usd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
         params![
             r.id, r.automation_id, r.source, r.status, r.detail, r.task_id, r.delivery_id, r.event, r.count, r.batch_key, r.batch_id, r.payload, r.due_at,
-            r.created_at, r.finished_at
+            r.created_at, r.finished_at, r.outcome, r.cost_usd
         ],
     )?;
     Ok(())

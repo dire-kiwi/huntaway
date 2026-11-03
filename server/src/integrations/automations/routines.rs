@@ -40,6 +40,8 @@ pub(super) fn message(s: &Shared, a: &Automation, vars: &Vars, how: &str, messag
             let when = vars.now.with_timezone(&Local).format("%a %-d %b %H:%M");
             let thread = db::insert_routine_task(&s.db(), &assistant, &format!("{} · {when}", a.name)).map_err(|e| Outcome::Failed(None, format!("{e:#}")))?;
             s.emit_task(&thread);
+            #[cfg(test)]
+            crate::testing::reached("routine:thread");
             let text = format!(
                 "This is a run of your routine \"{}\", {how} ({when}), in a thread of its own (A-{}).\n\n{note}{}\n\n\
                  When you're done, reply with a short report for the user: it's posted to your main thread. If there's nothing \
@@ -48,7 +50,12 @@ pub(super) fn message(s: &Shared, a: &Automation, vars: &Vars, how: &str, messag
                 thread.number,
                 body.trim()
             );
-            crate::agent::runner::send_from_agent(s, &thread.id, &text).map_err(|e| Outcome::Failed(Some(thread.id.clone()), e.1))?;
+            if let Err(e) = crate::agent::runner::send_from_agent(s, &thread.id, &text) {
+                // It never started (the host can't run agents, say): an empty thread would only be in the way.
+                let _ = s.db().execute("DELETE FROM tasks WHERE id=?1 AND running=0", [&thread.id]);
+                s.emit(json!({"type": "task_deleted", "id": thread.id, "project_id": Value::Null}));
+                return Err(Outcome::Failed(None, e.1));
+            }
             Ok(Some(thread.id))
         }
     }

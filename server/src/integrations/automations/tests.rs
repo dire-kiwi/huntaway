@@ -696,3 +696,6 @@ fn old_runs_and_payloads_are_pruned() {
     assert!(left.iter().any(|r| r.id == pending.id && r.payload.is_some()));
     assert_eq!(left.iter().filter(|r| r.payload.is_some()).count(), KEEP_PAYLOADS as usize + 1);
 }
+
+#[path = "tests/routines.rs"]
+mod routines_tests;
