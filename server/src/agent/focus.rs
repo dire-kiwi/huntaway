@@ -1,5 +1,5 @@
-//! The board's now/later split: every task is in "later" until it's put in "now" (by the user's prompt
-//! to its agent, or from the board or the API), and goes back after a day with no activity on it.
+//! The board's now/later split: a task is in "later" until it's put in "now" (by the user's prompt
+//! to its agent, an update to it, or from the board or the API), and goes back after a day with no activity on it.
 //! The day is the host's `now_expiry_hours` setting; 0 keeps tasks in "now" until they're moved.
 //!
 //! A task in "now" has `now_at` set (see `Task::now_at`). Anything that adds to its thread (the agent's
@@ -40,6 +40,14 @@ pub fn put_in_now(s: &Shared, task_id: &str) -> Option<Task> {
             None
         }
     }
+}
+
+/// Task `t` after a change made to it through `update_task` (the API's or the MCP tool's, `body` being what was asked for): a task
+/// that's been updated at all, by the user or an agent, is in "now" (for another day). Unless the change itself said where it goes (`now`),
+/// or only reorders it: the board renumbers a whole column's `position`s when a card is dropped, and the other cards weren't touched.
+pub fn updated(s: &Shared, t: Task, body: &serde_json::Map<String, Value>) -> Task {
+    let reorder_only = !body.is_empty() && body.keys().all(|k| k == "position");
+    if reorder_only || body.get("now").is_some_and(|v| !v.is_null()) { t } else { put_in_now(s, &t.id).unwrap_or(t) }
 }
 
 /// Sends the tasks in "now" with nothing happening on them since `cutoff` back to "later". How many.

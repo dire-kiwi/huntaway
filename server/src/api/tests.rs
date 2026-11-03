@@ -335,6 +335,31 @@ fn profiles_connect_to_asana_and_search_it() {
 }
 
 #[test]
+fn updating_a_task_from_the_api_puts_it_in_now() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+        let project = db::insert_project(&s.db(), project).unwrap();
+        let t = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "Fix it"})).unwrap()).unwrap();
+        assert_eq!(t.now_at, None);
+        let patch = async |v: Value| {
+            let Json(t) = update_task(State(s.clone()), Path(t.id.clone()), Json(v.as_object().unwrap().clone())).await.unwrap();
+            (t["now_at"].clone(), db::get_task(&s.db(), &t["id"].as_str().unwrap()).unwrap().unwrap().now_at)
+        };
+        // Asking for Later in the same request keeps it there; any other update is a reason for Now.
+        assert_eq!(patch(json!({"description": "More", "now": false})).await, (Value::Null, None));
+        let (shown, kept) = patch(json!({"description": "Even more"})).await;
+        assert!(kept.is_some() && shown == json!(kept));
+        patch(json!({"now": false})).await;
+        // The board renumbers a column's positions when a card is dropped: that touches no other card.
+        assert_eq!(patch(json!({"position": 7.5})).await, (Value::Null, None));
+        // The dropped card's own request moves it too.
+        assert!(patch(json!({"status": "in_progress", "position": 8.5})).await.1.is_some());
+    });
+}
+
+#[test]
 fn a_tasks_fields_are_checked_for_type_before_theyre_stored() {
     crate::testing::run(async || {
         let s = crate::testing::state();
