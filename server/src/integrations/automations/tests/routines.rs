@@ -491,3 +491,18 @@ fn a_fresh_run_that_cant_start_leaves_no_thread() {
         assert_eq!(s.db().query_row("SELECT COUNT(*) FROM tasks WHERE task_type='routine'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
     })
 }
+
+#[test]
+fn deleting_the_assistant_stops_its_routine_threads_first() {
+    testing::run(async || {
+        let s = testing::state();
+        let p = profile(&s);
+        let assistant = assistant::get_or_create(&s, &p.id).unwrap();
+        let t = db::insert_routine_task(&s.db(), &assistant, "w").unwrap();
+        busy(&s, &t.id);
+        api::delete_task_inner(&s, &assistant, false).await.unwrap();
+        assert!(db::get_task(&s.db(), &t.id).unwrap().is_none());
+        // Its agent was stopped, not left running for a thread that's gone.
+        assert!(!s.is_running(&t.id));
+    })
+}

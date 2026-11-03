@@ -1079,6 +1079,30 @@ fn the_assistant_is_told_what_it_is() {
 }
 
 #[test]
+fn a_routine_thread_is_told_what_it_is_and_works_in_the_assistants_workspace() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let assistant = crate::agent::assistant::get_or_create(&s, &p.id).unwrap();
+        let task = db::insert_routine_task(&s.db(), &assistant, "Inbox").unwrap();
+        let text = system_prompt(&task, None, None, &[], &[], None, true);
+        assert!(text.contains(&format!("thread A-2 (id {})", task.id)) && text.contains(&format!("(id {})", assistant.id)), "{text}");
+        assert!(text.contains(&format!("(assistants/{} in the board's data dir)", assistant.id)), "{text}");
+        assert!(text.contains("NO_REPLY") && text.contains("posted to your"), "{text}");
+        assert_paragraphs(&text);
+        // The assistant is told about routines, and to make a reminder an `at` one.
+        let told = system_prompt(&assistant, None, None, &[], &[], None, true);
+        assert!(told.contains("`at` routine") && told.contains("message_assistant"), "{told}");
+        assert_paragraphs(&told);
+        // Its first prompt is the routine's as it's given.
+        assert_eq!(start_prompt(&task, None, "Check the inbox.\n"), "Check the inbox.");
+        // Claude and Codex runs both work where the assistant does.
+        assert_eq!(work_dir(&s, &task).unwrap(), work_dir(&s, &assistant).unwrap());
+        assert_eq!(key_prefix(&task, None), "A");
+    });
+}
+
+#[test]
 fn previews_what_a_new_thread_in_a_project_is_told() {
     crate::testing::run(async || {
         let state = crate::testing::state();
