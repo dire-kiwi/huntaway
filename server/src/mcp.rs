@@ -595,10 +595,21 @@ async fn handle(ctx: &Ctx, req: &Value) -> Option<Value> {
     })
 }
 
+/// The board's token for a helper: `IA_TOKEN`, or else the file `IA_TOKEN_FILE` names (agent-threads' helpers,
+/// whose environment is on their agent's command line: see threads::engine::token_file).
+pub fn board_token() -> Result<String> {
+    if let Ok(t) = std::env::var("IA_TOKEN") {
+        return Ok(t);
+    }
+    let file = std::env::var("IA_TOKEN_FILE").context("neither IA_TOKEN nor IA_TOKEN_FILE is set")?;
+    let token = std::fs::read_to_string(&file).with_context(|| format!("reading the board's token from {file}"))?;
+    Ok(token.trim().to_string())
+}
+
 pub async fn serve_stdio() -> Result<()> {
     let ctx = Arc::new(Ctx {
         url: std::env::var("IA_URL").context("IA_URL not set")?,
-        token: std::env::var("IA_TOKEN").context("IA_TOKEN not set")?,
+        token: board_token()?,
         run_id: std::env::var("IA_RUN_ID").context("IA_RUN_ID not set")?,
         review: std::env::var("IA_REVIEW").is_ok_and(|v| v == "1"),
         http: reqwest::Client::new(),

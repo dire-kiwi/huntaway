@@ -298,3 +298,137 @@ fn messages_not_wholly_the_users_carry_their_origin() {
         assert!(ids.iter().all(|c| !left.contains_key(c)), "the follower took their origins");
     })
 }
+
+/// "Stop, then do this instead": the follow-up starts a new turn in the same run, which then ends as that turn
+/// did, not as stopped.
+#[test]
+fn a_message_after_a_stop_carries_on_in_a_new_turn() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        start_fake(&s, &[("IA_FAKE_CLAUDE_SLEEP", "3")]);
+        let t = new_task(&s);
+        runner::send(&s, &t.id, "the first thing").unwrap();
+        until(&s, &t.id, "its run going", |_| db::active_runs(&s.db()).unwrap().iter().any(|r| r.status == "running")).await;
+        assert!(runner::stop(&s, &t.id));
+        runner::send(&s, &t.id, "do this instead").unwrap();
+        let done = until(&s, &t.id, "its run ended", |t| !t.running).await;
+        assert!(last_reply(&s, &t.id).await.contains("do this instead"));
+        assert_eq!((done.status.as_str(), done.attention_reason.as_deref()), ("in_review", None));
+    })
+}
+
+/// Many short turns at once: each task's run ends once, with its turn's outcome, however far behind the
+/// follower is (it's slowed down here, as it is under load).
+#[test]
+fn fast_turns_on_many_tasks_end_their_runs_once_each() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        start_fake(&s, &[]);
+        FOLLOW_DELAY.set(30);
+        let tasks: Vec<Task> = (0..12).map(|_| new_task(&s)).collect();
+        for t in &tasks {
+            runner::send(&s, &t.id, "quick").unwrap();
+        }
+        for t in &tasks {
+            until(&s, &t.id, "to in_review", |t| !t.running && t.status == "in_review").await;
+        }
+        // Nothing follows: no run adopted from a turn that had ended.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        for t in &tasks {
+            let (runs, ok): (i64, i64) = s
+                .db()
+                .query_row("SELECT COUNT(*), SUM(saw_result) FROM runs WHERE task_id=?1", [&t.id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!((runs, ok), (1, 1), "one run each");
+            let failed: i64 =
+                s.db().query_row("SELECT COUNT(*) FROM messages WHERE task_id=?1 AND kind='event' AND data LIKE '%Run failed%'", [&t.id], |r| r.get(0)).unwrap();
+            assert_eq!(failed, 0);
+            assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().status, "in_review");
+        }
+    })
+}
+
+/// A question kept open after its run ended (it was stopped) is answered: the crate sends the answer as the
+/// next message, which gets a board run of its own, and the thread's helpers call the board as that run.
+#[test]
+fn a_late_answer_gets_a_run_that_the_board_tools_reach() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        start_fake(&s, &[("IA_FAKE_CLAUDE_SLEEP", "1")]);
+        let t = new_task(&s);
+        let call = |id: &str| crate::mcp::tools::McpCall {
+            run_id: helper_run_id(&t.id),
+            call_id: id.into(),
+            tool: "get_task".into(),
+            args: json!({"task_id": t.id}),
+            task_fields: true,
+        };
+        // Behind, as under load: the answer's turn can end before the follower sees it start.
+        FOLLOW_DELAY.set(25);
+        runner::send(&s, &t.id, "fake-ask-question").unwrap();
+        let asked = until(&s, &t.id, "a question", |t| t.status == "needs_attention").await;
+        assert_eq!(asked.attention_reason.as_deref(), Some("Which one?"));
+        // While it runs, its helpers' calls are its run's.
+        crate::mcp::tools::handle_mcp(&s, call("c1")).await.unwrap();
+        assert!(runner::stop(&s, &t.id));
+        until(&s, &t.id, "stopped", |t| !t.running).await;
+        let err = crate::mcp::tools::handle_mcp(&s, call("c2")).await.unwrap_err();
+        assert!(err.contains("no run going"), "{err}");
+        let b = backend(&s).unwrap();
+        let snap = b.snapshot(&t.id).await.unwrap();
+        let open: Vec<Value> = snap.requests.iter().map(|r| serde_json::to_value(r).unwrap()).filter(|r| r["resolution"].is_null()).collect();
+        assert_eq!(open.len(), 1, "the question is kept: {open:?}");
+        let resolution: agent_threads::protocol::Resolution =
+            serde_json::from_value(json!({"outcome": "answer", "answers": {"Which one?": ["b"]}})).unwrap();
+        b.respond(&t.id, open[0]["id"].as_str().unwrap(), resolution).await.unwrap();
+        // A board tool called in its turn reaches the board as its run (adopted then, if the follower is behind).
+        for _ in 0..200 {
+            if running_turn(b, &t.id).await.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        crate::mcp::tools::handle_mcp(&s, call("c3")).await.unwrap();
+        until(&s, &t.id, "to in_review", |t| !t.running && t.status == "in_review").await;
+        let runs: i64 = s.db().query_row("SELECT COUNT(*) FROM runs WHERE task_id=?1", [&t.id], |r| r.get(0)).unwrap();
+        assert_eq!(runs, 2);
+    })
+}
+
+/// The helpers' config has no token (Claude Code's is on its command line): they read it from a file of the
+/// user's own.
+#[test]
+fn the_helpers_read_the_token_from_a_private_file() {
+    crate::testing::run(async || {
+        let id = crate::state::Identity {
+            host_id: "h".into(),
+            host_name: "desktop".into(),
+            token: "the-hosts-token".into(),
+            hub_token: String::new(),
+            internal_url: "http://127.0.0.1:1".into(),
+        };
+        let s = crate::testing::state_as(id);
+        start_fake(&s, &[]);
+        let t = fix(&s, new_task(&s)).unwrap();
+        let run = db::insert_run(&s.db(), &t.id, "prompt").unwrap();
+        let spec = Spec {
+            codex: false, cwd: "/".into(), text: String::new(), compact: false, model: None, effort: None, permission_mode: "default".into(),
+            system_prompt: String::new(), args: vec![], allowed: vec![], add_dirs: vec![], env: vec![], config_dir: None, mcp_servers: Map::new(),
+            skills: vec![], github_account: None,
+        };
+        let servers = mcp_servers(&s, &run, &spec);
+        for (name, server) in &servers {
+            let McpServer::Stdio { env, .. } = server else { panic!("{name}") };
+            assert!(!env.contains_key("IA_TOKEN") && !env.values().any(|v| v.contains("the-hosts-token")), "{name}: {env:?}");
+            assert_eq!(env["IA_RUN_ID"], format!("thread:{}", t.id));
+            assert_eq!(std::fs::read_to_string(&env["IA_TOKEN_FILE"]).unwrap(), "the-hosts-token");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(token_file(&s)).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // Codex's sandbox has the network, as the board's own adapter gives it.
+        assert_eq!(codex_config()["sandbox_workspace_write.network_access"], json!(true));
+    })
+}

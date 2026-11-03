@@ -29,7 +29,7 @@ server/src/threads/engine.rs) is a session instead: it answers control requests,
 as a turn (replayed, then the reply and a `result` after IA_FAKE_CLAUDE_SLEEP), takes messages sent during
 a turn into it (the reply names them), ends a turn as interrupted on an `interrupt` request, and exits when
 its input closes. A message containing "fake-ask-permission" asks permission (`can_use_tool`) for a Bash
-call first, and the reply says what the answer was.
+call first, and "fake-ask-question" asks an AskUserQuestion; the reply says what the answer was.
 """
 import json
 import os
@@ -136,13 +136,18 @@ def session_mode(first, leftover=b""):
         replay(m)
         taken = []
         answer = None
-        if "fake-ask-permission" in prompt:
+        asking = "fake-ask-permission" in prompt or "fake-ask-question" in prompt
+        if asking:
             ask = str(uuid.uuid4())
             tool = "toolu_" + uuid.uuid4().hex
+            name, tool_input = "Bash", {"command": "echo fake"}
+            if "fake-ask-question" in prompt:
+                name = "AskUserQuestion"
+                tool_input = {"questions": [{"question": "Which one?", "header": "Pick", "multiSelect": False, "options": [{"label": "a"}, {"label": "b"}]}]}
             emit({"type": "assistant", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None,
                   "message": {"id": "msg_" + uuid.uuid4().hex, "role": "assistant", "model": model,
-                              "content": [{"type": "tool_use", "id": tool, "name": "Bash", "input": {"command": "echo fake"}}]}})
-            emit({"type": "control_request", "request_id": ask, "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "echo fake"},
+                              "content": [{"type": "tool_use", "id": tool, "name": name, "input": tool_input}]}})
+            emit({"type": "control_request", "request_id": ask, "request": {"subtype": "can_use_tool", "tool_name": name, "input": tool_input,
                                                                           "tool_use_id": tool}})
             while answer is None:
                 r = read(None)

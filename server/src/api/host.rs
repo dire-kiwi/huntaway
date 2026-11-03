@@ -118,6 +118,8 @@ pub(super) async fn internal_mcp(State(s): State<Shared>, Json(call): Json<tools
 
 /// From a run's gh server, before it merges a pull request: why it can't, if it can't (see review/merge_gate.rs).
 pub(super) async fn internal_merge_gate(State(s): State<Shared>, Path(run_id): Path<String>) -> ApiResult<Json<Value>> {
+    // An agent-threads thread's helper asks as the thread (see threads::engine::helper_run_id).
+    let run_id = crate::threads::engine::current_run_id(&s, &run_id).await.ok_or_else(|| ApiError::not_found("run"))?;
     let c = s.db();
     let run = db::get_run(&c, &run_id)?.ok_or_else(|| ApiError::not_found("run"))?;
     let blocked = match db::get_task(&c, &run.task_id)? {

@@ -491,7 +491,8 @@ async fn run(tool: &str, a: &Value) -> Result<(String, bool)> {
     exec(&command(tool, &a)?, &a).await
 }
 
-/// The board's line to the run this server is for, which the commands it runs don't get.
+/// The board's line to the run this server is for, which the commands it runs don't get (nor `IA_TOKEN_FILE`,
+/// which agent-threads' helpers have in place of `IA_TOKEN`, see mcp::board_token).
 const BOARD_ENV: [&str; 3] = ["IA_URL", "IA_TOKEN", "IA_RUN_ID"];
 
 /// Whether call `a` to `tool` may merge a pull request: pr_merge, `gh pr merge`, or GitHub's API
@@ -523,7 +524,7 @@ fn mentions_merge(call: &str) -> bool {
 /// Why the board won't let this run merge, if it won't (see review/merge_gate.rs). A server started
 /// without the board's address (by hand, say) has no say from it.
 async fn merge_gate() -> Result<Option<String>> {
-    let board = BOARD_ENV.map(std::env::var);
+    let board = [std::env::var("IA_URL"), crate::mcp::board_token().map_err(|_| std::env::VarError::NotPresent), std::env::var("IA_RUN_ID")];
     #[cfg(test)]
     let board = TEST_BOARD.with_borrow(Clone::clone).map(|b| b.map(Ok)).unwrap_or(board);
     let [Ok(url), Ok(token), Ok(run_id)] = board else { return Ok(None) };
@@ -574,7 +575,7 @@ async fn exec(c: &Command, a: &Value) -> Result<(String, bool)> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    for k in BOARD_ENV {
+    for k in BOARD_ENV.iter().chain(&["IA_TOKEN_FILE"]) {
         cmd.env_remove(k);
     }
     // Only the call's own repository, which was checked.

@@ -49,7 +49,13 @@ impl Drop for InFlight<'_> {
 
 /// An agent's tool call, at most once per call id: it's recorded as executing before it runs,
 /// and with its result once it has.
-pub async fn handle_mcp(s: &Shared, c: McpCall) -> std::result::Result<Value, String> {
+pub async fn handle_mcp(s: &Shared, mut c: McpCall) -> std::result::Result<Value, String> {
+    // An agent-threads thread's helpers call as the thread: the call is its run's at the time (see
+    // threads::engine::helper_run_id).
+    match crate::threads::engine::current_run_id(s, &c.run_id).await {
+        Some(run_id) => c.run_id = run_id,
+        None => return Err(format!("This thread has no run going on the board, so its {} call wasn't run.", c.tool)),
+    }
     // A duplicate delivery while the first is still executing waits for its result.
     let rx = {
         let mut inflight = s.calls_inflight.lock().unwrap();

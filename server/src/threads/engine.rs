@@ -99,10 +99,19 @@ pub fn build(state: &Shared) -> AgentThreads {
         // The profile's CODEX_HOME (each thread's launch options give it), else the user's, as it is.
         user_config: true,
         login: None,
+        config: codex_config(),
         ..Default::default()
     };
     let spawner = agent_threads::shim(state.exe.with_file_name("ia-shim"), ShimOptions::new(runs_dir(state)));
     build_with(state, spawner, claude, codex)
+}
+
+/// The config Codex threads start with, under the crate's own, as the board's Codex adapter has it (see
+/// agent/codex.rs): agents need the network (git push, gh, package managers), as Claude's have it.
+pub(crate) fn codex_config() -> Map<String, Value> {
+    let mut config = Map::new();
+    config.insert("sandbox_workspace_write.network_access".into(), json!(true));
+    config
 }
 
 /// `build`, with these processes and harnesses (for tests).
@@ -147,6 +156,9 @@ pub(crate) fn start_with(state: &Shared, backend: AgentThreads) {
         tracing::warn!("the agent-threads backend was set up twice; keeping the first");
         return;
     }
+    if let Err(e) = write_token_file(state) {
+        tracing::error!("writing the agents' token file {}: {e:#}", token_file(state).display());
+    }
     let (tx, rx) = mpsc::unbounded_channel();
     SENDS.lock().unwrap().insert(key(state), tx);
     tokio::spawn(sender(Arc::downgrade(state), rx));
@@ -167,7 +179,7 @@ pub async fn recover(state: &Shared) {
     let tasks: Vec<String> = state.runs.lock().unwrap().keys().cloned().collect();
     for id in tasks {
         if db::get_task(&state.db(), &id).ok().flatten().is_some_and(|t| uses(&t)) {
-            settle(state, &id).await;
+            settle(state, &id, None).await;
         }
     }
 }
@@ -234,13 +246,65 @@ fn mode(m: &str) -> PermissionMode {
     }
 }
 
-/// The board's MCP servers for a run (see runs::start): its tools (`huntaway mcp`, which says which run it's
-/// from) and GitHub's, then the project's own.
+/// The run id a thread's MCP helpers call the board as: the thread's, `thread:<task id>`, which the board takes
+/// as the task's run at the time of each call (see `current_run_id`). The helpers outlive a board run (a turn the
+/// thread starts by itself has a run of its own, see `adopt`), so they can't be given one.
+pub fn helper_run_id(task_id: &str) -> String {
+    format!("{THREAD_RUN}{task_id}")
+}
+
+const THREAD_RUN: &str = "thread:";
+
+/// The board run that a helper's run id (see `helper_run_id`) stands for now: the task's run, or, for a turn the
+/// thread started by itself that the follower hasn't caught up with yet, the run it's given now (see `adopt`).
+/// None for a thread with no turn running. Another run id is itself.
+pub async fn current_run_id(state: &Shared, run_id: &str) -> Option<String> {
+    let Some(task_id) = run_id.strip_prefix(THREAD_RUN) else { return Some(run_id.to_string()) };
+    let current = || state.runs.lock().unwrap().get(task_id).map(|h| h.run_id.clone());
+    if let Some(r) = current() {
+        return Some(r);
+    }
+    let task = task_of(state, task_id).ok().flatten()?;
+    running_turn(backend(state)?, task_id).await?;
+    if let Err(e) = adopt(state, &task) {
+        tracing::warn!(task = task_id, "starting a run for the agent's turn: {e:#}");
+    }
+    current()
+}
+
+/// The file the board's helpers read its token from (`IA_TOKEN_FILE`, see mcp::board_token), private to this
+/// user: Claude Code gets its MCP servers on its command line, which other users can read.
+pub fn token_file(state: &AppState) -> PathBuf {
+    state.data_dir.join("helper_token")
+}
+
+/// Writes the token file (see `token_file`), readable only by this user.
+fn write_token_file(state: &AppState) -> Result<()> {
+    use std::io::Write;
+    let path = token_file(state);
+    let tmp = path.with_extension("tmp");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let _ = std::fs::remove_file(&tmp);
+    opts.open(&tmp)?.write_all(state.token.as_bytes())?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// The board's MCP servers for a run (see runs::start): its tools (`huntaway mcp`) and GitHub's, then the
+/// project's own. They read the board's token from a file (see `token_file`), and call it as the thread (see
+/// `helper_run_id`).
 fn mcp_servers(state: &Shared, run: &Run, spec: &Spec) -> BTreeMap<String, McpServer> {
     let exe = path_str(&state.exe);
+    let (token, run_id) = (path_str(&token_file(state)), helper_run_id(&run.task_id));
     let env = |extra: &[(&str, &str)]| -> BTreeMap<String, String> {
         let mut env: BTreeMap<String, String> =
-            [("IA_URL", state.internal_url.as_str()), ("IA_TOKEN", state.token.as_str()), ("IA_RUN_ID", run.id.as_str())].map(|(k, v)| (k.to_string(), v.to_string())).into();
+            [("IA_URL", state.internal_url.as_str()), ("IA_TOKEN_FILE", token.as_str()), ("IA_RUN_ID", run_id.as_str())].map(|(k, v)| (k.to_string(), v.to_string())).into();
         env.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
         env
     };
@@ -337,9 +401,8 @@ pub async fn launch(state: &Shared, run: &Run, spec: Spec) -> Result<()> {
         let origin = run_origin(state, run);
         backend.send(task_id, &spec.text, send_options(task_id, origin)).await.map_err(|e| anyhow!("{e}"))?;
     }
+    // (Its turn may have ended already: the follower ends the run with it, being prepared or not.)
     started(state, run)?;
-    // It may have ended already (before the run was marked running, which `settle` waits for).
-    settle(state, task_id).await;
     Ok(())
 }
 
@@ -522,18 +585,31 @@ async fn follow(state: Weak<AppState>, mut events: broadcast::Receiver<ThreadEve
                 let tasks: Vec<String> = s.runs.lock().unwrap().keys().cloned().collect();
                 for id in tasks {
                     if db::get_task(&s.db(), &id).ok().flatten().is_some_and(|t| uses(&t)) {
-                        settle(&s, &id).await;
+                        settle(&s, &id, None).await;
                     }
                 }
                 continue;
             }
             Err(broadcast::error::RecvError::Closed) => return,
         };
+        #[cfg(test)]
+        {
+            let delay = FOLLOW_DELAY.get();
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+        }
         let Some(s) = state.upgrade() else { return };
         if let Err(e) = on_event(&s, event).await {
             tracing::warn!("following an agent-threads thread: {e:#}");
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How long the follower takes over each event, to have it fall behind as it does under load.
+    pub(crate) static FOLLOW_DELAY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// The task an event's thread is for, if it runs on agent-threads.
@@ -561,10 +637,12 @@ async fn on_event(state: &Shared, event: ThreadEvent) -> Result<()> {
                     db::set_run_session(&state.db(), &run.id, sid)?;
                 }
             }
-            match t.status {
-                ThreadStatus::Running if !state.is_running(&task.id) => adopt(state, &task)?,
-                ThreadStatus::Running => {}
-                _ => settle(state, &task.id).await,
+            // A run ends with its turn (see TurnCompleted), not with these, which can come late: the follower reads
+            // events in order, while the thread may well have moved on.
+        }
+        ThreadEvent::TurnCompleted(e) => {
+            if task_of(state, &e.thread_id)?.is_some() {
+                settle(state, &e.thread_id, Some(&e.turn_id)).await;
             }
         }
         ThreadEvent::ItemAdded(e) => {
@@ -591,9 +669,19 @@ async fn on_event(state: &Shared, event: ThreadEvent) -> Result<()> {
         }
         ThreadEvent::TurnStarted(e) => {
             let Some(task) = task_of(state, &e.thread_id)? else { return Ok(()) };
-            if let Some(run) = current_run(state, &task.id)? {
-                // A new turn (a message carried over): what the last one ended with isn't the run's outcome.
-                state.db().execute("UPDATE runs SET between_turns=0, result_error=NULL WHERE id=?1", [&run.id])?;
+            match current_run(state, &task.id)? {
+                // A new turn (a message carried over): what the last one ended with isn't the run's outcome, and
+                // after a stop, the run is no longer stopped (as runner::steered has it).
+                Some(run) => {
+                    state.db().execute(
+                        "UPDATE runs SET between_turns=0, result_error=NULL, stop_requested = CASE WHEN stop_requested=2 THEN 0 ELSE stop_requested END WHERE id=?1",
+                        [&run.id],
+                    )?;
+                }
+                // A turn no board run started (an answer to a question kept after its turn, which the crate sends
+                // as the next message), even if it has ended by now: its end settles the run (runs are settled in
+                // the order of their events, so a turn of a run that has ended doesn't come here).
+                None => adopt(state, &task)?,
             }
         }
         ThreadEvent::RequestOpened(e) => {
@@ -687,9 +775,11 @@ fn adopt(state: &Shared, task: &Task) -> Result<()> {
     Ok(())
 }
 
-/// Ends the board's run on an agent-threads task if its thread isn't running any more, with the outcome of
-/// its last turn (see runner::finish).
-pub async fn settle(state: &Shared, task_id: &str) {
+/// Ends the board's run on an agent-threads task once its thread isn't running any more, with the outcome of
+/// its last turn as the thread has it (see runner::finish). `completed` is the turn the follower has just seen
+/// end: unless that's the thread's latest turn, a later one is going (or has ended, and its own end settles the
+/// run). Without it (after a restart, or events missed), whatever the thread's state is now.
+pub async fn settle(state: &Shared, task_id: &str, completed: Option<&str>) {
     let Some(backend) = backend(state) else { return };
     let thread = match backend.get(task_id).await {
         Ok(t) => t,
@@ -698,10 +788,17 @@ pub async fn settle(state: &Shared, task_id: &str) {
             return;
         }
     };
-    match thread.as_ref().map(|t| t.status) {
-        Some(ThreadStatus::Running) => return,
+    if thread.as_ref().is_some_and(|t| t.status == ThreadStatus::Running) {
+        return;
+    }
+    let (latest, result) = match &thread {
+        Some(_) => last_turn(backend, task_id).await,
+        None => (None, None),
+    };
+    match completed {
+        Some(t) if latest.as_deref() != Some(t) => return,
         // A question or plan open in a turn that's still running.
-        Some(ThreadStatus::Waiting) if in_turn(backend, task_id).await => return,
+        None if thread.as_ref().is_some_and(|t| t.status == ThreadStatus::Waiting) && latest.is_some() && result.is_none() => return,
         _ => {}
     }
     let run_id = state.runs.lock().unwrap().get(task_id).map(|h| h.run_id.clone());
@@ -712,36 +809,46 @@ pub async fn settle(state: &Shared, task_id: &str) {
         Ok(None) => return crate::agent::runner::finish(state, &run_id, crate::agent::runner::Outcome::Cancelled),
         _ => return,
     };
-    // Still being prepared: `launch` settles it once it's started.
-    if run.status == "preparing" {
+    // Still being prepared, and no turn of its seen to end: its turn hasn't started.
+    if run.status == "preparing" && completed.is_none() {
         return;
     }
     if !ENDING.lock().unwrap().insert(run.id.clone()) {
         return;
     }
-    let outcome = if run.stop_requested {
-        crate::agent::runner::Outcome::Cancelled
-    } else if let Some(e) = run.result_error.clone() {
-        crate::agent::runner::Outcome::Failed(e)
-    } else if let Some(e) = thread.as_ref().filter(|t| t.status == ThreadStatus::Error).and_then(|t| t.error.clone()) {
-        crate::agent::runner::Outcome::Failed(e)
-    } else if thread.is_none() {
-        crate::agent::runner::Outcome::Failed("The task's thread is gone".into())
-    } else if !run.saw_result {
-        crate::agent::runner::Outcome::Failed("The agent stopped before it ended its turn".into())
-    } else {
-        crate::agent::runner::Outcome::Ok
+    use crate::agent::runner::Outcome;
+    let outcome = match (&thread, &result) {
+        _ if run.stop_requested => Outcome::Cancelled,
+        (None, _) => Outcome::Failed("The task's thread is gone".into()),
+        (_, Some(r)) if r.ok => Outcome::Ok,
+        (_, Some(r)) if r.interrupted => Outcome::Cancelled,
+        (_, Some(r)) => Outcome::Failed(r.error.clone().unwrap_or_else(|| "The turn failed.".into())),
+        (Some(t), None) if t.status == ThreadStatus::Error => Outcome::Failed(t.error.clone().unwrap_or_else(|| "The turn failed.".into())),
+        (Some(_), None) => Outcome::Failed("The agent stopped before it ended its turn".into()),
     };
     crate::agent::runner::finish(state, &run.id, outcome);
     ENDING.lock().unwrap().remove(&run.id);
 }
 
-/// Whether a turn is running on the thread: its latest item in a turn has no turn_result for that turn.
-async fn in_turn(backend: &AgentThreads, thread_id: &str) -> bool {
-    let Ok(snapshot) = backend.snapshot_window(thread_id, 50).await else { return false };
-    let items: Vec<Value> = snapshot.items.iter().filter_map(|i| serde_json::to_value(i).ok()).filter(|i| i["parent_id"].is_null()).collect();
-    let Some(turn) = items.iter().rev().find_map(|i| i["turn_id"].as_str()) else { return false };
-    !items.iter().any(|i| i["type"] == "turn_result" && i["turn_id"] == turn)
+/// The thread's latest turn (of its main conversation), and its result if it has ended.
+async fn last_turn(backend: &AgentThreads, thread_id: &str) -> (Option<String>, Option<agent_threads::protocol::TurnResult>) {
+    let Ok(snapshot) = backend.snapshot_window(thread_id, 50).await else { return (None, None) };
+    let main = |i: &&Item| serde_json::to_value(*i).ok().is_some_and(|v| v["parent_id"].is_null());
+    let turn_of = |i: &Item| serde_json::to_value(i).ok().and_then(|v| v["turn_id"].as_str().map(String::from));
+    let Some(latest) = snapshot.items.iter().rev().filter(main).find_map(turn_of) else { return (None, None) };
+    let result = snapshot.items.iter().rev().find_map(|i| match i {
+        Item::TurnResult(r) if r.parent_id.is_none() && r.turn_id.as_deref() == Some(latest.as_str()) => Some(r.clone()),
+        _ => None,
+    });
+    (Some(latest), result)
+}
+
+/// The turn running on the thread now, if one is.
+async fn running_turn(backend: &AgentThreads, thread_id: &str) -> Option<String> {
+    match last_turn(backend, thread_id).await {
+        (Some(t), None) => Some(t),
+        _ => None,
+    }
 }
 
 // ---------- harness output ----------
