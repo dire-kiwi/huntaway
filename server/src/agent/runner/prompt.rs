@@ -17,6 +17,8 @@ pub(super) struct Told<'a> {
     pub(super) profile: &'a Profile,
     /// Its temp folder (see agent/task_tmp.rs), if it has one.
     pub(super) tmp: Option<&'a str>,
+    /// For the assistant, its memory as its files say now (see assistant::memory::prompt), last.
+    pub(super) memory: &'a str,
 }
 
 /// What a run is told on top of its agent's own system prompt: Claude Code's `--append-system-prompt`, or Codex's
@@ -54,6 +56,7 @@ pub(super) fn instructions(mut s: String, task: &Task, to: &Told) -> String {
     if task.kind != "review" {
         s.push_str(&profiles_note(to.profiles, to.profile));
     }
+    s.push_str(to.memory);
     s
 }
 
@@ -141,7 +144,7 @@ pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> A
     let account = github_account(Some(project), &profile);
     let base = system_prompt(&task, Some(project), None, &[], &documents, github.as_ref(), gh_tools);
     let tmp = path_str(&crate::agent::task_tmp::dir(state, &task));
-    let to = Told { codex, plan: permission_mode == "plan", gh_tools, github_account: account.as_deref(), profiles: &profiles, profile: &profile, tmp: Some(&tmp) };
+    let to = Told { codex, plan: permission_mode == "plan", gh_tools, github_account: account.as_deref(), profiles: &profiles, profile: &profile, tmp: Some(&tmp), memory: "" };
     Ok((instructions(base, &task, &to), codex, permission_mode))
 }
 
@@ -275,7 +278,8 @@ pub(super) fn system_prompt(
                  you help the user with whatever they ask, such as answering questions, looking things up, keeping track \
                  of things, and planning and following their work across the board.\n\n\
                  Your working directory is your own workspace folder ({dir} in the board's data dir), which lasts \
-                 between conversations. Keep notes there that you'll want later.\n\n\
+                 between conversations. Your memory is kept in files there (see below), and you can keep other notes \
+                 there too.\n\n\
                  You can use the skills and MCP servers set up for this profile (beyond any project), and the board's tools.\n\n\
                  {tools}\n\n\
                  Hand code work to project tasks rather than doing it yourself: find the project with `list_projects`, \

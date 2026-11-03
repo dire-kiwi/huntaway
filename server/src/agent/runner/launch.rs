@@ -130,6 +130,8 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
 
     let config = db::task_claude_config(&state.db(), &task)?;
     let codex = config.as_ref().is_some_and(|c| c.is_codex());
+    // The assistant's memory files, loaded here rather than by the agent so Claude and Codex both get them.
+    let memory = crate::agent::assistant::memory::for_run(state, &task).await;
     if codex {
         // Claude's models don't run on Codex; a thread's own pick is used as given.
         let inherited = [project.as_ref().and_then(|p| p.model.clone()), profile.default_model.clone(), db::get_setting(&state.db(), "default_model")?];
@@ -156,6 +158,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             profiles: &profiles,
             profile: &profile,
             tmp: tmp.as_deref(),
+            memory: &memory,
         };
         let mut instructions = instructions(base, &task, &to);
         let own_gh = tools.mcp_servers.contains_key(crate::mcp::gh_mcp::SERVER_NAME);
@@ -243,6 +246,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         profiles: &profiles,
         profile: &profile,
         tmp: tmp.as_deref(),
+        memory: &memory,
     };
     push("--append-system-prompt", &instructions(base, &task, &to));
     push("--permission-mode", &permission_mode);
