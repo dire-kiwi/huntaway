@@ -101,7 +101,14 @@ fn queued_routine_runs(c: &Connection, task_id: &str) -> Result<Vec<String>> {
 }
 
 /// The automation runs left on a thread with no text (see `queue`), taken by the run that starts.
+/// None while a message is queued: the runs are its, for the run that takes it in (an automatic
+/// prompt, such as a review's fixes, starts without it).
 pub fn take_parked_runs(c: &Connection, task_id: &str) -> Result<Vec<String>> {
+    let Some(task) = get_task(c, task_id)? else { return Ok(Vec::new()) };
+    if task.queued_message.is_some_and(|q| !q.trim().is_empty()) {
+        return Ok(Vec::new());
+    }
+
     let runs = queued_routine_runs(c, task_id)?;
     if !runs.is_empty() {
         c.execute("UPDATE tasks SET queued_routine_runs=NULL WHERE id=?1", [task_id])?;

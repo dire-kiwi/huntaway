@@ -360,7 +360,7 @@ impl Run {
         })
     }
 
-    fn new(automation_id: &str, source: &str, status: &str, now: DateTime<Utc>) -> Self {
+    pub(crate) fn new(automation_id: &str, source: &str, status: &str, now: DateTime<Utc>) -> Self {
         Self {
             id: new_id(),
             automation_id: automation_id.into(),
@@ -414,7 +414,7 @@ pub fn list_routines(c: &Connection, profile_id: &str) -> rusqlite::Result<Vec<A
     st.query_map([profile_id], Automation::from_row)?.collect()
 }
 
-fn insert_run(c: &Connection, r: &Run) -> rusqlite::Result<()> {
+pub(crate) fn insert_run(c: &Connection, r: &Run) -> rusqlite::Result<()> {
     c.execute(
         "INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at,outcome,cost_usd)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",

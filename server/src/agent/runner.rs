@@ -111,8 +111,8 @@ fn start_run(
             None => message,
         };
         // An automation's start of a task it made, held back (for a usage limit, say), left its run
-        // for this one (see db::queue).
-        if taken.is_none() && kind == "prompt" {
+        // for the task's first run (see db::queue).
+        if taken.is_none() && kind == "prompt" && task.session_id.is_none() {
             message.routine_runs.extend(db::take_parked_runs(&tx, task_id)?);
         }
         let run = db::insert_run(&tx, task_id, kind)?;

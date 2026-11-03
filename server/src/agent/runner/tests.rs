@@ -2360,9 +2360,43 @@ fn automation_runs_left_with_no_text_go_to_the_next_run() {
     assert_eq!(db::get_task(&c, &task.id).unwrap().unwrap().queued_message, None);
     assert_eq!(db::take_queued(&c, &task.id).unwrap(), None);
     db::queue(&c, &task.id, db::Queued::new("Hello", false)).unwrap();
+    // While a message is queued, they're its, not for a run that starts without it.
+    assert!(db::take_parked_runs(&c, &task.id).unwrap().is_empty());
     assert_eq!(db::take_queued(&c, &task.id).unwrap().unwrap().routine_runs, ["a"]);
     assert!(db::take_parked_runs(&c, &task.id).unwrap().is_empty());
     db::queue(&c, &task.id, db::Queued { routine_runs: vec!["b".into()], ..db::Queued::new(" ", true) }).unwrap();
     assert_eq!(db::take_parked_runs(&c, &task.id).unwrap(), ["b"]);
     assert!(db::take_parked_runs(&c, &task.id).unwrap().is_empty());
+}
+
+// HA-161 review: an automatic prompt (a review's fixes, say) that started while an automation's
+// message was queued took that message's automation run with it, leaving the message, so the
+// wrong run was charged, and the one that took the message in later wasn't.
+#[test]
+fn an_automatic_prompt_leaves_a_queued_automation_message_its_run() {
+    crate::testing::run(async || {
+        let (state, task, run, a) = project_task_running_with_an_automation(json!({"kind": "send_to_task"}));
+        // The task's agent isn't running: the automation's message waits in its queue (as it would
+        // for its dependencies).
+        finish(&state, &run.id, Outcome::Ok);
+        let r = crate::integrations::automations::Run::new(&a.id, "schedule", "ok", chrono::Utc::now());
+        crate::integrations::automations::insert_run(&state.db(), &r).unwrap();
+        db::queue(&state.db(), &task.id, db::Queued { routine_runs: vec![r.id.clone()], ..db::Queued::new("From the automation", true) }).unwrap();
+        runs::TEST_CAN_RUN.set(true);
+        send_fixes(&state, &task.id, "Fix these", 1).unwrap();
+        let fixes = state.runs.lock().unwrap().get(&task.id).map(|h| h.run_id.clone()).expect("the fixes run");
+        assert_eq!(charged_to(&state, &r.id), (None, None));
+        assert_eq!(reload(&state, &task.id).queued_message.as_deref(), Some("From the automation"));
+        // The run that takes the message in, once the fixes run ends, is charged.
+        for _ in 0..200 {
+            if charged_to(&state, &r.id).0.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        runs::TEST_CAN_RUN.set(false);
+        let charged = charged_to(&state, &r.id).0.expect("charged to the run that took its message in");
+        assert_ne!(charged, fixes);
+        assert!(reload(&state, &task.id).queued_message.is_none());
+    });
 }
