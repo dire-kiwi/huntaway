@@ -94,7 +94,7 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
               <div className="px-3 py-1 text-[11px] font-medium tracking-wide text-faint uppercase">{TITLES[g.kind]}</div>
               {g.files.map((f) => {
                 const loaded = LOADED.has(f.kind) || loadedLogs.has(f.path);
-                const over = loaded && (f.chars ?? 0) > overview.cap;
+                const over = loaded && ((f.chars ?? 0) > overview.cap || (overview.cap_bytes !== undefined && f.size > overview.cap_bytes));
                 return (
                   <button
                     key={f.path}
@@ -117,7 +117,8 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
           ))}
         </div>
         <p className="border-t border-line px-3 py-2 text-[11px] leading-snug text-faint narrow:hidden">
-          Highlighted files go into every run, up to {n(overview.cap)} characters each. The assistant keeps them up to date; you can edit them too.
+          Highlighted files go into every run, up to {n(overview.cap)} characters
+          {overview.cap_bytes !== undefined && ` (${n(Math.floor(overview.cap_bytes / 1024))} KB)`} each. The assistant keeps them up to date; you can edit them too.
         </p>
       </aside>
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -127,6 +128,7 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
           path={path}
           file={file}
           cap={LOADED.has(file?.kind ?? "other") || loadedLogs.has(path) ? overview.cap : undefined}
+          capBytes={overview.cap_bytes}
           history={overview.history}
           onSaved={load}
         />
@@ -159,6 +161,7 @@ function FileEditor({
   path,
   file,
   cap,
+  capBytes,
   history,
   onSaved,
 }: {
@@ -167,6 +170,8 @@ function FileEditor({
   file: MemoryFile | undefined;
   /** How much of it a run is told, if it's loaded. */
   cap?: number;
+  /** And in bytes, if the host says. */
+  capBytes?: number;
   history: boolean;
   onSaved: () => void;
 }) {
@@ -244,7 +249,8 @@ function FileEditor({
       written = (await api.writeMemoryFile(task.host_id, task.profile_id, path, content, base, force)).content;
       saved(key, written);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) conflicts.add(key);
+      // A forced save refused too (a file the history leaves out, changed since it was opened) says why.
+      if (e instanceof ApiError && e.status === 409 && !force) conflicts.add(key);
       else setError((e as Error).message);
     } finally {
       saving.delete(key);
@@ -282,13 +288,17 @@ function FileEditor({
   }, [viewing]);
 
   const chars = [...content].length;
+  // Past the cap in bytes (as text in a script of 3 or 4 bytes a character can be) before the one in characters.
+  const bytes = capBytes !== undefined && content.length > capBytes / 4 ? new TextEncoder().encode(content).length : 0;
+  const over = cap !== undefined && (chars > cap || (capBytes !== undefined && bytes > capBytes));
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
         <span className="font-mono text-[13px] text-fg">{path}</span>
         {cap !== undefined && (
-          <span className={clsx("text-[11px] tabular-nums", chars > cap ? "text-amber-300" : "text-faint")} title="How much of it the assistant is told at the start of each run">
-            {n(chars)} / {n(cap)} characters{chars > cap && (path.startsWith("memory/") ? ": only the end is loaded" : ": the rest isn't loaded")}
+          <span className={clsx("text-[11px] tabular-nums", over ? "text-amber-300" : "text-faint")} title="How much of it the assistant is told at the start of each run">
+            {n(chars)} / {n(cap)} characters{chars <= cap && over && ` (over ${n(Math.floor(capBytes! / 1024))} KB)`}
+            {over && (path.startsWith("memory/") ? ": only the end is loaded" : ": the rest isn't loaded")}
           </span>
         )}
         <div className="ml-auto flex items-center gap-1.5">
