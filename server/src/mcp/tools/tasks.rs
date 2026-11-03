@@ -110,6 +110,9 @@ pub(super) fn summarize(s: &Shared, t: &Task) -> Value {
     if t.is_scratch() {
         v["type"] = json!(db::SCRATCH);
     }
+    if t.is_assistant() {
+        v["type"] = json!(db::ASSISTANT);
+    }
     if let Some(sp) = t.parent_id.as_deref().filter(|_| t.kind == "task").and_then(|id| db::get_task(&s.db(), id).ok().flatten()) {
         v["subproject"] = json!(format!("{}-{}", project_key(s, &sp), sp.number));
     }

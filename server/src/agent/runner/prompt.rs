@@ -148,13 +148,14 @@ pub async fn preview(state: &Shared, project: &Project, o: &PreviewOptions) -> A
 /// The key a group task's number goes with, in place of a project's key.
 pub const GROUP_TASK_KEY: &str = "G";
 
-/// What goes before a task's number in its key: its project's key, for a group task `G`, or
-/// for a scratch task `S`.
+/// What goes before a task's number in its key: its project's key, for a group task `G`, for a
+/// scratch task `S`, or for a profile's assistant `A`.
 pub fn key_prefix<'a>(task: &Task, project: Option<&'a Project>) -> &'a str {
     match project {
         Some(p) => &p.key,
         None if task.group_name.is_some() => GROUP_TASK_KEY,
         None if task.is_scratch() => db::SCRATCH_TASK_KEY,
+        None if task.is_assistant() => db::ASSISTANT_TASK_KEY,
         None => "T",
     }
 }
@@ -166,6 +167,10 @@ pub fn key_prefix<'a>(task: &Task, project: Option<&'a Project>) -> &'a str {
 pub(super) fn start_prompt(task: &Task, project: Option<&Project>, text: &str) -> String {
     let key = key_prefix(task, project);
     let text = text.trim();
+    // The assistant is a conversation, not a task to start on: its first prompt is the user's message.
+    if task.is_assistant() {
+        return text.to_string();
+    }
     let mut p = String::new();
     if is_slash_command(text) {
         p.push_str(&format!("{text}\n\n"));
@@ -261,6 +266,28 @@ pub(super) fn system_prompt(
          - While they work, wait for them with `wait` (listing them in `tasks`) rather than ending your turn.\n\
          - Run tasks that build on each other one after the other, and independent ones in parallel.";
     let mut s = match (task.kind.as_str(), project) {
+        ("task", _) if task.is_assistant() => {
+            let dir = task.work_dir.as_deref().unwrap_or("its own folder");
+            format!(
+                "You are the personal assistant of this Huntaway profile: one long-lasting conversation with the user, \
+                 thread A-{} (id {}) on the Huntaway board, which is a kanban board where each task is worked by its own \
+                 Claude agent, grouped into projects. You aren't a coding agent and you aren't in a project or a repository: \
+                 you help the user with whatever they ask, such as answering questions, looking things up, keeping track \
+                 of things, and planning and following their work across the board.\n\n\
+                 Your working directory is your own workspace folder ({dir} in the board's data dir), which lasts \
+                 between conversations. Keep notes there that you'll want later.\n\n\
+                 You can use the skills and MCP servers set up for this profile (beyond any project), and the board's tools.\n\n\
+                 {tools}\n\n\
+                 Hand code work to project tasks rather than doing it yourself: find the project with `list_projects`, \
+                 then `create_task` there (with start=true to start its agent, when the user wants that), and follow it \
+                 with `get_task` or `wait`. Don't change repositories, commit, push or open pull requests yourself. Tasks \
+                 you create are recorded as yours.\n\n\
+                 If you need a decision or information from the user before you can go on, call `request_user_input` \
+                 with your question (and its `options`, when the choices are known), then end your turn. Otherwise just \
+                 reply: this thread stays open and never goes to review or merge, so don't move it to another status.",
+                task.number, task.id
+            )
+        }
         ("task", p) if task.is_scratch() => {
             // One from a scratch chat works in the chat's folder, which may be shared.
             let dir = match &task.work_dir {

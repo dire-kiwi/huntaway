@@ -779,12 +779,22 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              PRAGMA user_version=76; COMMIT;",
         )?;
     }
+    if version < 77 {
+        // Each profile's assistant (see Task::is_assistant): one at most, keyed A-<n>, so a project
+        // with the key A moves to a free one.
+        conn.execute_batch("BEGIN;")?;
+        free_task_key(&conn, ASSISTANT_TASK_KEY, "AP")?;
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_assistant ON tasks(profile_id) WHERE task_type='assistant';
+             PRAGMA user_version=77; COMMIT;",
+        )?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 76;
+pub const VERSION: i64 = 77;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

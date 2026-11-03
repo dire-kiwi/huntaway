@@ -3,6 +3,8 @@ import { useSyncExternalStore } from "react";
 export type Route =
   | { name: "home" }
   | { name: "profile"; profile: string }
+  /** The profile's assistant (API 97), full width. */
+  | { name: "assistant"; profile: string }
   | { name: "board"; projectId: string }
   | { name: "group"; hostId: string; group: string }
   /** `tab` is the section of the settings open, the first one when it's missing. */
@@ -27,6 +29,9 @@ export function parse(path: string): Route {
   switch (parts[0]) {
     case "profile":
       if (parts[1]) return { name: "profile", profile: decode(parts[1]) };
+      break;
+    case "assistant":
+      if (parts[1]) return { name: "assistant", profile: decode(parts[1]) };
       break;
     case "settings":
       return { name: "settings" };
@@ -56,6 +61,8 @@ export function href(r: Route): string {
       return "/";
     case "profile":
       return `/profile/${encodeURIComponent(r.profile)}`;
+    case "assistant":
+      return `/assistant/${encodeURIComponent(r.profile)}`;
     case "settings":
       return "/settings";
     case "analytics":

@@ -401,6 +401,8 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         (Outcome::Ok, None) if task.merging => (Some("needs_attention"), Some("The agent finished without marking the task merged".into())),
         // It stepped out of the merge queue to make changes, and now rejoins it.
         (Outcome::Ok, None) if task.remerge => (Some("ready_for_merge"), None),
+        // The assistant never goes to review: it waits for the user's next message.
+        (Outcome::Ok, None) if task.is_assistant() => (Some("todo"), None),
         (Outcome::Ok, None) => (Some("in_review"), None),
     };
     // The queued message carries on the conversation, so the task stays where it is. Out of

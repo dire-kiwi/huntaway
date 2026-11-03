@@ -241,7 +241,8 @@ fn board_tools() -> Value {
                 "project_id": {"type": "string", "description": project_ref},
                 "profile": profile,
                 "status": {"type": "string", "enum": status_enum},
-                "subproject": {"type": "string", "description": "Only the tasks of this subproject (task id or key), 'none' for top-level tasks only, or 'all'"}
+                "subproject": {"type": "string", "description": "Only the tasks of this subproject (task id or key), 'none' for top-level tasks only, or 'all'"},
+                "include_assistant": {"type": "boolean", "description": "Also list your profile's assistant (key A-<n>), which is left out otherwise"}
             }}
         },
         {

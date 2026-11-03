@@ -4,6 +4,8 @@ use super::*;
 
 /// The key scratch tasks' numbers go with (see Task::is_scratch), which no project can have.
 pub const SCRATCH_TASK_KEY: &str = "S";
+/// The key a profile's assistant's number goes with (see Task::is_assistant), which no project can have.
+pub const ASSISTANT_TASK_KEY: &str = "A";
 
 /// Gives each project with the key G (which group tasks' keys use, see
 /// runner::GROUP_TASK_KEY) the first of GP, GP2, GP3, … free in its profile.
@@ -222,6 +224,12 @@ impl Task {
         self.kind == "task" && self.task_type.as_deref() == Some(SCRATCH)
     }
 
+    /// A profile's assistant: its one long-lived thread in no project (see assistant.rs), which
+    /// works in a folder of its own and never goes to review or merge.
+    pub fn is_assistant(&self) -> bool {
+        self.kind == "task" && self.task_type.as_deref() == Some(ASSISTANT)
+    }
+
     /// The column a task sits in while its agent works.
     pub fn working_status(&self) -> &'static str {
         if self.merging { "ready_for_merge" } else { "in_progress" }
@@ -337,9 +345,12 @@ pub fn project_threads(c: &Connection, project_id: &str) -> Result<Vec<Task>> {
 }
 
 /// A profile's group tasks (see Task::group_name), including any whose group is gone.
-pub fn list_group_tasks(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
-    let mut st = c.prepare("SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' ORDER BY position")?;
-    let rows = st.query_map([profile_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+/// With `assistant`, the profile's assistant too, which is off the board (the sidebar opens it).
+pub fn list_group_tasks(c: &Connection, profile_id: &str, assistant: bool) -> Result<Vec<Task>> {
+    let mut st = c.prepare(
+        "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY position",
+    )?;
+    let rows = st.query_map(params![profile_id, assistant], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 
@@ -385,6 +396,34 @@ pub fn insert_scratch_task(c: &Connection, mut t: NewTask) -> Result<Task> {
         params![task.id, SCRATCH, task.profile_id],
     )?;
     Ok(get_task(c, &task.id)?.unwrap())
+}
+
+/// A profile's assistant, if it has one (see Task::is_assistant).
+pub fn assistant_task(c: &Connection, profile_id: &str) -> Result<Option<Task>> {
+    Ok(c.query_row("SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND task_type=?2", params![profile_id, ASSISTANT], Task::from_row).optional()?)
+}
+
+/// A profile's assistant by number (its key is `A-<n>`).
+pub fn assistant_task_by_number(c: &Connection, profile_id: &str, number: i64) -> Result<Option<Task>> {
+    Ok(assistant_task(c, profile_id)?.filter(|t| t.number == number))
+}
+
+/// Adds a profile's assistant, keyed `A-<n>` and working in `work_dir(<its id>)` (relative to the
+/// data dir, see documents::work_dir). A profile has one at most (the index tasks_one_assistant), so
+/// this fails if it has one; assistant::get_or_create checks first.
+pub fn insert_assistant_task(c: &Connection, mut t: NewTask, work_dir: impl Fn(&str) -> String) -> Result<Task> {
+    t.project_id = None;
+    t.kind = "task";
+    let tx = c.unchecked_transaction()?;
+    let task = insert_task(&tx, t)?;
+    tx.execute(
+        "UPDATE tasks SET task_type=?2, work_dir=?4, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
+           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type=?2) WHERE id=?1",
+        params![task.id, ASSISTANT, task.profile_id, work_dir(&task.id)],
+    )?;
+    let task = get_task(&tx, &task.id)?.unwrap();
+    tx.commit()?;
+    Ok(task)
 }
 
 /// Scratch tasks working in `dir`, which were scratch chats there (see Task::work_dir).
@@ -438,11 +477,12 @@ pub fn list_all_tasks(c: &Connection) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
-pub fn list_tasks_for_profile(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
+/// A profile's tasks, and with `assistant` its assistant (see Task::is_assistant), which is off the board.
+pub fn list_tasks_for_profile(c: &Connection, profile_id: &str, assistant: bool) -> Result<Vec<Task>> {
     let mut st = c.prepare(
-        "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' ORDER BY project_id, position",
+        "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY project_id, position",
     )?;
-    let rows = st.query_map([profile_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    let rows = st.query_map(params![profile_id, assistant], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 

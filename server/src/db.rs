@@ -57,6 +57,9 @@ pub const TASK_TYPES: &[&str] = &[SCRATCH];
 pub const LABELS: &[&str] = &["plan", "artifact", "diagram"];
 /// The task type of a scratch task.
 pub const SCRATCH: &str = "scratch";
+/// The task type of a profile's assistant (see Task::is_assistant). Not one of TASK_TYPES: it's
+/// made by the board, one per profile (see assistant.rs), not asked for as a new task's type.
+pub const ASSISTANT: &str = "assistant";
 /// What a new task's type can also be, to make it a subproject (API 51). It's kept as
 /// Task::subproject rather than in `task_type`, which is for tasks with no worktree.
 pub const SUBPROJECT: &str = "subproject";
