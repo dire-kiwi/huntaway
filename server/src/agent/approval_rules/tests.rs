@@ -162,6 +162,8 @@ fn inputs_are_summed_up_in_a_line() {
     let long = summarize(&json!({"body": "x".repeat(500)}));
     assert_eq!(long, format!("body: {}…", "x".repeat(80)));
     assert_eq!(summarize(&Value::Null), "");
+    // A Codex prompt's: the arguments, not its question.
+    assert_eq!(summarize(&json!({"message": "Allow the google MCP server to run tool \"send\"?", "arguments": {"to": "bob"}})), "to: bob");
 }
 
 #[test]

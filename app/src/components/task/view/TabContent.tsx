@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { isAssistant, ownWorkDir, type DocumentType, type Project, type Task } from "../../../api";
+import { ActionLog } from "../ActionLog";
 import { DocumentView } from "../Document";
 import { ChangeSummaryView, ReviewSummary } from "../Review";
 import { Thread } from "../Thread";
@@ -69,6 +70,8 @@ export function TabContent({
         <ChangeSummaryView task={task} />
       </div>
     </div>
+  ) : shown === "actions" ? (
+    <ActionLog task={task} />
   ) : shown === "details" ? (
     <Details key={task.id} task={task} mode={mode} className="h-full overflow-y-auto" />
   ) : null;

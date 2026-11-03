@@ -114,7 +114,7 @@ fn host_routes() -> Router<Shared> {
         // Scratch chats, of which there are none since they became scratch tasks (for older boards).
         .route("/profiles/{id}/scratch", get(list_profile_scratch))
         .route("/profiles/{id}/assistant", get(get_assistant).post(send_to_assistant))
-        .route("/profiles/{id}/approval-rules", get(get_approval_rules).put(set_approval_rules))
+        .route("/profiles/{id}/approval-rules", get(get_approval_rules).post(set_approval_rules))
         .route("/profiles/{id}/approval-log", get(approval_log))
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))

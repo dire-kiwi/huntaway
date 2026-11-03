@@ -444,8 +444,12 @@ pub const MAX_LISTED: i64 = 500;
 /// How many entries a profile keeps: older ones go.
 const KEEP: i64 = 5000;
 
-/// A tool input in a line: its fields and values, each cut short.
+/// A tool input in a line: its fields and values, each cut short. Codex's prompts for an MCP tool
+/// (see codex/adapter.rs) give the tool's arguments beside its question, and only those are shown.
 pub fn summarize(input: &Value) -> String {
+    if let (Some(args), Some(_)) = (input.get("arguments").filter(|a| a.is_object()), input.get("message")) {
+        return summarize(args);
+    }
     let cut = |s: &str, n: usize| {
         let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
         if one.chars().count() > n { format!("{}…", one.chars().take(n).collect::<String>()) } else { one }

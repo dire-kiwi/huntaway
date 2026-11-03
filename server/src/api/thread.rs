@@ -96,7 +96,7 @@ pub(super) struct RulesBody {
     reset: bool,
 }
 
-/// `PUT /profiles/{id}/approval-rules` (API 98) with `{rules, expiry_minutes}` (either may be left
+/// `POST /profiles/{id}/approval-rules` (API 98) with `{rules, expiry_minutes}` (either may be left
 /// out, keeping it as it is), or `{reset: true}` for the defaults. They hold from the next run on.
 pub(super) async fn set_approval_rules(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<RulesBody>) -> ApiResult<Json<Value>> {
     let c = s.db();

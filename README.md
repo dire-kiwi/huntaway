@@ -219,6 +219,40 @@ merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and th
 lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
 whatever access their profile has.
 
+**Approval rules** (API 98) say what the assistant may do outside the board (*allow*), asks you
+first each time (*ask*) or never does (*never*), whatever its thread's permission mode. Edit them
+under *Rules* in its details, or with `GET`/`POST /api/profiles/<id>/approval-rules` (`{"rules":
+[{"tool", "decision"}], "expiry_minutes"}`, or `{"reset": true}`). A rule names a tool
+(`mcp__google__send_gmail_message`, `Bash`), an MCP server for all its tools (`mcp__google`), or a
+pattern with `*` (`mcp__google__*delete*`), without regard to case; when several match, never beats
+ask and ask beats allow. They hold for the assistant and the threads under it, from their next run.
+A profile starts with rules for a Google Workspace MCP server named `google`: reading, searching and
+drafting are allowed; sending mail, making, changing or deleting events, sharing files and changing
+mail's labels ask; deleting or trashing mail and files is never. A switch adds an *ask* on the
+board's `create_task`.
+
+- **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`) that allows, asks or denies the
+  calls a rule matches. Its *ask* goes to the board's permission prompt in every mode, Bypass
+  included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool
+  too; in *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are
+  left out of the run (`--disallowedTools`).
+- **Codex** can't hold an *ask* with a hook (its PreToolUse `ask` fails open, checked with Codex
+  0.166), so an MCP server a rule may match asks the board about each of its calls
+  (`default_tools_approval_mode = "prompt"`), and the board answers by the rules. In *Auto* its own
+  reviewer would answer, so the assistant's Codex runs in Auto have you answer instead, as in *Ask*.
+  In *Bypass* and *Don't ask* Codex can't ask at all: what a rule asks about is refused, as is a tool
+  only a pattern allows.
+- **The board's own tools** are held by the board as it runs them, for both.
+
+A prompt raised by a **routine run** (one an automation started, with nobody there: its message is
+marked `routine`) is denied if nobody answers it within the profile's expiry (30 minutes by
+default; `expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts
+raised before this, and ones the user's own turns raise, wait as they always did. Each call a
+rule asked about or blocked goes in the assistant's **Actions** tab (`GET
+/api/profiles/<id>/approval-log`): what it was called with, the rule, how it ended (allowed,
+denied, expired or blocked) and who answered (you on the board, a notification, nobody in time,
+the mode, the rule, or its run ending first).
+
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
@@ -400,7 +434,8 @@ the notification's place (`result` is `allowed` or `denied`, or `answered`, `exp
 token and keeps only its hash (`push_answer_tokens`), so that's where it's checked; a prompt on a
 linked host is then answered through the link, as the UI's `/api/h/<host>/permissions/{id}` is.
 The first answer settles it: a token stops working once its prompt has been answered (from a
-notification, the board or anywhere else) or has expired with its run. If the host is offline the
+notification, the board or anywhere else) or has expired with its run, or at its `expires_at` (a
+routine run's, see the assistant's approval rules) even if the hub hasn't heard yet. If the host is offline the
 token still works later, and the notification keeps its buttons.
 
 ### Desktop config
