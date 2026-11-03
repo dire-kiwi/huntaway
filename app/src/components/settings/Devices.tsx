@@ -140,7 +140,7 @@ export function DevicesPanel() {
               <div className="flex flex-wrap items-start gap-4">
                 <QrSvg text={link} />
                 <div className="min-w-0 flex-1 space-y-2">
-                  <p className="text-fg">Scan it with the Huntaway app (Add board → Scan).</p>
+                  <p className="text-fg">Scan it in the Huntaway app: Boards → Pair a board.</p>
                   <p>
                     Expires in {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}. Or paste the link into the app:
                   </p>

@@ -14,6 +14,7 @@ server/broker/ huntaway-broker: public connection setup with managed tunnels, or
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 packages/client/ the board's API client, plain TypeScript with no DOM, shared by app/ (which links it, file:) and the
                mobile app: createClient() makes a client for one board, from an adapter for its address and token
+mobile/        the mobile app (Expo, React Native, Expo Router): your paired boards on Android and iOS
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)
@@ -367,6 +368,52 @@ on the board you use (a hub, for several machines). `IA_PUSH_SUBJECT` sets the c
 push services (a `mailto:` or `https:` URL; the default is this project's page). The installed app
 is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, so it always loads
 the board's current UI.
+
+### The mobile app
+
+`mobile/` is an Expo app for Android and iOS (API 96) that follows and drives your tasks on several
+boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
+paired board together, each item labelled with its board (tasks that need attention, permission
+prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
+project's tasks by status and a sheet to add one; and each task's **thread**, with the agent's
+reply streaming in, the composer, photos from the camera or library as attachments, and start,
+stop and move. A **Boards** tab lists the paired boards, picks the profile shown on each, and opens
+a board on the web for what the app leaves out (terminals, diffs and commits, settings,
+analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
+the network changes. A board older than API 96 says so rather than failing.
+
+The phone reaches a board over **HTTPS**: iOS and Android refuse plain HTTP, and the app adds no
+exception. With Tailscale, run `tailscale serve --bg 7878` on the board's machine, as for push
+(see *Push notifications on a phone*). Then pair:
+
+1. On the board, Settings → Network access → **Pair a phone**, and check the address it shows
+   (the host's public address if it has one, else the page's own if that's HTTPS).
+2. In the app, Boards → **Pair a board**, and scan the QR code (or paste the link under it).
+
+The QR code holds `huntaway://pair?url=<board>&code=<code>`: a code that works once, for five
+minutes, never the board's token. `POST /devices/pair` (which needs no token) swaps it and the
+phone's name for a token of the phone's own, which the app keeps in the keychain (Android's
+keystore). The board keeps only its SHA-256, in `device_tokens`, and takes it as it takes
+`auth_token`, on REST, `/ws` and `/api/h/<host>/…`. Settings lists the paired devices, with their
+last use, to rename or revoke; revoking one cuts it off at once, open websockets included, and the
+app then says it was unpaired. A device can't pair others or manage them (`POST
+/devices/pairing`, `PATCH` and `DELETE /devices/{id}` are for the board's own token), but it can
+list them and unpair itself, which removing the board in the app does. A device sees the board as
+its token does: every profile on it, as a browser with the token would.
+
+To run it (Node 22.13 or later):
+
+```sh
+cd mobile && npm ci
+npx expo start --web          # in a browser, to try it against a board (CORS is open)
+npx expo run:android          # a dev build on an emulator or a phone (needs the Android SDK)
+npx eas-cli build --profile development --platform ios   # or android: a dev build from EAS
+npm run typecheck && npm test # what CI's Tests / mobile runs
+```
+
+It uses native modules that Expo Go lacks (the camera's scanner, secure storage), so it runs as a
+dev build (`expo-dev-client`). A dev build lets the app pair with a board on plain HTTP (an
+emulator's `10.0.2.2`, say); release builds won't.
 
 ### Desktop config
 

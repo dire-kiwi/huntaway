@@ -1,0 +1,61 @@
+{
+  "name": "huntaway-mobile",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Huntaway's mobile app: your boards, prompts and threads on Android and iOS",
+  "license": "MIT",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.ts?(x)"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@huntaway/.*|mdast-.*|micromark.*|decode-named-character-reference|character-entities|unist-.*|ccount|escape-string-regexp|markdown-table|longest-streak|zwitch|devlop)"
+    ],
+    "modulePaths": [
+      "<rootDir>/node_modules"
+    ]
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~58.0.16",
+    "@huntaway/client": "file:../packages/client",
+    "expo": "~58.0.22",
+    "expo-camera": "~58.0.14",
+    "expo-clipboard": "~58.0.4",
+    "expo-constants": "~58.0.14",
+    "expo-dev-client": "~58.0.18",
+    "expo-device": "~58.0.5",
+    "expo-image-picker": "~58.0.10",
+    "expo-linking": "~58.0.15",
+    "expo-network": "~58.0.4",
+    "expo-router": "~58.0.29",
+    "expo-secure-store": "~58.0.2",
+    "expo-status-bar": "~58.0.4",
+    "mdast-util-from-markdown": "^2.1.0",
+    "mdast-util-gfm": "^3.1.0",
+    "micromark-extension-gfm": "^3.0.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-screens": "~4.30.1",
+    "react-native-web": "^0.21.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/mdast": "^4.0.4",
+    "@types/react": "~19.3.0",
+    "jest": "^30.5.2",
+    "jest-expo": "^58.0.13",
+    "typescript": "~6.0.3"
+  }
+}
