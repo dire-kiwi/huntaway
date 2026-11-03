@@ -102,7 +102,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             };
             let marks = new_task_marks(args)?;
             let t = api::create_scratch_task_inner(s, &board.id, body)?;
-            Ok(summarize(s, &created(s, ctx, t, &marks)?))
+            let t = created(s, ctx, t, &marks)?;
+            Ok(summarize(s, &new_in_now(s, args, t)))
         }
         "create_task" => {
             let parent = match str_arg("subproject").as_deref() {
@@ -149,7 +150,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             };
             let marks = new_task_marks(args)?;
             let t = api::create_task_inner(s, &project.id, body)?;
-            Ok(summarize(s, &created(s, ctx, t, &marks)?))
+            let t = created(s, ctx, t, &marks)?;
+            Ok(summarize(s, &new_in_now(s, args, t)))
         }
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;

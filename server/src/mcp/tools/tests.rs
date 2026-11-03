@@ -529,7 +529,7 @@ fn puts_tasks_in_now_and_later() {
         let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
         project(&s, &p, "kiwicd", "KIW");
         let me = ctx(&p);
-        let t = call(&s, &me, "create_task", json!({"title": "Soon", "project_id": "KIW"})).await.unwrap();
+        let t = call(&s, &me, "create_task", json!({"title": "Soon", "project_id": "KIW", "now": false})).await.unwrap();
         assert!(t["now"].is_null());
         let t = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": true})).await.unwrap();
         assert_eq!(t["now"].as_bool(), Some(true));
@@ -543,7 +543,7 @@ fn puts_tasks_in_now_and_later() {
 }
 
 #[test]
-fn a_task_an_agent_creates_and_starts_stays_in_later() {
+fn a_task_an_agent_creates_and_starts_is_in_now() {
     testing::run(async || {
         crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = state();
@@ -555,9 +555,28 @@ fn a_task_an_agent_creates_and_starts_stays_in_later() {
         let t = call(&s, &me, "create_task", json!({"title": "Second", "project_id": "KIW", "depends_on": [first["id"]], "start": true})).await.unwrap();
         let t = db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap();
         assert!(t.waiting, "started");
-        assert_eq!(t.now_at, None);
+        assert!(t.now_at.is_some());
         crate::agent::runs::TEST_CAN_RUN.set(false);
     })
+}
+
+#[test]
+fn created_tasks_start_in_now() {
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let now_at = |t: &Value| db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap().now_at;
+        let t = call(&s, &me, "create_task", json!({"title": "Default", "project_id": "KIW"})).await.unwrap();
+        assert!(now_at(&t).is_some());
+        let t = call(&s, &me, "create_task", json!({"title": "Explicit", "project_id": "KIW", "now": true})).await.unwrap();
+        assert!(now_at(&t).is_some());
+        let t = call(&s, &me, "create_task", json!({"title": "Later", "project_id": "KIW", "now": false})).await.unwrap();
+        assert_eq!(now_at(&t), None);
+        let t = call(&s, &me, "create_task", json!({"title": "Scratch", "type": "scratch"})).await.unwrap();
+        assert!(now_at(&t).is_some());
+    });
 }
 
 #[test]
