@@ -395,12 +395,12 @@ fn lists_pending_prompts() {
     add("r3", &a, "{}", "allowed");
 
     let ids = |v: Vec<Value>| v.iter().map(|r| r["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
-    assert_eq!(ids(pending(&s, None).unwrap()), ["r1", "r2"]);
-    let only_a = pending(&s, Some(&a)).unwrap();
+    assert_eq!(ids(pending(&s, None, None).unwrap()), ["r1", "r2"]);
+    let only_a = pending(&s, Some(&a), None).unwrap();
     assert_eq!(ids(only_a.clone()), ["r1"]);
     assert_eq!(only_a[0]["input"]["command"], "ls");
     assert_eq!(only_a[0]["task_id"], a.as_str());
-    assert_eq!(pending(&s, Some(&b)).unwrap()[0]["input"], "not json");
+    assert_eq!(pending(&s, Some(&b), None).unwrap()[0]["input"], "not json");
 }
 
 // ---------- approval rules and expiry ----------
@@ -550,7 +550,7 @@ fn only_routine_runs_prompts_expire_and_only_if_the_profile_says_so() {
             assert_eq!(s.db().query_row("SELECT expires_at FROM permission_requests WHERE id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
         }
         assert_eq!(expire_due(&s, chrono::Utc::now() + chrono::Duration::days(365)), 0);
-        assert_eq!(pending(&s, Some(&task.id)).unwrap().len(), 3);
+        assert_eq!(pending(&s, Some(&task.id), None).unwrap().len(), 3);
     });
 }
 

@@ -15,9 +15,11 @@ pub const PROTOCOL: u32 = 1;
 /// `Up::ToolCall`, and `hub_hello`/`hub_call` on `/api/host/ws`, see hosts/uplink.rs). A host passes calls
 /// only to a hub that said hello, which older hubs don't, and older hosts ignore the hello.
 /// API 99: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
-/// API 100: the assistant's approval rules and action log (`/profiles/{id}/approval-rules` and `/approval-log`,
+/// API 100: paired devices (devices.rs): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
+/// `GET /permissions?profile_id=`.
+/// API 101: the assistant's approval rules and action log (`/profiles/{id}/approval-rules` and `/approval-log`,
 /// see agent/approval_rules.rs), prompts' `expires_at` and `rule`, and `via` on a prompt's answer.
-pub const API_VERSION: u32 = 100;
+pub const API_VERSION: u32 = 101;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.

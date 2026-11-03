@@ -135,7 +135,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
           <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")} className="narrow:px-4">
             <Check size={13} /> Allow
           </Button>
-          {/* What an approval rule asks about is asked each time (API 100). */}
+          {/* What an approval rule asks about is asked each time (API 101). */}
           {!data.rule && (
             <Button size="sm" disabled={busy} onClick={() => decide("allow_always")} className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal">
               Always allow {data.tool_name} for this thread
@@ -151,7 +151,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
   );
 });
 
-/** Why a prompt asks (an approval rule, API 100), and when one from a routine run is denied if nobody answers it. */
+/** Why a prompt asks (an approval rule, API 101), and when one from a routine run is denied if nobody answers it. */
 function PromptRule({ data, pending }: { data: Any; pending: boolean }) {
   const expires = typeof data.expires_at === "string" ? new Date(data.expires_at) : null;
   if (!data.rule && !expires) return null;

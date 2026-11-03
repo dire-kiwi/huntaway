@@ -847,7 +847,7 @@ fn agents_delete_tasks_only_once_the_user_confirms() {
         let asked = async {
             let a = approval_asked(&s).await;
             assert!(permissions::pending_approvals(&s, false, false).unwrap().is_empty());
-            assert_eq!(permissions::pending(&s, Some(&caller.id)).unwrap().len(), 1);
+            assert_eq!(permissions::pending(&s, Some(&caller.id), None).unwrap().len(), 1);
             answer_approval(&s, true).await;
             a
         };
@@ -2416,7 +2416,7 @@ fn the_assistants_rules_can_make_creating_a_task_ask_first_whatever_its_mode() {
         let (s2, call) = (s.clone(), mcp("c1", "create_task", json!({"project_id": "kiwicd", "title": "Book flights"})));
         let denied = tokio::spawn(async move { handle_mcp(&s2, call).await });
         let request = loop {
-            if let Some(p) = permissions::pending(&s, Some(&assistant.id)).unwrap().pop() {
+            if let Some(p) = permissions::pending(&s, Some(&assistant.id), None).unwrap().pop() {
                 break p;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2430,7 +2430,7 @@ fn the_assistants_rules_can_make_creating_a_task_ask_first_whatever_its_mode() {
         let (s2, call) = (s.clone(), mcp("c2", "create_task", json!({"project_id": "kiwicd", "title": "Book flights"})));
         let allowed = tokio::spawn(async move { handle_mcp(&s2, call).await });
         let request = loop {
-            if let Some(p) = permissions::pending(&s, Some(&assistant.id)).unwrap().pop() {
+            if let Some(p) = permissions::pending(&s, Some(&assistant.id), None).unwrap().pop() {
                 break p;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2471,7 +2471,7 @@ fn ruled_assistant(s: &Shared, p: &db::Profile, rules: &[(&str, crate::agent::ap
 /// The next prompt an approval rule raised in `task_id`'s thread, once there is one.
 async fn rule_asked(s: &Shared, task_id: &str) -> Value {
     loop {
-        if let Some(p) = permissions::pending(s, Some(task_id)).unwrap().into_iter().find(|p| !p["rule"].is_null()) {
+        if let Some(p) = permissions::pending(s, Some(task_id), None).unwrap().into_iter().find(|p| !p["rule"].is_null()) {
             return p;
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;

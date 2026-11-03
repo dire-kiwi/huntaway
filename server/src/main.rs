@@ -7,6 +7,7 @@ mod api;
 mod attachments;
 mod db;
 mod demo;
+mod devices;
 mod disk;
 mod git;
 mod hosts;

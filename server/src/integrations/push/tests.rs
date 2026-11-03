@@ -739,7 +739,7 @@ fn a_notification_cant_answer_a_prompt_past_its_expiry_and_one_it_answers_is_log
         assert_eq!((status, v["result"].as_str()), (409, Some("expired")), "{v}");
         assert!(v["message"].as_str().unwrap().contains("nobody answered it in time"), "{v}");
         // Still waiting on the host: the late answer didn't go through.
-        assert_eq!(crate::mcp::permissions::pending(&s, Some(&task.id)).unwrap().len(), 1);
+        assert_eq!(crate::mcp::permissions::pending(&s, Some(&task.id), None).unwrap().len(), 1);
         // One in time does, and the action log says it came from a notification.
         let future = (chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id, Some(&future)).unwrap();

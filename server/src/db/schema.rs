@@ -802,6 +802,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=78; COMMIT;")?;
     }
     if version < 79 {
+        // Devices paired with the board, each with a token of its own (see devices.rs).
+        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=79; COMMIT;", crate::devices::TABLE))?;
+    }
+    if version < 80 {
         // When a prompt from a routine run is denied if nobody has answered it, and the approval
         // rule that asked it (see agent/approval_rules.rs); the notifications' answer tokens stop at
         // the same time; and the action log of the calls that hit an ask or never rule. Columns are
@@ -838,7 +842,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              );
              CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, created_at);
              CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
-             PRAGMA user_version=79; COMMIT;",
+             PRAGMA user_version=80; COMMIT;",
         )?;
     }
     Ok(conn)
@@ -846,7 +850,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 79;
+pub const VERSION: i64 = 80;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for
