@@ -193,8 +193,8 @@ export function TelegramSection({ task }: { task: Task }) {
           </label>
         ))}
         <div className="text-faint">
-          Push goes to the devices that chose these in Settings → Notifications (replies and reports are off there until chosen). Replies to what
-          you send here aren't pushed.
+          Push goes to the devices that chose these in Settings → Notifications (replies are off there until chosen). Replies to what you send
+          here aren't pushed.
         </div>
       </div>
 

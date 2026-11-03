@@ -83,7 +83,7 @@ export function pushData(notification: Any): PushData | null {
   return null;
 }
 
-/** The task screen a push opens, if it's about a task: a reply's is the assistant's thread, a report's its routine's. */
+/** The task screen a push opens, if it's about a task (a reply's or a routine's report's: the assistant's thread). */
 export function taskRoute(d: PushData): { pathname: "/task/[board]/[host]/[id]"; params: { board: string; host: string; id: string } } | null {
   if (!d.host || !d.task_id) return null;
   return { pathname: "/task/[board]/[host]/[id]", params: { board: d.board, host: d.host, id: d.task_id } };

@@ -259,6 +259,8 @@ const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
 /** The events a device gets by push (the board's, and the assistant's replies and reports), and whose permission prompts. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   const prompts = device.events.prompts ?? "assistant";
+  // The assistant's events the board has (each in its devices' events).
+  const assistant = ASSISTANT_PUSH_EVENTS.filter((e) => typeof device.events[e.id] === "boolean");
   return (
     <div className={clsx(compact ? "flex flex-wrap items-center gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>
       {NOTIFY_EVENTS.map((e) => (
@@ -275,7 +277,7 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
           </span>
         </label>
       ))}
-      {ASSISTANT_PUSH_EVENTS.map((e) => (
+      {assistant.map((e) => (
         <label key={e.id} className="flex items-start gap-2.5">
           <input
             type="checkbox"

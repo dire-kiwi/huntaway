@@ -12,10 +12,10 @@
 //! a one-time token (push_answers.rs) for its Allow and Deny actions, which answer it from the
 //! notification without the board's token.
 //!
-//! So are the assistant's replies and its routines' reports, for the devices that choose them (off until they do):
-//! a report as its message is posted on the assistant's thread, a reply as the assistant's host says its turn ended
-//! (`REPLY_EVENT`), except one to a message sent on Telegram, which goes back there. They say who and what happened
-//! (the routine's name, "Replied"), not what was said.
+//! So are the assistant's routines' reports (such as the morning brief's), as each is posted on its thread, and its
+//! replies, for the devices that choose them, as the assistant's host says its turn ended (`REPLY_EVENT`), except one to
+//! a message sent on Telegram, which goes back there. A reply says only "Replied"; a report its first line, but not
+//! through Expo (see `observe_report`).
 //!
 //! The mobile app (mobile/, API 103) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and
 //! its pushes go through Expo's push service (see `deliver_expo`), which needs no keys kept here. Expo, Apple and
@@ -183,7 +183,9 @@ pub struct Events {
     /// `telegram::on_turn_end`). Off unless chosen, also for the subscriptions from before there was a choice.
     #[serde(default)]
     pub replies: bool,
-    /// One of the assistant's routines posted a report (it reported, failed or needs you). Off unless chosen, as `replies`.
+    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 105). On for a new
+    /// subscription, unless it says otherwise; off for one stored before it could choose (HA-162), so a device that never
+    /// chose isn't suddenly sent them.
     #[serde(default)]
     pub reports: bool,
 }
@@ -207,7 +209,7 @@ fn yes() -> bool {
 
 impl Default for Events {
     fn default() -> Self {
-        Self { attention: true, review: true, merge: false, done: false, prompts: Prompts::Assistant, replies: false, reports: false }
+        Self { attention: true, review: true, merge: false, done: false, prompts: Prompts::Assistant, replies: false, reports: true }
     }
 }
 
@@ -645,7 +647,7 @@ pub enum Event {
     Prompt,
     /// The assistant finished a reply (see `observe_reply`).
     Reply,
-    /// One of the assistant's routines posted a report (see `observe_report`).
+    /// A routine posted a report in the assistant's thread (see observe_report).
     Report,
 }
 
@@ -723,8 +725,7 @@ pub fn notification_text(e: Event, t: &Value, key: &str) -> (String, String) {
         },
         Event::Prompt => "Waiting for your answer".into(),
         Event::Reply => "Replied".into(),
-        // Said by report_text, from the report.
-        Event::Report => "Reported".into(),
+        Event::Report => "Posted a report".into(),
     };
     let body = if body.chars().count() > 200 { format!("{}…", body.chars().take(199).collect::<String>()) } else { body };
     (format!("{key} {}", t["title"].as_str().unwrap_or("")), body)
@@ -1002,6 +1003,53 @@ async fn notify(s: &Shared, host: &str, t: &Value, e: Event) {
     send_all(s, &subs, &msg, e == Event::Attention).await;
 }
 
+// ---------- routines' reports ----------
+
+/// What a routine's report notification says: its routine, and the report's first line (or why it failed).
+pub fn report_text(data: &Value) -> Option<(String, String)> {
+    let first = data["text"].as_str().unwrap_or("").lines().map(|l| l.trim().trim_start_matches(['#', '*', '-', ' '])).find(|l| !l.is_empty()).unwrap_or("");
+    let body = match data["outcome"].as_str() {
+        Some("reported") if !first.is_empty() => first.to_string(),
+        Some("reported") => "Posted a report".into(),
+        Some("failed") => format!("Failed: {first}"),
+        _ => return None,
+    };
+    let body = if body.chars().count() > 200 { format!("{}…", body.chars().take(199).collect::<String>()) } else { body };
+    Some((data["automation"].as_str().filter(|n| !n.is_empty()).unwrap_or("A routine").to_string(), body))
+}
+
+/// A thread message as it is now: a routine's report that's just been posted (one per run, so a brief pushes once) goes to
+/// the devices that want reports. A routine waiting on the user is pushed as its prompt or attention instead.
+fn observe_report(s: &Shared, host: &str, m: &Value) {
+    if m["kind"] != "report" {
+        return;
+    }
+    let Some(task_id) = m["task_id"].as_str() else { return };
+    let Some((title, body)) = report_text(&m["data"]) else { return };
+    let failed = m["data"]["outcome"] == "failed";
+    let (st, host, task_id, tag) = (s.clone(), host.to_string(), task_id.to_string(), m["id"].to_string());
+    tokio::spawn(async move {
+        let subs = match list(&st.db()) {
+            Ok(subs) => subs.into_iter().filter(|x| x.events.wants(Event::Report)).collect::<Vec<_>>(),
+            Err(e) => return tracing::warn!("push: reading the subscriptions: {e:#}"),
+        };
+        let msg = Message {
+            title,
+            body,
+            url: format!("/t/{task_id}"),
+            tag: format!("{host}:{task_id}:report:{tag}"),
+            task_id: Some(task_id.clone()),
+            event: Some(Event::Report),
+            request_id: None,
+            answer: None,
+            host_id: Some(host.clone()),
+            // Expo (and Apple and Google) can read what goes through it, and a report can quote mail.
+            summary: Some(if failed { "A routine failed".into() } else { "Posted a report".into() }),
+        };
+        send_all(&st, &subs, &msg, false).await;
+    });
+}
+
 // ---------- permission prompts ----------
 
 /// A thread message as it is now: a permission prompt that has just been raised is pushed.
@@ -1103,7 +1151,7 @@ async fn notify_prompt(s: &Shared, host: &str, task_id: &str, data: &Value) {
     send_all(s, &subs, &msg, true).await;
 }
 
-// ---------- the assistant's replies and its routines' reports ----------
+// ---------- the assistant's replies ----------
 
 /// The event the assistant's host sends when the assistant finished a reply (its turn's `result`), with the
 /// assistant's `task_id`, the result's `message_id`, and `telegram`: whether it answers a message sent to it on
@@ -1148,59 +1196,6 @@ async fn notify_reply(s: &Shared, host: &str, task_id: &str) {
         summary: None,
     };
     send_all(s, &subs, &msg, false).await;
-}
-
-/// A thread message as it is now: a routine's report, posted on the assistant's thread (automations::routines::finished),
-/// is pushed to the devices that want reports. Tapping it opens the routine's thread.
-fn observe_report(s: &Shared, host: &str, m: &Value) {
-    if m["kind"] != "report" {
-        return;
-    }
-    let data = m["data"].clone();
-    let Some(thread) = data["task_id"].as_str().or(m["task_id"].as_str()).map(String::from) else { return };
-    let (st, host) = (s.clone(), host.to_string());
-    tokio::spawn(async move { notify_report(&st, &host, &thread, &data).await });
-}
-
-/// What a report's notification says: the routine, and how its run went (not what it said, as `notify_reply`).
-pub(crate) fn report_text(data: &Value) -> String {
-    let name = crate::integrations::telegram::format::cut(data["automation"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or("A routine"), 80);
-    match data["outcome"].as_str() {
-        Some("failed") => format!("{name} failed"),
-        Some("asked") => format!("{name} needs you"),
-        _ => format!("{name} reported"),
-    }
-}
-
-async fn notify_report(s: &Shared, host: &str, thread: &str, data: &Value) {
-    let subs = match list(&s.db()) {
-        Ok(subs) => subs.into_iter().filter(|x| x.events.wants(Event::Report)).collect::<Vec<_>>(),
-        Err(e) => return tracing::warn!("push: reading the subscriptions: {e:#}"),
-    };
-    if subs.is_empty() {
-        return;
-    }
-    // The routine's thread, by the key the report gives (it may have been deleted since, or be on a host that's gone).
-    let t = find_task(s, host, thread).await;
-    let key = match &t {
-        Some(t) => task_key(s, host, t).await,
-        None => data["key"].as_str().unwrap_or("A").to_string(),
-    };
-    let title = t.as_ref().and_then(|t| t["title"].as_str()).or(data["automation"].as_str()).unwrap_or("");
-    let msg = Message {
-        title: format!("{key} {title}"),
-        body: report_text(data),
-        url: format!("/t/{thread}"),
-        tag: format!("{host}:{thread}:report"),
-        task_id: Some(thread.into()),
-        event: Some(Event::Report),
-        request_id: None,
-        answer: None,
-        host_id: Some(host.into()),
-        summary: None,
-    };
-    // One that needs you is as urgent as an agent that does.
-    send_all(s, &subs, &msg, data["outcome"] == "asked").await;
 }
 
 // ---------- API ----------

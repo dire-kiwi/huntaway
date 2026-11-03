@@ -790,52 +790,35 @@ fn reports_go_by_push_telegram_or_both_as_chosen() {
     testing::run(async || {
         let (s, f, p, mut pushed) = pushing_board().await;
         let a = assistant_id(&s, &p);
-        let phone = subscribe_phone(&s, "phone", json!({"reports": true})).await;
-        // The routine's thread, which a report's tap opens.
-        let new = db::NewTask {
-            profile_id: &p,
-            project_id: None,
-            kind: "task",
-            title: "Inbox check · 4 Nov",
-            description: "",
-            status: "todo",
-            use_worktree: false,
-            model: None,
-            effort: None,
-            claude_config_id: None,
-        };
-        let thread = db::insert_task(&s.db(), new).unwrap();
-        s.db().execute("UPDATE tasks SET task_type='routine', parent_id=?1 WHERE id=?2", rusqlite::params![a, thread.id]).unwrap();
-        let report = |name: &str, outcome: &str, text: &str| {
-            let data = json!({"automation": name, "task_id": thread.id, "key": format!("A-{}", thread.number), "outcome": outcome, "text": text});
+        // A new device has reports on, unless it says otherwise.
+        let phone = subscribe_phone(&s, "phone", json!({})).await;
+        let report = |outcome: &str, text: &str| {
+            let data = json!({"automation": "Inbox check", "task_id": "routine-thread", "key": "A-9", "outcome": outcome, "text": text});
             s.add_message(&a, "report", data).unwrap();
         };
 
-        // Both (Telegram's reports are on by default).
-        report("Inbox check", "reported", "Two mails from the bank");
+        // Both (Telegram's reports are on by default): pushed through Expo without what it says, opening the assistant.
+        report("reported", "Two mails from the bank");
         let m = next_push(&mut pushed).await;
         assert_eq!((m["to"].as_str(), m["data"]["event"].as_str()), (Some("ExponentPushToken[phone]"), Some("report")), "{m}");
-        assert_eq!((m["data"]["task_id"].as_str(), m["data"]["url"].clone()), (Some(thread.id.as_str()), json!(format!("/t/{}", thread.id))));
-        let title = format!("A-{} Inbox check · 4 Nov", thread.number);
-        assert_eq!((m["title"].as_str(), m["body"].as_str()), (Some(title.as_str()), Some("Inbox check reported")), "{m}");
+        assert_eq!((m["data"]["task_id"].as_str(), m["data"]["url"].clone()), (Some(a.as_str()), json!(format!("/t/{a}"))));
+        assert_eq!((m["title"].as_str(), m["body"].as_str()), (Some("Inbox check"), Some("Posted a report")), "{m}");
         assert!(!m.to_string().contains("bank"), "the report's text was pushed: {m}");
         until("the report on Telegram", || f.sent_texts().iter().any(|t| t.contains("Two mails from the bank"))).await;
         no_push(&mut pushed, "a report to the phone subscribed before reports, or one twice,").await;
 
         // Push only.
         set_telegram_events(&s, &p, false, false).await;
-        report("Inbox check", "failed", "It broke");
-        let m = next_push(&mut pushed).await;
-        assert_eq!((m["body"].as_str(), m["priority"].as_str()), (Some("Inbox check failed"), Some("normal")), "{m}");
-        report("Inbox check", "asked", "Which account?");
-        let m = next_push(&mut pushed).await;
-        assert_eq!((m["body"].as_str(), m["priority"].as_str()), (Some("Inbox check needs you"), Some("high")), "{m}");
-        no_push(&mut pushed, "a report twice").await;
+        report("failed", "It broke");
+        assert_eq!(next_push(&mut pushed).await["body"], "A routine failed");
+        // One that waits on the user is pushed as its prompt or attention, not as a report too.
+        report("asked", "Which account?");
+        no_push(&mut pushed, "a report waiting on the user").await;
 
         // Telegram only.
         set_telegram_events(&s, &p, false, true).await;
         set_phone_events(&s, &phone, json!({"reports": false})).await;
-        report("Inbox check", "reported", "Only on Telegram");
+        report("reported", "Only on Telegram");
         until("the report on Telegram", || f.sent_texts().iter().any(|t| t.contains("Only on Telegram"))).await;
         no_push(&mut pushed, "a report the phone turned off").await;
         assert!(!f.sent_texts().iter().any(|t| t.contains("It broke") || t.contains("Which account")));

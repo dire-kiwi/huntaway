@@ -178,7 +178,7 @@ fn devices_subscribe_change_their_events_and_unsubscribe() {
         let endpoint = "https://push.example.com/send/abc";
         let (status, sub) = api(&s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": endpoint, "keys": keys, "name": "Pixel"}))).await;
         assert_eq!(status, 200, "{sub}");
-        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false, "prompts": "assistant", "replies": false, "reports": false}));
+        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false, "prompts": "assistant", "replies": false, "reports": true}));
         assert_eq!(sub["name"], "Pixel");
         assert!(sub.get("auth").is_none() && sub.get("p256dh").is_none());
         let id = sub["id"].as_str().unwrap().to_string();
@@ -749,4 +749,46 @@ fn a_notification_cant_answer_a_prompt_past_its_expiry_and_one_it_answers_is_log
         let log = approval_rules::list(&s.db(), &task.profile_id, 10).unwrap();
         assert_eq!((log[0].outcome.as_str(), log[0].answered_by.as_deref()), ("allowed", Some("push")));
     })
+}
+
+#[test]
+fn a_routines_report_is_pushed_once_to_the_devices_that_want_reports() {
+    testing::run(async || {
+        let s = testing::state();
+        let (url, mut got) = push_service(Arc::new(AtomicU16::new(201))).await;
+        // Reports are on unless a device turns them off.
+        let ua = subscribe_device(&s, &url, json!({"attention": false, "review": false, "merge": false, "done": false, "prompts": "off"})).await;
+        subscribe_device(&s, &format!("{url}-quiet"), json!({"attention": false, "review": false, "merge": false, "done": false, "reports": false})).await;
+        let profile = db::insert_profile(&s.db(), "personal", &[], None).unwrap();
+        let assistant = crate::agent::assistant::get_or_create(&s, &profile.id).unwrap();
+        crate::hosts::hub::start(&s).unwrap();
+        start(&s);
+        // The relay of this host's events subscribes once it's running.
+        while s.events.receiver_count() == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let report = |outcome: &str, text: &str| json!({"automation": "Morning brief", "task_id": "t", "key": "A-2", "outcome": outcome, "text": text});
+        s.add_message(&assistant.id, "report", report("reported", "## Today\n\n**Dentist at 9:30**; two mails need you.\nMore lines")).unwrap();
+        let msg = next_push(&mut got, &ua).await;
+        let id = assistant.id.as_str();
+        assert_eq!((msg["title"].as_str(), msg["body"].as_str(), msg["event"].as_str()), (Some("Morning brief"), Some("Today"), Some("report")), "{msg}");
+        assert_eq!((msg["url"].as_str(), msg["task_id"].as_str()), (Some(format!("/t/{id}").as_str()), Some(id)));
+        s.add_message(&assistant.id, "report", report("failed", "Out of usage")).unwrap();
+        assert_eq!(next_push(&mut got, &ua).await["body"], "Failed: Out of usage");
+        // One waiting on the user is pushed as its prompt or attention, not again here; other messages aren't reports.
+        s.add_message(&assistant.id, "report", report("asked", "Which calendar?")).unwrap();
+        s.add_message(&assistant.id, "user", json!({"text": "hi"})).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(got.try_recv().is_err(), "pushed what it shouldn't have");
+    })
+}
+
+#[test]
+fn a_reports_notification_says_its_first_line() {
+    let d = |outcome: &str, text: &str| json!({"automation": "Inbox", "outcome": outcome, "text": text});
+    assert_eq!(report_text(&d("reported", "\n\n- Two mails from the bank\nmore")), Some(("Inbox".into(), "Two mails from the bank".into())));
+    assert_eq!(report_text(&d("reported", "")).unwrap().1, "Posted a report");
+    assert_eq!(report_text(&d("reported", &"x".repeat(300))).unwrap().1.chars().count(), 200);
+    assert_eq!(report_text(&d("asked", "x")), None);
+    assert_eq!(report_text(&json!({"outcome": "reported", "text": "x"})).unwrap().0, "A routine");
 }

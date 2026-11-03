@@ -124,7 +124,7 @@ export default function BoardNotifications() {
               {assistantPushEvents(device.events).length > 0 && (
                 <View style={[s.card, { marginHorizontal: 0 }]}>
                   <Text style={s.title}>Assistant</Text>
-                  <Text style={s.faint}>Its replies open its thread, and a routine's report the routine's. Neither says what was written.</Text>
+                  <Text style={s.faint}>Both open its thread, and don't say what was written.</Text>
                   {assistantPushEvents(device.events).map((e) => (
                     <View key={e.id} style={[s.row, { minHeight: 40 }]}>
                       <View style={{ flex: 1 }}>
