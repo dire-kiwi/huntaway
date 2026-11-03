@@ -234,7 +234,8 @@ one, into which its old `.git`'s objects and refs are copied and written again b
 `.git` goes; one with a `commondir`, `gitdir` or alternates, or whose history isn't whole, is left
 as it is and the history starts again; the board's git also ignores your own git config. What
 the workspace's `.gitignore` lists (made with common downloads, build output and secrets) and files
-over 1 MB aren't committed. The assistant's **Memory** tab lists the files (those loaded into every
+over 1 MB aren't committed, nor is a repository in the workspace (a `git clone`, say): it's never a
+gitlink in the history, as git would look in it with its own config, which the assistant can write. The assistant's **Memory** tab lists the files (those loaded into every
 run highlighted, with their length against the cap), edits them (committed as *You*; a save over what
 the assistant wrote meanwhile asks whose to keep), shows each file's history with what each commit
 changed, and restores a version. A restore or a save over the assistant's edit first commits that

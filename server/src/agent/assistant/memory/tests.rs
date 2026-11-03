@@ -797,3 +797,74 @@ fn a_save_over_a_file_left_out_of_the_history_needs_what_was_opened() {
         assert_eq!(git_ok(&dir, Who::User, &["show", "HEAD~1:notes.md"]).await.unwrap(), "the assistant's notes\n");
     });
 }
+
+/// Plain git in `dir`, as the assistant would run it.
+fn plain_git(dir: &Path, args: &[&str]) {
+    let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=x", "-c", "user.email=x@y", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+}
+
+/// A repository at `clone` in the workspace, with a commit.
+fn nested_repo(dir: &Path) {
+    let clone = dir.join("clone");
+    std::fs::create_dir_all(&clone).unwrap();
+    plain_git(&clone, &["init", "-q"]);
+    std::fs::write(clone.join("a.txt"), "a\n").unwrap();
+    plain_git(&clone, &["add", "-A"]);
+    plain_git(&clone, &["commit", "-q", "-m", "c1"]);
+}
+
+/// With file writes only: a filter in the nested repository's config, for all its files, one of them rewritten, and its
+/// HEAD moved (so a gitlink to it would differ).
+fn plant_in_nested_repo(dir: &Path, evil: &impl Fn(&str) -> String) {
+    let clone = dir.join("clone");
+    let mut c = std::fs::read_to_string(clone.join(".git/config")).unwrap();
+    c.push_str(&format!("[filter \"evil\"]\n\tclean = {}\n", evil("clean")));
+    std::fs::write(clone.join(".git/config"), c).unwrap();
+    std::fs::write(clone.join(".gitattributes"), "* filter=evil\n").unwrap();
+    // The same size, so git hashes it (through the filter) to see whether it changed.
+    std::fs::write(clone.join("a.txt"), "b\n").unwrap();
+    std::fs::write(clone.join(".git/HEAD"), format!("{:040}\n", 1)).unwrap();
+}
+
+async fn gitlinks(dir: &Path) -> String {
+    let index = git_ok(dir, Who::User, &["ls-files", "-s"]).await.unwrap();
+    let head = git_ok(dir, Who::User, &["ls-tree", "-r", "HEAD"]).await.unwrap();
+    index.lines().chain(head.lines()).filter(|l| l.starts_with("160000")).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn a_repository_in_the_workspace_never_runs_its_config_as_the_board() {
+    testing::run(async || {
+        // An approved `git clone` in the workspace isn't committed as a gitlink, nor are its files.
+        let dir = testing::temp_dir().join("ws");
+        std::fs::create_dir_all(&dir).unwrap();
+        ensure(&dir).await.unwrap();
+        let (ran_dir, evil) = evil_script();
+        nested_repo(&dir);
+        write(&dir, "notes.md", "notes");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert_eq!(log(&dir).await[0].1, "Update notes.md");
+        assert_eq!(gitlinks(&dir).await, "");
+        plant_in_nested_repo(&dir, &evil);
+        write(&dir, MEMORY_FILE, "- a fact\n");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert_eq!(commit_file(&dir, Who::User, "clone/a.txt", "Edit clone/a.txt").await.unwrap(), None);
+        assert_eq!(ran(&ran_dir), Vec::<std::ffi::OsString>::new(), "the filter ran");
+
+        // A history from HA-121 with one in it: the move takes it out, before anything looks at the work tree.
+        let dir = testing::temp_dir().join("ws");
+        old_workspace(&dir);
+        nested_repo(&dir);
+        plain_git(&dir, &["add", "-A"]);
+        plain_git(&dir, &["commit", "-q", "-m", "Update clone"]);
+        plant_in_nested_repo(&dir, &evil);
+        ensure(&dir).await.unwrap();
+        assert_eq!(gitlinks(&dir).await, "");
+        write(&dir, MEMORY_FILE, "- a fact\n");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        commit_file(&dir, Who::User, USER_FILE, "Edit USER.md").await.unwrap();
+        assert_eq!(ran(&ran_dir), Vec::<std::ffi::OsString>::new(), "the filter ran");
+        assert_eq!(log(&dir).await.len(), 4, "{:?}", log(&dir).await);
+    });
+}

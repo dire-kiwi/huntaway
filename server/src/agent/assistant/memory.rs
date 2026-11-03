@@ -310,6 +310,8 @@ async fn migrate(dir: &Path, old: &Path, gd: &Path) -> Result<()> {
     git_ok(dir, Who::Assistant, &["pack-refs", "--all", "--prune"]).await?;
     git_ok(dir, Who::Assistant, &["rev-list", "--objects", "--all", "--quiet"]).await?;
     git_ok(dir, Who::Assistant, &["read-tree", "HEAD"]).await?;
+    // Before anything looks at the work tree (see drop_gitlinks).
+    drop_gitlinks(dir, Who::Assistant).await?;
     tracing::info!("moved the assistant's history to {}", gd.display());
     // From here the history is in `gd`, whatever happens to the old one.
     if let Err(e) = std::fs::remove_dir_all(old) {
@@ -409,8 +411,10 @@ async fn commit_all_locked(dir: &Path, who: Who, message: Option<&str>) -> Resul
 
 /// `git add -A` without the files over MAX_COMMITTED (which stay out of the history, as `.gitignore`'s do).
 async fn stage(dir: &Path, who: Who) -> Result<()> {
+    drop_gitlinks(dir, who).await?;
     let listed = git_ok(dir, who, &["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard"]).await?;
-    let mut paths: Vec<&str> = listed.split('\0').filter(|p| !p.is_empty()).collect();
+    // Not a repository in the workspace (`--others` gives it as `clone/`), which `add` would make a gitlink.
+    let mut paths: Vec<&str> = listed.split('\0').filter(|p| !p.is_empty() && !p.ends_with('/')).collect();
     paths.sort_unstable();
     paths.dedup();
     // A name that isn't UTF-8 (which reads back as another, with U+FFFD in it) would fail the whole `add`.
@@ -427,7 +431,38 @@ async fn stage(dir: &Path, who: Who) -> Result<()> {
     if !o.ok {
         bail!("git add failed: {}", o.stderr.trim());
     }
+    // One made a repository since it was listed.
+    drop_gitlinks(dir, who).await
+}
+
+/// Take the gitlinks (repositories in the workspace: an approved `git clone`, say, which HA-121 committed as such) out
+/// of the index, so the history never has one again. With one there, git looks in that repository for changes by
+/// running `git status` in it, with its own config, which the assistant can write: a filter there would run as the board.
+async fn drop_gitlinks(dir: &Path, who: Who) -> Result<()> {
+    let entries = git_ok(dir, who, &["ls-files", "-s", "-z"]).await?;
+    let links: Vec<u8> = entries
+        .split('\0')
+        .filter_map(|e| e.strip_prefix("160000 ").and_then(|e| e.split_once('\t')).map(|(_, path)| path))
+        .flat_map(|p| p.bytes().chain([0]))
+        .collect();
+    if links.is_empty() {
+        return Ok(());
+    }
+    let o = git_in(dir, who, &["update-index", "--force-remove", "-z", "--stdin"], Some(&links)).await?;
+    if !o.ok {
+        bail!("git update-index failed: {}", o.stderr.trim());
+    }
     Ok(())
+}
+
+/// Whether `rel` is in a repository in the workspace (a folder on the way has a `.git`), whose files the history leaves out.
+fn in_nested_repo(dir: &Path, rel: &str) -> bool {
+    let mut p = dir.to_path_buf();
+    let parts: Vec<_> = Path::new(rel).components().collect();
+    parts.iter().take(parts.len().saturating_sub(1)).any(|c| {
+        p.push(c);
+        std::fs::symlink_metadata(p.join(".git")).is_ok()
+    })
 }
 
 fn too_big(dir: &Path, rel: &str) -> bool {
@@ -444,11 +479,12 @@ fn changed_message(files: &[&str]) -> String {
 }
 
 /// Commit one file as it is now (other changes stay uncommitted, for the assistant's next commit), with the
-/// workspace's lock held. Not one that `.gitignore` leaves out.
+/// workspace's lock held. Not one that `.gitignore` leaves out, nor one in a repository in the workspace.
 async fn commit_file_locked(dir: &Path, who: Who, rel: &str, message: &str) -> Result<Option<String>> {
-    if !is_repo(dir) {
+    if !is_repo(dir) || in_nested_repo(dir, rel) {
         return Ok(None);
     }
+    drop_gitlinks(dir, who).await?;
     let tracked = git(dir, who, &["ls-files", "--error-unmatch", "--", rel]).await?.ok;
     // (Not `check-ignore`, which doesn't take paths literally.)
     let ignored = async || git_ok(dir, who, &["ls-files", "--others", "--ignored", "--exclude-standard", "--", rel]).await.map(|o| !o.trim().is_empty());
