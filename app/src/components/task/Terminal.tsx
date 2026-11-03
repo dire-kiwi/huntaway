@@ -1,5 +1,4 @@
 import "@xterm/xterm/css/xterm.css";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
@@ -45,7 +44,7 @@ const THEME: ITheme = {
 
 const FONT_FAMILY = '"JetBrains Mono Variable", "Symbols Nerd Font Mono", monospace';
 
-/** The bundled font loads lazily, and canvas text doesn't ask for it. */
+/** Wait for the bundled font before xterm measures its cells. */
 const terminalFont: Promise<unknown> =
   document.fonts?.load('13px "JetBrains Mono Variable"').catch(() => {}) ?? Promise.resolve();
 
@@ -107,7 +106,7 @@ export function TerminalPane({ task, active, tool, onClose }: { task: Task; acti
         const term = new XTerm({
           cursorBlink: true,
           // Same text setup as kiwi-code: the bundled variable JetBrains Mono, with Nerd Font
-          // symbols as a fallback, drawn by the canvas renderer.
+          // symbols as a fallback.
           fontFamily: FONT_FAMILY,
           fontSize: 13,
           fontWeight: "400",
@@ -127,7 +126,8 @@ export function TerminalPane({ task, active, tool, onClose }: { task: Task; acti
         term.loadAddon(fit);
         term.loadAddon(new WebLinksAddon());
         term.open(el);
-        term.loadAddon(new CanvasAddon());
+        // Use xterm's DOM renderer: canvas allocation failures abort startup, and the
+        // canvas addon has no recovery for a lost rendering context.
         view.current = { term, fit };
         cleanups.push(() => {
           view.current = null;
