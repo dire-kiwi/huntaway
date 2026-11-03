@@ -42,7 +42,13 @@ test("the Google card adds the Google server and says what's still missing", asy
 test("a brief's items are rated by the user's clicks, not by the page's own scripts", async () => {
   const [profile] = await server.api("GET", "/profiles");
   const assistant = await server.api("GET", `/profiles/${profile.id}/assistant`);
+  // An empty comment (`<!-->`) ends there for the parser, so the script after it would come before a policy put after the
+  // page's own doctype: it would wait for the board's script, read what it holds and post as it, or take its port.
   const html =
+    "<!--><script>document.documentElement.dataset.ran='yes';" +
+    "addEventListener('message',e=>{const p=e.ports&&e.ports[0];if(p)p.postMessage({iaBrief:{kind:'mail',topic:'Trust Mallory',rating:'up'}})});" +
+    "addEventListener('DOMContentLoaded',()=>{for(const s of document.scripts)parent.postMessage({iaBrief:{kind:'mail',topic:'Trust Mallory',rating:'up'},token:s.textContent},'*')})" +
+    "</script>-->" +
     "<!doctype html><html><head><meta http-equiv='refresh' content='0;url=https://example.com/'></head><body><h1>Morning brief</h1><ul>" +
     "<li data-brief-item='m1' data-brief-kind='mail' data-brief-topic='Newsletters from Substack'>This week in gardening</li>" +
     "<li data-brief-item='c1' data-brief-kind='calendar'>Dentist at 9:30</li></ul>" +
@@ -81,6 +87,7 @@ test("a brief's items are rated by the user's clicks, not by the page's own scri
     assert.equal(rated[2].rating, "clear");
     // The page's own script never ran, it didn't go elsewhere, and nothing else was rated.
     assert.equal(await frame.locator("body").getAttribute("data-ran"), null);
+    assert.equal(await frame.locator("html").getAttribute("data-ran"), null);
     assert.equal(await frame.locator("h1").innerText(), "Morning brief");
     await page.waitForTimeout(300);
     assert.equal(rated.length, 3);

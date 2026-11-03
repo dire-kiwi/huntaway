@@ -38,9 +38,12 @@ function saveRated(hostId: string, taskId: string, r: Rated) {
 
 /**
  * What runs in the brief's frame (as source, so it can't use anything from outside): a thumbs up and down on each element with
- * `data-brief-item`, which posts the user's click (and only a real click) to the board with `token`, and shows `rated`.
+ * `data-brief-item`, which sends the user's click (and only a real click) to the board, and shows `rated`. It sends them on
+ * the port the board hands it once the frame has loaded (a MessageChannel's, in an `iaBriefPort` message from the board's
+ * window), and the board takes ratings on that port alone: nothing in the page holds a secret it could read and post with.
  */
-function iaBrief(token: string, rated: Record<string, string>) {
+function iaBrief(rated: Record<string, string>) {
+  let port: MessagePort | null = null;
   const style = document.createElement("style");
   style.textContent =
     ".ia-rate{display:inline-flex;gap:2px;margin-left:.5em;vertical-align:middle;opacity:.45;transition:opacity .15s}" +
@@ -80,7 +83,7 @@ function iaBrief(token: string, rated: Record<string, string>) {
         if (next === "clear") delete rated[key];
         else rated[key] = next;
         show();
-        parent.postMessage({ iaBrief: { kind, topic, text, rating: next }, token }, "*");
+        port?.postMessage({ iaBrief: { kind, topic, text, rating: next } });
       });
       return b;
     });
@@ -89,12 +92,16 @@ function iaBrief(token: string, rated: Record<string, string>) {
     (el.tagName === "TR" ? (el.lastElementChild as HTMLElement | null) ?? el : el).append(box);
     items.push({ key, buttons, box });
   }
+  // The board's port, once: from the board's window, which nothing in the page can post as.
   addEventListener("message", (e) => {
-    if (e.source === parent && e.data?.iaBriefRated && typeof e.data.iaBriefRated === "object") {
+    if (port || e.source !== parent || e.data !== "iaBriefPort" || !e.ports[0]) return;
+    port = e.ports[0];
+    port.onmessage = (m) => {
+      if (!m.data?.iaBriefRated || typeof m.data.iaBriefRated !== "object") return;
       for (const k of Object.keys(rated)) delete rated[k];
-      Object.assign(rated, e.data.iaBriefRated);
+      Object.assign(rated, m.data.iaBriefRated);
       show();
-    }
+    };
   });
   show();
 }
@@ -104,17 +111,17 @@ const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(16)),
 /**
  * The brief as its frame shows it. Its own scripts don't run (a Content-Security-Policy lets only the board's, by its nonce),
  * nothing is fetched from elsewhere (no tracking pixels from mail), links open in a new tab, and a meta refresh is taken out, so
- * what the run wrote from mail can't act in the page or rate items. The policy goes first, after any doctype, so it covers it all.
+ * what the run wrote from mail can't act in the page or rate items. The policy goes first of all, so it covers everything.
  */
-export function briefDoc(html: string, nonce: string, token: string, rated: Rated): string {
+export function briefDoc(html: string, nonce: string, rated: Rated): string {
   const csp =
     `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; font-src data:; ` + "form-action 'none'; base-uri 'none'";
   const head = `<meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">`;
   const body = html.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh[^>]*>/gi, "");
-  const doctype = /^\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>/i.exec(body);
-  const at = doctype ? doctype[0].length : 0;
-  const script = `<script nonce="${nonce}">(${iaBrief})(${JSON.stringify(token)}, ${JSON.stringify(rated).replace(/</g, "\\u003c")})</script>`;
-  return `${body.slice(0, at)}${head}${body.slice(at)}\n${script}`;
+  const script = `<script nonce="${nonce}">(${iaBrief})(${JSON.stringify(rated).replace(/</g, "\\u003c")})</script>`;
+  // First of all, whatever the page starts with (not after its own doctype, which a comment can be made to hide a script
+  // before: the parser ends one at `<!-->`). The doctype keeps the page out of quirks mode; one of its own later is ignored.
+  return `<!doctype html>${head}${body}\n${script}`;
 }
 
 const dayLabel = (iso: string) => new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
@@ -155,43 +162,50 @@ export function BriefView({ assistant }: { assistant: Task }) {
   const ratedRef = useRef(rated);
   ratedRef.current = rated;
   const frame = useRef<HTMLIFrameElement>(null);
-  // A new nonce and token each time the page is built: the page can't know either.
+  // A new nonce each time the page is built, which the page can't know.
   const content = doc?.content ?? null;
-  const built = useMemo(() => {
-    if (content === null) return null;
-    const nonce = randomToken();
-    const token = randomToken();
-    return { token, html: briefDoc(content, nonce, token, ratedRef.current) };
-  }, [content]);
-  useEffect(() => {
-    const onMessage = async (e: MessageEvent) => {
-      if (!built || e.source !== frame.current?.contentWindow || e.data?.token !== built.token) return;
-      const item = e.data?.iaBrief as { kind?: unknown; topic?: unknown; text?: unknown; rating?: unknown } | undefined;
-      const rating = item?.rating;
-      if (!item || (rating !== "up" && rating !== "down" && rating !== "clear")) return;
-      const str = (x: unknown) => (typeof x === "string" ? x.slice(0, 300) : undefined);
-      const kind = str(item.kind) ?? "other";
-      const topic = str(item.topic) ?? "";
-      const key = itemKey(kind, topic);
-      const before = ratedRef.current;
-      const next = { ...before };
-      if (rating === "clear") delete next[key];
-      else next[key] = rating;
-      setRated(next);
-      saveRated(hostId, taskId, next);
-      try {
-        await api.rateBrief(hostId, profileId, rating as BriefRating, { kind, topic, text: str(item.text) });
-        setErr(null);
-      } catch (x) {
-        setErr(`That rating wasn't saved: ${(x as Error).message}`);
-        setRated(before);
-        saveRated(hostId, taskId, before);
-        frame.current?.contentWindow?.postMessage({ iaBriefRated: before }, "*");
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [built, hostId, profileId, taskId]);
+  const html = useMemo(() => (content === null ? null : briefDoc(content, randomToken(), ratedRef.current)), [content]);
+  // The port ratings come in on: a new one each time the frame loads (see iaBrief), handed to the frame's own script.
+  const port = useRef<MessagePort | null>(null);
+  const onRating = useRef<(data: unknown) => void>(() => {});
+  useEffect(() => () => port.current?.close(), []);
+  const handPort = () => {
+    port.current?.close();
+    const target = frame.current?.contentWindow;
+    if (!target) return;
+    const ch = new MessageChannel();
+    ch.port1.onmessage = (m) => onRating.current(m.data);
+    port.current = ch.port1;
+    target.postMessage("iaBriefPort", "*", [ch.port2]);
+  };
+  // A rating from the frame: kept here at once, and taken back if it isn't saved.
+  const rate = async (data: unknown) => {
+    const item = (data as { iaBrief?: unknown } | null)?.iaBrief as { kind?: unknown; topic?: unknown; text?: unknown; rating?: unknown } | undefined;
+    const rating = item?.rating;
+    if (!item || (rating !== "up" && rating !== "down" && rating !== "clear")) return;
+    const str = (x: unknown) => (typeof x === "string" ? x.slice(0, 300) : undefined);
+    const kind = str(item.kind) ?? "other";
+    const topic = str(item.topic) ?? "";
+    const key = itemKey(kind, topic);
+    const before = ratedRef.current;
+    const next = { ...before };
+    if (rating === "clear") delete next[key];
+    else next[key] = rating;
+    ratedRef.current = next;
+    setRated(next);
+    saveRated(hostId, taskId, next);
+    try {
+      await api.rateBrief(hostId, profileId, rating as BriefRating, { kind, topic, text: str(item.text) });
+      setErr(null);
+    } catch (x) {
+      setErr(`That rating wasn't saved: ${(x as Error).message}`);
+      ratedRef.current = before;
+      setRated(before);
+      saveRated(hostId, taskId, before);
+      port.current?.postMessage({ iaBriefRated: before });
+    }
+  };
+  onRating.current = (data) => void rate(data);
 
   const versions = doc?.versions ?? [];
   const latest = versions[versions.length - 1];
@@ -259,11 +273,12 @@ export function BriefView({ assistant }: { assistant: Task }) {
           <div className="flex h-full items-center justify-center text-muted">
             <Loader2 size={16} className="animate-spin" />
           </div>
-        ) : built ? (
+        ) : html ? (
           <iframe
             ref={frame}
             title="Morning brief"
-            srcDoc={built.html}
+            srcDoc={html}
+            onLoad={handPort}
             sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
             referrerPolicy="no-referrer"
             className="block h-full w-full bg-white"

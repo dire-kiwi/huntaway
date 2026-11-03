@@ -750,6 +750,8 @@ fn a_notification_cant_answer_a_prompt_past_its_expiry_and_one_it_answers_is_log
         assert_eq!((log[0].outcome.as_str(), log[0].answered_by.as_deref()), ("allowed", Some("push")));
     })
 }
+
+#[test]
 fn a_routines_report_is_pushed_once_to_the_devices_that_want_reports() {
     testing::run(async || {
         let s = testing::state();
