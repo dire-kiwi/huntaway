@@ -533,6 +533,18 @@ Keep a copy of `huntaway-release.jks` and its password somewhere safe outside th
 losing it means everyone uninstalling and pairing again. Only a release's build (a tag) uses the
 key, never a branch's; without it, the `android` job fails and the release gets the other files.
 
+Push on Android goes through Firebase Cloud Messaging, which Expo's push service hands it to, so
+the APK needs a Firebase app's config: in the [Firebase console](https://console.firebase.google.com),
+make a project and add an Android app with the package `nz.net.ivan.huntaway`, download its
+`google-services.json`, and keep it as the repository secret `GOOGLE_SERVICES_JSON` (`gh secret
+set GOOGLE_SERVICES_JSON < google-services.json`). The `android` job writes it into `mobile/` and
+names it in `app.json` (`android.googleServicesFile`) for that build only, since it isn't
+committed. Then give Expo the project's FCM V1 key, so it can send: Firebase → Project settings →
+Service accounts → **Generate new private key**, and `npx eas-cli credentials --platform android`
+→ production → Google Service Account → *Manage your Google Service Account Key for Push
+Notifications (FCM V1)*, with that file. Without the secret the APK builds with a warning, but
+can't register for push.
+
 **iOS** is built and sent to TestFlight by EAS (Expo's build service, so no Mac or Xcode), from
 `.github/workflows/testflight.yml`: by hand (Actions → TestFlight → Run workflow, with a release's
 tag), or on every published release once the repository variable `TESTFLIGHT_ON_RELEASE` is
@@ -546,8 +558,9 @@ up, once:
 2. In `mobile/`: `npx eas-cli login`, then `npx eas-cli init`, which makes the Expo project and
    writes its `owner` and `extra.eas.projectId` into `app.json`; commit them.
 3. `npx eas-cli credentials --platform ios` (production): sign in with the Apple account, and let
-   it make the distribution certificate and provisioning profile, and an App Store Connect API key
-   for EAS Submit. EAS keeps them, not this repository.
+   it make the distribution certificate and provisioning profile, a push key (APNs, for
+   notifications), and an App Store Connect API key for EAS Submit. EAS keeps them, not this
+   repository.
 4. In App Store Connect, add the app (bundle id `nz.net.ivan.huntaway`), and put its Apple ID (the
    number under App Information) and your team id in `eas.json`'s `submit.production.ios` as
    `ascAppId` and `appleTeamId`.
