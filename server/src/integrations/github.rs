@@ -342,27 +342,47 @@ pub async fn create(gh: &str, account: Option<&str>, dir: &Path, owner: Option<&
     {
         return Err(format!("{owner}/{name} isn't a GitHub repository name"));
     }
-    let made_dir = !dir.exists();
-    if made_dir {
-        std::fs::create_dir_all(dir).map_err(|e| format!("couldn't create {}: {e}", dir.display()))?;
-    }
+    // The folder the path names, however it's written (`..`, symlinks), before anything's made or checked,
+    // so what's rolled back is what this call made and nothing that was there.
+    let resolved = folder(dir);
+    let dir = resolved.as_path();
+    // The top-most folder this call makes: a failure takes that away again.
+    let created = dir.ancestors().take_while(|a| std::fs::symlink_metadata(a).is_err()).last().map(Path::to_path_buf);
     let undo = |inited: bool| {
-        if made_dir {
-            let _ = std::fs::remove_dir_all(dir);
+        if let Some(created) = &created {
+            let _ = std::fs::remove_dir_all(created);
         } else if inited {
             let _ = std::fs::remove_dir_all(dir.join(".git"));
         }
     };
-    let top = match worktree::git(dir, &["rev-parse", "--show-toplevel"]).await {
-        Ok(o) if o.ok => std::fs::canonicalize(o.stdout.trim()).ok(),
-        _ => None,
+    if created.is_some()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        undo(false);
+        return Err(format!("couldn't create {}: {e}", dir.display()));
+    }
+    let probe = match worktree::git(dir, &["rev-parse", "--show-toplevel"]).await {
+        Ok(o) => o,
+        Err(e) => {
+            undo(false);
+            return Err(format!("{e:#}"));
+        }
     };
-    let is_repo = top.is_some();
+    let top = probe.ok.then(|| std::fs::canonicalize(probe.stdout.trim()).ok()).flatten();
+    // Git metadata that's there but that git won't open (another owner's, damaged) isn't initialized over,
+    // and isn't ours to take away if the repository can't be created.
+    if top.is_none() && std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+        undo(false);
+        return Err(format!("{} has a .git that git can't use, so no repository was created: {}", dir.display(), probe.stderr.trim()));
+    }
+    let inited = top.is_none();
     if let Some(top) = &top {
         if Some(top) != std::fs::canonicalize(dir).ok().as_ref() {
+            undo(false);
             return Err(format!("{} is inside the repository {}: pick its top folder", dir.display(), top.display()));
         }
         if matches!(worktree::git(dir, &["remote", "get-url", "origin"]).await, Ok(o) if o.ok) {
+            undo(false);
             return Err(format!("{} already has a remote called origin", dir.display()));
         }
     } else {
@@ -381,7 +401,7 @@ pub async fn create(gh: &str, account: Option<&str>, dir: &Path, owner: Option<&
     let env = match gh_mcp::account_env(account).await {
         Ok(env) => env,
         Err(e) => {
-            undo(!is_repo);
+            undo(inited);
             return Err(format!("{e:#}"));
         }
     };
@@ -418,7 +438,7 @@ pub async fn create(gh: &str, account: Option<&str>, dir: &Path, owner: Option<&
         (None, Some(full_name)) => full_name,
         (Some(_), Some(full_name)) if remote.is_some() => full_name,
         (failed, _) => {
-            undo(!is_repo);
+            undo(inited);
             return Err(format!("couldn't create {target}: {}", failed.clone().unwrap_or_else(|| "gh didn't say what it made".into())));
         }
     };
@@ -651,6 +671,48 @@ fi
             std::fs::write(plain.join("f"), "x").unwrap();
             assert!(create(&gh, None, &plain, Some("o"), "fails", true).await.is_err());
             assert!(!plain.join(".git").exists() && plain.join("f").exists());
+
+            // A failure takes away only what this call made. A path that goes through a folder that isn't there
+            // and back out (`missing/../valuable`) names the folder that is, with what's in it.
+            let valuable = fake.join("valuable");
+            std::fs::create_dir_all(&valuable).unwrap();
+            std::fs::write(valuable.join("mine.txt"), "keep").unwrap();
+            let err = create(&gh, None, &fake.join("missing/../valuable"), Some("o"), "fails", true).await.unwrap_err();
+            assert!(err.contains("Name already exists"), "{err}");
+            assert_eq!(std::fs::read_to_string(valuable.join("mine.txt")).unwrap(), "keep");
+            assert!(!valuable.join(".git").exists() && !fake.join("missing").exists());
+            // Nor are the folders above a new one that were there.
+            let err = create(&gh, None, &fake.join("valuable/a/b"), Some("o"), "fails", true).await.unwrap_err();
+            assert!(err.contains("Name already exists"), "{err}");
+            assert!(!valuable.join("a").exists() && valuable.join("mine.txt").exists());
+
+            // Git metadata git won't open (here a repository without its HEAD, as another owner's or a damaged one is) is neither
+            // initialized over nor taken away, whether or not gh would have created the repository.
+            let broken = fake.join("broken");
+            std::fs::create_dir_all(&broken).unwrap();
+            git(&broken, &["init", "-q"]);
+            git(&broken, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            std::fs::rename(broken.join(".git/HEAD"), broken.join(".git/HEAD.saved")).unwrap();
+            let objects = || {
+                let mut dirs: Vec<_> = std::fs::read_dir(broken.join(".git/objects")).unwrap().map(|e| e.unwrap().file_name()).filter(|n| n.len() == 2).collect();
+                dirs.sort();
+                dirs
+            };
+            let objects_before = objects();
+            assert!(!objects_before.is_empty());
+            let before = log();
+            for name in ["fails", "fine"] {
+                let err = create(&gh, None, &broken, Some("o"), name, true).await.unwrap_err();
+                assert!(err.contains("has a .git that git can't use"), "{err}");
+                assert!(broken.join(".git/HEAD.saved").exists() && !broken.join(".git/HEAD").exists(), "{name}");
+                assert_eq!(objects(), objects_before, "{name}");
+            }
+            assert_eq!(log(), before);
+
+            // A folder that isn't there inside a repository isn't left behind when it's turned down.
+            let err = create(&gh, None, &old.join("not/yet"), None, "yet", true).await.unwrap_err();
+            assert!(err.contains("is inside the repository"), "{err}");
+            assert!(!old.join("not").exists());
 
             // Refused before gh runs: an origin already there, a folder inside a repository, a bad name.
             let before = log();

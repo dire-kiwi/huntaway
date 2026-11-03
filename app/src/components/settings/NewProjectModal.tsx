@@ -39,6 +39,8 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
   const [visibility, setVisibility] = useState<"private" | "public">("private");
   const creating = canCreateRepo && createRepo;
   const folderName = path.split("/").filter(Boolean).pop() ?? "";
+  // The repository was created and the project added, but its commits weren't pushed: said here rather than closing as if all went well.
+  const [pushFailed, setPushFailed] = useState<{ projectId: string; repo: string; path: string; error: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // A clone can take a while, and the dialog can be closed meanwhile. Open again on each mount, as
@@ -76,8 +78,14 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
               key: key || undefined,
             })
           : await api.createProject(host, pid, { name, repo_path: path, key: key || undefined });
-      useStore.getState().upsertProject({ ...p, host_id: host });
+      const { github, ...project } = p as typeof p & { github?: { full_name: string; push_error: string | null } };
+      useStore.getState().upsertProject({ ...project, host_id: host });
       if (closed.current) return;
+      if (github?.push_error) {
+        setPushFailed({ projectId: p.id, repo: github.full_name, path: p.repo_path, error: github.push_error });
+        setBusy(false);
+        return;
+      }
       onClose();
       navigate({ name: "board", projectId: p.id });
     } catch (e) {
@@ -86,6 +94,37 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
       setBusy(false);
     }
   };
+  if (pushFailed) {
+    return (
+      <Modal title="Project added, but not pushed" onClose={onClose} width="max-w-xl">
+        <div className="space-y-4 text-[13px]">
+          <p>
+            Created <span className="font-mono">{pushFailed.repo}</span> on GitHub and added the project, but its commits weren't pushed:
+          </p>
+          <div role="alert" className="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
+            {pushFailed.error}
+          </div>
+          <p className="text-muted">
+            The repository on GitHub is empty. Once that's sorted out, push it from <span className="font-mono">{pushFailed.path}</span> with{" "}
+            <span className="font-mono">git push -u origin HEAD</span>.
+          </p>
+          <ModalFooter>
+            <div className="flex justify-end">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  onClose();
+                  navigate({ name: "board", projectId: pushFailed.projectId });
+                }}
+              >
+                Open project
+              </Button>
+            </div>
+          </ModalFooter>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal title="Add project" onClose={onClose} width="max-w-xl">
       <div className="space-y-4">
