@@ -610,6 +610,19 @@ project or task that isn't found there is looked up on linked hosts, and `list_p
 every host, so an orchestrating agent can work across machines. On each host they reach their
 own profile's board and those that let them in (see *Agents across profiles*).
 
+A linked host's agents can use the hub's board too, once the hub lets them: switch on **Let this
+host's agents use this board** for it under Settings → Hosts (off by default; hub and host need API
+98). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
+up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the tunnel for
+one that dials in). The hub takes it only from an agent in one of its profiles whose **Assistant host**
+is that host (see *An assistant host*): the host names the caller's profile, and whoever controls it
+could name any. It runs with that profile's access (its board, and those that let that profile in),
+looking on its other linked hosts too, but never back on the calling host or further up, and at most
+once per call id. If the link drops after a call went up, the agent is told it may have taken effect. Changes that need the user's approval
+(`update_project`, `delete_task`, automations) are refused there, since the agent's thread isn't on the
+hub, and `wait` only watches tasks on the agent's own host. Calls with `host` set to the hub's name (or
+one of its hosts') go there.
+
 A hub that can't run agents itself (no `claude` or `ia-shim`, e.g. a board-only deployment)
 sends new scratch tasks to a linked host. Pick which one under Settings → Hosts →
 **Scratch task host**; by default it's the first host that can run agents.
@@ -651,6 +664,51 @@ version, so it can update release hosts but not checkouts).
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
 mode set on a thread or project, takes precedence.
+
+### An assistant host
+
+Each profile's **assistant** (the sidebar's *Assistant*) can run on another machine, such as a
+home server or a small VPS, rather than on the hub. Its credentials (the Google account and Telegram
+bot it will be given) then never sit where project agents run, and its agents can't read the hub's
+files or database. Set it up like this:
+
+1. **Install a host there** from a release, as the user the assistant should run as:
+
+   ```sh
+   curl -fsSLO https://raw.githubusercontent.com/dire-kiwi/huntaway/master/scripts/install-release-host.sh
+   sh install-release-host.sh
+   ```
+
+   It prints the command that starts the host with release updates, and the forced command for SSH.
+   The host's data dir is made private at start (`0700`, and its databases `0600`; every host does
+   this), so other users of that machine can't read the assistant's threads.
+2. **Link it over SSH** from the board: Settings → Hosts → **Add host** → **Over SSH**, with
+   `user@machine` and the path the script printed. Add the line the dialog shows to that user's
+   `~/.ssh/authorized_keys` on the machine, with the forced command the script printed:
+
+   ```text
+   restrict,port-forwarding,permitopen="127.0.0.1:7878",command="IA_RELEASE_UPDATES=dire-kiwi/huntaway '/home/me/.local/share/huntaway-server/current/huntaway' ssh-host --port 7878 --data-dir '/home/me/.local/share/huntaway'" ssh-ed25519 AAAA… huntaway-hub@<hub>
+   ```
+
+   The hub starts the host through that command and tunnels to it, so it listens on its own
+   localhost only and never needs to reach the hub. When the hub's machine sleeps or changes network,
+   the link drops and comes back by itself; the assistant keeps running there meanwhile.
+3. **Give it a Claude login.** Settings → Agent configs → **Copy login** copies the config's login
+   and settings to the new host (or log in there with `claude` as that user). Then add a profile of
+   the same name there: Settings → Profiles shows **Not set up on: <host>** under the profile.
+4. **Move the assistant there**: Settings → Profiles → **Edit** the profile on the board's own host
+   and pick the host under **Assistant host**. The sidebar's *Assistant* then opens the assistant on
+   that host, and says so while the host is offline. `GET /api/profiles/<id>/assistant` on the hub
+   goes there too (to `/api/profiles/<id there>/assistant?local=1`), and returns the task with that
+   host's `host_id`, which clients such as the mobile app reach through `/api/h/<host_id>/…`. Removing
+   the host puts the assistant back on the board's own host.
+5. **Let it use your board**, if it should hand work to your projects or read what needs your
+   attention: Settings → Hosts → **Let this host's agents use this board** for that host. Agents
+   there in the profiles whose assistant runs on it then act on your boards with that profile's access
+   (see above); other profiles on that host stay out. The assistant's Details panel
+   shows the host it runs on and whether it can use this board.
+6. **Google and Telegram** are set up on the assistant host only. *(Coming with the next steps of the
+   personal mode: the Google Workspace MCP server with its OAuth client, and the Telegram bot.)*
 
 ### Reaching a host from anywhere
 
