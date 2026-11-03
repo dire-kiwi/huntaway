@@ -146,7 +146,8 @@ pub(super) fn send_message(state: &Shared, task_id: &str, message: Option<db::Qu
 /// it waits in "In progress", keeping `text` as its queued message, and starts once they're
 /// merged (see `start_unblocked`).
 pub fn wait_for_dependencies(state: &Shared, task: &Task, unmet: &[Task], message: Option<db::Queued>) -> ApiResult<Task> {
-    if let Some(message) = message.as_ref().filter(|m| !m.text.trim().is_empty()) {
+    // One with no text keeps only its automation runs, for the run that starts it (see db::queue).
+    if let Some(message) = message.as_ref() {
         db::queue(&state.db(), &task.id, db::Queued { text: message.text.trim().to_string(), ..message.clone() })?;
     }
     // Without a message, for the one queued: unless it was sent or taken back meanwhile (checked
@@ -175,7 +176,8 @@ pub fn wait_for_dependencies(state: &Shared, task: &Task, unmet: &[Task], messag
 /// `wait_for_dependencies`, it waits in "In progress", keeping `message` as its queued message,
 /// and its agent carries on once the limit resets (see usage::resume_loop).
 pub fn wait_for_limit(state: &Shared, task: &Task, config_name: &str, until: &str, message: Option<db::Queued>) -> ApiResult<Task> {
-    if let Some(message) = message.as_ref().filter(|m| !m.text.trim().is_empty()) {
+    // One with no text keeps only its automation runs, for the run that starts it (see db::queue).
+    if let Some(message) = message.as_ref() {
         db::queue(&state.db(), &task.id, db::Queued { text: message.text.trim().to_string(), ..message.clone() })?;
     }
     let fields = [("waiting", json!(true)), ("limit_reset_at", json!(until)), ("status", json!("in_progress")), ("attention_reason", Value::Null)];

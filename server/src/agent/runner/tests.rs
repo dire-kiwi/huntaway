@@ -2291,3 +2291,78 @@ fn a_project_automations_new_tasks_first_run_is_charged_to_it() {
         runs::TEST_CAN_RUN.set(false);
     });
 }
+
+// HA-161 review: the start of a task a project automation made, held back for its config's usage
+// limit, dropped the automation run with its empty message, so the run it got once the limit reset
+// wasn't charged to it.
+#[test]
+fn a_project_automations_new_task_that_waits_for_a_usage_reset_is_charged_its_first_run() {
+    crate::testing::run(async || {
+        let state = crate::testing::state();
+        let (task, configs) = out_of_usage_setup(&state, "claude", true, false, false);
+        let project = db::NewProject {
+            id: "web",
+            profile_id: &task.profile_id,
+            name: "Web",
+            key: "WEB",
+            repo_path: "/src/web",
+            scratch_path: "/s",
+            worktrees_root: "/w",
+            base_branch: None,
+            use_worktrees: false,
+        };
+        db::insert_project(&state.db(), project).unwrap();
+        let b = json!({"name": "Make", "trigger": {"kind": "interval", "every_minutes": 60}, "budget_usd": 1.0,
+                       "action": {"kind": "create_task", "title": "Look", "start": true, "claude_config_id": configs[0].id}});
+        let a = crate::integrations::automations::create(&state, "web", b.as_object().unwrap()).unwrap();
+        let (resets, _) = reset_in(1);
+        crate::agent::usage::on_rate_limit_event(&state, &configs[0].id, &json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets}}));
+        runs::TEST_CAN_RUN.set(true);
+        let r = crate::integrations::automations::run_now(&state, &a, Default::default()).await.unwrap();
+        assert_eq!(r.status, "ok", "{:?}", r.detail);
+        let made = r.task_id.clone().unwrap();
+        let get = || db::get_task(&state.db(), &made).unwrap().unwrap();
+        assert!(get().waiting && !state.is_running(&made));
+        assert_eq!(charged_to(&state, &r.id), (None, None));
+
+        // Once the limit resets, it starts as a task does, and that first run is the automation run's.
+        let past = chrono::DateTime::from_timestamp(resets - 3 * 3600, 0).unwrap().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        state.update_task(&made, &[("limit_reset_at", json!(past))]).unwrap();
+        state.usage.lock().unwrap().get_mut(&configs[0].id).unwrap().out_until = Some(past);
+        start_unblocked(&state, None);
+        let first = state.runs.lock().unwrap().get(&made).map(|h| h.run_id.clone()).expect("its first run");
+        assert_eq!(charged_to(&state, &r.id).0.as_deref(), Some(first.as_str()));
+        assert_eq!(user_messages(&state, &made)[0]["start"], true);
+        state.db().execute("UPDATE runs SET cost_usd=2 WHERE id=?1", [&first]).unwrap();
+        for _ in 0..200 {
+            if !state.is_running(&made) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!state.is_running(&made));
+        runs::TEST_CAN_RUN.set(false);
+        assert_eq!(charged_to(&state, &r.id), (Some(first.clone()), Some(2.0)));
+        next_scheduled_is_over_budget(&state, &a).await;
+    });
+}
+
+// HA-161 review: with no queued text, the automation runs left on a thread stay for the run that
+// starts it, and a message queued later takes them along.
+#[test]
+fn automation_runs_left_with_no_text_go_to_the_next_run() {
+    let state = crate::testing::state();
+    let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
+    let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
+    let task = db::insert_task(&state.db(), t).unwrap();
+    let c = state.db();
+    db::queue(&c, &task.id, db::Queued { routine_runs: vec!["a".into()], ..db::Queued::new("", false) }).unwrap();
+    assert_eq!(db::get_task(&c, &task.id).unwrap().unwrap().queued_message, None);
+    assert_eq!(db::take_queued(&c, &task.id).unwrap(), None);
+    db::queue(&c, &task.id, db::Queued::new("Hello", false)).unwrap();
+    assert_eq!(db::take_queued(&c, &task.id).unwrap().unwrap().routine_runs, ["a"]);
+    assert!(db::take_parked_runs(&c, &task.id).unwrap().is_empty());
+    db::queue(&c, &task.id, db::Queued { routine_runs: vec!["b".into()], ..db::Queued::new(" ", true) }).unwrap();
+    assert_eq!(db::take_parked_runs(&c, &task.id).unwrap(), ["b"]);
+    assert!(db::take_parked_runs(&c, &task.id).unwrap().is_empty());
+}

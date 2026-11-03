@@ -106,10 +106,15 @@ fn start_run(
         if take == Take::Only && taken.is_none() {
             return Err(ApiError::conflict("nothing is queued to send"));
         }
-        let message = match &taken {
+        let mut message = match &taken {
             Some(queued) => queued.clone().then(message),
             None => message,
         };
+        // An automation's start of a task it made, held back (for a usage limit, say), left its run
+        // for this one (see db::queue).
+        if taken.is_none() && kind == "prompt" {
+            message.routine_runs.extend(db::take_parked_runs(&tx, task_id)?);
+        }
         let run = db::insert_run(&tx, task_id, kind)?;
         // The routines whose messages it starts with are this run's, for its cost.
         crate::integrations::automations::routines::taken_in(&tx, &run.id, &message.routine_runs)?;
