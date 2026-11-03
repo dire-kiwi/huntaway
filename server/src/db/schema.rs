@@ -794,7 +794,21 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         // integrations/automations.rs). SQLite can't drop NOT NULL, so the table is rebuilt, with
         // foreign keys off so dropping the old one doesn't take the runs with it; ids, runs and
         // every column are kept, and each automation's profile is its project's.
-        conn.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; {SCHEMA_V78} PRAGMA user_version=78; COMMIT; PRAGMA foreign_keys=ON;"))?;
+        let has = |table: &str, col: &str| -> rusqlite::Result<bool> {
+            conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", [table, col], |r| r.get(0))
+        };
+        let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V78 };
+        let mut runs = String::new();
+        for col in ["outcome TEXT", "cost_usd REAL"] {
+            if !has("automation_runs", col.split(' ').next().unwrap())? {
+                runs.push_str(&format!("ALTER TABLE automation_runs ADD COLUMN {col};"));
+            }
+        }
+        conn.execute_batch(&format!(
+            "PRAGMA foreign_keys=OFF; BEGIN; {rebuild} {runs}
+             CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
+             PRAGMA user_version=78; COMMIT; PRAGMA foreign_keys=ON;"
+        ))?;
     }
     Ok(conn)
 }
@@ -833,9 +847,6 @@ ALTER TABLE automations_v78 RENAME TO automations;
 CREATE INDEX IF NOT EXISTS automations_project ON automations(project_id);
 CREATE INDEX IF NOT EXISTS automations_profile ON automations(profile_id);
 DELETE FROM automation_runs WHERE automation_id NOT IN (SELECT id FROM automations);
-ALTER TABLE automation_runs ADD COLUMN outcome TEXT;
-ALTER TABLE automation_runs ADD COLUMN cost_usd REAL;
-CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
 "#;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
