@@ -10,7 +10,7 @@ const hook = `export async function resolve(spec, ctx, next) {
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
-const { ApiError, createClient } = await import("@huntaway/client");
+const { ApiError, assistantHome, createClient } = await import("@huntaway/client");
 
 /** A board at `baseUrl` whose requests are recorded, answering `answer(url, init)` (200 with `{}` by default). */
 function board(baseUrl, { token = "", answer, wsBase } = {}) {
@@ -145,4 +145,26 @@ test("the assistant's calls go to its profile on its host", async () => {
     ],
   );
   assert.deepEqual(JSON.parse(requests[1].body), { text: "Hi" });
+});
+
+// HA-120: a profile's assistant can run on a linked host of its own, which the board goes to in whatever state it's in.
+test("a profile's assistant is on its assistant host, or else the board's own host", () => {
+  const host = (id, more = {}) => ({ id, name: id, local: id === "hub", connected: true, mode: id === "hub" ? "local" : "ssh", api_version: 98, ...more });
+  const profile = (host_id, id, more = {}) => ({ host_id, id, name: "personal", ...more });
+  const hosts = [host("hub"), host("home"), host("laptop")];
+  // No setting: the board's own host's profile, else the first connected host with assistants that has one.
+  assert.deepEqual(assistantHome([profile("laptop", "pl"), profile("hub", "ph")], hosts, "personal"), { hostId: "hub", profileId: "ph" });
+  assert.deepEqual(assistantHome([profile("laptop", "pl")], hosts, "personal"), { hostId: "laptop", profileId: "pl" });
+  assert.equal(assistantHome([profile("laptop", "pl")], [host("hub"), host("laptop", { api_version: 96 })], "personal"), undefined);
+  // The board's own profile picks the host, and its profile of that name there.
+  const placed = [profile("hub", "ph", { assistant_host: "home" }), profile("home", "pr"), profile("laptop", "pl")];
+  assert.deepEqual(assistantHome(placed, hosts, "personal"), { hostId: "home", profileId: "pr" });
+  // Rather than falling back to another host, it says why it can't be opened there.
+  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { connected: false }), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
+  assert.deepEqual(assistantHome(placed, [host("hub"), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
+  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 90 })], "personal"), { hostId: "home", unavailable: "old" });
+  assert.deepEqual(assistantHome([placed[0]], hosts, "personal"), { hostId: "home", unavailable: "no_profile" });
+  // Another host's setting doesn't count, nor does one naming the board's own host.
+  assert.deepEqual(assistantHome([profile("hub", "ph"), profile("laptop", "pl", { assistant_host: "home" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });
+  assert.deepEqual(assistantHome([profile("hub", "ph", { assistant_host: "hub" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });
 });

@@ -219,6 +219,10 @@ fn an_assistant_host_must_be_a_linked_host_with_assistants() {
         assert_eq!((status, &made["assistant_host"]), (200, &json!("host")));
         assert_eq!(api(&hub, "POST", "/api/profiles", Some(json!({"name": "third", "assistant_host": "nope"}))).await.0, 400);
         assert!(db::list_profiles(&hub.db()).unwrap().iter().all(|p| p.name != "third"));
+        // Removing the host takes it off the profiles that named it.
+        assert_eq!(api(&hub, "DELETE", "/api/hosts/host", None).await.0, 200);
+        assert!(db::list_profiles(&hub.db()).unwrap().iter().all(|p| p.assistant_host.as_deref() != Some("host")));
+        assert_eq!(db::get_profile(&hub.db(), &p.id).unwrap().unwrap().assistant_host.as_deref(), Some("old"));
     });
 }
 

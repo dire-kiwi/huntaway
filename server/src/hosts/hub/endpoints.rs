@@ -192,6 +192,10 @@ pub async fn change_host(State(s): State<Shared>, Path(id): Path<String>, Json(b
 /// Forget a link. Its data stays on that host.
 pub async fn remove_host(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     s.db().execute("DELETE FROM links WHERE id=?1", [&id])?;
+    // Profiles whose assistants ran there have them here again.
+    if s.db().execute("UPDATE profiles SET assistant_host=NULL WHERE assistant_host=?1", [&id])? > 0 {
+        s.emit(json!({"type": "profiles_changed"}));
+    }
     if let Some(t) = s.link_tasks.lock().unwrap().remove(&id) {
         t.abort();
     }
