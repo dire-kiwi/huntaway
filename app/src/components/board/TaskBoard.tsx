@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Archive, ChevronLeft, ChevronRight, GanttChart, Inbox, Kanban, List, MonitorPlay, Network, Plus, X } from "lucide-react";
+import { Archive, ChevronLeft, ChevronRight, Inbox, Kanban, List, Network, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type MouseEvent, type ReactNode, type UIEvent, type WheelEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -32,10 +32,8 @@ import { FOCUSES, inFocus, isFocus, isNow, type Focus } from "../../focus";
 import { useSelection } from "../../selection";
 import { focusItems, moveToFocus } from "./focusActions";
 import { LassoPath, SelectionBar, useClearSelection, useLasso } from "./Lasso";
-import { TimelineView } from "./TimelineView";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
-import { LiveView } from "./LiveView";
 import { Button, ContextMenu, IconButton, RESOLUTION_LABELS, StatusIcon, STATUS_COLOR, useClock, type MenuItem } from "../ui";
 import { useNarrow } from "../../narrow";
 import { TaskCard, TaskRow, useProgress, useCreatedProgress } from "./TaskCard";
@@ -50,8 +48,6 @@ const VIEWS = [
   { id: "board", label: "Board", icon: Kanban, title: "Board view: a column for each status" },
   { id: "list", label: "List", icon: List, title: "List view: a section for each status" },
   { id: "triage", label: "Triage", icon: Inbox, title: "Triage view: what needs you, most pressing first" },
-  { id: "live", label: "Live", icon: MonitorPlay, title: "Live view: the working agents side by side" },
-  { id: "timeline", label: "Timeline", icon: GanttChart, title: "Timeline view: when agents ran, and how long tasks have waited on you" },
   { id: "graph", label: "Graph", icon: Network, title: "Graph view: which tasks led to which, and what waits on what" },
 ] as const;
 type BoardView = (typeof VIEWS)[number]["id"];
@@ -618,10 +614,6 @@ export function TaskBoard({
       )}
       {view === "triage" ? (
         <TriageView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
-      ) : view === "live" ? (
-        <LiveView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
-      ) : view === "timeline" ? (
-        <TimelineView tasks={shownTasks} projectOf={projectOf} onMenu={onMenu} />
       ) : view === "graph" ? (
         <GraphView tasks={shownTasks} boardTasks={tasks} keep={keepInGraph} projectOf={projectOf} progressOf={progressOf} onMenu={onMenu} />
       ) : view === "list" ? (

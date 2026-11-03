@@ -954,7 +954,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
   `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
   (*Now*, *Later*, *All*, which starts on *All* and is kept for every board) applies to every
-  view: the board, list, triage, live, timeline and graph, with the search and filters. A task in
+  view: the board, list, triage and graph, with the search and filters. A task in
   Now has a bolt on its card and row, and the switch counts them. A task goes back to Later once
   nothing has happened on it for a day: no prompt from you, no message in its thread (the
   agent's included), and its agent not running. The day is the host's *Tasks in Now go back to
@@ -968,7 +968,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
     (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
     use a card's menu button.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
-  *Board* and *List*, the view switch has four more, which show the same tasks (the search and
+  *Board* and *List*, the view switch has two more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
   1500px the switch names only the current view, and below 1320px none.
   - *Triage*: what each task needs from you, most pressing first: an answer (*Needs
@@ -977,15 +977,6 @@ skipped. Auto-compacting idle sessions is Claude-only.
     (`GET /tasks/{id}`'s `last_message`); picking one (a click, or `j`/`k`) shows its pending
     permission prompts to allow or deny, its thread's composer (the same draft as its panel's)
     and, in review, *Ready for merge*. `Enter` opens its thread.
-  - *Live*: a tile for each agent that's working, needs you or was active in the last 30
-    minutes (12 at most): the tail of its thread (the user's messages, the agent's text, its tool
-    calls) with the text it's streaming, its permission prompts to allow or deny, and a field to
-    message it.
-  - *Timeline*: a lane for each task with activity in the last hour, 6 hours, day, 3, 7 or 30
-    days (‹ › go back a window at a time), most recent first: its agent's runs and reviews as
-    bars, your prompts as ticks, and since its agent stopped, how long it's waited on you. Above,
-    how many agents ran at once. It's the hosts' analytics report (API 16) for each profile on
-    the board.
   - *Graph*: tasks linked by how they came about: a task follows the task whose agent created
     it, the tasks it waits for (`depends_on`) and the subproject it's in, a column per step, and
     a link that a longer way round already makes is left out. Tasks made from one prompt are
