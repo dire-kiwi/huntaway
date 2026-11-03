@@ -336,3 +336,42 @@ fn the_join_command_dials_the_hub_where_the_browser_reached_it() {
     s.broker_url.set("https://broker.example.com/_broker/h/hub".into()).unwrap();
     assert_eq!(hub_url(&s, &brokered), "https://broker.example.com/_broker/h/hub");
 }
+
+#[test]
+fn a_linked_hosts_agent_threads_thread_and_events_are_relayed() {
+    crate::testing::run(async || {
+        use crate::threads::live::tests::{another_task, backend, create_thread, next_thread_event, stage_example};
+        let (hub, host) = (node("hub", "hub"), node("host", "laptop"));
+        let t = crate::testing::task(&host);
+        stage_example(&host, &t.id).await;
+        let b = backend(&host);
+        crate::threads::live::install(&host, b.clone());
+        let url = format!("http://{}", serve(&host).await);
+        spawn_outbound(&hub, outbound_link("host", &url, "host-tok"));
+        until("the hub to connect", || find_link(&hub, "host")).await;
+        let app = crate::api::router(hub.clone());
+        let get = async |path: String| {
+            let req = Request::builder().uri(path).header("authorization", "Bearer hub-tok").body(Body::empty()).unwrap();
+            let res = app.clone().oneshot(req).await.unwrap();
+            let status = res.status().as_u16();
+            (status, serde_json::from_slice::<Value>(&axum::body::to_bytes(res.into_body(), 16 << 20).await.unwrap()).unwrap())
+        };
+
+        // Its routes, through the hub.
+        let (status, window) = get(format!("/api/h/host/tasks/{}/thread?limit=8", t.id)).await;
+        assert_eq!((status, &window["start"], &window["seq"]), (200, &json!(5), &json!(34)), "{window}");
+        let (status, page) = get(format!("/api/h/host/tasks/{}/thread/items?before=5&limit=3", t.id)).await;
+        assert_eq!((status, &page["start"]), (200, &json!(2)), "{page}");
+        let (_, events) = get(format!("/api/h/host/tasks/{}/thread/events?after=32", t.id)).await;
+        assert_eq!(events["events"].as_array().map(Vec::len), Some(2), "{events}");
+
+        // Its live events, tagged with the host, on the hub's stream.
+        let mut rx = hub.hub_events.subscribe();
+        let live = another_task(&host, &t);
+        create_thread(&b, &live.id).await;
+        let ev = next_thread_event(&mut rx).await;
+        assert_eq!((&ev["host_id"], &ev["task_id"], &ev["event"]["type"]), (&json!("host"), &json!(live.id), &json!("thread.updated")));
+        let (status, state) = get(format!("/api/h/host/tasks/{}/thread", live.id)).await;
+        assert_eq!((status, &state["seq"]), (200, &json!(1)), "{state}");
+    })
+}

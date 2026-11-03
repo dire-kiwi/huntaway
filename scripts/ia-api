@@ -9,6 +9,7 @@
   ia-api pending [<task>]                                  # pending permission prompts
   ia-api approve-all [<task>] [--deny-pattern REGEX]
   ia-api wait-idle <task> [--timeout SECS] [--approve [--deny-pattern REGEX]] [--grace SECS]
+  ia-api thread <task> [--limit N | --before I [--limit N] | --events [--after SEQ]] [--brief]
 
 A <task> is an id, or a key like TES-3 (looked up in $IA_TEST_PROJECT), S-3 or G-3 (a scratch or
 group task, in $IA_TEST_PROFILE, or in any profile without one), here and in a path's
@@ -25,6 +26,11 @@ board. Responses are printed as JSON; an HTTP error exits 1 with the error body 
 merge that ended in needs_attention) and 124 on timeout (default 300s, --approve included). If no run is going when it
 starts, it waits --grace seconds (default 5) for one to start first, since a run can take a
 moment to start (a task's title is generated before its run starts, for example).
+
+`thread` reads a task's agent-threads thread (API 104, docs/agent-threads-api.md): the whole
+snapshot, the window of its last --limit items, the page of items before index --before, or
+(--events) its saved events after --after, every page of them. --brief prints a line for each
+item (and request, or event) instead of the JSON.
 """
 import json
 import os
@@ -232,6 +238,75 @@ def wait_idle(api, ref, timeout, grace, approve, deny_pattern):
         time.sleep(1)
 
 
+def clip(text, n=100):
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+def brief_item(item):
+    """A line for an item: its type and id, then what it says."""
+    t = item.get("type")
+    what = item.get("text") or item.get("title") or item.get("summary") or item.get("command") or item.get("name") or ""
+    if t == "tool_call":
+        what = f"{item.get('kind', '?')} {item.get('status', '?')}: {item.get('title') or item.get('command') or item.get('name', '')}"
+    elif t == "turn_result":
+        what = "ok" if item.get("ok") else ("interrupted" if item.get("interrupted") else f"error {item.get('error', '')}")
+    parent = f" (in {item['parent_id']})" if item.get("parent_id") else ""
+    return f"{t} {item.get('id')}{parent}: {clip(what)}"
+
+
+def brief_request(r):
+    res = r.get("resolution")
+    state = "open" if res is None else res.get("outcome")
+    what = r.get("title") or r.get("name") or " / ".join(q.get("question", "") for q in r.get("questions", [])) or r.get("plan", "")
+    return f"request {r.get('type')} {r.get('id')} [{state}]: {clip(what)}"
+
+
+def brief(v):
+    """Lines for a snapshot, window or page (with each item's index in the thread), or a list of events."""
+    if isinstance(v, list):
+        out = []
+        for e in v:
+            detail = e.get("item", {}).get("id") or e.get("item_id") or e.get("request_id") or e.get("turn_id") or (e.get("request") or {}).get("id") \
+                or (e.get("thread") or {}).get("status") or ""
+            out.append(f"{e.get('seq')} {e.get('type')} {detail}")
+        return out
+    context = v.get("context") or []
+    items = v.get("items", [])
+    start = v.get("start") or 0
+    t = v.get("thread")
+    out = [f"thread {t['id']} {t['status']} seq {v.get('seq')}" if t else f"page of {v.get('thread_id')} seq {v.get('seq')}"]
+    for i, item in enumerate(items):
+        index = context[i] if i < len(context) else start + i - len(context)
+        out.append(f"{index:>4} {brief_item(item)}")
+    out += [brief_request(r) for r in v.get("requests", [])]
+    return out
+
+
+def thread(api, ref, args):
+    tid = api.task_id(ref)
+    limit, before, after = take(args, "--limit"), take(args, "--before"), take(args, "--after")
+    events, short = take(args, "--events", False, has_value=False), take(args, "--brief", False, has_value=False)
+    if args or (events and (limit or before)) or (after and not events):
+        die("usage: ia-api thread <task> [--limit N | --before I [--limit N] | --events [--after SEQ]] [--brief]", 2)
+    if events:
+        out, seq = [], int(after or 0)
+        while True:
+            got = api.call("get", f"/tasks/{tid}/thread/events?after={seq}")
+            out += got["events"]
+            if not got["more"] or not got["events"]:
+                break
+            seq = got["events"][-1]["seq"]
+    elif before is not None:
+        out = api.call("get", f"/tasks/{tid}/thread/items?before={int(before)}" + (f"&limit={int(limit)}" if limit else ""))
+    else:
+        out = api.call("get", f"/tasks/{tid}/thread" + (f"?limit={int(limit)}" if limit else ""))
+    if short:
+        print("\n".join(brief(out)))
+    else:
+        show(out)
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
@@ -283,6 +358,8 @@ def main():
         if len(rest) != 1:
             die("usage: ia-api wait-idle <task> [--timeout SECS] [--approve [--deny-pattern REGEX]] [--grace SECS]", 2)
         return wait_idle(api, rest[0], timeout, grace, approve, deny)
+    elif cmd == "thread" and rest:
+        thread(api, rest[0], rest[1:])
     else:
         die(f"unknown command or wrong arguments: {' '.join(args)} (see ia-api --help)", 2)
     return 0
