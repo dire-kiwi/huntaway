@@ -188,9 +188,21 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
           )}
         </label>
         <div className="rounded-md border border-line bg-panel-2/60 p-2.5 text-[11.5px] text-faint">
-          With Claude, ask and never hold in every mode, Bypass included; in Don't ask, what a rule asks about is denied. With Codex, you answer
-          its approvals yourself in Auto (not its reviewer); in Bypass and Don't ask it can't ask, so what a rule asks about is refused, as is
-          a tool that only a pattern allows.
+          <p>
+            <span className="text-muted">Claude:</span> ask and never hold in every mode, Bypass included; in Don't ask, what a rule asks about
+            is denied.
+          </p>
+          <p className="mt-1">
+            <span className="text-muted">Codex:</span> for MCP tools, you answer its approvals yourself in Auto (not its reviewer); in Bypass
+            and Don't ask it can't ask, so what a rule asks about is refused, as is a tool that only a pattern allows. For its own tools (
+            <code>Bash</code>, <code>ApplyPatch</code>), an ask rule makes it ask about every command and file change in any mode, except
+            commands it takes as safe (reading files, listing them), which it runs without asking. It can't be kept from its own tools, so
+            with a never rule on them (or <code>*</code>) the assistant won't run on Codex.
+          </p>
+          <p className="mt-1">
+            <span className="text-muted">The board's tools</span> (<code>mcp__{rules.board_server}__…</code>) are held by the board, for
+            both. Deleting tasks, adding projects and changing automations always ask you, so an ask rule doesn't ask about them twice.
+          </p>
         </div>
         <ModalFooter className="flex items-center justify-end gap-2">
           {save.error && <span className="mr-auto text-xs text-red-400">{save.error}</span>}

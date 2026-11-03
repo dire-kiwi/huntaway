@@ -36,7 +36,8 @@ pub struct Queued {
     /// The parts the user sent, if any.
     pub user_text: Option<String>,
     /// An automation sent it, with nobody there to answer the run it starts: its prompts expire
-    /// (see permissions::expiry). Not kept when it's queued.
+    /// (see permissions::expiry). Kept while it's queued (`tasks.queued_routine`), as long as all
+    /// that's queued is an automation's.
     pub routine: bool,
 }
 
@@ -61,7 +62,13 @@ impl Queued {
             (Some(a), Some(b)) => Some(join(a, b)),
             (a, b) => a.or(b),
         };
-        Self { text: join(self.text, next.text), from_agent: self.from_agent && next.from_agent, user_text, routine: self.routine && next.routine }
+        // An empty part (nothing sent with what's queued) says nothing about who's there.
+        let routine = match (self.text.trim().is_empty(), next.text.trim().is_empty()) {
+            (false, true) => self.routine,
+            (true, false) => next.routine,
+            _ => self.routine && next.routine,
+        };
+        Self { text: join(self.text, next.text), from_agent: self.from_agent && next.from_agent, user_text, routine }
     }
 }
 
@@ -69,32 +76,42 @@ impl Queued {
 pub fn queue(c: &Connection, task_id: &str, message: Queued) -> Result<Option<Task>> {
     let Some(task) = get_task(c, task_id)? else { return Ok(None) };
     let queued = match task.queued_message.filter(|q| !q.trim().is_empty()) {
-        Some(text) => Queued { text, from_agent: queued_from_agent(c, task_id)?, user_text: task.queued_user_text, routine: false }.then(message),
+        Some(text) => {
+            let (from_agent, routine) = queued_from(c, task_id)?;
+            Queued { text, from_agent, user_text: task.queued_user_text, routine }.then(message)
+        }
         None => message,
     };
     c.execute(
-        "UPDATE tasks SET queued_message=?2, queued_from_agent=?3, queued_user_text=?4, updated_at=?5 WHERE id=?1",
-        params![task_id, queued.text, queued.from_agent, queued.user_text, now()],
+        "UPDATE tasks SET queued_message=?2, queued_from_agent=?3, queued_user_text=?4, queued_routine=?5, updated_at=?6 WHERE id=?1",
+        params![task_id, queued.text, queued.from_agent, queued.user_text, queued.routine, now()],
     )?;
     get_task(c, task_id)
 }
 
-fn queued_from_agent(c: &Connection, task_id: &str) -> Result<bool> {
-    Ok(c.query_row("SELECT queued_from_agent FROM tasks WHERE id=?1", [task_id], |r| r.get(0))?)
+/// Whether what's queued on a task is all other agents' (`from_agent`), and all automations' (`routine`).
+fn queued_from(c: &Connection, task_id: &str) -> Result<(bool, bool)> {
+    Ok(c.query_row("SELECT queued_from_agent, queued_routine FROM tasks WHERE id=?1", [task_id], |r| Ok((r.get(0)?, r.get(1)?)))?)
 }
 
 /// Take the message queued on a thread.
 pub fn take_queued(c: &Connection, task_id: &str) -> Result<Option<Queued>> {
     let queued = get_task(c, task_id)?
         .and_then(|t| Some((t.queued_message.filter(|q| !q.trim().is_empty())?, t.queued_user_text)))
-        .map(|(text, user_text)| Ok::<_, anyhow::Error>(Queued { text, from_agent: queued_from_agent(c, task_id)?, user_text, routine: false }))
+        .map(|(text, user_text)| {
+            let (from_agent, routine) = queued_from(c, task_id)?;
+            Ok::<_, anyhow::Error>(Queued { text, from_agent, user_text, routine })
+        })
         .transpose()?;
     clear_queued(c, task_id)?;
     Ok(queued)
 }
 
 pub fn clear_queued(c: &Connection, task_id: &str) -> Result<Option<Task>> {
-    c.execute("UPDATE tasks SET queued_message=NULL, queued_from_agent=0, queued_user_text=NULL, updated_at=?2 WHERE id=?1", params![task_id, now()])?;
+    c.execute(
+        "UPDATE tasks SET queued_message=NULL, queued_from_agent=0, queued_user_text=NULL, queued_routine=0, updated_at=?2 WHERE id=?1",
+        params![task_id, now()],
+    )?;
     get_task(c, task_id)
 }
 

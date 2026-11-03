@@ -18,9 +18,12 @@
 //!   Codex's own reviewer would answer in Auto, so the assistant's Codex runs in Auto have the user
 //!   as reviewer instead (they ask as in Ask). With an approval policy of `never` (Bypass and Don't
 //!   ask), Codex refuses a call that asks: *ask* and *never* still hold, as refusals, but a tool
-//!   allowed only by a pattern is refused too.
-//! - **The board's own tools** (create_task and the rest) are decided by the board as it runs them
-//!   (see mcp/tools/dispatch.rs), for both.
+//!   allowed only by a pattern is refused too. Codex's own tools (Bash, ApplyPatch) can't be stopped
+//!   before they run: an *ask* rule on them has it ask about everything it doesn't take as safe, and a
+//!   *never* rule on them keeps the run from starting (see `codex_policy`).
+//! - **The board's own tools** (create_task, wait and the rest) are decided by the board as it runs
+//!   them (see mcp/tools/dispatch.rs's check_rules), for both. Those that always ask the user
+//!   themselves (`ASKS_ITSELF`) aren't asked about again.
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -94,8 +97,9 @@ impl Default for Rules {
 pub const GOOGLE_SERVER: &str = "google";
 
 /// The rules a profile starts with: for the Google server, reading, searching and drafting are
-/// allowed; sending mail, making, changing or deleting events, sharing files and changing mail's
-/// labels (which is how mail goes to the trash) ask; deleting or trashing mail and files is never.
+/// allowed; sending mail, making, changing or deleting events, sharing files or handing them over,
+/// changing files, mail filters and mail's labels (which is how mail goes to the trash) ask; deleting
+/// or trashing mail and files is never.
 /// The patterns fit the tool names of the Google Workspace MCP server (`search_gmail_messages`,
 /// `send_gmail_message`, `create_event`, `share_drive_file` and so on) and names like them.
 pub fn default_rules() -> Vec<Rule> {
@@ -104,7 +108,7 @@ pub fn default_rules() -> Vec<Rule> {
     let allow = ["search*", "get*", "list*", "read*", "check*", "*draft*"].map(|p| rule(&g(p), Allow));
     let ask = [
         "*send*", "create*event*", "modify*event*", "update*event*", "delete*event*", "*share*", "*add*permission*", "*update*permission*",
-        "*remove*permission*", "*message*label*",
+        "*remove*permission*", "*message*label*", "manage*", "update*file*", "create*filter*", "*transfer*",
     ]
     .map(|p| rule(&g(p), Ask));
     let never = ["*trash*", "*delete*mail*", "*mail*delete*", "*delete*message*", "*delete*file*", "*delete*drive*", "*drive*delete*"].map(|p| rule(&g(p), Never));
@@ -150,9 +154,19 @@ fn glob(p: &[u8], t: &[u8]) -> bool {
     p[pi..].iter().all(|&c| c == b'*')
 }
 
-/// Whether `tool` is one of the board's own (decided by the board as it runs them, see `decide_board_tool`).
+/// The names the board's MCP server goes by, now and before (a rule may use any).
+pub const BOARD_SERVER_NAMES: [&str; 3] = [MCP_SERVER_NAME, LEGACY_MCP_SERVER_NAME, "issue-agent"];
+
+/// The board's tools that ask the user to approve what they do whatever the thread's mode (see
+/// mcp/tools/approvals.rs): an ask rule doesn't ask about them again (a never rule still refuses them).
+/// update_project asks only for some settings, so an ask rule asks about it too.
+pub const ASKS_ITSELF: &[&str] = &["delete_task", "create_project", "create_automation", "update_automation", "delete_automation"];
+
+/// Whether `tool` is one of the board's own (decided by the board as it runs them, see
+/// mcp/tools/dispatch.rs's check_rules).
 pub fn is_board_tool(tool: &str) -> bool {
-    [MCP_SERVER_NAME, LEGACY_MCP_SERVER_NAME].iter().any(|n| tool.strip_prefix(&format!("mcp__{n}__")).is_some())
+    let t = tool.to_lowercase();
+    BOARD_SERVER_NAMES.iter().any(|n| t.starts_with(&format!("mcp__{n}__")) || t == format!("mcp__{n}"))
 }
 
 /// Whether rules hold for `tool` at all: questions and plans only ever go to the user.
@@ -333,11 +347,19 @@ pub fn on_tool_results(s: &Shared, task: &Task, v: &Value) {
             Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
             _ => continue,
         };
-        let Some(rest) = text.find(BLOCKED).map(|i| &text[i + BLOCKED.len()..]) else { continue };
-        let pattern = rest.strip_prefix(" (never: ").and_then(|r| r.split_once(')')).map(|(p, _)| p.to_string()).unwrap_or_default();
+        if !text.contains(BLOCKED) {
+            continue;
+        }
         let Some(id) = b["tool_use_id"].as_str() else { continue };
-        let (tool, input) = tool_use(s, &task.id, id).unwrap_or_else(|| ("unknown".into(), Value::Null));
-        if let Err(e) = log_blocked(s, task, &tool, &input, &pattern) {
+        let Some((tool, input)) = tool_use(s, &task.id, id) else { continue };
+        // Only a call the hook blocked: one a never rule decides, of a tool the hook decides (the
+        // board logs its own), and not some other tool's output that happens to quote the reason.
+        let rules = match for_task(&s.db(), task) {
+            Ok(Some(r)) => r,
+            _ => continue,
+        };
+        let Some(rule) = rules.decide(&tool).filter(|r| r.decision == Decision::Never && !is_board_tool(&tool)) else { continue };
+        if let Err(e) = log_blocked(s, task, &tool, &input, &rule.tool) {
             tracing::warn!(task = %task.id, "logging a blocked call: {e:#}");
         }
     }
@@ -413,6 +435,49 @@ fn may_match_server(pattern: &str, prefix: &str) -> bool {
 /// reviewer answer its approvals: the reviewer would answer ask rules itself.
 pub fn codex_needs_user_reviewer(rules: &Rules) -> bool {
     rules.has(Decision::Ask) || rules.has(Decision::Never)
+}
+
+/// A Codex run's (approval policy, approvals reviewer, sandbox) with `rules` (already for its mode),
+/// from what its mode gives (see codex::policy): the user rather than Codex's reviewer answers when
+/// a rule asks or refuses (the reviewer would answer them itself), and with a rule asking about its
+/// own tools it asks about every command and file change it doesn't take as safe, never with full
+/// access (see `codex_own_tools`, which also says when it can't run at all).
+pub fn codex_policy(rules: Option<&Rules>, mode: (&'static str, &'static str, &'static str)) -> Result<(&'static str, &'static str, &'static str), String> {
+    let (mut policy, mut reviewer, mut sandbox) = mode;
+    let Some(rules) = rules else { return Ok(mode) };
+    if codex_needs_user_reviewer(rules) && reviewer == "auto_review" {
+        reviewer = "user";
+    }
+    if codex_own_tools(rules)? {
+        (policy, reviewer) = ("untrusted", "user");
+        if sandbox == "danger-full-access" {
+            sandbox = "workspace-write";
+        }
+    }
+    Ok((policy, reviewer, sandbox))
+}
+
+/// Whether a rule may match one of an agent's own tools rather than an MCP server's (Bash, and
+/// Codex's ApplyPatch, as the board asks about them).
+fn for_own_tools(r: &Rule) -> bool {
+    !r.tool.trim().to_lowercase().starts_with("mcp__")
+}
+
+/// What a Codex run needs for the rules (already for its mode) on its own tools, which nothing can
+/// stop before they run: Ok(true) for an ask rule, so Codex asks about every command and file change
+/// it doesn't take as safe (approval policy `untrusted`, never full access), and the board answers by
+/// the rules; or Err, why it can't run, for a never rule, which Codex can't hold (it runs the
+/// commands it takes as read-only without asking, and has other ways to run code, such as its
+/// JavaScript tool, checked with Codex 0.166).
+pub fn codex_own_tools(rules: &Rules) -> Result<bool, String> {
+    if let Some(r) = rules.rules.iter().find(|r| r.decision == Decision::Never && for_own_tools(r)) {
+        return Err(format!(
+            "The assistant's approval rule \"{}: never\" is for the agent's own tools, which Codex can't be stopped from using: \
+             it runs commands it takes as safe without asking. Change the rule to ask, or give the assistant a Claude config.",
+            r.tool
+        ));
+    }
+    Ok(rules.rules.iter().any(|r| r.decision == Decision::Ask && for_own_tools(r)))
 }
 
 // ---------- the action log ----------

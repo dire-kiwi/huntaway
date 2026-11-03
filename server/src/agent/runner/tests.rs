@@ -2127,3 +2127,63 @@ fn a_run_an_automation_starts_is_a_routine_run_and_one_the_user_starts_isnt() {
         assert!(turn(&queued).get("routine").is_none(), "{}", turn(&queued));
     })
 }
+
+#[test]
+fn a_codex_assistant_with_a_never_rule_on_its_own_tools_doesnt_run() {
+    use crate::agent::approval_rules::{self, Decision, Rule, Rules};
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let state = crate::testing::state();
+        let codex = db::insert_claude_config(&state.db(), "Codex", "", "codex").unwrap();
+        let p = db::insert_profile(&state.db(), "me", std::slice::from_ref(&codex.id), None).unwrap();
+        let a = crate::agent::assistant::get_or_create(&state, &p.id).unwrap();
+        db::update_task(&state.db(), &a.id, &[("permission_mode", json!("bypassPermissions"))]).unwrap();
+        let rules = vec![Rule { tool: "Bash".into(), decision: Decision::Never }];
+        approval_rules::set(&state.db(), &p.id, Some(&Rules { rules, expiry_minutes: 30 })).unwrap();
+        send(&state, &a.id, "list the files").unwrap();
+        while state.is_running(&a.id) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        // Refused before anything is started, saying why.
+        let why = reload(&state, &a.id).attention_reason.unwrap_or_default();
+        assert!(why.contains("\"Bash: never\"") && why.contains("Claude config"), "{why}");
+    })
+}
+
+#[test]
+fn an_automations_message_that_waits_in_the_queue_still_starts_a_routine_run() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let state = crate::testing::state();
+        let p = db::insert_profile(&state.db(), "me", &[], None).unwrap();
+        let new = |title: &str| {
+            db::insert_task(&state.db(), db::NewTask {
+                profile_id: &p.id, project_id: None, kind: "task", title, description: "", status: "todo", use_worktree: false, model: None,
+                effort: None, claude_config_id: None,
+            })
+            .unwrap()
+        };
+        let routine = |text: &str| db::Queued { routine: true, ..db::Queued::new(text, true) };
+        // Queued while a run couldn't take it (compacting, waiting for dependencies or a usage limit), from two
+        // automations: it's kept, in the database, as all automations'.
+        let queued = new("Queued");
+        db::queue(&state.db(), &queued.id, routine("New mail")).unwrap();
+        db::queue(&state.db(), &queued.id, routine("And more")).unwrap();
+        // Released: its run is a routine run, so a prompt it raises expires.
+        assert!(send_queued(&state, &queued.id));
+        let run: String = state.db().query_row("SELECT id FROM runs WHERE task_id=?1", [&queued.id], |r| r.get(0)).unwrap();
+        state.db().execute("INSERT INTO mcp_calls (id,run_id,task_id,tool,args,created_at) VALUES ('c',?1,?2,'permission_prompt','{}','1')", [&run, &queued.id]).unwrap();
+        assert!(crate::mcp::permissions::routine_call(&state.db(), "c").unwrap());
+
+        // With the user's message queued alongside, someone's there: it isn't.
+        let mixed = new("Mixed");
+        db::queue(&state.db(), &mixed.id, routine("New mail")).unwrap();
+        db::queue(&state.db(), &mixed.id, db::Queued::new("and reply to Bob", false)).unwrap();
+        assert!(!db::take_queued(&state.db(), &mixed.id).unwrap().unwrap().routine);
+        // Nor once the queue is cleared, for what's queued next.
+        db::queue(&state.db(), &mixed.id, routine("New mail")).unwrap();
+        db::clear_queued(&state.db(), &mixed.id).unwrap();
+        db::queue(&state.db(), &mixed.id, db::Queued::new("mine", false)).unwrap();
+        assert!(!db::take_queued(&state.db(), &mixed.id).unwrap().unwrap().routine);
+    })
+}

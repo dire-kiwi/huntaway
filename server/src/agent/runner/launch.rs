@@ -149,12 +149,10 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             Some(cfg) => codex_run_effort(cfg, model.as_deref(), effort.clone()).await,
             None => effort.clone(),
         };
-        let (approval_policy, mut approvals_reviewer, sandbox) = crate::agent::codex::policy(&permission_mode, task.kind == "review");
-        // The user's approval rules (see agent/approval_rules.rs), which Codex's reviewer would answer itself.
+        // The user's approval rules (see agent/approval_rules.rs) may have Codex ask more, or keep it from running.
         let approval_rules = crate::agent::approval_rules::for_task(&state.db(), &task)?.map(|r| r.for_mode(&permission_mode));
-        if approval_rules.as_ref().is_some_and(crate::agent::approval_rules::codex_needs_user_reviewer) && approvals_reviewer == "auto_review" {
-            approvals_reviewer = "user";
-        }
+        let policy = crate::agent::codex::policy(&permission_mode, task.kind == "review");
+        let (approval_policy, approvals_reviewer, sandbox) = crate::agent::approval_rules::codex_policy(approval_rules.as_ref(), policy).map_err(|e| anyhow!(e))?;
         let tools = crate::agent::agent_tools::for_task_run(state, &task, project.as_ref())?;
         let gh_tools = uses_gh_server(&tools);
         let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);

@@ -807,10 +807,17 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         // the same time; and the action log of the calls that hit an ask or never rule. Columns are
         // added only if they aren't there, in case another migration takes this version first.
         conn.execute_batch("BEGIN;")?;
-        for (table, column) in [("permission_requests", "expires_at"), ("permission_requests", "rule"), ("push_answer_tokens", "expires_at")] {
+        // Also whether a task's queued message is all automations' (see db::Queued::routine).
+        let columns = [
+            ("permission_requests", "expires_at", "TEXT"),
+            ("permission_requests", "rule", "TEXT"),
+            ("push_answer_tokens", "expires_at", "TEXT"),
+            ("tasks", "queued_routine", "INTEGER NOT NULL DEFAULT 0"),
+        ];
+        for (table, column, kind) in columns {
             let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
             if !has {
-                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT;"))?;
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
             }
         }
         conn.execute_batch(

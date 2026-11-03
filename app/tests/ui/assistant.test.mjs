@@ -133,14 +133,14 @@ test("the assistant's rules can be changed, and a draft isn't saved until it's s
   const [profile] = await server.api("GET", "/profiles");
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    await ui.run(["goto /assistant/Default", "wait Message your assistant", "wait 6 allow", "wait 10 ask", "wait 7 never", "wait (the defaults, for Google)"]);
+    await ui.run(["goto /assistant/Default", "wait Message your assistant", "wait 6 allow", "wait 14 ask", "wait 7 never", "wait (the defaults, for Google)"]);
     await ui.run(["click Edit rules", "wait Approval rules", "click Ask before the assistant creates a task on the board"]);
     // Trying a tool name says which rule decides it.
     await ui.run(["click css=[aria-label='A tool name to try the rules on']", "type mcp__huntaway__create_task", "wait (mcp__huntaway__create_task)"]);
     // Cancelled, nothing changes.
     await ui.run(["click Cancel", "gone Approval rules"]);
     assert.equal((await server.api("GET", `/profiles/${profile.id}/approval-rules`)).is_default, true);
-    await ui.run(["click Edit rules", "wait Approval rules", "click Ask before the assistant creates a task on the board", "click Save rules", "gone Approval rules", "wait 11 ask"]);
+    await ui.run(["click Edit rules", "wait Approval rules", "click Ask before the assistant creates a task on the board", "click Save rules", "gone Approval rules", "wait 15 ask"]);
     const saved = await server.api("GET", `/profiles/${profile.id}/approval-rules`);
     assert.equal(saved.is_default, false);
     assert.deepEqual(saved.rules.at(-1), { tool: "mcp__huntaway__create_task", decision: "ask" });

@@ -152,6 +152,14 @@ async fn at_most_once(
 /// an automation can while the user hasn't approved what it asked (nothing is changed before
 /// then): it carries on waiting for them.
 fn rerunnable(s: &Shared, c: &McpCall) -> bool {
+    // One that was waiting for an approval rule's prompt (see check_rules) hasn't done anything yet.
+    let ruled: Option<String> = s
+        .db()
+        .query_row("SELECT status FROM permission_requests WHERE call_id=?1 AND kind='tool' AND rule IS NOT NULL", [&c.call_id], |r| r.get(0))
+        .ok();
+    if ruled.is_some_and(|status| status != "allowed") {
+        return true;
+    }
     let kind = match c.tool.as_str() {
         _ if RERUNNABLE.contains(&c.tool.as_str()) => return true,
         "update_project" | "create_project" => "project",
@@ -191,6 +199,11 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
     // subagents raise them too, and the agent's own tool calls end the wait before theirs.
     if !matches!(c.tool.as_str(), "wait" | "permission_prompt") {
         crate::mcp::wait::resumed(s, &task.id, &run.id);
+    }
+    // The user's approval rules hold for every board tool but the plumbing of prompts and questions,
+    // `wait` included (its command runs as the agent's own would).
+    if !matches!(c.tool.as_str(), "permission_prompt" | "request_user_input") {
+        check_rules(s, &task, &c.call_id, &c.tool, &c.args).await?;
     }
     match c.tool.as_str() {
         "permission_prompt" => {
@@ -296,7 +309,6 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             Ok(result)
         }
         tool => {
-            check_rules(s, &task, &c.call_id, tool, &c.args).await?;
             let ctx = Ctx {
                 profile_id: Some(profile.id),
                 profile_name: profile.name,
@@ -314,9 +326,13 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
 /// either runtime (see agent/approval_rules.rs): a call a never rule matches is refused, and one an
 /// ask rule matches waits for the user's answer, as a permission prompt.
 async fn check_rules(s: &Shared, task: &Task, call_id: &str, tool: &str, args: &Value) -> std::result::Result<(), String> {
-    let rules = crate::agent::approval_rules::for_task(&s.db(), task).map_err(|e| format!("{e:#}"))?;
-    let name = format!("mcp__{}__{tool}", crate::agent::runner::MCP_SERVER_NAME);
-    if rules.as_ref().and_then(|r| r.decide(&name)).is_none_or(|r| r.decision == crate::agent::approval_rules::Decision::Allow) {
+    use crate::agent::approval_rules::{self, Decision};
+    let Some(rules) = approval_rules::for_task(&s.db(), task).map_err(|e| format!("{e:#}"))? else { return Ok(()) };
+    // A rule may name the board's tools by the server's current name or an older one.
+    let names = approval_rules::BOARD_SERVER_NAMES.map(|n| format!("mcp__{n}__{tool}"));
+    let Some((name, rule)) = names.iter().filter_map(|n| rules.decide(n).map(|r| (n, r))).max_by_key(|(_, r)| r.decision) else { return Ok(()) };
+    // The tools that ask the user themselves, whatever the mode, aren't asked about twice; never still refuses them.
+    if rule.decision == Decision::Allow || (rule.decision == Decision::Ask && approval_rules::ASKS_ITSELF.contains(&tool)) {
         return Ok(());
     }
     let answer = permissions::prompt(s, task, call_id, &name, args, None).await.map_err(|e| format!("{e:#}"))?;

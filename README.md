@@ -245,9 +245,9 @@ under *Rules* in its details, or with `GET`/`POST /api/profiles/<id>/approval-ru
 pattern with `*` (`mcp__google__*delete*`), without regard to case; when several match, never beats
 ask and ask beats allow. They hold for the assistant and the threads under it, from their next run.
 A profile starts with rules for a Google Workspace MCP server named `google`: reading, searching and
-drafting are allowed; sending mail, making, changing or deleting events, sharing files and changing
-mail's labels ask; deleting or trashing mail and files is never. A switch adds an *ask* on the
-board's `create_task`.
+drafting are allowed; sending mail, making, changing or deleting events, sharing files or handing
+them over, changing files, mail filters and labels, and anything `manage_*` ask; deleting or
+trashing mail and files is never. A switch adds an *ask* on the board's `create_task`.
 
 - **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`) that allows, asks or denies the
   calls a rule matches. Its *ask* goes to the board's permission prompt in every mode, Bypass
@@ -259,11 +259,19 @@ board's `create_task`.
   (`default_tools_approval_mode = "prompt"`), and the board answers by the rules. In *Auto* its own
   reviewer would answer, so the assistant's Codex runs in Auto have you answer instead, as in *Ask*.
   In *Bypass* and *Don't ask* Codex can't ask at all: what a rule asks about is refused, as is a tool
-  only a pattern allows.
-- **The board's own tools** are held by the board as it runs them, for both.
+  only a pattern allows. Its own tools (`Bash`, `ApplyPatch`) can't be stopped before they run: an
+  *ask* rule on them launches it with the approval policy `untrusted` (and never full access), so it
+  asks about every command and file change in any mode, except commands it takes as safe (reading,
+  listing), which it runs without asking; a *never* rule on them (or `*`) can't hold, so the run is
+  refused, saying so.
+- **The board's own tools**, `wait` included, are held by the board as it runs them, for both, under
+  the server's current name or an older one (`mcp__issue_agent__…`). Deleting tasks, adding projects
+  and changing automations always ask you with their own card, so an *ask* rule doesn't ask about
+  them again (a *never* rule still refuses them).
 
 A prompt raised by a **routine run** (one an automation started, with nobody there: its message is
-marked `routine`) is denied if nobody answers it within the profile's expiry (30 minutes by
+marked `routine`, which a message that waits in the queue keeps, unless something of yours is
+queued with it) is denied if nobody answers it within the profile's expiry (30 minutes by
 default; `expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts
 raised before this, and ones the user's own turns raise, wait as they always did. Each call a
 rule asked about or blocked goes in the assistant's **Actions** tab (`GET

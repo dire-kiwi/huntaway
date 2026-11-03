@@ -50,7 +50,10 @@ fn the_google_defaults_read_and_draft_ask_to_send_and_never_delete() {
     for t in ["search_gmail_messages", "get_gmail_message_content", "list_calendars", "get_events", "search_drive_files", "get_drive_file_content", "draft_gmail_message", "list_drive_items", "get_drive_file_permissions"] {
         assert_eq!(g(t), Some(Allow), "{t}");
     }
-    for t in ["send_gmail_message", "create_event", "modify_event", "delete_event", "share_drive_file", "modify_gmail_message_labels", "batch_modify_gmail_message_labels", "update_drive_permission"] {
+    for t in [
+        "send_gmail_message", "create_event", "modify_event", "delete_event", "share_drive_file", "modify_gmail_message_labels", "batch_modify_gmail_message_labels",
+        "update_drive_permission", "manage_event", "update_drive_file", "create_gmail_filter", "transfer_drive_ownership", "manage_gmail_label",
+    ] {
         assert_eq!(g(t), Some(Ask), "{t}");
     }
     for t in ["delete_gmail_message", "trash_gmail_message", "delete_drive_file", "trash_drive_file", "gmail_deleteMessage"] {
@@ -208,6 +211,18 @@ fn calls_the_hook_blocked_go_in_the_action_log() {
         {"type": "tool_result", "tool_use_id": "toolu_2", "is_error": true, "content": [{"type": "text", "text": "exit 1"}]}
     ]}});
     on_tool_results(&s, &task, &result);
+    // Not another tool's output that quotes the reason (mail about the rules, say), nor a board tool's
+    // refusal, which the board logs itself.
+    for (id, name) in [("toolu_3", "mcp__google__search_gmail_messages"), ("toolu_4", "mcp__huntaway__delete_task")] {
+        let call = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": name, "input": {}}]}});
+        s.add_message(&task.id, "claude", call).unwrap();
+    }
+    set(&s.db(), &profile.id, Some(&Rules { rules: [default_rules(), vec![rule("mcp__huntaway__delete_task", Never)]].concat(), expiry_minutes: 30 })).unwrap();
+    let quoted = json!({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "toolu_3", "is_error": true, "content": format!("Subject: {reason}")},
+        {"type": "tool_result", "tool_use_id": "toolu_4", "is_error": true, "content": blocked_reason("mcp__huntaway__delete_task")}
+    ]}});
+    on_tool_results(&s, &task, &quoted);
     let log = list(&s.db(), &profile.id, 10).unwrap();
     assert_eq!(log.len(), 1);
     let a = &log[0];
@@ -215,4 +230,36 @@ fn calls_the_hook_blocked_go_in_the_action_log() {
         (a.tool_name.as_str(), a.summary.as_str(), a.rule.as_str(), a.decision.as_str(), a.outcome.as_str(), a.answered_by.as_deref()),
         ("mcp__google__delete_drive_file", "file_id: f1", "mcp__google__*delete*file*", "never", "blocked", Some("rule"))
     );
+}
+
+#[test]
+fn codex_asks_about_its_own_tools_for_an_ask_rule_and_wont_run_with_a_never_rule() {
+    assert_eq!(codex_own_tools(&Rules::default()), Ok(false));
+    assert_eq!(codex_own_tools(&rules(&[("mcp__g__x", Never), ("Bash", Ask)])), Ok(true));
+    assert_eq!(codex_own_tools(&rules(&[("Bash", Allow)])), Ok(false));
+    for never in ["Bash", "*", "ApplyPatch"] {
+        let err = codex_own_tools(&rules(&[(never, Never)])).unwrap_err();
+        assert!(err.contains(&format!("\"{never}: never\"")) && err.contains("Claude config"), "{err}");
+    }
+}
+
+#[test]
+fn codex_runs_with_rules_on_its_own_tools_ask_whatever_their_mode() {
+    let policy = |r: Option<&Rules>, mode: &str| codex_policy(r, crate::agent::codex::policy(mode, false));
+    // No rules: as the mode has it.
+    assert_eq!(policy(None, "bypassPermissions"), Ok(("never", "user", "danger-full-access")));
+    assert_eq!(policy(None, "auto"), Ok(("on-request", "auto_review", "workspace-write")));
+    // Rules for MCP tools only: the user answers rather than Codex's reviewer, the policy stays.
+    let mcp = rules(&[("mcp__g__send*", Ask)]);
+    assert_eq!(policy(Some(&mcp), "auto"), Ok(("on-request", "user", "workspace-write")));
+    assert_eq!(policy(Some(&mcp), "bypassPermissions"), Ok(("never", "user", "danger-full-access")));
+    // An ask rule on Bash: Codex asks about every command it doesn't take as safe, in Bypass too, and
+    // without full access; in plan mode its sandbox stays read-only.
+    let bash = rules(&[("Bash", Ask)]);
+    for mode in ["bypassPermissions", "dontAsk", "auto", "acceptEdits", "default"] {
+        assert_eq!(policy(Some(&bash), mode), Ok(("untrusted", "user", "workspace-write")), "{mode}");
+    }
+    assert_eq!(policy(Some(&bash), "plan"), Ok(("untrusted", "user", "read-only")));
+    // Never on Bash: it doesn't run.
+    assert!(policy(Some(&rules(&[("Bash", Never)])), "default").is_err());
 }

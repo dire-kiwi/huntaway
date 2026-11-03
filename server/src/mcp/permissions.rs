@@ -188,9 +188,11 @@ fn request(s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, 
 fn request_ruled(
     s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, input: &Value, mut data: Value, reason: &str, rule: Option<&Rule>,
 ) -> anyhow::Result<String> {
+    // By tool too: one call can ask more than once, an approval rule first and then the tool itself
+    // (an update_project, or a wait's command), and each has its own answer.
     let existing: Option<String> = s
         .db()
-        .query_row("SELECT id FROM permission_requests WHERE call_id=?1", [call_id], |r| r.get(0))
+        .query_row("SELECT id FROM permission_requests WHERE call_id=?1 AND tool_name=?2", [call_id, tool_name], |r| r.get(0))
         .ok();
     if let Some(id) = existing {
         return Ok(id);
