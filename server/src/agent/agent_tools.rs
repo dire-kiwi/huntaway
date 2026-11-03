@@ -613,12 +613,30 @@ fn skills_root(state: &Shared, project_id: &str) -> PathBuf {
 /// for it (its override, else its profile's default). A project's own one takes the name while
 /// it's on; switched off, the global one with that name is used if it's on.
 fn effective(c: &Connection, project: &crate::db::Project) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
-    let (profile, own) = (switches(c, "profile", &project.profile_id)?, switches(c, "project", &project.id)?);
-    let on = |id: &str| own.get(id).or_else(|| profile.get(id)).and_then(|v| v.as_bool()).unwrap_or(false);
     let mut skills = list_skills(c, Some(&project.id))?;
     let mut servers = list_mcp_servers(c, Some(&project.id))?;
     skills.retain(|s| s.enabled);
     servers.retain(|s| s.enabled);
+    add_global(c, &project.profile_id, Some(&project.id), skills, servers)
+}
+
+/// What's on for a profile's runs in no project (its assistant, see agent/assistant.rs): the global
+/// skills and servers the profile switches on.
+fn effective_for_profile(c: &Connection, profile_id: &str) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
+    add_global(c, profile_id, None, Vec::new(), Vec::new())
+}
+
+/// `skills` and `servers`, then the global ones switched on for the project (its override, else
+/// the profile's default), or with no project for the profile, that don't share a name with them.
+fn add_global(
+    c: &Connection, profile_id: &str, project_id: Option<&str>, mut skills: Vec<Skill>, mut servers: Vec<McpServer>,
+) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
+    let profile = switches(c, "profile", profile_id)?;
+    let own = match project_id {
+        Some(id) => switches(c, "project", id)?,
+        None => Map::new(),
+    };
+    let on = |id: &str| own.get(id).or_else(|| profile.get(id)).and_then(|v| v.as_bool()).unwrap_or(false);
     for g in list_skills(c, None)? {
         if g.enabled && on(&g.id) && !skills.iter().any(|s| s.name == g.name) {
             skills.push(g);
@@ -634,23 +652,48 @@ fn effective(c: &Connection, project: &crate::db::Project) -> rusqlite::Result<(
 
 /// Set up a project's skills and servers for a run.
 pub fn for_run(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
-    run_tools(state, project_id, true)
+    run_tools(state, Scope::Project(project_id), true)
 }
 
 /// A project's skills and servers as a run would have them, without setting up its skills.
 pub fn for_preview(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
-    run_tools(state, project_id, false)
+    run_tools(state, Scope::Project(project_id), false)
 }
 
-fn run_tools(state: &Shared, project_id: &str, sync: bool) -> anyhow::Result<RunTools> {
-    let (skills, servers, o) = {
+/// Set up the skills and servers for a run of `task`: its project's, or for a profile's assistant
+/// (in no project) the global ones its profile switches on. Other tasks in no project get none.
+pub fn for_task_run(state: &Shared, task: &crate::db::Task, project: Option<&crate::db::Project>) -> anyhow::Result<RunTools> {
+    match project {
+        Some(p) => for_run(state, &p.id),
+        None if task.is_assistant() => run_tools(state, Scope::Profile(&task.profile_id), true),
+        None => Ok(RunTools::default()),
+    }
+}
+
+/// Whose skills and servers a run gets.
+enum Scope<'a> {
+    Project(&'a str),
+    /// A profile's, for its runs in no project.
+    Profile(&'a str),
+}
+
+fn run_tools(state: &Shared, scope: Scope, sync: bool) -> anyhow::Result<RunTools> {
+    let (skills, servers, o, root) = {
         let c = state.db();
-        let project = crate::db::get_project(&c, project_id)?.ok_or_else(|| anyhow::anyhow!("project not found"))?;
-        let (skills, servers) = effective(&c, &project)?;
-        (skills, servers, get_overrides(&c, project_id)?)
+        match scope {
+            Scope::Project(project_id) => {
+                let project = crate::db::get_project(&c, project_id)?.ok_or_else(|| anyhow::anyhow!("project not found"))?;
+                let (skills, servers) = effective(&c, &project)?;
+                (skills, servers, get_overrides(&c, project_id)?, skills_root(state, project_id))
+            }
+            // A profile has no list of others' skills and servers to turn off.
+            Scope::Profile(profile_id) => {
+                let (skills, servers) = effective_for_profile(&c, profile_id)?;
+                (skills, servers, Overrides::default(), state.data_dir.join("profiles").join(profile_id).join("agent"))
+            }
+        }
     };
     let enabled: Vec<&Skill> = skills.iter().collect();
-    let root = skills_root(state, project_id);
     if sync {
         sync_skills(&root.join(".claude").join("skills"), &enabled)?;
     }
@@ -758,6 +801,12 @@ pub async fn for_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiRes
                 let on = effective(&c, p)?.0;
                 let off = board_skills_off(&c, p, &on)?;
                 (on, off, get_overrides(&c, &p.id)?)
+            }
+            // A profile's assistant has the global skills its profile switches on (see for_task_run).
+            None if task.is_assistant() => {
+                let on = effective_for_profile(&c, &task.profile_id)?.0;
+                let off = list_skills(&c, None)?.into_iter().map(|s| s.name).filter(|n| !on.iter().any(|s| s.name == *n)).collect();
+                (on, off, Overrides::default())
             }
             None => Default::default(),
         };

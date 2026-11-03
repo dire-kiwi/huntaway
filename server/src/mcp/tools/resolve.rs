@@ -163,7 +163,9 @@ pub(super) fn resolve_task(s: &Shared, ctx: &Ctx, r: &str, profile: Option<&str>
     let (prefix, id) = split_ref(s, r)?;
     let boards = pick_boards(s, ctx, prefix.or(profile))?;
     // Not a review thread, as by its key: an agent's tools only reach tasks.
-    if let Some(t) = db::get_task(&s.db(), id)?.filter(|t| t.kind == "task" && boards.iter().any(|b| b.id == t.profile_id)) {
+    // A profile's assistant is its own: other profiles' agents can't reach it (see agent/assistant.rs).
+    let reaches = |t: &Task| t.kind == "task" && boards.iter().any(|b| b.id == t.profile_id && (!t.is_assistant() || ctx.is_own(b)));
+    if let Some(t) = db::get_task(&s.db(), id)?.filter(reaches) {
         return Ok(t);
     }
     let mut found = Vec::new();
@@ -171,7 +173,7 @@ pub(super) fn resolve_task(s: &Shared, ctx: &Ctx, r: &str, profile: Option<&str>
         && let Ok(n) = n.parse::<i64>()
     {
         for b in boards {
-            // No project has the group or scratch tasks' keys (see db::free_task_key).
+            // No project has the group, scratch or assistant tasks' keys (see db::free_task_key).
             if k.eq_ignore_ascii_case(runner::GROUP_TASK_KEY) {
                 let t = db::group_task_by_number(&s.db(), &b.id, n)?;
                 found.extend(t.map(|t| (b, t)));
@@ -179,6 +181,11 @@ pub(super) fn resolve_task(s: &Shared, ctx: &Ctx, r: &str, profile: Option<&str>
             }
             if k.eq_ignore_ascii_case(db::SCRATCH_TASK_KEY) {
                 let t = db::scratch_task_by_number(&s.db(), &b.id, n)?;
+                found.extend(t.map(|t| (b, t)));
+                continue;
+            }
+            if k.eq_ignore_ascii_case(db::ASSISTANT_TASK_KEY) {
+                let t = db::assistant_task_by_number(&s.db(), &b.id, n)?.filter(|_| ctx.is_own(&b));
                 found.extend(t.map(|t| (b, t)));
                 continue;
             }

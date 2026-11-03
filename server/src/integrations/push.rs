@@ -471,13 +471,14 @@ pub fn notification_text(e: Event, t: &Value, key: &str) -> (String, String) {
 }
 
 /// What goes before a task's number (`keyPrefix`): its project's key, `G` for a group task, `S` for
-/// a scratch task.
+/// a scratch task, `A` for a profile's assistant.
 async fn task_key(s: &Shared, host_id: &str, t: &Value) -> String {
     let prefix = match t["project_id"].as_str() {
         Some(p) if host_id == s.host_id => local_project_key(s, p),
         Some(p) => crate::hosts::hub::host_request(s, host_id, "GET", &format!("/api/projects/{p}"), None).await.ok().and_then(|p| p["key"].as_str().map(String::from)),
         None if t["group_name"].is_string() => Some("G".into()),
         None if t["task_type"] == "scratch" => Some("S".into()),
+        None if t["task_type"] == "assistant" => Some("A".into()),
         None => None,
     };
     format!("{}-{}", prefix.unwrap_or_else(|| "T".into()), t["number"])

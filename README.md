@@ -205,6 +205,21 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
+Each profile has an **assistant** (API 97): one long-lived conversation outside every project,
+opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
+It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
+`{"text": …}` sends it a message), keyed `A-<n>` (no project can use the key `A`; one that had it
+moves to `AP`), and its agent works in `<data dir>/assistants/<task id>`, which it can write without
+asking and which lasts between conversations. It's told it's a personal assistant rather than a
+coding agent: it has the global skills and MCP servers its profile switches on (its skills are written
+to `<data dir>/profiles/<profile id>/agent`), on Claude Code and Codex alike, and the board tools, and
+hands code work to project tasks with `create_task`. Your messages go to it as they are, with no
+"start working on this task" around the first. It never goes to review or
+merge: after each reply it's back in *To do*, and it can't be moved to *In review*, *Ready for
+merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and the profile's task
+lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
+whatever access their profile has.
+
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 

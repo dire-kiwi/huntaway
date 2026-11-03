@@ -144,10 +144,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             None => effort.clone(),
         };
         let (approval_policy, approvals_reviewer, sandbox) = crate::agent::codex::policy(&permission_mode, task.kind == "review");
-        let tools = match &project {
-            Some(p) => crate::agent::agent_tools::for_run(state, &p.id)?,
-            None => Default::default(),
-        };
+        let tools = crate::agent::agent_tools::for_task_run(state, &task, project.as_ref())?;
         let gh_tools = uses_gh_server(&tools);
         let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
         let profiles = db::list_profiles(&state.db())?;
@@ -232,11 +229,8 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         // Echoed back, the messages show where in the turn the agent took them in.
         args.extend(["--input-format", "stream-json", "--replay-user-messages"].map(String::from));
     }
-    // The project's own skills and MCP servers, and the ones it turns off.
-    let tools = match &project {
-        Some(p) => crate::agent::agent_tools::for_run(state, &p.id)?,
-        None => Default::default(),
-    };
+    // The project's own skills and MCP servers, and the ones it turns off (for the assistant, its profile's).
+    let tools = crate::agent::agent_tools::for_task_run(state, &task, project.as_ref())?;
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
     let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
