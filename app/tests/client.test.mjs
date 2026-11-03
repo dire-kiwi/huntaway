@@ -121,7 +121,7 @@ test("storage that throws (a browser that blocks it) is no token and nothing rem
 
 // HA-119: the assistant works in a folder of its own, but isn't a task that makes only documents.
 test("a profile's assistant isn't a documents-only task", async () => {
-  const { documentsOnly, isAssistant, ASSISTANT_API, hasAssistant } = await import("@huntaway/client");
+  const { documentsOnly, isAssistant, ASSISTANT_API, hasAssistant, MEMORY_API, hasMemory } = await import("@huntaway/client");
   const assistant = { kind: "task", task_type: "assistant", labels: [], work_dir: "assistants/a1" };
   assert.equal(isAssistant(assistant), true);
   assert.equal(documentsOnly(assistant), false);
@@ -129,6 +129,9 @@ test("a profile's assistant isn't a documents-only task", async () => {
   assert.equal(documentsOnly({ kind: "task", task_type: null, labels: ["plan"], work_dir: "documents/t1" }), true);
   assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API - 1 }), false);
   assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API }), true);
+  // Its Memory tab, from API 98.
+  assert.equal(hasMemory({ local: false, api_version: ASSISTANT_API }), false);
+  assert.equal(hasMemory({ local: false, api_version: MEMORY_API }), true);
 });
 
 test("the assistant's calls go to its profile on its host", async () => {

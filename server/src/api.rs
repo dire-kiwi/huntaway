@@ -115,7 +115,7 @@ fn host_routes() -> Router<Shared> {
         .route("/profiles/{id}/scratch", get(list_profile_scratch))
         .route("/profiles/{id}/assistant", get(get_assistant).post(send_to_assistant))
         .route("/profiles/{id}/assistant/memory", get(assistant::memory::overview))
-        .route("/profiles/{id}/assistant/memory/file", get(assistant::memory::read).put(assistant::memory::write))
+        .route("/profiles/{id}/assistant/memory/file", get(assistant::memory::read).post(assistant::memory::write))
         .route("/profiles/{id}/assistant/memory/history", get(assistant::memory::history))
         .route("/profiles/{id}/assistant/memory/diff", get(assistant::memory::diff))
         .route("/profiles/{id}/assistant/memory/restore", post(assistant::memory::restore))

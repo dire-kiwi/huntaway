@@ -236,20 +236,20 @@ fn the_memory_api_reads_writes_and_restores_files() {
         let seeded = f["content"].as_str().unwrap().to_string();
         assert!(seeded.starts_with("# About the user"));
         // A save from an editor that opened what's there.
-        let (st, w) = call(&app, "PUT", &format!("{base}/file"), Some(json!({"path": "USER.md", "content": "# Me\n- Ivan\n", "expected": seeded}))).await;
+        let (st, w) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "USER.md", "content": "# Me\n- Ivan\n", "expected": seeded}))).await;
         assert_eq!(st, 200, "{w}");
         assert!(w["commit"].as_str().is_some());
         assert_eq!(std::fs::read_to_string(dir.join("USER.md")).unwrap(), "# Me\n- Ivan\n");
         // One from an editor that opened an older version is refused, unless forced.
-        let (st, _) = call(&app, "PUT", &format!("{base}/file"), Some(json!({"path": "USER.md", "content": "stale", "expected": seeded}))).await;
+        let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "USER.md", "content": "stale", "expected": seeded}))).await;
         assert_eq!(st, 409);
         // A new file: expected is none. Its folders are made.
-        let (st, w) = call(&app, "PUT", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "- a log\n"}))).await;
+        let (st, w) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "- a log\n"}))).await;
         assert_eq!(st, 200, "{w}");
-        let (st, _) = call(&app, "PUT", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "x"}))).await;
+        let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "x"}))).await;
         assert_eq!(st, 409);
         // The same content again makes no commit.
-        let (_, w) = call(&app, "PUT", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "- a log\n", "force": true}))).await;
+        let (_, w) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "- a log\n", "force": true}))).await;
         assert_eq!(w["commit"], Value::Null);
 
         let (_, h) = call(&app, "GET", &format!("{base}/history?path=USER.md"), None).await;
@@ -315,7 +315,7 @@ fn the_memory_api_stays_in_its_profiles_workspace() {
         for path in [format!("../{}/USER.md", mine.id), path_str(&dir.join("USER.md")), "theirs/USER.md".into(), "link.md".into(), ".git/config".into()] {
             let (st, r) = call(&app, "GET", &format!("{base}/file?path={}", enc(&path)), None).await;
             assert_eq!(st, 400, "{path}: {r}");
-            let (st, _) = call(&app, "PUT", &format!("{base}/file"), Some(json!({"path": path, "content": "x", "force": true}))).await;
+            let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": path, "content": "x", "force": true}))).await;
             assert_eq!(st, 400, "{path}");
             let (st, _) = call(&app, "GET", &format!("{base}/history?path={}", enc(&path)), None).await;
             assert_eq!(st, 400, "{path}");

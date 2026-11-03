@@ -534,7 +534,7 @@ pub struct WriteBody {
     force: bool,
 }
 
-/// `PUT /profiles/{id}/assistant/memory/file`: write a file in the workspace (making it and its folders if need be),
+/// `POST /profiles/{id}/assistant/memory/file`: write a file in the workspace (making it and its folders if need be),
 /// committed as the user's. Returns the file and the commit (none if it didn't change).
 pub async fn write(State(s): State<Shared>, UrlPath(id): UrlPath<String>, Json(b): Json<WriteBody>) -> ApiResult<Json<Value>> {
     let (_, dir) = open(&s, &id).await?;
