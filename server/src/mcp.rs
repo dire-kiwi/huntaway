@@ -101,6 +101,11 @@ fn submit_review_tool() -> Value {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Problems that must be fixed before merging: bugs that cause wrong behaviour, crashes, data loss, security holes, or a broken build or tests. One entry per issue: where (file:line), what goes wrong, and how to fix it. Empty if there are none. Style, nits and optional suggestions don't belong here."
+            },
+            "minor_issues": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Minor issues and suggestions that don't block merging but may be worth a follow-up: one short entry each. Empty if there are none. Mention them in the summary too."
             }
         }, "required": ["verdict", "summary", "serious_issues"]}
     })

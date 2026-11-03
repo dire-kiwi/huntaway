@@ -114,6 +114,7 @@ fn host_routes() -> Router<Shared> {
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))
         .route("/profiles/{id}/context-stats", get(crate::analytics::context))
+        .route("/profiles/{id}/token-stats", get(crate::analytics::tokens))
         .route("/profiles/{id}/disk-usage", get(crate::disk::get))
         .route("/profiles/{id}/asana/tasks", get(asana_tasks))
         .route("/projects/{id}", get(get_project).patch(update_project).delete(delete_project))

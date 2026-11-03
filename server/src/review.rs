@@ -13,11 +13,12 @@
 //! its agent works on it again (to fix the issues found, or because it was sent a message).
 //!
 //! The `review` folder has what follows a review: summaries of the changes, merge approvals, merged pull requests and
-//! fan-outs.
+//! fan-outs, and the statistics kept of what reviewers report.
 
 pub mod fanout;
 pub mod merge_gate;
 pub mod merged;
+pub mod stats;
 pub mod summary;
 
 use std::path::{Path, PathBuf};
@@ -200,6 +201,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         fixes: if manual { 0 } else { previous.as_ref().map(|r| r.fixes).unwrap_or(0) },
         extra_rounds: if manual { 0 } else { previous.map(|r| r.extra_rounds).unwrap_or(0) },
         updated_at: now(),
+        started_at: Some(now()),
         reviewers: parts.clone(),
     };
     #[cfg(test)]
@@ -393,7 +395,7 @@ fn prompt(
          When you're done, call `submit_review` once. If anything must be fixed before merging (for example, a bug you confirmed), the \
          verdict is `needs_fixes` and each such problem goes in `serious_issues`, with where it is, what goes wrong and how \
          to fix it: they are sent to the task's agent to fix. Otherwise the verdict is `pass`. Put minor issues and \
-         suggestions in the summary."
+         suggestions in the summary, and list each of them in `minor_issues` too."
     ));
     if !fixed.is_empty() {
         p.push_str("\n\nThe previous review found these serious issues, and the agent was asked to fix them. Check that they're fixed:\n");
@@ -569,6 +571,26 @@ pub fn submit(state: &Shared, thread: &Task, run_id: &str, args: &Value) -> ApiR
         issues.push(part.summary.clone().unwrap_or_else(|| "The reviewer asked for fixes without saying what they are; see the review thread.".into()));
     }
     part.verdict = Some(if issues.is_empty() { "pass" } else { "issues" }.into());
+    let minor = stats::minor_list(args);
+    // A review started before rounds were kept: its round as the backfill works them out, which
+    // its other reviewers' submissions share.
+    let round = match review.started_at.clone() {
+        Some(at) => Some(at),
+        None => stats::run_round(&state.db(), &parent.id, run_id).map_err(anyhow::Error::from)?,
+    };
+    let part = review.reviewers.iter_mut().find(|p| p.thread_id == thread.id).unwrap();
+    let submission = stats::Submission {
+        task_id: &parent.id,
+        thread_id: &thread.id,
+        round: round.as_deref(),
+        run_id: Some(run_id),
+        verdict: part.verdict.as_deref().unwrap(),
+        serious: issues.len(),
+        minor: Some(minor.as_ref().map_or(0, Vec::len)),
+        summary: part.summary.as_deref(),
+        label: Some(&part.label),
+    };
+    stats::record_now(&state.db(), &submission);
     part.issues = issues;
     review.updated_at = now();
     set_review(state, &parent.id, &review)?;

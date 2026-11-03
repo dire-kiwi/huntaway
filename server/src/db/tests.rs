@@ -779,6 +779,35 @@ fn a_database_at_version_76_has_every_task_in_later() {
 }
 
 #[test]
+fn a_database_that_had_token_usage_as_an_earlier_version_gets_the_columns_it_skipped() {
+    // Builds of token_usage had it as version 74, then 75, then 76, then 78, so a database that ran them skipped
+    // master's 74, 75 and 76 (pr_checks, require_pr_approval, start_from), and 77 (now_at) ran as master's. The
+    // builds that had it as 78 didn't add those back (but start_from), nor the runs' usage_tail at first.
+    for version in [76, 77, 78] {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(&format!(
+                "ALTER TABLE tasks DROP COLUMN pr_checks; ALTER TABLE tasks DROP COLUMN start_from;
+                 ALTER TABLE profiles DROP COLUMN require_pr_approval; ALTER TABLE projects DROP COLUMN require_pr_approval;
+                 ALTER TABLE runs DROP COLUMN usage_tail;
+                 PRAGMA user_version={version};"
+            ))
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        for (table, column) in [("tasks", "pr_checks"), ("tasks", "start_from"), ("profiles", "require_pr_approval"), ("projects", "require_pr_approval"), ("runs", "usage_tail")] {
+            let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();
+            assert!(has, "version {version}: {table}.{column}");
+        }
+        // The demo seed, which is what failed on such a database.
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        assert!(!get_profile(&c, &p.id).unwrap().unwrap().require_pr_approval);
+    }
+}
+
+#[test]
 fn a_database_at_version_69_gets_profiles_reviewers_and_summarizer() {
     // As master's build left it, with context stats (69) and no profile reviewers yet.
     let path = crate::testing::temp_dir().join("huntaway.db");

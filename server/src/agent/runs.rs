@@ -608,13 +608,21 @@ pub fn remove_finished(state: &Shared, run_ids: &[String]) {
     }
 }
 
-/// Prune runs (see `prune`) now and every hour.
+/// Prune runs (see `prune`) now and every hour, once the tokens they used are counted.
 pub fn start_pruner(state: &Shared) {
     let s = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(PRUNE_EVERY);
         loop {
             tick.tick().await;
+            let st = s.clone();
+            // Before their folders go (see agent/tokens.rs).
+            match tokio::task::spawn_blocking(move || crate::agent::tokens::count_pending(&st, None)).await {
+                Ok(Ok(0)) => {}
+                Ok(Ok(n)) => tracing::info!("runs: counted the tokens of {n} finished runs"),
+                Ok(Err(e)) => tracing::warn!("runs: counting tokens failed: {e:#}"),
+                Err(e) => tracing::warn!("runs: counting tokens failed: {e}"),
+            }
             let st = s.clone();
             match tokio::task::spawn_blocking(move || prune(&st, chrono::Utc::now())).await {
                 Ok(Ok(p)) if p == Pruned::default() => {}

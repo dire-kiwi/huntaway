@@ -26,13 +26,13 @@ The server is one crate, so each module is a file named after its feature (`work
 
 | Folder | Modules |
 |---|---|
-| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, prompts, documents, agent_tools |
+| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, tokens, prompts, documents, agent_tools |
 | `mcp/` | (`mcp.rs`, the stdio server) tools, gh_mcp, wait, pr_watch, permissions, questions |
 | `git/` | worktree, worktree_files, checkpoints, git_view, changes, relocate |
 | `hosts/` | hub, broker, proto, relay, ssh, terminal, pty |
 | `update/` | admin, release, staging |
 | `integrations/` | github, asana, push, automations, status_script |
-| `review/` | (`review.rs`, automatic review) summary, merged, merge_gate, fanout |
+| `review/` | (`review.rs`, automatic review) summary, merged, merge_gate, fanout, stats |
 
 `main`, `state`, `util`, `db`, `api`, `testing`, `demo`, `analytics`, `disk` and `attachments`
 stay at the top. A folder's `agent.rs` (and so on) has its `//!` docs and a `pub mod` for each

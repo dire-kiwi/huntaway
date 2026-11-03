@@ -173,6 +173,58 @@ fn the_review_waits_for_every_reviewer_and_combines_their_issues() {
 }
 
 #[test]
+fn each_submission_is_kept_for_statistics() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 2);
+        let mut review = review_of(&s, &task);
+        review.started_at = Some("2026-10-01T10:00:00.000Z".into());
+        set_review(&s, &task.id, &review).unwrap();
+        submit(&s, &threads[0], "run1", &json!({"verdict": "pass", "summary": "Fine at first."})).unwrap();
+        // Submitted again in the same run: this one counts instead.
+        let args = json!({"verdict": "needs_fixes", "summary": "One bug, and a nit.", "serious_issues": ["the bug"], "minor_issues": ["a nit", "another"]});
+        submit(&s, &threads[0], "run1", &args).unwrap();
+        submit(&s, &threads[1], "run2", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        let c = s.db();
+        let mut st = c.prepare("SELECT task_id, thread_id, round, run_id, verdict, serious, minor, minor_noted, label FROM review_stats ORDER BY id").unwrap();
+        type Row = (String, String, String, String, String, i64, Option<i64>, bool, String);
+        let rows: Vec<Row> =
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?))).unwrap().map(Result::unwrap).collect();
+        // Both in the round the review started.
+        let round = "2026-10-01T10:00:00.000Z".to_string();
+        assert_eq!(
+            rows,
+            vec![
+                (task.id.clone(), threads[0].id.clone(), round.clone(), "run1".into(), "issues".into(), 1, Some(2), true, "r0".into()),
+                (task.id.clone(), threads[1].id.clone(), round, "run2".into(), "pass".into(), 0, Some(0), false, "r1".into()),
+            ]
+        );
+    })
+}
+
+#[test]
+fn a_review_started_before_rounds_were_kept_is_one_round() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        // Its review has no start: its reviewers' runs started half a minute apart.
+        let (task, threads) = reviewing(&s, 2);
+        let run = |thread: &Task, at: &str| {
+            let r = db::insert_run(&s.db(), &thread.id, "review").unwrap();
+            s.db().execute("UPDATE runs SET created_at=?1 WHERE id=?2", [at, &r.id]).unwrap();
+            r.id
+        };
+        let (a, b) = (run(&threads[0], "2026-10-01T10:00:00.000Z"), run(&threads[1], "2026-10-01T10:00:30.000Z"));
+        submit(&s, &threads[0], &a, &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        submit(&s, &threads[1], &b, &json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["x"]})).unwrap();
+        let c = s.db();
+        let rounds: Vec<String> = c.prepare("SELECT round FROM review_stats ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(rounds, ["2026-10-01T10:00:00.000Z", "2026-10-01T10:00:00.000Z"]);
+        let r = crate::analytics::token_report(&c, &task.profile_id, "2026-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z").unwrap();
+        assert_eq!(r.rounds.iter().map(|x| (x.round, x.verdict.as_str(), x.reviewers)).collect::<Vec<_>>(), [(1, "issues", 2)]);
+    })
+}
+
+#[test]
 fn a_review_passes_when_every_reviewer_passes() {
     crate::testing::run(async || {
         let s = crate::testing::state();

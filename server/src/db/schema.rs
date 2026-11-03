@@ -800,12 +800,96 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=77; COMMIT;")?;
     }
+    if version < 79 {
+        // The tokens each run used, per model (see agent/tokens.rs), counted from runs' output as
+        // they end (and from older runs' that are still kept), and what reviewers reported (see
+        // review/stats.rs), with the reviews threads already show. Added only if they aren't
+        // there, in case another migration takes this version first. Builds of this before it was
+        // version 79 had it as version 74, 75, 76 or 78, and skipped what the versions below theirs
+        // add (a database can have taken it as 75, then 76, then 78, skipping them all), or added
+        // less than this does: 74's, 75's and 76's columns are added here if they aren't there, as
+        // are the runs' usage columns, and a `review_stats` from before its rounds were kept is
+        // made again.
+        conn.execute_batch("BEGIN;")?;
+        let cols = [
+            ("tasks", "pr_checks", "TEXT"),
+            ("profiles", "require_pr_approval", "INTEGER NOT NULL DEFAULT 0"),
+            ("projects", "require_pr_approval", "INTEGER"),
+            ("tasks", "start_from", "TEXT"),
+        ];
+        for (table, column, kind) in cols {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        let stale: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='review_stats') AND NOT EXISTS(SELECT 1 FROM pragma_table_info('review_stats') WHERE name='round')",
+            [],
+            |r| r.get(0),
+        )?;
+        if stale {
+            conn.execute_batch("DROP TABLE review_stats;")?;
+        }
+        conn.execute_batch(SCHEMA_V79)?;
+        for column in ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT", "usage_tail TEXT"] {
+            let name = column.split(' ').next().unwrap();
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [name], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column};"))?;
+            }
+        }
+        crate::review::stats::backfill(&conn)?;
+        conn.execute_batch("PRAGMA user_version=79; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 77;
+pub const VERSION: i64 = 79;
+
+/// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
+/// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
+/// thought in. `estimated` rows are guesses: a run whose output was gone has its cost and no
+/// tokens. A run's `usage_at` says when it was counted, and `usage_session` and `usage_snapshot`
+/// the totals its agent's session (or Codex's threads) had reached, which a later run that resumes
+/// the session goes on from; `usage_tail` the part of them its requests after its last result add.
+///
+/// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed,
+/// with when its review round started (`round`).
+/// `minor` is how many minor issues it listed, null for reviews from before they were listed;
+/// `minor_noted` whether it found any or its summary mentions them.
+const SCHEMA_V79: &str = r#"
+CREATE TABLE IF NOT EXISTS token_usage (
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  runtime TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  estimated INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id, model)
+);
+CREATE TABLE IF NOT EXISTS review_stats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL,
+  round TEXT NOT NULL,
+  run_id TEXT,
+  at TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  serious INTEGER NOT NULL DEFAULT 0,
+  minor INTEGER,
+  minor_noted INTEGER NOT NULL DEFAULT 0,
+  label TEXT
+);
+CREATE INDEX IF NOT EXISTS review_stats_task ON review_stats(task_id, at);
+CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);
+"#;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for
