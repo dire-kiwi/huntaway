@@ -3,7 +3,7 @@ import { Bell, BellRing, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Pl
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../activeProfile";
-import { api, hostCompat, hostSupports, isAssistant, readyToCheck, type Project, type Status, type Task } from "../../api";
+import { api, hostCompat, hostSupports, isAssistant, isAssistants, readyToCheck, type Project, type Status, type Task } from "../../api";
 import { assistantHome } from "../../assistant";
 import {
   groupKey,
@@ -322,8 +322,8 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
     // Each profile's tasks by column, by profile name.
     const byProfile: Record<string, Partial<Record<Status, number>>> = {};
     for (const t of Object.values(tasks)) {
-      // The assistant is off the board (see AssistantEntry).
-      if (t.kind !== "task" || isAssistant(t)) continue;
+      // The assistant and its routines' threads are off the board (see AssistantEntry).
+      if (t.kind !== "task" || isAssistants(t)) continue;
       const name = profileOf(t);
       if (name) {
         const counts = (byProfile[name] ??= {});

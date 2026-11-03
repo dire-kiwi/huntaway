@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, isAssistant, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
+import { api, canRunAgents, dependencyQueued, documentsOnly, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
 import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
@@ -161,14 +161,17 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // that makes only its documents. Each of a task's labels has a tab for its document, first.
   const group = isGroupTask(task) ? task.group_name! : undefined;
   const scratch = isScratch(task);
-  // The profile's assistant: no repository either, and it opens on a page of its own.
+  // The profile's assistant: no repository either, and it opens on a page of its own. Its routines' threads work in
+  // its workspace, with no repository.
   const assistant = isAssistant(task);
+  const routine = isRoutine(task);
   // One in no project is on its profile's board (a scratch task can be in a project since API 51).
   const profileScratch = scratch && !task.project_id;
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
-  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || docsOnly ? ["thread"] : ["thread", "changes"])];
-  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant;
+  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
+  if (assistant && hasRoutines(host)) tabs.push("routines");
+  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant && !routine;
   if (reviews) tabs.push("review");
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
@@ -202,6 +205,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     if (group) navigate(mode === "page" ? href({ name: "group", hostId: task.host_id, group }) : groupTaskUrl(task.host_id, group, task.id));
     else if (profileScratch && profileName) navigate(mode === "page" ? href({ name: "profile", profile: profileName }) : profileTaskUrl(profileName, task.id));
     else if (assistant && profileName) navigate({ name: "profile", profile: profileName });
+    else if (routine && profileName) navigate({ name: "assistant", profile: profileName });
     else if (project) navigate(mode === "page" ? href({ name: "board", projectId: project.id }) : boardTaskUrl(project.id, task.id));
   };
 
@@ -227,7 +231,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     ) : (
       !task.session_id &&
       agents &&
-      !assistant && (
+      !assistant &&
+      !routine && (
         <Button
           size="sm"
           variant="primary"

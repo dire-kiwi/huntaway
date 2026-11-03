@@ -24,7 +24,9 @@ export type Item =
   | { type: "thinking"; key: string; text: string }
   | { type: "tools"; key: string; calls: Call[] }
   | { type: "result"; key: string; data: Any }
-  | { type: "compact"; key: string; meta: Any; summary?: string; result?: Any };
+  | { type: "compact"; key: string; meta: Any; summary?: string; result?: Any }
+  /** A routine's report, posted in the assistant's thread (API 98). */
+  | { type: "report"; key: string; data: Any };
 
 export interface ThreadModel {
   items: Item[];
@@ -281,6 +283,7 @@ class ItemBuilder {
     else if (m.kind === "permission") this.push({ type: "permission", key: k, data: m.data });
     // A question asked with request_user_input (API 64).
     else if (m.kind === "question") this.push({ type: "question", key: k, id: m.id, data: m.data });
+    else if (m.kind === "report") this.push({ type: "report", key: k, data: m.data });
     else if (m.kind === "claude") {
       const d = m.data;
       const last = this.items.length - 1;
