@@ -294,9 +294,11 @@ def thread(api, ref, args):
         while True:
             got = api.call("get", f"/tasks/{tid}/thread/events?after={seq}")
             out += got["events"]
-            if not got["more"] or not got["events"]:
+            # `seq` goes past event types the host doesn't know, which aren't in `events`.
+            nxt = got.get("seq", got["events"][-1]["seq"] if got["events"] else seq)
+            if not got["more"] or nxt <= seq:
                 break
-            seq = got["events"][-1]["seq"]
+            seq = nxt
     elif before is not None:
         out = api.call("get", f"/tasks/{tid}/thread/items?before={int(before)}" + (f"&limit={int(limit)}" if limit else ""))
     else:

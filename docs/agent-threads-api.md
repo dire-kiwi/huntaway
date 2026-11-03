@@ -28,11 +28,13 @@ see its `spec/PROTOCOL.md` ("Windows", "Applying events", "Reconnecting") and `s
 | `GET /api/tasks/{id}/thread` | The whole thread as a `Snapshot` `{thread, items, requests, seq}`, including text streamed so far. |
 | `GET /api/tasks/{id}/thread?limit=N` | A window: the last `N` items, with `start` and `context` (the whole thread if it has no more than `N`). |
 | `GET /api/tasks/{id}/thread/items?before=I[&limit=N]` | An `ItemPage` of the items before index `I` (a window's `start`), 100 unless `limit` says. `start` 0: nothing before it. |
-| `GET /api/tasks/{id}/thread/events?after=SEQ[&limit=N]` | `{events, more}`: the saved events after `SEQ` (no deltas), at most `N` and 1000. With `more`, ask again after the last one's `seq`. |
+| `GET /api/tasks/{id}/thread/events?after=SEQ[&limit=N]` | `{events, more, seq}`: the saved events after `SEQ` (no deltas), at most `N` and 1000. With `more`, ask again after `seq`. |
 
 Put a page into a window with the protocol's `withPage`. Events of types this host's build doesn't know are
-left out of `events`. A client that applies events keeps its `seq` from the last event it applied, and a
-window's `seq` covers them.
+left out of `events`, but not skipped silently: `seq` is how far the answer goes, those events included (the
+last event's `seq` when there are `more`, and otherwise the thread's last saved one, which may be past every
+event given). Set your state's `seq` to it once you've applied `events`, so a gap of unknown events isn't
+asked for again, and start the next page after it. A window's `seq` covers them too.
 
 ## Live events
 

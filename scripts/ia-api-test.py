@@ -234,8 +234,11 @@ class Thread(unittest.TestCase):
             self.asked.append(path)
             if "/thread/events?after=" in path:
                 after = int(path.rsplit("=", 1)[1])
+                # Known events up to the page's end, and the unknown ones (no "type") skipped past.
                 rest = [e for e in self.events if e["seq"] > after]
-                return {"events": rest[:2], "more": len(rest) > 2}
+                page = rest[:2]
+                end = page[-1]["seq"] if len(rest) > 2 else (rest[-1]["seq"] if rest else after)
+                return {"events": [e for e in page if "type" in e], "more": len(rest) > 2, "seq": end}
             if "/thread/items" in path:
                 return {"thread_id": "th", "start": 1, "context": [], "seq": 3, "items": [{"id": "a1", "type": "assistant_message", "text": "hi"}],
                         "requests": []}
@@ -254,6 +257,13 @@ class Thread(unittest.TestCase):
         api = self.Api([{"seq": n, "type": "turn.started", "turn_id": f"t{n}"} for n in range(1, 6)])
         out = self.run_thread(api, "--events", "--after", "0", "--brief")
         self.assertEqual(out.splitlines(), [f"{n} turn.started t{n}" for n in range(1, 6)])
+        self.assertEqual([p.split("?")[1] for p in api.asked], ["after=0", "after=2", "after=4"])
+
+    def test_a_page_of_only_unknown_events_is_gone_past(self):
+        events = [{"seq": n} if n in (2, 3) else {"seq": n, "type": "turn.started", "turn_id": f"t{n}"} for n in range(1, 7)]
+        api = self.Api(events)
+        out = self.run_thread(api, "--events", "--brief")
+        self.assertEqual(out.splitlines(), [f"{n} turn.started t{n}" for n in (1, 4, 5, 6)])
         self.assertEqual([p.split("?")[1] for p in api.asked], ["after=0", "after=2", "after=4"])
 
     def test_a_window_is_shown_with_each_items_index(self):

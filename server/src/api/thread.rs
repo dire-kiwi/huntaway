@@ -364,16 +364,13 @@ pub(super) struct EventsQuery {
 /// The most saved events one request returns.
 const MAX_EVENTS: usize = 1000;
 
-/// `GET /tasks/{id}/thread/events?after=SEQ[&limit=N]` (API 104): `{events, more}`, the thread's saved
+/// `GET /tasks/{id}/thread/events?after=SEQ[&limit=N]` (API 104): `{events, more, seq}`, the thread's saved
 /// events after `after`, for a client that missed some. At most `limit` (and 1000) of them: with `more`,
-/// ask again after the last one's seq.
+/// ask again after `seq`, which also goes past events of types this host doesn't know.
 pub(super) async fn agent_thread_events(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<EventsQuery>) -> ApiResult<Json<Value>> {
     let thread = crate::threads::live::TaskThread::open(&s, &id)?;
     let limit = q.limit.unwrap_or(MAX_EVENTS).clamp(1, MAX_EVENTS);
-    let mut events = thread.events_since(q.after, Some(limit + 1)).await?;
-    let more = events.len() > limit;
-    events.truncate(limit);
-    Ok(Json(json!({"events": events, "more": more})))
+    Ok(Json(json!(thread.events_since(q.after, limit).await?)))
 }
 
 /// `POST /tasks/{id}/thread/commands` (API 104): a protocol command for the task's thread (its

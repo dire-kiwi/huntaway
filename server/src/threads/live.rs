@@ -90,6 +90,17 @@ fn is_live(c: &Connection, task_id: &str, id: &str) -> rusqlite::Result<bool> {
     Ok(engine.as_deref() == Some("agent_threads"))
 }
 
+/// A page of a thread's saved events (see TaskThread::events_since).
+#[derive(serde::Serialize)]
+pub struct Events {
+    pub events: Vec<Value>,
+    /// Whether there are more after these: ask again after `seq`.
+    pub more: bool,
+    /// The seq these go up to, unknown events after the last of them included: where the next page
+    /// starts, and (once they're applied) the client's state's seq.
+    pub seq: u64,
+}
+
 /// A task's thread, and where it's read from.
 pub struct TaskThread {
     pub task_id: String,
@@ -137,18 +148,35 @@ impl TaskThread {
         }
     }
 
-    /// The thread's saved events after `seq`, at most `limit` of them. Event types this build doesn't
-    /// know are left out (their seqs are still gone past: a client's state takes the seq of the last
-    /// event it applies, and a later window).
-    pub async fn events_since(&self, seq: u64, limit: Option<usize>) -> ApiResult<Vec<Value>> {
-        let events = match &self.backend {
-            Some(b) => b.events_since(&self.thread_id, seq, limit).await.map_err(read_error)?.iter().map(to_value).collect(),
-            None => {
-                let events = self.store.read_events(&self.thread_id, seq, limit).await.map_err(store_error)?;
-                events.into_iter().filter(|e| serde_json::from_value::<ThreadEvent>(e.clone()).is_ok()).collect()
+    /// The thread's saved events after `seq` that this build knows, at most `limit` of them. Event types
+    /// it doesn't know (a newer build's) are left out, but gone past: the store's limit counts them, so
+    /// it reads on until it has `limit` and one more, or there are no more.
+    pub async fn events_since(&self, seq: u64, limit: usize) -> ApiResult<Events> {
+        if let Some(b) = &self.backend {
+            // Waits for the thread's events so far to be saved (reading none of them), then they're read
+            // from the store as for any thread.
+            b.events_since(&self.thread_id, seq, Some(0)).await.map_err(read_error)?;
+        }
+        let (mut events, mut scanned) = (Vec::new(), seq);
+        while events.len() <= limit {
+            let want = limit + 1 - events.len();
+            let batch = self.store.read_events(&self.thread_id, scanned, Some(want)).await.map_err(store_error)?;
+            let end = batch.len() < want;
+            for e in batch {
+                scanned = e["seq"].as_u64().unwrap_or(scanned).max(scanned);
+                if serde_json::from_value::<ThreadEvent>(e.clone()).is_ok() {
+                    events.push(e);
+                }
             }
-        };
-        Ok(events)
+            if end {
+                break;
+            }
+        }
+        let more = events.len() > limit;
+        events.truncate(limit);
+        // With more to come, they start after the last event given; otherwise after all it read.
+        let seq = if more { events.last().and_then(|e| e["seq"].as_u64()).unwrap_or(scanned) } else { scanned };
+        Ok(Events { events, more, seq })
     }
 
     /// Carries out `command` (whose `thread_id` is this thread's) on the backend: a 409 if the thread
@@ -187,10 +215,6 @@ impl TaskThread {
         }
         Ok(state)
     }
-}
-
-fn to_value(e: &ThreadEvent) -> Value {
-    serde_json::to_value(e).unwrap_or(Value::Null)
 }
 
 fn read_error(e: agent_threads::Error) -> ApiError {

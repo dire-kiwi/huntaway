@@ -162,7 +162,7 @@ fn a_client_catches_up_on_saved_events_after_its_seq() {
         let (_, rest) = call(&app, "GET", &at("?after=32&limit=3"), None).await;
         assert_eq!((seqs(&rest["events"]), &rest["more"]), (vec![33, 34], &json!(false)));
         let (_, none) = call(&app, "GET", &at("?after=34"), None).await;
-        assert_eq!(none, json!({"events": [], "more": false}));
+        assert_eq!(none, json!({"events": [], "more": false, "seq": 34}));
 
         // The window of a state with those events, after a gap, is the whole state's.
         let saved: Vec<ThreadEvent> = example_events().into_iter().filter(|e| e["type"] != "delta").map(|e| serde_json::from_value(e).unwrap()).collect();
@@ -180,9 +180,86 @@ fn a_client_catches_up_on_saved_events_after_its_seq() {
         // An event type from a newer build is left out, and its seq gone past.
         store(&s).append_events("th_1", &[json!({"type": "thread.renamed", "thread_id": "th_1", "seq": 35})], &[]).await.unwrap();
         let (_, newer) = call(&app, "GET", &at("?after=33"), None).await;
-        assert_eq!(seqs(&newer["events"]), vec![34]);
+        assert_eq!((seqs(&newer["events"]), &newer["more"], &newer["seq"]), (vec![34], &json!(false), &json!(35)));
         let (_, state) = call(&app, "GET", &format!("/api/tasks/{}/thread", t.id), None).await;
         assert_eq!(state["seq"], 35);
+    })
+}
+
+/// Appends events of types this build doesn't know at `unknown`, and known ones at the other seqs from
+/// `from` to `to`, to `thread`.
+async fn append_mixed(s: &Shared, thread: &str, from: u64, to: u64, unknown: &[u64]) {
+    let events: Vec<Value> = (from..=to)
+        .map(|seq| match unknown.contains(&seq) {
+            true => json!({"type": "thread.renamed", "thread_id": thread, "seq": seq}),
+            false => json!({"type": "turn.started", "thread_id": thread, "seq": seq, "turn_id": format!("t{seq}")}),
+        })
+        .collect();
+    store(s).append_events(thread, &events, &[]).await.unwrap();
+}
+
+/// Every page of `task`'s events after `after`, `limit` at a time: the known events' seqs, and the
+/// `seq` the last page went up to.
+async fn every_page(app: &Router, task: &str, mut after: u64, limit: usize) -> (Vec<u64>, u64) {
+    let mut got = Vec::new();
+    for _ in 0..100 {
+        let (status, page) = call(app, "GET", &format!("/api/tasks/{task}/thread/events?after={after}&limit={limit}"), None).await;
+        assert_eq!(status, 200, "{page}");
+        got.extend(seqs(&page["events"]));
+        let seq = page["seq"].as_u64().unwrap();
+        assert!(seq >= after, "{page}");
+        if page["more"] == false {
+            return (got, seq);
+        }
+        assert!(!page["events"].as_array().unwrap().is_empty(), "more, with nothing: {page}");
+        after = seq;
+    }
+    panic!("never ended");
+}
+
+#[test]
+fn unknown_event_types_dont_end_a_catch_up_early() {
+    testing::run(async || {
+        let s = testing::state();
+        let app = crate::api::router(s.clone());
+        let t = testing::task(&s);
+        stage_example(&s, &t.id).await;
+        // 35-36 unknown, 37-38 known, 39 unknown, 40 known, 41-43 unknown.
+        append_mixed(&s, "th_1", 35, 43, &[35, 36, 39, 41, 42, 43]).await;
+        let at = |q: &str| format!("/api/tasks/{}/thread/events?{q}", t.id);
+        // Unknown ones before the page's first known one, and between its end and the next.
+        let (_, first) = call(&app, "GET", &at("after=34&limit=1"), None).await;
+        assert_eq!(first, json!({"events": [first["events"][0]], "more": true, "seq": 37}));
+        assert_eq!(seqs(&first["events"]), vec![37]);
+        let (_, second) = call(&app, "GET", &at("after=37&limit=1"), None).await;
+        assert_eq!((seqs(&second["events"]), &second["more"], &second["seq"]), (vec![38], &json!(true), &json!(38)));
+        let (_, third) = call(&app, "GET", &at("after=38&limit=1"), None).await;
+        assert_eq!((seqs(&third["events"]), &third["more"], &third["seq"]), (vec![40], &json!(false), &json!(43)));
+        // Only unknown ones left: none, but gone past.
+        let (_, rest) = call(&app, "GET", &at("after=40"), None).await;
+        assert_eq!(rest, json!({"events": [], "more": false, "seq": 43}));
+        for limit in [1, 2, 3, 7] {
+            assert_eq!(every_page(&app, &t.id, 30, limit).await, (vec![31, 32, 33, 34, 37, 38, 40], 43), "limit {limit}");
+        }
+    })
+}
+
+#[test]
+fn a_live_threads_unknown_event_types_dont_end_a_catch_up_early() {
+    testing::run(async || {
+        let s = testing::state();
+        let app = crate::api::router(s.clone());
+        let t = testing::task(&s);
+        let b = backend(&s);
+        install(&s, b.clone());
+        create_thread(&b, &t.id).await;
+        // As a newer build of the backend would have saved them.
+        append_mixed(&s, &t.id, 2, 9, &[2, 3, 5, 6, 9]).await;
+        let (_, first) = call(&app, "GET", &format!("/api/tasks/{}/thread/events?after=1&limit=1", t.id), None).await;
+        assert_eq!((seqs(&first["events"]), &first["more"], &first["seq"]), (vec![4], &json!(true), &json!(4)));
+        for limit in [1, 2, 5] {
+            assert_eq!(every_page(&app, &t.id, 0, limit).await, (vec![1, 4, 7, 8], 9), "limit {limit}");
+        }
     })
 }
 
