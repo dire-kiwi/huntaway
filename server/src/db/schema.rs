@@ -805,13 +805,22 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         // they end (and from older runs' that are still kept), and what reviewers reported (see
         // review/stats.rs), with the reviews threads already show. Added only if they aren't
         // there, in case another migration takes this version first. Builds of this before it was
-        // version 78 had it as version 74, 75 or 76, and skipped what those versions add: version
-        // 76's `start_from` is added here if it isn't there (76 adds 74's and 75's), and a
-        // `review_stats` from before its rounds were kept is made again.
+        // version 78 had it as version 74, 75 or 76, and skipped what those versions add (a database
+        // can have taken it as 75 and then as 76, skipping both): 74's, 75's and 76's columns are
+        // added here if they aren't there, and a `review_stats` from before its rounds were kept is
+        // made again.
         conn.execute_batch("BEGIN;")?;
-        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='start_from'", [], |r| r.get(0))?;
-        if !has {
-            conn.execute_batch("ALTER TABLE tasks ADD COLUMN start_from TEXT;")?;
+        let cols = [
+            ("tasks", "pr_checks", "TEXT"),
+            ("profiles", "require_pr_approval", "INTEGER NOT NULL DEFAULT 0"),
+            ("projects", "require_pr_approval", "INTEGER"),
+            ("tasks", "start_from", "TEXT"),
+        ];
+        for (table, column, kind) in cols {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
         }
         let stale: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='review_stats') AND NOT EXISTS(SELECT 1 FROM pragma_table_info('review_stats') WHERE name='round')",
