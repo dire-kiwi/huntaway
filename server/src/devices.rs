@@ -128,11 +128,12 @@ const HOST: &[(&str, &str)] = &[
 
 /// The segments of `path` (an `/api/...` path as the client sent it) as the router sees them, percent-decoded, or
 /// `None` where that's in doubt: an encoded `/`, `\` or `%` (a proxied request is decoded once more on its host, so
-/// `%252F` would become a `/` there), an empty segment, `.` or `..`, or bytes that aren't UTF-8.
+/// `%252F` would become a `/` there), an encoded `?` or `#` (the hub's proxy puts the decoded path back in a URL, where
+/// either would cut it short), an empty segment, `.` or `..`, or bytes that aren't UTF-8.
 fn segments(path: &str) -> Option<Vec<String>> {
     path.strip_prefix("/api/")?
         .split('/')
-        .map(|raw| percent_decode(raw).filter(|seg| !seg.is_empty() && seg != "." && seg != ".." && !seg.contains(['/', '\\', '%'])))
+        .map(|raw| percent_decode(raw).filter(|seg| !seg.is_empty() && seg != "." && seg != ".." && !seg.contains(['/', '\\', '%', '?', '#'])))
         .collect()
 }
 
@@ -166,7 +167,7 @@ fn matches(segs: &[String], pattern: &str) -> bool {
 /// forwards with its own token.
 pub fn refused(method: &str, path: &str) -> Option<&'static str> {
     let Some(segs) = segments(path) else {
-        return Some("a paired device's request must be a plain path: no encoded '/', '%' or '\\', empty segments, '.' or '..'");
+        return Some("a paired device's request must be a plain path: no encoded '/', '\\', '%', '?' or '#', empty segments, '.' or '..'");
     };
     let allowed = match segs.as_slice() {
         [h, _host, rest @ ..] if h == "h" => HOST.iter().any(|(m, p)| *m == method && matches(rest, p)),

@@ -278,6 +278,9 @@ fn a_device_cant_get_the_boards_tokens_or_a_shell() {
             get("/api/h/h/tasks/{task}/./terminal"),
             get("/api/h/h/profiles/../tasks/{task}/terminal"),
             get("/api/h/h/tasks/{task}/"),
+            // An encoded '?' or '#', which the forwarded URL would cut the path at.
+            get("/api/h/h/tasks/{task}%3F/messages"),
+            get("/api/h/h/tasks/{task}%23/messages"),
             // Moving a Claude login to another host, linking one, and the rest of what the app doesn't use.
             ("POST", "/api/hosts/copy-claude-config".into()),
             ("POST", "/api/h/h/hosts/copy-claude-config".into()),
@@ -378,6 +381,11 @@ fn what_a_device_may_do() {
         ("GET", "/api/h/x/tasks/../tasks/a"),
         ("GET", "/api/h/x/h/y/profiles"),
         ("GET", "/api/h/x/attachments/a/%FF"),
+        // A '?' or '#' that the proxy's forwarded URL would cut the path at.
+        ("GET", "/api/h/x/tasks/a%3F/messages"),
+        ("GET", "/api/h/x/tasks/a%3f/messages"),
+        ("GET", "/api/h/x/tasks/a%23/messages"),
+        ("POST", "/api/h/x/permissions/p%3Fx"),
         ("GET", "/api/profiles/"),
         ("GET", "/api"),
         ("GET", "/profiles"),
@@ -388,4 +396,6 @@ fn what_a_device_may_do() {
     assert_eq!(refused_on_host("GET", "tasks/a/messages"), None);
     assert!(refused_on_host("GET", "tasks/a/terminal").is_some());
     assert!(refused_on_host("GET", "hosts/join").is_some());
+    assert!(refused_on_host("GET", "tasks/a?/messages").is_some());
+    assert!(refused_on_host("GET", "tasks/a#/messages").is_some());
 }

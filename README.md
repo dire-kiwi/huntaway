@@ -441,8 +441,8 @@ board or through it on a linked host. Everything else gets a 403, so a new route
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
 and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
 host), linking hosts, terminals (a shell on the host), settings and admin. A device's path is
-checked percent-decoded, and refused with an encoded `/`, `\` or `%`, an empty segment, `.` or
-`..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
+checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, an empty segment,
+`.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
 host linking and terminals refuse a device's request themselves.
 
 Revoking a phone stops the phone, not what was done with it before: whoever held it could have

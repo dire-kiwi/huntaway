@@ -2,7 +2,7 @@
 // the task's host and listed after the text (see attachments.ts).
 import type { Attachment, Client, Task } from "@huntaway/client";
 import * as ImagePicker from "expo-image-picker";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { photoName, withAttachments } from "./attachments";
 import { colors } from "./theme";
@@ -33,7 +33,11 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<Attachment[]>([]);
-  const [busy, setBusy] = useState<"send" | "photo" | null>(null);
+  // Sending and uploading are tracked apart: a photo picked while a message is sending mustn't make Send usable again.
+  const [sending, setSending] = useState(false);
+  const [uploads, setUploads] = useState(0);
+  // Set at once, before a render, so a second tap can't send the same message again.
+  const inFlight = useRef(false);
   const [err, setErr] = useState<string | null>(null);
 
   const addPhoto = async (from: "camera" | "library") => {
@@ -46,7 +50,7 @@ export function Composer({
     const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], base64: true, quality: 0.7, allowsMultipleSelection: from === "library", selectionLimit: 5 };
     const picked = from === "camera" ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
     if (picked.canceled) return;
-    setBusy("photo");
+    setUploads((n) => n + 1);
     try {
       for (const a of picked.assets) {
         if (!a.base64) continue;
@@ -56,14 +60,16 @@ export function Composer({
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(null);
+      setUploads((n) => n - 1);
     }
   };
 
   const send = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     // What goes: the field stays editable meanwhile, and only this is taken out of it once it's sent.
     const sent = { text, files };
-    setBusy("send");
+    setSending(true);
     setErr(null);
     try {
       onSent(await client.send(host, taskId, withAttachments(sent.text, sent.files)));
@@ -72,7 +78,8 @@ export function Composer({
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(null);
+      inFlight.current = false;
+      setSending(false);
     }
   };
 
@@ -89,8 +96,8 @@ export function Composer({
       )}
       {err && <ErrorText>{err}</ErrorText>}
       <View style={[s.row, { alignItems: "flex-end" }]}>
-        <Button title="📷" small kind="ghost" busy={busy === "photo"} onPress={() => addPhoto("camera")} />
-        <Button title="🖼" small kind="ghost" disabled={busy === "photo"} onPress={() => addPhoto("library")} />
+        <Button title="📷" small kind="ghost" busy={uploads > 0} onPress={() => addPhoto("camera")} />
+        <Button title="🖼" small kind="ghost" disabled={uploads > 0} onPress={() => addPhoto("library")} />
         <TextInput
           style={[s.input, { flex: 1, maxHeight: 140, paddingTop: 10 }]}
           value={text}
@@ -100,7 +107,15 @@ export function Composer({
           multiline
           accessibilityLabel="Message"
         />
-        <Button title="Send" small kind="primary" busy={busy === "send"} disabled={busy === "send" || (!text.trim() && !files.length)} onPress={send} />
+        <Button
+          title="Send"
+          small
+          kind="primary"
+          busy={sending}
+          // Not while a photo's uploading either: it would be left out of the message.
+          disabled={sending || uploads > 0 || (!text.trim() && !files.length)}
+          onPress={send}
+        />
       </View>
     </View>
   );
