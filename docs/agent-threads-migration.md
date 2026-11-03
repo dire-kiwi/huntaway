@@ -18,7 +18,8 @@ and has the first steps of the safe importer below, in `server/src/threads/`. Th
 read it as items (below), and nothing else reads the new tables yet: running agents, the API and the UI are unchanged.
 
 - **Store** (`threads/store.rs`): agent-threads' `Store` on huntaway.db, in `at_threads`, `at_events`,
-  `at_snapshots` and `at_runs` (migration 85), and `at_item_origins` (migration 86, see the readers below). It passes the crate's store conformance cases
+  `at_snapshots` and `at_runs` (migration 85), and `at_item_origins` and `at_item_times` (migration 86, see the
+  readers below): appending an `item.added` records when the item was added (as it says, or the time it's saved). It passes the crate's store conformance cases
   (`spec/conformance/store.json`, copied next to it at the pinned revision). A thread whose `metadata.task_id`
   names a task is deleted with it.
 - **Converter** (`threads/import.rs`): a pure function from a task's stored messages to a `Thread`, saved
@@ -35,7 +36,8 @@ question prompts keep their answers as the board stored them (a list for each qu
 successful result whose text no message of its turn says (about 1% of them: turns a background subagent's report
 started) gives an `assistant_message` with it. Each item has an origin (`history::Origin`): its message, and what the
 board knows that the protocol has no place for (who sent a user message: `auto`, `from_agent`, `user_text`; the
-harness's id for a second call with an id; Claude's task id for a subagent).
+harness's id for a second call with an id; Claude's task id for a subagent; a turn's result's text, and whether an
+`assistant_message` is only that).
 - **Dry run and staging** (`threads/report.rs`): `huntaway threads-import --db <copy> [--json] [--stage]
   [task ids or keys]` opens the database read-only and reports each task's conversion, its warnings and what
   stops it being switched over now (a run that's running or alive between turns, queued input, a merge, an open
@@ -49,7 +51,10 @@ harness's id for a second call with an id; Claude's task id for a subagent).
   widening until they have their answer, and those that only want what was said (user messages, the agent's
   messages, turns' ends) convert only the messages that can say it. An agent-threads task's thread is its snapshot
   with the events after it folded in, and its origins are in `at_item_origins` (`history::record_origin`, which the
-  engine calls as it sends a message that isn't wholly the user's). Review (`tool_calls_since` and
+  engine calls as it sends a message that isn't wholly the user's). Its items needn't say when they were made, so
+  the readers that want what came after a time read `at_item_times` for those that don't. A turn ends with what its
+  result said, as the old readers had it (a subagent can speak after the main conversation's last message), and
+  a call agent-threads says was denied never ran, whatever its result says. Review (`tool_calls_since` and
   `changes::changes_code`, which reads tool_call items, and the user's replies), summaries, titles, the wait tool's
   subagent lookup, `get_task`'s `last_message` (API and MCP) and pr_watch's `user_wrote_since` read it; the
   raw-message versions are gone. Their tests run each reader on a legacy thread and on its staged import, and expect
