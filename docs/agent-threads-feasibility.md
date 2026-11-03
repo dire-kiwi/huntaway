@@ -16,6 +16,14 @@ over existing threads or runs. (The fourth, that the repository was private, is 
 A wholesale swap now would mean rewriting about 12k lines of server code and 2-3k lines of UI, with two message
 formats in use until every linked host upgrades.
 
+## Existing-task migration follow-up (HA-118)
+
+[The migration assessment](agent-threads-migration.md) finds that stored histories can be converted directly into
+items and saved events; missing streaming events do not prevent an import. It distinguishes history conversion,
+native-session continuation and live-process adoption, and proposes a per-task cutover with source retention.
+It also records relevant upstream additions at `327a862`; the blocker list below describes the earlier revision.
+No importer or full-board conversion has been tested yet.
+
 ## What fits already
 
 | | Huntaway | agent-threads (Rust) |
