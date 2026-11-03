@@ -265,18 +265,28 @@ fn a_resumed_claude_run_with_no_result_goes_on_from_the_sessions_totals() {
 }
 
 #[test]
-fn a_run_killed_before_its_result_doesnt_hide_its_sessions_totals() {
-    crate::testing::run(async || {
+fn a_resumed_claude_run_goes_on_without_an_unkept_tail_on_a_model_the_session_hadnt_used() {
+    let init = || json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string();
+    let a = vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))];
+    // Killed before its result, after a request on a model A didn't use.
+    let b = vec![init(), reply("m1", "claude-haiku-5-5", 2, 40, None)];
+    // Claude Code didn't keep it: C's totals don't have that model.
+    let c = vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))];
+    let counted = in_turn(vec![a, b, c]);
+    assert_eq!(counted[1].models["claude-haiku-5-5"].output, 40);
+    let out: Vec<(&str, i64)> = counted[2].models.iter().map(|(m, n)| (m.as_str(), n.output)).collect();
+    assert_eq!(out, [("claude-opus-5-5", 30)]);
+    assert!((counted[2].models["claude-opus-5-5"].cost - 0.5).abs() < 1e-9);
+}
+
+/// Counts runs of one task with these outputs through the database, the last with Claude Code's
+/// cost `cost`, and checks each one's output tokens and whether they're estimated.
+fn assert_counted_in_db(outputs: Vec<Vec<String>>, cost: f64, want: [(i64, bool); 3]) {
+    crate::testing::run(async move || {
         let state = crate::testing::state();
         let p = db::insert_profile(&state.db(), "p", &[], None).unwrap();
         let t = db::NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let task = db::insert_task(&state.db(), t).unwrap();
-        let init = || json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string();
-        let outputs = [
-            vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))],
-            vec![init(), reply("m1", "claude-opus-5-5", 2, 40, None)],
-            vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))],
-        ];
         let mut runs = Vec::new();
         for lines in outputs {
             let run = db::insert_run(&state.db(), &task.id, "prompt").unwrap();
@@ -286,12 +296,30 @@ fn a_run_killed_before_its_result_doesnt_hide_its_sessions_totals() {
             state.db().execute("UPDATE runs SET status='exited' WHERE id=?1", [&run.id]).unwrap();
             runs.push(run.id);
         }
-        state.db().execute("UPDATE runs SET cost_usd=0.5 WHERE id=?1", [&runs[2]]).unwrap();
+        state.db().execute("UPDATE runs SET cost_usd=?2 WHERE id=?1", rusqlite::params![runs.last().unwrap(), cost]).unwrap();
         count_pending(&state, None).unwrap();
         let out: Vec<(i64, bool)> = runs
             .iter()
-            .map(|id| state.db().query_row("SELECT output_tokens, estimated FROM token_usage WHERE run_id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap())
+            .map(|id| state.db().query_row("SELECT SUM(output_tokens), MAX(estimated) FROM token_usage WHERE run_id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap())
             .collect();
-        assert_eq!(out, [(100, false), (40, true), (30, false)]);
+        assert_eq!(out, want);
     })
+}
+
+#[test]
+fn a_run_killed_before_its_result_doesnt_hide_its_sessions_totals() {
+    let init = || json!({"type": "system", "subtype": "init", "session_id": "s1"}).to_string();
+    let outputs = vec![
+        vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))],
+        vec![init(), reply("m1", "claude-opus-5-5", 2, 40, None)],
+        vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 170, 2000, 1.5)}))],
+    ];
+    assert_counted_in_db(outputs, 0.5, [(100, false), (40, true), (30, false)]);
+    // The killed run used a model the session hadn't, and Claude Code didn't keep it.
+    let outputs = vec![
+        vec![init(), result("s1", json!({"claude-opus-5-5": opus(5, 100, 1000, 1.0)}))],
+        vec![init(), reply("m1", "claude-haiku-5-5", 2, 40, None)],
+        vec![init(), result("s1", json!({"claude-opus-5-5": opus(9, 130, 2000, 1.5)}))],
+    ];
+    assert_counted_in_db(outputs, 0.5, [(100, false), (40, true), (30, false)]);
 }

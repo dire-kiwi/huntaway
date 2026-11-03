@@ -219,6 +219,8 @@ pub fn count_claude(lines: impl Iterator<Item = String>, earlier: &mut Earlier) 
                         *c = c.minus(tail);
                     }
                 }
+                // A model only the tail used isn't in totals that don't have it.
+                t.retain(|_, c| c.total() > 0);
                 t
             });
             out.snapshot = before.totals;
