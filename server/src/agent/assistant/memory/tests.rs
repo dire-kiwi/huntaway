@@ -18,17 +18,23 @@ fn write(dir: &Path, rel: &str, text: &str) {
 
 #[test]
 fn cap_keeps_the_start_or_the_end_at_a_line() {
-    assert_eq!(cap("short", 10, false), ("short".into(), false));
+    const B: usize = usize::MAX;
+    assert_eq!(cap("short", 10, B, false), ("short".into(), false));
     // Cut back to the line break near the end.
-    assert_eq!(cap("aaaaaaaa\nbbbbbbbb", 10, false), ("aaaaaaaa\nb".into(), true));
-    assert_eq!(cap("aaaaaaaaa\nbbbbbbbb", 11, false), ("aaaaaaaaa\n".into(), true));
-    // Characters, not bytes, and never in the middle of one.
-    let (t, cut) = cap(&"é".repeat(20), 5, false);
+    assert_eq!(cap("aaaaaaaa\nbbbbbbbb", 10, B, false), ("aaaaaaaa\nb".into(), true));
+    assert_eq!(cap("aaaaaaaaa\nbbbbbbbb", 11, B, false), ("aaaaaaaaa\n".into(), true));
+    // Characters, and never in the middle of one.
+    let (t, cut) = cap(&"é".repeat(20), 5, B, false);
     assert_eq!((t.as_str(), cut), ("ééééé", true));
     // The end, from the next whole line.
-    assert_eq!(cap("aaaaaaaaaaa\nbbbbbbbbb\n", 12, true), ("bbbbbbbbb\n".into(), true));
-    let (t, _) = cap(&"ü".repeat(20), 3, true);
+    assert_eq!(cap("aaaaaaaaaaa\nbbbbbbbbb\n", 12, B, true), ("bbbbbbbbb\n".into(), true));
+    let (t, _) = cap(&"ü".repeat(20), 3, B, true);
     assert_eq!(t, "üüü");
+    // And bytes, whichever is fewer, still not in the middle of a character.
+    assert_eq!(cap(&"é".repeat(20), 10, 7, false), ("ééé".into(), true));
+    assert_eq!(cap(&"é".repeat(20), 10, 7, true), ("ééé".into(), true));
+    assert_eq!(cap("😀😀😀", 10, 12, false), ("😀😀😀".into(), false));
+    assert_eq!(cap("😀😀😀", 10, 11, false), ("😀😀".into(), true));
 }
 
 #[test]
@@ -45,7 +51,7 @@ fn a_run_is_told_its_memory_files_capped() {
     assert!(text.contains("## Your memory") && text.contains("today is 2026-11-04 (Wednesday)"), "{text}");
     assert!(text.contains("remember") && text.contains("forget") && text.contains("today's log"), "{text}");
     // USER.md is cut at the cap, and says so.
-    assert!(text.contains(&format!("(`USER.md` is {} characters, over the 8,000 that are loaded", format_number(long_user.chars().count()))), "{text}");
+    assert!(text.contains(&format!("(`USER.md` is {} characters, over the 8,000 (or 16 KB) that are loaded", format_number(long_user.chars().count()))), "{text}");
     assert!(text.contains("- likes tea") && !text.contains("LAST LINE OF USER"));
     let user = text.split("<memory-file path=\"USER.md\">").nth(1).unwrap().split("</memory-file>").next().unwrap();
     assert!(user.chars().count() <= CAP + 2, "{}", user.chars().count());
@@ -58,6 +64,23 @@ fn a_run_is_told_its_memory_files_capped() {
     assert!(!text.contains("an older entry"));
     // Today's comes last, after yesterday's.
     assert!(text.find("yesterday's entry").unwrap() < text.find("the latest entry").unwrap());
+}
+
+#[test]
+fn a_runs_memory_stays_well_under_the_most_an_argument_may_be() {
+    // Each file at the cap in characters, in a script of 4 bytes a character: 32,000 bytes each, as characters alone.
+    let dir = testing::temp_dir();
+    let big = "😀".repeat(CAP);
+    for rel in [USER_FILE, MEMORY_FILE, "memory/2026-11-03.md", "memory/2026-11-04.md"] {
+        write(&dir, rel, &big);
+    }
+    let text = prompt(&dir, day("2026-11-04"));
+    assert!(text.len() < 4 * CAP_BYTES + 8 * 1024, "{} bytes", text.len());
+    assert!(text.len() < 96 * 1024, "{} bytes", text.len());
+    assert_eq!(text.matches("(or 16 KB) that are loaded").count(), 4, "{text}");
+    // As much as fits.
+    let user = text.split("<memory-file path=\"USER.md\">\n").nth(1).unwrap().split("\n</memory-file>").next().unwrap();
+    assert_eq!(user.len(), CAP_BYTES);
 }
 
 #[test]
@@ -110,7 +133,8 @@ fn the_workspace_is_committed_only_when_it_changed() {
         let dir = testing::temp_dir().join("ws");
         std::fs::create_dir_all(&dir).unwrap();
         ensure(&dir).await.unwrap();
-        assert!(dir.join(".git").is_dir());
+        assert!(git_dir(&dir).is_dir() && !dir.join(".git").exists());
+        assert_eq!(git_dir(&dir), dir.with_file_name("ws.git"));
         assert_eq!(log(&dir).await, vec![("Assistant".into(), "Start the assistant's memory".into())]);
         // Again: nothing to do.
         ensure(&dir).await.unwrap();
@@ -230,10 +254,13 @@ fn the_memory_api_reads_writes_and_restores_files() {
         assert_eq!(st, 200, "{o}");
         assert_eq!((o["cap"].as_u64(), o["history"].as_bool()), (Some(CAP as u64), Some(true)));
         let files: Vec<&str> = o["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
-        assert_eq!(files, ["USER.md", "MEMORY.md"]);
+        assert_eq!(files, ["USER.md", "MEMORY.md", ".gitignore"]);
         assert_eq!(o["files"][0]["kind"], "user");
         assert!(o["import_prompt"].as_str().unwrap().contains("what you know about me") || o["import_prompt"].as_str().unwrap().contains("learned about me"));
         let dir = PathBuf::from(o["dir"].as_str().unwrap());
+        // Today's log, which the overview counts the characters of.
+        let today = log_name(Local::now().date_naive());
+        let today = today.as_str();
 
         let (st, f) = call(&app, "GET", &format!("{base}/file?path=USER.md"), None).await;
         assert_eq!(st, 200);
@@ -248,12 +275,12 @@ fn the_memory_api_reads_writes_and_restores_files() {
         let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "USER.md", "content": "stale", "expected": seeded}))).await;
         assert_eq!(st, 409);
         // A new file: expected is none. Its folders are made.
-        let (st, w) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "- a log\n"}))).await;
+        let (st, w) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": today, "content": "- a log\n"}))).await;
         assert_eq!(st, 200, "{w}");
-        let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "x"}))).await;
+        let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": today, "content": "x"}))).await;
         assert_eq!(st, 409);
         // The same content again makes no commit.
-        let (_, w) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "memory/2026-11-04.md", "content": "- a log\n", "force": true}))).await;
+        let (_, w) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": today, "content": "- a log\n", "force": true}))).await;
         assert_eq!(w["commit"], Value::Null);
 
         let (_, h) = call(&app, "GET", &format!("{base}/history?path=USER.md"), None).await;
@@ -264,7 +291,7 @@ fn the_memory_api_reads_writes_and_restores_files() {
         assert_eq!(commits[1]["author"], "Assistant");
         let (_, all) = call(&app, "GET", &format!("{base}/history"), None).await;
         assert_eq!(all["commits"].as_array().unwrap().len(), 3);
-        assert_eq!(all["commits"][2]["files"], json!(["MEMORY.md", "USER.md"]));
+        assert_eq!(all["commits"][2]["files"], json!([".gitignore", "MEMORY.md", "USER.md"]));
         let first = commits[1]["sha"].as_str().unwrap().to_string();
         let latest = commits[0]["sha"].as_str().unwrap().to_string();
 
@@ -289,7 +316,7 @@ fn the_memory_api_reads_writes_and_restores_files() {
 
         let (_, o) = call(&app, "GET", &base, None).await;
         let files: Vec<&str> = o["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
-        assert_eq!(files, ["USER.md", "MEMORY.md", "memory/2026-11-04.md"]);
+        assert_eq!(files, ["USER.md", "MEMORY.md", today, ".gitignore"]);
         assert_eq!((o["files"][2]["kind"].as_str(), o["files"][2]["chars"].as_u64()), (Some("log"), Some(8)));
     });
 }
@@ -412,17 +439,23 @@ fn a_workspace_that_is_a_symlink_is_refused() {
 #[test]
 fn git_stays_in_the_workspaces_own_repository() {
     testing::run(async || {
-        // A `.git` symlink to another repository: no history, and nothing committed there.
+        // A symlink to another repository in place of its git folder: no history, and nothing committed there.
         let other = testing::temp_dir().join("other");
         std::fs::create_dir_all(&other).unwrap();
         ensure(&other).await.unwrap();
         let dir = testing::temp_dir().join("ws");
         std::fs::create_dir_all(&dir).unwrap();
         seed(&dir).unwrap();
-        std::os::unix::fs::symlink(other.join(".git"), dir.join(".git")).unwrap();
+        std::os::unix::fs::symlink(git_dir(&other), git_dir(&dir)).unwrap();
         assert!(!is_repo(&dir));
         assert!(ensure(&dir).await.is_err());
         assert_eq!(commit_all(&dir, Who::Assistant, None).await.unwrap(), None);
+        assert_eq!(log(&other).await.len(), 1);
+        // A `.git` in the workspace that leads there isn't used either: the workspace gets its own.
+        std::fs::remove_file(git_dir(&dir)).unwrap();
+        std::os::unix::fs::symlink(git_dir(&other), dir.join(".git")).unwrap();
+        ensure(&dir).await.unwrap();
+        assert_eq!(log(&dir).await.len(), 1);
         assert_eq!(log(&other).await.len(), 1);
 
         // Its config can't point git at another work tree.
@@ -456,11 +489,14 @@ fn the_list_keeps_the_memory_files_and_latest_logs_first() {
     }
     write(&dir, "memory/2026-11-04.md", "today");
     write(&dir, "memory/2026-11-03.md", "yesterday");
-    let files = list(&dir);
+    let files = list(&dir, day("2026-11-04"));
     let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
     assert_eq!(paths.len(), MAX_LISTED);
     assert_eq!(&paths[..4], ["USER.md", "MEMORY.md", "memory/2026-11-04.md", "memory/2026-11-03.md"]);
-    assert_eq!(paths[4], "aaa/0000.md");
+    assert_eq!(paths[4..6], [".gitignore", "aaa/0000.md"]);
+    // Only the files a run is told are read for their length.
+    assert_eq!(files[2]["chars"], 5);
+    assert_eq!((files[5]["chars"].clone(), files[5]["size"].as_u64()), (Value::Null, Some(1)));
 }
 
 #[test]
@@ -481,5 +517,354 @@ fn an_assistant_on_another_host_keeps_its_memory_there() {
         }
         // No assistant was made here for it.
         assert!(crate::db::assistant_task(&s.db(), &p.id).unwrap().is_none());
+    });
+}
+
+/// A workspace as HA-121 made it, with its repository in `.git`, by plain git.
+fn old_workspace(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    seed(dir).unwrap();
+    std::fs::remove_file(dir.join(".gitignore")).unwrap();
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=Assistant", "-c", "user.email=a@b", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    run(&["init", "-q"]);
+    run(&["add", "-A"]);
+    run(&["commit", "-q", "-m", "Start the assistant's memory"]);
+}
+
+/// A folder that's empty until the script runs, and the command that runs it (it says it ran by its first argument,
+/// and passes its input on, as a filter or a textconv).
+fn evil_script() -> (PathBuf, impl Fn(&str) -> String) {
+    let ran = testing::temp_dir();
+    let script = testing::temp_dir().join("evil");
+    std::fs::write(&script, format!("#!/bin/sh\ntouch '{}'/\"$1\"\ncat \"${{2:-/dev/stdin}}\"\n", path_str(&ran))).unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    (ran, move |what: &str| format!("{} {what}", path_str(&script)))
+}
+
+fn ran(dir: &Path) -> Vec<std::ffi::OsString> {
+    std::fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name()).collect()
+}
+
+#[test]
+fn the_board_runs_no_git_config_the_assistant_can_write() {
+    testing::run(async || {
+        let dir = testing::temp_dir().join("ws");
+        old_workspace(&dir);
+        // The assistant turned on a filter, a textconv and a hook in its workspace's .git.
+        let (ran, evil) = evil_script();
+        let config = dir.join(".git/config");
+        let mut c = std::fs::read_to_string(&config).unwrap();
+        c.push_str(&format!("[filter \"evil\"]\n\tclean = {}\n\tsmudge = {}\n[diff \"evil\"]\n\ttextconv = {}\n", evil("clean"), evil("smudge"), evil("textconv")));
+        c.push_str(&format!("[core]\n\tfsmonitor = {}\n", evil("fsmonitor")));
+        std::fs::write(&config, c).unwrap();
+        write(&dir, ".gitattributes", "* filter=evil diff=evil\n");
+        // The first open moves the history out of the workspace, without that config.
+        ensure(&dir).await.unwrap();
+        assert!(!dir.join(".git").exists() && is_repo(&dir));
+        let l = log(&dir).await;
+        assert_eq!(l.last().unwrap().1, "Start the assistant's memory");
+        assert_eq!(l[0].1, "Update .gitattributes, .gitignore");
+        assert!(!std::fs::read_to_string(git_dir(&dir).join("config")).unwrap().contains("evil"));
+        // And a new `.git/config` in the workspace isn't git's.
+        write(&dir, ".git/config", &format!("[filter \"evil\"]\n\tclean = {}\n", evil("clean2")));
+        write(&dir, MEMORY_FILE, "- a fact\n");
+        let sha = commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        // Nor do the Memory tab's reads run anything.
+        assert_eq!(at_rev(&dir, &sha, MEMORY_FILE).await.unwrap(), "- a fact\n");
+        let diff = git_ok(&dir, Who::User, &["show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv", &sha]).await.unwrap();
+        assert!(diff.contains("+- a fact"), "{diff}");
+        git_ok(&dir, Who::User, &["log", "--no-textconv", "--follow", "--name-only", "--", MEMORY_FILE]).await.unwrap();
+        let ran: Vec<_> = std::fs::read_dir(&ran).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert!(ran.is_empty(), "ran {ran:?}");
+        assert_eq!(log(&dir).await[0].1, "Update MEMORY.md");
+        // Once moved, it stays: the next open finds it.
+        ensure(&dir).await.unwrap();
+        assert_eq!(log(&dir).await.len(), 3);
+    });
+}
+
+#[test]
+fn what_gitignore_lists_and_big_files_arent_committed() {
+    testing::run(async || {
+        let dir = testing::temp_dir().join("ws");
+        std::fs::create_dir_all(&dir).unwrap();
+        ensure(&dir).await.unwrap();
+        let committed = async || git_ok(&dir, Who::User, &["ls-files"]).await.unwrap().lines().map(String::from).collect::<Vec<_>>();
+        assert_eq!(committed().await, [".gitignore", "MEMORY.md", "USER.md"]);
+        write(&dir, ".env", "TOKEN=secret");
+        write(&dir, "downloads/report.pdf", "pdf");
+        write(&dir, "node_modules/x/index.js", "js");
+        write(&dir, "big.bin", &"x".repeat(MAX_COMMITTED as usize + 1));
+        write(&dir, "notes.md", "notes");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert_eq!(committed().await, [".gitignore", "MEMORY.md", "USER.md", "notes.md"]);
+        // A name that isn't UTF-8 doesn't stop the rest being committed.
+        std::fs::write(dir.join(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"bad\xff.md")), "x").unwrap();
+        write(&dir, "notes2.md", "notes");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert!(committed().await.contains(&"notes2.md".to_string()));
+        // Only big files: nothing to commit (not everything).
+        write(&dir, "big2.bin", &"x".repeat(MAX_COMMITTED as usize + 1));
+        assert_eq!(commit_all(&dir, Who::Assistant, None).await.unwrap(), None);
+        // A file that grew too big keeps its last version, and one removed is removed.
+        write(&dir, "notes.md", &"y".repeat(MAX_COMMITTED as usize + 1));
+        std::fs::remove_file(dir.join(MEMORY_FILE)).unwrap();
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert_eq!(committed().await, [".gitignore", "USER.md", "notes.md", "notes2.md"]);
+        assert_eq!(git_ok(&dir, Who::User, &["show", "HEAD:notes.md"]).await.unwrap(), "notes");
+        // The Memory tab's write of an ignored file writes it, with no commit.
+        assert_eq!(commit_file(&dir, Who::User, ".env", "Edit .env").await.unwrap(), None);
+        // A seeded .gitignore the user removed comes back, as the other seeded files do; one they changed stays.
+        write(&dir, ".gitignore", "mine\n");
+        seed(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(".gitignore")).unwrap(), "mine\n");
+    });
+}
+
+#[test]
+fn restore_and_overwrite_keep_an_edit_not_committed_yet() {
+    testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let p = insert_profile(&s.db(), "p", &[], None).unwrap();
+        let base = format!("/api/profiles/{}/assistant/memory", p.id);
+        let (_, o) = call(&app, "GET", &base, None).await;
+        let dir = PathBuf::from(o["dir"].as_str().unwrap());
+        let first = git_ok(&dir, Who::User, &["rev-parse", "HEAD"]).await.unwrap().trim().to_string();
+        let shas = async || -> Vec<(String, String)> {
+            let (_, h) = call(&app, "GET", &format!("{base}/history?path=MEMORY.md"), None).await;
+            h["commits"].as_array().unwrap().iter().map(|c| (c["sha"].as_str().unwrap().to_string(), c["author"].as_str().unwrap().to_string())).collect()
+        };
+        // The assistant writes MEMORY.md, and its turn hasn't ended (so it isn't committed) when the user restores it.
+        write(&dir, MEMORY_FILE, "- the assistant's edit\n");
+        let (st, r) = call(&app, "POST", &format!("{base}/restore"), Some(json!({"path": "MEMORY.md", "rev": first}))).await;
+        assert_eq!(st, 200, "{r}");
+        let h = shas().await;
+        assert_eq!(h.iter().map(|c| c.1.as_str()).collect::<Vec<_>>(), ["You", "Assistant", "Assistant"]);
+        let (_, kept) = call(&app, "GET", &format!("{base}/file?path=MEMORY.md&rev={}", h[1].0), None).await;
+        assert_eq!(kept["content"], "- the assistant's edit\n");
+        // The same for a save that overwrites it.
+        write(&dir, MEMORY_FILE, "- another edit\n");
+        let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "MEMORY.md", "content": "mine", "expected": "stale", "force": true}))).await;
+        assert_eq!(st, 200);
+        let h = shas().await;
+        assert_eq!(h.len(), 5);
+        let (_, kept) = call(&app, "GET", &format!("{base}/file?path=MEMORY.md&rev={}", h[1].0), None).await;
+        assert_eq!(kept["content"], "- another edit\n");
+        assert_eq!(std::fs::read_to_string(dir.join(MEMORY_FILE)).unwrap(), "mine");
+        // Saves at once: one of them is refused, rather than both checking and then both writing.
+        let saves: Vec<_> = (0..4)
+            .map(|i| {
+                let (app, base) = (app.clone(), base.clone());
+                tokio::spawn(async move { call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "MEMORY.md", "content": format!("save {i}"), "expected": "mine"}))).await.0 })
+            })
+            .collect();
+        let mut codes = vec![];
+        for h in saves {
+            codes.push(h.await.unwrap());
+        }
+        codes.sort();
+        assert_eq!(codes, [200, 409, 409, 409]);
+    });
+}
+
+#[test]
+fn the_move_keeps_only_the_history_of_the_old_git_folder() {
+    testing::run(async || {
+        let dir = testing::temp_dir().join("ws");
+        old_workspace(&dir);
+        let (ran_dir, evil) = evil_script();
+        // A hook, a ref that's a symlink, a pack's .keep and the like in it are left behind, and what's copied is
+        // written again by git.
+        write(&dir, ".git/hooks/post-commit", "#!/bin/sh\n");
+        write(&dir, ".git/info/attributes", "* filter=evil\n");
+        write(&dir, ".git/config.worktree", &format!("[filter \"evil\"]\n\tclean = {}\n", evil("clean")));
+        let secret = testing::temp_dir().join("secret");
+        std::fs::write(&secret, "SECRET").unwrap();
+        std::os::unix::fs::symlink(&secret, dir.join(".git/refs/heads/stolen")).unwrap();
+        write(&dir, ".git/objects/pack/pack-x.keep", "");
+        write(&dir, ".gitattributes", "* filter=evil\n");
+        let head = std::fs::read_to_string(dir.join(".git/HEAD")).unwrap();
+        let loose = |objects: &Path| -> Vec<String> {
+            let mut out = vec![];
+            for d in std::fs::read_dir(objects).unwrap().flatten().filter(|e| e.file_name().len() == 2) {
+                out.extend(std::fs::read_dir(d.path()).unwrap().flatten().map(|f| format!("{}/{}", d.file_name().to_string_lossy(), f.file_name().to_string_lossy())));
+            }
+            out
+        };
+        let old_loose = loose(&dir.join(".git/objects"));
+        assert!(!old_loose.is_empty());
+        ensure(&dir).await.unwrap();
+        assert_eq!(ran(&ran_dir), Vec::<std::ffi::OsString>::new(), "the filter ran");
+        let gd = git_dir(&dir);
+        for left in ["hooks/post-commit", "info/attributes", "config.worktree", "refs/heads/stolen", "objects/pack/pack-x.keep"] {
+            assert!(std::fs::symlink_metadata(gd.join(left)).is_err(), "{left} was kept");
+        }
+        // The old objects are in a pack git wrote, none of them copied as they were, and the refs are packed.
+        let kept: Vec<_> = loose(&gd.join("objects")).into_iter().filter(|o| old_loose.contains(o)).collect();
+        assert!(kept.is_empty(), "{kept:?}");
+        assert!(std::fs::read_to_string(gd.join("packed-refs")).unwrap().contains("refs/heads/"));
+        assert_eq!(std::fs::read_to_string(gd.join("HEAD")).unwrap(), head);
+        assert!(!dir.join(".git").exists());
+        // The history is there, and goes on.
+        let l = log(&dir).await;
+        assert_eq!(l.last().unwrap().1, "Start the assistant's memory");
+        assert!(l[0].1.starts_with("Update .gitattributes, .gitignore"), "{l:?}");
+        write(&dir, MEMORY_FILE, "- a fact\n");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert_eq!(log(&dir).await[0].1, "Update MEMORY.md");
+        assert!(ran(&ran_dir).is_empty());
+    });
+}
+
+#[test]
+fn an_old_git_folder_that_points_elsewhere_isnt_moved() {
+    testing::run(async || {
+        for planted in ["commondir", "gitdir", "objects/info/alternates"] {
+            let dir = testing::temp_dir().join("ws");
+            old_workspace(&dir);
+            let (ran_dir, evil) = evil_script();
+            // The assistant pointed its .git at a folder of its own (whose config git reads, GIT_DIR or not), with a
+            // filter in that config.
+            let common = dir.join("common");
+            std::fs::create_dir_all(&common).unwrap();
+            for d in ["objects", "refs"] {
+                let o = std::process::Command::new("cp").arg("-r").arg(dir.join(".git").join(d)).arg(&common).output().unwrap();
+                assert!(o.status.success());
+            }
+            std::fs::copy(dir.join(".git/HEAD"), common.join("HEAD")).unwrap();
+            std::fs::write(common.join("config"), format!("[core]\n\trepositoryformatversion = 0\n\tbare = false\n[filter \"evil\"]\n\tclean = {}\n", evil("clean"))).unwrap();
+            let target = if planted.ends_with("alternates") { common.join("objects") } else { common.clone() };
+            write(&dir, &format!(".git/{planted}"), &format!("{}\n", path_str(&target)));
+            write(&dir, ".gitattributes", "* filter=evil\n");
+            ensure(&dir).await.unwrap();
+            assert_eq!(ran(&ran_dir), Vec::<std::ffi::OsString>::new(), "{planted}: the filter ran");
+            // It starts again, in a repository of the board's, and the old one is left for the user to look at.
+            assert_eq!(log(&dir).await, vec![("Assistant".into(), "Start the assistant's memory".into())], "{planted}");
+            assert!(std::fs::symlink_metadata(git_dir(&dir).join(planted)).is_err(), "{planted}");
+            assert!(dir.join(".git").join(planted).is_file());
+            write(&dir, MEMORY_FILE, "- a fact\n");
+            commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+            assert!(ran(&ran_dir).is_empty(), "{planted}");
+        }
+    });
+}
+
+#[test]
+fn a_broken_old_history_is_left_and_the_workspace_starts_again() {
+    testing::run(async || {
+        let dir = testing::temp_dir().join("ws");
+        old_workspace(&dir);
+        // Its objects are gone.
+        std::fs::remove_dir_all(dir.join(".git/objects")).unwrap();
+        std::fs::create_dir_all(dir.join(".git/objects")).unwrap();
+        ensure(&dir).await.unwrap();
+        assert_eq!(log(&dir).await, vec![("Assistant".into(), "Start the assistant's memory".into())]);
+        // The old one is left for the user to look at.
+        assert!(dir.join(".git/HEAD").is_file());
+    });
+}
+
+#[test]
+fn a_save_over_a_file_left_out_of_the_history_needs_what_was_opened() {
+    testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let p = insert_profile(&s.db(), "p", &[], None).unwrap();
+        let base = format!("/api/profiles/{}/assistant/memory", p.id);
+        let (_, o) = call(&app, "GET", &base, None).await;
+        let dir = PathBuf::from(o["dir"].as_str().unwrap());
+        // `.env` is in the seeded .gitignore, and the assistant wrote it after the user opened it.
+        write(&dir, ".env", "TOKEN=the assistant's\n");
+        let save = |content: &str, expected: &str, force: bool| json!({"path": ".env", "content": content, "expected": expected, "force": force});
+        for force in [false, true] {
+            let (st, r) = call(&app, "POST", &format!("{base}/file"), Some(save("TOKEN=mine\n", "TOKEN=old\n", force))).await;
+            assert_eq!(st, 409, "force {force}: {r}");
+            assert_eq!(std::fs::read_to_string(dir.join(".env")).unwrap(), "TOKEN=the assistant's\n");
+        }
+        assert!(call(&app, "POST", &format!("{base}/file"), Some(save("TOKEN=mine\n", "TOKEN=old\n", true))).await.1.to_string().contains("history"));
+        // Once it's what the user opened, it's written (with no commit, as the history leaves it out).
+        let (st, w) = call(&app, "POST", &format!("{base}/file"), Some(save("TOKEN=mine\n", "TOKEN=the assistant's\n", true))).await;
+        assert_eq!((st, w["commit"].clone()), (200, Value::Null), "{w}");
+        assert_eq!(std::fs::read_to_string(dir.join(".env")).unwrap(), "TOKEN=mine\n");
+        // A file the history keeps is still overwritten when forced: what it said is committed first.
+        write(&dir, "notes.md", "the assistant's notes\n");
+        let (st, _) = call(&app, "POST", &format!("{base}/file"), Some(json!({"path": "notes.md", "content": "mine", "expected": "old", "force": true}))).await;
+        assert_eq!(st, 200);
+        assert_eq!(git_ok(&dir, Who::User, &["show", "HEAD~1:notes.md"]).await.unwrap(), "the assistant's notes\n");
+    });
+}
+
+/// Plain git in `dir`, as the assistant would run it.
+fn plain_git(dir: &Path, args: &[&str]) {
+    let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=x", "-c", "user.email=x@y", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+}
+
+/// A repository at `clone` in the workspace, with a commit.
+fn nested_repo(dir: &Path) {
+    let clone = dir.join("clone");
+    std::fs::create_dir_all(&clone).unwrap();
+    plain_git(&clone, &["init", "-q"]);
+    std::fs::write(clone.join("a.txt"), "a\n").unwrap();
+    plain_git(&clone, &["add", "-A"]);
+    plain_git(&clone, &["commit", "-q", "-m", "c1"]);
+}
+
+/// With file writes only: a filter in the nested repository's config, for all its files, one of them rewritten, and its
+/// HEAD moved (so a gitlink to it would differ).
+fn plant_in_nested_repo(dir: &Path, evil: &impl Fn(&str) -> String) {
+    let clone = dir.join("clone");
+    let mut c = std::fs::read_to_string(clone.join(".git/config")).unwrap();
+    c.push_str(&format!("[filter \"evil\"]\n\tclean = {}\n", evil("clean")));
+    std::fs::write(clone.join(".git/config"), c).unwrap();
+    std::fs::write(clone.join(".gitattributes"), "* filter=evil\n").unwrap();
+    // The same size, so git hashes it (through the filter) to see whether it changed.
+    std::fs::write(clone.join("a.txt"), "b\n").unwrap();
+    std::fs::write(clone.join(".git/HEAD"), format!("{:040}\n", 1)).unwrap();
+}
+
+async fn gitlinks(dir: &Path) -> String {
+    let index = git_ok(dir, Who::User, &["ls-files", "-s"]).await.unwrap();
+    let head = git_ok(dir, Who::User, &["ls-tree", "-r", "HEAD"]).await.unwrap();
+    index.lines().chain(head.lines()).filter(|l| l.starts_with("160000")).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn a_repository_in_the_workspace_never_runs_its_config_as_the_board() {
+    testing::run(async || {
+        // An approved `git clone` in the workspace isn't committed as a gitlink, nor are its files.
+        let dir = testing::temp_dir().join("ws");
+        std::fs::create_dir_all(&dir).unwrap();
+        ensure(&dir).await.unwrap();
+        let (ran_dir, evil) = evil_script();
+        nested_repo(&dir);
+        write(&dir, "notes.md", "notes");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert_eq!(log(&dir).await[0].1, "Update notes.md");
+        assert_eq!(gitlinks(&dir).await, "");
+        plant_in_nested_repo(&dir, &evil);
+        write(&dir, MEMORY_FILE, "- a fact\n");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        assert_eq!(commit_file(&dir, Who::User, "clone/a.txt", "Edit clone/a.txt").await.unwrap(), None);
+        assert_eq!(ran(&ran_dir), Vec::<std::ffi::OsString>::new(), "the filter ran");
+
+        // A history from HA-121 with one in it: the move takes it out, before anything looks at the work tree.
+        let dir = testing::temp_dir().join("ws");
+        old_workspace(&dir);
+        nested_repo(&dir);
+        plain_git(&dir, &["add", "-A"]);
+        plain_git(&dir, &["commit", "-q", "-m", "Update clone"]);
+        plant_in_nested_repo(&dir, &evil);
+        ensure(&dir).await.unwrap();
+        assert_eq!(gitlinks(&dir).await, "");
+        write(&dir, MEMORY_FILE, "- a fact\n");
+        commit_all(&dir, Who::Assistant, None).await.unwrap().unwrap();
+        commit_file(&dir, Who::User, USER_FILE, "Edit USER.md").await.unwrap();
+        assert_eq!(ran(&ran_dir), Vec::<std::ffi::OsString>::new(), "the filter ran");
+        assert_eq!(log(&dir).await.len(), 4, "{:?}", log(&dir).await);
     });
 }
