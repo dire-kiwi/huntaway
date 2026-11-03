@@ -191,7 +191,11 @@ function FileEditor({
   }, [key, fetchFile, file?.modified]);
 
   const dirty = base !== undefined && content !== (base ?? "");
+  // What's in the editor now, for a save that ends after more was typed.
+  const latest = useRef(content);
+  latest.current = content;
   const edit = (c: string) => {
+    latest.current = c;
     setContent(c);
     if (base === undefined) return;
     if (c === (base ?? "")) drafts.delete(key);
@@ -199,12 +203,16 @@ function FileEditor({
   };
 
   const save = async (force = false) => {
-    if (base === undefined || busy) return;
+    // Nothing to save (Ctrl+S on a file as it is, or a log not written yet, which would make it empty).
+    if (base === undefined || busy || (!dirty && !force)) return;
     setBusy(true);
     setError(undefined);
     try {
       const w = await api.writeMemoryFile(task.host_id, task.profile_id, path, content, base, force);
-      drafts.delete(key);
+      // What was typed while it saved stays, as an edit of what was saved.
+      const now = latest.current;
+      if (now === w.content) drafts.delete(key);
+      else drafts.set(key, { content: now, base: w.content });
       setBase(w.content);
       setConflict(false);
       onSaved();

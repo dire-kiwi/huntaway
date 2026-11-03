@@ -233,7 +233,9 @@ changed, and restores a version. Its **Import** gives a prompt to paste into ano
 (ChatGPT, Claude.ai…) for what it knows about you, and sends its answer to your assistant, as data,
 to fold into `USER.md` and `MEMORY.md`. The API is under `/api/profiles/<id>/assistant/memory`
 (`file`, `history`, `diff`, `restore`, `import`), and only reaches files in that profile's
-assistant's workspace: paths with `..`, in `.git` or through a symlink are refused.
+assistant's workspace: paths with `..`, in `.git` or through a symlink are refused, and so is a
+workspace (or `assistants` folder) that's been replaced by a symlink, whose memory isn't loaded or
+committed either.
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).

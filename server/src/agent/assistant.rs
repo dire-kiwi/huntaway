@@ -48,10 +48,13 @@ pub fn get_or_create(s: &Shared, profile_id: &str) -> ApiResult<Task> {
     };
     // Its workspace, with its memory files (see memory.rs). Made again if it went missing. It's made a git
     // repository before its first run, or when the Memory tab opens.
-    if let Some(dir) = crate::agent::documents::work_dir(s, &task) {
-        if let Err(e) = memory::seed(&dir) {
-            tracing::warn!(task = %task.id, "making the assistant's folder {}: {e}", dir.display());
+    match memory::checked(s, &task) {
+        Ok(dir) => {
+            if let Err(e) = memory::seed(&dir) {
+                tracing::warn!(task = %task.id, "making the assistant's memory files in {}: {e}", dir.display());
+            }
         }
+        Err(e) => tracing::warn!(task = %task.id, "the assistant's folder: {e:#}"),
     }
     if made {
         s.emit_task(&task);

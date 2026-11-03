@@ -81,6 +81,7 @@ fn missing_memory_files_are_said_to_be_missing() {
 #[test]
 fn seeding_leaves_what_is_there() {
     let dir = testing::temp_dir().join("ws");
+    std::fs::create_dir_all(&dir).unwrap();
     seed(&dir).unwrap();
     assert!(std::fs::read_to_string(dir.join(USER_FILE)).unwrap().starts_with("# About the user"));
     assert!(std::fs::read_to_string(dir.join(MEMORY_FILE)).unwrap().starts_with("# Memory"));
@@ -107,6 +108,7 @@ async fn log(dir: &Path) -> Vec<(String, String)> {
 fn the_workspace_is_committed_only_when_it_changed() {
     testing::run(async || {
         let dir = testing::temp_dir().join("ws");
+        std::fs::create_dir_all(&dir).unwrap();
         ensure(&dir).await.unwrap();
         assert!(dir.join(".git").is_dir());
         assert_eq!(log(&dir).await, vec![("Assistant".into(), "Start the assistant's memory".into())]);
@@ -142,6 +144,7 @@ fn a_workspace_in_another_repository_gets_its_own() {
         let outer = testing::temp_dir();
         git_ok(&outer, Who::User, &["init", "-q"]).await.unwrap();
         let dir = outer.join("assistants").join("t1");
+        std::fs::create_dir_all(&dir).unwrap();
         // Without a .git of its own, nothing is committed (not even to the repository around it).
         seed(&dir).unwrap();
         assert_eq!(commit_all(&dir, Who::Assistant, None).await.unwrap(), None);
@@ -158,7 +161,7 @@ fn the_assistants_turns_are_committed_and_other_tasks_arent() {
         let s = state();
         let p = insert_profile(&s.db(), "p", &[], None).unwrap();
         let a = super::super::get_or_create(&s, &p.id).unwrap();
-        let dir = workspace(&s, &a).unwrap();
+        let dir = checked(&s, &a).unwrap();
         // The first run's instructions make it a repository.
         let told = for_run(&s, &a).await;
         assert!(told.contains("<memory-file path=\"USER.md\">") && told.contains(&path_str(&dir)), "{told}");
@@ -175,7 +178,7 @@ fn the_assistants_turns_are_committed_and_other_tasks_arent() {
         assert_eq!(log(&dir).await[0], ("Assistant".into(), "Update MEMORY.md".into()));
         // A scratch task's folder has no memory.
         let t = crate::api::create_scratch_task_inner(&s, &p.id, Default::default()).unwrap();
-        assert!(workspace(&s, &t).is_none());
+        assert!(checked(&s, &t).is_err());
         assert_eq!(for_run(&s, &t).await, "");
         turn_ended(&s, &t.id);
     });
@@ -188,6 +191,7 @@ fn path_str(p: &Path) -> String {
 #[test]
 fn paths_out_of_the_workspace_are_refused() {
     let dir = testing::temp_dir().join("ws");
+    std::fs::create_dir_all(&dir).unwrap();
     seed(&dir).unwrap();
     let outside = testing::temp_dir();
     std::fs::write(outside.join("secret"), "SECRET").unwrap();
@@ -299,12 +303,12 @@ fn the_memory_api_stays_in_its_profiles_workspace() {
         let b = insert_profile(&s.db(), "work", &[], None).unwrap();
         let mine = super::super::get_or_create(&s, &a.id).unwrap();
         let theirs = super::super::get_or_create(&s, &b.id).unwrap();
-        let dir = workspace(&s, &mine).unwrap();
+        let dir = checked(&s, &mine).unwrap();
         std::fs::write(dir.join("USER.md"), "PERSONAL SECRET").unwrap();
         ensure(&dir).await.unwrap();
         let outside = testing::temp_dir();
         std::fs::write(outside.join("secret.md"), "OUTSIDE").unwrap();
-        let other = workspace(&s, &theirs).unwrap();
+        let other = checked(&s, &theirs).unwrap();
         std::os::unix::fs::symlink(&dir, other.join("theirs")).unwrap();
         std::os::unix::fs::symlink(outside.join("secret.md"), other.join("link.md")).unwrap();
         let base = format!("/api/profiles/{}/assistant/memory", b.id);
@@ -348,4 +352,109 @@ fn an_import_goes_to_the_assistant_as_data() {
         let (st, _) = call(&app, "POST", &format!("{base}/import"), Some(json!({"text": "x".repeat(MAX_IMPORT + 1)}))).await;
         assert_eq!(st, 400);
     });
+}
+
+#[test]
+fn a_workspace_that_is_a_symlink_is_refused() {
+    testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let a = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        let b = insert_profile(&s.db(), "work", &[], None).unwrap();
+        let mine = super::super::get_or_create(&s, &a.id).unwrap();
+        let theirs = super::super::get_or_create(&s, &b.id).unwrap();
+        let their_dir = checked(&s, &theirs).unwrap();
+        ensure(&their_dir).await.unwrap();
+        std::fs::write(their_dir.join("SECRET.md"), "WORK SECRET").unwrap();
+        // Personal's workspace is swapped for a symlink to work's.
+        let my_dir = checked(&s, &mine).unwrap();
+        std::fs::remove_dir_all(&my_dir).unwrap();
+        std::os::unix::fs::symlink(&their_dir, &my_dir).unwrap();
+        assert!(checked(&s, &mine).is_err());
+        let base = format!("/api/profiles/{}/assistant/memory", a.id);
+        for (method, path, body) in [
+            ("GET", base.clone(), None),
+            ("GET", format!("{base}/file?path=SECRET.md"), None),
+            ("POST", format!("{base}/file"), Some(json!({"path": "SECRET.md", "content": "overwritten", "force": true}))),
+            ("GET", format!("{base}/history"), None),
+        ] {
+            let (st, r) = call(&app, method, &path, body).await;
+            assert_eq!(st, 409, "{method} {path}: {r}");
+            assert!(!r.to_string().contains("WORK SECRET"), "{r}");
+        }
+        assert_eq!(std::fs::read_to_string(their_dir.join("SECRET.md")).unwrap(), "WORK SECRET");
+        // Its runs aren't told work's memory, and its turns don't commit there.
+        let told = for_run(&s, &mine).await;
+        assert!(told.contains("Your memory isn't loaded") && !told.contains("<memory-file"), "{told}");
+        turn_ended(&s, &mine.id);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(log(&their_dir).await.len(), 1);
+        // Nor is the assistant's folder made through it when it's opened.
+        super::super::get_or_create(&s, &a.id).unwrap();
+        assert!(!their_dir.join(LOG_DIR).join("x").exists());
+
+        // The same for the folder of all the assistants.
+        std::fs::remove_file(&my_dir).unwrap();
+        let assistants = s.data_dir.join("assistants");
+        let elsewhere = testing::temp_dir().join("elsewhere");
+        std::fs::rename(&assistants, &elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &assistants).unwrap();
+        assert!(checked(&s, &theirs).is_err());
+        let (st, _) = call(&app, "GET", &format!("/api/profiles/{}/assistant/memory/file?path=SECRET.md", b.id), None).await;
+        assert_eq!(st, 409);
+    });
+}
+
+#[test]
+fn git_stays_in_the_workspaces_own_repository() {
+    testing::run(async || {
+        // A `.git` symlink to another repository: no history, and nothing committed there.
+        let other = testing::temp_dir().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        ensure(&other).await.unwrap();
+        let dir = testing::temp_dir().join("ws");
+        std::fs::create_dir_all(&dir).unwrap();
+        seed(&dir).unwrap();
+        std::os::unix::fs::symlink(other.join(".git"), dir.join(".git")).unwrap();
+        assert!(!is_repo(&dir));
+        assert!(ensure(&dir).await.is_err());
+        assert_eq!(commit_all(&dir, Who::Assistant, None).await.unwrap(), None);
+        assert_eq!(log(&other).await.len(), 1);
+
+        // Its config can't point git at another work tree.
+        let dir = testing::temp_dir().join("ws2");
+        std::fs::create_dir_all(&dir).unwrap();
+        ensure(&dir).await.unwrap();
+        std::fs::write(other.join("theirs.md"), "THEIRS").unwrap();
+        git_ok(&dir, Who::User, &["config", "core.worktree", &path_str(&other)]).await.unwrap();
+        write(&dir, "mine.md", "mine");
+        commit_all(&dir, Who::Assistant, None).await.unwrap();
+        assert_eq!(log(&dir).await[0].1, "Update mine.md");
+        let o = git(&dir, Who::User, &["show", "HEAD:theirs.md"]).await.unwrap();
+        assert!(!o.ok);
+
+        // A path is a name, not a pattern: `*.md` commits the file called that, not every .md.
+        write(&dir, "*.md", "star");
+        write(&dir, USER_FILE, "changed");
+        commit_file(&dir, Who::User, "*.md", "Edit *.md").await.unwrap().unwrap();
+        let files = git_ok(&dir, Who::User, &["show", "--name-only", "--format=", "HEAD"]).await.unwrap();
+        assert_eq!(files.trim(), "*.md");
+    });
+}
+
+#[test]
+fn the_list_keeps_the_memory_files_and_latest_logs_first() {
+    let dir = testing::temp_dir().join("ws");
+    std::fs::create_dir_all(&dir).unwrap();
+    seed(&dir).unwrap();
+    for i in 0..MAX_LISTED + 20 {
+        write(&dir, &format!("aaa/{i:04}.md"), "x");
+    }
+    write(&dir, "memory/2026-11-04.md", "today");
+    write(&dir, "memory/2026-11-03.md", "yesterday");
+    let files = list(&dir);
+    let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert_eq!(paths.len(), MAX_LISTED);
+    assert_eq!(&paths[..4], ["USER.md", "MEMORY.md", "memory/2026-11-04.md", "memory/2026-11-03.md"]);
+    assert_eq!(paths[4], "aaa/0000.md");
 }

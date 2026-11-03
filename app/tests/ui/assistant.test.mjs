@@ -55,6 +55,8 @@ test("the Memory tab edits the assistant's files and shows their history", async
     // Saved with Ctrl+S, though the focus isn't in the editor.
     await page.getByRole("button", { name: "History" }).focus();
     await page.keyboard.press("Control+s");
+    // (The history has a commit of yours already, from the API above: wait for the save itself.)
+    await page.waitForFunction(() => !document.querySelector("[title='Not saved']"));
     await ui.run(["click History", "wait You"]);
     assert.equal((await server.api("GET", `${base}/file?path=MEMORY.md`)).content, "# Memory\n- The cat is called Mog\n- Likes walks");
 
@@ -69,5 +71,54 @@ test("the Memory tab edits the assistant's files and shows their history", async
     // (The history is still open.)
     await ui.run(["click Start the assistant's memory", "wait Restore this version", "click Restore this version", "wait Lasting facts"]);
     assert.match((await server.api("GET", `${base}/file?path=MEMORY.md`)).content, /^# Memory\n\n<!-- Lasting facts/);
+  });
+});
+
+// HA-121 review: what's typed while a save is on its way isn't lost when it's saved, and Ctrl+S on a file you haven't
+// changed (a daily log not written yet, say) saves nothing.
+test("an edit made while the Memory tab saves stays", async () => {
+  const [profile] = await server.api("GET", "/profiles");
+  const base = `/profiles/${profile.id}/assistant/memory`;
+  await server.api("POST", `${base}/file`, { path: "MEMORY.md", content: "# Memory\n", force: true });
+  const { today } = await server.api("GET", base);
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const value = () => page.getByRole("textbox", { name: "Edit MEMORY.md" }).inputValue();
+    await ui.run(["goto /assistant/Default", "wait Message your assistant", "click memory", "click MEMORY.md"]);
+    await page.waitForFunction(() => document.querySelector("textarea[aria-label='Edit MEMORY.md']")?.value === "# Memory\n");
+    // The save is held until more has been typed.
+    let release;
+    const held = new Promise((r) => (release = r));
+    let posted;
+    const sent = new Promise((r) => (posted = r));
+    await page.route("**/assistant/memory/file", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      posted();
+      await held;
+      await route.continue();
+    });
+    await page.getByRole("textbox", { name: "Edit MEMORY.md" }).click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("- first");
+    await page.keyboard.press("Control+s");
+    await sent;
+    await page.keyboard.type(" and second");
+    release();
+    await ui.run(["click History", "wait You"]);
+    assert.equal((await server.api("GET", `${base}/file?path=MEMORY.md`)).content, "# Memory\n- first");
+    // The list was refreshed after the save, and the editor still has what came after it, unsaved.
+    await page.waitForTimeout(300);
+    assert.equal(await value(), "# Memory\n- first and second");
+    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isEnabled(), true);
+    await page.unroute("**/assistant/memory/file");
+    await page.keyboard.press("Control+s");
+    await page.waitForFunction(() => !document.querySelector("[title='Not saved']"));
+    assert.equal((await server.api("GET", `${base}/file?path=MEMORY.md`)).content, "# Memory\n- first and second");
+
+    // Today's log isn't written by a Ctrl+S on its empty editor.
+    await ui.run([`click ${today.slice("memory/".length)}`, "wait isn't there yet"]);
+    await page.keyboard.press("Control+s");
+    await page.waitForTimeout(300);
+    assert.ok(!(await server.api("GET", base)).files.some((f) => f.path === today));
   });
 });

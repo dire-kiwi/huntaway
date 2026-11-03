@@ -17,6 +17,7 @@
 //! leads out of it, through `..` or a symlink, is refused.
 
 use std::collections::HashMap;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -42,8 +43,9 @@ pub const CAP: usize = 8000;
 const MAX_FILE: usize = 1 << 20;
 /// The most an import may paste.
 const MAX_IMPORT: usize = 200_000;
-/// The most files `list` gives.
+/// The most files `list` gives, and the most it looks at (USER.md and MEMORY.md are always among them).
 const MAX_LISTED: usize = 500;
+const MAX_WALKED: usize = 20_000;
 
 const USER_SEED: &str = "# About the user\n\n\
 <!-- Who you are and how you like things done: your name, where you live, your work, the people who matter to you, \
@@ -71,14 +73,46 @@ impl Who {
 
 // ---------- the workspace ----------
 
-/// The assistant's workspace, if `task` is an assistant.
-pub fn workspace(state: &Shared, task: &Task) -> Option<PathBuf> {
-    task.is_assistant().then(|| crate::agent::documents::work_dir(state, task)).flatten()
+/// The assistant's workspace, made if it isn't there, once it's checked to be its own: `assistants/<task id>` in the
+/// data dir, as real folders. A symlink in their place (or a file) could lead to another assistant's workspace, or
+/// anywhere else, so it's refused, and nothing is read, written or run there. The data dir itself may be a symlink.
+pub fn checked(state: &Shared, task: &Task) -> Result<PathBuf> {
+    if !task.is_assistant() {
+        bail!("{} isn't an assistant", task.id);
+    }
+    if task.work_dir.as_deref() != Some(super::work_dir(&task.id).as_str()) {
+        bail!("the assistant's folder isn't its own workspace ({:?})", task.work_dir);
+    }
+    let mut dir = state.data_dir.clone();
+    for part in [Path::new("assistants"), Path::new(&task.id)] {
+        dir.push(part);
+        real_dir(&dir)?;
+    }
+    Ok(dir)
+}
+
+/// Make `dir` if it isn't there (but not its parents), and check it's a folder rather than a symlink to one.
+fn real_dir(dir: &Path) -> Result<()> {
+    if let Err(e) = std::fs::create_dir(dir) {
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(e).with_context(|| format!("making {}", dir.display()));
+        }
+    }
+    let meta = std::fs::symlink_metadata(dir).with_context(|| format!("reading {}", dir.display()))?;
+    if !meta.is_dir() {
+        bail!("{} isn't a folder of its own (it's a symlink or a file), so the assistant's memory isn't used", dir.display());
+    }
+    Ok(())
 }
 
 /// The files a new workspace starts with, made again if they went missing. A file that's there is left alone.
 pub fn seed(dir: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir.join(LOG_DIR))?;
+    // Not `create_dir_all`, which would follow a symlink in its place (as is, it's left, and refused when used).
+    if let Err(e) = std::fs::create_dir(dir.join(LOG_DIR)) {
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(e);
+        }
+    }
     for (name, text) in [(USER_FILE, USER_SEED), (MEMORY_FILE, MEMORY_SEED)] {
         let path = dir.join(name);
         // A dangling symlink is left too: writing through it would make its target, wherever that is.
@@ -106,26 +140,31 @@ struct Out {
     stderr: String,
 }
 
-/// Run git in the workspace, as `who`, ignoring the user's hooks and signing. The workspace's own
-/// repository, never one around it: GIT_CEILING_DIRECTORIES stops the search at the workspace's folder.
+/// Run git in the workspace, as `who`, ignoring the user's hooks, fsmonitor and signing. The workspace's own
+/// repository and files, never others: GIT_DIR and GIT_WORK_TREE are the workspace's (whatever its config says), and
+/// GIT_CEILING_DIRECTORIES stops any search at its folder. Paths are taken literally, not as patterns.
 async fn git(dir: &Path, who: Who, args: &[&str]) -> Result<Out> {
     let (name, email) = who.name_email();
     let ceiling = dir.parent().map(crate::util::path_str).unwrap_or_default();
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "core.quotepath=false"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"])
         .args(args)
         .stdin(Stdio::null())
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_LITERAL_PATHSPECS", "1")
+        .env("GIT_DIR", dir.join(".git"))
+        .env("GIT_WORK_TREE", dir)
         .env("GIT_CEILING_DIRECTORIES", ceiling)
         .env("GIT_AUTHOR_NAME", name)
         .env("GIT_AUTHOR_EMAIL", email)
         .env("GIT_COMMITTER_NAME", name)
         .env("GIT_COMMITTER_EMAIL", email)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
         .kill_on_drop(true)
         .output()
         .await
@@ -141,8 +180,9 @@ async fn git_ok(dir: &Path, who: Who, args: &[&str]) -> Result<String> {
     Ok(o.stdout)
 }
 
+/// Whether the workspace has a repository of its own: a real `.git` folder, not a symlink to another's.
 fn is_repo(dir: &Path) -> bool {
-    dir.join(".git").is_dir()
+    std::fs::symlink_metadata(dir.join(".git")).is_ok_and(|m| m.is_dir())
 }
 
 /// Seed the workspace and make it a git repository with a first commit, if it isn't one yet.
@@ -150,6 +190,10 @@ pub async fn ensure(dir: &Path) -> Result<()> {
     seed(dir).with_context(|| format!("making the assistant's memory files in {}", dir.display()))?;
     if is_repo(dir) {
         return Ok(());
+    }
+    // A `.git` file or symlink would point git at another repository: left for the user to look at.
+    if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+        bail!("{}/.git isn't a folder of its own, so the workspace has no history", dir.display());
     }
     let lock = lock(dir);
     let _held = lock.lock().await;
@@ -217,7 +261,10 @@ pub fn turn_ended(state: &Shared, task_id: &str) {
         Ok(Some(t)) if t.is_assistant() => t,
         _ => return,
     };
-    let Some(dir) = workspace(state, &task) else { return };
+    let dir = match checked(state, &task) {
+        Ok(d) => d,
+        Err(e) => return tracing::warn!(task = %task.id, "not committing the assistant's memory: {e:#}"),
+    };
     let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
     let task_id = task.id.clone();
     rt.spawn(async move {
@@ -332,7 +379,16 @@ pub fn prompt(dir: &Path, today: NaiveDate) -> String {
 
 /// What the assistant `task` is told about its memory, its workspace made ready first. Empty for other tasks.
 pub async fn for_run(state: &Shared, task: &Task) -> String {
-    let Some(dir) = workspace(state, task) else { return String::new() };
+    if !task.is_assistant() {
+        return String::new();
+    }
+    let dir = match checked(state, task) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(task = %task.id, "the assistant's memory: {e:#}");
+            return format!("\n\n## Your memory\n\nYour memory isn't loaded: {e:#}. Tell the user, so they can fix it.");
+        }
+    };
     if let Err(e) = ensure(&dir).await {
         tracing::warn!(task = %task.id, "setting up the assistant's memory: {e:#}");
     }
@@ -423,18 +479,23 @@ fn kind(rel: &str) -> &'static str {
 /// MEMORY.md, the daily logs newest first, then the rest by name.
 pub fn list(dir: &Path) -> Vec<Value> {
     let mut found: Vec<(String, std::fs::Metadata)> = Vec::new();
+    let mut walked = 0;
     let mut stack = vec![(dir.to_path_buf(), String::new())];
     while let Some((d, prefix)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            walked += 1;
+            if walked > MAX_WALKED && !matches!(kind(&rel), "user" | "memory") {
+                continue;
+            }
             let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
             if meta.is_dir() {
                 if !(prefix.is_empty() && name == ".git") && rel.matches('/').count() < 4 {
                     stack.push((e.path(), rel));
                 }
-            } else if meta.is_file() && found.len() < MAX_LISTED {
+            } else if meta.is_file() {
                 found.push((rel, meta));
             }
         }
@@ -445,7 +506,9 @@ pub fn list(dir: &Path) -> Vec<Value> {
         "log" => 2,
         _ => 3,
     };
+    // Sorted before the cap, so it's the latest logs and USER.md and MEMORY.md that are listed.
     found.sort_by(|(a, _), (b, _)| order(a).cmp(&order(b)).then_with(|| if kind(a) == "log" { b.cmp(a) } else { a.cmp(b) }));
+    found.truncate(MAX_LISTED);
     found
         .into_iter()
         .map(|(rel, meta)| {
@@ -465,7 +528,7 @@ pub fn list(dir: &Path) -> Vec<Value> {
 /// The profile's assistant and its workspace, made ready.
 async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathBuf)> {
     let task = super::get_or_create(s, profile_id)?;
-    let dir = workspace(s, &task).ok_or_else(|| ApiError::not_found("assistant's workspace"))?;
+    let dir = checked(s, &task).map_err(|e| ApiError::conflict(format!("{e:#}")))?;
     ensure(&dir).await?;
     Ok((task, dir))
 }
@@ -560,7 +623,15 @@ async fn put(dir: &Path, path: &Path, rel: &str, content: &str, message: &str) -
         // Made just now, so check the way again.
         resolve(dir, rel).map_err(ApiError::bad)?;
     }
-    std::fs::write(path, content).map_err(|e| ApiError::from(anyhow::anyhow!("writing {rel}: {e}")))?;
+    // Not through a symlink put there since the path was checked.
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes()));
+    written.map_err(|e| ApiError::bad(format!("writing {rel}: {e}")))?;
     Ok(commit_file(dir, Who::User, rel, message).await?)
 }
 
