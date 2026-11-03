@@ -6,7 +6,7 @@ export type PushPrompts = "off" | "assistant" | "all";
 /** Which of the board's notifications a device gets by push (see notifications.ts), and its permission prompts (left as they are, or the default, without). */
 export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & {
   prompts?: PushPrompts;
-  /** The reports the assistant's routines post, such as the morning brief's (API 104; on unless turned off). */
+  /** The reports the assistant's routines post, such as the morning brief's (API 105; on unless turned off). */
   reports?: boolean;
 };
 

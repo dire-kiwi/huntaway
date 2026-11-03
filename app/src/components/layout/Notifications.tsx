@@ -260,7 +260,7 @@ const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
 /** The events a device gets by push, and whose permission prompts. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   const prompts = device.events.prompts ?? "assistant";
-  // Pushes are the board's own host's (API 104 for reports).
+  // Pushes are the board's own host's (API 105 for reports).
   const reports = hasBrief(useStore((s) => s.hosts.find((h) => h.local)));
   return (
     <div className={clsx(compact ? "flex flex-wrap items-center gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>

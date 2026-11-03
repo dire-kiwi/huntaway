@@ -470,7 +470,7 @@ key and title and the tool's name, but never the tool's input, as it passes thro
 service. Android's Chrome shows the buttons; iOS doesn't show buttons on web notifications, so
 there you tap through to the board.
 
-**Routine reports** (API 104) are pushed too, once each: what the assistant's routines post in its
+**Routine reports** (API 105) are pushed too, once each: what the assistant's routines post in its
 thread, such as the morning brief's summary (its routine's name and the report's first line), and a
 routine that failed. Each device has them on unless it turns them off (`reports` in its events).
 
@@ -877,8 +877,8 @@ files or database. Set it up like this:
    there in the profiles whose assistant runs on it then act on your boards with that profile's access
    (see above); other profiles on that host stay out. The assistant's Details panel
    shows the host it runs on and whether it can use this board.
-6. **Connect Google** (Gmail, Calendar and Drive) on the assistant host only: see below.
-   *(Telegram comes with a later step of the personal mode.)*
+6. **Google and Telegram** are set up on the assistant host only: see *Google on the assistant host*
+   and [Telegram](#telegram) below.
 
 #### Google on the assistant host
 
@@ -939,6 +939,35 @@ rules' Google defaults are written for its tool names (`mcp__google__…`).
    can read, scopes not granted, or several accounts signed in (set `USER_GOOGLE_EMAIL` in the server's
    env to pick one). `GET /api/profiles/<id>/assistant/google[?check=1]` is the same on the API, and
    `POST` adds the server.
+
+### Telegram
+
+You can talk to a profile's assistant from Telegram, and it can reach you there. Its bot runs on the
+host the assistant runs on, which long-polls Telegram for messages, so it needs no open port and
+keeps working while that host's link to the hub is down.
+
+1. **Make a bot**: message [@BotFather](https://t.me/BotFather) with `/newbot`, and copy the token it
+   gives you (`123456789:AAH…`).
+2. **Give it to the assistant**: open the assistant, and in its Details panel under **Telegram**,
+   paste the token and **Save token**. The host checks it with Telegram and keeps it in its settings;
+   the board never shows it again. One bot serves one profile's assistant, and one host reads it at
+   a time.
+3. **Link your chat**: **Link a chat…** shows a one-time code that lasts ten minutes. Send
+   `/start <code>` to the bot from a private chat with it (or tap **Open in Telegram**). That chat is
+   then the only one the bot listens to and writes to. Messages and button presses from anyone else
+   are dropped, logged and counted in the panel.
+
+What you send the bot (text, and photos, voice notes and files up to 10 MB, saved as attachments) goes
+to the assistant as your message, and its reply comes back, formatted for Telegram and split if it's
+long. Besides those, the assistant's prompts (with **Allow** and **Deny** buttons) and questions
+(answered by replying), and word that it needs attention, go by push (to the devices that chose them
+in Settings → Notifications) and, as you choose, Telegram too. Its routines' reports go to Telegram if you turn them on, as well as by push (to the devices with
+**Routine reports** on); its replies to what you send from the board go only to Telegram, if you turn them on. A
+prompt answered from Telegram is answered as the board's buttons answer it (the approval rules and a
+routine's expiry hold the same, and the action log says *on Telegram*), and its message is edited to
+say how it ended, however it did. What can't be sent while Telegram is unreachable is kept and tried
+again, across restarts. Moving the assistant to another host removes its bot from the host it left
+(if that host is online): set it up again on the new one.
 
 ### Reaching a host from anywhere
 
@@ -2121,7 +2150,7 @@ routines too (`routines: true`, or an action of kind `message_assistant`; the as
 are about its routines by default), for the caller's own profile only, and changing one asks the
 user as for any automation. The assistant is told to make "remind me…" an *at* routine.
 
-**The morning brief** (API 104) is a routine template: the assistant's **Brief** tab sets it up at the
+**The morning brief** (API 105) is a routine template: the assistant's **Brief** tab sets it up at the
 time and on the days you pick (weekdays at 7:30 by default; `POST
 /api/profiles/<id>/assistant/brief` with `{time, weekdays}`), as a routine called *Morning brief* in a
 fresh thread, which you can change like any other. Its run reads today's calendar, unread and starred

@@ -302,7 +302,7 @@ pub struct DocumentQuery {
 pub async fn get(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<DocumentQuery>) -> ApiResult<Json<Value>> {
     let task = db::get_task(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("task"))?;
     let label = match q.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
-        // The assistant's morning brief (API 104).
+        // The assistant's morning brief (API 105).
         Some(l) if l == brief::LABEL && task.is_assistant() => brief::LABEL,
         Some(l) => *db::LABELS.iter().find(|x| **x == l).ok_or_else(|| ApiError::bad(format!("unknown label {l:?}")))?,
         None => labels(&task).first().copied().unwrap_or(db::LABELS[0]),
@@ -338,7 +338,7 @@ pub async fn get(State(s): State<Shared>, Path(id): Path<String>, Query(q): Quer
         "version": version.filter(|_| content.is_some()),
         "content": content,
     });
-    // The brief's items to rate (API 104): those the run wrote the same day, in the host's time zone, as checked.
+    // The brief's items to rate (API 105): those the run wrote the same day, in the host's time zone, as checked.
     if label == brief::LABEL {
         let day = |at: &str| chrono::DateTime::parse_from_rfc3339(at).ok().map(|t| t.with_timezone(&chrono::Local).date_naive());
         let shown = versions.iter().find(|v| v["version"].as_i64() == version).and_then(|v| v["created_at"].as_str().and_then(day));

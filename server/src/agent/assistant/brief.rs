@@ -1,4 +1,4 @@
-//! The morning brief (API 104): a routine template, its document, and the user's ratings of its items.
+//! The morning brief (API 105): a routine template, its document, and the user's ratings of its items.
 //!
 //! The template (`POST /profiles/{id}/assistant/brief`) makes a routine called "Morning brief" that runs on the weekdays
 //! and at the time picked, in a fresh thread. Its run reads today's calendar, unread and starred mail and Drive files changed

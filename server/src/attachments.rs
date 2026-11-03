@@ -74,16 +74,32 @@ fn mime(name: &str) -> &'static str {
 /// `POST /attachments`: save a file and return where it is.
 pub async fn upload(State(s): State<Shared>, Json(b): Json<Upload>) -> ApiResult<Json<Value>> {
     let data = B64.decode(b.data.trim()).map_err(|_| ApiError::bad("data must be base64"))?;
+    let (id, name, path) = save(&s, &b.name, &data).await?;
+    Ok(Json(json!({"id": id, "name": name, "path": path_str(&path), "size": data.len(), "mime": mime(&name)})))
+}
+
+/// Saves `data` as an attachment called `name` (made safe): its id, name and path, which a message
+/// lists after `HEADER` (see `listed`). Files from elsewhere (Telegram's, say) are saved this way too.
+pub async fn save(s: &Shared, name: &str, data: &[u8]) -> ApiResult<(String, String, PathBuf)> {
     if data.len() > MAX_BYTES {
-        return Err(ApiError::bad(format!("{} is larger than {} MB", b.name, MAX_BYTES >> 20)));
+        return Err(ApiError::bad(format!("{name} is larger than {} MB", MAX_BYTES >> 20)));
     }
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let name = clean_name(&b.name);
-    let folder = dir(&s).join(&id);
+    let name = clean_name(name);
+    let folder = dir(s).join(&id);
     let path = folder.join(&name);
     tokio::fs::create_dir_all(&folder).await.map_err(|e| ApiError::bad(format!("saving {name}: {e}")))?;
-    tokio::fs::write(&path, &data).await.map_err(|e| ApiError::bad(format!("saving {name}: {e}")))?;
-    Ok(Json(json!({"id": id, "name": name, "path": path_str(&path), "size": data.len(), "mime": mime(&name)})))
+    tokio::fs::write(&path, data).await.map_err(|e| ApiError::bad(format!("saving {name}: {e}")))?;
+    Ok((id, name, path))
+}
+
+/// `text` with the files at `paths` listed after it, as the UI sends them (app/src/attachments.ts).
+pub fn listed(text: &str, paths: &[PathBuf]) -> String {
+    if paths.is_empty() {
+        return text.to_string();
+    }
+    let list = format!("{HEADER}\n{}", paths.iter().map(|p| format!("- {}", path_str(p))).collect::<Vec<_>>().join("\n"));
+    if text.trim().is_empty() { list } else { format!("{}\n\n{list}", text.trim_end()) }
 }
 
 /// `GET /attachments/{id}/{name}`: a saved file, base64.

@@ -210,7 +210,7 @@ export interface TaskDocument {
   /** The version `content` is, or null before the agent has written anything. */
   version: number | null;
   content: string | null;
-  /** The assistant's brief (API 104): its items to rate, from the run's brief.json of the same day, as the host checked them. */
+  /** The assistant's brief (API 105): its items to rate, from the run's brief.json of the same day, as the host checked them. */
   items?: BriefListItem[];
 }
 
