@@ -346,16 +346,23 @@ pub async fn create(gh: &str, account: Option<&str>, dir: &Path, owner: Option<&
     // so what's rolled back is what this call made and nothing that was there.
     let resolved = folder(dir);
     let dir = resolved.as_path();
-    // The top-most folder this call makes: a failure takes that away again.
-    let created = dir.ancestors().take_while(|a| std::fs::symlink_metadata(a).is_err()).last().map(Path::to_path_buf);
+    // The folders this call makes, the destination first and then the ones above it that weren't there. A failure takes the
+    // destination away (all of it is this call's) and the others only while they're empty: another request can be making a
+    // folder next to this one, in the same new folder.
+    let created: Vec<PathBuf> = dir.ancestors().take_while(|a| std::fs::symlink_metadata(a).is_err()).map(Path::to_path_buf).collect();
     let undo = |inited: bool| {
-        if let Some(created) = &created {
-            let _ = std::fs::remove_dir_all(created);
+        if let Some((dest, above)) = created.split_first() {
+            let _ = std::fs::remove_dir_all(dest);
+            for folder in above {
+                if std::fs::remove_dir(folder).is_err() {
+                    break;
+                }
+            }
         } else if inited {
             let _ = std::fs::remove_dir_all(dir.join(".git"));
         }
     };
-    if created.is_some()
+    if !created.is_empty()
         && let Err(e) = std::fs::create_dir_all(dir)
     {
         undo(false);
@@ -582,7 +589,7 @@ esac
     /// A folder (for the caller to remove) with a fake `gh repo create TARGET --private|--public
     /// --source DIR --remote origin [--push]`, as gh does it: it logs its arguments to `create.log`,
     /// makes the bare repository `bare/NAME.git`, adds a GitHub URL as `origin` to DIR, prints that
-    /// URL and, with `--push`, pushes HEAD to it. `fails` can't be created and `push-fails` is made
+    /// URL and, with `--push`, pushes HEAD to it. `fails` can't be created (`slow-fails` after a second) and `push-fails` is made
     /// but can't be pushed to.
     pub(crate) fn fake_gh_create() -> PathBuf {
         let dir = crate::testing::temp_dir();
@@ -601,6 +608,7 @@ while [ $# -gt 0 ]; do
 done
 name=${{target##*/}}
 case $target in */*) owner=${{target%/*}} ;; *) owner=me ;; esac
+[ "$name" = slow-fails ] && {{ sleep 1; echo "GraphQL: Name already exists on this account (createRepository)" >&2; exit 1; }}
 [ "$name" = fails ] && {{ echo "GraphQL: Name already exists on this account (createRepository)" >&2; exit 1; }}
 git init -q --bare "{base}/bare/$name.git"
 cd "$src" || exit 1
@@ -685,6 +693,20 @@ fi
             let err = create(&gh, None, &fake.join("valuable/a/b"), Some("o"), "fails", true).await.unwrap_err();
             assert!(err.contains("Name already exists"), "{err}");
             assert!(!valuable.join("a").exists() && valuable.join("mine.txt").exists());
+
+            // Another request making a folder in the same new folder keeps it when this one fails: only what this made goes.
+            let shared = fake.join("shared/new");
+            let (a, b) = (shared.join("a"), shared.join("b"));
+            let (failed, other) = tokio::join!(create(&gh, None, &a, Some("o"), "slow-fails", true), async {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                let made = create(&gh, None, &b, Some("o"), "b", true).await;
+                std::fs::write(b.join("valuable.txt"), "keep").unwrap();
+                made
+            });
+            assert!(failed.unwrap_err().contains("Name already exists"));
+            assert!(other.is_ok());
+            assert!(shared.join("b/.git").exists() && shared.join("b/valuable.txt").exists());
+            assert!(!shared.join("a").exists());
 
             // Git metadata git won't open (here a repository without its HEAD, as another owner's or a damaged one is) is neither
             // initialized over nor taken away, whether or not gh would have created the repository.
