@@ -220,16 +220,17 @@ pub fn parse_command(thread_id: &str, mut body: Value) -> ApiResult<Command> {
         Some(t) if t == thread_id => {}
         Some(t) => return Err(ApiError::bad(format!("thread {t} isn't this task's (its thread is {thread_id})"))),
     }
-    let route = match o.get("type").and_then(Value::as_str) {
-        Some("respond" | "compact" | "new_session") => None,
-        Some("send") => Some("POST /api/tasks/{id}/messages"),
-        Some("interrupt") => Some("POST /api/tasks/{id}/stop"),
-        Some("set_options") => Some("PATCH /api/tasks/{id}"),
-        Some("rewind") => Some("POST /api/tasks/{id}/rewind"),
+    let kind = o.get("type").and_then(Value::as_str).unwrap_or_default();
+    let route = match kind {
+        "respond" | "compact" | "new_session" => None,
+        "send" => Some("POST /api/tasks/{id}/messages"),
+        "interrupt" => Some("POST /api/tasks/{id}/stop"),
+        "set_options" => Some("PATCH /api/tasks/{id}"),
+        "rewind" => Some("POST /api/tasks/{id}/rewind"),
         _ => return Err(ApiError::bad("type must be respond, compact or new_session")),
     };
     if let Some(route) = route {
-        return Err(ApiError::bad(format!("{} goes through {route}, which keeps the board's task in step", o["type"])));
+        return Err(ApiError::bad(format!("{kind} goes through {route}, which keeps the board's task in step")));
     }
     serde_json::from_value(body).map_err(|e| ApiError::bad(format!("that isn't a valid command: {e}")))
 }
