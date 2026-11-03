@@ -12,6 +12,11 @@
 //! a one-time token (push_answers.rs) for its Allow and Deny actions, which answer it from the
 //! notification without the board's token.
 //!
+//! So are the assistant's routines' reports (such as the morning brief's), as each is posted on its thread, and its
+//! replies, for the devices that choose them, as the assistant's host says its turn ended (`REPLY_EVENT`), except one to
+//! a message sent on Telegram, which goes back there. A reply says only "Replied"; a report its first line, but not
+//! through Expo (see `observe_report`).
+//!
 //! The mobile app (mobile/, API 103) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and
 //! its pushes go through Expo's push service (see `deliver_expo`), which needs no keys kept here. Expo, Apple and
 //! Google can read those, so they say less (see `Message::summary`). A paired device sees and changes only the
@@ -159,8 +164,8 @@ fn authorization(v: &Vapid, endpoint: &str, sub: &str, now: i64) -> Result<Strin
 
 // ---------- subscriptions ----------
 
-/// Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults, and
-/// permission prompts.
+/// Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults, permission
+/// prompts, and the assistant's replies and its routines' reports.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Events {
     #[serde(default = "yes")]
@@ -174,8 +179,14 @@ pub struct Events {
     /// Whose permission prompts it gets, with Allow and Deny (API 96).
     #[serde(default)]
     pub prompts: Prompts,
-    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 105).
-    #[serde(default = "yes")]
+    /// The assistant finished a reply, other than one to a message sent to it on Telegram (which answers there; see
+    /// `telegram::on_turn_end`). Off unless chosen, also for the subscriptions from before there was a choice.
+    #[serde(default)]
+    pub replies: bool,
+    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 105). On for a new
+    /// subscription, unless it says otherwise; off for one stored before it could choose (HA-162), so a device that never
+    /// chose isn't suddenly sent them.
+    #[serde(default)]
     pub reports: bool,
 }
 
@@ -198,7 +209,7 @@ fn yes() -> bool {
 
 impl Default for Events {
     fn default() -> Self {
-        Self { attention: true, review: true, merge: false, done: false, prompts: Prompts::Assistant, reports: true }
+        Self { attention: true, review: true, merge: false, done: false, prompts: Prompts::Assistant, replies: false, reports: true }
     }
 }
 
@@ -209,9 +220,10 @@ impl Events {
             Event::Review => self.review,
             Event::Merge => self.merge,
             Event::Done => self.done,
+            Event::Reply => self.replies,
+            Event::Report => self.reports,
             // Depends on the task: see wants_prompt.
             Event::Prompt => false,
-            Event::Report => self.reports,
         }
     }
 
@@ -633,6 +645,8 @@ pub enum Event {
     Done,
     /// A permission prompt was raised.
     Prompt,
+    /// The assistant finished a reply (see `observe_reply`).
+    Reply,
     /// A routine posted a report in the assistant's thread (see observe_report).
     Report,
 }
@@ -645,8 +659,8 @@ impl Event {
             Event::Review => "in_review",
             Event::Merge => "ready_for_merge",
             Event::Done => "done",
-            // Not about a column.
-            Event::Report => "",
+            // Not a column: a move doesn't stand for them.
+            Event::Reply | Event::Report => "",
         }
     }
 }
@@ -710,6 +724,7 @@ pub fn notification_text(e: Event, t: &Value, key: &str) -> (String, String) {
             _ => "Done".into(),
         },
         Event::Prompt => "Waiting for your answer".into(),
+        Event::Reply => "Replied".into(),
         Event::Report => "Posted a report".into(),
     };
     let body = if body.chars().count() > 200 { format!("{}…", body.chars().take(199).collect::<String>()) } else { body };
@@ -717,14 +732,15 @@ pub fn notification_text(e: Event, t: &Value, key: &str) -> (String, String) {
 }
 
 /// What goes before a task's number (`keyPrefix`): its project's key, `G` for a group task, `S` for
-/// a scratch task, `A` for a profile's assistant.
+/// a scratch task, `A` for a profile's assistant and its routines' threads.
 async fn task_key(s: &Shared, host_id: &str, t: &Value) -> String {
     let prefix = match t["project_id"].as_str() {
         Some(p) if host_id == s.host_id => local_project_key(s, p),
         Some(p) => crate::hosts::hub::host_request(s, host_id, "GET", &format!("/api/projects/{p}"), None).await.ok().and_then(|p| p["key"].as_str().map(String::from)),
         None if t["group_name"].is_string() => Some("G".into()),
         None if t["task_type"] == "scratch" => Some("S".into()),
-        None if t["task_type"] == "assistant" => Some("A".into()),
+        // The assistant's thread and its routines' (`isAssistants`).
+        None if matches!(t["task_type"].as_str(), Some("assistant" | "routine")) => Some(db::ASSISTANT_TASK_KEY.into()),
         None => None,
     };
     format!("{}-{}", prefix.unwrap_or_else(|| "T".into()), t["number"])
@@ -848,6 +864,7 @@ pub fn start(s: &Shared) {
                     observe_prompt(&st, &host, &ev["message"]);
                     observe_report(&st, &host, &ev["message"]);
                 }
+                Some(REPLY_EVENT) => observe_reply(&st, &host, &ev),
                 Some("message_updated") => prompt_settled(&st, &host, &ev["message"]),
                 Some("resync") => sync_host(&st, &host).await,
                 Some("hosts_changed") => {
@@ -1001,13 +1018,14 @@ pub fn report_text(data: &Value) -> Option<(String, String)> {
     Some((data["automation"].as_str().filter(|n| !n.is_empty()).unwrap_or("A routine").to_string(), body))
 }
 
-/// A thread message as it is now: a routine's report that's just been posted (one per run, so a brief pushes once) goes to
-/// the devices that want reports. A routine waiting on the user is pushed as its prompt or attention instead.
+/// A thread message as it is now: a routine's report that's just been posted on the assistant's thread (one per run, so a
+/// brief pushes once) goes to the devices that want reports. A routine waiting on the user is pushed as its prompt or attention instead.
 fn observe_report(s: &Shared, host: &str, m: &Value) {
     if m["kind"] != "report" {
         return;
     }
-    let Some(task_id) = m["task_id"].as_str() else { return };
+    // Tapping it opens the routine's thread (its run, with what it posted), or the assistant's for a report without one.
+    let Some(task_id) = m["data"]["task_id"].as_str().filter(|t| !t.is_empty()).or(m["task_id"].as_str()) else { return };
     let Some((title, body)) = report_text(&m["data"]) else { return };
     let failed = m["data"]["outcome"] == "failed";
     let (st, host, task_id, tag) = (s.clone(), host.to_string(), task_id.to_string(), m["id"].to_string());
@@ -1029,9 +1047,7 @@ fn observe_report(s: &Shared, host: &str, m: &Value) {
             // Expo (and Apple and Google) can read what goes through it, and a report can quote mail.
             summary: Some(if failed { "A routine failed".into() } else { "Posted a report".into() }),
         };
-        for sub in subs {
-            let _ = send(&st, &sub, &msg, false).await;
-        }
+        send_all(&st, &subs, &msg, false).await;
     });
 }
 
@@ -1136,6 +1152,53 @@ async fn notify_prompt(s: &Shared, host: &str, task_id: &str, data: &Value) {
     send_all(s, &subs, &msg, true).await;
 }
 
+// ---------- the assistant's replies ----------
+
+/// The event the assistant's host sends when the assistant finished a reply (its turn's `result`), with the
+/// assistant's `task_id`, the result's `message_id`, and `telegram`: whether it answers a message sent to it on
+/// Telegram, which the reply goes back to (see `telegram::on_turn_end`). Only that host knows, as its bot is there.
+pub const REPLY_EVENT: &str = "assistant_reply";
+
+/// An `assistant_reply` event: the reply is pushed to the devices that want replies, unless it went back to Telegram,
+/// where it was asked for.
+fn observe_reply(s: &Shared, host: &str, ev: &Value) {
+    if ev["telegram"] == json!(true) {
+        return;
+    }
+    let Some(task_id) = ev["task_id"].as_str() else { return };
+    let (st, host, task_id) = (s.clone(), host.to_string(), task_id.to_string());
+    tokio::spawn(async move { notify_reply(&st, &host, &task_id).await });
+}
+
+/// Pushes that the assistant (task `task_id` on `host`) replied, to the devices that want it. Not what it said:
+/// that's read in the thread (pushes pass through push services, Expo's unencrypted).
+async fn notify_reply(s: &Shared, host: &str, task_id: &str) {
+    let subs = match list(&s.db()) {
+        Ok(subs) => subs.into_iter().filter(|x| x.events.wants(Event::Reply)).collect::<Vec<_>>(),
+        Err(e) => return tracing::warn!("push: reading the subscriptions: {e:#}"),
+    };
+    if subs.is_empty() {
+        return;
+    }
+    let Some(t) = find_task(s, host, task_id).await.filter(|t| t["task_type"] == "assistant") else { return };
+    let (title, body) = notification_text(Event::Reply, &t, &task_key(s, host, &t).await);
+    let msg = Message {
+        title,
+        body,
+        // The assistant's page (the board sends /t/ of an assistant there), in the app its thread.
+        url: format!("/t/{task_id}"),
+        // Its own, so a reply doesn't take the place of a prompt or an attention notification.
+        tag: format!("{host}:{task_id}:reply"),
+        task_id: Some(task_id.into()),
+        event: Some(Event::Reply),
+        request_id: None,
+        answer: None,
+        host_id: Some(host.into()),
+        summary: None,
+    };
+    send_all(s, &subs, &msg, false).await;
+}
+
 // ---------- API ----------
 
 type Device = Option<axum::Extension<crate::devices::DeviceAuth>>;
@@ -1168,8 +1231,9 @@ pub struct Subscribe {
     keys: Option<Keys>,
     #[serde(default)]
     name: String,
+    /// Its events (see `merged_events`).
     #[serde(default)]
-    events: Option<Events>,
+    events: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -1219,17 +1283,25 @@ pub async fn subscribe(State(s): State<Shared>, device: Device, Json(b): Json<Su
         Some((_, kind)) if kind != b.kind.as_str() => return Err(ApiError::bad("that endpoint is subscribed as another kind")),
         // The same phone paired again (its old pairing may not have been revoked) takes its subscription over.
         Some((id, _)) => {
+            let events = match &b.events {
+                Some(patch) => Some(merged_events(&get(&c, &id)?.map(|x| x.events).unwrap_or_default(), patch)?),
+                None => None,
+            };
             c.execute(
                 "UPDATE push_subscriptions SET p256dh=?1, auth=?2, name=?3, events=COALESCE(?4, events), last_error=NULL, device_id=COALESCE(?5, device_id) WHERE id=?6",
-                params![p256dh, auth, name, b.events.map(|e| json!(e).to_string()), device_id, id],
+                params![p256dh, auth, name, events.map(|e| json!(e).to_string()), device_id, id],
             )?;
             id
         }
         None => {
             let id = crate::util::new_id();
+            let events = match &b.events {
+                Some(patch) => merged_events(&Events::default(), patch)?,
+                None => Events::default(),
+            };
             c.execute(
                 "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at,kind,device_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                params![id, b.endpoint, p256dh, auth, name, json!(b.events.unwrap_or_default()).to_string(), now(), b.kind.as_str(), device_id],
+                params![id, b.endpoint, p256dh, auth, name, json!(events).to_string(), now(), b.kind.as_str(), device_id],
             )?;
             id
         }
@@ -1241,20 +1313,33 @@ pub async fn subscribe(State(s): State<Shared>, device: Device, Json(b): Json<Su
     Ok(Json(json!(get(&c, &id)?.ok_or_else(|| ApiError::not_found("subscription"))?)))
 }
 
+/// Events `patch` (an object of some of them) over `old`: what it leaves out stays as it was. A page or app from
+/// before an event was added sends the others without it, which mustn't turn it off.
+fn merged_events(old: &Events, patch: &Value) -> ApiResult<Events> {
+    let Some(patch) = patch.as_object() else { return Err(ApiError::bad("events must be an object")) };
+    let mut v = json!(old);
+    for (k, x) in patch {
+        v[k] = x.clone();
+    }
+    serde_json::from_value(v).map_err(|e| ApiError::bad(format!("events: {e}")))
+}
+
 #[derive(Deserialize)]
 pub struct Change {
     name: Option<String>,
-    events: Option<Events>,
+    /// Some of its events, changed (see `merged_events`).
+    events: Option<Value>,
 }
 
 /// Changes a device's name or the events it gets.
 pub async fn update(State(s): State<Shared>, device: Device, Path(id): Path<String>, Json(b): Json<Change>) -> ApiResult<Json<Value>> {
     let c = s.db();
-    get_for(&c, &device, &id)?;
+    let sub = get_for(&c, &device, &id)?;
     if let Some(name) = b.name {
         c.execute("UPDATE push_subscriptions SET name=?1 WHERE id=?2", params![name.trim().chars().take(100).collect::<String>(), id])?;
     }
-    if let Some(events) = b.events {
+    if let Some(patch) = b.events {
+        let events = merged_events(&sub.events, &patch)?;
         c.execute("UPDATE push_subscriptions SET events=?1 WHERE id=?2", params![json!(events).to_string(), id])?;
     }
     Ok(Json(json!(get(&c, &id)?.ok_or_else(|| ApiError::not_found("subscription"))?)))

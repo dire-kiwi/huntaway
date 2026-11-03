@@ -3,6 +3,7 @@ import { Boards, tokenKey, type Board } from "../src/boards";
 import {
   ALLOW,
   answerPrompt,
+  assistantPushEvents,
   DEFAULT_ACTION,
   DENY,
   pushable,
@@ -17,6 +18,7 @@ import {
   savedBoardUrl,
   subscriptionOn,
   taskRoute,
+  withEvent,
   URLS_KEY,
   type ResponseDeps,
 } from "../src/push";
@@ -68,6 +70,28 @@ describe("what a push carries", () => {
     expect(taskRoute(pushData(notification(promptData))!)).toEqual({ pathname: "/task/[board]/[host]/[id]", params: { board: "work", host: "h1", id: "t1" } });
     // A test push is about no task.
     expect(taskRoute({ board: "work" })).toBeNull();
+  });
+
+  test("a reply opens the assistant's thread, and a report its routine's", () => {
+    const reply = { board: "work", host: "h1", url: "/t/a1", tag: "h1:a1:reply", task_id: "a1", event: "reply" };
+    expect(taskRoute(pushData(notification(reply))!)).toEqual({ pathname: "/task/[board]/[host]/[id]", params: { board: "work", host: "h1", id: "a1" } });
+    // As the board sends it: the routine's thread (r7), whose report was posted on the assistant's (a1).
+    const report = { board: "work", host: "h1", url: "/t/r7", tag: "h1:r7:report:9", task_id: "r7", event: "report" };
+    expect(pushData(notification(report))?.event).toBe("report");
+    expect(taskRoute(pushData(notification(report))!)).toEqual({ pathname: "/task/[board]/[host]/[id]", params: { board: "work", host: "h1", id: "r7" } });
+  });
+});
+
+describe("the assistant's events", () => {
+  const events = { attention: true, review: true, merge: false, done: false, prompts: "assistant" as const };
+
+  test("are offered by a board that has them, and not by one from before", () => {
+    expect(assistantPushEvents({ ...events, replies: false, reports: true }).map((e) => e.id)).toEqual(["replies", "reports"]);
+    expect(assistantPushEvents(events)).toEqual([]);
+  });
+
+  test("change one at a time, keeping the rest", () => {
+    expect(withEvent({ ...events, replies: false, reports: true }, "replies", true)).toEqual({ ...events, replies: true, reports: true });
   });
 });
 

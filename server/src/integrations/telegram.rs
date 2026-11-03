@@ -15,8 +15,9 @@
 //!   questions and its permission prompts, the last with Allow and Deny buttons. Those are answered as the
 //!   board's own buttons answer (permissions::answer_by, `telegram` in the action log), so the approval
 //!   rules and expiry hold the same; the message is edited to say how the prompt ended, however it did.
-//!   Each kind of message can be turned off (`events`). Push (push.rs, chosen per device) sends prompts
-//!   and attention too, but not reports or replies.
+//!   Each kind of message can be turned off (`events`). Push (push.rs, chosen per device) can send each of them
+//!   too: the replies it's told of here (`announce_reply`), as only this host knows which were asked for on
+//!   Telegram, and those go back there alone.
 //! - **Sending** goes through a queue per profile, kept in the settings until Telegram takes each item:
 //!   one that fails for a while (Telegram unreachable, failing or rate-limiting) is tried again, waiting
 //!   longer each time, and after a restart; one Telegram refuses outright is dropped. One profile's queue
@@ -1089,10 +1090,17 @@ fn on_message(s: &Shared, m: &Value) {
     if !relevant {
         return;
     }
+    if kind == "claude" {
+        // Every assistant's, for push (push::REPLY_EVENT), whether or not it has a bot.
+        let task = m["task_id"].as_str().and_then(|id| db::get_task(&s.db(), id).ok().flatten()).filter(Task::is_assistant);
+        if let Some(task) = task {
+            on_turn_end(s, &task, m["id"].as_i64().unwrap_or_default(), TurnEnd::of(data));
+        }
+        return;
+    }
     let Some(task) = m["task_id"].as_str().and_then(|id| assistants_task(s, id)) else { return };
     let events = events_of(s, &task.profile_id);
     match kind {
-        "claude" if task.is_assistant() => on_turn_end(s, &task, m["id"].as_i64().unwrap_or_default(), events),
         "report" if events.reports && task.is_assistant() => {
             let name = data["automation"].as_str().unwrap_or("A routine");
             let text = data["text"].as_str().unwrap_or_default();
@@ -1116,34 +1124,85 @@ fn on_message(s: &Shared, m: &Value) {
     }
 }
 
+/// How the assistant's turn ended, from its `result`: only a turn that went as it should is a reply.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TurnEnd {
+    Reply,
+    /// A compaction's end (a `/compact` run's, the user's or the board's after the thread was idle a while), which
+    /// answers nothing.
+    Compact,
+    /// It failed (an error, or the usage limit) or was stopped part way: its needs attention says so.
+    Failed,
+}
+
+impl TurnEnd {
+    fn of(result: &Value) -> Self {
+        if result["compact"] == json!(true) {
+            TurnEnd::Compact
+        } else if result["is_error"] == json!(true) || result["interrupted"] == json!(true) || result["subtype"].as_str().is_some_and(|t| t.starts_with("error")) {
+            TurnEnd::Failed
+        } else {
+            TurnEnd::Reply
+        }
+    }
+}
+
 /// The assistant's turn ended (its `result`, message `message_id`): its reply goes back if a message
-/// from Telegram was waiting for one, or if every reply is to.
-fn on_turn_end(s: &Shared, task: &Task, message_id: i64, events: Events) {
+/// from Telegram was waiting for one, or if every reply is to. Either way it's announced for push
+/// (`announce_reply`), which sends the replies that weren't asked for on Telegram. A turn that isn't a reply
+/// (`TurnEnd`) is only noted as looked at: a compaction leaves a message from Telegram waiting for the next turn, and a
+/// failed turn has answered it (with the attention it needs, see `on_attention`).
+fn on_turn_end(s: &Shared, task: &Task, message_id: i64, end: TurnEnd) {
+    let text = if end == TurnEnd::Reply { reply_text(s, task, message_id) } else { None };
+    let Some((_, cfg, _)) = linked(&s.db(), &task.profile_id) else {
+        // No bot: nothing came from Telegram, and the turn's result comes once.
+        if text.is_some() {
+            announce_reply(s, task, message_id, false);
+        }
+        return;
+    };
     // A message queued or steered in that this turn didn't take is answered by the next.
     let more = db::get_task(&s.db(), &task.id).ok().flatten().is_some_and(|t| t.queued_message.is_some() || !t.steering.is_empty());
-    let send = update_progress(s, &task.profile_id, |p| {
+    let seen = update_progress(s, &task.profile_id, |p| {
         if message_id <= p.replied {
-            return false;
+            return None;
         }
         p.replied = message_id;
-        let send = p.awaiting || events.replies;
-        p.awaiting = p.awaiting && more;
-        send
+        if end == TurnEnd::Compact {
+            return None;
+        }
+        let asked = p.awaiting;
+        p.awaiting = asked && more;
+        (end == TurnEnd::Reply).then_some((asked || cfg.events.replies, asked))
     });
-    if !matches!(send, Ok(true)) {
-        return;
-    }
-    // What it said since the user's last message.
-    let text = {
-        let c = s.db();
-        let asked: i64 = c
-            .query_row("SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='user' AND id < ?2", rusqlite::params![task.id, message_id], |r| r.get(0))
-            .unwrap_or(0);
-        db::last_assistant_text_after(&c, &task.id, asked).ok().flatten()
-    };
-    if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
+    let Ok(Some((send, asked))) = seen else { return };
+    let Some(text) = text else { return };
+    announce_reply(s, task, message_id, asked);
+    if send {
         queue(&task.profile_id, s, Item::Markdown { md: text });
     }
+}
+
+/// What the assistant said in the turn that ended with message `message_id`: since the user's last message, and
+/// since the turn before ended (so a turn that said nothing doesn't say the last one's reply again). None if it said
+/// nothing.
+fn reply_text(s: &Shared, task: &Task, message_id: i64) -> Option<String> {
+    let c = s.db();
+    let asked: i64 = c
+        .query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND id < ?2
+               AND (kind='user' OR (kind='claude' AND json_extract(data,'$.type')='result'))",
+            rusqlite::params![task.id, message_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    db::last_assistant_text_after(&c, &task.id, asked).ok().flatten().filter(|t| !t.trim().is_empty())
+}
+
+/// Tells the board (its push, push::REPLY_EVENT) that the assistant replied, and whether to a message sent on
+/// Telegram, which is the one thing only this host knows: the board's push sends the others.
+fn announce_reply(s: &Shared, task: &Task, message_id: i64, telegram: bool) {
+    s.emit(json!({"type": super::push::REPLY_EVENT, "task_id": task.id, "profile_id": task.profile_id, "message_id": message_id, "telegram": telegram}));
 }
 
 /// The assistant's run ended. A turn it ended with is answered as its `result` comes (once, whichever is
@@ -1153,17 +1212,22 @@ fn run_ended(s: &Shared, task: &Task) {
     if !task.is_assistant() || linked(&s.db(), &task.profile_id).is_none() {
         return;
     }
-    let last_result: i64 = s
+    let (last_result, data): (i64, String) = s
         .db()
         .query_row(
-            "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result'",
+            "SELECT id, data FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result' ORDER BY id DESC LIMIT 1",
             [&task.id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .unwrap_or(0);
+        .unwrap_or((0, String::new()));
     let replied = progress(&s.db(), &task.profile_id).replied;
     if last_result > replied {
-        return on_turn_end(s, task, last_result, events_of(s, &task.profile_id));
+        let end = TurnEnd::of(&serde_json::from_str(&data).unwrap_or(Value::Null));
+        on_turn_end(s, task, last_result, end);
+        // A compaction answered nothing: as a run that stopped without a turn's end.
+        if end != TurnEnd::Compact {
+            return;
+        }
     }
     let more = task.queued_message.is_some() || !task.steering.is_empty();
     if !more {
