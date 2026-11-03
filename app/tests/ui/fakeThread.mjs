@@ -18,6 +18,8 @@ export async function fakeThread(page, task, { items = [], requests = [], thread
   const saved = [];
   let socket = null;
   const asked = { windows: [], pages: [], events: [] };
+  // While set, pages of earlier items wait for it.
+  let gate = null;
   const t = {
     asked,
     commands: [],
@@ -41,6 +43,15 @@ export async function fakeThread(page, task, { items = [], requests = [], thread
     },
     switchOn(fields = {}) {
       t.sendTask({ run_engine: "agent_threads", ...fields });
+    },
+    /** Holds back pages of earlier items until the function it returns is called. */
+    holdPages() {
+      let release;
+      gate = new Promise((r) => (release = r));
+      return () => {
+        gate = null;
+        release();
+      };
     },
   };
   for (const item of items) t.emit({ type: "item.added", item }, { quiet: true });
@@ -68,6 +79,7 @@ export async function fakeThread(page, task, { items = [], requests = [], thread
       const before = Number(q.get("before"));
       const limit = Number(q.get("limit") ?? 100);
       asked.pages.push(before);
+      await gate;
       return route.fulfill({ json: itemPage(state, before, limit) });
     }
     if (tail === "events") {

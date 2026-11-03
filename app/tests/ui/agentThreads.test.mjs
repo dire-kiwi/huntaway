@@ -130,28 +130,29 @@ test("a long agent-threads thread loads its earlier items as it's scrolled up, k
     await ui.run(["wait Answer 159"]);
     assert.equal(await page.getByText("Answer 100", { exact: true }).count(), 0, "the window has the latest items");
     // Scrolled up, the page before loads, and what was at the top of the screen stays where it was.
-    const before = await page.evaluate(() => {
-      const el = document.querySelector("[data-autoscroll]");
-      el.scrollTop = 1200;
-      el.dispatchEvent(new Event("scroll"));
-      const first = [...el.querySelectorAll(".ha-rows > *")].find((r) => r.getBoundingClientRect().bottom > el.getBoundingClientRect().top);
-      first.dataset.anchor = "1";
-      return first.getBoundingClientRect().top;
-    });
+    const release = t.holdPages();
     await page.evaluate(() => {
       const el = document.querySelector("[data-autoscroll]");
       el.scrollTop = 300;
       el.dispatchEvent(new Event("scroll"));
     });
+    await page.getByText("Loading earlier messages…").waitFor();
+    const before = await page.evaluate(() => {
+      const el = document.querySelector("[data-autoscroll]");
+      const first = [...el.querySelectorAll(".ha-rows > *")].find((r) => r.getBoundingClientRect().top > el.getBoundingClientRect().top);
+      first.dataset.anchor = "1";
+      return first.getBoundingClientRect().top;
+    });
+    release();
     await page.getByText("Answer 120", { exact: true }).waitFor({ state: "attached" });
-    assert.ok(t.asked.pages.length >= 1, "a page was asked for");
+    assert.equal(t.asked.pages.length, 1, "a page was asked for");
     const kept = await page.evaluate(() => {
       const el = document.querySelector("[data-autoscroll]");
       return { top: document.querySelector("[data-anchor]")?.getBoundingClientRect().top, scroll: el.scrollTop };
     });
     assert.ok(kept.scroll > 1000, `the thread kept its place (scrollTop ${kept.scroll})`);
     assert.ok(kept.top !== undefined, "the row on screen is the same row");
-    assert.ok(Math.abs(kept.top - before) < 5, `what was on screen stayed where it was (${before} → ${kept.top})`);
+    assert.ok(Math.abs(kept.top - before) < 2, `what was on screen stayed where it was (${before} → ${kept.top})`);
     // All the way up, it gets to the first.
     for (let i = 0; i < 10 && !(await page.getByText("Question 0", { exact: true }).count()); i++) {
       await page.evaluate(() => {
@@ -162,6 +163,32 @@ test("a long agent-threads thread loads its earlier items as it's scrolled up, k
       await page.waitForTimeout(200);
     }
     await page.getByText("Question 0", { exact: true }).waitFor();
+  });
+});
+
+test("a tool group keeps its row, and what's opened in it, when its earlier calls load", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Agent threads: groups", status: "in_review" });
+  // 5 items, a group of 30 calls, then 80 more: the window of 100 starts in the group.
+  const items = [user("u0", 0, "Read the files."), said("a0", 1, "Reading."), said("a1", 2, "First."), said("a2", 3, "Second."), said("a3", 4, "Third.")];
+  for (let i = 0; i < 30; i++) items.push(call(`g${i}`, 5 + i, "Read", "read", { file_path: `/repo/g${i}.rs` }, { path: `/repo/g${i}.rs`, result: { content: `contents of g${i}` } }));
+  for (let i = 0; i < 80; i++) items.push(said(`b${i}`, 40 + i, `Later ${i}`));
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const t = await openThread(ui, task, { items });
+    await ui.run(["wait Later 79"]);
+    // Scrolled up to the group (to open one of its calls), the page before is asked for: it waits meanwhile.
+    const release = t.holdPages();
+    const row = page.locator("[data-tool-row]", { hasText: "/repo/g29.rs" });
+    await row.getByRole("button").first().click();
+    await row.getByText("contents of g29").waitFor();
+    await row.evaluate((el) => (el.dataset.kept = "1"));
+    await page.getByText("Loading earlier messages…").waitFor();
+    // The page brings the group's first calls.
+    release();
+    await page.getByText("Read the files.", { exact: true }).waitFor();
+    assert.deepEqual(t.asked.pages, [15]);
+    assert.equal(await page.locator("[data-kept]").count(), 1, "the group's rows weren't drawn again");
+    await page.locator("[data-kept]").getByText("contents of g29").waitFor();
   });
 });
 
