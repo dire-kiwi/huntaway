@@ -25,8 +25,10 @@ tables yet: running agents, the API and the UI are unchanged.
   events from seq 1, the snapshot the crate's reducer folds them into, a disposition for every source row
   (converted, redundant or retained) and warnings. It follows the table below; turns aren't reconstructed (no
   `turn_id`, no turn events), and calls with no result are cancelled with a warning. A thread can have several
-calls with one tool_use id: each is its own item, and prompts and results go to the one still waiting (or, for
-one stored before its call, the next), with a warning where there's no telling. The task_* messages the board
+calls with one tool_use id: each is its own item. Results go to the call with the id in the same subagent and
+session that's still waiting (or, stored before its call, the next one), prompts to the waiting or next call
+with their input, and a subagent's messages to its call in their session. Where more than one call fits, they
+go to none, with a warning. The task_* messages the board
 writes for Codex's children (no `task_type`, by `tool_use_id`) are read as subagents, as are their compactions.
 - **Dry run and staging** (`threads/report.rs`): `huntaway threads-import --db <copy> [--json] [--stage]
   [task ids or keys]` opens the database read-only and reports each task's conversion, its warnings and what

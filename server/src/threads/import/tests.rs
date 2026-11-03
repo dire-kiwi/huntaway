@@ -365,3 +365,83 @@ fn a_subagents_compaction_and_its_summary_stay_in_it() {
     assert_eq!(items["legacy:2"]["summary"], "Child summary");
     assert!(c.warnings.is_empty(), "{:?}", c.warnings);
 }
+
+#[test]
+fn calls_with_one_id_in_two_subagents_get_their_own_results() {
+    let c = convert_all(&[
+        assistant(1, None, json!([{"type": "tool_use", "id": "a", "name": "Agent", "input": {}}, {"type": "tool_use", "id": "b", "name": "Agent", "input": {}}])),
+        assistant(2, Some("a"), json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "ls a"}}])),
+        assistant(3, Some("b"), json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "ls b"}}])),
+        results(4, Some("a"), json!([{"type": "tool_result", "tool_use_id": "c", "content": "out a"}])),
+        results(5, Some("b"), json!([{"type": "tool_result", "tool_use_id": "c", "content": "out b"}])),
+    ]);
+    let items = items(&c);
+    assert_eq!((&items["c"]["parent_id"], &items["c"]["result"]["content"]), (&json!("a"), &json!("out a")));
+    assert_eq!((&items["legacy:3:0"]["parent_id"], &items["legacy:3:0"]["result"]["content"]), (&json!("b"), &json!("out b")));
+}
+
+#[test]
+fn a_result_two_calls_with_its_id_wait_for_goes_to_neither() {
+    let c = convert_all(&[
+        assistant(1, None, json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "one"}}])),
+        assistant(2, None, json!([{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": "two"}}])),
+        results(3, None, json!([{"type": "tool_result", "tool_use_id": "c", "content": "which?"}])),
+    ]);
+    let items = items(&c);
+    assert_eq!((&items["c"]["status"], &items["legacy:2:0"]["status"]), (&json!("cancelled"), &json!("cancelled")));
+    assert!(items.values().all(|i| i.get("result").is_none()));
+    assert_eq!(disposition(&c, 3), Disposition::Retained);
+    assert_eq!(codes(&c), ["duplicate_call", "ambiguous_call", "no_result"]);
+}
+
+/// A call with id `c` in session `session`, and its result if it has one.
+fn bash(id: i64, session: &str, command: &str) -> Message {
+    msg(id, "claude", json!({"type": "assistant", "session_id": session, "message": {"content": [{"type": "tool_use", "id": "c", "name": "Bash", "input": {"command": command}}]}}))
+}
+
+fn bash_denied(id: i64, session: &str) -> Message {
+    msg(id, "claude", json!({"type": "user", "session_id": session, "message": {"content": [{"type": "tool_result", "tool_use_id": "c", "content": "Denied", "is_error": true}]}}))
+}
+
+#[test]
+fn a_prompt_before_a_reused_id_whose_first_call_never_returned() {
+    let denied = |command: &str| msg(2, "permission", json!({"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "c", "request_id": "r", "status": "denied"}));
+    // Its input tells the calls apart.
+    let c = convert_all(&[bash(1, "s1", "ls"), denied("rm x"), bash(3, "s2", "rm x"), bash_denied(4, "s2")]);
+    let items = items(&c);
+    assert_eq!(serde_json::to_value(&c.snapshot.requests[0]).unwrap()["tool_call_id"], "legacy:3:0");
+    assert_eq!((&items["legacy:3:0"]["status"], &items["c"]["status"]), (&json!("denied"), &json!("cancelled")));
+    // The same input: no telling which call asked, and the result is only the new session's call's.
+    let c = convert_all(&[bash(1, "s1", "rm x"), denied("rm x"), bash(3, "s2", "rm x"), bash_denied(4, "s2")]);
+    let same = super::tests::items(&c);
+    assert!(serde_json::to_value(&c.snapshot.requests[0]).unwrap().get("tool_call_id").is_none());
+    assert_eq!((&same["legacy:3:0"]["status"], &same["c"]["status"]), (&json!("failed"), &json!("cancelled")));
+    assert!(codes(&c).contains(&"ambiguous_call"));
+}
+
+#[test]
+fn a_subagents_compaction_and_summary_before_its_call() {
+    let c = convert_all(&[
+        msg(1, "claude", json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "auto"}})),
+        msg(2, "claude", json!({"type": "system", "subtype": "compact_boundary", "parent_tool_use_id": "ag", "compact_metadata": {"trigger": "auto"}})),
+        msg(3, "claude", json!({"type": "user", "isSynthetic": true, "parent_tool_use_id": "ag", "message": {"content": "Child summary"}})),
+        assistant(4, None, json!([{"type": "tool_use", "id": "ag", "name": "Agent", "input": {}}])),
+        results(5, None, json!([{"type": "tool_result", "tool_use_id": "ag", "content": "done"}])),
+    ]);
+    let items = items(&c);
+    assert_eq!((&items["legacy:2"]["parent_id"], &items["legacy:2"]["summary"]), (&json!("ag"), &json!("Child summary")));
+    assert!(items["legacy:1"].get("summary").is_none());
+    assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+}
+
+#[test]
+fn a_result_before_its_agent_call_keeps_what_the_board_kept_of_it() {
+    let call = assistant(2, None, json!([{"type": "tool_use", "id": "ag", "name": "Agent", "input": {"description": "Away"}}]));
+    let meta = json!({"agentId": "x", "resolvedModel": "haiku", "agentType": "Explore", "totalToolUseCount": 3, "isAsync": true, "status": "async_launched"});
+    let result = |id| msg(id, "claude", json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "ag", "content": "Launched"}]}, "tool_use_result": meta}));
+    let early = convert_all(&[result(1), call.clone()]);
+    let in_order = convert_all(&[call, result(3)]);
+    let (early, in_order) = (&items(&early)["ag"], &items(&in_order)["ag"]);
+    assert_eq!(early["subagent"], json!({"status": "stopped", "background": true, "model": "haiku", "agent_type": "Explore", "tool_uses": 3}));
+    assert_eq!((&early["status"], &early["subagent"]), (&in_order["status"], &in_order["subagent"]));
+}
