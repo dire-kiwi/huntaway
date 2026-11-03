@@ -441,9 +441,10 @@ the network changes.
   the phone, download it, and allow your browser to install apps when Android asks (Settings →
   Apps → Special app access → Install unknown apps). A later release's APK installs over it, keeping
   the paired boards; Android refuses one signed with another key, or an older version.
-- **iPhone**: through TestFlight. Install Apple's TestFlight app, then open the invitation (an email
-  from App Store Connect, or a public TestFlight link if one is shared) and tap **Install**. TestFlight
-  offers each new build as it's uploaded, and a build lasts 90 days.
+- **iPhone**: not yet. It's to come through TestFlight (install Apple's TestFlight app, open the
+  invitation and tap **Install**; each build lasts 90 days), but the Apple and Expo accounts it
+  needs aren't set up, so there are no iPhone builds for now (*Building the mobile app* has the
+  steps). Until then, use the board on the iPhone as a web app.
 
 The app works with a board of the same API or newer: a board older than the app's minimum (API 100,
 `MIN_API` in `mobile/src/pairing.ts`) says so in the app, both when pairing and on a paired board
@@ -546,7 +547,8 @@ Service accounts → **Generate new private key**, and `npx eas-cli credentials 
 Notifications (FCM V1)*, with that file. Without the secret the APK builds with a warning, but
 can't register for push.
 
-**iOS** is built and sent to TestFlight by EAS (Expo's build service, so no Mac or Xcode), from
+**iOS** isn't built yet: the workflow is ready, but waits for the accounts below. Once they're set
+up, EAS (Expo's build service, so no Mac or Xcode) builds it and sends it to TestFlight, from
 `.github/workflows/testflight.yml`: by hand (Actions → TestFlight → Run workflow, with a release's
 tag), or on every published release once the repository variable `TESTFLIGHT_ON_RELEASE` is
 `true`. It starts the build with `eas build --platform ios --profile production --auto-submit`
