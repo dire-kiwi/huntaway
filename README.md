@@ -614,9 +614,11 @@ A linked host's agents can use the hub's board too, once the hub lets them: swit
 host's agents use this board** for it under Settings → Hosts (off by default; hub and host need API
 98). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
 up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the tunnel for
-one that dials in). The hub runs it with the access of its own profile of the caller's profile's name
-(its board, and those that let that profile in), looking on its other linked hosts too, but never back
-on the calling host or further up, and at most once per call id. Changes that need the user's approval
+one that dials in). The hub takes it only from an agent in one of its profiles whose **Assistant host**
+is that host (see *An assistant host*): the host names the caller's profile, and whoever controls it
+could name any. It runs with that profile's access (its board, and those that let that profile in),
+looking on its other linked hosts too, but never back on the calling host or further up, and at most
+once per call id. If the link drops after a call went up, the agent is told it may have taken effect. Changes that need the user's approval
 (`update_project`, `delete_task`, automations) are refused there, since the agent's thread isn't on the
 hub, and `wait` only watches tasks on the agent's own host. Calls with `host` set to the hub's name (or
 one of its hosts') go there.
@@ -701,8 +703,9 @@ files or database. Set it up like this:
    host's `host_id`, which clients such as the mobile app reach through `/api/h/<host_id>/…`. Removing
    the host puts the assistant back on the board's own host.
 5. **Let it use your board**, if it should hand work to your projects or read what needs your
-   attention: Settings → Hosts → **Let this host's agents use this board** for that host. Its agents
-   then act on your boards with their profile's access (see above). The assistant's Details panel
+   attention: Settings → Hosts → **Let this host's agents use this board** for that host. Agents
+   there in the profiles whose assistant runs on it then act on your boards with that profile's access
+   (see above); other profiles on that host stay out. The assistant's Details panel
    shows the host it runs on and whether it can use this board.
 6. **Google and Telegram** are set up on the assistant host only. *(Coming with the next steps of the
    personal mode: the Google Workspace MCP server with its OAuth client, and the Telegram bot.)*

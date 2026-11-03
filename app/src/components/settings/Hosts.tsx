@@ -6,7 +6,6 @@ import {
   agentOf,
   api,
   ASSISTANT_HOST_API,
-  hasAssistant,
   canRunAgents,
   EFFORTS,
   hostCompat,
@@ -500,7 +499,7 @@ function UplinkToggle({ host }: { host: Host }) {
       />
       <div className="text-[11.5px] text-faint">
         {host.uplink
-          ? `Agents on ${host.name} can list, read, create and change this board's projects and tasks (and its other hosts'), with the access their profile has here.`
+          ? `Agents on ${host.name}, in the profiles whose assistant runs there, can list, read, create and change this board's projects and tasks (and its other hosts'), with the access that profile has here.`
           : `Agents on ${host.name} only see their own host's board and the hosts it links.`}
       </div>
       {action.error && <div className="text-xs text-red-400">{action.error}</div>}
@@ -645,7 +644,7 @@ export function ProfileForm({
   const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
   const gating = hostSupports(hosts.find((h) => h.id === host), PR_APPROVAL_API);
   // This board's own profiles can run their assistants on a linked host (API 98).
-  const assistantHosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hasAssistant(h))));
+  const assistantHosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
   const onBoardHost = useStore((s) => !!s.hosts.find((h) => h.id === host)?.local);
   const placing = onBoardHost && (assistantHosts.length > 0 || !!initial?.assistant_host);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
@@ -816,7 +815,7 @@ export function ProfileForm({
 /** This board's host, or a linked host with assistants, for a profile's assistant to run on. */
 function AssistantHostSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const local = useStore((s) => s.hosts.find((h) => h.local));
-  const hosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hasAssistant(h))));
+  const hosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
   const picked = useStore((s) => s.hosts.find((h) => h.id === value));
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">

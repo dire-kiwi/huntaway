@@ -96,6 +96,8 @@ struct Boards {
 fn boards() -> Boards {
     let (hub, host) = (node("hub", "desktop"), node("host", "homeserver"));
     let personal = insert_profile(&hub.db(), "personal", &[], None).unwrap();
+    // Its assistant runs on the host, so the host's agents in personal may use the hub's board.
+    db::update_profile(&hub.db(), &personal.id, &[("assistant_host", json!("host"))]).unwrap();
     let work = insert_profile(&hub.db(), "work", &[], None).unwrap();
     project(&hub, &personal, "hub-p", "HUB");
     project(&hub, &work, "hub-w", "WRK");
@@ -268,9 +270,50 @@ fn an_up_link_goes_with_its_connection() {
         // The hub connecting again takes its place; the old one going then leaves the new one.
         let (second, _calls) = register(&s, "hub", "desktop");
         drop(first);
-        assert!(matches!(pending.await.unwrap(), Outcome::Err(_)));
+        // It may have run there all the same.
+        assert!(matches!(pending.await.unwrap(), Outcome::Err(e) if e.contains("may or may not have taken effect")), "the call's outcome");
         assert!(Arc::ptr_eq(&s.uplinks.lock().unwrap()["hub"], &second.link));
         drop(second);
         assert!(s.uplinks.lock().unwrap().is_empty());
+    })
+}
+
+// HA-120 review: the host names the caller's profile, and whoever controls it (an agent that reads its token, say) can
+// name any. The hub took the name on trust, so a host-side profile called work had the hub's work board.
+#[test]
+fn only_the_profiles_whose_assistant_runs_on_a_host_use_the_hub_from_it() {
+    crate::testing::run(async || {
+        let b = boards();
+        let (hub, host) = (&b.hub, &b.host);
+        link_by_url(hub, host).await;
+        let_in(hub, "host", true).await;
+        // A work profile made on the host, with a run of its own.
+        let work = insert_profile(&host.db(), "work", &[], None).unwrap();
+        let sneaky = crate::api::create_scratch_task_inner(host, &work.id, crate::api::CreateTask { title: "Sneaky".into(), ..Default::default() }).unwrap();
+        let run = db::insert_run(&host.db(), &sneaky.id, "prompt").unwrap();
+        for (i, (tool, args)) in [
+            ("get_task", json!({"task_id": "WRK-1"})),
+            ("get_task", json!({"task_id": b.work_task.id})),
+            ("send_to_task", json!({"task_id": "WRK-1", "message": "hi"})),
+            ("create_task", json!({"project_id": "WRK", "title": "Planted"})),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let e = agent_call(host, &run, &format!("w{i}"), tool, args).await.unwrap_err();
+            assert!(e.starts_with("not found") && e.contains("only in the profiles whose assistant runs on homeserver, and work isn't one"), "{tool}: {e}");
+        }
+        let listed = agent_call(host, &run, "w9", "list_projects", json!({})).await.unwrap();
+        assert!(!listed.to_string().contains("WRK") && !listed.to_string().contains("HUB"), "{listed}");
+        assert!(!hub.db().query_row("SELECT COUNT(*) > 0 FROM tasks WHERE title='Planted'", [], |r| r.get::<_, bool>(0)).unwrap());
+        // Nor is a profile of the right name whose assistant runs elsewhere (or on the hub) let in.
+        let personal = db::list_profiles(&hub.db()).unwrap().into_iter().find(|p| p.name == "personal").unwrap();
+        db::update_profile(&hub.db(), &personal.id, &[("assistant_host", Value::Null)]).unwrap();
+        let e = agent_call(host, &b.run, "p1", "get_task", json!({"task_id": "HUB-1"})).await.unwrap_err();
+        assert!(e.contains("personal isn't one"), "{e}");
+        // Placed there, it is, and only it: work stays out.
+        db::update_profile(&hub.db(), &personal.id, &[("assistant_host", json!("host"))]).unwrap();
+        assert_eq!(agent_call(host, &b.run, "p2", "get_task", json!({"task_id": "HUB-1"})).await.unwrap()["key"], "HUB-1");
+        assert!(agent_call(host, &run, "w10", "get_task", json!({"task_id": "WRK-1"})).await.is_err());
     })
 }

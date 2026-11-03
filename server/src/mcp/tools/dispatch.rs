@@ -339,7 +339,7 @@ pub async fn handle_remote(s: &Shared, tool: &str, profile_name: &str, args: Val
 const THREAD_TOOLS: &[&str] = &["permission_prompt", "request_user_input", "submit_review", "wait"];
 
 /// A board tool call from an agent on linked host `host_id` that it passed up its link (see hosts/uplink.rs),
-/// once that host is let in: run here with the access of this host's profile of the caller's name, as
+/// once `hub::run_up_call` has let it in (the switch, and a profile whose assistant runs there): run here with the access of this host's profile of the caller's name, as
 /// `handle_remote` does, and on this host's other links, but never up again, nor back down to that host. At
 /// most once per call id.
 pub async fn handle_up_call(s: &Shared, host_id: &str, c: &crate::hosts::proto::ToolCall) -> std::result::Result<Value, String> {
@@ -384,18 +384,21 @@ fn up_call_id(ctx: &Ctx) -> String {
     ctx.call_id.clone().unwrap_or_else(crate::util::new_id)
 }
 
-/// Why a hub that wasn't asked (or said no) might have had it.
-fn off_note(s: &Shared, off: &[String]) -> String {
-    if off.is_empty() {
-        return String::new();
-    }
-    format!(
-        " ({} {} this host's agents use {} board; the user can switch on \"Let this host's agents use this board\" for {} in Settings → Hosts there)",
-        off.join(", "),
-        if off.len() == 1 { "doesn't let" } else { "don't let" },
-        if off.len() == 1 { "its" } else { "their" },
-        s.host_name
-    )
+/// Why hubs that said no, by name with their reasons, might have had it.
+fn off_note(s: &Shared, off: &[(String, Option<String>)]) -> String {
+    let why: Vec<String> = off
+        .iter()
+        .map(|(hub, why)| {
+            why.clone().unwrap_or_else(|| {
+                format!(
+                    "{hub} doesn't let this host's agents use its board; the user can switch on \"Let this host's agents use this board\" for {} \
+                     in Settings → Hosts there",
+                    s.host_name
+                )
+            })
+        })
+        .collect();
+    if why.is_empty() { String::new() } else { format!(" ({})", why.join("; ")) }
 }
 
 /// Run a board tool here, falling back to (or fanning out over) linked hosts.
@@ -415,7 +418,7 @@ pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> 
             return match up.call(&up_call_id(ctx), tool, &ctx.profile_name, &args, ctx.task_fields).await {
                 Outcome::Ok(v) => Ok(v),
                 Outcome::Err(e) => Err(e),
-                Outcome::Off => Err(format!("no linked host named {h}{}", off_note(s, std::slice::from_ref(&up.hub_name)))),
+                Outcome::Off(why) => Err(format!("no linked host named {h}{}", off_note(s, &[(up.hub_name.clone(), why)]))),
             };
         }
         return local(s, ctx, tool, &args).await.map_err(msg);
@@ -447,7 +450,7 @@ pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> 
                     all.extend(items.into_iter().filter(|i| i["id"].as_str().is_none_or(|id| !seen.contains(id))));
                     missing = None;
                 }
-                Outcome::Ok(_) | Outcome::Off => {}
+                Outcome::Ok(_) | Outcome::Off(_) => {}
                 Outcome::Err(e) => tracing::debug!("{tool} on {}: {e}", up.hub_name),
             }
         }
@@ -478,7 +481,7 @@ pub(super) async fn dispatch(s: &Shared, ctx: &Ctx, tool: &str, args: Value) -> 
             for up in uplinks(s, ctx) {
                 match up.call(&up_call_id(ctx), tool, &ctx.profile_name, &args, ctx.task_fields).await {
                     Outcome::Ok(v) => return Ok(v),
-                    Outcome::Off => off.push(up.hub_name.clone()),
+                    Outcome::Off(why) => off.push((up.hub_name.clone(), why)),
                     Outcome::Err(e) if !e.starts_with("not found") => refused = refused.or(Some(e)),
                     Outcome::Err(_) => {}
                 }

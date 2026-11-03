@@ -163,6 +163,8 @@ test("a profile's assistant is on its assistant host, or else the board's own ho
   assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { connected: false }), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
   assert.deepEqual(assistantHome(placed, [host("hub"), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
   assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 90 })], "personal"), { hostId: "home", unavailable: "old" });
+  // One with assistants but from before assistant hosts can't be one.
+  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 97 })], "personal"), { hostId: "home", unavailable: "old" });
   assert.deepEqual(assistantHome([placed[0]], hosts, "personal"), { hostId: "home", unavailable: "no_profile" });
   // Another host's setting doesn't count, nor does one naming the board's own host.
   assert.deepEqual(assistantHome([profile("hub", "ph"), profile("laptop", "pl", { assistant_host: "home" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });

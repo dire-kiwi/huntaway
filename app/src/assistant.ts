@@ -18,7 +18,8 @@ export function useAssistant(name: string): { taskId?: string; error?: string; m
     if (!hostId || !profileId) return;
     let live = true;
     api
-      .assistant(hostId, profileId)
+      // assistantHome has already followed this board's assistant host setting: that host's own profile may name another.
+      .assistant(hostId, profileId, { here: true })
       .then((t: Task) => live && useStore.getState().upsertTask({ ...t, host_id: hostId }))
       .catch((e: Error) => live && setError(e.message));
     return () => {
@@ -45,7 +46,7 @@ export function unavailableNote(profile: string, hostName: string, why: NonNulla
     case "offline":
       return `${profile}'s assistant runs on ${hostName}, which is offline. It's there again once the host reconnects.`;
     case "old":
-      return `${profile}'s assistant runs on ${hostName}, which runs an older build without assistants. Update it in Settings → Hosts.`;
+      return `${profile}'s assistant runs on ${hostName}, which runs an older build that can't be an assistant host. Update it in Settings → Hosts.`;
     case "no_profile":
       return `${profile}'s assistant runs on ${hostName}, which has no ${profile} profile yet. Add one there in Settings → Profiles.`;
   }

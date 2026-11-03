@@ -17,7 +17,7 @@ export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "
 export const ASSISTANT_HOST_API = 98;
 
 /** Where a profile's assistant is. `profileId` is its profile on that host, missing when it can't be opened there: the host
- *  is `offline`, `old` (from before assistants), or has `no_profile` of that name. */
+ *  is `offline`, `old` (from before assistant hosts), or has `no_profile` of that name. */
 export interface AssistantHome {
   hostId: string;
   profileId?: string;
@@ -33,7 +33,7 @@ export function assistantHome(profiles: Profile[], hosts: Host[], name: string):
   if (picked && picked !== local?.id) {
     const host = hosts.find((h) => h.id === picked);
     if (!host?.connected) return { hostId: picked, unavailable: "offline" };
-    if (!hasAssistant(host)) return { hostId: picked, unavailable: "old" };
+    if (!hostSupports(host, ASSISTANT_HOST_API)) return { hostId: picked, unavailable: "old" };
     const there = profiles.find((p) => p.name === name && p.host_id === picked);
     return there ? { hostId: picked, profileId: there.id } : { hostId: picked, unavailable: "no_profile" };
   }
@@ -45,10 +45,18 @@ export function assistantHome(profiles: Profile[], hosts: Host[], name: string):
   return home && { hostId: home.profile.host_id, profileId: home.profile.id };
 }
 
+/** `here`: the assistant on host `h` itself, as assistantHome found it, rather than wherever that host's profile sends it
+ *  (`?local=1`, API 98; older hosts ignore it). Without it a host whose profile names another assistant host sends it on. */
+export interface AssistantOn {
+  here?: boolean;
+}
+
+const assistantPath = (profileId: string, opts?: AssistantOn) => `/profiles/${enc(profileId)}/assistant${opts?.here ? "?local=1" : ""}`;
+
 export const assistantApi = ({ on }: Http) => ({
   /** The profile's assistant, which the host makes the first time it's asked for. From API 98 it has `host_id`: a hub sends this to
    *  the profile's assistant host, if it has one, so the task is there (go on to it through `on(host_id)`). */
-  assistant: (h: string, profileId: string) => on(h).get<Task>(`/profiles/${enc(profileId)}/assistant`),
+  assistant: (h: string, profileId: string, opts?: AssistantOn) => on(h).get<Task>(assistantPath(profileId, opts)),
   /** Send the user's message to the profile's assistant (made first if it has none), as a message in its thread does. */
-  sendToAssistant: (h: string, profileId: string, text: string) => on(h).post<Task>(`/profiles/${enc(profileId)}/assistant`, { text }),
+  sendToAssistant: (h: string, profileId: string, text: string, opts?: AssistantOn) => on(h).post<Task>(assistantPath(profileId, opts), { text }),
 });

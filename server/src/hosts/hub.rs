@@ -247,11 +247,19 @@ pub async fn call_tool(_s: &Shared, link: &LinkConn, tool: &str, profile: &str, 
 }
 
 /// A board tool call that linked host `host_id` passed up its link (see hosts/uplink.rs): run only if
-/// the user lets that host's agents use this board.
+/// the user lets that host's agents use this board, and only for the profiles whose assistants run
+/// there. The host says which profile its caller is in, and whoever controls it can say any: a profile of
+/// this board's whose assistant isn't there would let it act with that profile's access.
 pub async fn run_up_call(s: &Shared, host_id: &str, c: ToolCall) -> ToolAnswer {
-    let allowed = db::get_link(&s.db(), host_id).ok().flatten().is_some_and(|l| l.uplink);
-    if !allowed {
-        return ToolAnswer { id: c.id, result: None, error: None, off: true };
+    let off = |why: Option<String>| ToolAnswer { id: c.id, result: None, error: why, off: true };
+    let Some(link) = db::get_link(&s.db(), host_id).ok().flatten().filter(|l| l.uplink) else { return off(None) };
+    let placed = db::list_profiles(&s.db()).is_ok_and(|ps| ps.iter().any(|p| p.name == c.profile && p.assistant_host.as_deref() == Some(host_id)));
+    if !placed {
+        return off(Some(format!(
+            "{} lets {}'s agents use its board only in the profiles whose assistant runs on {}, and {} isn't one; the user can pick {} \
+             as the profile's Assistant host in Settings → Profiles there",
+            s.host_name, link.name, link.name, c.profile, link.name
+        )));
     }
     match crate::mcp::tools::handle_up_call(s, host_id, &c).await {
         Ok(v) => ToolAnswer { id: c.id, result: Some(v), error: None, off: false },

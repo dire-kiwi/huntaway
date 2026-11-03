@@ -8,8 +8,10 @@
 //! (`{"type": "hub_call"}` or `Up::ToolCall`), and the hub answers (`hub_result` or `Down::ToolAnswer`).
 //!
 //! The hub runs it only if its user lets that host's agents use its board (`links.uplink`, Settings →
-//! Hosts, off by default), with the access of its own profile of the caller's name (`agent_access`),
-//! at most once per call id, and never further up: see `hub::run_up_call`.
+//! Hosts, off by default), and only for a caller in one of its profiles whose assistant runs on that host
+//! (`assistant_host`): whoever controls the host can name any profile, so the name alone proves nothing.
+//! It runs with the access of that profile (`agent_access`), at most once per call id, and never further
+//! up: see `hub::run_up_call`.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,8 +40,9 @@ pub struct Uplink {
 pub enum Outcome {
     Ok(Value),
     Err(String),
-    /// The hub doesn't let this host's agents use its board.
-    Off,
+    /// The hub doesn't let this host's agents use its board, or not in the caller's profile (with the hub's
+    /// reason for that).
+    Off(Option<String>),
 }
 
 impl Uplink {
@@ -51,16 +54,20 @@ impl Uplink {
         let call = ToolCall { id, call_id: call_id.into(), tool: tool.into(), profile: profile.into(), args: args.clone(), task_fields };
         if self.tx.send(call).is_err() {
             self.pending.lock().unwrap().remove(&id);
-            return Outcome::Err(format!("lost the link to {}", self.hub_name));
+            return Outcome::Err(format!("lost the link to {}, so this {tool} call wasn't sent there", self.hub_name));
         }
+        // Once it's sent, the hub may have run it whatever becomes of the answer.
+        let maybe = |what: String| {
+            format!("{what}: this {tool} call may or may not have taken effect there. Check (with get_task or list_tasks, say) before you call it again.")
+        };
         match tokio::time::timeout(TIMEOUT, rrx).await {
-            Ok(Ok(a)) if a.off => Outcome::Off,
+            Ok(Ok(a)) if a.off => Outcome::Off(a.error),
             Ok(Ok(ToolAnswer { error: Some(e), .. })) => Outcome::Err(e),
             Ok(Ok(a)) => Outcome::Ok(a.result.unwrap_or(Value::Null)),
-            Ok(Err(_)) => Outcome::Err(format!("lost the link to {} before it answered", self.hub_name)),
+            Ok(Err(_)) => Outcome::Err(maybe(format!("lost the link to {} before it answered", self.hub_name))),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
-                Outcome::Err(format!("{} didn't answer in time", self.hub_name))
+                Outcome::Err(maybe(format!("{} didn't answer in time", self.hub_name)))
             }
         }
     }

@@ -15,8 +15,9 @@ use crate::agent::runner;
 use crate::db::{self, NewTask, Task};
 use crate::state::{ApiError, ApiResult, Shared};
 
-/// The API version from which hosts have assistants.
-pub const ASSISTANT_API: u32 = 97;
+/// The API version from which a host can be a profile's assistant host: it takes the routed requests
+/// (`?local=1`) and passes its agents' board tool calls up its link (see hosts/uplink.rs).
+pub const ASSISTANT_HOST_API: u32 = 98;
 
 /// Where an assistant works, relative to the data dir (see documents::work_dir), so it moves with it.
 pub fn work_dir(task_id: &str) -> String {
@@ -83,7 +84,7 @@ pub fn with_host(s: &Shared, t: &Task) -> Value {
 }
 
 /// What profile `profile_id`'s `assistant_host` may be set to, as it's stored: null for this host, else a
-/// linked host with assistants.
+/// linked host that can be an assistant host (API 98).
 pub fn check_host(s: &Shared, v: &Value) -> ApiResult<Value> {
     let id = match v {
         Value::Null => return Ok(Value::Null),
@@ -98,8 +99,8 @@ pub fn check_host(s: &Shared, v: &Value) -> ApiResult<Value> {
     let live = s.links.lock().unwrap().get(id).cloned();
     if let Some(l) = live {
         let api = l.version.lock().unwrap().api_version;
-        if api < ASSISTANT_API {
-            return Err(ApiError::bad(format!("{} runs an older build without assistants; update it first", link.name)));
+        if api < ASSISTANT_HOST_API {
+            return Err(ApiError::bad(format!("{} runs an older build that can't be an assistant host; update it first", link.name)));
         }
     }
     Ok(json!(id))
@@ -113,8 +114,8 @@ pub async fn on_its_host(s: &Shared, profile_id: &str, method: &str, body: Optio
     let name = db::get_link(&s.db(), &host)?.map(|l| l.name).unwrap_or_else(|| host.clone());
     let offline = || ApiError(StatusCode::SERVICE_UNAVAILABLE, format!("{}'s assistant runs on {name}, which is offline", p.name));
     let link = s.links.lock().unwrap().get(&host).cloned().ok_or_else(offline)?;
-    if link.version.lock().unwrap().api_version < ASSISTANT_API {
-        return Err(ApiError::conflict(format!("{}'s assistant runs on {name}, which runs an older build without assistants; update it", p.name)));
+    if link.version.lock().unwrap().api_version < ASSISTANT_HOST_API {
+        return Err(ApiError::conflict(format!("{}'s assistant runs on {name}, which runs an older build that can't be an assistant host; update it", p.name)));
     }
     // Its profile of the same name: profiles are matched by name across hosts.
     let profiles = crate::hosts::hub::host_request(s, &host, "GET", "/api/profiles", None).await?;

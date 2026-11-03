@@ -190,15 +190,15 @@ fn an_assistant_host_must_be_a_linked_host_with_assistants() {
         let (hub, host) = (node("hub", "desktop"), node("host", "homeserver"));
         let p = insert_profile(&hub.db(), "personal", &[], None).unwrap();
         link_by_url(&hub, &host).await;
-        // A host from before assistants, which is connected, so it can tell.
-        crate::hosts::hub::link_http(&hub, "old", axum::Router::new(), ASSISTANT_API - 1).await;
+        // A host with assistants but from before assistant hosts (API 97), which is connected, so it can tell.
+        crate::hosts::hub::link_http(&hub, "old", axum::Router::new(), ASSISTANT_HOST_API - 1).await;
         db::upsert_link(&hub.db(), "old", "old", "outbound", Some("http://x"), None).unwrap();
         let path = format!("/api/profiles/{}", p.id);
         let set = |v: Value| {
             let (hub, path) = (hub.clone(), path.clone());
             async move { api(&hub, "PATCH", &path, Some(json!({"assistant_host": v}))).await }
         };
-        for (bad, why) in [(json!("nope"), "must be a linked host"), (json!(5), "must be a linked host's id or null"), (json!("old"), "older build without assistants")] {
+        for (bad, why) in [(json!("nope"), "must be a linked host"), (json!(5), "must be a linked host's id or null"), (json!("old"), "older build that can't be an assistant host")] {
             let (status, v) = set(bad.clone()).await;
             assert_eq!(status, 400, "{bad}");
             assert!(v["error"].as_str().unwrap().contains(why), "{bad}: {v}");
