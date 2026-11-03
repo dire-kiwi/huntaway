@@ -280,3 +280,67 @@ fn a_source_whose_skills_names_are_taken_isnt_added() {
         assert!(!clones.exists() || std::fs::read_dir(clones).unwrap().count() == 0);
     })
 }
+
+/// A source's skills trade names, or pass them along, in one commit: they stay the same skills, with their switches.
+#[test]
+fn a_source_whose_skills_swap_or_pass_on_names_keeps_them() {
+    crate::testing::run(async || {
+        let state = crate::testing::state();
+        let repo = crate::testing::temp_dir().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for name in ["alpha", "beta", "gamma"] {
+            write(repo.join(format!("skills/{name}/SKILL.md")), &skill_md(name, name));
+        }
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "init"]);
+        let Json(v) = add_source(State(state.clone()), Json(AddSource { url: Some(crate::util::path_str(&repo)), git_ref: None })).await.unwrap();
+        let source_id = v["source"]["id"].as_str().unwrap().to_string();
+        let ids = |v: &Value| -> Vec<(String, String)> {
+            v["skills"].as_array().unwrap().iter().map(|s| (s["name"].as_str().unwrap().to_string(), s["id"].as_str().unwrap().to_string())).collect()
+        };
+        let before = ids(&v);
+        let id_of = |name: &str| before.iter().find(|(n, _)| n == name).unwrap().1.clone();
+        let profile = crate::db::insert_profile(&state.db(), "p", &[], None).unwrap();
+        set_switch(
+            State(state.clone()),
+            Json(SwitchBody { scope: "profile".into(), scope_id: profile.id.clone(), item_id: None, source_id: Some(source_id.clone()), enabled: Some(true) }),
+        )
+        .await
+        .unwrap();
+
+        // alpha → beta, beta → gamma (a chain), and gamma → alpha: a cycle.
+        let rename = |dir: &str, name: &str| write(repo.join(format!("skills/{dir}/SKILL.md")), &skill_md(name, "renamed"));
+        rename("alpha", "beta");
+        rename("beta", "gamma");
+        rename("gamma", "alpha");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "rotate"]);
+        let Json(v) = update_source(State(state.clone()), Path(source_id.clone())).await.unwrap();
+        assert_eq!(v["source"]["notes"], json!([]), "{v}");
+        let now = ids(&v);
+        // Each folder's skill keeps its id (matched by folder) under its new name.
+        assert_eq!(now, [("alpha".to_string(), id_of("gamma")), ("beta".to_string(), id_of("alpha")), ("gamma".to_string(), id_of("beta"))]);
+        let on = switches(&state.db(), "profile", &profile.id).unwrap();
+        assert!(before.iter().all(|(_, id)| on.get(id) == Some(&Value::Bool(true))));
+
+        // A swap of two: the folders of alpha and gamma (named beta and alpha now) trade names.
+        rename("alpha", "alpha");
+        rename("gamma", "beta");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "swap"]);
+        let Json(v) = update_source(State(state.clone()), Path(source_id.clone())).await.unwrap();
+        assert_eq!(v["source"]["notes"], json!([]), "{v}");
+        assert_eq!(v["skills"].as_array().unwrap().len(), 3);
+        assert!(switches(&state.db(), "profile", &profile.id).unwrap().len() == 3);
+
+        // A name another global skill has still leaves out the one that wants it, and only that one.
+        create_skill_in(&state.db(), None, SkillBody { content: Some(skill_md("delta", "mine")), enabled: None }).unwrap();
+        rename("alpha", "delta");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "clash"]);
+        let Json(v) = update_source(State(state.clone()), Path(source_id)).await.unwrap();
+        assert_eq!(v["skills"].as_array().unwrap().len(), 2);
+        assert!(v["source"]["notes"][0].as_str().unwrap().contains("already on this host"));
+    })
+}

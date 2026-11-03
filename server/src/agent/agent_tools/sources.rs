@@ -342,15 +342,29 @@ fn install(state: &Shared, id: &str, fetched: &Fetched) -> std::io::Result<()> {
 }
 
 /// Brings a source's skills in line with a fresh clone: adds new ones (off everywhere), updates the
-/// ones that stay and removes the ones that went. Returns what was left out.
+/// ones that stay and removes the ones that went. Returns what was left out. All or nothing.
 fn apply(c: &Connection, id: &str, fetched: &Fetched) -> ApiResult<Vec<String>> {
+    c.execute_batch("SAVEPOINT apply_source")?;
+    match apply_in(c, id, fetched) {
+        Ok(notes) => {
+            c.execute_batch("RELEASE apply_source")?;
+            Ok(notes)
+        }
+        Err(e) => {
+            let _ = c.execute_batch("ROLLBACK TO apply_source; RELEASE apply_source");
+            Err(e)
+        }
+    }
+}
+
+fn apply_in(c: &Connection, id: &str, fetched: &Fetched) -> ApiResult<Vec<String>> {
     let mut notes = fetched.notes.clone();
     let existing: Vec<Skill> = c.prepare("SELECT * FROM agent_skills WHERE source_id=?1")?.query_map([id], Skill::from_row)?.collect::<rusqlite::Result<_>>()?;
     let at = now();
     // Which existing skill each found one is: the one at its path, else (the folder was moved) the one
     // with its name that no found skill is at the path of, so it keeps its id and switches.
     let at_path = |f: &Found| existing.iter().find(|s| s.source_path.as_deref() == Some(f.path.as_str()));
-    let matched: Vec<Option<&Skill>> = fetched
+    let mut matched: Vec<Option<&Skill>> = fetched
         .found
         .iter()
         .map(|f| {
@@ -359,27 +373,44 @@ fn apply(c: &Connection, id: &str, fetched: &Fetched) -> ApiResult<Vec<String>> 
             })
         })
         .collect();
-    // The ones that are gone go first, so their names are free for what takes them over.
-    for s in existing.iter().filter(|s| !matched.iter().flatten().any(|m| m.id == s.id)) {
-        c.execute("DELETE FROM agent_skills WHERE id=?1", [&s.id])?;
-        forget_board_skill(c, None, &s.name)?;
-    }
-    for (f, before) in fetched.found.iter().zip(matched) {
-        if unique(c, "agent_skills", None, &f.name, before.map(|s| s.id.as_str())).is_err() {
+    // A name is taken only by a skill that isn't from this source: its own skills give theirs up as
+    // they're renamed, moved or removed. (The found ones have names of their own, see `discover`.)
+    let mut keep = vec![true; fetched.found.len()];
+    for (i, f) in fetched.found.iter().enumerate() {
+        let taken: bool = c.query_row(
+            "SELECT COUNT(*) > 0 FROM agent_skills WHERE project_id IS NULL AND name=?1 AND (source_id IS NULL OR source_id != ?2)",
+            params![f.name, id],
+            |r| r.get(0),
+        )?;
+        if taken {
             notes.push(format!("{}: a skill named {} is already on this host", if f.path.is_empty() { "the repository's root" } else { &f.path }, f.name));
-            // Left out now: the one it was is removed, as it can't have its name.
-            if let Some(s) = before {
-                c.execute("DELETE FROM agent_skills WHERE id=?1", [&s.id])?;
-                forget_board_skill(c, None, &s.name)?;
-            }
+            keep[i] = false;
+        }
+    }
+    // The ones that are gone, or left out, are removed.
+    let used = |s: &Skill| fetched.found.iter().zip(&matched).zip(&keep).any(|((_, m), k)| *k && m.is_some_and(|m| m.id == s.id));
+    let gone: Vec<&Skill> = existing.iter().filter(|s| !used(s)).collect();
+    for s in &gone {
+        c.execute("DELETE FROM agent_skills WHERE id=?1", [&s.id])?;
+    }
+    for (i, k) in keep.iter().enumerate() {
+        if !k {
+            matched[i] = None;
+        }
+    }
+    // Renames in two steps, so that skills can swap names or pass them along.
+    let renamed: Vec<(&Found, &Skill)> =
+        fetched.found.iter().zip(&matched).zip(&keep).filter(|(_, k)| **k).filter_map(|((f, m), _)| Some((f, (*m)?))).filter(|(f, s)| f.name != s.name).collect();
+    for (_, s) in &renamed {
+        c.execute("UPDATE agent_skills SET name=?1 WHERE id=?2", params![format!("\u{0}renaming {}", s.id), s.id])?;
+    }
+    for ((f, before), k) in fetched.found.iter().zip(&matched).zip(&keep) {
+        if !k {
             continue;
         }
         match before {
             Some(s) => {
                 c.execute("UPDATE agent_skills SET name=?1, content=?2, source_path=?3, updated_at=?4 WHERE id=?5", params![f.name, f.content, f.path, at, s.id])?;
-                if s.name != f.name {
-                    forget_board_skill(c, None, &s.name)?;
-                }
             }
             None => {
                 c.execute(
@@ -388,6 +419,10 @@ fn apply(c: &Connection, id: &str, fetched: &Fetched) -> ApiResult<Vec<String>> 
                 )?;
             }
         }
+    }
+    // What runs reported under the names that went (see forget_board_skill) is forgotten once all are settled.
+    for name in gone.iter().map(|s| &s.name).chain(renamed.iter().map(|(_, s)| &s.name)) {
+        forget_board_skill(c, None, name)?;
     }
     Ok(notes)
 }
