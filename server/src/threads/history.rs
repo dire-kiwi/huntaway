@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use agent_threads::protocol::{Item, Snapshot, Thread, ThreadEvent, ThreadRequest, ToolCall, ToolKind};
+use agent_threads::protocol::{Item, NoticeLevel, Snapshot, Thread, ThreadEvent, ThreadRequest, ToolCall, ToolKind};
 use agent_threads::reducer;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -137,10 +137,27 @@ pub enum Window<'a> {
     All,
     /// What was added after a time (an RFC 3339 timestamp, as the board writes them).
     Since(&'a str),
-    /// The latest messages, about this many (a legacy thread's; an agent-threads thread is read whole).
-    Latest(usize),
+    /// The latest messages, about this many (a legacy thread's; an agent-threads thread is read whole), of
+    /// the part of the thread given.
+    Latest(usize, Part),
     /// Only the user's messages (user_message items), all of them.
     UserMessages,
+}
+
+/// Which items to read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Everything,
+    /// What was said: the user_message, assistant_message, turn_result and notice items, which is all
+    /// some readers need. On a legacy thread, they're from a fraction of its messages (most of a thread is
+    /// tool calls and their results, which needn't be read).
+    Said,
+}
+
+impl Part {
+    fn has(self, item: &Item) -> bool {
+        self == Part::Everything || matches!(item, Item::UserMessage(_) | Item::AssistantMessage(_) | Item::TurnResult(_) | Item::Notice(_))
+    }
 }
 
 /// When an item was made, if it says.
@@ -171,21 +188,21 @@ fn read_on(c: &Connection, task: &db::Task, engine: Engine, window: Window) -> R
 }
 
 /// How many of the latest messages `read_back` reads first, and how many times more each time after.
-const FIRST_WINDOW: usize = 200;
+const FIRST_WINDOW: usize = 25;
 const GROWTH: usize = 8;
 
-/// Reads back from the end of `task_id`'s thread until `f` has what it wants: it's given the
-/// latest messages' history, and the latest of more of them each time it returns None, until it has
-/// the whole thread. It must answer then (its None is the answer).
-pub fn read_back<T>(c: &Connection, task_id: &str, mut f: impl FnMut(&History) -> Option<T>) -> Result<Option<T>> {
+/// Reads back from the end of `task_id`'s thread (`part` of it) until `f` has what it wants: it's
+/// given the latest messages' history, and the latest of more of them each time it returns None, until
+/// it has the whole thread. It must answer then (its None is the answer).
+pub fn read_back<T>(c: &Connection, task_id: &str, part: Part, mut f: impl FnMut(&History) -> Option<T>) -> Result<Option<T>> {
     let Some(task) = db::get_task(c, task_id)? else { return Ok(f(&History { whole: true, ..Default::default() })) };
-    read_back_on(c, &task, engine(&task), &mut f)
+    read_back_on(c, &task, engine(&task), part, &mut f)
 }
 
-fn read_back_on<T>(c: &Connection, task: &db::Task, engine: Engine, f: &mut dyn FnMut(&History) -> Option<T>) -> Result<Option<T>> {
+fn read_back_on<T>(c: &Connection, task: &db::Task, engine: Engine, part: Part, f: &mut dyn FnMut(&History) -> Option<T>) -> Result<Option<T>> {
     let mut n = FIRST_WINDOW;
     loop {
-        let h = read_on(c, task, engine, Window::Latest(n))?;
+        let h = read_on(c, task, engine, Window::Latest(n, part))?;
         if let Some(answer) = f(&h) {
             return Ok(Some(answer));
         }
@@ -207,12 +224,21 @@ fn legacy(c: &Connection, task: &db::Task, window: Window) -> Result<History> {
         Window::All => (rows("SELECT * FROM messages WHERE task_id=?1 ORDER BY id", &[&id])?, true),
         Window::Since(at) => (rows("SELECT * FROM messages WHERE task_id=?1 AND created_at>?2 ORDER BY id", &[&id, &at])?, false),
         Window::UserMessages => (rows("SELECT * FROM messages WHERE task_id=?1 AND kind='user' ORDER BY id", &[&id])?, false),
-        Window::Latest(n) => {
+        Window::Latest(n, part) => {
+            // What was said is in user messages, the agent's messages with text, and results (which can say
+            // what a turn ended by saying, see import.rs). Claude's are stored as compact JSON.
+            let only = match part {
+                Part::Everything => "",
+                Part::Said => {
+                    "AND (kind='user' OR (kind='claude' AND ((instr(data, '\"type\":\"text\"') > 0 AND json_extract(data, '$.type')='assistant')
+                       OR (instr(data, '\"type\":\"result\"') > 0 AND json_extract(data, '$.type')='result'))))"
+                }
+            };
             let limit = n.min(i64::MAX as usize) as i64;
-            let mut m = rows("SELECT * FROM messages WHERE task_id=?1 ORDER BY id DESC LIMIT ?2", &[&id, &limit])?;
+            let mut m = rows(&format!("SELECT * FROM messages WHERE task_id=?1 {only} ORDER BY id DESC LIMIT ?2"), &[&id, &limit])?;
             m.reverse();
-            let whole = (m.len() as i64) < limit
-                || !c.prepare_cached("SELECT 1 FROM messages WHERE task_id=?1 AND id<?2")?.exists(params![id, m.first().map_or(i64::MAX, |m| m.id)])?;
+            let first = m.first().map_or(i64::MAX, |m| m.id);
+            let whole = (m.len() as i64) < limit || !c.prepare_cached(&format!("SELECT 1 FROM messages WHERE task_id=?1 AND id<?2 {only}"))?.exists(params![id, first])?;
             (m, whole)
         }
     };
@@ -224,7 +250,7 @@ fn legacy(c: &Connection, task: &db::Task, window: Window) -> Result<History> {
 /// The history `messages` (a legacy thread's, or a window of them) convert into.
 pub fn from_messages(task: &db::Task, messages: &[Message]) -> Result<History> {
     // The harness is only the converted thread's, which isn't kept.
-    let mut conv = import::convert(&Source { task, harness: "claude", messages })?;
+    let mut conv = import::convert_as(&Source { task, harness: "claude", messages }, false)?;
     Ok(History::new(conv.snapshot.items, conv.snapshot.requests, |id| conv.origins.remove(id).unwrap_or_default()))
 }
 
@@ -261,7 +287,8 @@ fn stored(c: &Connection, task: &db::Task, window: Window) -> Result<History> {
         reducer::apply_event(&mut state, &serde_json::from_str::<ThreadEvent>(&e?)?);
     }
     let keep = |item: &Item| match window {
-        Window::All | Window::Latest(_) => true,
+        Window::All => true,
+        Window::Latest(_, part) => part.has(item),
         Window::Since(at) => created_at(item).is_some_and(|t| t > at),
         Window::UserMessages => matches!(item, Item::UserMessage(_)),
     };
@@ -273,7 +300,7 @@ fn stored(c: &Connection, task: &db::Task, window: Window) -> Result<History> {
     }
     let items = state.items.into_iter().filter(keep).collect();
     let mut h = History::new(items, state.requests, |id| origins.remove(id).unwrap_or_else(|| Origin::implied(id)));
-    h.whole = matches!(window, Window::All | Window::Latest(_));
+    h.whole = matches!(window, Window::All | Window::Latest(..));
     Ok(h)
 }
 
@@ -284,7 +311,8 @@ fn stored(c: &Connection, task: &db::Task, window: Window) -> Result<History> {
 enum Said {
     /// The user's own words (`Entry::users_text`).
     User(String),
-    /// One of the agent's messages (a legacy message's text blocks, joined by newlines).
+    /// One of the agent's messages (a legacy message's text blocks, joined by newlines), or an error
+    /// the harness gave in its place (an error notice with a code: Claude's API errors, a usage limit).
     Agent(String),
     /// The error a turn of the agent's ended with (see `turn_error`).
     Failed(String),
@@ -301,6 +329,7 @@ impl History {
             match &e.item {
                 Item::UserMessage(_) => out.extend(e.users_text().map(|t| (i, Said::User(t.to_string())))),
                 Item::TurnResult(r) => out.extend(turn_error(r).map(|t| (i, Said::Failed(t.to_string())))),
+                Item::Notice(n) if n.level == NoticeLevel::Error && n.code.is_some() => out.push((i, Said::Agent(n.text.clone()))),
                 Item::AssistantMessage(m) => {
                     let mut texts = vec![m.text.as_str()];
                     // The rest of its message's text: a message's items are together, with its other blocks among
@@ -372,13 +401,13 @@ fn turn_error(r: &agent_threads::protocol::TurnResult) -> Option<&str> {
 /// turn ended with (the API's and MCP tools' `last_message`, and what review and summaries go on
 /// when the work is somewhere else).
 pub fn last_said(c: &Connection, task_id: &str) -> Result<Option<String>> {
-    read_back(c, task_id, |h| h.last_said(None))
+    read_back(c, task_id, Part::Said, |h| h.last_said(None))
 }
 
 /// What the agent said after the latest message it was sent (the answer to it, such as a summary
 /// it was asked for), trimmed; None if nothing.
 pub fn said_since_asked(c: &Connection, task_id: &str) -> Result<Option<String>> {
-    let said = read_back(c, task_id, |h| {
+    let said = read_back(c, task_id, Part::Said, |h| {
         let asked = h.last_user_message();
         match h.last_said(asked) {
             Some(text) => Some(Some(text)),
@@ -462,7 +491,7 @@ impl UserReplies {
 /// The user's own messages in `task_id`'s thread (`UserReplies`), the latest `limit` of them if given.
 /// Read back from the end, so a long thread is only read as far as those.
 pub fn user_replies(c: &Connection, task_id: &str, limit: Option<usize>) -> Result<UserReplies> {
-    let Some((mut out, cut)) = read_back(c, task_id, |h| h.user_replies(limit))? else { return Ok(UserReplies::default()) };
+    let Some((mut out, cut)) = read_back(c, task_id, Part::Said, |h| h.user_replies(limit))? else { return Ok(UserReplies::default()) };
     // How many it left out, from the user's messages alone.
     if let Some(cut) = cut {
         let users = read(c, task_id, Window::UserMessages)?;
@@ -493,7 +522,7 @@ pub fn subagent_call(c: &Connection, task_id: &str, event: &Value) -> Result<Opt
     if call.is_none() && task.is_none() {
         return Ok(None);
     }
-    let found = read_back(c, task_id, |h| {
+    let found = read_back(c, task_id, Part::Everything, |h| {
         let named = |call: &str| h.subagent_call(call).and_then(Entry::call_id).map(String::from);
         match (call, task.and_then(|t| h.subagent_tasks.get(t))) {
             (Some(call), _) => named(call).map(Some).or_else(|| h.whole.then_some(None)),

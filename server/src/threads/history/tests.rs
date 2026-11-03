@@ -83,27 +83,27 @@ fn user_replies_read_a_long_thread_only_back_to_the_latest() {
         let s = testing::state();
         let t = testing::task(&s).id;
         // More messages than the first window has.
-        for i in 0..100 {
+        for i in 0..200 {
             add(&s, &t, "claude", json!({"type": "assistant", "message": {"content": [{"type": "text", "text": format!("Question {i}?")}]}}));
             add(&s, &t, "user", json!({"text": format!("Answer {i}")}));
             add(&s, &t, "claude", json!({"type": "user", "message": {"content": [{"type": "tool_result", "content": "x".repeat(1000)}]}}));
         }
         let all = both(&s, &t, |c| user_replies(c, &t, None).unwrap()).await;
-        assert_eq!((all.replies.len(), &all.since, all.earlier), (100, &None, 0));
+        assert_eq!((all.replies.len(), &all.since, all.earlier), (200, &None, 0));
         let r = both(&s, &t, |c| user_replies(c, &t, Some(30)).unwrap()).await;
-        assert_eq!(r.replies, all.replies[70..]);
-        assert_eq!((r.since, r.earlier), (None, 70));
-        assert_eq!(r.replies[0], (Some("Question 70?".to_string()), "Answer 70".to_string()));
-        // Read back only as far as those: the first window has them.
+        assert_eq!(r.replies, all.replies[170..]);
+        assert_eq!((r.since, r.earlier), (None, 170));
+        assert_eq!(r.replies[0], (Some("Question 170?".to_string()), "Answer 170".to_string()));
+        // Read back only as far as those, not the whole thread.
         let c = s.db();
         let task = db::get_task(&c, &t).unwrap().unwrap();
-        let mut windows = 0;
-        read_back_on(&c, &task, Engine::Legacy, &mut |h| {
-            windows += 1;
+        let mut whole = Vec::new();
+        read_back_on(&c, &task, Engine::Legacy, Part::Said, &mut |h| {
+            whole.push(h.whole);
             h.user_replies(Some(30))
         })
         .unwrap();
-        assert_eq!(windows, 1);
+        assert_eq!(whole.last(), Some(&false));
     })
 }
 
@@ -144,6 +144,13 @@ fn the_last_thing_the_agent_said() {
         // One that says what went wrong, says that.
         add(&s, &t, "claude", json!({"type": "result", "subtype": "success", "is_error": true, "result": "You've hit your limit · resets 3pm"}));
         assert_eq!(both(&s, &t, last).await, (Some("You've hit your limit · resets 3pm".into()), Some("You've hit your limit · resets 3pm".into())));
+        // And it's what the user answered, if they did then.
+        let limit = json!({"type": "assistant", "is_api_error_message": true, "message": {"content": [{"type": "text", "text": "You've hit your limit"}]}});
+        add(&s, &t, "claude", limit);
+        add(&s, &t, "claude", json!({"type": "result", "subtype": "success", "is_error": true, "result": "You've hit your limit"}));
+        add(&s, &t, "user", json!({"text": "start again"}));
+        let replies = both(&s, &t, |c| user_replies(c, &t, Some(1)).unwrap()).await;
+        assert_eq!(replies.replies, [(Some("You've hit your limit".to_string()), "start again".to_string())]);
         // A subagent's messages count too.
         add(&s, &t, "claude", json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "look", "prompt": "p"}}]}}));
         add(&s, &t, "claude", json!({"type": "assistant", "parent_tool_use_id": "a1", "message": {"content": [{"type": "text", "text": "Looking."}]}}));

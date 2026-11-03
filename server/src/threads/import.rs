@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use agent_threads::protocol::{Snapshot, Thread, ThreadEvent};
 use agent_threads::reducer;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::history::Origin;
@@ -91,13 +91,19 @@ impl Conversion {
 /// The messages of `source` as an agent-threads thread. Fails only when what it made doesn't parse
 /// as the protocol's events, which is a bug in it: what the messages don't say is a warning.
 pub fn convert(source: &Source) -> anyhow::Result<Conversion> {
+    convert_as(source, true)
+}
+
+/// `convert`, without the source's fingerprint (it's empty) if `fingerprinted` is false: what
+/// reading a thread (threads/history.rs) needs, which hashing every message would slow down.
+pub fn convert_as(source: &Source, fingerprinted: bool) -> anyhow::Result<Conversion> {
     let task = source.task;
     let mut b = Builder::new(source.messages);
     for m in source.messages {
         b.row(m);
     }
     b.finish();
-    let fingerprint = fingerprint(source.messages);
+    let fingerprint = if fingerprinted { fingerprint(source.messages) } else { String::new() };
     let mut thread = json!({
         "id": task.id,
         "harness": source.harness,
@@ -131,7 +137,7 @@ pub fn convert(source: &Source) -> anyhow::Result<Conversion> {
     for (i, mut e) in raw.into_iter().enumerate() {
         e["thread_id"] = json!(task.id);
         e["seq"] = json!(i + 1);
-        let event: ThreadEvent = serde_json::from_value(e.clone()).map_err(|err| anyhow::anyhow!("event {} doesn't parse ({err}): {e}", i + 1))?;
+        let event: ThreadEvent = ThreadEvent::deserialize(&e).map_err(|err| anyhow::anyhow!("event {} doesn't parse ({err}): {e}", i + 1))?;
         events.push(event);
     }
     let mut snapshot = reducer::initial_state(thread.clone());
@@ -663,9 +669,8 @@ impl Builder {
         if d["is_api_error_message"] == true {
             let text: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
             let mut item = json!({"id": format!("legacy:{}", m.id), "type": "notice", "level": "error", "text": text.join("\n"), "created_at": m.created_at});
-            if let Some(e) = str_arg(d, "api_error").or_else(|| str_arg(d, "error")) {
-                item["code"] = json!(e);
-            }
+            // Always with a code, which tells it from the board's own errors (history.rs reads it as the agent's).
+            item["code"] = json!(str_arg(d, "api_error").or_else(|| str_arg(d, "error")).unwrap_or("api_error"));
             self.add(with_parent(item));
             return Disposition::Converted;
         }

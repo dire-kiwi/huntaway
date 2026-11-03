@@ -14,11 +14,11 @@ measurement or a prediction of migration time.
 ## Status: the importer's first steps (HA-128)
 
 Huntaway now depends on agent-threads (a git dependency pinned to `b009454`, which adds no second copy of any crate)
-and has the first steps of the safe importer below, in `server/src/threads/`. Nothing in the server reads the new
-tables yet: running agents, the API and the UI are unchanged.
+and has the first steps of the safe importer below, in `server/src/threads/`. The board's features that read a thread
+read it as items (below), and nothing else reads the new tables yet: running agents, the API and the UI are unchanged.
 
 - **Store** (`threads/store.rs`): agent-threads' `Store` on huntaway.db, in `at_threads`, `at_events`,
-  `at_snapshots` and `at_runs` (migration 85). It passes the crate's store conformance cases
+  `at_snapshots` and `at_runs` (migration 85), and `at_item_origins` (migration 86, see the readers below). It passes the crate's store conformance cases
   (`spec/conformance/store.json`, copied next to it at the pinned revision). A thread whose `metadata.task_id`
   names a task is deleted with it.
 - **Converter** (`threads/import.rs`): a pure function from a task's stored messages to a `Thread`, saved
@@ -31,14 +31,30 @@ among those that could still ask (waiting in the current session, or not come to
 their input, none), and a subagent's messages to its call in their session. Where more than one call fits, they
 go to none, with a warning. The task_* messages the board
 writes for Codex's children (no `task_type`, by `tool_use_id`) are read as subagents, as are their compactions. Answered
-question prompts keep their answers as the board stored them (a list for each question; a secret's hidden).
+question prompts keep their answers as the board stored them (a list for each question; a secret's hidden). A
+successful result whose text no message of its turn says (about 1% of them: turns a background subagent's report
+started) gives an `assistant_message` with it. Each item has an origin (`history::Origin`): its message, and what the
+board knows that the protocol has no place for (who sent a user message: `auto`, `from_agent`, `user_text`; the
+harness's id for a second call with an id; Claude's task id for a subagent).
 - **Dry run and staging** (`threads/report.rs`): `huntaway threads-import --db <copy> [--json] [--stage]
   [task ids or keys]` opens the database read-only and reports each task's conversion, its warnings and what
   stops it being switched over now (a run that's running or alive between turns, queued input, a merge, an open
   prompt). `--stage` also writes the conversions through the store, checking that the saved events fold into the
   snapshot before saving it; staging the same source again changes nothing, and an older import is replaced. The
   database must be at this build's version: run it on a copy a test server has opened, such as
-  `scripts/copy-live-board.sh`'s.
+  `scripts/copy-live-board.sh`'s. Staging saves the origins that say more than an item's id does.
+- **Readers** (`threads/history.rs`): a task's items and requests in thread order, with their origins, whichever
+  thread layer it's on (`history::engine`, the one switch, says legacy until tasks have `run_engine`). A legacy task's
+  messages are converted as they're read: the readers that want a thread's end read windows of its latest messages,
+  widening until they have their answer, and those that only want what was said (user messages, the agent's
+  messages, turns' ends) convert only the messages that can say it. An agent-threads task's thread is its snapshot
+  with the events after it folded in, and its origins are in `at_item_origins` (`history::record_origin`, which the
+  engine calls as it sends a message that isn't wholly the user's). Review (`tool_calls_since` and
+  `changes::changes_code`, which reads tool_call items, and the user's replies), summaries, titles, the wait tool's
+  subagent lookup, `get_task`'s `last_message` (API and MCP) and pr_watch's `user_wrote_since` read it; the
+  raw-message versions are gone. Their tests run each reader on a legacy thread and on its staged import, and expect
+  the same answers. `huntaway threads-readers --db <copy> [--json [--no-times]] [tasks]` prints every reader's
+  answers and times for each task, to compare two builds on a copy of a live board.
 
 On a scrubbed copy of the live board (2026-11-03, a debug build), all 1,373 tasks converted: 243,246 messages
 (602 MB) gave 226,094 events (536 MB) in about a minute. 224,551 rows converted, 18,689 were redundant (mostly
@@ -49,6 +65,15 @@ switched over then (14 open prompts, 1 queued message). Staging them all (on an 
 saved events and their snapshot each hold a full copy of a thread, so a real cutover should expect about 2.5
 times the space, or keep fewer snapshots (the crate needs only the latest, and only to avoid folding every event
 on load).
+
+The ported readers, on the same copy (2026-11-03, 1,430 tasks and 251,086 messages by then), gave the same answers as
+the raw-message ones they replace for every task compared (the first 1,020; the old wait lookup, which read the whole
+thread for each subagent, made the old build too slow to finish the rest), and a release build ran them all in about
+80 s. Per task, in a release build: `last_message` takes a median of 0.5 ms and at most 3 ms; the user's replies at
+most 20 ms (2,999 messages); all the tool calls at most 44 ms (3,271 messages, against about 200 ms for the old SQL in
+a debug build); and a subagent lookup that has to read a whole thread about 90 ms, which the wait tool only needs for
+a terminal notification that names no call while its agent waits. In a debug build on the largest threads,
+`last_message` went from 0.1 ms to 2–5 ms and the replies from 3–7 ms to 7–38 ms.
 
 Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
 task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and
