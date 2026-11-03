@@ -123,6 +123,16 @@ fn copies_a_skill_folder_and_keeps_to_it() {
     write(from.join("SKILL.md"), "skill 2");
     copy_skill(&from, &to).unwrap();
     assert_eq!(std::fs::read_to_string(to.join("SKILL.md")).unwrap(), "skill 2");
+
+    // A change that's only to a script's permissions reaches the copy, both ways.
+    let (script, copy) = (from.join("scripts/run.sh"), to.join("scripts/run.sh"));
+    let mode = |p: &FsPath| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+    copy_skill(&from, &to).unwrap();
+    assert_eq!(mode(&copy), 0o644);
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    copy_skill(&from, &to).unwrap();
+    assert_eq!(mode(&copy), 0o755);
 }
 
 #[test]
@@ -213,6 +223,25 @@ fn adds_updates_and_removes_a_skill_source() {
         assert!(state.data_dir.join("skill-sources").join(&source_id).join("scripts/lint.py").is_file());
         assert!(!state.data_dir.join("skill-sources").join(format!("{source_id}.new")).exists());
         std::fs::rename(repo.with_file_name("moved"), &repo).unwrap();
+
+        // The skill's folder moves, as it does once a repository has a second skill: the same skill, with its switches.
+        std::fs::create_dir_all(repo.join("skills/ste-writer")).unwrap();
+        for entry in ["SKILL.md", "scripts"] {
+            git(&repo, &["mv", entry, &format!("skills/ste-writer/{entry}")]);
+        }
+        git(&repo, &["commit", "-q", "-m", "move"]);
+        let Json(v) = update_source(State(state.clone()), Path(source_id.clone())).await.unwrap();
+        assert_eq!(v["skills"].as_array().unwrap().len(), 1, "{v}");
+        assert_eq!(v["skills"][0]["id"], skill_id);
+        assert_eq!(v["source"]["notes"], json!([]));
+        assert_eq!(switches(&state.db(), "profile", &profile.id).unwrap().get(&skill_id), Some(&Value::Bool(true)));
+        assert!(for_run(&state, "pr").unwrap().skills_dir.is_some());
+        assert_eq!(std::fs::read_to_string(skills_dir.join("scripts/lint.py")).unwrap(), "print('lint 2')\n");
+        git(&repo, &["mv", "skills/ste-writer/SKILL.md", "SKILL.md"]);
+        git(&repo, &["mv", "skills/ste-writer/scripts", "scripts"]);
+        git(&repo, &["commit", "-q", "-m", "move back"]);
+        let Json(v) = update_source(State(state.clone()), Path(source_id.clone())).await.unwrap();
+        assert_eq!(v["skills"][0]["id"], skill_id);
 
         // The skill goes from the repository and a new one comes: the old one is removed with its switches.
         std::fs::remove_file(repo.join("SKILL.md")).unwrap();

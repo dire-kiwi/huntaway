@@ -9,8 +9,10 @@ import {
   byImplementer,
   byReviewer,
   byTask,
+  effortLabel,
   format,
   groupBy,
+  issuesByModelAndEffort,
   METRIC_LABEL,
   ownerOf,
   PURPOSE_HINT,
@@ -25,6 +27,7 @@ import {
   total,
   usd,
   value,
+  type IssueCell,
   type Metric,
   type Purpose,
   type ReviewSummary,
@@ -447,6 +450,7 @@ function Reviews({ data }: { data: TokenData }) {
               }
             />
           </div>
+          <SeriousIssues data={data} />
           <div className="grid gap-6 lg:grid-cols-2">
             <ReviewTable
               title="By the model that did the work"
@@ -460,6 +464,57 @@ function Reviews({ data }: { data: TokenData }) {
         </>
       )}
     </section>
+  );
+}
+
+/** Serious issues found in each model's work, at each effort it worked at and across all of them. */
+function SeriousIssues({ data }: { data: TokenData }) {
+  const { efforts, models, total } = issuesByModelAndEffort(data, data.reviews);
+  const cell = (c: IssueCell | undefined, who: string) => {
+    if (!c) return <span className="text-faint">–</span>;
+    const title = `${who}: ${plural(c.serious, "serious issue")} in ${plural(c.reviews, "review")} of ${plural(c.tasks, "task")}, ${c.withIssues} of the reviews found some`;
+    return (
+      <span title={title}>
+        {c.serious} <span className="text-faint">· {(c.serious / c.tasks).toFixed(1)}/task</span>
+      </span>
+    );
+  };
+  return (
+    <div>
+      <h3 className="mb-2 text-[12.5px] text-muted" title="Serious issues the reviews found, by the model each reviewed task's agent used and the effort it was set to work at. Per task: serious issues divided by the tasks reviewed.">
+        Serious issues by model and effort
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-line">
+        <table className="w-full min-w-[34rem] text-[12.5px]">
+          <thead className="bg-panel text-left text-[11.5px] text-faint">
+            <tr>
+              <th className="px-3 py-2 font-normal">Model</th>
+              <th className={th}>All efforts</th>
+              {efforts.map((e) => (
+                <th key={e} className={th} title={e === "default" ? "The agent's own default effort, or one the host doesn't say" : undefined}>
+                  {effortLabel(e)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {[...models, total].map((m) => (
+              <tr key={m.model} className={clsx(m === total ? "bg-raised/40 font-medium" : "bg-panel/60")}>
+                <td className="truncate px-3 py-1.5" title={m.model}>
+                  {m.model}
+                </td>
+                <td className={td}>{cell(m.all, `${m.model}, all efforts`)}</td>
+                {efforts.map((e) => (
+                  <td key={e} className={td}>
+                    {cell(m.byEffort[e], `${m.model}, ${effortLabel(e)} effort`)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

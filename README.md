@@ -867,7 +867,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   They're denied with `--disallowedTools` (`Skill(<name>)`, `mcp__<server>`). The settings list
   what the project's runs reported in their `init` message over the last two weeks, and anything
   else can be turned off by name. Changes apply from each thread's next message.
-- **Skill sources** (API 101): global skills can come from a git repository, as with `npx skills add`.
+- **Skill sources** (API 102): global skills can come from a git repository, as with `npx skills add`.
   Settings → Skills and MCP servers → *Add from git* takes a git URL (https, ssh or a local path),
   `git@host:owner/repo` or `owner/repo` for GitHub, and optionally a branch or tag. The host clones it
   (shallow, into `<data-dir>/skill-sources/<id>/`, with its own git setup, so a private repository needs

@@ -11,6 +11,7 @@
 use super::*;
 
 use axum::http::StatusCode;
+use std::os::unix::fs::PermissionsExt;
 
 /// One source operation at a time: they clone, swap folders and write skills, and two at once for the
 /// same source would race. (Runs only read the clones.)
@@ -278,6 +279,12 @@ pub(super) fn copy_skill(from: &FsPath, to: &FsPath) -> std::io::Result<()> {
                 && std::fs::read(&dst).ok() == std::fs::read(&src).ok();
             if !same {
                 std::fs::copy(&src, &dst)?;
+            } else {
+                // A commit may only make a script executable (or not): the copy follows.
+                let want = std::fs::metadata(&src)?.permissions();
+                if std::fs::metadata(&dst)?.permissions().mode() & 0o777 != want.mode() & 0o777 {
+                    std::fs::set_permissions(&dst, want)?;
+                }
             }
         }
     }
@@ -340,17 +347,36 @@ fn apply(c: &Connection, id: &str, fetched: &Fetched) -> ApiResult<Vec<String>> 
     let mut notes = fetched.notes.clone();
     let existing: Vec<Skill> = c.prepare("SELECT * FROM agent_skills WHERE source_id=?1")?.query_map([id], Skill::from_row)?.collect::<rusqlite::Result<_>>()?;
     let at = now();
-    let mut kept = Vec::new();
-    for f in &fetched.found {
-        let before = existing.iter().find(|s| s.source_path.as_deref() == Some(f.path.as_str()));
+    // Which existing skill each found one is: the one at its path, else (the folder was moved) the one
+    // with its name that no found skill is at the path of, so it keeps its id and switches.
+    let at_path = |f: &Found| existing.iter().find(|s| s.source_path.as_deref() == Some(f.path.as_str()));
+    let matched: Vec<Option<&Skill>> = fetched
+        .found
+        .iter()
+        .map(|f| {
+            at_path(f).or_else(|| {
+                existing.iter().find(|s| s.name == f.name && !fetched.found.iter().any(|o| s.source_path.as_deref() == Some(o.path.as_str())))
+            })
+        })
+        .collect();
+    // The ones that are gone go first, so their names are free for what takes them over.
+    for s in existing.iter().filter(|s| !matched.iter().flatten().any(|m| m.id == s.id)) {
+        c.execute("DELETE FROM agent_skills WHERE id=?1", [&s.id])?;
+        forget_board_skill(c, None, &s.name)?;
+    }
+    for (f, before) in fetched.found.iter().zip(matched) {
         if unique(c, "agent_skills", None, &f.name, before.map(|s| s.id.as_str())).is_err() {
             notes.push(format!("{}: a skill named {} is already on this host", if f.path.is_empty() { "the repository's root" } else { &f.path }, f.name));
+            // Left out now: the one it was is removed, as it can't have its name.
+            if let Some(s) = before {
+                c.execute("DELETE FROM agent_skills WHERE id=?1", [&s.id])?;
+                forget_board_skill(c, None, &s.name)?;
+            }
             continue;
         }
         match before {
             Some(s) => {
-                kept.push(s.id.clone());
-                c.execute("UPDATE agent_skills SET name=?1, content=?2, updated_at=?3 WHERE id=?4", params![f.name, f.content, at, s.id])?;
+                c.execute("UPDATE agent_skills SET name=?1, content=?2, source_path=?3, updated_at=?4 WHERE id=?5", params![f.name, f.content, f.path, at, s.id])?;
                 if s.name != f.name {
                     forget_board_skill(c, None, &s.name)?;
                 }
@@ -363,15 +389,10 @@ fn apply(c: &Connection, id: &str, fetched: &Fetched) -> ApiResult<Vec<String>> 
             }
         }
     }
-    // The ones that are gone, or left out now.
-    for s in existing.iter().filter(|s| !kept.contains(&s.id)) {
-        c.execute("DELETE FROM agent_skills WHERE id=?1", [&s.id])?;
-        forget_board_skill(c, None, &s.name)?;
-    }
     Ok(notes)
 }
 
-/// `POST /agent-tools/skill-sources` (API 101): clones a repository and adds its skills, off for
+/// `POST /agent-tools/skill-sources` (API 102): clones a repository and adds its skills, off for
 /// every profile and project until they're switched on.
 pub async fn add_source(State(s): State<Shared>, Json(b): Json<AddSource>) -> ApiResult<Json<Value>> {
     let url = normalize_url(&b.url.unwrap_or_default())?;
