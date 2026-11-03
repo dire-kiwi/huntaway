@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, CHECKS_API, documentsOnly, hasApprovalRules, hostSupports, isAssistant, isScratch, LABELS_API, taskLabels, type Task } from "../../../../api";
+import { api, CHECKS_API, documentsOnly, hasApprovalRules, hostSupports, isAssistant, isScratch, LABELS_API, taskLabels, type Host, type Task } from "../../../../api";
 import { RulesSection } from "../../ApprovalRules";
 import { isGroupTask, useProject, useStore } from "../../../../store";
 import { Dependencies } from "../../../board/Dependencies";
@@ -102,6 +102,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
                 <span className="font-mono text-[11px] break-all">{task.work_dir}</span>
               </Row>
             )}
+            <AssistantPlace host={host} />
           </div>
         </Section>
       )}
@@ -234,5 +235,27 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
       {doneDialog}
     </aside>
+  );
+}
+
+/** Which host the assistant runs on, and whether its agents can use this board's tools from there (API 98). */
+function AssistantPlace({ host }: { host: Host | undefined }) {
+  const board = useStore((s) => s.hosts.find((h) => h.local));
+  if (!host) return null;
+  return (
+    <>
+      <Row label="Host">
+        <span className="text-[12px]">{host.local ? `${host.name} (this board's host)` : `${host.name}${host.connected ? "" : " (offline)"}`}</span>
+      </Row>
+      {!host.local && (
+        <Row label="This board">
+          <span className="text-[12px] text-muted">
+            {host.uplink
+              ? `Its agents can use ${board?.name ?? "this board"}'s projects and tasks, with the access their profile has here.`
+              : `Its agents can't use ${board?.name ?? "this board"}'s projects and tasks. Let them in Settings → Hosts (${host.name}).`}
+          </span>
+        </Row>
+      )}
+    </>
   );
 }

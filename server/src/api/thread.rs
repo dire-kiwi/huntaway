@@ -45,18 +45,40 @@ pub(super) async fn send_message(State(s): State<Shared>, Path(id): Path<String>
     Ok(Json(json!(t)))
 }
 
-/// Answer a question an agent asked with request_user_input, from its card (API 64): the answer
-/// is sent as the user's message.
+#[derive(Deserialize)]
+pub(super) struct AssistantQuery {
+    /// Set by a hub that routed the request here (API 98): it's this host's, whatever its profile's `assistant_host`.
+    #[serde(default)]
+    local: Option<String>,
+}
+
 /// `GET /profiles/{id}/assistant` (API 97): the profile's assistant (see agent/assistant.rs),
-/// made the first time it's asked for.
-pub(super) async fn get_assistant(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(assistant::get_or_create(&s, &id)?)))
+/// made the first time it's asked for. API 98: with its `host_id`, which is the profile's assistant host's
+/// when it has one, where the request goes (see assistant::on_its_host).
+pub(super) async fn get_assistant(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<AssistantQuery>) -> ApiResult<Json<Value>> {
+    if q.local.is_none()
+        && let Some(t) = assistant::on_its_host(&s, &id, "GET", None).await?
+    {
+        return Ok(Json(t));
+    }
+    Ok(Json(assistant::with_host(&s, &assistant::get_or_create(&s, &id)?)))
 }
 
 /// `POST /profiles/{id}/assistant` (API 97): send the user's message to the profile's assistant,
-/// as `POST /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
-pub(super) async fn send_to_assistant(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<SendBody>) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(assistant::send(&s, &id, &b.text)?)))
+/// as `POST /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task,
+/// on its assistant host if it has one, as `GET` does.
+pub(super) async fn send_to_assistant(
+    State(s): State<Shared>,
+    Path(id): Path<String>,
+    Query(q): Query<AssistantQuery>,
+    Json(b): Json<SendBody>,
+) -> ApiResult<Json<Value>> {
+    if q.local.is_none()
+        && let Some(t) = assistant::on_its_host(&s, &id, "POST", Some(json!({"text": b.text}))).await?
+    {
+        return Ok(Json(t));
+    }
+    Ok(Json(assistant::with_host(&s, &assistant::send(&s, &id, &b.text)?)))
 }
 
 /// A profile's approval rules as the UI shows them: the ones in force, whether they're the
@@ -75,7 +97,7 @@ fn rules_view(c: &rusqlite::Connection, profile_id: &str) -> anyhow::Result<Valu
     }))
 }
 
-/// `GET /profiles/{id}/approval-rules` (API 98): what the profile's assistant may do outside the
+/// `GET /profiles/{id}/approval-rules` (API 99): what the profile's assistant may do outside the
 /// board, asks first or never does (see agent/approval_rules.rs).
 pub(super) async fn get_approval_rules(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let c = s.db();
@@ -96,7 +118,7 @@ pub(super) struct RulesBody {
     reset: bool,
 }
 
-/// `POST /profiles/{id}/approval-rules` (API 98) with `{rules, expiry_minutes}` (either may be left
+/// `POST /profiles/{id}/approval-rules` (API 99) with `{rules, expiry_minutes}` (either may be left
 /// out, keeping it as it is), or `{reset: true}` for the defaults. They hold from the next run on.
 pub(super) async fn set_approval_rules(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<RulesBody>) -> ApiResult<Json<Value>> {
     let c = s.db();
@@ -122,7 +144,7 @@ pub(super) struct LogQuery {
     limit: Option<i64>,
 }
 
-/// `GET /profiles/{id}/approval-log` (API 98): the calls the profile's rules asked about or turned
+/// `GET /profiles/{id}/approval-log` (API 99): the calls the profile's rules asked about or turned
 /// away, newest first (see approval_rules::Action).
 pub(super) async fn approval_log(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<LogQuery>) -> ApiResult<Json<Value>> {
     let c = s.db();
@@ -380,7 +402,7 @@ pub(super) struct ResolveBody {
     /// The answers to a question, or how a plan is approved or what to change in it (API 64).
     #[serde(flatten)]
     reply: permissions::Reply,
-    /// `push` for an answer from a notification, which the hub passes on (API 98), for the action log.
+    /// `push` for an answer from a notification, which the hub passes on (API 99), for the action log.
     #[serde(default)]
     via: Option<String>,
 }

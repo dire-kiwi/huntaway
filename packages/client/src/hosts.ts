@@ -55,6 +55,8 @@ export interface Host {
   last_seen?: string | null;
   /** When the hub last heard from a connected host (API 78); pings keep it within about 20s. */
   last_message_at?: string;
+  /** A linked host whose agents may use this board's tools, up the link (API 98, Settings → Hosts). */
+  uplink?: boolean;
 }
 
 export interface DirListing {
@@ -81,6 +83,8 @@ export const hostsApi = ({ del, get, on, patch, post }: Http) => ({
   hosts: () => get<Host[]>("/hosts"),
   addHost: (url: string, token: string) => post<Host>("/hosts", { url, token }),
   renameHost: (id: string, name: string) => patch(`/hosts/${enc(id)}`, { name }),
+  /** Let a linked host's agents use this board's tools, up the link (API 98), or stop them. */
+  setHostUplink: (id: string, uplink: boolean) => patch(`/hosts/${enc(id)}`, { uplink }),
   removeHost: (id: string) => del(`/hosts/${enc(id)}`),
   /** Send this hub's code to a host, which updates its checkout and restarts. */
   updateHost: (id: string) => post<{ ok: boolean; up_to_date?: boolean }>(`/hosts/${enc(id)}/update`),

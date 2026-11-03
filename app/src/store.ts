@@ -734,7 +734,7 @@ export function onCheckpoints(fn: CheckpointListener) {
   };
 }
 
-/** Told when a profile's approval rules (`rules`) or action log (`log`) change on a host (API 98). */
+/** Told when a profile's approval rules (`rules`) or action log (`log`) change on a host (API 99). */
 type ApprovalRulesListener = (hostId: string, profileId: string, what: "rules" | "log") => void;
 const approvalRulesListeners = new Set<ApprovalRulesListener>();
 export function onApprovalRules(fn: ApprovalRulesListener) {

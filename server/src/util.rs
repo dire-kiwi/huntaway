@@ -131,9 +131,84 @@ pub fn truncate(s: &str, max: usize) -> String {
     format!("{}\n… [truncated {} bytes]", &s[..end], s.len() - end)
 }
 
+/// Make a data dir private to its user, at start: the folder `0700` and its databases (`*.db`, with their
+/// `-wal`, `-shm` and `-journal` files) `0600`, whatever the umask made them. Its tokens are made `0600`
+/// when they're written. Not a home folder given as the data dir, which other things may need to read.
+/// What can't be changed (a folder of another user's, say) is logged, and the server starts anyway.
+#[cfg(unix)]
+pub fn make_private(data_dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let set = |path: &Path, mode: u32| {
+        let Ok(meta) = std::fs::symlink_metadata(path) else { return };
+        // Not through a link in the folder, which could point anywhere.
+        if meta.file_type().is_symlink() || meta.permissions().mode() & 0o777 == mode {
+            return;
+        }
+        if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+            tracing::warn!("making {} private: {e}", path.display());
+        }
+    };
+    let home = dirs::home_dir().and_then(|h| h.canonicalize().ok());
+    let dir = data_dir.canonicalize().unwrap_or_else(|_| data_dir.to_path_buf());
+    if home.as_deref() != Some(dir.as_path()) && dir != Path::new("/") {
+        set(&dir, 0o700);
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if [".db", ".db-wal", ".db-shm", ".db-journal"].iter().any(|ext| name.ends_with(ext)) {
+            set(&e.path(), 0o600);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // HA-120: the live data dir was 0755 and its database 0644, readable by any user on the machine.
+    #[cfg(unix)]
+    #[test]
+    fn makes_an_existing_data_dir_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = crate::testing::temp_dir();
+        let dir = root.join("data");
+        std::fs::create_dir_all(dir.join("runs")).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let chmod = |p: &Path, m: u32| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+        // As a server from before left it: a database open in WAL mode, and other files.
+        let db = crate::db::open(&dir.join("huntaway.db")).unwrap();
+        db.execute_batch("CREATE TABLE t (x); INSERT INTO t VALUES (1);").unwrap();
+        for f in ["huntaway.db-wal", "huntaway.db-shm"] {
+            assert!(dir.join(f).exists(), "{f}");
+        }
+        std::fs::write(dir.join("serve.log"), "log").unwrap();
+        std::fs::write(root.join("elsewhere.db"), "").unwrap();
+        std::os::unix::fs::symlink(root.join("elsewhere.db"), dir.join("linked.db")).unwrap();
+        for f in ["huntaway.db", "huntaway.db-wal", "huntaway.db-shm", "serve.log"] {
+            chmod(&dir.join(f), 0o644);
+        }
+        chmod(&root.join("elsewhere.db"), 0o644);
+        chmod(&dir, 0o755);
+        // Reached through a symlink, as a --data-dir can be.
+        let via = root.join("via");
+        std::os::unix::fs::symlink(&dir, &via).unwrap();
+        make_private(&via);
+        assert_eq!(mode(&dir), 0o700);
+        for f in ["huntaway.db", "huntaway.db-wal", "huntaway.db-shm"] {
+            assert_eq!(mode(&dir.join(f)), 0o600, "{f}");
+        }
+        // Other files keep their mode (the folder keeps others out), and a link's target is left alone.
+        assert_eq!(mode(&dir.join("serve.log")), 0o644);
+        assert_eq!(mode(&root.join("elsewhere.db")), 0o644);
+        assert_eq!(mode(&dir.join("runs")), 0o755);
+        // The database still works, and a second start changes nothing.
+        db.execute_batch("INSERT INTO t VALUES (2);").unwrap();
+        make_private(&dir);
+        assert_eq!(mode(&dir), 0o700);
+        drop(db);
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     fn git(dir: &Path, args: &[&str]) {
         let ok = std::process::Command::new("git").arg("-C").arg(dir).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success();

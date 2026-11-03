@@ -11,7 +11,12 @@ pub const PROTOCOL: u32 = 1;
 
 /// Version of the host API (endpoints, fields and events the UI relies on). Bump it with
 /// every API change; changes should be additive (new endpoints, optional fields).
-pub const API_VERSION: u32 = 98;
+/// API 98: a profile's assistant host (`assistant_host`), and board tool calls up a link (`Down::Hello`,
+/// `Up::ToolCall`, and `hub_hello`/`hub_call` on `/api/host/ws`, see hosts/uplink.rs). A host passes calls
+/// only to a hub that said hello, which older hubs don't, and older hosts ignore the hello.
+/// API 99: the assistant's approval rules and action log (`/profiles/{id}/approval-rules` and `/approval-log`,
+/// see agent/approval_rules.rs), prompts' `expires_at` and `rule`, and `via` on a prompt's answer.
+pub const API_VERSION: u32 = 99;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.
@@ -53,6 +58,38 @@ pub enum Up {
     },
     /// The answer to `Down::Ping`.
     Pong,
+    /// A board tool call from one of our agents that we couldn't resolve here, for the hub to run (API 98).
+    /// Sent only to a hub that said `Down::Hello`.
+    ToolCall(ToolCall),
+}
+
+/// A board tool call a host passes up its link to a hub (see hosts/uplink.rs).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ToolCall {
+    /// This call on this link, which the answer carries.
+    pub id: u64,
+    /// The agent's call id on the host, by which the hub runs it at most once.
+    pub call_id: String,
+    pub tool: String,
+    /// The calling agent's profile, by name: the hub acts with that profile's access to its boards.
+    pub profile: String,
+    #[serde(default)]
+    pub args: Value,
+    #[serde(default)]
+    pub task_fields: bool,
+}
+
+/// The hub's answer to a `ToolCall`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ToolAnswer {
+    pub id: u64,
+    #[serde(default)]
+    pub result: Option<Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+    /// The hub doesn't let this host's agents use its board (Settings → Hosts there).
+    #[serde(default)]
+    pub off: bool,
 }
 
 /// Hub → host.
@@ -80,4 +117,9 @@ pub enum Down {
     /// Sent every `relay::PING`, so each side hears from the other even through a broker, which
     /// answers websocket pings itself. Hosts answer `Up::Pong`; older ones ignore it.
     Ping,
+    /// Who the hub is, sent once the tunnel is up (API 98). A host may then pass it board tool calls
+    /// (`Up::ToolCall`). Older hosts ignore it.
+    Hello { hub_id: String, name: String, api_version: u32 },
+    /// The answer to `Up::ToolCall`.
+    ToolAnswer(ToolAnswer),
 }

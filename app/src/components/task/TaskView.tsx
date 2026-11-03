@@ -173,7 +173,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
-  // The assistant's action log (API 98): what its approval rules asked about or blocked.
+  // The assistant's action log (API 99): what its approval rules asked about or blocked.
   if (assistant && hasApprovalRules(host)) tabs.push("actions");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");

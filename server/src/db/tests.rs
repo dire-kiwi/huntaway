@@ -1367,7 +1367,7 @@ fn a_database_from_version_72_keeps_new_sessions_apart() {
 }
 
 #[test]
-fn a_database_from_version_77_keeps_its_prompts_waiting_without_an_expiry() {
+fn a_database_from_version_78_keeps_its_prompts_waiting_without_an_expiry() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
@@ -1375,7 +1375,7 @@ fn a_database_from_version_77_keeps_its_prompts_waiting_without_an_expiry() {
             "PRAGMA foreign_keys=OFF; DROP INDEX permission_requests_expiry; ALTER TABLE permission_requests DROP COLUMN expires_at; ALTER TABLE permission_requests DROP COLUMN rule;
              ALTER TABLE push_answer_tokens DROP COLUMN expires_at; DROP TABLE approval_log;
              INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('p','t',1,'Bash','{}','pending','1','c','tool');
-             PRAGMA user_version=77;",
+             PRAGMA user_version=78;",
         )
         .unwrap();
     }
