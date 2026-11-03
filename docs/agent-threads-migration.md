@@ -67,9 +67,9 @@ times the space, or keep fewer snapshots (the crate needs only the latest, and o
 on load).
 
 The ported readers, on the same copy (2026-11-03, 1,430 tasks and 251,086 messages by then), gave the same answers as
-the raw-message ones they replace for every task compared (the first 1,020; the old wait lookup, which read the whole
-thread for each subagent, made the old build too slow to finish the rest), and a release build ran them all in about
-80 s. Per task, in a release build: `last_message` takes a median of 0.5 ms and at most 3 ms; the user's replies at
+the raw-message ones they replace for all 1,426 tasks compared (the other four were running when the board was copied,
+and the test server added to their threads between the two runs). A release build ran them all in about 80 s; the old
+build, a debug one, took 75 minutes, most of it in the old wait lookup, which read the whole thread for each subagent. Per task, in a release build: `last_message` takes a median of 0.5 ms and at most 3 ms; the user's replies at
 most 20 ms (2,999 messages); all the tool calls at most 44 ms (3,271 messages, against about 200 ms for the old SQL in
 a debug build); and a subagent lookup that has to read a whole thread about 90 ms, which the wait tool only needs for
 a terminal notification that names no call while its agent waits. In a debug build on the largest threads,
