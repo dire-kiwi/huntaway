@@ -629,6 +629,8 @@ async fn load_host(s: &Shared, host: &str) {
         }
         all
     };
+    // Prompts it raised that the board heard of may have been answered while it wasn't listening.
+    s.push.prompts.lock().unwrap().retain(|k, _| !k.starts_with(&format!("{host}:")));
     let mut known = s.push.tasks.lock().unwrap();
     for t in tasks {
         if let Some(id) = t["id"].as_str() {
@@ -645,6 +647,10 @@ fn local_tasks(s: &Shared) -> Result<Vec<Value>> {
 fn observe(s: &Shared, host: &str, t: &Value) {
     let Some(id) = t["id"].as_str() else { return };
     let key = format!("{host}:{id}");
+    // Its prompts end with its run (if the board missed hearing so).
+    if t["running"] == json!(false) {
+        s.push.prompts.lock().unwrap().remove(&key);
+    }
     let Some(prev) = s.push.tasks.lock().unwrap().insert(key.clone(), t.clone()) else { return };
     let Some(e) = task_event(&prev, t) else { return };
     if s.push.moved(&key, e) {

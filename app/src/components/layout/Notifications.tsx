@@ -286,7 +286,7 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
             </option>
           ))}
         </select>
-        {!compact && <span className="text-faint">· With Allow and Deny on the notification. It says which tool, but not what with</span>}
+        {!compact && <span className="basis-full text-faint">With Allow and Deny on the notification. It names the tool, but not what it's run with.</span>}
       </label>
     </div>
   );

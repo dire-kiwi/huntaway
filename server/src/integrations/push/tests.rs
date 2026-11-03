@@ -660,3 +660,23 @@ fn a_prompt_on_a_linked_host_is_answered_through_the_link() {
         assert_eq!(answer_from_push(&remote, &request, &token, "allow").await.0, 403);
     })
 }
+
+#[test]
+fn a_prompt_the_board_missed_the_end_of_doesnt_keep_its_task_from_notifying() {
+    testing::run(async || {
+        let s = testing::state();
+        let (url, mut got) = push_service(Arc::new(AtomicU16::new(201))).await;
+        let ua = subscribe_device(&s, &url, json!({"attention": true, "prompts": "all"})).await;
+        start(&s);
+        emit(&s, &with(task("in_progress"), json!({"running": true})));
+        while !s.push.tasks.lock().unwrap().contains_key("h:t1") {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        // A prompt it heard of, but not its answer (over a link that was down).
+        s.push.prompts.lock().unwrap().entry("h:t1".into()).or_default().insert("r1".into());
+        // The run ends, and the task needs attention for another reason.
+        emit(&s, &with(task("needs_attention"), json!({"running": false, "attention_reason": "The run failed"})));
+        let msg = next_push(&mut got, &ua).await;
+        assert_eq!((msg["event"].as_str(), msg["body"].as_str()), (Some("attention"), Some("Needs attention: The run failed")));
+    })
+}
