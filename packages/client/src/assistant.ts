@@ -19,6 +19,12 @@ export const hasMemory = (h: Host | undefined) => hostSupports(h, MEMORY_API);
 
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "assistant";
 
+/** A routine's run of the assistant (API 101): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
+export const isRoutine = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "routine";
+
+/** The assistant or one of its routine threads: off the board. */
+export const isAssistants = (t: Pick<Task, "kind" | "task_type">) => isAssistant(t) || isRoutine(t);
+
 /** A profile can have its assistant run on a linked host of its own (`Profile.assistant_host`), and a linked host's agents can
  *  use the board's tools up the link when Settings → Hosts lets them (`Host.uplink`), from API 98 on both. */
 export const ASSISTANT_HOST_API = 98;

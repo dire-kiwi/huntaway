@@ -17,9 +17,11 @@ pub const PROTOCOL: u32 = 1;
 /// API 99: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
 /// API 100: paired devices (devices.rs): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
 /// `GET /permissions?profile_id=`.
-/// API 101: the assistant's approval rules and action log (`/profiles/{id}/approval-rules` and `/approval-log`,
+/// API 101: routines (a profile's automations, which wake its assistant): `/profiles/{id}/automations`, the `cron`
+/// and `at` triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, and `report` messages.
+/// API 102: the assistant's approval rules and action log (`/profiles/{id}/approval-rules` and `/approval-log`,
 /// see agent/approval_rules.rs), prompts' `expires_at` and `rule`, and `via` on a prompt's answer.
-pub const API_VERSION: u32 = 101;
+pub const API_VERSION: u32 = 102;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.

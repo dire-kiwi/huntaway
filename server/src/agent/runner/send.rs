@@ -32,12 +32,13 @@ pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<T
     send_run(state, task_id, text, false, true, "prompt")
 }
 
-/// Like `send_from_agent`, for a message an automation sent (or, with no text, an automation
-/// starting the agent of a task it made): a run it starts is a routine run, whose prompts in the
-/// assistant and its threads expire if nobody answers them (see permissions::expiry). A message that
-/// goes to a run that's going starts none; one that waits in the queue starts one when it's sent.
-pub fn send_from_routine(state: &Shared, task_id: &str, text: &str) -> ApiResult<Task> {
-    let message = db::Queued { routine: true, ..db::Queued::new(text, true) };
+/// Send a routine's message (see automations::routines) as another agent's: one that starts a run
+/// makes it a routine run, with nobody there, whose prompts expire if nobody answers them (see
+/// permissions::expiry), and a thread-mode routine's (for its automation run `automation_run`) is
+/// charged to that automation run by the run that takes it in, whether it starts with it, is steered
+/// it or takes it from the queue later (see automations::routines::taken_in).
+pub fn send_from_routine(state: &Shared, task_id: &str, text: &str, automation_run: Option<&str>) -> ApiResult<Task> {
+    let message = db::Queued { routine: true, routine_runs: automation_run.map(String::from).into_iter().collect(), ..db::Queued::new(text, true) };
     send_message(state, task_id, Some(message), false, "prompt", None)
 }
 

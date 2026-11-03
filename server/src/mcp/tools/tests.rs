@@ -2397,6 +2397,56 @@ fn an_automation_approval_cut_short_by_a_restart_is_still_waited_for() {
 }
 
 #[test]
+fn the_assistant_sets_up_routines_once_the_user_approves() {
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let assistant = crate::agent::assistant::get_or_create(&s, &p.id).unwrap();
+        let me = |call_id: &str| Ctx { task: Some(assistant.clone()), call_id: Some(call_id.into()), ..ctx(&p) };
+        let remind = json!({
+            "name": "Call Sam",
+            "trigger": {"kind": "at", "at": (chrono::Utc::now() + chrono::TimeDelta::days(1)).to_rfc3339()},
+            "action": {"kind": "message_assistant", "mode": "thread", "message": "Remind the user to call Sam."},
+            "reason": "The user asked to be reminded",
+        });
+        let c1 = me("c1");
+        let (res, asked) = tokio::join!(call(&s, &c1, "create_automation", remind), answer_approval(&s, true));
+        let made = res.unwrap();
+        // The approval names the profile, not a project.
+        let input = &asked["input"];
+        assert_eq!((input["profile"]["id"].as_str(), input["project"].is_null()), (Some(p.id.as_str()), true), "{input}");
+        assert_eq!(input["automation"]["action"]["kind"], "message_assistant");
+        assert_eq!((made["profile_id"].as_str(), made["project_id"].is_null()), (Some(p.id.as_str()), true), "{made}");
+        // The assistant lists its routines without saying so; a project's agent asks for them.
+        let listed = call(&s, &me("c2"), "list_automations", json!({})).await.unwrap();
+        assert_eq!(listed["routines"][0]["name"], "Call Sam");
+        let worker = task(&s, "kiwicd", "Worker");
+        let theirs = Ctx { task: Some(worker.clone()), call_id: Some("c3".into()), ..ctx(&p) };
+        assert_eq!(call(&s, &theirs, "list_automations", json!({})).await.unwrap()["automations"], json!([]));
+        assert_eq!(call(&s, &theirs, "list_automations", json!({"routines": true})).await.unwrap()["routines"][0]["name"], "Call Sam");
+        // Changing what it does asks; by name among the routines.
+        let c4 = me("c4");
+        let change = json!({"automation_id": "call sam", "precheck": "test -f flag", "budget_usd": 0.5});
+        let (res, asked) = tokio::join!(call(&s, &c4, "update_automation", change), answer_approval(&s, true));
+        assert_eq!(res.unwrap()["precheck"], "test -f flag");
+        assert_eq!(asked["input"]["changes"], json!(["budget_usd", "precheck"]));
+        // A routine can't make tasks.
+        let bad = json!({"name": "x", "routines": true, "trigger": {"kind": "interval", "every_minutes": 60}, "action": {"kind": "create_task", "title": "x"}});
+        assert!(call(&s, &me("c5"), "create_automation", bad).await.unwrap_err().contains("only message the assistant"));
+
+        // Another profile's agents can't reach it, even with access to this board.
+        let work = insert_profile(&s.db(), "work", &[], None).unwrap();
+        s.db().execute("UPDATE profiles SET agent_access=?2 WHERE id=?1", rusqlite::params![p.id, json!(["work"]).to_string()]).unwrap();
+        let id = made["id"].as_str().unwrap();
+        let err = call(&s, &ctx(&work), "run_automation", json!({"automation_id": id})).await.unwrap_err();
+        assert_eq!(err, format!("automation {id}"));
+        let err = call(&s, &ctx(&work), "list_automations", json!({"routines": true, "profile": "personal"})).await.unwrap_err();
+        assert!(err.contains("its own profile"), "{err}");
+    });
+}
+
+#[test]
 fn the_assistants_rules_can_make_creating_a_task_ask_first_whatever_its_mode() {
     use crate::agent::approval_rules::{self, Decision, Rule, Rules};
     testing::run(async || {

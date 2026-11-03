@@ -448,6 +448,10 @@ fn a_profiles_assistant_gets_the_global_tools_its_profile_switches_on() {
             v
         };
         assert_eq!(written(&dir), ["on"]);
+        // HA-122: a routine's thread under it has the same, for Claude and Codex runs alike.
+        let routine = crate::db::insert_routine_task(&s.db(), &assistant, "Inbox").unwrap();
+        let theirs = for_task_run(&s, &routine, None).unwrap();
+        assert_eq!((theirs.mcp_servers.keys().map(String::as_str).collect::<Vec<_>>(), theirs.allowed.clone(), theirs.skills_dir.clone()), (vec!["probe"], vec![tool_prefix("probe")], tools.skills_dir.clone()));
         // A skill switched off later is taken out of its folder on the next run.
         set(&me.id, &on.id, false);
         let tools = for_task_run(&s, &assistant, None).unwrap();

@@ -238,7 +238,7 @@ assistant's workspace: paths with `..`, in `.git` or through a symlink are refus
 workspace (or `assistants` folder) that's been replaced by a symlink, whose memory isn't loaded or
 committed either.
 
-**Approval rules** (API 101) say what the assistant may do outside the board (*allow*), asks you
+**Approval rules** (API 102) say what the assistant may do outside the board (*allow*), asks you
 first each time (*ask*) or never does (*never*), whatever its thread's permission mode. Edit them
 under *Rules* in its details, or with `GET`/`POST /api/profiles/<id>/approval-rules` (`{"rules":
 [{"tool", "decision"}], "expiry_minutes"}`, or `{"reset": true}`). A rule names a tool
@@ -273,15 +273,16 @@ trashing mail and files is never. A switch adds an *ask* on the board's `create_
   them again: their own card is the rule's asking, and goes in the action log (a *never* rule still
   refuses them).
 
-A prompt raised in the assistant or a thread under it by a **routine run** (one an automation
-started, with nobody there: its message is marked `routine`, which a message that waits in the queue
-keeps, unless something of yours is queued with it) is denied if nobody answers it within the
-profile's expiry (30 minutes by default; `expiry_minutes`, 0 for never), and the agent is told to
-carry on without it. Prompts raised before this, ones the user's own turns raise, and project tasks'
-(even ones an automation started) wait as they always did. Each call a rule asked about or blocked
-goes in the assistant's **Actions** tab (`GET /api/profiles/<id>/approval-log`): what it was called
-with, the rule, how it ended (allowed, denied, expired or blocked) and who answered (you on the
-board, a notification, nobody in time, the mode, the rule, or its run ending first).
+A prompt raised in the assistant or a thread under it by a **routine run** (one a routine started,
+in a thread of its own or with a message to the assistant, with nobody there: its message is marked
+`routine`, which a message that waits in the queue keeps, unless something of yours is queued with
+it) is denied if nobody answers it within the profile's expiry (30 minutes by default;
+`expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts raised before
+this, ones the user's own turns raise, and project tasks' (even ones an automation started) wait as
+they always did. Each call a rule asked about or blocked goes in the assistant's **Actions** tab
+(`GET /api/profiles/<id>/approval-log`): what it was called with, the rule, how it ended (allowed,
+denied, expired or blocked) and who answered (you on the board, a notification, nobody in time, the
+mode, the rule, or its run ending first).
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
@@ -1902,8 +1903,22 @@ new GitHub issue to triage. Each one has a trigger and an action, can be switche
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; or a **webhook**: a POST to
-  `/api/hooks/<id>/<token>` on the host.
+  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 101:
+  five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
+  the host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
+  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 101: it runs once, late if the server was down then,
+  and turns itself off); or a **webhook**: a POST to `/api/hooks/<id>/<token>` on the host.
+- **Before each run** (API 101): **active hours** (a scheduled run outside them waits for them to
+  start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
+  command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
+  exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
+  the run as having nothing to do; any other exit fails it), and a **budget** a day in dollars
+  (from the cost of its runs' agents today, in the host's time zone: once it's spent, runs are
+  skipped and say so; Run now isn't held to it). A routine's runs from the last two days that woke
+  its assistant are kept past the history limit, so a busy one's skipped deliveries can't push today's
+  costs out. A precheck runs in a task of its own once the run is recorded, so a webhook sender that
+  hangs up (GitHub waits 10 seconds) doesn't cancel it; a routine's precheck runs only in the
+  assistant's own workspace, not one that's become a symlink.
 - **Actions.** Create a task in the project from a template: title, description, type (code or
   scratch), labels (plan, artifact, diagram), agent config, model, effort, To do or Backlog, and whether to
   start its agent. Or send a message to one of the project's tasks (to its agent as it works, if
@@ -1973,6 +1988,33 @@ marked as interrupted (it may or may not have made its task) and isn't run again
 deliveries wait in the database and run after a restart. A time of day that the clocks skip
 (daylight saving starts) runs when they've gone forward; one they repeat runs once. An archived
 project's schedules don't run until it's unarchived.
+
+**Routines** (API 101) are a profile's automations, on the assistant's **Routines** tab
+(`/api/profiles/<id>/automations`): they have no project, and their one action is
+`message_assistant`, which wakes the profile's assistant (on the host the routine is on). By
+default (`mode: fresh`) each run works in a thread of its own under the assistant (`task_type`
+`routine`, `parent_id` the assistant, keyed `A-<n>` after it), in the assistant's workspace with its
+config, model, permission mode, skills and MCP servers, on Claude Code or Codex. When its agent
+stops, its last message is posted in the assistant's thread as a report (a `report` message), unless
+it's `NO_REPLY` (on its own or as its last line) or empty: a quiet run says nothing. A run that
+failed, or asks the user something, is posted too. The assistant reads the reports it hasn't seen
+with your next message, so a routine's work stays out of its context. A routine's run is recorded
+with how its agent ended (`outcome`: quiet, reported, asked, stopped or failed) and what it cost;
+the tab shows each routine's next run, last result, cost today and in all, and Run now, pause, edit
+and delete. While a run's thread is still working (or waiting for its usage limit to reset), the
+next scheduled one is skipped. Routine threads are off the boards and the task lists, open from
+their report or run by their link, and are deleted 14 days after their last activity, whatever
+their status (done, failed, stopped or left asking; their runs and reports stay). With
+`mode: thread` the message goes to the assistant's own thread instead, as `send_to_task` does, and
+the run is charged what the assistant's run that takes the message in costs, toward its budget. The
+message carries its routine run with it, whether it starts a run, is steered into the one going or
+waits in the queue (also when a run ends without taking in a steered message, which is queued again
+for the next), so the run that actually takes it in is the one charged. A run that takes in several
+routines' messages splits its cost evenly between them; the user's messages in the same run aren't
+taken out. The automation tools take
+routines too (`routines: true`, or an action of kind `message_assistant`; the assistant's own calls
+are about its routines by default), for the caller's own profile only, and changing one asks the
+user as for any automation. The assistant is told to make "remind me…" an *at* routine.
 
 **Reaching the webhook.** The board usually listens on localhost or a LAN, where GitHub can't
 reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the project:

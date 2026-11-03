@@ -138,6 +138,7 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}/setup-thread", post(start_setup_thread))
         .route("/projects/{id}/system-prompt", get(system_prompt_preview))
         .route("/projects/{id}/automations", get(automations::list_handler).post(automations::create_handler))
+        .route("/profiles/{id}/automations", get(automations::list_routines_handler).post(automations::create_routine_handler))
         .route(
             "/automations/{id}",
             get(automations::get_handler).patch(automations::update_handler).delete(automations::delete_handler),

@@ -9,7 +9,7 @@ import {
   hostCompat,
   hostSupports,
   isScratch,
-  isAssistant,
+  isAssistants,
   hasAssistant,
   wsUrl,
   type ClaudeConfig,
@@ -723,7 +723,8 @@ export function connectEvents() {
   };
 }
 
-type AutomationListener = (hostId: string, projectId: string, automationId: string) => void;
+/** `projectId` is null for a profile's routine, whose profile is `profileId` (API 101). */
+type AutomationListener = (hostId: string, projectId: string | null, automationId: string, profileId?: string) => void;
 /** Told when a task's checkpoints change (API 70): a turn's was taken, or it was rewound. */
 type CheckpointListener = (hostId: string, taskId: string) => void;
 const checkpointListeners = new Set<CheckpointListener>();
@@ -734,7 +735,7 @@ export function onCheckpoints(fn: CheckpointListener) {
   };
 }
 
-/** Told when a profile's approval rules (`rules`) or action log (`log`) change on a host (API 101). */
+/** Told when a profile's approval rules (`rules`) or action log (`log`) change on a host (API 102). */
 type ApprovalRulesListener = (hostId: string, profileId: string, what: "rules" | "log") => void;
 const approvalRulesListeners = new Set<ApprovalRulesListener>();
 export function onApprovalRules(fn: ApprovalRulesListener) {
@@ -804,7 +805,7 @@ export function handleEvent(ev: any) {
       s.loadHostSettings(h);
       break;
     case "automations_changed":
-      for (const fn of automationListeners) fn(h, ev.project_id, ev.automation_id);
+      for (const fn of automationListeners) fn(h, ev.project_id ?? null, ev.automation_id, ev.profile_id);
       break;
     case "approval_rules":
     case "approval_log":
@@ -895,7 +896,7 @@ export function taskKey(t: Task, projects: Project[]) {
 
 /** What goes before a task's number: its project's key, `G` for a group task, or `S` for a scratch task. */
 export const keyPrefix = (t: Task, project?: Project) =>
-  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistant(t) ? "A" : "T");
+  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistants(t) ? "A" : "T");
 
 /** A group task: in no project, it plans the work of its group's projects. */
 export const isGroupTask = (t: Task) => t.kind === "task" && !t.project_id && !!t.group_name;

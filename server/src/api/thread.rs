@@ -97,7 +97,7 @@ fn rules_view(c: &rusqlite::Connection, profile_id: &str) -> anyhow::Result<Valu
     }))
 }
 
-/// `GET /profiles/{id}/approval-rules` (API 101): what the profile's assistant may do outside the
+/// `GET /profiles/{id}/approval-rules` (API 102): what the profile's assistant may do outside the
 /// board, asks first or never does (see agent/approval_rules.rs).
 pub(super) async fn get_approval_rules(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let c = s.db();
@@ -118,7 +118,7 @@ pub(super) struct RulesBody {
     reset: bool,
 }
 
-/// `POST /profiles/{id}/approval-rules` (API 101) with `{rules, expiry_minutes}` (either may be left
+/// `POST /profiles/{id}/approval-rules` (API 102) with `{rules, expiry_minutes}` (either may be left
 /// out, keeping it as it is), or `{reset: true}` for the defaults. They hold from the next run on.
 pub(super) async fn set_approval_rules(State(s): State<Shared>, Path(id): Path<String>, Json(b): Json<RulesBody>) -> ApiResult<Json<Value>> {
     let c = s.db();
@@ -144,7 +144,7 @@ pub(super) struct LogQuery {
     limit: Option<i64>,
 }
 
-/// `GET /profiles/{id}/approval-log` (API 101): the calls the profile's rules asked about or turned
+/// `GET /profiles/{id}/approval-log` (API 102): the calls the profile's rules asked about or turned
 /// away, newest first (see approval_rules::Action).
 pub(super) async fn approval_log(State(s): State<Shared>, Path(id): Path<String>, Query(q): Query<LogQuery>) -> ApiResult<Json<Value>> {
     let c = s.db();
@@ -415,7 +415,7 @@ pub(super) struct ResolveBody {
     /// The answers to a question, or how a plan is approved or what to change in it (API 64).
     #[serde(flatten)]
     reply: permissions::Reply,
-    /// `push` for an answer from a notification, which the hub passes on (API 101), for the action log.
+    /// `push` for an answer from a notification, which the hub passes on (API 102), for the action log.
     #[serde(default)]
     via: Option<String>,
 }

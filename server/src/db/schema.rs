@@ -806,6 +806,30 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=79; COMMIT;", crate::devices::TABLE))?;
     }
     if version < 80 {
+        // Routines: automations that belong to a profile rather than a project (see
+        // integrations/automations.rs). SQLite can't drop NOT NULL, so the table is rebuilt, with
+        // foreign keys off so dropping the old one doesn't take the runs with it; ids, runs and
+        // every column are kept, and each automation's profile is its project's.
+        let has = |table: &str, col: &str| -> rusqlite::Result<bool> {
+            conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", [table, col], |r| r.get(0))
+        };
+        let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V80 };
+        // The routines' runs whose messages are in the one queued on a thread (see db::Queued::routine_runs).
+        let queued = if has("tasks", "queued_routine_runs")? { "" } else { "ALTER TABLE tasks ADD COLUMN queued_routine_runs TEXT;" };
+        let mut runs = String::new();
+        for col in ["outcome TEXT", "cost_usd REAL", "agent_run_id TEXT"] {
+            if !has("automation_runs", col.split(' ').next().unwrap())? {
+                runs.push_str(&format!("ALTER TABLE automation_runs ADD COLUMN {col};"));
+            }
+        }
+        conn.execute_batch(&format!(
+            "PRAGMA foreign_keys=OFF; BEGIN; {rebuild} {runs} {queued}
+             CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
+             CREATE INDEX IF NOT EXISTS automation_runs_agent_run ON automation_runs(agent_run_id);
+             PRAGMA user_version=80; COMMIT; PRAGMA foreign_keys=ON;"
+        ))?;
+    }
+    if version < 81 {
         // When a prompt from a routine run is denied if nobody has answered it, and the approval
         // rule that asked it (see agent/approval_rules.rs); the notifications' answer tokens stop at
         // the same time; and the action log of the calls that hit an ask or never rule. Columns are
@@ -842,7 +866,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              );
              CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, created_at);
              CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
-             PRAGMA user_version=80; COMMIT;",
+             PRAGMA user_version=81; COMMIT;",
         )?;
     }
     Ok(conn)
@@ -850,7 +874,39 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 80;
+pub const VERSION: i64 = 81;
+
+/// Automations get a profile, and a project only if they're a project's (none for a profile's
+/// routine), and the conditions a run is checked against first: the hours it may run in, a
+/// command to run first, and a budget a day. Their runs get how a routine's agent ended and what it cost.
+const SCHEMA_V80: &str = r#"
+CREATE TABLE automations_v80 (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  trigger TEXT NOT NULL,
+  action TEXT NOT NULL,
+  token TEXT NOT NULL,
+  secret TEXT,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  active_hours TEXT,
+  precheck TEXT,
+  budget_usd REAL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO automations_v80 (id, profile_id, project_id, name, enabled, trigger, action, token, secret, next_run_at, last_run_at, created_at, updated_at)
+  SELECT a.id, p.profile_id, a.project_id, a.name, a.enabled, a.trigger, a.action, a.token, a.secret, a.next_run_at, a.last_run_at, a.created_at, a.updated_at
+  FROM automations a JOIN projects p ON p.id = a.project_id;
+DROP TABLE automations;
+ALTER TABLE automations_v80 RENAME TO automations;
+CREATE INDEX IF NOT EXISTS automations_project ON automations(project_id);
+CREATE INDEX IF NOT EXISTS automations_profile ON automations(profile_id);
+DELETE FROM automation_runs WHERE automation_id NOT IN (SELECT id FROM automations);
+"#;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

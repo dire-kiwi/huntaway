@@ -10,10 +10,13 @@ import {
   LABELS_API,
   taskLabels,
   FILTER_OPS,
+  hasRoutines,
   MODEL_ALIASES,
   WEEKDAYS,
+  type ActiveHours,
   type Automation,
   type AutomationFilter,
+  type AutomationAction,
   type AutomationInput,
   type AutomationRun,
   type AutomationRunStatus,
@@ -28,7 +31,14 @@ import { openTask } from "../../router";
 import { onAutomationsChanged, useAvailableConfigs, useHost, useStore } from "../../store";
 import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useAsyncAction, useConfirm, useDraft } from "../ui";
 
-type TimeZone = { name: string | null; offset: string };
+export type TimeZone = { name: string | null; offset: string };
+
+/** What an automation belongs to: a project, or (with none) a profile, whose routines wake its assistant. */
+export interface Owner {
+  hostId: string;
+  profileId: string;
+  project?: Project;
+}
 
 const DAY_LABELS: Record<Weekday, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
 
@@ -99,14 +109,24 @@ export function filterText(f: AutomationFilter) {
 export function triggerText(t: AutomationTrigger, tz: TimeZone | null) {
   if (t.kind === "interval") return everyText(t.every_minutes);
   if (t.kind === "daily") return `At ${t.time} on ${daysText(t.weekdays)}${tz?.name ? ` (${tz.name})` : ""}`;
+  if (t.kind === "cron") return `Cron ${t.expr}${tz?.name ? ` (${tz.name})` : ""}`;
+  if (t.kind === "at") return `Once, ${localTime(t.at)}`;
   const parts = ["Webhook"];
   if (t.filters.length) parts.push(`when ${t.filters.map(filterText).join(" and ")}`);
   if (t.coalesce_seconds) parts.push(`coalescing ${t.coalesce_seconds}s`);
   return parts.join(", ");
 }
 
+/** The hours a run may start in, e.g. "08:00–22:00 on weekdays". */
+export function activeText(h: ActiveHours) {
+  return `${h.start}–${h.end}${h.weekdays.length ? ` on ${daysText(h.weekdays)}` : ""}`;
+}
+
+/** Dollars, to the cent (or a tenth of one, under a dollar). */
+export const usd = (n: number) => `$${n < 1 && n > 0 ? n.toFixed(3).replace(/0$/, "") : n.toFixed(2)}`;
+
 /** "in 5m", "in 3h": how long until a time. */
-function timeUntil(iso: string) {
+export function timeUntil(iso: string) {
   const s = Math.max(0, (new Date(iso).getTime() - Date.now()) / 1000);
   if (s < 60) return "in under a minute";
   if (s < 3600) return `in ${Math.round(s / 60)}m`;
@@ -114,7 +134,7 @@ function timeUntil(iso: string) {
   return `in ${Math.round(s / 86400)}d`;
 }
 
-const localTime = (iso: string) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+export const localTime = (iso: string) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /** A project's automations: tasks created, or messages sent to a task, on a schedule or from a webhook. */
 export function ProjectAutomations({ project }: { project: Project }) {
@@ -186,7 +206,7 @@ export function ProjectAutomations({ project }: { project: Project }) {
       {confirm.dialog}
       {editing && (
         <AutomationEditor
-          project={project}
+          owner={{ hostId, profileId: project.profile_id, project }}
           automation={editing === "new" ? null : editing}
           tz={tz}
           onSaved={reload}
@@ -198,7 +218,26 @@ export function ProjectAutomations({ project }: { project: Project }) {
   );
 }
 
-function RunStatus({ run }: { run: AutomationRun }) {
+const OUTCOME_LABEL: Record<NonNullable<AutomationRun["outcome"]>, string> = {
+  quiet: "Quiet",
+  reported: "Reported",
+  asked: "Waiting for you",
+  stopped: "Stopped",
+  failed: "Failed",
+};
+
+const OUTCOME_STYLE: Record<NonNullable<AutomationRun["outcome"]>, string> = {
+  quiet: "text-faint",
+  reported: "text-emerald-400",
+  asked: "text-st-attention",
+  stopped: "text-muted",
+  failed: "text-red-400",
+};
+
+/** How a run went: for a routine's run in a thread of its own, how its agent ended (or that it's working). */
+export function RunStatus({ run }: { run: AutomationRun }) {
+  if (run.status === "ok" && run.outcome) return <span className={clsx("shrink-0", OUTCOME_STYLE[run.outcome])}>{OUTCOME_LABEL[run.outcome]}</span>;
+  if (run.status === "ok" && run.task?.running) return <span className="shrink-0 text-st-progress">Working</span>;
   return <span className={clsx("shrink-0", STATUS_STYLE[run.status])}>{STATUS_LABEL[run.status]}</span>;
 }
 
@@ -299,7 +338,7 @@ function AutomationRow({
 }
 
 /** An automation's latest runs and deliveries. */
-function RunHistory({ hostId, automation }: { hostId: string; automation: Automation }) {
+export function RunHistory({ hostId, automation }: { hostId: string; automation: Automation }) {
   const [runs, setRuns] = useState<AutomationRun[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const load = useCallback(
@@ -332,6 +371,7 @@ function RunHistory({ hostId, automation }: { hostId: string; automation: Automa
             {r.event && <span className="shrink-0 font-mono text-faint">{r.event}</span>}
             {r.count > 1 && <span className="shrink-0 text-faint">×{r.count}</span>}
             <RunTask run={r} />
+            {!!r.cost_usd && <span className="ml-auto shrink-0 text-faint">{usd(r.cost_usd)}</span>}
           </div>
           {r.detail && r.status !== "duplicate" && <div className="pl-[8.5rem] text-faint break-words">{r.detail}</div>}
         </div>
@@ -348,7 +388,10 @@ const UNIT_MINUTES: Record<Unit, number> = { minutes: 1, hours: 60, days: 1440 }
 interface Draft {
   name: string;
   enabled: boolean;
-  when: "interval" | "daily" | "webhook";
+  when: AutomationTrigger["kind"];
+  cron: string;
+  /** A `datetime-local` value, in this browser's time zone. */
+  at: string;
   every: number;
   unit: Unit;
   time: string;
@@ -362,7 +405,7 @@ interface Draft {
   /** A new signing secret ("" leaves it as it is). */
   secret: string;
   removeSecret: boolean;
-  does: "create_task" | "send_to_task";
+  does: AutomationAction["kind"];
   title: string;
   description: string;
   taskType: TaskType | "";
@@ -375,7 +418,22 @@ interface Draft {
   start: boolean;
   taskId: string;
   message: string;
+  mode: "fresh" | "thread";
+  active: boolean;
+  activeStart: string;
+  activeEnd: string;
+  activeDays: Weekday[];
+  precheck: string;
+  /** Dollars a day, or "" for no limit. */
+  budget: string;
 }
+
+/** A `datetime-local` value for a time, in this browser's time zone. */
+const localInput = (iso: string) => {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
 
 const listText = (v: AutomationFilter["value"]) => (Array.isArray(v) ? v.join(", ") : (v ?? ""));
 const splitList = (s: string) =>
@@ -384,11 +442,13 @@ const splitList = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-function draftOf(a: Automation | null): Draft {
+function draftOf(a: Automation | null, routine = false): Draft {
   const d: Draft = {
     name: "",
     enabled: true,
     when: "daily",
+    cron: "0 8 * * mon-fri",
+    at: localInput(new Date(Date.now() + 3600_000).toISOString()),
     every: 1,
     unit: "days",
     time: "09:00",
@@ -411,7 +471,15 @@ function draftOf(a: Automation | null): Draft {
     start: false,
     taskId: "",
     message: "",
+    mode: "fresh",
+    active: false,
+    activeStart: "08:00",
+    activeEnd: "22:00",
+    activeDays: [],
+    precheck: "",
+    budget: "",
   };
+  if (routine) d.does = "message_assistant";
   if (!a) return d;
   d.name = a.name;
   d.enabled = a.enabled;
@@ -423,6 +491,10 @@ function draftOf(a: Automation | null): Draft {
   } else if (t.kind === "daily") {
     d.time = t.time;
     d.weekdays = t.weekdays.length ? t.weekdays : [...WEEKDAYS];
+  } else if (t.kind === "cron") {
+    d.cron = t.expr;
+  } else if (t.kind === "at") {
+    d.at = localInput(t.at);
   } else {
     for (const f of t.filters) {
       const simple = SIMPLE_FILTERS.find((p) => p === f.path);
@@ -445,20 +517,35 @@ function draftOf(a: Automation | null): Draft {
     d.effort = act.effort ?? "";
     d.status = act.status;
     d.start = act.start;
-  } else {
+  } else if (act.kind === "send_to_task") {
     d.taskId = act.task_id;
     d.message = act.message;
+  } else {
+    d.message = act.message;
+    d.mode = act.mode;
   }
+  if (a.active_hours) {
+    d.active = true;
+    d.activeStart = a.active_hours.start;
+    d.activeEnd = a.active_hours.end;
+    d.activeDays = a.active_hours.weekdays;
+  }
+  d.precheck = a.precheck ?? "";
+  d.budget = a.budget_usd ? String(a.budget_usd) : "";
   return d;
 }
 
-function inputOf(d: Draft, existing: Automation | null, labelling: boolean): AutomationInput {
+function inputOf(d: Draft, existing: Automation | null, labelling: boolean, routines: boolean): AutomationInput {
   const trigger: AutomationInput["trigger"] =
     d.when === "interval"
       ? { kind: "interval", every_minutes: Math.round(d.every * UNIT_MINUTES[d.unit]) }
       : d.when === "daily"
         ? { kind: "daily", time: d.time, weekdays: d.weekdays.length === 7 ? [] : WEEKDAYS.filter((w) => d.weekdays.includes(w)) }
-        : {
+        : d.when === "cron"
+          ? { kind: "cron", expr: d.cron.trim() }
+          : d.when === "at"
+            ? { kind: "at", at: new Date(d.at).toISOString() }
+            : {
             kind: "webhook",
             filters: [
               ...SIMPLE_FILTERS.filter((p) => splitList(d.simple[p]).length).map((p): AutomationFilter => ({ path: p, op: "in", value: splitList(d.simple[p]) })),
@@ -481,8 +568,16 @@ function inputOf(d: Draft, existing: Automation | null, labelling: boolean): Aut
           status: d.status,
           start: d.start,
         }
-      : { kind: "send_to_task", task_id: d.taskId, message: d.message };
+      : d.does === "send_to_task"
+        ? { kind: "send_to_task", task_id: d.taskId, message: d.message }
+        : { kind: "message_assistant", message: d.message, mode: d.mode };
   const b: AutomationInput = { name: d.name, enabled: d.enabled, trigger, action };
+  // A host before API 101 has none of these.
+  if (routines) {
+    b.active_hours = d.active ? { start: d.activeStart, end: d.activeEnd, weekdays: d.activeDays.length === 7 ? [] : WEEKDAYS.filter((w) => d.activeDays.includes(w)) } : null;
+    b.precheck = d.precheck.trim() || null;
+    b.budget_usd = Number(d.budget) > 0 ? Number(d.budget) : null;
+  }
   if (d.when === "webhook") {
     // As it's typed: GitHub signs with it as it is (the server refuses one with spaces around it).
     if (d.secret.trim()) b.secret = d.secret;
@@ -516,27 +611,32 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
 
 const selectClass = "h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none";
 
-function AutomationEditor({
-  project,
+export function AutomationEditor({
+  owner,
   automation,
   tz,
   onSaved,
   onClose,
 }: {
-  project: Project;
+  owner: Owner;
   automation: Automation | null;
   tz: TimeZone | null;
   onSaved: () => void;
   onClose: () => void;
 }) {
-  const hostId = project.host_id;
-  const [d, setD] = useState<Draft>(() => draftOf(automation));
+  const { hostId, project } = owner;
+  // A profile's routine: it wakes the assistant, and makes no tasks.
+  const routine = !project;
+  const what = routine ? "routine" : "automation";
+  const [d, setD] = useState<Draft>(() => draftOf(automation, routine));
   const [saved, setSaved] = useState<Automation | null>(automation);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
-  const configs = useAvailableConfigs(hostId, project.profile_id, project);
-  const labelling = hostSupports(useHost(hostId), LABELS_API);
+  const configs = useAvailableConfigs(hostId, owner.profileId, project);
+  const host = useHost(hostId);
+  const labelling = hostSupports(host, LABELS_API);
+  const routines = hasRoutines(host);
   // A host before API 71 makes a task of one label's type, rather than a scratch or code task with it.
   const toggleLabel = (l: DocumentType) =>
     setD((x) =>
@@ -547,7 +647,7 @@ function AutomationEditor({
   const tasks = useStore(
     useShallow((s) =>
       Object.values(s.tasks)
-        .filter((t) => t.host_id === hostId && t.project_id === project.id && t.kind === "task")
+        .filter((t) => !!project && t.host_id === hostId && t.project_id === project.id && t.kind === "task")
         .sort((a, b) => b.number - a.number),
     ),
   );
@@ -556,16 +656,22 @@ function AutomationEditor({
     if (!d.name.trim()) return setErr("Give it a name.");
     if (d.does === "create_task" && !d.title.trim()) return setErr("The task needs a title.");
     if (d.does === "send_to_task" && !d.taskId) return setErr("Pick the task to message.");
-    if (d.does === "send_to_task" && !d.message.trim()) return setErr("Write the message.");
+    if (d.does !== "create_task" && !d.message.trim()) return setErr("Write the message.");
+    if (d.when === "cron" && d.cron.trim().split(/\s+/).length !== 5 && !d.cron.trim().startsWith("@")) return setErr("A cron expression has five fields.");
+    if (d.when === "at" && !(new Date(d.at).getTime() > Date.now())) return setErr("Pick a time to come.");
     setBusy(true);
     try {
-      const b = inputOf(d, saved, labelling);
-      const a = saved ? await api.updateAutomation(hostId, saved.id, b) : await api.createAutomation(hostId, project.id, b);
+      const b = inputOf(d, saved, labelling, routines);
+      const a = saved
+        ? await api.updateAutomation(hostId, saved.id, b)
+        : project
+          ? await api.createAutomation(hostId, project.id, b)
+          : await api.createRoutine(hostId, owner.profileId, b);
       onSaved();
       // A new webhook stays open, to show its URL, and the secret it was given until it closes.
       if (!saved && a.trigger.kind === "webhook") {
         setSaved(a);
-        setD({ ...draftOf(a), secret: d.secret });
+        setD({ ...draftOf(a, routine), secret: d.secret });
         setBusy(false);
         return;
       }
@@ -579,6 +685,7 @@ function AutomationEditor({
   const vars = webhook
     ? ["{{body.issue.title}}", "{{body.issue.html_url}}", "{{body.issue.body}}", "{{event}}", "{{action}}", "{{labels}}", "{{count}}"]
     : ["{{date}}", "{{time}}", "{{automation}}"];
+  if (d.precheck.trim()) vars.push("{{precheck}}");
   const templateHint = (
     <>
       Templates take values like {vars.map((v, i) => (
@@ -587,15 +694,15 @@ function AutomationEditor({
           <code>{v}</code>
         </span>
       ))}
-      .{webhook && " A webhook's values are wrapped in <untrusted-data> tags, and the agent is told not to follow instructions in them."}
+      .{(webhook || d.precheck.trim()) && " A webhook's values and the precheck's output are wrapped in <untrusted-data> tags, and the agent is told not to follow instructions in them."}
     </>
   );
   return (
-    <Modal title={saved ? `Edit ${saved.name}` : "New automation"} onClose={onClose} onSubmit={save} width="max-w-2xl">
+    <Modal title={saved ? `Edit ${saved.name}` : `New ${what}`} onClose={onClose} onSubmit={save} width="max-w-2xl">
       <div className="space-y-4">
         <div className="grid grid-cols-[1fr_auto] items-end gap-3">
           <Field label="Name">
-            <Input value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="Weekly dependency update" autoFocus={!saved} />
+            <Input value={d.name} onChange={(e) => set("name", e.target.value)} placeholder={routine ? "Morning inbox check" : "Weekly dependency update"} autoFocus={!saved} />
           </Field>
           <div className="pb-1.5">
             <Toggle checked={d.enabled} onChange={(v) => set("enabled", v)} label="On" />
@@ -611,6 +718,8 @@ function AutomationEditor({
               options={[
                 { id: "daily", label: "At a time of day" },
                 { id: "interval", label: "Every…" },
+                ...(routines || d.when === "cron" ? [{ id: "cron" as const, label: "Cron" }] : []),
+                ...(routines || d.when === "at" ? [{ id: "at" as const, label: "Once" }] : []),
                 { id: "webhook", label: "From a webhook" },
               ]}
             />
@@ -660,22 +769,70 @@ function AutomationEditor({
               </div>
             </div>
           )}
-          {webhook && <WebhookFields project={project} draft={d} saved={saved} set={set} onRotated={(a) => setSaved(a)} />}
+          {d.when === "cron" && (
+            <div className="space-y-2">
+              <Input className="font-mono" aria-label="Cron expression" value={d.cron} onChange={(e) => set("cron", e.target.value)} placeholder="0 8 * * mon-fri" />
+              <div className="text-[12px] text-faint">
+                Five fields: minute, hour, day of month, month, day of week (e.g. <code>*/30 9-17 * * mon-fri</code>), in the host's time zone
+                {tz ? ` (${[tz.name, tz.offset].filter(Boolean).join(", ")})` : ""}. A run missed by more than 10 minutes is skipped.
+              </div>
+            </div>
+          )}
+          {d.when === "at" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-[13px]">
+                At
+                <div className="w-60">
+                  <Input type="datetime-local" aria-label="At" value={d.at} onChange={(e) => set("at", e.target.value)} />
+                </div>
+              </div>
+              <div className="text-[12px] text-faint">It runs once (late, if the server was down then), and then turns itself off.</div>
+            </div>
+          )}
+          {webhook && <WebhookFields hostId={hostId} draft={d} saved={saved} set={set} onRotated={(a) => setSaved(a)} />}
         </div>
 
         <div className="space-y-3 rounded-lg border border-line/70 p-3">
           <div className="flex items-center gap-3">
             <span className="text-xs font-medium text-muted">Do</span>
-            <Segmented
-              value={d.does}
-              onChange={(v) => set("does", v)}
-              options={[
-                { id: "create_task", label: "Create a task" },
-                { id: "send_to_task", label: "Message a task" },
-              ]}
-            />
+            {routine ? (
+              <Segmented
+                value={d.mode}
+                onChange={(v) => set("mode", v)}
+                options={[
+                  { id: "fresh", label: "Run in a fresh thread" },
+                  { id: "thread", label: "Message the assistant" },
+                ]}
+              />
+            ) : (
+              <Segmented
+                value={d.does}
+                onChange={(v) => set("does", v)}
+                options={[
+                  { id: "create_task", label: "Create a task" },
+                  { id: "send_to_task", label: "Message a task" },
+                ]}
+              />
+            )}
           </div>
-          {d.does === "create_task" ? (
+          {d.does === "message_assistant" ? (
+            <>
+              <div className="text-[12px] text-faint">
+                {d.mode === "fresh"
+                  ? "The assistant works on it in a thread of its own, with its workspace, memory and tools. Its last message is posted to the assistant's thread as a report, unless it replies NO_REPLY (there's nothing new): then the run is quiet."
+                  : "The message goes straight into the assistant's thread, as if sent there, and it replies there."}
+              </div>
+              <Field label={d.mode === "fresh" ? "What to do" : "Message"} hint={templateHint}>
+                <Textarea
+                  rows={5}
+                  className="font-mono text-[12px]"
+                  value={d.message}
+                  onChange={(e) => set("message", e.target.value)}
+                  placeholder={d.mode === "fresh" ? "Check my inbox for anything that needs a reply today." : "Remind me to call Sam."}
+                />
+              </Field>
+            </>
+          ) : d.does === "create_task" ? (
             <>
               <Field label="Title">
                 <Input value={d.title} onChange={(e) => set("title", e.target.value)} placeholder={webhook ? "Triage: {{body.issue.title}}" : "Update dependencies ({{date}})"} />
@@ -779,11 +936,12 @@ function AutomationEditor({
           ) : (
             <>
               <Field label="Task" hint="One of this project's tasks. Messages to a task whose agent is running go to it as it works.">
+                {/* (Only a project's automations message its tasks.) */}
                 <select className={selectClass} value={d.taskId} onChange={(e) => set("taskId", e.target.value)}>
                   <option value="">Pick a task…</option>
                   {tasks.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {project.key}-{t.number} {t.title}
+                      {project?.key}-{t.number} {t.title}
                       {t.status === "done" ? " (done)" : ""}
                     </option>
                   ))}
@@ -801,6 +959,7 @@ function AutomationEditor({
             </>
           )}
         </div>
+        {routines && <GuardFields draft={d} set={set} routine={routine} />}
         <ModalFooter className="space-y-2">
           {err && <div className="text-xs text-red-400">{err}</div>}
           <div className="flex items-center justify-end gap-2">
@@ -809,7 +968,7 @@ function AutomationEditor({
               {saved && !automation ? "Done" : "Cancel"}
             </Button>
             <Button variant="primary" disabled={busy} onClick={save}>
-              {saved ? "Save automation" : "Add automation"}
+              {saved ? `Save ${what}` : `Add ${what}`}
             </Button>
           </div>
         </ModalFooter>
@@ -818,21 +977,70 @@ function AutomationEditor({
   );
 }
 
+/** What a run is checked against first (API 101): the hours it may start in, a precheck command and a budget a day. */
+function GuardFields({ draft: d, set, routine }: { draft: Draft; set: <K extends keyof Draft>(k: K, v: Draft[K]) => void; routine: boolean }) {
+  return (
+    <div className="space-y-3 rounded-lg border border-line/70 p-3" data-testid="guards">
+      <span className="text-xs font-medium text-muted">Before each run</span>
+      <div className="space-y-2">
+        <Toggle checked={d.active} onChange={(v) => set("active", v)} label="Only in active hours" />
+        {d.active && (
+          <div className="flex flex-wrap items-center gap-2 pl-1 text-[13px]">
+            From
+            <div className="w-32">
+              <Input type="time" aria-label="Active from" value={d.activeStart} onChange={(e) => set("activeStart", e.target.value)} />
+            </div>
+            to
+            <div className="w-32">
+              <Input type="time" aria-label="Active until" value={d.activeEnd} onChange={(e) => set("activeEnd", e.target.value)} />
+            </div>
+            on
+            {WEEKDAYS.map((w) => {
+              const on = d.activeDays.includes(w);
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => set("activeDays", on ? d.activeDays.filter((x) => x !== w) : [...d.activeDays, w])}
+                  className={clsx("h-7 w-10 rounded-md border text-[12px]", on ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-faint hover:text-muted")}
+                >
+                  {DAY_LABELS[w]}
+                </button>
+              );
+            })}
+            <div className="w-full text-[12px] text-faint">A scheduled run waits for them; a delivery outside them is skipped. No day picked means every day.</div>
+          </div>
+        )}
+      </div>
+      <Field
+        label="Precheck"
+        hint={`A bash command run first, in ${routine ? "the assistant's workspace" : "the project's folder"}: exit 1 skips the run (nothing new), and what it prints is {{precheck}}. Any other exit fails the run.`}
+      >
+        <Input className="font-mono text-[12px]" value={d.precheck} onChange={(e) => set("precheck", e.target.value)} placeholder="./new-mail.sh || exit 1" />
+      </Field>
+      <Field label="Budget a day (USD)" hint="Once its runs today have cost this much, it's skipped until tomorrow. Blank for no limit.">
+        <div className="w-32">
+          <Input type="number" min={0} step="0.05" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="no limit" />
+        </div>
+      </Field>
+    </div>
+  );
+}
+
 /** A webhook's URL, signing secret, filters and coalescing. */
 function WebhookFields({
-  project,
+  hostId,
   draft: d,
   saved,
   set,
   onRotated,
 }: {
-  project: Project;
+  hostId: string;
   draft: Draft;
   saved: Automation | null;
   set: <K extends keyof Draft>(k: K, v: Draft[K]) => void;
   onRotated: (a: Automation) => void;
 }) {
-  const hostId = project.host_id;
   const host = useHost(hostId);
   const publicUrl = useStore((s) => s.hostSettings[hostId]?.public_url ?? "");
   // Follows the saved address until it's edited, so a refresh of the host's settings doesn't overwrite what's typed.

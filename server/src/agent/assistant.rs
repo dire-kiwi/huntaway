@@ -21,6 +21,21 @@ use crate::state::{ApiError, ApiResult, Shared};
 /// (`?local=1`) and passes its agents' board tool calls up its link (see hosts/uplink.rs).
 pub const ASSISTANT_HOST_API: u32 = 98;
 
+/// The assistant whose workspace and memory a run of `task` has: the assistant's own, and a routine
+/// thread's its parent's (`parent`), whose workspace it has to be in. None for any other thread.
+pub fn whose_workspace(task: &Task, parent: Option<&Task>) -> anyhow::Result<Option<Task>> {
+    if task.is_assistant() {
+        return Ok(Some(task.clone()));
+    }
+    if !task.is_routine() {
+        return Ok(None);
+    }
+    match parent {
+        Some(p) if p.is_assistant() && p.work_dir == task.work_dir => Ok(Some(p.clone())),
+        _ => anyhow::bail!("this routine thread's assistant, or its workspace, is gone"),
+    }
+}
+
 /// Where an assistant works, relative to the data dir (see documents::work_dir), so it moves with it.
 pub fn work_dir(task_id: &str) -> String {
     format!("assistants/{task_id}")

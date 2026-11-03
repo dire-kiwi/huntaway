@@ -14,12 +14,19 @@ fn how(source: &str, event: Option<&str>) -> String {
     }
 }
 
-/// Does what the automation does, for run `run_id`, and records how it went.
+/// Does what the automation does, for run `run_id`, once it's passed its checks (see `guards`),
+/// and records how it went.
 pub(super) async fn run_action(s: &Shared, a: &Automation, run_id: &str, source: &str, delivery: Option<&Delivery>, count: i64) -> Option<Run> {
-    let vars = Vars { automation: a, source, delivery, count, now: Utc::now() };
+    let now = Utc::now();
     let event = delivery.and_then(Delivery::event_label);
-    let result = act(s, a, &vars, event.as_deref());
-    if let Err((_, e)) = &result {
+    let result = match guards(s, a, source, now).await {
+        Ok(precheck) => {
+            let vars = Vars { automation: a, source, delivery, count, now, precheck: precheck.as_deref() };
+            act(s, a, run_id, &vars, event.as_deref())
+        }
+        Err(o) => Err(o),
+    };
+    if let Err(Outcome::Failed(_, e)) = &result {
         tracing::warn!(automation = %a.id, "automation \"{}\" failed: {e}", a.name);
     }
     let run = {
@@ -34,15 +41,61 @@ pub(super) async fn run_action(s: &Shared, a: &Automation, run_id: &str, source:
     run
 }
 
+/// What a run checks before it does anything: its active hours, its budget, that its last run
+/// in a thread of its own is over (a run from the board is only checked against those), and
+/// its precheck, whose output it returns. Each says why it skipped the run.
+async fn guards(s: &Shared, a: &Automation, source: &str, now: DateTime<Utc>) -> Result<Option<String>, Outcome> {
+    let by_hand = source == "manual";
+    if !by_hand
+        && !matches!(a.trigger, Trigger::At { .. })
+        && let Some(hours) = a.active_hours.as_ref().filter(|h| !h.contains(now, &Local))
+    {
+        return Err(Outcome::Skipped(format!("Skipped: outside its active hours ({})", hours.text())));
+    }
+    if !by_hand && let Some(budget) = a.budget_usd {
+        let spent = routines::spent_today(&s.db(), &a.id, now, &Local).map_err(|e| Outcome::Failed(None, format!("{e:#}")))?;
+        if spent >= budget {
+            return Err(Outcome::Skipped(format!("Skipped: over budget (its runs today cost ${spent:.2}, and its budget is ${budget:.2} a day)")));
+        }
+    }
+    if !by_hand && let Some(t) = routines::still_running(&s.db(), a).map_err(|e| Outcome::Failed(None, format!("{e:#}")))? {
+        return Err(Outcome::Skipped(format!("Skipped: its last run (A-{}) is still going", t.number)));
+    }
+    match &a.precheck {
+        Some(cmd) => routines::precheck(s, a, cmd).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// `run_action` in a task of its own, waited for: the run is recorded, so a request that started it
+/// and is dropped meanwhile (a webhook sender that hung up during a slow precheck, say) can't cancel
+/// it half way, leaving it `running` with nothing done.
+pub(super) async fn run_action_detached(s: &Shared, a: &Automation, run_id: &str, source: &str, delivery: Option<&Delivery>, count: i64) -> Option<Run> {
+    let (s, a, run_id, source, delivery) = (s.clone(), a.clone(), run_id.to_string(), source.to_string(), delivery.cloned());
+    tokio::spawn(async move { run_action(&s, &a, &run_id, &source, delivery.as_ref(), count).await }).await.ok().flatten()
+}
+
 /// The task the automation's action made or messaged, or why it couldn't (with the task, if it
 /// made one but couldn't start it).
-fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<Option<String>, (Option<String>, String)> {
-    let fail = |e: ApiError| (None, e.1);
-    let project = db::get_project(&s.db(), &a.project_id).map_err(|e| (None, format!("{e:#}")))?.ok_or((None, "the project is gone".to_string()))?;
-    if project.archived_at.is_some() {
-        return Err((None, "the project is archived".into()));
-    }
+fn act(s: &Shared, a: &Automation, run_id: &str, vars: &Vars, event: Option<&str>) -> Result<Option<String>, Outcome> {
+    let fail = |e: ApiError| Outcome::Failed(None, e.1);
     let how = how(vars.source, event);
+    let project = match &a.project_id {
+        Some(id) => {
+            let p = db::get_project(&s.db(), id).map_err(|e| Outcome::Failed(None, format!("{e:#}")))?;
+            let p = p.ok_or(Outcome::Failed(None, "the project is gone".to_string()))?;
+            if p.archived_at.is_some() {
+                return Err(Outcome::Failed(None, "the project is archived".into()));
+            }
+            p
+        }
+        None => {
+            let Action::MessageAssistant { message, mode } = &a.action else {
+                return Err(Outcome::Failed(None, "a routine can only message the assistant".into()));
+            };
+            return routines::message(s, a, run_id, vars, &how, message, *mode);
+        }
+    };
     match &a.action {
         Action::CreateTask { title, description, task_type, labels, claude_config_id, model, effort, status, start } => {
             let (title, title_untrusted) = render(title, vars, Out::Title);
@@ -50,7 +103,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
             let (body, body_untrusted) = render(description, vars, Out::Text);
             let mut text = String::new();
             if title_untrusted || body_untrusted {
-                text.push_str(&untrusted_note(&a.name, title_untrusted));
+                text.push_str(&untrusted_note(vars, title_untrusted));
             }
             if !body.trim().is_empty() {
                 text.push_str(body.trim_end());
@@ -70,19 +123,20 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
             };
             let t = api::create_task_inner(s, &project.id, task).map_err(fail)?;
             if *start {
-                crate::agent::runner::send_from_routine(s, &t.id, "")
-                    .map_err(|e| (Some(t.id.clone()), format!("created the task, but couldn't start its agent: {}", e.1)))?;
+                crate::agent::runner::send(s, &t.id, "")
+                    .map_err(|e| Outcome::Failed(Some(t.id.clone()), format!("created the task, but couldn't start its agent: {}", e.1)))?;
             }
             Ok(Some(t.id))
         }
         Action::SendToTask { task_id, message } => {
             let t = target_task(&s.db(), &project, task_id).map_err(fail)?;
             let (body, untrusted) = render(message, vars, Out::Text);
-            let note = if untrusted { untrusted_note(&a.name, false) } else { String::new() };
+            let note = if untrusted { untrusted_note(vars, false) } else { String::new() };
             let text = format!("From the automation \"{}\", {how}:\n\n{note}{}", a.name, body.trim());
-            crate::agent::runner::send_from_routine(s, &t.id, &text).map_err(|e| (Some(t.id.clone()), e.1))?;
+            crate::agent::runner::send_from_agent(s, &t.id, &text).map_err(|e| Outcome::Failed(Some(t.id.clone()), e.1))?;
             Ok(Some(t.id))
         }
+        Action::MessageAssistant { .. } => Err(Outcome::Failed(None, "message_assistant is for a profile's routines".into())),
     }
 }
 
@@ -126,7 +180,7 @@ pub(super) async fn receive(s: &Shared, a: &Automation, delivery: Delivery, raw:
     if delivery.event() == Some("ping") && !filters.iter().any(takes_ping) {
         return record(Run { status: "filtered".into(), ..run }.with_detail("Ignored: GitHub's ping, sent when a webhook is added (a filter on event equal to ping takes it)"));
     }
-    let vars = Vars { automation: a, source, delivery: Some(&delivery), count: 1, now };
+    let vars = Vars { automation: a, source, delivery: Some(&delivery), count: 1, now, precheck: None };
     if let Some(why) = failed_filter(filters, &vars) {
         return record(Run { status: "filtered".into(), ..run }.with_detail(why));
     }
@@ -210,7 +264,7 @@ pub(super) async fn receive(s: &Shared, a: &Automation, delivery: Delivery, raw:
         insert_run(&c, &run)?;
     }
     changed(s, a);
-    Ok(run_action(s, a, &run.id, source, Some(&delivery), 1).await.unwrap_or(run))
+    Ok(run_action_detached(s, a, &run.id, source, Some(&delivery), 1).await.unwrap_or(run))
 }
 
 /// `POST /api/hooks/{id}/{token}`: a webhook delivery. It doesn't take the board's token: the
@@ -259,10 +313,12 @@ pub async fn webhook(State(s): State<Shared>, Path((id, token)): Path<(String, S
 fn claim_due<Tz: TimeZone>(s: &Shared, now: DateTime<Utc>, tz: &Tz) -> anyhow::Result<Vec<(Automation, Run)>> {
     let c = s.db();
     let mut st = c.prepare(
-        "SELECT a.*, p.archived_at IS NOT NULL AS archived FROM automations a JOIN projects p ON p.id=a.project_id
+        "SELECT a.*, p.archived_at IS NOT NULL AS archived FROM automations a LEFT JOIN projects p ON p.id=a.project_id
          WHERE a.enabled=1 AND a.next_run_at IS NOT NULL",
     )?;
-    let due: Vec<(Automation, bool)> = st.query_map([], |r| Ok((Automation::from_row(r)?, r.get("archived")?)))?.filter_map(Result::ok).collect();
+    // A routine has no project, so it's never archived.
+    let due: Vec<(Automation, bool)> =
+        st.query_map([], |r| Ok((Automation::from_row(r)?, r.get::<_, Option<bool>>("archived")?.unwrap_or(false))))?.filter_map(Result::ok).collect();
     drop(st);
     let mut out = Vec::new();
     for (a, archived) in due {
@@ -270,19 +326,25 @@ fn claim_due<Tz: TimeZone>(s: &Shared, now: DateTime<Utc>, tz: &Tz) -> anyhow::R
         if due_at > now {
             continue;
         }
+        let active = a.active_hours.as_ref();
         let (run, next) = match &a.trigger {
-            // An interval keeps its rhythm, unless it's missed one: then it runs once, and goes on from now.
+            // An interval keeps its rhythm, unless it's missed one: then it runs once, and goes on
+            // from now. Outside its active hours, it starts again when they do.
             Trigger::Interval { every_minutes } => {
                 let next = due_at + chrono::TimeDelta::minutes(*every_minutes as i64);
-                (true, Some(if next > now { next } else { now + chrono::TimeDelta::minutes(*every_minutes as i64) }))
+                let next = if next > now { next } else { now + chrono::TimeDelta::minutes(*every_minutes as i64) };
+                (true, align(&a.trigger, active, next, tz))
             }
-            Trigger::Daily { .. } => (now - due_at <= LATE_GRACE, next_after(&a.trigger, now, tz)),
+            Trigger::Daily { .. } | Trigger::Cron { .. } => (now - due_at <= LATE_GRACE, next_run(&a.trigger, active, now, tz)),
+            // Once, however late (a reminder is better late than never), and then it's off.
+            Trigger::At { .. } => (true, None),
             Trigger::Webhook { .. } => (false, None),
         };
+        let once = matches!(a.trigger, Trigger::At { .. });
         let tx = c.unchecked_transaction()?;
         let claimed = tx.execute(
-            "UPDATE automations SET next_run_at=?3 WHERE id=?1 AND next_run_at=?2 AND enabled=1",
-            params![a.id, a.next_run_at, next.map(fmt)],
+            "UPDATE automations SET next_run_at=?3, enabled=CASE WHEN ?4 THEN 0 ELSE enabled END WHERE id=?1 AND next_run_at=?2 AND enabled=1",
+            params![a.id, a.next_run_at, next.map(fmt), once],
         )?;
         if claimed == 0 {
             continue;
@@ -379,6 +441,7 @@ pub fn start(s: &Shared) {
                 if let Err(e) = prune(&s.db(), Utc::now()) {
                     tracing::error!("pruning automation runs: {e}");
                 }
+                routines::prune_threads(&s, Utc::now()).await;
                 pruned = Some(Instant::now());
             }
             tokio::time::sleep(TICK).await;
