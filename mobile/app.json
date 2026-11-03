@@ -27,6 +27,12 @@
       "expo-router",
       "expo-secure-store",
       [
+        "expo-notifications",
+        {
+          "color": "#8b7cf6"
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "Huntaway uses the camera to scan a board's pairing QR code and to take photos for tasks.",

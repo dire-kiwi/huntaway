@@ -45,7 +45,7 @@ pub(super) fn steer_or_queue(state: &Shared, task_id: &str, message: &db::Queued
         Some(run) => {
             let mut steering = task.steering;
             let id = crate::util::new_id();
-            steering.push(db::Steer { id, text: text.to_string(), from_agent, run_id: run.id, written: false, routine_runs: message.routine_runs.clone() });
+            steering.push(db::Steer { id, text: text.to_string(), from_agent, run_id: run.id, written: false, routine_runs: message.routine_runs.clone(), routine: message.routine });
             db::update_task(&state.db(), task_id, &[("steering", json!(steering))])?;
             write_steers(state, task_id)?
         }
@@ -176,7 +176,7 @@ pub(super) fn requeue_steers(state: &Shared, task_id: &str, run_id: &str) -> Res
     let later = db::take_queued(&c, task_id)?;
     // Its routines' runs go with it, to the run that takes it in.
     for s in &mine {
-        db::queue(&c, task_id, db::Queued { routine: !s.routine_runs.is_empty(), routine_runs: s.routine_runs.clone(), ..db::Queued::new(&s.text, s.from_agent) })?;
+        db::queue(&c, task_id, db::Queued { routine: s.routine, routine_runs: s.routine_runs.clone(), ..db::Queued::new(&s.text, s.from_agent) })?;
     }
     if let Some(later) = later {
         db::queue(&c, task_id, later)?;
