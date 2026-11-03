@@ -33,10 +33,11 @@ The server is one crate, so each module is a file named after its feature (`work
 | `update/` | admin, release, staging |
 | `integrations/` | github, asana, push, automations, status_script |
 | `review/` | (`review.rs`, automatic review) summary, merged, merge_gate, fanout, stats |
+| `threads/` | (`threads.rs`, moving threads onto agent-threads) store, import, report |
 
 `main`, `state`, `util`, `db`, `api`, `testing`, `demo`, `analytics`, `disk` and `attachments`
 stay at the top. A folder's `agent.rs` (and so on) has its `//!` docs and a `pub mod` for each
-module; `mcp.rs` and `review.rs` are modules of their own as well as their folders'. Paths name the
+module; `mcp.rs`, `review.rs` and `threads.rs` are modules of their own as well as their folders'. Paths name the
 folder: `crate::agent::runner::send_message`, `use crate::git::{checkpoints, worktree};`. A new
 module goes in the folder for what it's about, or at the top if it's used everywhere, as `util` is.
 

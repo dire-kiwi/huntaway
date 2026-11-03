@@ -16,6 +16,7 @@ mod review;
 mod state;
 #[cfg(test)]
 mod testing;
+mod threads;
 mod update;
 mod util;
 
@@ -83,6 +84,25 @@ enum Cmd {
         #[arg(long)]
         input: bool,
         /// Task ids.
+        tasks: Vec<String>,
+    },
+    /// Dry run of importing tasks' threads into agent-threads (see threads/report.rs): reads the database and
+    /// changes nothing, unless --stage.
+    #[command(hide = true)]
+    ThreadsImport {
+        /// The database, read-only unless --stage. It must be at this build's version (a copy a test server has opened).
+        #[arg(long)]
+        db: PathBuf,
+        /// Write the conversions to the database's agent-threads tables, which nothing reads yet. Use a copy.
+        #[arg(long)]
+        stage: bool,
+        /// Each task's report as JSON, rather than a summary.
+        #[arg(long)]
+        json: bool,
+        /// How many examples the summary gives of each warning.
+        #[arg(long, default_value_t = 5)]
+        examples: usize,
+        /// Task ids or keys (all tasks if none).
         tasks: Vec<String>,
     },
     /// Print this host's access token (or, with --hub, the token hosts use to dial in).
@@ -257,6 +277,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Cmd::TitleCheck { db, steps, input, tasks }) => title::check(&db, &tasks, steps, input).await,
+        Some(Cmd::ThreadsImport { db, json, examples, stage, tasks }) => threads::report::run(&db, &tasks, json, examples, stage).await,
         Some(Cmd::Serve(args)) => serve(args).await,
         Some(Cmd::SshHost { port, data_dir, name }) => ssh::ssh_host(port, data_dir.unwrap_or_else(default_data_dir), name).await,
         None => serve(ServeArgs::parse_from(["huntaway"])).await,

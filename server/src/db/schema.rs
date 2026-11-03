@@ -842,12 +842,47 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         crate::review::stats::backfill(&conn)?;
         conn.execute_batch("PRAGMA user_version=79; COMMIT;")?;
     }
+    if version < 80 {
+        // agent-threads' store (see threads/store.rs). IF NOT EXISTS, in case another migration takes this version first.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V80} PRAGMA user_version=80; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
-#[cfg(test)]
-pub const VERSION: i64 = 79;
+pub const VERSION: i64 = 80;
+
+/// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
+/// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON
+/// text they were given. A thread can belong to a task (its `metadata.task_id`), and goes with it.
+const SCHEMA_V80: &str = r#"
+CREATE TABLE IF NOT EXISTS at_threads (
+  id TEXT PRIMARY KEY,
+  task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS at_threads_task ON at_threads(task_id);
+CREATE TABLE IF NOT EXISTS at_events (
+  thread_id TEXT NOT NULL REFERENCES at_threads(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (thread_id, seq)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS at_snapshots (
+  thread_id TEXT PRIMARY KEY REFERENCES at_threads(id) ON DELETE CASCADE,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS at_runs (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL REFERENCES at_threads(id) ON DELETE CASCADE,
+  started_at TEXT NOT NULL,
+  active INTEGER NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS at_runs_thread ON at_runs(thread_id);
+CREATE INDEX IF NOT EXISTS at_runs_active ON at_runs(active, started_at, id);
+"#;
 
 /// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
 /// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model

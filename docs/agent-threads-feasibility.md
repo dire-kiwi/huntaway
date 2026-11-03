@@ -22,7 +22,8 @@ formats in use until every linked host upgrades.
 items and saved events; missing streaming events do not prevent an import. It distinguishes history conversion,
 native-session continuation and live-process adoption, and proposes a per-task cutover with source retention.
 It also records relevant upstream additions at `327a862`; the blocker list below describes the earlier revision.
-No importer or full-board conversion has been tested yet.
+HA-128 has since added the store, the converter and a dry run with staging, and converted a copy of the whole
+board (see its *Status* section).
 
 ## What fits already
 

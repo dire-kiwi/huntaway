@@ -11,6 +11,42 @@ existing-threads blocker. Source review on 2026-11-03: Huntaway `3c09bfe`, agent
 session-resumption test was run. The earlier study's 205k-message / 490 MB figures are historical sizing, not a new
 measurement or a prediction of migration time.
 
+## Status: the importer's first steps (HA-128)
+
+Huntaway now depends on agent-threads (a git dependency pinned to `b009454`, which adds no second copy of any crate)
+and has the first steps of the safe importer below, in `server/src/threads/`. Nothing in the server reads the new
+tables yet: running agents, the API and the UI are unchanged.
+
+- **Store** (`threads/store.rs`): agent-threads' `Store` on huntaway.db, in `at_threads`, `at_events`,
+  `at_snapshots` and `at_runs` (migration 80). It passes the crate's store conformance cases
+  (`spec/conformance/store.json`, copied next to it at the pinned revision). A thread whose `metadata.task_id`
+  names a task is deleted with it.
+- **Converter** (`threads/import.rs`): a pure function from a task's stored messages to a `Thread`, saved
+  events from seq 1, the snapshot the crate's reducer folds them into, a disposition for every source row
+  (converted, redundant or retained) and warnings. It follows the table below; turns aren't reconstructed (no
+  `turn_id`, no turn events), and calls with no result are cancelled with a warning.
+- **Dry run and staging** (`threads/report.rs`): `huntaway threads-import --db <copy> [--json] [--stage]
+  [task ids or keys]` opens the database read-only and reports each task's conversion, its warnings and what
+  stops it being switched over now (a run that's running or alive between turns, queued input, a merge, an open
+  prompt). `--stage` also writes the conversions through the store, checking that the saved events fold into the
+  snapshot before saving it; staging the same source again changes nothing, and an older import is replaced. The
+  database must be at this build's version: run it on a copy a test server has opened, such as
+  `scripts/copy-live-board.sh`'s.
+
+On a scrubbed copy of the live board (2026-11-03, a debug build), all 1,366 tasks converted: 242,276 messages
+(600 MB) gave 225,166 events (535 MB) in under a minute. 223,630 rows converted, 18,640 were redundant (mostly
+Bash commands' `task_*` messages and subagents' prompts) and 6 were retained with a warning (4 `task_*` messages
+for background tasks that never started, 2 `local_workflow` tasks). Other warnings: 32 calls with no result in 9
+tasks, one background subagent that never said it ended, and 14 unanswered questions. 15 tasks couldn't have been
+switched over then (14 open prompts, 1 queued message). Staging them all took the 744 MB database to 1.99 GB:
+saved events and their snapshot each hold a full copy of a thread, so a real cutover should expect about 2.5
+times the space, or keep fewer snapshots (the crate needs only the latest, and only to avoid folding every event
+on load).
+
+Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
+task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and
+the UI. Attachments are kept as the text that names them, and costs stay in Huntaway's runs.
+
 ## Three different migrations
 
 | Goal | Feasibility | Requirement |

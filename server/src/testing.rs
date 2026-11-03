@@ -79,6 +79,24 @@ pub fn state() -> Shared {
     state_with(meta())
 }
 
+/// A task in a profile of its own, with no project, in `s`'s database.
+pub fn task(s: &Shared) -> crate::db::Task {
+    let profile = crate::db::insert_profile(&s.db(), "p", &[], None).unwrap();
+    let t = crate::db::NewTask {
+        profile_id: &profile.id,
+        project_id: None,
+        kind: "task",
+        title: "t",
+        description: "",
+        status: "todo",
+        use_worktree: false,
+        model: None,
+        effort: None,
+        claude_config_id: None,
+    };
+    crate::db::insert_task(&s.db(), t).unwrap()
+}
+
 pub fn meta() -> crate::update::admin::ServerMeta {
     crate::update::admin::ServerMeta { boot_id: String::new(), started_at: String::new(), source_dir: None, running_commit: None, update_from: None, release: None, args: vec![] }
 }
