@@ -311,7 +311,7 @@ fn a_device_cant_get_the_boards_tokens_or_a_shell() {
     })
 }
 
-/// The app's Assistant tab (API 103): a device reaches the profile's assistant on the board, through the hub's proxy to
+/// The app's Assistant tab (API 104): a device reaches the profile's assistant on the board, through the hub's proxy to
 /// the host it's on (`?local=1`, as the app asks for it), and its thread; not the assistant's memory.
 #[test]
 fn a_device_reaches_the_profiles_assistant() {
@@ -387,6 +387,12 @@ fn what_a_device_may_do() {
         ("GET", "/api/h/my%20host/profiles"),
         ("GET", "/api/profiles/p/assistant"),
         ("POST", "/api/h/x/profiles/p/assistant"),
+        ("GET", "/api/push"),
+        ("POST", "/api/push/subscriptions"),
+        ("PATCH", "/api/push/subscriptions/s1"),
+        ("DELETE", "/api/push/subscriptions/s1"),
+        ("POST", "/api/push/subscriptions/s1/test"),
+        ("POST", "/api/permissions/p/push-answer"),
     ] {
         assert_eq!(refused(m, p), None, "{m} {p}");
     }
@@ -394,6 +400,9 @@ fn what_a_device_may_do() {
         ("GET", "/api/hosts/join"),
         ("GET", "/api/h/x/hosts/join"),
         ("GET", "/api/h/x/ws"),
+        ("GET", "/api/h/x/push"),
+        ("POST", "/api/h/x/push/subscriptions"),
+        ("GET", "/api/push/subscriptions"),
         ("GET", "/api/h/x/devices"),
         ("DELETE", "/api/h/x/devices/d1"),
         ("PATCH", "/api/devices/d1"),

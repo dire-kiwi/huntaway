@@ -19,3 +19,15 @@ const native: SecretStore = {
 };
 
 export const secrets: SecretStore = Platform.OS === "web" ? web : native;
+
+/**
+ * For what Allow and Deny on a locked phone's notification need (the boards' addresses, not their tokens): readable
+ * after the phone's first unlock since it started, locked or not.
+ */
+export const lockScreenStore: SecretStore =
+  Platform.OS === "web"
+    ? web
+    : {
+        ...native,
+        set: (k, v) => SecureStore.setItemAsync(k, v, { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY }),
+      };

@@ -271,7 +271,12 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         tmp: tmp.as_deref(),
         memory: &memory,
     };
-    push("--append-system-prompt", &instructions(base, &task, &to));
+    // In a file rather than an argument: the assistant's memory and a project's documents can make it longer than the
+    // most an argument may be (128 KiB on Linux).
+    let prompt_file = runs::run_dir(state, &run.id).join("system-prompt.md");
+    tokio::fs::create_dir_all(runs::run_dir(state, &run.id)).await?;
+    tokio::fs::write(&prompt_file, instructions(base, &task, &to)).await.context("writing the run's instructions")?;
+    push("--append-system-prompt-file", &path_str(&prompt_file));
     push("--permission-mode", &permission_mode);
     // The user's approval rules (see agent/approval_rules.rs): a hook's ask goes to the permission
     // prompt even in Bypass, which otherwise has none.

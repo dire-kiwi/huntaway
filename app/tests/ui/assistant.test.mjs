@@ -70,7 +70,10 @@ test("the Memory tab edits the assistant's files and shows their history", async
     // An older version, restored.
     // (The history is still open.)
     await ui.run(["click Start the assistant's memory", "wait Restore this version", "click Restore this version", "wait Lasting facts"]);
-    assert.match((await server.api("GET", `${base}/file?path=MEMORY.md`)).content, /^# Memory\n\n<!-- Lasting facts/);
+    // (Its diff says "Lasting facts" too: wait for the restore itself, which commits the assistant's edit first.)
+    const restored = async () => (await server.api("GET", `${base}/file?path=MEMORY.md`)).content;
+    for (let i = 0; i < 50 && !/^# Memory\n\n<!-- Lasting facts/.test(await restored()); i++) await page.waitForTimeout(100);
+    assert.match(await restored(), /^# Memory\n\n<!-- Lasting facts/);
   });
 });
 
