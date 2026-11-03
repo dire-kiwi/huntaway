@@ -25,7 +25,7 @@ const KEEP: &[&str] = &[
 ];
 
 /// Translate a Claude-style `mcpServers` entry into Codex's `mcp_servers` config.
-pub(super) fn mcp_server_config(name: &str, c: &Value, approved: bool, disabled: &[String], review_waits: bool) -> Option<Value> {
+pub(crate) fn mcp_server_config(name: &str, c: &Value, approved: bool, disabled: &[String], review_waits: bool) -> Option<Value> {
     let mut out = Map::new();
     match c["type"].as_str().unwrap_or("stdio") {
         "stdio" => {

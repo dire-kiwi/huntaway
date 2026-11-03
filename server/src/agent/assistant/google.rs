@@ -275,7 +275,7 @@ pub fn status(s: &Shared, profile_id: &str) -> ApiResult<Status> {
     let mut warnings = Vec::new();
     let account = match &wanted {
         Some(w) => accounts.iter().find(|a| a.email.eq_ignore_ascii_case(w)),
-        None => accounts.iter().find(|a| a.refresh_token),
+        None => accounts.iter().find(|a| a.refresh_token).or(accounts.first()),
     };
     let consent_command = format!("huntaway google-auth --client-secret {}", path_str(&secret));
     let problem = match (&server_state, account) {

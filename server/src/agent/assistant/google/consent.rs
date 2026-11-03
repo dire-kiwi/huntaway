@@ -225,17 +225,40 @@ pub async fn run(client_secret: Option<PathBuf>, credentials_dir: Option<PathBuf
         .await
         .with_context(|| format!("listening on 127.0.0.1:{port} (pick another with --port, and forward that one)"))?;
     let port = listener.local_addr()?.port();
-    let redirect = format!("http://127.0.0.1:{port}/");
-    let (state, verifier) = (random(24), random(48));
-    let url = consent_url(&client, &redirect, &state, &verifier);
     let host = hostname();
     println!("Signing in to Google for the assistant's Google server, with the OAuth client in {}.", secret_path.display());
-    if client.web {
-        println!("\nThat's a Web application client: Google sends the browser back only to its registered redirect URIs, so add {redirect} to them (or use a Desktop app client).");
+    let web = client.web;
+    let signed_in = sign_in(&client, &creds_dir, listener, |url, redirect| {
+        if web {
+            println!("\nThat's a Web application client: Google sends the browser back only to its registered redirect URIs, so add {redirect} to them (or use a Desktop app client).");
+        }
+        println!("\n1. Forward this port from the machine your browser is on, if you haven't (in another terminal there):\n\n     ssh -N -L {port}:127.0.0.1:{port} {host}\n");
+        println!("2. Open this in that browser, sign in and allow access:\n\n     {url}\n");
+        println!("Waiting for Google to send the browser back to {redirect} (up to {} minutes)…", WAIT.as_secs() / 60);
+    })
+    .await?;
+    println!("\nSigned in as {}. Its credentials are in {} (readable by you alone).", signed_in.email, signed_in.file.display());
+    if !signed_in.missing.is_empty() {
+        println!("Google didn't grant all it was asked for (some boxes were left unticked): {}. Run this again to give them.", signed_in.missing.join(", "));
     }
-    println!("\n1. Forward this port from the machine your browser is on, if you haven't (in another terminal there):\n\n     ssh -N -L {port}:127.0.0.1:{port} {host}\n");
-    println!("2. Open this in that browser, sign in and allow access:\n\n     {url}\n");
-    println!("Waiting for Google to send the browser back to {redirect} (up to {} minutes)…", WAIT.as_secs() / 60);
+    println!("The assistant's Google card shows it as connected. The Google server picks it up from its next run.");
+    Ok(())
+}
+
+/// Who `sign_in` signed in, where their credentials are, and the scopes Google didn't grant.
+#[derive(Debug)]
+pub struct SignedIn {
+    pub email: String,
+    pub file: PathBuf,
+    pub missing: Vec<String>,
+}
+
+/// The flow itself: `show` is given the consent URL and the redirect, then it waits on `listener` for the browser, swaps
+/// the code for tokens and writes them to `creds_dir`.
+pub async fn sign_in(client: &Client, creds_dir: &Path, listener: tokio::net::TcpListener, show: impl FnOnce(&str, &str)) -> Result<SignedIn> {
+    let redirect = format!("http://127.0.0.1:{}/", listener.local_addr()?.port());
+    let (state, verifier) = (random(24), random(48));
+    show(&consent_url(client, &redirect, &state, &verifier), &redirect);
     let code = tokio::time::timeout(WAIT, wait_for_code(listener, &state)).await.map_err(|_| anyhow!("gave up waiting for the browser"))??;
     let token = token_request(
         &client.token_uri,
@@ -250,17 +273,12 @@ pub async fn run(client_secret: Option<PathBuf>, credentials_dir: Option<PathBuf
     )
     .await
     .context("exchanging Google's code for tokens")?;
-    let (email, creds) = credentials_json(&client, &token, chrono::Utc::now())?;
+    let (email, creds) = credentials_json(client, &token, chrono::Utc::now())?;
     let file = creds_dir.join(credentials_file(&email));
     write_private(&file, &serde_json::to_string_pretty(&creds)?)?;
-    println!("\nSigned in as {email}. Its credentials are in {} (readable by you alone).", file.display());
     let granted: Vec<&str> = creds["scopes"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-    let missing: Vec<&&str> = SCOPES.iter().filter(|s| !granted.contains(s)).collect();
-    if !missing.is_empty() {
-        println!("Google didn't grant all it was asked for (some boxes were left unticked): {}. Run this again to give them.", missing.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
-    }
-    println!("The assistant's Google card shows it as connected. The Google server picks it up from its next run.");
-    Ok(())
+    let missing = SCOPES.iter().filter(|s| !granted.contains(s)).map(|s| s.to_string()).collect();
+    Ok(SignedIn { email, file, missing })
 }
 
 /// Checks that an account's refresh token still works, by using it once (the token it gets isn't kept).
