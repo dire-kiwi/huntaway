@@ -204,7 +204,8 @@ fn is_prompt(b: &CreateTask) -> bool {
 }
 
 /// A task made with the user's own prompt, from the board, is in "now" like one they prompt later. Not the ones
-/// agents and automations make (they go through `create_task_inner` directly), which start in "later".
+/// automations make (they go through `create_task_inner` directly), which start in "later"; agents' `create_task` puts its tasks in "now"
+/// itself (see mcp::tools::tasks::new_in_now).
 fn prompted_now(s: &Shared, prompted: bool, t: db::Task) -> db::Task {
     if prompted { crate::agent::focus::put_in_now(s, &t.id).unwrap_or(t) } else { t }
 }
