@@ -745,6 +745,16 @@ export function onApprovalRules(fn: ApprovalRulesListener) {
   };
 }
 
+/** Told when a profile's Telegram bot changes on a host: linked, its settings, an error (API 104). */
+type TelegramListener = (hostId: string, profileId: string) => void;
+const telegramListeners = new Set<TelegramListener>();
+export function onTelegram(fn: TelegramListener) {
+  telegramListeners.add(fn);
+  return () => {
+    telegramListeners.delete(fn);
+  };
+}
+
 const automationListeners = new Set<AutomationListener>();
 
 /** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
@@ -810,6 +820,9 @@ export function handleEvent(ev: any) {
     case "approval_rules":
     case "approval_log":
       for (const fn of approvalRulesListeners) fn(h, ev.profile_id, ev.type === "approval_rules" ? "rules" : "log");
+      break;
+    case "telegram":
+      for (const fn of telegramListeners) fn(h, ev.profile_id);
       break;
     case "checkpoints":
       for (const fn of checkpointListeners) fn(h, ev.task_id);

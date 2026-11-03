@@ -103,6 +103,7 @@ pub(super) async fn delete_profile(State(s): State<Shared>, Path(id): Path<Strin
         delete_one(&s, &t, false).await?;
     }
     s.db().execute("DELETE FROM profiles WHERE id=?1", [&id])?;
+    crate::integrations::telegram::forget_profile(&s, &id);
     remove_unused_dir(&s, &s.data_dir.join("profiles").join(&id), "profile")?;
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!({"ok": true})))

@@ -1023,7 +1023,7 @@ async fn find_task(s: &Shared, host: &str, id: &str) -> Option<Value> {
 
 /// What a prompt's notification says it asks (not what the tool would do: pushes pass through push
 /// services, so they carry no tool inputs).
-fn prompt_text(data: &Value) -> String {
+pub(crate) fn prompt_text(data: &Value) -> String {
     let tool = data["tool_name"].as_str().unwrap_or("a tool");
     match data["kind"].as_str() {
         Some("project") => "Approve a project change?".into(),
