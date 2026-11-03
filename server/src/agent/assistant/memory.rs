@@ -418,8 +418,8 @@ async fn stage(dir: &Path, who: Who) -> Result<()> {
     paths.sort_unstable();
     paths.dedup();
     // A name that isn't UTF-8 (which reads back as another, with U+FFFD in it) would fail the whole `add`.
-    // The morning brief (brief.rs) is written over each day and kept as the assistant's document, one version a day.
-    paths.retain(|p| *p != super::brief::FILE);
+    // The morning brief and its items (brief.rs) are written over each day and kept as the assistant's documents, one version a day.
+    paths.retain(|p| *p != super::brief::FILE && *p != super::brief::ITEMS_FILE);
     let (big, paths): (Vec<&str>, Vec<&str>) = paths.into_iter().partition(|p| p.contains('\u{FFFD}') || too_big(dir, p));
     if !big.is_empty() {
         tracing::info!(dir = %dir.display(), "not committing files over {MAX_COMMITTED} bytes, or not named in UTF-8: {}", big.join(", "));
@@ -766,7 +766,7 @@ pub fn list(dir: &Path, today: NaiveDate) -> Vec<Value> {
                 continue;
             }
             // The morning brief is the assistant's document (its Brief tab), not memory.
-            if prefix.is_empty() && name == super::brief::FILE {
+            if prefix.is_empty() && (name == super::brief::FILE || name == super::brief::ITEMS_FILE) {
                 continue;
             }
             let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };

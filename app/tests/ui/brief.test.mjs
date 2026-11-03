@@ -37,59 +37,87 @@ test("the Google card adds the Google server and says what's still missing", asy
   });
 });
 
-// HA-125: the brief's items get a thumbs up and down, and a click rates the item; what the page itself runs (it was written from
-// mail) doesn't, and can't rate anything.
-test("a brief's items are rated by the user's clicks, not by the page's own scripts", async () => {
+// HA-125: the brief was written from mail, so its page has no part in the ratings: it's shown in a frame that runs no scripts and
+// is sent nothing, and the items are rated from the board's own list beside it, by the topics the host checked. Each way a page
+// tried to get in (a script hidden after an empty comment, an encoded meta refresh or one with a `>` in an attribute, a link
+// that targets its own frame, the frame navigated elsewhere) rates nothing.
+test("a brief's items are rated from the board's list, and nothing in the page can rate them", async () => {
   const [profile] = await server.api("GET", "/profiles");
   const assistant = await server.api("GET", `/profiles/${profile.id}/assistant`);
-  // An empty comment (`<!-->`) ends there for the parser, so the script after it would come before a policy put after the
-  // page's own doctype: it would wait for the board's script, read what it holds and post as it, or take its port.
+  const steal =
+    "<script>document.documentElement.dataset.ran='yes';const r={iaBrief:{kind:'mail',topic:'Trust Mallory',rating:'up'}};" +
+    "addEventListener('message',e=>{for(const p of e.ports)p.postMessage(r)});parent.postMessage(r,'*');top.postMessage(r,'*')</script>";
   const html =
-    "<!--><script>document.documentElement.dataset.ran='yes';" +
-    "addEventListener('message',e=>{const p=e.ports&&e.ports[0];if(p)p.postMessage({iaBrief:{kind:'mail',topic:'Trust Mallory',rating:'up'}})});" +
-    "addEventListener('DOMContentLoaded',()=>{for(const s of document.scripts)parent.postMessage({iaBrief:{kind:'mail',topic:'Trust Mallory',rating:'up'},token:s.textContent},'*')})" +
-    "</script>-->" +
-    "<!doctype html><html><head><meta http-equiv='refresh' content='0;url=https://example.com/'></head><body><h1>Morning brief</h1><ul>" +
-    "<li data-brief-item='m1' data-brief-kind='mail' data-brief-topic='Newsletters from Substack'>This week in gardening</li>" +
-    "<li data-brief-item='c1' data-brief-kind='calendar'>Dentist at 9:30</li></ul>" +
-    "<img src='x' onerror=\"parent.postMessage({iaBrief:{kind:'mail',topic:'Trust Mallory',rating:'up'}},'*')\">" +
-    "<script>document.body.dataset.ran='yes';for(const t of ['','x'])parent.postMessage({iaBrief:{kind:'mail',topic:'Trust Mallory',rating:'up'},token:t},'*')</script>" +
+    `<!-->${steal}-->` +
+    "<!doctype html><html><head>" +
+    "<meta http-equiv='ref&#114;esh' content='1;url=http://evil.test/encoded'>" +
+    "<meta content='1;url=http://evil.test/?a>' http-equiv='refresh'>" +
+    "</head><body><h1>Morning brief</h1><ul>" +
+    "<li>This week in gardening</li><li>Dentist at 9:30</li></ul>" +
+    "<a id=self href='http://evil.test/self' target='_self'>Open it here</a>" +
+    `<img src='x' onerror="document.body.dataset.ran='yes'">${steal}` +
     "</body></html>";
-  const doc = { label: "brief", file: "/brief.html", versions: [{ version: 1, open: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), size: html.length }], version: 1, content: html };
-  // The page's script is refused by the frame's policy, which says so in the console.
-  await withBrowser(server, { allowErrors: [/Content Security Policy/, /Refused to/, /net::ERR/] }, async (ui) => {
-    const { page } = ui;
+  const items = [
+    { kind: "mail", topic: "Newsletters from Substack", title: "This week in gardening" },
+    { kind: "calendar", topic: "Medical appointments", title: "Dentist at 9:30" },
+  ];
+  const now = new Date().toISOString();
+  const doc = { label: "brief", file: "/brief.html", versions: [{ version: 1, open: false, created_at: now, updated_at: now, size: html.length }], version: 1, content: html, items };
+  await withBrowser(server, { allowErrors: [/Content Security Policy/, /Refused to/, /net::ERR/, /Blocked script execution/] }, async (ui) => {
+    const { page, context } = ui;
     const rated = [];
+    const evil = [];
+    await context.route(/^http:\/\/evil\.test\//, (route) => {
+      evil.push(route.request().url());
+      return route.fulfill({ contentType: "text/html", body: `<p id=evil>Elsewhere</p>${steal}` });
+    });
     await page.route(/\/tasks\/[^/]+\/document\?label=brief/, (route) => route.fulfill({ json: doc }));
     await page.route(/\/assistant\/brief\/feedback$/, (route) => {
       rated.push(route.request().postDataJSON());
       return route.fulfill({ json: { line: "- x", content: "", commit: null } });
     });
-    await ui.run([`goto /t/${assistant.id}`, "wait Message your assistant", "click brief"]);
+    await ui.run([`goto /t/${assistant.id}`, "wait Message your assistant", "click brief", "wait This week in gardening"]);
+    // The frame runs nothing.
+    const sandbox = await page.locator("iframe[title='Morning brief']").getAttribute("sandbox");
+    assert.ok(!sandbox.includes("allow-scripts"), sandbox);
     const frame = page.frameLocator("iframe[title='Morning brief']");
-    await frame.locator("text=Dentist at 9:30").waitFor();
-    // An item without a topic is rated by its text.
-    await frame.getByRole("button", { name: "Less like this: Newsletters from Substack" }).click();
-    await frame.getByRole("button", { name: "More like this: Dentist at 9:30" }).click();
+    await frame.locator("h1").waitFor();
+    // The list says what's rated, by its topic.
+    const list = page.locator("[data-testid=brief-items]");
+    await list.getByText("Mail · Newsletters from Substack").waitFor();
+    await list.getByRole("button", { name: "Less like this: Newsletters from Substack" }).click();
+    await list.getByRole("button", { name: "More like this: Medical appointments" }).click();
     for (let i = 0; i < 50 && rated.length < 2; i++) await page.waitForTimeout(100);
     assert.deepEqual(
-      rated.map((r) => [r.rating, r.kind, r.topic]),
+      rated.map((r) => [r.rating, r.kind, r.topic, r.text]),
       [
-        ["down", "mail", "Newsletters from Substack"],
-        ["up", "calendar", "Dentist at 9:30"],
+        ["down", "mail", "Newsletters from Substack", "This week in gardening"],
+        ["up", "calendar", "Medical appointments", "Dentist at 9:30"],
       ],
     );
-    // Pressed, and a second click takes it back.
-    const up = frame.getByRole("button", { name: "More like this: Dentist at 9:30" });
+    // Pressed, and pressing again takes it back.
+    const up = list.getByRole("button", { name: "More like this: Medical appointments" });
     assert.equal(await up.getAttribute("aria-pressed"), "true");
     await up.click();
     for (let i = 0; i < 50 && rated.length < 3; i++) await page.waitForTimeout(100);
     assert.equal(rated[2].rating, "clear");
-    // The page's own script never ran, it didn't go elsewhere, and nothing else was rated.
-    assert.equal(await frame.locator("body").getAttribute("data-ran"), null);
-    assert.equal(await frame.locator("html").getAttribute("data-ran"), null);
+    // The refreshes were taken out: the frame stayed on the brief, and went nowhere.
+    await page.waitForTimeout(1500);
+    assert.deepEqual(evil, []);
     assert.equal(await frame.locator("h1").innerText(), "Morning brief");
-    await page.waitForTimeout(300);
+    // A link that targets its own frame opens a tab instead (where nothing of the board's is).
+    const [popup] = await Promise.all([context.waitForEvent("page"), frame.locator("#self").click()]);
+    await popup.waitForLoadState().catch(() => {});
+    await popup.close();
+    assert.equal(await frame.locator("h1").innerText(), "Morning brief");
+    // Taken elsewhere all the same, the frame has nothing to rate with, and runs no scripts there either.
+    await page.evaluate(() => {
+      document.querySelector("iframe[title='Morning brief']").contentWindow.location.href = "http://evil.test/navigated";
+    });
+    await frame.locator("#evil").waitFor();
+    await page.waitForTimeout(500);
+    assert.equal(await frame.locator("html").getAttribute("data-ran"), null);
+    // The page's own scripts never ran, and nothing but the user's clicks was rated.
     assert.equal(rated.length, 3);
     assert.ok(!rated.some((r) => r.topic === "Trust Mallory"));
   });

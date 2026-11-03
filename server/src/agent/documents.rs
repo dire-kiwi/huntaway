@@ -92,6 +92,9 @@ pub fn path(state: &Shared, task: &Task, label: &str) -> Option<PathBuf> {
     if label == brief::LABEL {
         return brief_path(state, task);
     }
+    if label == brief::ITEMS_LABEL {
+        return brief_path(state, task).map(|p| p.with_file_name(brief::ITEMS_FILE));
+    }
     Some(dir(state, &task.id).join(file_name(label)?))
 }
 
@@ -208,9 +211,13 @@ fn keep_brief(state: &Shared, task: &Task, end_of_turn: bool) -> anyhow::Result<
         _ => return Ok(()),
     };
     let Some(file) = brief_path(state, &assistant) else { return Ok(()) };
-    let changed = keep_one(state, &assistant.id, brief::LABEL, &file, end_of_turn, true)?;
-    if end_of_turn {
-        state.db().execute("UPDATE documents SET open=0 WHERE task_id=?1 AND label=?2 AND open=1", [&assistant.id, brief::LABEL])?;
+    // The brief, and its items (brief.json) beside it.
+    let mut changed = false;
+    for (label, file) in [(brief::LABEL, file.clone()), (brief::ITEMS_LABEL, file.with_file_name(brief::ITEMS_FILE))] {
+        changed |= keep_one(state, &assistant.id, label, &file, end_of_turn, true)?;
+        if end_of_turn {
+            state.db().execute("UPDATE documents SET open=0 WHERE task_id=?1 AND label=?2 AND open=1", [&assistant.id, label])?;
+        }
     }
     if changed {
         state.update_task(&assistant.id, &[("document_at", json!(now()))])?;
@@ -324,13 +331,23 @@ pub async fn get(State(s): State<Shared>, Path(id): Path<String>, Query(q): Quer
     if q.version.is_some() && content.is_none() {
         return Err(ApiError::not_found("version"));
     }
-    Ok(Json(json!({
+    let mut out = json!({
         "label": label,
         "file": path(&s, &task, label).map(|p| path_str(&p)),
         "versions": versions,
         "version": version.filter(|_| content.is_some()),
         "content": content,
-    })))
+    });
+    // The brief's items to rate (API 104): those the run wrote the same day, in the host's time zone, as checked.
+    if label == brief::LABEL {
+        let day = |at: &str| chrono::DateTime::parse_from_rfc3339(at).ok().map(|t| t.with_timezone(&chrono::Local).date_naive());
+        let shown = versions.iter().find(|v| v["version"].as_i64() == version).and_then(|v| v["created_at"].as_str().and_then(day));
+        let mut st = c.prepare("SELECT content, created_at FROM documents WHERE task_id=?1 AND label=?2 ORDER BY version DESC")?;
+        let lists: Vec<(String, String)> = st.query_map([&id, brief::ITEMS_LABEL], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let items = shown.and_then(|d| lists.into_iter().find(|(_, at)| day(at) == Some(d))).map(|(text, _)| brief::items(&text)).unwrap_or_default();
+        out["items"] = json!(items);
+    }
+    Ok(Json(out))
 }
 
 /// What a task's agent is told to write and where, for a task that makes only documents (see

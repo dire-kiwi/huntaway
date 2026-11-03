@@ -34,7 +34,7 @@ fn the_template_makes_a_valid_weekday_routine_in_a_fresh_thread() {
         assert_eq!((a["action"]["kind"].as_str(), a["action"]["mode"].as_str()), (Some("message_assistant"), Some("fresh")));
         assert!(a["next_run_at"].is_string(), "{a}");
         let message = a["action"]["message"].as_str().unwrap();
-        for part in ["Google: {{google}}", "mcp__google__", "brief.html", "data-brief-item", "data-brief-kind", "data-brief-topic", "list_tasks", "needs_attention", "NO_REPLY"] {
+        for part in ["Google: {{google}}", "mcp__google__", "brief.html", "brief.json", "\"topic\"", "\"title\"", "list_tasks", "needs_attention", "NO_REPLY"] {
             assert!(message.contains(part), "{part}");
         }
         // It's read-only for now, and mail is data.
@@ -211,6 +211,7 @@ fn the_brief_is_kept_as_the_assistants_document_one_version_a_day() {
         assert_eq!(documents::brief_path(&s, &thread), None);
         // The routine's thread writes it: it's the assistant's.
         std::fs::write(&file, "<p>Monday</p>").unwrap();
+        std::fs::write(dir.join(ITEMS_FILE), r#"[{"kind": "mail", "topic": "Newsletters", "title": "This week in gardening"}]"#).unwrap();
         documents::follow(&s, &thread.id);
         documents::turn_ended(&s, &thread.id);
         let url = format!("/api/tasks/{}/document?label=brief", assistant.id);
@@ -219,6 +220,8 @@ fn the_brief_is_kept_as_the_assistants_document_one_version_a_day() {
         assert_eq!((d["version"].as_i64(), d["content"].as_str()), (Some(1), Some("<p>Monday</p>")));
         assert_eq!(d["file"], json!(path_str(&file)));
         assert_eq!(d["versions"][0]["open"], false);
+        // With the day's items, as checked.
+        assert_eq!(d["items"], json!([{"kind": "mail", "topic": "Newsletters", "title": "This week in gardening"}]));
         assert!(db::get_task(&s.db(), &assistant.id).unwrap().unwrap().document_at.is_some());
         // Written again today: still today's one version.
         std::fs::write(&file, "<p>Monday, again</p>").unwrap();
@@ -231,17 +234,52 @@ fn the_brief_is_kept_as_the_assistants_document_one_version_a_day() {
         documents::turn_ended(&s, &assistant.id);
         let (_, d) = call(&app, "GET", &url, None).await;
         assert_eq!((d["version"].as_i64(), d["content"].as_str()), (Some(2), Some("<p>Tuesday</p>")));
+        // Tuesday's run wrote no items yet: none, rather than Monday's.
+        assert_eq!(d["items"], json!([]));
+        std::fs::write(dir.join(ITEMS_FILE), r#"{"items": [{"kind": "board", "topic": "Reviews", "title": "TES-1 is ready"}]}"#).unwrap();
+        documents::turn_ended(&s, &thread.id);
+        let (_, d) = call(&app, "GET", &url, None).await;
+        assert_eq!(d["items"][0]["topic"], "Reviews");
         let (_, v1) = call(&app, "GET", &format!("{url}&version=1"), None).await;
         assert_eq!(v1["content"], "<p>Monday, again</p>");
+        assert_eq!(v1["items"][0]["title"], "This week in gardening");
         // Only the assistant has one.
         assert_eq!(call(&app, "GET", &format!("/api/tasks/{}/document?label=brief", thread.id), None).await.0, 400);
         // It isn't memory: not in the Memory tab, nor in the workspace's history.
         let (_, m) = call(&app, "GET", &format!("/api/profiles/{}/assistant/memory", p.id), None).await;
-        assert!(!m["files"].to_string().contains(FILE), "{m}");
+        assert!(!m["files"].to_string().contains(FILE) && !m["files"].to_string().contains(ITEMS_FILE), "{m}");
         std::fs::write(dir.join(memory::MEMORY_FILE), "# Memory\n- changed\n").unwrap();
         memory::commit_all(&dir, memory::Who::Assistant, None).await.unwrap();
         let tracked = std::process::Command::new("git").arg("--git-dir").arg(memory::git_dir(&dir)).args(["ls-files"]).output().unwrap();
         let tracked = String::from_utf8_lossy(&tracked.stdout);
-        assert!(tracked.contains("MEMORY.md") && !tracked.contains(FILE), "{tracked}");
+        assert!(tracked.contains("MEMORY.md") && !tracked.contains(FILE) && !tracked.contains(ITEMS_FILE), "{tracked}");
     })
+}
+
+#[test]
+fn a_briefs_items_are_checked_before_theyre_listed_to_rate() {
+    let got = items(
+        r#"[
+        {"kind": "Mail", "topic": "  Newsletters\n from <b>Substack</b> ", "title": "This week in <i>gardening</i>"},
+        {"kind": "weather", "title": "Rain at 3pm"},
+        {"kind": "calendar", "topic": "1:1s with Sam"},
+        {"kind": "mail", "topic": "", "title": ""},
+        {"kind": "mail", "topic": "Newsletters from bSubstack/b", "title": "This week in <i>gardening</i>"},
+        "not an item", 42
+    ]"#,
+    );
+    let want = [
+        ("mail", "Newsletters from bSubstack/b", "This week in <i>gardening</i>"),
+        ("other", "Rain at 3pm", "Rain at 3pm"),
+        ("calendar", "1:1s with Sam", "1:1s with Sam"),
+    ];
+    assert_eq!(got.iter().map(|i| (i.kind.as_str(), i.topic.as_str(), i.title.as_str())).collect::<Vec<_>>(), want);
+    // Cut, and capped.
+    let long = format!(r#"[{{"topic": "{}", "title": "{}"}}]"#, "t".repeat(500), "x".repeat(500));
+    let one = &items(&long)[0];
+    assert_eq!((one.topic.chars().count(), one.title.chars().count()), (MAX_TOPIC + 1, MAX_TITLE + 1));
+    let many: Vec<Value> = (0..MAX_ITEMS + 10).map(|i| json!({"kind": "mail", "topic": format!("t{i}")})).collect();
+    assert_eq!(items(&json!(many).to_string()).len(), MAX_ITEMS);
+    // Not JSON, or not a list: none.
+    assert!(items("<p>oops</p>").is_empty() && items(r#"{"a": 1}"#).is_empty());
 }

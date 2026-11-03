@@ -2127,7 +2127,7 @@ time and on the days you pick (weekdays at 7:30 by default; `POST
 fresh thread, which you can change like any other. Its run reads today's calendar, unread and starred
 mail, Drive files changed since yesterday (through the Google server, above) and what needs your
 attention or is ready to review on your boards (through the board's tools, up the link from an
-assistant host), writes `brief.html` in the assistant's workspace, and replies with a short summary,
+assistant host), writes `brief.html` and `brief.json` in the assistant's workspace, and replies with a short summary,
 which is posted in the assistant's thread and pushed to your devices once. The board keeps the brief
 as the assistant's `brief` document, one version a day (`GET /api/tasks/<id>/document?label=brief`),
 out of the workspace's git history and the Memory tab, and the Brief tab shows it, with the earlier
@@ -2136,13 +2136,16 @@ as …*, or *not connected:* and why), so a run without Google says so at the to
 summary rather than failing quietly. Until the approval rules hold it, its message tells it to only
 read and draft, and that what it reads in mail, invitations and files is data, not instructions.
 
-Each item of the brief has a 👍 and 👎: a rating becomes a line under *Morning brief preferences* in
-`MEMORY.md` (`- More like this — mail: Newsletters from Substack (rated 2026-11-04)`; the run names
-what kind of item each is), committed as yours, one line per kind of item and the last 30 kept, and
-every run of the assistant reads it, the brief's included. Clicking it again takes it back. The brief's
-own scripts don't run in the tab (a Content-Security-Policy lets only the board's), nothing is loaded
-from elsewhere (no tracking pixels), and a rating needs a real click, so what the run wrote from your
-mail can't rate items into memory. Routine reports are pushed to the devices that have **Routine
+The run also lists the brief's items in `brief.json` beside it (each one's kind, the topic it's rated
+by, in its own words, and a line saying what it is), which the host checks and caps and keeps with the
+day's brief (`items` in the document). The Brief tab lists them beside the brief, with a 👍 and 👎 each:
+a rating becomes a line under *Morning brief preferences* in `MEMORY.md` (`- More like this — mail:
+Newsletters from Substack (rated 2026-11-04)`), committed as yours, one line per kind of item and topic
+and the last 30 kept, and every run of the assistant reads it, the brief's included. Pressing it again
+takes it back. The brief's page has no part in the ratings: it's shown in a frame that runs no scripts
+and is sent nothing, with its refreshes, frames and handlers taken out and nothing loaded from
+elsewhere (no tracking pixels), and links open in a new tab; only the board's own buttons rate, so
+what the run wrote from your mail can't rate items into memory. Routine reports are pushed to the devices that have **Routine
 reports** on in their notification settings (on by default): the routine's name, and the report's
 first line.
 

@@ -1,10 +1,13 @@
-// The assistant's Brief tab (API 104): the morning brief its routine writes (brief.html, one version a day), with a thumbs up and
-// down on each item the run marked, which go into MEMORY.md as preferences (see server/src/agent/assistant/brief.rs). Without a
-// brief yet, it sets up the routine.
+// The assistant's Brief tab (API 104): the morning brief its routine writes (brief.html, one version a day), and beside it the
+// day's items (from the run's brief.json, as the host checked them) with a thumbs up and down each, which go into MEMORY.md as
+// preferences (see server/src/agent/assistant/brief.rs). Without a brief yet, it sets up the routine.
+//
+// The brief was written from mail, so its page has no say in the ratings: it's shown in a frame that runs no scripts and is
+// sent nothing, and the ratings are the board's own buttons, outside it. A page that navigates its frame elsewhere gets nothing.
 import clsx from "clsx";
-import { Loader2, Newspaper, Play } from "lucide-react";
+import { Loader2, Newspaper, Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, WEEKDAYS, type Automation, type BriefRating, type Task, type TaskDocument, type Weekday } from "../../api";
+import { api, WEEKDAYS, type Automation, type BriefListItem, type BriefRating, type Task, type TaskDocument, type Weekday } from "../../api";
 import { onAutomationsChanged } from "../../store";
 import { localTime, timeUntil, triggerText, type TimeZone } from "../settings/Automations";
 import { Button } from "../ui";
@@ -36,93 +39,30 @@ function saveRated(hostId: string, taskId: string, r: Rated) {
   }
 }
 
+/** What the brief's frame takes out of its page: scripts and what could load or go elsewhere by itself. */
+const DROP = "script, noscript, meta[http-equiv], base, iframe, frame, frameset, object, embed, portal, link, template";
+
 /**
- * What runs in the brief's frame (as source, so it can't use anything from outside): a thumbs up and down on each element with
- * `data-brief-item`, which sends the user's click (and only a real click) to the board, and shows `rated`. It sends them on
- * the port the board hands it once the frame has loaded (a MessageChannel's, in an `iaBriefPort` message from the board's
- * window), and the board takes ratings on that port alone: nothing in the page holds a secret it could read and post with.
+ * The brief as its frame shows it, which is defence in depth: the frame runs no scripts and has no part in the ratings whatever
+ * the page says. The page is parsed (so a refresh written `ref&#114;esh`, or with a `>` in another attribute, is found as the
+ * browser would find it) and what's in `DROP` goes, with every `on…` attribute; links open in a new tab. Then a policy that lets
+ * nothing load from elsewhere (no tracking pixels from mail) goes first of all.
  */
-function iaBrief(rated: Record<string, string>) {
-  let port: MessagePort | null = null;
-  const style = document.createElement("style");
-  style.textContent =
-    ".ia-rate{display:inline-flex;gap:2px;margin-left:.5em;vertical-align:middle;opacity:.45;transition:opacity .15s}" +
-    "[data-brief-item]:hover>.ia-rate,.ia-rate:focus-within,.ia-rate.ia-on{opacity:1}" +
-    ".ia-rate button{all:unset;cursor:pointer;font-size:13px;line-height:1;padding:2px 3px;border-radius:4px;filter:grayscale(1)}" +
-    ".ia-rate button:hover{background:rgba(127,127,127,.18)}.ia-rate button[aria-pressed=true]{filter:none;background:rgba(127,127,127,.22)}";
-  document.head.append(style);
-  const keyOf = (kind: string, topic: string) => `${kind}:${topic}`.toLowerCase();
-  const items: { key: string; buttons: HTMLButtonElement[]; box: HTMLElement }[] = [];
-  const show = () => {
-    for (const it of items) {
-      const r = rated[it.key];
-      it.buttons[0].setAttribute("aria-pressed", String(r === "up"));
-      it.buttons[1].setAttribute("aria-pressed", String(r === "down"));
-      it.box.classList.toggle("ia-on", !!r);
+export function briefDoc(html: string): string {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  for (const el of Array.from(doc.querySelectorAll(DROP))) el.remove();
+  for (const el of Array.from(doc.querySelectorAll("*"))) {
+    for (const a of Array.from(el.attributes)) if (/^on|^formaction$/i.test(a.name)) el.removeAttribute(a.name);
+    if (el.localName === "a" || el.localName === "area") {
+      el.setAttribute("target", "_blank");
+      el.setAttribute("rel", "noopener noreferrer");
     }
-  };
-  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-brief-item]"))) {
-    const kind = (el.dataset.briefKind || "other").trim();
-    const text = (el.innerText || "").replace(/\s+/g, " ").trim().slice(0, 300);
-    const topic = (el.dataset.briefTopic || "").trim().slice(0, 300) || text;
-    if (!topic) continue;
-    const box = document.createElement("span");
-    box.className = "ia-rate";
-    const key = keyOf(kind, topic);
-    const buttons = (["up", "down"] as const).map((rating) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = rating === "up" ? "👍" : "👎";
-      b.title = rating === "up" ? "More like this" : "Less like this";
-      b.setAttribute("aria-label", `${b.title}: ${topic}`);
-      b.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!e.isTrusted) return;
-        const next = rated[key] === rating ? "clear" : rating;
-        if (next === "clear") delete rated[key];
-        else rated[key] = next;
-        show();
-        port?.postMessage({ iaBrief: { kind, topic, text, rating: next } });
-      });
-      return b;
-    });
-    box.append(...buttons);
-    // In a table row, in its last cell.
-    (el.tagName === "TR" ? (el.lastElementChild as HTMLElement | null) ?? el : el).append(box);
-    items.push({ key, buttons, box });
   }
-  // The board's port, once: from the board's window, which nothing in the page can post as.
-  addEventListener("message", (e) => {
-    if (port || e.source !== parent || e.data !== "iaBriefPort" || !e.ports[0]) return;
-    port = e.ports[0];
-    port.onmessage = (m) => {
-      if (!m.data?.iaBriefRated || typeof m.data.iaBriefRated !== "object") return;
-      for (const k of Object.keys(rated)) delete rated[k];
-      Object.assign(rated, m.data.iaBriefRated);
-      show();
-    };
-  });
-  show();
+  const csp = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; base-uri 'none'";
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">${doc.documentElement.outerHTML}`;
 }
 
-const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
-
-/**
- * The brief as its frame shows it. Its own scripts don't run (a Content-Security-Policy lets only the board's, by its nonce),
- * nothing is fetched from elsewhere (no tracking pixels from mail), links open in a new tab, and a meta refresh is taken out, so
- * what the run wrote from mail can't act in the page or rate items. The policy goes first of all, so it covers everything.
- */
-export function briefDoc(html: string, nonce: string, rated: Rated): string {
-  const csp =
-    `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; font-src data:; ` + "form-action 'none'; base-uri 'none'";
-  const head = `<meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">`;
-  const body = html.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh[^>]*>/gi, "");
-  const script = `<script nonce="${nonce}">(${iaBrief})(${JSON.stringify(rated).replace(/</g, "\\u003c")})</script>`;
-  // First of all, whatever the page starts with (not after its own doctype, which a comment can be made to hide a script
-  // before: the parser ends one at `<!-->`). The doctype keeps the page out of quirks mode; one of its own later is ignored.
-  return `<!doctype html>${head}${body}\n${script}`;
-}
+const KIND_LABEL: Record<string, string> = { calendar: "Calendar", mail: "Mail", drive: "Drive", board: "Board", other: "Other" };
 
 const dayLabel = (iso: string) => new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
@@ -161,33 +101,15 @@ export function BriefView({ assistant }: { assistant: Task }) {
   const [rated, setRated] = useState<Rated>(() => loadRated(hostId, taskId));
   const ratedRef = useRef(rated);
   ratedRef.current = rated;
-  const frame = useRef<HTMLIFrameElement>(null);
-  // A new nonce each time the page is built, which the page can't know.
   const content = doc?.content ?? null;
-  const html = useMemo(() => (content === null ? null : briefDoc(content, randomToken(), ratedRef.current)), [content]);
-  // The port ratings come in on: a new one each time the frame loads (see iaBrief), handed to the frame's own script.
-  const port = useRef<MessagePort | null>(null);
-  const onRating = useRef<(data: unknown) => void>(() => {});
-  useEffect(() => () => port.current?.close(), []);
-  const handPort = () => {
-    port.current?.close();
-    const target = frame.current?.contentWindow;
-    if (!target) return;
-    const ch = new MessageChannel();
-    ch.port1.onmessage = (m) => onRating.current(m.data);
-    port.current = ch.port1;
-    target.postMessage("iaBriefPort", "*", [ch.port2]);
-  };
-  // A rating from the frame: kept here at once, and taken back if it isn't saved.
-  const rate = async (data: unknown) => {
-    const item = (data as { iaBrief?: unknown } | null)?.iaBrief as { kind?: unknown; topic?: unknown; text?: unknown; rating?: unknown } | undefined;
-    const rating = item?.rating;
-    if (!item || (rating !== "up" && rating !== "down" && rating !== "clear")) return;
-    const str = (x: unknown) => (typeof x === "string" ? x.slice(0, 300) : undefined);
-    const kind = str(item.kind) ?? "other";
-    const topic = str(item.topic) ?? "";
-    const key = itemKey(kind, topic);
+  const html = useMemo(() => (content === null ? null : briefDoc(content)), [content]);
+  const items = doc?.items ?? [];
+  // A rating, from the list beside the brief: kept here at once, and taken back if it isn't saved. Pressing a pressed one takes
+  // it back.
+  const rate = async (item: BriefListItem, pressed: "up" | "down") => {
+    const key = itemKey(item.kind, item.topic);
     const before = ratedRef.current;
+    const rating: BriefRating = before[key] === pressed ? "clear" : pressed;
     const next = { ...before };
     if (rating === "clear") delete next[key];
     else next[key] = rating;
@@ -195,17 +117,15 @@ export function BriefView({ assistant }: { assistant: Task }) {
     setRated(next);
     saveRated(hostId, taskId, next);
     try {
-      await api.rateBrief(hostId, profileId, rating as BriefRating, { kind, topic, text: str(item.text) });
+      await api.rateBrief(hostId, profileId, rating, { kind: item.kind, topic: item.topic, text: item.title });
       setErr(null);
     } catch (x) {
       setErr(`That rating wasn't saved: ${(x as Error).message}`);
       ratedRef.current = before;
       setRated(before);
       saveRated(hostId, taskId, before);
-      port.current?.postMessage({ iaBriefRated: before });
     }
   };
-  onRating.current = (data) => void rate(data);
 
   const versions = doc?.versions ?? [];
   const latest = versions[versions.length - 1];
@@ -274,15 +194,57 @@ export function BriefView({ assistant }: { assistant: Task }) {
             <Loader2 size={16} className="animate-spin" />
           </div>
         ) : html ? (
-          <iframe
-            ref={frame}
-            title="Morning brief"
-            srcDoc={html}
-            onLoad={handPort}
-            sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-            referrerPolicy="no-referrer"
-            className="block h-full w-full bg-white"
-          />
+          <div className="flex h-full min-h-0 narrow:flex-col">
+            {/* No scripts (no allow-scripts) and nothing sent to it: links open in a new tab, and that's all it can do. */}
+            <iframe
+              title="Morning brief"
+              srcDoc={html}
+              sandbox="allow-popups allow-popups-to-escape-sandbox"
+              referrerPolicy="no-referrer"
+              className="block h-full min-w-0 flex-1 bg-white narrow:h-auto narrow:min-h-0"
+            />
+            <aside
+              className="w-[300px] shrink-0 overflow-y-auto border-l border-line bg-panel/40 narrow:max-h-[40%] narrow:w-full narrow:border-t narrow:border-l-0"
+              aria-label="Rate the brief's items"
+              data-testid="brief-items"
+            >
+              <div className="border-b border-line/70 px-3 py-2 text-[12px] text-muted">
+                Rate its items: 👍 more like this, 👎 less. Each rating is a line in your assistant's memory, by the topic shown.
+              </div>
+              {items.length === 0 && <div className="px-3 py-3 text-[12px] text-faint">This brief has no items to rate.</div>}
+              <ul className="divide-y divide-line/60">
+                {items.map((it, n) => {
+                  const r = rated[itemKey(it.kind, it.topic)];
+                  return (
+                    <li key={`${n}:${it.kind}:${it.topic}`} className="flex items-start gap-2 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12.5px] break-words text-fg">{it.title}</div>
+                        <div className="text-[11.5px] text-faint">
+                          {KIND_LABEL[it.kind] ?? it.kind} · {it.topic}
+                        </div>
+                      </div>
+                      {(["up", "down"] as const).map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          aria-pressed={r === v}
+                          aria-label={`${v === "up" ? "More" : "Less"} like this: ${it.topic}`}
+                          title={`${v === "up" ? "More" : "Less"} like this: ${it.topic}`}
+                          onClick={() => void rate(it, v)}
+                          className={clsx(
+                            "flex h-6 w-6 shrink-0 items-center justify-center rounded",
+                            r === v ? (v === "up" ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300") : "text-faint hover:bg-raised hover:text-fg",
+                          )}
+                        >
+                          {v === "up" ? <ThumbsUp size={13} /> : <ThumbsDown size={13} />}
+                        </button>
+                      ))}
+                    </li>
+                  );
+                })}
+              </ul>
+            </aside>
+          </div>
         ) : (
           <div className="h-full overflow-y-auto">
             <div className="mx-auto max-w-xl p-8">
