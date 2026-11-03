@@ -82,6 +82,8 @@ pub struct AppState {
     pub deleting: Mutex<HashMap<String, usize>>,
     /// Web Push to devices (see integrations/push.rs).
     pub push: crate::integrations::push::PushState,
+    /// The agent-threads backend that runs tasks on the crate, once it's started (see threads::live::install).
+    pub agent_threads: OnceLock<agent_threads::AgentThreads>,
     /// A test state's `data_dir`, removed when the state goes (see testing::state).
     #[cfg(test)]
     pub test_dir: OnceLock<crate::testing::TempDir>,
@@ -97,7 +99,8 @@ impl AppState {
 
     /// `new`, for a server whose binary is `exe` (for tests of what depends on where it runs from).
     pub fn with_exe(db: Connection, data_dir: PathBuf, id: Identity, meta: ServerMeta, exe: PathBuf) -> Shared {
-        let (events, _) = broadcast::channel(1024);
+        // Room for a burst of agent-threads' streamed deltas (see threads::live).
+        let (events, _) = broadcast::channel(4096);
         let (hub_events, _) = broadcast::channel(4096);
         Arc::new_cyclic(|me| Self {
             me: me.clone(),
@@ -127,6 +130,7 @@ impl AppState {
             relocating: Mutex::new(Default::default()),
             deleting: Mutex::new(HashMap::new()),
             push: Default::default(),
+            agent_threads: OnceLock::new(),
             #[cfg(test)]
             test_dir: OnceLock::new(),
         })
