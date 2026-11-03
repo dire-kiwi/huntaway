@@ -52,6 +52,8 @@ pub struct AppState {
     pub runs: Mutex<HashMap<String, RunHandle>>,
     /// Connected linked hosts by host id.
     pub links: Mutex<HashMap<String, LinkHandle>>,
+    /// Hubs that take this host's agents' board tool calls up their links, by hub id (see hosts/uplink.rs).
+    pub uplinks: Mutex<HashMap<String, Arc<crate::hosts::uplink::Uplink>>>,
     /// Connection loops for outbound links, by host id.
     pub link_tasks: Mutex<HashMap<String, JoinHandle<()>>>,
     /// This host's API, for answering tunnelled and proxied requests in-process.
@@ -115,6 +117,7 @@ impl AppState {
             hub_events,
             runs: Mutex::new(HashMap::new()),
             links: Mutex::new(HashMap::new()),
+            uplinks: Mutex::new(HashMap::new()),
             link_tasks: Mutex::new(HashMap::new()),
             local_router: OnceLock::new(),
             broker_url: OnceLock::new(),

@@ -18,6 +18,14 @@ pub async fn accept(State(s): State<Shared>, headers: HeaderMap, upgrade: WebSoc
     })
 }
 
+/// What sends a tunnel's messages to its host.
+fn conn_tx(conn: &LinkConn) -> Option<&mpsc::UnboundedSender<Down>> {
+    match &conn.kind {
+        Kind::Tunnel { tx, .. } => Some(tx),
+        Kind::Http { .. } => None,
+    }
+}
+
 async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
     let (mut sink, mut stream) = ws.split();
     let hello = tokio::time::timeout(Duration::from_secs(10), stream.next()).await.context("no hello")?;
@@ -43,6 +51,9 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
         bail!("{name}: {reason}");
     };
     db::note_inbound_link(&s.db(), &host_id, &name)?;
+    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 98 ignore it).
+    let hello = Down::Hello { hub_id: s.host_id.clone(), name: s.host_name.clone(), api_version: API_VERSION };
+    let _ = conn_tx(&conn).map(|tx| tx.send(hello));
     let writer = tokio::spawn(async move {
         let mut ping = tokio::time::interval(PING);
         loop {
@@ -118,6 +129,15 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
                         let _ = w.send(Frame::Close(code.map(|c| (c, reason.unwrap_or_default()))));
                     }
                 }
+            }
+            Ok(Up::ToolCall(c)) => {
+                let (s, id, conn) = (s.clone(), host_id.clone(), conn.clone());
+                tokio::spawn(async move {
+                    let a = run_up_call(&s, &id, c).await;
+                    if let Some(tx) = conn_tx(&conn) {
+                        let _ = tx.send(Down::ToolAnswer(a));
+                    }
+                });
             }
             Ok(Up::Pong) => answers_pings = true,
             Ok(Up::Hello { .. }) => {}
