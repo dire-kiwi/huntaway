@@ -407,6 +407,17 @@ fn a_thread_can_have_board_skills_the_project_doesnt() {
     assert!(!on(&[]).iter().any(|s| s.0 == "local-off"));
     // The project's own skill of a name wins over a global one, as it does for the project.
     assert_eq!(got[0].1.as_deref(), Some("a"));
+    // A project's skill that's off for the project, and a global one of the same name that's on for it: picking the name
+    // for a thread gives the project's, not the global one that's already there.
+    let own = skill(Some("a"), "thread-audit", false);
+    let global = skill(None, "thread-audit", true);
+    c.execute("INSERT INTO agent_tool_switches VALUES ('project', 'a', ?1, 1)", [&global.id]).unwrap();
+    let owner = |extra: &[&str]| {
+        let extra: Vec<String> = extra.iter().map(|s| s.to_string()).collect();
+        effective_with(&c, &a, &extra).unwrap().0.into_iter().find(|s| s.name == "thread-audit").map(|s| s.id)
+    };
+    assert_eq!(owner(&[]), Some(global.id.clone()));
+    assert_eq!(owner(&["thread-audit"]), Some(own.id.clone()));
 }
 
 #[test]

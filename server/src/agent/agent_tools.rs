@@ -657,11 +657,12 @@ fn effective_with(c: &Connection, project: &crate::db::Project, extra: &[String]
         let mut more = list_skills(c, Some(&project.id))?;
         more.extend(list_skills(c, None)?);
         for name in extra {
-            if skills.iter().any(|s| s.name == *name) {
-                continue;
-            }
-            if let Some(i) = more.iter().position(|s| (s.enabled || s.project_id.is_some()) && s.name == *name) {
-                skills.push(more.remove(i));
+            // The project's own skill of a name comes first, and takes the place of a global one the project has on.
+            let Some(i) = more.iter().position(|s| (s.enabled || s.project_id.is_some()) && s.name == *name) else { continue };
+            match skills.iter().position(|s| s.name == *name) {
+                Some(at) if skills[at].id == more[i].id => {}
+                Some(at) => skills[at] = more.remove(i),
+                None => skills.push(more.remove(i)),
             }
         }
     }
