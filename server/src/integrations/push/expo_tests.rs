@@ -455,3 +455,34 @@ fn a_new_token_for_the_same_phone_keeps_its_subscription_and_events() {
         assert_eq!(left, vec![token("new"), token("tablet")]);
     })
 }
+
+#[test]
+fn what_expo_says_of_an_old_token_doesnt_touch_the_new_one() {
+    testing::run(async || {
+        let s = board();
+        let mut fake = expo().await;
+        s.push.set_expo_url(&fake.url);
+        let (phone, _) = pair(&s, "phone").await;
+        let picked = json!({"attention": true, "review": false, "merge": true, "done": false, "prompts": "all"});
+        let (_, sub) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("A"), "events": picked}))).await;
+        let id = sub["id"].as_str().unwrap().to_string();
+        // A push to A is taken...
+        let (status, _) = call(&s, "POST", &format!("/api/push/subscriptions/{id}/test"), BOARD, None).await;
+        assert_eq!(status, 200);
+        next(&mut fake.sent).await;
+        // ...the phone's token becomes B...
+        let (_, moved) = call(&s, "POST", "/api/push/subscriptions", &phone, Some(json!({"kind": "expo", "endpoint": token("B")}))).await;
+        assert_eq!((moved["id"].as_str(), moved["endpoint"].as_str()), (Some(id.as_str()), Some(token("B").as_str())));
+        // ...and then A's receipt says it isn't registered, or failed.
+        *fake.receipts.lock().unwrap() = json!({format!("ticket:{}", token("A")): {"status": "error", "message": "gone", "details": {"error": "DeviceNotRegistered"}}});
+        check_receipts(&s, Duration::ZERO).await;
+        next(&mut fake.asked).await;
+        let now = sub_for(&s, &token("B")).expect("the new token's subscription was deleted");
+        assert_eq!((json!(now.events), now.last_error.clone()), (picked.clone(), None));
+        // A send to A that answers after the change is about A too.
+        let old = Subscription { endpoint: token("A"), ..now.clone() };
+        noted(&s, &old, &Err(Failed("too late".into()))).unwrap();
+        noted(&s, &old, &Err(Gone("too late".into()))).unwrap();
+        assert_eq!(sub_for(&s, &token("B")).unwrap().last_error, None);
+    })
+}

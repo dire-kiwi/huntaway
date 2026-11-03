@@ -234,7 +234,7 @@ export async function subscriptionOn(client: Pick<Client, "push">, token: string
 }
 
 /** What subscribing came to on each board: its subscription, or why it failed. */
-export type Subscribed = Record<string, { device?: PushDevice; error?: string }>;
+export type Subscribed = Record<string, { device?: PushDevice; error?: string; /** Turned down by the board: not retried. */ final?: boolean }>;
 
 /** A board's subscription is made again when the phone pairs again there (a new device) or its token changes. */
 export const subscribedKey = (b: Board, token: string) => `${b.id}|${b.deviceId}|${b.url}|${token}`;
@@ -282,6 +282,9 @@ export const RETRY_MAX = 15 * 60_000;
 /** Whether an error means the board turned the request down for good (it's gone, or the phone is unpaired there). */
 const final = (e: unknown) => typeof (e as { status?: number })?.status === "number" && [401, 403, 404].includes((e as { status: number }).status);
 
+/** Whether the board turned a subscription down (unpaired, or not allowed): trying again won't help. */
+const refusedBy = (e: unknown) => [400, 401, 403].includes((e as { status?: number })?.status ?? 0);
+
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -295,6 +298,8 @@ export class PushRegistrar {
   pending: Pending[] = [];
   /** The boards subscribed with the token (see subscribedKey). */
   private done = new Set<string>();
+  /** The boards that turned this token down (by subscribedKey): tried again with a new pairing or token. */
+  private refused = new Set<string>();
   private loaded: Promise<void> | null = null;
   private failures = 0;
   private cancelRetry: (() => void) | null = null;
@@ -379,7 +384,17 @@ export class PushRegistrar {
       await Promise.all(
         want.map(async (b) => {
           const key = subscribedKey(b, token);
-          if (this.done.has(key)) return;
+          if (this.done.has(key)) {
+            // Still there? It may have been removed on the board, or dropped there as unregistered: then again.
+            try {
+              const { subscriptions } = await this.deps.clientFor(b).push();
+              if (subscriptions.some((x) => x.kind === "expo" && x.endpoint === token)) return;
+              this.done.delete(key);
+            } catch {
+              return;
+            }
+          }
+          if (this.refused.has(key)) return;
           try {
             const device = await this.deps.clientFor(b).pushSubscribeApp({ token, name: this.deps.name() });
             // Turned off while it was being made: it goes again.
@@ -387,8 +402,9 @@ export class PushRegistrar {
             this.done.add(key);
             this.subscribed = { ...this.subscribed, [b.id]: { device } };
           } catch (e) {
-            failed = true;
-            this.subscribed = { ...this.subscribed, [b.id]: { error: message(e) } };
+            if (refusedBy(e)) this.refused.add(key);
+            else failed = true;
+            this.subscribed = { ...this.subscribed, [b.id]: { error: message(e), final: refusedBy(e) } };
           }
         }),
       );
@@ -416,6 +432,7 @@ export class PushRegistrar {
   /** Starts again with a new token (it changed, or notifications were allowed since). */
   tokenChanged() {
     this.done.clear();
+    this.refused.clear();
     return this.sync();
   }
 
@@ -428,7 +445,7 @@ export class PushRegistrar {
     const board = this.deps.boards.board(id);
     if (!board) return;
     this.pending = this.pending.filter((p) => !(p.kind === "unsubscribe" && p.board === id));
-    for (const k of [...this.done]) if (k.startsWith(`${id}|`)) this.done.delete(k);
+    for (const set of [this.done, this.refused]) for (const k of [...set]) if (k.startsWith(`${id}|`)) set.delete(k);
     const { [id]: _, ...rest } = this.subscribed;
     this.subscribed = rest;
     if (!on) this.pending.push({ kind: "unsubscribe", board: id });
@@ -446,7 +463,7 @@ export class PushRegistrar {
     const token = this.deps.boards.token(id);
     this.pending = this.pending.filter((p) => p.board !== id);
     if (board.deviceId && token) this.pending.push({ kind: "revoke", board: id, url: board.url, deviceId: board.deviceId, token });
-    for (const k of [...this.done]) if (k.startsWith(`${id}|`)) this.done.delete(k);
+    for (const set of [this.done, this.refused]) for (const k of [...set]) if (k.startsWith(`${id}|`)) set.delete(k);
     const { [id]: _, ...rest } = this.subscribed;
     this.subscribed = rest;
     await this.save();

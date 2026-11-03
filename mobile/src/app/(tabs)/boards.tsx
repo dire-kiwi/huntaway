@@ -6,7 +6,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { loadProfiles, pickedProfile, profilesOf } from "../../boardData";
-import { registrar } from "../../notifications";
+import { registrar, usePushState } from "../../notifications";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad, type BoardStatus } from "../../session";
 import { colors } from "../../theme";
 import { Button, Chip, s } from "../../ui";
@@ -35,6 +35,7 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
   const profile = pickedProfile(board, profiles.data);
   const [busy, setBusy] = useState(false);
   const st = statusText(status);
+  const push = usePushState().subscribed[board.id];
 
   const remove = async () => {
     if (!(await confirm(`Remove ${board.name}?`, "The app forgets it, and this phone is unpaired from it.", "Remove"))) return;
@@ -57,6 +58,9 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
         {board.url}
       </Text>
       <Text style={[s.faint, { color: st.color }]}>{st.text}</Text>
+      {push?.final && board.push !== false && (
+        <Text style={[s.faint, { color: colors.amber }]}>It turned this phone's push down: {push.error}</Text>
+      )}
       {(profiles.data?.names.length ?? 0) > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
           {profiles.data!.names.map((n) => (

@@ -76,6 +76,8 @@ function fakeBoard(id: string) {
   const b = {
     down: false,
     failDelete: false,
+    /** What it answers a subscription with instead of taking it. */
+    refuse: 0,
     /** The device tokens it takes (others are turned down as unpaired). */
     tokens: new Set([`device-${id}`]),
     subs: [] as PushDevice[],
@@ -85,6 +87,7 @@ function fakeBoard(id: string) {
     if (b.down) throw new Error("Network request failed");
     if (!b.tokens.has((headers.Authorization ?? "").replace("Bearer ", ""))) return { status: 401, body: { error: "unauthorized" } };
     if (method === "POST" && path === "/api/push/subscriptions") {
+      if (b.refuse) return { status: b.refuse, body: { error: "a paired device can only subscribe the app" } };
       const { endpoint, kind, name } = body as { endpoint: string; kind: string; name: string };
       const old = b.subs.find((x) => x.endpoint === endpoint);
       if (old) return { status: 200, body: old };
@@ -201,6 +204,45 @@ describe("subscribing", () => {
     const denied = await setup([board("home")], { home: fakeBoard("home") }, { token: () => ({ retry: false }) });
     await denied.registrar.sync();
     expect(denied.retries).toEqual([]);
+  });
+});
+
+describe("what the board says of it", () => {
+  test("a subscription the board turns down isn't retried, and says why", async () => {
+    for (const status of [400, 401, 403]) {
+      const fakes = { work: fakeBoard("work") };
+      fakes.work.state.refuse = status;
+      const { registrar, retries } = await setup([board("work")], fakes);
+      await registrar.sync();
+      expect(registrar.subscribed.work).toEqual({ error: expect.stringMatching(/only subscribe the app|Unauthorized/), final: true });
+      expect(retries).toEqual([]);
+      await registrar.sync();
+      expect(subscribeCalls(fakes.work)).toHaveLength(1);
+      // Tried again with a new token (or pairing, or push turned off and on).
+      fakes.work.state.refuse = 0;
+      await registrar.tokenChanged();
+      expect(subscribeCalls(fakes.work)).toHaveLength(2);
+      expect(registrar.subscribed.work.device).toBeDefined();
+    }
+  });
+
+  test("a subscription gone from the board (removed there, or dropped as unregistered) is made again", async () => {
+    const fakes = { work: fakeBoard("work") };
+    const { registrar } = await setup([board("work")], fakes);
+    await registrar.sync();
+    expect(subscribeCalls(fakes.work)).toHaveLength(1);
+    // Still there: nothing to do when it reconnects.
+    await registrar.sync();
+    expect(subscribeCalls(fakes.work)).toHaveLength(1);
+    fakes.work.state.subs = [];
+    await registrar.sync();
+    expect(subscribeCalls(fakes.work)).toHaveLength(2);
+    expect(fakes.work.state.subs.map((x) => x.endpoint)).toEqual(["ExponentPushToken[abc]"]);
+    // Offline, it isn't taken for gone.
+    fakes.work.state.down = true;
+    await registrar.sync();
+    fakes.work.state.down = false;
+    expect(subscribeCalls(fakes.work)).toHaveLength(2);
   });
 });
 

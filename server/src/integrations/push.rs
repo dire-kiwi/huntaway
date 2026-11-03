@@ -367,20 +367,23 @@ pub async fn send_all(s: &Shared, subs: &[Subscription], msg: &Message, urgent: 
     }
 }
 
-/// Notes how a push to `sub` went: when it last worked, why it didn't, or (gone) deletes it.
+/// Notes how a push to `sub` went: when it last worked, why it didn't, or (gone) deletes it. Only while it still has
+/// the endpoint the push went to: the app's subscription takes its new token when Expo's changes (see `subscribe`),
+/// and what's said of the old one (its receipt, say, that it's no longer registered) isn't about the new.
 fn noted(s: &Shared, sub: &Subscription, result: &std::result::Result<(), Undelivered>) -> Result<()> {
     let c = s.db();
     match &result {
         Ok(()) => {
-            c.execute("UPDATE push_subscriptions SET last_sent_at=?1, last_error=NULL WHERE id=?2", params![now(), sub.id])?;
+            c.execute("UPDATE push_subscriptions SET last_sent_at=?1, last_error=NULL WHERE id=?2 AND endpoint=?3", params![now(), sub.id, sub.endpoint])?;
         }
         Err(Gone(_)) => {
-            tracing::info!("push subscription {} ({}) is gone; deleting it", sub.id, sub.name);
-            c.execute("DELETE FROM push_subscriptions WHERE id=?1", [&sub.id])?;
+            if c.execute("DELETE FROM push_subscriptions WHERE id=?1 AND endpoint=?2", params![sub.id, sub.endpoint])? > 0 {
+                tracing::info!("push subscription {} ({}) is gone; deleted it", sub.id, sub.name);
+            }
         }
         Err(Failed(e)) => {
             tracing::warn!("push to {} ({}) failed: {e}", sub.id, sub.name);
-            c.execute("UPDATE push_subscriptions SET last_error=?1 WHERE id=?2", params![e, sub.id])?;
+            c.execute("UPDATE push_subscriptions SET last_error=?1 WHERE id=?2 AND endpoint=?3", params![e, sub.id, sub.endpoint])?;
         }
     }
     Ok(())
@@ -462,6 +465,8 @@ const RECEIPTS_EVERY: Duration = Duration::from_secs(5 * 60);
 struct Ticket {
     id: String,
     subscription: String,
+    /// The token it went to, which the subscription may have changed since.
+    endpoint: String,
     sent: Instant,
 }
 
@@ -550,7 +555,7 @@ async fn send_expo(s: &Shared, subs: &[&Subscription], msg: &Message, urgent: bo
     for (sub, ticket) in subs.iter().zip(tickets) {
         let result = if ticket["status"] == "ok" { Ok(()) } else { Err(expo_error(&ticket)) };
         if let (Ok(()), Some(id)) = (&result, ticket["id"].as_str()) {
-            s.push.tickets.lock().unwrap().push(Ticket { id: id.into(), subscription: sub.id.clone(), sent: Instant::now() });
+            s.push.tickets.lock().unwrap().push(Ticket { id: id.into(), subscription: sub.id.clone(), endpoint: sub.endpoint.clone(), sent: Instant::now() });
         }
         if let Err(e) = noted(s, sub, &result) {
             tracing::warn!("push: noting a push to {}: {e:#}", sub.id);
@@ -594,7 +599,9 @@ pub async fn check_receipts(s: &Shared, after: Duration) {
             if r["status"] == "ok" {
                 continue;
             }
-            let Some(sub) = get(&s.db(), &t.subscription).ok().flatten() else { continue };
+            let Some(mut sub) = get(&s.db(), &t.subscription).ok().flatten() else { continue };
+            // About the token it went to: a new one since is left alone.
+            sub.endpoint = t.endpoint;
             if let Err(e) = noted(s, &sub, &Err(expo_error(r))) {
                 tracing::warn!("push: noting a receipt for {}: {e:#}", sub.id);
             }
