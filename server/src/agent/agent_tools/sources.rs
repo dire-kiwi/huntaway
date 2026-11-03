@@ -427,7 +427,7 @@ fn apply_in(c: &Connection, id: &str, fetched: &Fetched) -> ApiResult<Vec<String
     Ok(notes)
 }
 
-/// `POST /agent-tools/skill-sources` (API 103): clones a repository and adds its skills, off for
+/// `POST /agent-tools/skill-sources` (API 104): clones a repository and adds its skills, off for
 /// every profile and project until they're switched on.
 pub async fn add_source(State(s): State<Shared>, Json(b): Json<AddSource>) -> ApiResult<Json<Value>> {
     let url = normalize_url(&b.url.unwrap_or_default())?;

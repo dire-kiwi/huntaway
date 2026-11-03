@@ -878,7 +878,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   They're denied with `--disallowedTools` (`Skill(<name>)`, `mcp__<server>`). The settings list
   what the project's runs reported in their `init` message over the last two weeks, and anything
   else can be turned off by name. Changes apply from each thread's next message.
-- **Skill sources** (API 103): global skills can come from a git repository, as with `npx skills add`.
+- **Skill sources** (API 104): global skills can come from a git repository, as with `npx skills add`.
   Settings → Skills and MCP servers → *Add from git* takes a git URL (https, ssh or a local path),
   `git@host:owner/repo` or `owner/repo` for GitHub, and optionally a branch or tag. The host clones it
   (shallow, into `<data-dir>/skill-sources/<id>/`, with its own git setup, so a private repository needs
@@ -1142,24 +1142,37 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
-- **A profile's reviewers and summarizer** (API 87): a profile's settings (*Settings → Profiles →
-  Edit*) pick the *Reviewers* and *Summarizer* for its projects, and each project's *Review*
-  settings use *The profile's* until you switch to *This project's own*, which starts from the
+- **A profile's reviewers and summarizers** (API 87, several summarizers in API 103): a profile's settings
+  (*Settings → Profiles → Edit*) pick the *Reviewers* and *Summarizers* for its projects, and each project's
+  *Review* settings use *The profile's* until you switch to *This project's own*, which starts from the
   profile's and overrides them. A project's own can still be one reviewer with the task's config,
-  over a profile's that differ. Through the API a project's `reviewers: []` and `summarizer: null`
-  use the profile's (`reviewers` and `summarizer` on `PATCH /profiles/{id}`), and `get_project`
-  shows the profile's as `profile_reviewers` and `profile_summarizer`.
+  over a profile's that differ. Through the API a project's `reviewers: []` and `summarizers: []`
+  use the profile's (`reviewers` and `summarizers` on `PATCH /profiles/{id}`), and `get_project`
+  shows the profile's as `profile_reviewers` and `profile_summarizers`. (`summarizer`, the first of
+  `summarizers`, is still read and written for clients from before API 103: `null` is `[]`.)
 - **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
   to read before merging: what changed and why, the main changes, and how to try it. It reads the
   pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
   own (a review thread of type `summary`), and its last message is the summary, kept in the task's
-  `summary` with the commit it describes. While the task waits in *In review* with that summary
+  `summaries` with the commit it describes. While the task waits in *In review* with a summary
   (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
   writes one at any time. A summary in progress stops when the task's agent works again, and the
-  next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
-  config, model and effort; the profile's, and otherwise the task's config, by default), in the
-  project's *Review* settings (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  next review that passes writes a new one. Turn it off, or pick the *Summarizers* (each an agent
+  config, model and effort; the profile's, and otherwise one with the task's config, by default), in the
+  project's *Review* settings (`auto_summary` and `summarizers`, which `update_project` takes too). `POST /tasks/{id}/summary`
   summarises on demand.
+- **Several summarizers, to compare skills and prompts** (API 103): a project or profile can list up
+  to six summarizers, each writing the summary in a thread of its own at the same time, and the task's
+  *Summary* tab shows each one's, boxed and labelled. Besides its agent config, model and effort, a
+  summarizer has a *name* (to tell them apart), the *skills* its agent is asked to use while it writes
+  (`/name` for Claude Code, `$name` for Codex: the project's and host's own skills, or any the
+  config has) and a *prompt* that replaces the board's instructions on how to write the summary (the
+  board still asks it to end with only the summary). So one summarizer with no skills and another with a
+  `tldr` skill or a shorter prompt can be read side by side on the same change. A summarizer's
+  thread is kept from one summary to the next while its config, model, effort, name, skills and prompt
+  stay the same; one added later is written when the next summary is (without redoing the others), and
+  one taken out loses its summary. `summaries` on a task is one `{thread_id, label, name, skills,
+  custom_prompt, state, head, text}` for each, and `summary` is the first.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when
   it starts, after the task's title and description (and before any message it was started

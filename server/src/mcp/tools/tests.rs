@@ -825,6 +825,11 @@ fn agents_read_and_change_a_projects_prompts() {
         let v = call(&s, &me, "update_project", json!({"summarizer": null})).await.unwrap();
         assert_eq!(v["summarizer"], Value::Null);
         assert_eq!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().summarizer, None);
+        // Several, with skills.
+        let v = call(&s, &me, "update_project", json!({"summarizers": [{"name": "A"}, {"name": "B", "skills": ["tldr"]}]})).await.unwrap();
+        assert_eq!((v["summarizers"][1]["skills"].clone(), v["summarizer"]["name"].clone()), (json!(["tldr"]), json!("A")));
+        let v = call(&s, &me, "update_project", json!({"summarizers": null})).await.unwrap();
+        assert_eq!(v["summarizers"], json!([]));
         call(&s, &me, "update_project", json!({"reviewers": [{"model": "opus"}]})).await.unwrap();
         call(&s, &me, "update_project", json!({"reviewers": null})).await.unwrap();
         assert!(db::get_project(&s.db(), "kiwicd").unwrap().unwrap().reviewers.is_empty());

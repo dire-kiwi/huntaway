@@ -12,13 +12,13 @@ export interface ProjectSkill {
   content: string;
   /** Only means something for a project's own skill; global ones are switched per profile and project. */
   enabled: boolean;
-  /** The skill source (git repository) it comes from, for a global skill that does (API 103): not edited by itself. */
+  /** The skill source (git repository) it comes from, for a global skill that does (API 104): not edited by itself. */
   source_id?: string | null;
   created_at: string;
   updated_at: string;
 }
 
-/** A git repository the host clones, whose skills are global skills (API 103). */
+/** A git repository the host clones, whose skills are global skills (API 104). */
 export interface SkillSource {
   id: string;
   url: string;
@@ -134,7 +134,7 @@ export const agentToolsApi = {
   /** Switch a global skill or server on or off for a profile (its default) or a project; null clears it. */
   setAgentToolSwitch: (h: string, b: { scope: "profile" | "project"; scope_id: string; enabled: boolean | null } & ({ item_id: string } | { source_id: string })) =>
     on(h).post("/agent-tools/switches", b),
-  /** Clone a git repository (a URL, or `owner/repo` for GitHub) and add its skills, off until switched on (API 103). */
+  /** Clone a git repository (a URL, or `owner/repo` for GitHub) and add its skills, off until switched on (API 104). */
   addSkillSource: (h: string, b: { url: string; ref?: string }) => on(h).post<{ source: SkillSource; skills: ProjectSkill[] }>("/agent-tools/skill-sources", b),
   /** Clone it again and bring its skills up to date. */
   updateSkillSource: (h: string, id: string) => on(h).post<{ source: SkillSource; skills: ProjectSkill[] }>(`/agent-tools/skill-sources/${enc(id)}/update`, {}),
