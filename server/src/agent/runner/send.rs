@@ -33,9 +33,9 @@ pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<T
 }
 
 /// Like `send_from_agent`, for a message an automation sent (or, with no text, an automation
-/// starting the agent of a task it made): a run it starts is a routine run, whose prompts expire
-/// if nobody answers them (see permissions::expiry). A message that goes to a run that's going, or
-/// waits in the queue, starts none.
+/// starting the agent of a task it made): a run it starts is a routine run, whose prompts in the
+/// assistant and its threads expire if nobody answers them (see permissions::expiry). A message that
+/// goes to a run that's going starts none; one that waits in the queue starts one when it's sent.
 pub fn send_from_routine(state: &Shared, task_id: &str, text: &str) -> ApiResult<Task> {
     let message = db::Queued { routine: true, ..db::Queued::new(text, true) };
     send_message(state, task_id, Some(message), false, "prompt", None)

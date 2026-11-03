@@ -162,6 +162,13 @@ pub const BOARD_SERVER_NAMES: [&str; 3] = [MCP_SERVER_NAME, LEGACY_MCP_SERVER_NA
 /// update_project asks only for some settings, so an ask rule asks about it too.
 pub const ASKS_ITSELF: &[&str] = &["delete_task", "create_project", "create_automation", "update_automation", "delete_automation"];
 
+/// The rule that decides the board's tool `tool` (e.g. `create_task`), named by the server's current
+/// name or an older one, and the name it matched: the strongest, if several do.
+pub fn board_rule(rules: &Rules, tool: &str) -> Option<(String, Rule)> {
+    let names = BOARD_SERVER_NAMES.map(|n| format!("mcp__{n}__{tool}"));
+    names.into_iter().filter_map(|n| rules.decide(&n).cloned().map(|r| (n, r))).max_by_key(|(_, r)| r.decision)
+}
+
 /// Whether `tool` is one of the board's own (decided by the board as it runs them, see
 /// mcp/tools/dispatch.rs's check_rules).
 pub fn is_board_tool(tool: &str) -> bool {
@@ -290,12 +297,27 @@ pub fn claude_hook(exe: &std::path::Path, rules: &Rules) -> Option<Value> {
         return None;
     }
     let quote = |s: &str| format!("'{}'", s.replace('\'', r"'\''"));
-    let command = format!("{} approval-hook {}", quote(&crate::util::path_str(exe)), quote(&json!(own).to_string()));
+    let mut command = format!("{} approval-hook {}", quote(&crate::util::path_str(exe)), quote(&json!(own).to_string()));
+    // Claude Code lets a call through when its hook fails, so with rules that ask or refuse, a hook
+    // that can't run at all (this binary moved, say) refuses it (exit 2). The hook does the same
+    // when it fails itself (see `hook`).
+    if strict(own.iter().copied()) {
+        command.push_str(&format!(" || {{ echo {} >&2; exit 2; }}", quote(HOOK_FAILED)));
+    }
     // Only MCP tools, unless a rule is for another tool. The hook checks the name again.
     let matcher = if own.iter().all(|r| r.tool.to_lowercase().starts_with("mcp__")) { "mcp__.*" } else { "*" };
     // It answers at once: asking is the permission prompt's (the board's), not the hook's.
-    Some(json!({"matcher": matcher, "hooks": [{"type": "command", "command": command, "timeout": 10}]}))
+    Some(json!({"matcher": matcher, "hooks": [{"type": "command", "command": command, "timeout": 30}]}))
 }
+
+/// Whether any of `rules` asks or refuses, so that a call they can't be checked for is refused.
+fn strict<'a>(mut rules: impl Iterator<Item = &'a Rule>) -> bool {
+    rules.any(|r| r.decision != Decision::Allow)
+}
+
+/// Why a call is refused when the hook couldn't check the rules.
+pub const HOOK_FAILED: &str = "The user's approval rules couldn't be checked for this call (their hook failed), so it was refused. \
+     Don't try another way to do the same thing: tell the user the rules' hook isn't working.";
 
 /// `--disallowedTools` for a Claude run with `rules`: the tools and servers a rule names exactly
 /// that are never, so the agent doesn't get them at all.
@@ -311,12 +333,31 @@ pub fn needs_prompt_tool(rules: &Rules) -> bool {
 
 /// `huntaway approval-hook <rules>`: Claude Code's PreToolUse hook for the assistant's runs, which
 /// decides the calls the rules match (`<rules>` is their JSON list).
+///
+/// It fails closed: with rules that ask or refuse (or ones it can't read), a call it can't decide
+/// (its input unreadable, or the hook failing in any way) is refused, with exit code 2, which is
+/// how a PreToolUse hook blocks a call. With only allow rules, the call goes on to the run's own
+/// permissions, as it would without them.
 pub fn hook(rules: &str) -> Result<()> {
-    let mut input = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
-    let rules: Vec<Rule> = serde_json::from_str(rules)?;
-    let call: Value = serde_json::from_str(&input).unwrap_or_default();
-    if let Some(out) = hook_decision(&Rules { rules, expiry_minutes: 0 }, &call) {
+    let parsed: Option<Vec<Rule>> = serde_json::from_str(rules).ok();
+    let decided = std::panic::catch_unwind(|| -> Result<Option<Value>> {
+        let rules = parsed.clone().ok_or_else(|| anyhow::anyhow!("its rules can't be read"))?;
+        let mut input = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+        let call: Value = serde_json::from_str(&input)?;
+        anyhow::ensure!(call["tool_name"].is_string(), "the call has no tool name");
+        Ok(hook_decision(&Rules { rules, expiry_minutes: 0 }, &call))
+    });
+    let out = match decided {
+        Ok(Ok(out)) => out,
+        // Failed: refused, unless only allow rules hold (which then just don't allow).
+        _ if parsed.as_ref().is_none_or(|r| strict(r.iter())) => {
+            eprintln!("{HOOK_FAILED}");
+            std::process::exit(2);
+        }
+        _ => None,
+    };
+    if let Some(out) = out {
         println!("{out}");
     }
     Ok(())

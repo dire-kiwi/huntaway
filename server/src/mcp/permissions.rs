@@ -155,7 +155,13 @@ pub async fn approve(s: &Shared, task: &Task, call_id: &str, kind: &str, tool: &
         "project" if tool == "create_project" => "Add a project?",
         _ => "Approve a project change?",
     };
-    let id = request(s, task, call_id, kind, tool, input, data, question)?;
+    // An ask rule on the tool doesn't ask again (see dispatch's check_rules): this request is its asking,
+    // and goes in the action log.
+    let rule = match approval_rules::for_task(&s.db(), task)? {
+        Some(rules) if approval_rules::ASKS_ITSELF.contains(&tool) => approval_rules::board_rule(&rules, tool).map(|(_, r)| r).filter(|r| r.decision == Decision::Ask),
+        _ => None,
+    };
+    let id = request_ruled(s, task, call_id, kind, tool, input, data, question, rule.as_ref())?;
     if let Err(note) = decision(s, &id).await? {
         return Ok(Err(note));
     }
@@ -176,14 +182,9 @@ pub fn asked(s: &Shared, call_id: &str) -> anyhow::Result<Option<Value>> {
     Ok(input.map(|i| serde_json::from_str(&i)).transpose()?)
 }
 
-/// The request for MCP call `call_id`, raised (with `data` as its thread message) if it's new.
-#[allow(clippy::too_many_arguments)]
-fn request(s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, input: &Value, data: Value, reason: &str) -> anyhow::Result<String> {
-    request_ruled(s, task, call_id, kind, tool_name, input, data, reason, None)
-}
-
-/// `request`, for a call that approval rule `rule` asks about, if one does: it's asked whatever the
-/// mode, and goes in the action log. A request from a routine run expires (see `expiry`).
+/// The request for MCP call `call_id`, raised (with `data` as its thread message) if it's new. One
+/// that approval rule `rule` asks about is asked whatever the mode, and goes in the action log. A
+/// request from a routine run expires (see `expiry`).
 #[allow(clippy::too_many_arguments)]
 fn request_ruled(
     s: &Shared, task: &Task, call_id: &str, kind: &str, tool_name: &str, input: &Value, mut data: Value, reason: &str, rule: Option<&Rule>,
@@ -226,7 +227,9 @@ fn request_ruled(
         rusqlite::params![id, task.id, msg.id, tool_name, input.to_string(), now(), call_id, kind, expires_at, rule.map(|r| r.tool.clone())],
     )?;
     if let Some(r) = rule {
-        approval_rules::log_asked(&s.db(), task, &id, tool_name, input, r)?;
+        // An approval of the board's own (a deletion, say) by the tool's name, as rules name it.
+        let logged = if kind == "tool" { tool_name.to_string() } else { format!("mcp__{}__{tool_name}", crate::agent::runner::MCP_SERVER_NAME) };
+        approval_rules::log_asked(&s.db(), task, &id, &logged, input, r)?;
     }
     let mut fields = vec![("attention_reason", json!(reason))];
     if task.kind == "task" {
@@ -239,7 +242,9 @@ fn request_ruled(
 /// When a request raised by MCP call `call_id` in `task`'s thread is denied unanswered: for a call
 /// from a routine run, the profile's expiry after now (see approval_rules::Rules::expiry_minutes).
 fn expiry(s: &Shared, task: &Task, call_id: &str) -> anyhow::Result<Option<String>> {
-    if !routine_call(&s.db(), call_id)? {
+    // Only the assistant's and its threads' (where the rules hold): project tasks an automation starts
+    // wait for their prompts as they always did.
+    if !approval_rules::applies_to(&s.db(), task)? || !routine_call(&s.db(), call_id)? {
         return Ok(None);
     }
     let minutes = approval_rules::get(&s.db(), &task.profile_id)?.expiry_minutes;

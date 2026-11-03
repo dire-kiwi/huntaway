@@ -247,8 +247,9 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             // The command runs as the agent's own Bash calls would, so it's approved like them: in
             // auto mode the agent's reviewer (Claude's or Codex's) has already reviewed this call,
             // otherwise the user (or the mode) decides.
+            // An approval rule on Bash holds for it whoever reviewed the call: a wait's command is a command.
             if let (Some(cmd), None) = (&command, crate::mcp::wait::resuming(&task, &c.call_id))
-                && !crate::agent::runner::agent_reviews_waits(s, &run.id)
+                && (!crate::agent::runner::agent_reviews_waits(s, &run.id) || ruled_bash(s, &task).map_err(|e| format!("{e:#}"))?)
             {
                 let cwd = crate::agent::runner::work_dir(s, &task).map_err(|e| format!("{e:#}"))?;
                 let description = format!("Run while waiting{}", reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default());
@@ -322,16 +323,25 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
     }
 }
 
+/// Whether the user's approval rules ask about or refuse Bash in `task`'s thread now (see agent/approval_rules.rs).
+fn ruled_bash(s: &Shared, task: &Task) -> anyhow::Result<bool> {
+    let Some(rules) = crate::agent::approval_rules::for_task(&s.db(), task)? else { return Ok(false) };
+    let mode = {
+        let project = task.project_id.as_deref().map(|p| db::get_project(&s.db(), p)).transpose()?.flatten();
+        task.effective_permission_mode(&s.db(), project.as_ref())?
+    };
+    Ok(rules.for_mode(&mode).decide("Bash").is_some_and(|r| r.decision != crate::agent::approval_rules::Decision::Allow))
+}
+
 /// The user's approval rules for the board's own tools, which the board holds as it runs them for
 /// either runtime (see agent/approval_rules.rs): a call a never rule matches is refused, and one an
 /// ask rule matches waits for the user's answer, as a permission prompt.
 async fn check_rules(s: &Shared, task: &Task, call_id: &str, tool: &str, args: &Value) -> std::result::Result<(), String> {
     use crate::agent::approval_rules::{self, Decision};
     let Some(rules) = approval_rules::for_task(&s.db(), task).map_err(|e| format!("{e:#}"))? else { return Ok(()) };
-    // A rule may name the board's tools by the server's current name or an older one.
-    let names = approval_rules::BOARD_SERVER_NAMES.map(|n| format!("mcp__{n}__{tool}"));
-    let Some((name, rule)) = names.iter().filter_map(|n| rules.decide(n).map(|r| (n, r))).max_by_key(|(_, r)| r.decision) else { return Ok(()) };
-    // The tools that ask the user themselves, whatever the mode, aren't asked about twice; never still refuses them.
+    let Some((name, rule)) = approval_rules::board_rule(&rules, tool) else { return Ok(()) };
+    // The tools that ask the user themselves, whatever the mode, aren't asked about twice (their own
+    // request carries the rule, see permissions::approve); never still refuses them.
     if rule.decision == Decision::Allow || (rule.decision == Decision::Ask && approval_rules::ASKS_ITSELF.contains(&tool)) {
         return Ok(());
     }

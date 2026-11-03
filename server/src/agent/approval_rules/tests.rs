@@ -112,7 +112,9 @@ fn claude_gets_the_hook_the_prompt_tool_and_the_tools_that_are_never() {
     let command = hook["hooks"][0]["command"].as_str().unwrap();
     assert!(command.starts_with(r"'/opt/it'\''s/huntaway' approval-hook '"), "{command}");
     // The command's last argument is the rules, as the hook reads them back.
-    let arg = command.rsplit_once(" approval-hook ").unwrap().1;
+    // (Then what refuses the call if the hook can't run at all.)
+    let (arg, fallback) = command.rsplit_once(" approval-hook ").unwrap().1.split_once(" || ").unwrap();
+    assert!(fallback.ends_with("exit 2; }"), "{fallback}");
     let arg = arg.strip_prefix('\'').unwrap().strip_suffix('\'').unwrap().replace(r"'\''", "'");
     assert_eq!(serde_json::from_str::<Vec<Rule>>(&arg).unwrap(), r.rules);
     assert_eq!(claude_disallowed(&r), vec!["mcp__g__delete_mail".to_string(), "mcp__x".to_string()]);
@@ -262,4 +264,18 @@ fn codex_runs_with_rules_on_its_own_tools_ask_whatever_their_mode() {
     assert_eq!(policy(Some(&bash), "plan"), Ok(("untrusted", "user", "read-only")));
     // Never on Bash: it doesn't run.
     assert!(policy(Some(&rules(&[("Bash", Never)])), "default").is_err());
+}
+
+#[test]
+fn a_hook_that_cant_run_refuses_calls_while_rules_ask_or_refuse() {
+    let run = |rules: &Rules| {
+        let hook = claude_hook(std::path::Path::new("/nonexistent/huntaway"), rules).unwrap();
+        let command = hook["hooks"][0]["command"].as_str().unwrap().to_string();
+        std::process::Command::new("sh").args(["-c", &command]).stdin(std::process::Stdio::null()).output().unwrap()
+    };
+    let out = run(&rules(&[("mcp__g__send*", Ask)]));
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).trim().ends_with(HOOK_FAILED));
+    // Only allow rules: nothing to refuse.
+    assert_ne!(run(&rules(&[("mcp__g__get*", Allow)])).status.code(), Some(2));
 }

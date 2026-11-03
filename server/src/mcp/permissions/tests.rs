@@ -585,3 +585,16 @@ fn a_prompt_a_rule_asked_whose_run_ends_is_logged_as_expired() {
         assert_eq!(log(&s, &task), vec![entry("mcp__g__send_mail", "ask", "expired", Some("ended"))]);
     });
 }
+
+#[test]
+fn a_project_tasks_prompts_dont_expire_even_when_an_automation_started_its_run() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        // A project automation's task (the rules, and expiry, are the assistant's).
+        let (task, run) = running_task(&s, None);
+        call_in_turn(&s, &task, &run, "r", true);
+        let (id, _) = asked(&s, &task, "r", "Bash", json!({"command": "make"})).await;
+        assert_eq!(s.db().query_row("SELECT expires_at FROM permission_requests WHERE id=?1", [&id], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
+        assert_eq!(expire_due(&s, chrono::Utc::now() + chrono::Duration::days(1)), 0);
+    });
+}

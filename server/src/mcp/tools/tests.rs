@@ -2495,7 +2495,14 @@ fn an_ask_rule_on_the_whole_board_leaves_tools_that_ask_for_themselves_to_ask_on
         res.unwrap();
         assert_eq!((a["kind"].as_str(), a["input"]["delete"]["key"].as_str(), &a["input"]["tasks_with_it"]), (Some("delete_task"), Some("KIW-1"), &json!([])));
         assert!(db::get_task(&s.db(), &doomed.id).unwrap().is_none());
-        assert_eq!(ruled(&s), 0, "delete_task was asked about twice");
+        // Its one card is the rule's asking: it's in the action log, answered.
+        assert_eq!(a["rule"], json!({"tool": "mcp__huntaway", "decision": "ask"}));
+        assert_eq!(ruled(&s), 1, "delete_task was asked about twice");
+        let log = crate::agent::approval_rules::list(&s.db(), &p.id, 10).unwrap();
+        assert_eq!(
+            (log[0].tool_name.as_str(), log[0].rule.as_str(), log[0].outcome.as_str(), log[0].answered_by.as_deref()),
+            ("mcp__huntaway__delete_task", "mcp__huntaway", "allowed", Some("user"))
+        );
 
         // update_project asks for some settings only: the rule asks first, then the change is approved as ever.
         let answer_both = async {
@@ -2571,5 +2578,53 @@ fn rules_hold_for_wait_and_its_command() {
             crate::agent::approval_rules::list(&s.db(), &p.id, 10).unwrap().into_iter().map(|a| (a.tool_name, a.outcome)).collect();
         assert_eq!(log[0], ("mcp__huntaway__wait".to_string(), "allowed".to_string()));
         assert_eq!(log[1], ("mcp__huntaway__wait".to_string(), "denied".to_string()));
+    });
+}
+
+#[test]
+fn a_bash_rule_holds_for_a_waits_command_even_when_claudes_classifier_reviewed_the_wait() {
+    use crate::agent::approval_rules::Decision;
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        let dir = testing::temp_dir();
+        let marker = dir.join("ran");
+        // A Claude run in Auto mode: wait isn't in its --allowedTools, so Claude's classifier reviewed the call.
+        let auto = |rules: &[(&str, Decision)]| {
+            let (assistant, run) = ruled_assistant(&s, &p, rules);
+            db::update_task(&s.db(), &assistant.id, &[("permission_mode", json!("auto"))]).unwrap();
+            let run_dir = crate::agent::runs::run_dir(&s, &run.id);
+            std::fs::create_dir_all(&run_dir).unwrap();
+            let args = ["-p", "--permission-mode", "auto", "--allowedTools", "mcp__huntaway__list_tasks", "--add-dir", "/a"];
+            std::fs::write(run_dir.join("spec.json"), json!({"cwd": dir, "args": args}).to_string()).unwrap();
+            assert!(crate::agent::runner::agent_reviews_waits(&s, &run.id));
+            (assistant, run)
+        };
+        let wait = |call_id: &str, run: &db::Run| McpCall {
+            task_fields: true,
+            run_id: run.id.clone(),
+            call_id: call_id.into(),
+            tool: "wait".into(),
+            args: json!({"reason": "r", "seconds": 5, "command": format!("touch '{}'", marker.display())}),
+        };
+        // Never: the command doesn't run.
+        let (_, run) = auto(&[("Bash", Decision::Never)]);
+        let err = handle_mcp(&s, wait("w1", &run)).await.unwrap_err();
+        assert!(err.contains(crate::agent::approval_rules::BLOCKED), "{err}");
+        assert!(!marker.exists());
+        // Ask: the user answers, not the classifier.
+        let (assistant, run) = auto(&[("Bash", Decision::Ask)]);
+        let deny = async {
+            let r = rule_asked(&s, &assistant.id).await;
+            assert_eq!((r["tool_name"].as_str(), r["input"]["command"].is_string()), (Some("Bash"), true));
+            permissions::decide(&s, r["id"].as_str().unwrap(), false, false, None).unwrap();
+        };
+        let (res, _) = tokio::join!(handle_mcp(&s, wait("w2", &run)), deny);
+        assert!(res.is_err());
+        assert!(!marker.exists());
+        // No rule on Bash: the classifier's review stands, as before.
+        let (_, run) = auto(&[("mcp__google__*send*", Decision::Ask)]);
+        assert_eq!(handle_mcp(&s, wait("w3", &run)).await.unwrap()["ended"], "command_exited");
+        assert!(marker.exists());
     });
 }

@@ -254,7 +254,9 @@ trashing mail and files is never. A switch adds an *ask* on the board's `create_
   calls a rule matches. Its *ask* goes to the board's permission prompt in every mode, Bypass
   included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool
   too; in *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are
-  left out of the run (`--disallowedTools`).
+  left out of the run (`--disallowedTools`). The hook fails closed: while any rule asks or refuses,
+  a call it can't check (the hook failing, or its binary missing) is refused. A rule on `Bash`
+  holds for a `wait`'s command too, even in *Auto*, where Claude's classifier reviews the wait.
 - **Codex** can't hold an *ask* with a hook (its PreToolUse `ask` fails open, checked with Codex
   0.166), so an MCP server a rule may match asks the board about each of its calls
   (`default_tools_approval_mode = "prompt"`), and the board answers by the rules. In *Auto* its own
@@ -268,17 +270,18 @@ trashing mail and files is never. A switch adds an *ask* on the board's `create_
 - **The board's own tools**, `wait` included, are held by the board as it runs them, for both, under
   the server's current name or an older one (`mcp__issue_agent__…`). Deleting tasks, adding projects
   and changing automations always ask you with their own card, so an *ask* rule doesn't ask about
-  them again (a *never* rule still refuses them).
+  them again: their own card is the rule's asking, and goes in the action log (a *never* rule still
+  refuses them).
 
-A prompt raised by a **routine run** (one an automation started, with nobody there: its message is
-marked `routine`, which a message that waits in the queue keeps, unless something of yours is
-queued with it) is denied if nobody answers it within the profile's expiry (30 minutes by
-default; `expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts
-raised before this, and ones the user's own turns raise, wait as they always did. Each call a
-rule asked about or blocked goes in the assistant's **Actions** tab (`GET
-/api/profiles/<id>/approval-log`): what it was called with, the rule, how it ended (allowed,
-denied, expired or blocked) and who answered (you on the board, a notification, nobody in time,
-the mode, the rule, or its run ending first).
+A prompt raised in the assistant or a thread under it by a **routine run** (one an automation
+started, with nobody there: its message is marked `routine`, which a message that waits in the queue
+keeps, unless something of yours is queued with it) is denied if nobody answers it within the
+profile's expiry (30 minutes by default; `expiry_minutes`, 0 for never), and the agent is told to
+carry on without it. Prompts raised before this, ones the user's own turns raise, and project tasks'
+(even ones an automation started) wait as they always did. Each call a rule asked about or blocked
+goes in the assistant's **Actions** tab (`GET /api/profiles/<id>/approval-log`): what it was called
+with, the rule, how it ended (allowed, denied, expired or blocked) and who answered (you on the
+board, a notification, nobody in time, the mode, the rule, or its run ending first).
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
