@@ -6,9 +6,20 @@ export type PushPrompts = "off" | "assistant" | "all";
 /** Which of the board's notifications a device gets by push (see notifications.ts), and its permission prompts (left as they are, or the default, without). */
 export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & {
   prompts?: PushPrompts;
-  /** The reports the assistant's routines post, such as the morning brief's (API 105; on unless turned off). */
+  /** The assistant's replies, but for those to what was sent it on Telegram, which go back there. Off unless chosen; a
+   *  board from before it doesn't have it, and keeps what a change leaves out. */
+  replies?: boolean;
+  /** The reports the assistant's routines post, such as the morning brief's (API 105): on for a new device, off for one
+   *  subscribed before it could choose. */
   reports?: boolean;
 };
+
+/** The assistant's events a device can be pushed, besides the board's (`NOTIFY_EVENTS` in the web app): those a board
+ *  has are in its devices' events. */
+export const ASSISTANT_PUSH_EVENTS: { id: "replies" | "reports"; label: string; hint: string }[] = [
+  { id: "replies", label: "Assistant's replies", hint: "It finished a reply (those to what you sent on Telegram go back there)" },
+  { id: "reports", label: "Routine reports", hint: "What its routines post, such as the morning brief: its first line" },
+];
 
 /** The mobile app's push, through Expo's push service (API 103): its subscriptions are `kind` `expo`. */
 export const EXPO_PUSH_API = 103;

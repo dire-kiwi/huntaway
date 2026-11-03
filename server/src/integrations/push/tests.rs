@@ -178,7 +178,7 @@ fn devices_subscribe_change_their_events_and_unsubscribe() {
         let endpoint = "https://push.example.com/send/abc";
         let (status, sub) = api(&s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": endpoint, "keys": keys, "name": "Pixel"}))).await;
         assert_eq!(status, 200, "{sub}");
-        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false, "prompts": "assistant", "reports": true}));
+        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false, "prompts": "assistant", "replies": false, "reports": true}));
         assert_eq!(sub["name"], "Pixel");
         assert!(sub.get("auth").is_none() && sub.get("p256dh").is_none());
         let id = sub["id"].as_str().unwrap().to_string();
@@ -770,9 +770,10 @@ fn a_routines_report_is_pushed_once_to_the_devices_that_want_reports() {
         let report = |outcome: &str, text: &str| json!({"automation": "Morning brief", "task_id": "t", "key": "A-2", "outcome": outcome, "text": text});
         s.add_message(&assistant.id, "report", report("reported", "## Today\n\n**Dentist at 9:30**; two mails need you.\nMore lines")).unwrap();
         let msg = next_push(&mut got, &ua).await;
-        let id = assistant.id.as_str();
         assert_eq!((msg["title"].as_str(), msg["body"].as_str(), msg["event"].as_str()), (Some("Morning brief"), Some("Today"), Some("report")), "{msg}");
-        assert_eq!((msg["url"].as_str(), msg["task_id"].as_str()), (Some(format!("/t/{id}").as_str()), Some(id)));
+        // Tapping it opens the routine's thread, not the assistant's.
+        assert_eq!((msg["url"].as_str(), msg["task_id"].as_str()), (Some("/t/t"), Some("t")));
+        assert_ne!(assistant.id, "t");
         s.add_message(&assistant.id, "report", report("failed", "Out of usage")).unwrap();
         assert_eq!(next_push(&mut got, &ua).await["body"], "Failed: Out of usage");
         // One waiting on the user is pushed as its prompt or attention, not again here; other messages aren't reports.
