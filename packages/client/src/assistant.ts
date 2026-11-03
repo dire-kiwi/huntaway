@@ -71,7 +71,8 @@ export interface MemoryFile {
   path: string;
   kind: "user" | "memory" | "log" | "other";
   size: number;
-  /** Its length in characters, unless it's too big or isn't text. */
+  /** Its length in characters, for the files a run is told (USER.md, MEMORY.md, today's and yesterday's logs), unless
+   *  it's too big or isn't text. Null for the rest (from hosts before HA-160, it's there too). */
   chars: number | null;
   modified: string | null;
 }
@@ -82,9 +83,11 @@ export interface MemoryOverview {
   dir: string;
   /** How many characters of USER.md, MEMORY.md and each loaded daily log a run is told. */
   cap: number;
+  /** And how many bytes (from HA-160; older hosts don't say). */
+  cap_bytes?: number;
   /** Today's log's path, in the host's time zone. */
   today: string;
-  /** Whether the workspace has history (it's a git repository). */
+  /** Whether the workspace has history (a git repository of the board's, next to it). */
   history: boolean;
   files: MemoryFile[];
   /** What to paste into another assistant for it to write out what it knows about you. */
