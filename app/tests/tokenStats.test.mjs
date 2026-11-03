@@ -95,6 +95,31 @@ test("a task's tokens include its threads', and a subproject lists its tasks", (
   );
 });
 
+test("titles and window restarts are calls of their own, counted in totals but not towards tasks", () => {
+  const d = data();
+  const title = (threadId, at, model, output) => row(threadId, at, model, output, { runId: null, runKind: "title" });
+  const window = (at, model, output) => row(null, at, model, output, { runId: null, runKind: "window" });
+  const rows = [row("T", 1, "gpt", 50), title("T", 2, "haiku", 3), title("T", 3, "haiku", 4), title("C", 3, "haiku", 2), window(4, "haiku", 1), window(4, "gpt-mini", 1)];
+  assert.equal(purposeOf(d, rows[1]), "title");
+  assert.equal(purposeOf(d, rows[4]), "window");
+  const t = total(rows);
+  // The window restart that used two models is one call.
+  assert.deepEqual([t.runs, t.calls, t.output], [1, 4, 61]);
+  assert.deepEqual(
+    byTask(d, rows, "output").map((u) => [u.taskId, u.totals.output, u.totals.calls]),
+    [["T", 50, 0]],
+  );
+  assert.deepEqual(
+    groupBy(rows, (r) => purposeOf(d, r), "output").map((g) => [g.key, g.totals.output, g.totals.runs, g.totals.calls]),
+    [
+      ["task", 50, 1, 0],
+      ["title", 9, 0, 3],
+      ["window", 2, 0, 1],
+    ],
+  );
+  assert.deepEqual(byDay(d, rows, [0]).map((x) => [x.parts.title.output, x.parts.window.output]), [[9, 2]]);
+});
+
 test("a subproject's task shows under it even when the subproject used nothing itself", () => {
   const tasks = byTask(data(), [row("C", 2, "opus", 100)], "tokens");
   assert.deepEqual(

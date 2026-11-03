@@ -1,5 +1,5 @@
 //! agent-threads' `Store` on the board's database, in tables of its own (`at_threads`, `at_events`,
-//! `at_snapshots`, `at_runs`, see `SCHEMA_V80` in db/schema.rs): the crate's `SqliteStore` would make a
+//! `at_snapshots`, `at_runs`, see `SCHEMA_V81` in db/schema.rs): the crate's `SqliteStore` would make a
 //! `runs` table, which is Huntaway's, so it mustn't be opened on huntaway.db. Being in the same database
 //! lets a thread's events and its task's state change in one transaction.
 //!

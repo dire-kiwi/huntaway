@@ -1,9 +1,10 @@
 //! One-off queries to Codex: task titles, models, skills and rate limits.
 
 use super::*;
+use crate::agent::tokens::calls::Spent;
 
 /// A short-lived title query using this config's model and login, without a task session.
-pub async fn task_title(codex_home: &str, cwd: &Path, instructions: &str, input: &str) -> Result<String> {
+pub async fn task_title(codex_home: &str, cwd: &Path, instructions: &str, input: &str, spent: &mut Option<Spent>) -> Result<String> {
     let mut rpc = Rpc::start(Some(codex_home), cwd)?;
     let work = async {
         rpc.initialize().await?;
@@ -19,6 +20,7 @@ pub async fn task_title(codex_home: &str, cwd: &Path, instructions: &str, input:
                 "features.shell_tool": false, "features.apply_patch_freeform": false, "features.multi_agent": false, "features.apps": false},
         })).await?;
         let thread = started["thread"]["id"].as_str().context("no title thread id")?;
+        let model = started["model"].as_str().filter(|m| !m.is_empty()).unwrap_or("codex").to_string();
         rpc.request("turn/start", json!({"threadId": thread, "effort": "low",
             "input": [{"type": "text", "text": input, "text_elements": []}]})).await?;
         let mut title = String::new();
@@ -31,6 +33,8 @@ pub async fn task_title(codex_home: &str, cwd: &Path, instructions: &str, input:
             let p = &msg["params"];
             if p["threadId"].as_str() != Some(thread) { continue }
             match msg["method"].as_str() {
+                // Its thread's totals so far (see agent/tokens/calls.rs).
+                Some("thread/tokenUsage/updated") => *spent = Some(Spent::codex(&model, &p["tokenUsage"])),
                 Some("item/completed") if p["item"]["type"] == "agentMessage" => {
                     title = p["item"]["text"].as_str().unwrap_or("").to_string();
                 }

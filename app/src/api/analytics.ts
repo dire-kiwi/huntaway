@@ -36,11 +36,13 @@ export interface ContextStatsReport {
 
 /** The tokens a profile's runs used, per run and model, what reviewers reported, and the follow-up tasks agents created (API 98). */
 export interface TokenStatsReport {
+  /** Runs' rows, and from API 99 the model calls that aren't runs (task titles and window restarts). */
   usage: {
-    run_id: string;
-    /** The thread the run was in: a task, or a review or summary thread. */
-    task_id: string;
-    /** The run's: `prompt`, `compact` or `review`. */
+    /** Null for a call that isn't a run. */
+    run_id: string | null;
+    /** The thread the run was in: a task, or a review or summary thread. A title's task; null for a window restart. */
+    task_id: string | null;
+    /** The run's: `prompt`, `compact` or `review`; or the call's: `title` or `window`. */
     kind: string;
     at: string;
     model: string;

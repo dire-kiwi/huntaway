@@ -843,19 +843,24 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=79; COMMIT;")?;
     }
     if version < 80 {
-        // agent-threads' store (see threads/store.rs). IF NOT EXISTS, in case another migration takes this version first.
+        // The tokens of model calls that aren't runs: task titles and 5-hour window restarts (see
+        // agent/tokens/calls.rs).
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V80} PRAGMA user_version=80; COMMIT;"))?;
+    }
+    if version < 81 {
+        // agent-threads' store (see threads/store.rs). IF NOT EXISTS, in case another migration takes this version first.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V81} PRAGMA user_version=81; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
-pub const VERSION: i64 = 80;
+pub const VERSION: i64 = 81;
 
 /// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
 /// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON
 /// text they were given. A thread can belong to a task (its `metadata.task_id`), and goes with it.
-const SCHEMA_V80: &str = r#"
+const SCHEMA_V81: &str = r#"
 CREATE TABLE IF NOT EXISTS at_threads (
   id TEXT PRIMARY KEY,
   task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
@@ -924,6 +929,30 @@ CREATE TABLE IF NOT EXISTS review_stats (
 );
 CREATE INDEX IF NOT EXISTS review_stats_task ON review_stats(task_id, at);
 CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);
+"#;
+
+/// What each model call that isn't a run used (see agent/tokens/calls.rs), counted as
+/// `token_usage` is: `purpose` `title` for a task's title, written for task `task_id`, and `window`
+/// for the prompt that restarts config `config_id`'s 5-hour window. `cost_usd` is null for Codex,
+/// which doesn't say.
+const SCHEMA_V80: &str = r#"
+CREATE TABLE IF NOT EXISTS call_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  config_id TEXT,
+  model TEXT NOT NULL,
+  runtime TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL
+);
+CREATE INDEX IF NOT EXISTS call_usage_time ON call_usage(at);
+CREATE INDEX IF NOT EXISTS call_usage_task ON call_usage(task_id);
 "#;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
