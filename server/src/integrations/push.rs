@@ -12,7 +12,7 @@
 //! a one-time token (push_answers.rs) for its Allow and Deny actions, which answer it from the
 //! notification without the board's token.
 //!
-//! The mobile app (mobile/, API 101) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and
+//! The mobile app (mobile/, API 102) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and
 //! its pushes go through Expo's push service (see `deliver_expo`), which needs no keys kept here. Expo, Apple and
 //! Google can read those, so they say less (see `Message::summary`). A paired device sees and changes only the
 //! subscriptions it made, and they go when it's revoked.
@@ -1092,7 +1092,7 @@ pub async fn info(State(s): State<Shared>, device: Device) -> ApiResult<Json<Val
 #[derive(Deserialize)]
 pub struct Subscribe {
     endpoint: String,
-    /// `web` (the default) or `expo` (API 101).
+    /// `web` (the default) or `expo` (API 102).
     #[serde(default)]
     kind: Kind,
     /// A browser's (not for `expo`).

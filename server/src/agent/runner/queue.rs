@@ -45,7 +45,7 @@ pub(super) fn steer_or_queue(state: &Shared, task_id: &str, message: &db::Queued
         Some(run) => {
             let mut steering = task.steering;
             let id = crate::util::new_id();
-            steering.push(db::Steer { id, text: text.to_string(), from_agent, run_id: run.id, written: false });
+            steering.push(db::Steer { id, text: text.to_string(), from_agent, run_id: run.id, written: false, routine_runs: message.routine_runs.clone() });
             db::update_task(&state.db(), task_id, &[("steering", json!(steering))])?;
             write_steers(state, task_id)?
         }
@@ -122,6 +122,8 @@ pub(super) fn steered(state: &Shared, run: &Run, id: &str) -> Result<()> {
         msg["from_agent"] = json!(true);
     }
     let message = state.add_message(task_id, "user", msg)?;
+    // The routines whose messages it carried are this run's, for its cost.
+    crate::integrations::automations::routines::taken_in(&state.db(), &run.id, &steer.routine_runs)?;
     if new_turn {
         state.db().execute("UPDATE runs SET turn_message_id=?1 WHERE id=?2", rusqlite::params![message.id, run.id])?;
     }
@@ -172,8 +174,9 @@ pub(super) fn requeue_steers(state: &Shared, task_id: &str, run_id: &str) -> Res
     }
     let c = state.db();
     let later = db::take_queued(&c, task_id)?;
+    // Its routines' runs go with it, to the run that takes it in.
     for s in &mine {
-        db::queue(&c, task_id, db::Queued::new(&s.text, s.from_agent))?;
+        db::queue(&c, task_id, db::Queued { routine_runs: s.routine_runs.clone(), ..db::Queued::new(&s.text, s.from_agent) })?;
     }
     if let Some(later) = later {
         db::queue(&c, task_id, later)?;

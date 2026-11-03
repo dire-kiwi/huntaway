@@ -539,17 +539,17 @@ fn a_database_from_version_61_gets_push_subscriptions() {
 }
 
 #[test]
-fn push_subscriptions_from_before_version_80_are_web_push() {
+fn push_subscriptions_from_before_version_81_are_web_push() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
-        // As a board at version 79 left it: no kind or device_id, and a browser's subscription.
+        // As a board at version 80 left it: no kind or device_id, and a browser's subscription.
         let c = open(&path).unwrap();
         c.execute_batch(
             "DROP TABLE push_subscriptions;
              CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
                name TEXT NOT NULL DEFAULT '', events TEXT NOT NULL, created_at TEXT NOT NULL, last_sent_at TEXT, last_error TEXT);
              INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES ('s','https://push.example.com/1','k','a','Chrome','{}','1');
-             PRAGMA user_version=79;",
+             PRAGMA user_version=80;",
         )
         .unwrap();
     }

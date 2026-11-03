@@ -32,6 +32,14 @@ pub fn send_from_agent(state: &Shared, task_id: &str, text: &str) -> ApiResult<T
     send_run(state, task_id, text, false, true, "prompt")
 }
 
+/// Send a thread-mode routine's message (for its automation run `automation_run`), as another
+/// agent's: the run that takes it in, whether it starts with it, is steered it or takes it from the
+/// queue later, is charged to that automation run (see automations::routines::taken_in).
+pub fn send_from_routine(state: &Shared, task_id: &str, text: &str, automation_run: &str) -> ApiResult<Task> {
+    let message = db::Queued { routine_runs: vec![automation_run.to_string()], ..db::Queued::new(text, true) };
+    send_message(state, task_id, Some(message), false, "prompt", None)
+}
+
 /// Start a review round on a review thread (see review.rs): a prompt whose outcome is the review's.
 pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Task> {
     send_run(state, thread_id, text, true, false, "review")
