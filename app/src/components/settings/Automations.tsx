@@ -1018,7 +1018,14 @@ function GuardFields({ draft: d, set, routine }: { draft: Draft; set: <K extends
       >
         <Input className="font-mono text-[12px]" value={d.precheck} onChange={(e) => set("precheck", e.target.value)} placeholder="./new-mail.sh || exit 1" />
       </Field>
-      <Field label="Budget a day (USD)" hint="Once its runs today have cost this much, it's skipped until tomorrow. Blank for no limit.">
+      <Field
+        label="Budget a day (USD)"
+        hint={`Once its runs today have cost this much, it's skipped until tomorrow. ${
+          routine
+            ? "A run costs what its thread (or the assistant's turn that took its message) costs."
+            : "A run costs what the agent run it starts costs: a new task's first run, or the run that takes its message in (not the task's later work)."
+        } Blank for no limit.`}
+      >
         <div className="w-32">
           <Input type="number" min={0} step="0.05" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="no limit" />
         </div>

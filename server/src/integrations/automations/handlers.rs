@@ -44,6 +44,22 @@ pub fn run_json(c: &Connection, r: &Run) -> Value {
             v["cost_usd"] = json!(t.cost_usd);
         }
     }
+    // The agent run that took its message in, while it works (see routines::agent_run_ended).
+    if r.cost_usd.is_none() && v["cost_usd"].is_null() {
+        let so_far: Option<f64> = c
+            .query_row(
+                "SELECT x.cost_usd / (SELECT COUNT(*) FROM automation_runs y WHERE y.agent_run_id = x.id) FROM automation_runs r JOIN runs x ON x.id = r.agent_run_id
+                 WHERE r.id = ?1",
+                [&r.id],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
+        if let Some(cost) = so_far {
+            v["cost_usd"] = json!(cost);
+        }
+    }
     v
 }
 

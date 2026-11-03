@@ -42,6 +42,16 @@ pub fn send_from_routine(state: &Shared, task_id: &str, text: &str, automation_r
     send_message(state, task_id, Some(message), false, "prompt", None)
 }
 
+/// Send a project automation's message (for its run `automation_run`), as another agent's, or with
+/// no text, start a task it made: the agent run that takes it in, whether it starts with it, is
+/// steered it or takes it from the queue later, is charged to that automation run, for its budget
+/// (see automations::routines::taken_in). Unlike a routine's, it isn't a routine run: a project's
+/// task has the user's approval rules, not the assistant's.
+pub fn send_from_automation(state: &Shared, task_id: &str, text: &str, automation_run: &str) -> ApiResult<Task> {
+    let message = db::Queued { routine_runs: vec![automation_run.to_string()], ..db::Queued::new(text, !text.trim().is_empty()) };
+    send_message(state, task_id, Some(message), false, "prompt", None)
+}
+
 /// Start a review round on a review thread (see review.rs): a prompt whose outcome is the review's.
 pub fn send_review(state: &Shared, thread_id: &str, text: &str) -> ApiResult<Task> {
     send_run(state, thread_id, text, true, false, "review")
@@ -154,7 +164,8 @@ pub(super) fn send_message(state: &Shared, task_id: &str, message: Option<db::Qu
 /// it waits in "In progress", keeping `text` as its queued message, and starts once they're
 /// merged (see `start_unblocked`).
 pub fn wait_for_dependencies(state: &Shared, task: &Task, unmet: &[Task], message: Option<db::Queued>) -> ApiResult<Task> {
-    if let Some(message) = message.as_ref().filter(|m| !m.text.trim().is_empty()) {
+    // One with no text keeps only its automation runs, for the run that starts it (see db::queue).
+    if let Some(message) = message.as_ref() {
         db::queue(&state.db(), &task.id, db::Queued { text: message.text.trim().to_string(), ..message.clone() })?;
     }
     // Without a message, for the one queued: unless it was sent or taken back meanwhile (checked
@@ -183,7 +194,8 @@ pub fn wait_for_dependencies(state: &Shared, task: &Task, unmet: &[Task], messag
 /// `wait_for_dependencies`, it waits in "In progress", keeping `message` as its queued message,
 /// and its agent carries on once the limit resets (see usage::resume_loop).
 pub fn wait_for_limit(state: &Shared, task: &Task, config_name: &str, until: &str, message: Option<db::Queued>) -> ApiResult<Task> {
-    if let Some(message) = message.as_ref().filter(|m| !m.text.trim().is_empty()) {
+    // One with no text keeps only its automation runs, for the run that starts it (see db::queue).
+    if let Some(message) = message.as_ref() {
         db::queue(&state.db(), &task.id, db::Queued { text: message.text.trim().to_string(), ..message.clone() })?;
     }
     let fields = [("waiting", json!(true)), ("limit_reset_at", json!(until)), ("status", json!("in_progress")), ("attention_reason", Value::Null)];
