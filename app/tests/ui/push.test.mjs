@@ -124,7 +124,7 @@ test("a device turns push on in Settings and gets the board's notifications", as
     assert.equal(subscriptions[0].endpoint, endpoint);
     assert.match(subscriptions[0].name, /^Chrome on \w+$/);
     // The events this browser notifies of, to start with.
-    assert.deepEqual(subscriptions[0].events, { attention: true, review: true, merge: false, done: false });
+    assert.deepEqual(subscriptions[0].events, { attention: true, review: true, merge: false, done: false, prompts: "assistant" });
 
     // A test.
     await ui.run(["click Send a test", "wait It should show on this device"]);
@@ -153,7 +153,13 @@ test("a device turns push on in Settings and gets the board's notifications", as
 
     // The device's own events: Done too, and not attention.
     await ui.run(["click role=group[name^='Events pushed to'] >> text=Done", "click role=group[name^='Events pushed to'] >> text=Needs attention", "sleep 300"]);
-    assert.deepEqual((await server.api("GET", "/push")).subscriptions[0].events, { attention: false, review: true, merge: false, done: true });
+    assert.deepEqual((await server.api("GET", "/push")).subscriptions[0].events, { attention: false, review: true, merge: false, done: true, prompts: "assistant" });
+    // And whose permission prompts.
+    await ui.page.getByLabel(/^Permission prompts pushed to/).selectOption("all");
+    await ui.run(["sleep 300"]);
+    assert.equal((await server.api("GET", "/push")).subscriptions[0].events.prompts, "all");
+    await ui.run(["goto /settings", "wait On for this device"]);
+    assert.equal(await ui.page.getByLabel(/^Permission prompts pushed to/).inputValue(), "all");
     await server.api("PATCH", `/tasks/${first.id}`, { status: "in_progress" });
     await server.api("PATCH", `/tasks/${first.id}`, { status: "needs_attention" });
     await server.api("PATCH", `/tasks/${first.id}`, { status: "done" });
@@ -219,6 +225,66 @@ test("a push shows a notification, and a tap opens its task", async () => {
     // Not its title, which its card on the board already shows.
     await page.waitForURL((url) => url.searchParams.get("task") === t.id);
     assert.equal(await page.evaluate(() => window.loadedOnce), true);
+  });
+});
+
+// HA-126: a permission prompt's notification has Allow and Deny, which post its one-time token (never the board's) and
+// show how that went in its place; one that couldn't reach the board keeps its buttons to try again.
+test("a prompt's notification answers it with its token, and says how that went", async () => {
+  const tasks = await server.api("GET", `/projects/${project.id}/tasks`);
+  const t = tasks[0];
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await page.context().grantPermissions(["notifications"]);
+    await ui.run([`goto /p/${project.id}`, "wait Demo"]);
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    const sw = page.context().serviceWorkers()[0] ?? (await page.context().waitForEvent("serviceworker"));
+    // What the worker posts, as the board gets it.
+    const posted = [];
+    await page.context().route(/\/push-answer$/, async (route) => {
+      const req = route.request();
+      posted.push({ url: new URL(req.url()).pathname, body: req.postDataJSON(), auth: req.headers().authorization });
+      await route.continue();
+    });
+    const msg = {
+      title: `DEMO-${t.number} ${t.title}`,
+      body: "Approve Bash?",
+      url: `/t/${t.id}`,
+      tag: `h:${t.id}:req-1`,
+      task_id: t.id,
+      event: "prompt",
+      request_id: "req-1",
+      answer: { url: "/api/permissions/req-1/push-answer", token: "one-time" },
+    };
+    const notes = () =>
+      sw.evaluate(async () =>
+        (await self.registration.getNotifications()).map((n) => ({ body: n.body, tag: n.tag, actions: n.actions.map((a) => a.action), data: n.data })),
+      );
+    // Shown with Allow and Deny (the board isn't in front: it's another tab's page that's focused).
+    await sw.evaluate((m) => show(m, true), msg);
+    let [n] = await notes();
+    assert.deepEqual([n.body, n.tag, n.actions], ["Approve Bash?", msg.tag, ["allow", "deny"]]);
+    assert.deepEqual(n.data.answer, msg.answer);
+
+    // Deny: the board doesn't know the token (there's no such prompt), and the notification says so in its place.
+    await sw.evaluate((data) => answer(data, "deny"), n.data);
+    assert.deepEqual(posted, [{ url: "/api/permissions/req-1/push-answer", body: { token: "one-time", decision: "deny" }, auth: undefined }]);
+    [n] = await notes();
+    assert.deepEqual([n.body, n.tag, n.actions], ["This notification can't answer that prompt.", msg.tag, []]);
+    assert.equal(n.data.task_id, t.id);
+
+    // A board that can't be reached: the prompt again, with why, and its buttons to try again.
+    await sw.evaluate((data) => answer({ ...data, answer: { ...data.answer, url: "http://127.0.0.1:9/push-answer" } }, "allow"), msg);
+    [n] = await notes();
+    assert.match(n.body, /can't be reached/);
+    assert.deepEqual(n.actions, ["allow", "deny"]);
+
+    // Allowed: what the board answers is shown.
+    await page.context().unroute(/\/push-answer$/);
+    await page.context().route(/\/push-answer$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ result: "allowed", message: "Allowed." }) }));
+    await sw.evaluate((data) => answer(data, "allow"), msg);
+    [n] = await notes();
+    assert.deepEqual([n.body, n.actions], ["Allowed.", []]);
   });
 });
 

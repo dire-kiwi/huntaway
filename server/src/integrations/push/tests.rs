@@ -178,7 +178,7 @@ fn devices_subscribe_change_their_events_and_unsubscribe() {
         let endpoint = "https://push.example.com/send/abc";
         let (status, sub) = api(&s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": endpoint, "keys": keys, "name": "Pixel"}))).await;
         assert_eq!(status, 200, "{sub}");
-        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false}));
+        assert_eq!(sub["events"], json!({"attention": true, "review": true, "merge": false, "done": false, "prompts": "assistant"}));
         assert_eq!(sub["name"], "Pixel");
         assert!(sub.get("auth").is_none() && sub.get("p256dh").is_none());
         let id = sub["id"].as_str().unwrap().to_string();
@@ -409,5 +409,254 @@ fn a_subscription_its_push_service_has_dropped_is_deleted() {
         status.store(410, Ordering::SeqCst);
         assert_eq!(api(&s, "POST", &format!("/api/push/subscriptions/{id}/test"), None).await.0, 502);
         assert_eq!(api(&s, "GET", "/api/push", None).await.1["subscriptions"], json!([]));
+    })
+}
+
+// ---------- permission prompts ----------
+
+/// A task with a run going (so it can raise prompts), of `task_type` if given.
+fn running_task(s: &Shared, task_type: Option<&str>) -> db::Task {
+    let profile = db::insert_profile(&s.db(), &format!("p{}", crate::util::new_id()), &[], None).unwrap();
+    let new = db::NewTask {
+        profile_id: &profile.id,
+        project_id: None,
+        kind: "task",
+        title: "Send the invoice",
+        description: "",
+        status: "in_progress",
+        use_worktree: false,
+        model: None,
+        effort: None,
+        claude_config_id: None,
+    };
+    let task = db::insert_task(&s.db(), new).unwrap();
+    if let Some(tt) = task_type {
+        s.db().execute("UPDATE tasks SET task_type=?1 WHERE id=?2", [tt, &task.id]).unwrap();
+    }
+    let run = db::insert_run(&s.db(), &task.id, "prompt").unwrap();
+    s.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
+    s.runs.lock().unwrap().insert(task.id.clone(), crate::state::RunHandle { run_id: run.id, cancel: None });
+    s.update_task(&task.id, &[("running", json!(true))]).unwrap().unwrap()
+}
+
+/// Raises a prompt for `tool` from `task` and waits until it's asked: its request id, and what the agent is told.
+async fn raise(s: &Shared, task: &db::Task, call: &str, tool: &str, input: Value) -> (String, tokio::task::JoinHandle<Value>) {
+    let (s2, t2, call2, tool2) = (s.clone(), task.clone(), call.to_string(), tool.to_string());
+    let told = tokio::spawn(async move { crate::mcp::permissions::prompt(&s2, &t2, &call2, &tool2, &input, None).await.unwrap() });
+    loop {
+        if let Ok(id) = s.db().query_row("SELECT id FROM permission_requests WHERE call_id=?1", [call], |r| r.get::<_, String>(0)) {
+            return (id, told);
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// A device subscribed to `url` that wants `events`.
+async fn subscribe_device(s: &Shared, url: &str, events: Value) -> agreement::PrivateKey {
+    let (ua, keys) = device();
+    let (status, sub) = api(s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": url, "keys": keys, "events": events}))).await;
+    assert_eq!(status, 200, "{sub}");
+    ua
+}
+
+async fn next_push(got: &mut mpsc::UnboundedReceiver<(HeaderMap, Bytes)>, ua: &agreement::PrivateKey) -> Value {
+    let (_, body) = tokio::time::timeout(Duration::from_secs(10), got.recv()).await.expect("no push").unwrap();
+    serde_json::from_slice(&decrypt(ua, &[9u8; 16], &body)).unwrap()
+}
+
+async fn answer_from_push(s: &Shared, request: &str, token: &str, decision: &str) -> (u16, Value) {
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri(format!("/api/permissions/{request}/push-answer"))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(json!({"token": token, "decision": decision}).to_string()))
+        .unwrap();
+    let res = crate::api::router(s.clone()).oneshot(req).await.unwrap();
+    let status = res.status().as_u16();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// Waits until the board has noted prompt `request`'s tokens as `status`.
+async fn settled_as(s: &Shared, request: &str, status: &str) {
+    for _ in 0..500 {
+        if crate::integrations::push_answers::status_of(&s.db(), request).as_deref() == Some(status) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("prompt {request}'s tokens never became {status}");
+}
+
+#[test]
+fn a_prompt_is_pushed_with_a_token_that_answers_it_once() {
+    testing::run(async || {
+        let s = testing::state();
+        let (url, mut got) = push_service(Arc::new(AtomicU16::new(201))).await;
+        let ua = subscribe_device(&s, &url, json!({"attention": true, "review": true, "prompts": "all"})).await;
+        // Another device wants needs-attention, but no prompts: it's told of the task as before.
+        let (other_url, mut other_got) = push_service(Arc::new(AtomicU16::new(201))).await;
+        let other = subscribe_device(&s, &other_url, json!({"attention": true, "prompts": "off"})).await;
+        crate::hosts::hub::start(&s).unwrap();
+        start(&s);
+        let task = running_task(&s, None);
+        let (request, told) = raise(&s, &task, "c1", "Bash", json!({"command": "rm -rf /tmp/secret-stuff"})).await;
+
+        let msg = next_push(&mut got, &ua).await;
+        let token = msg["answer"]["token"].as_str().unwrap().to_string();
+        let title = format!("T-{} Send the invoice", task.number);
+        let want = json!({
+            "title": title, "body": "Approve Bash?", "url": format!("/t/{}", task.id), "tag": format!("h:{}:{request}", task.id),
+            "task_id": task.id, "event": "prompt", "request_id": request,
+            "answer": {"url": format!("/api/permissions/{request}/push-answer"), "token": token},
+        });
+        assert_eq!(msg, want);
+        // The other device gets the task's needs-attention; this one isn't told twice.
+        assert_eq!(next_push(&mut other_got, &other).await["event"], "attention");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(got.try_recv().is_err(), "the device that got the prompt was told it needs attention too");
+
+        // Only its own token answers it, and only it.
+        let (status, v) = answer_from_push(&s, &request, "not-the-token", "allow").await;
+        assert_eq!((status, v["result"].as_str()), (403, Some("invalid")), "{v}");
+        let (status, _) = answer_from_push(&s, "another-request", &token, "allow").await;
+        assert_eq!(status, 403);
+        assert_eq!(answer_from_push(&s, &request, &token, "maybe").await.0, 400);
+        // The board's token isn't needed (nor taken instead of the prompt's).
+        let (status, v) = answer_from_push(&s, &request, &token, "deny").await;
+        assert_eq!((status, v["result"].as_str()), (200, Some("denied")), "{v}");
+        assert_eq!(told.await.unwrap()["behavior"], "deny");
+        // Once.
+        let (status, v) = answer_from_push(&s, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (409, Some("answered")), "{v}");
+        assert_eq!(v["message"], "It was already denied.");
+    })
+}
+
+#[test]
+fn a_token_stops_working_once_its_prompt_is_answered_on_the_board_or_expires() {
+    testing::run(async || {
+        let s = testing::state();
+        let (url, mut got) = push_service(Arc::new(AtomicU16::new(201))).await;
+        let ua = subscribe_device(&s, &url, json!({"prompts": "all"})).await;
+        crate::hosts::hub::start(&s).unwrap();
+        start(&s);
+        let task = running_task(&s, None);
+
+        // Answered on the board.
+        let (request, told) = raise(&s, &task, "c1", "Bash", json!({})).await;
+        let token = next_push(&mut got, &ua).await["answer"]["token"].as_str().unwrap().to_string();
+        assert_eq!(api(&s, "POST", &format!("/api/permissions/{request}"), Some(json!({"decision": "allow"}))).await.0, 200);
+        assert_eq!(told.await.unwrap()["behavior"], "allow");
+        settled_as(&s, &request, "allowed").await;
+        let (status, v) = answer_from_push(&s, &request, &token, "deny").await;
+        assert_eq!((status, v["result"].as_str(), v["message"].as_str()), (409, Some("answered"), Some("It was already allowed.")));
+
+        // Expired with its run.
+        let (request, told) = raise(&s, &task, "c2", "Write", json!({})).await;
+        let token = next_push(&mut got, &ua).await["answer"]["token"].as_str().unwrap().to_string();
+        crate::mcp::permissions::expire_for_task(&s, &task.id);
+        assert_eq!(told.await.unwrap()["behavior"], "deny");
+        settled_as(&s, &request, "expired").await;
+        let (status, v) = answer_from_push(&s, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (409, Some("expired")), "{v}");
+    })
+}
+
+#[test]
+fn an_answer_the_board_missed_is_found_out_from_the_host() {
+    testing::run(async || {
+        // Not watching: the board misses the prompt's answer (as over a link that was down).
+        let s = testing::state();
+        let task = running_task(&s, None);
+        let (request, told) = raise(&s, &task, "c1", "Bash", json!({})).await;
+        let token = crate::integrations::push_answers::mint(&s.db(), "h", &request, &task.id).unwrap();
+        assert_eq!(api(&s, "POST", &format!("/api/permissions/{request}"), Some(json!({"decision": "deny"}))).await.0, 200);
+        told.await.unwrap();
+        let (status, v) = answer_from_push(&s, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (409, Some("closed")), "{v}");
+        assert_eq!(answer_from_push(&s, &request, &token, "allow").await.0, 409);
+    })
+}
+
+#[test]
+fn questions_and_plans_are_pushed_without_allow_and_deny_and_only_the_assistants_by_default() {
+    testing::run(async || {
+        let s = testing::state();
+        let (url, mut got) = push_service(Arc::new(AtomicU16::new(201))).await;
+        // Its events as a browser that subscribed before prompts sends them.
+        let ua = subscribe_device(&s, &url, json!({"attention": false, "review": false, "merge": false, "done": false})).await;
+        assert_eq!(api(&s, "GET", "/api/push", None).await.1["subscriptions"][0]["events"]["prompts"], "assistant");
+        crate::hosts::hub::start(&s).unwrap();
+        start(&s);
+        let project_task = running_task(&s, None);
+        raise(&s, &project_task, "c0", "Bash", json!({})).await;
+        let assistant = running_task(&s, Some("assistant"));
+        raise(&s, &assistant, "c1", crate::mcp::permissions::ASK_USER, json!({"questions": [{"question": "Which account?"}]})).await;
+        let msg = next_push(&mut got, &ua).await;
+        assert_eq!((msg["task_id"].as_str(), msg["body"].as_str()), (Some(assistant.id.as_str()), Some("The agent has questions for you")));
+        assert!(msg.get("answer").is_none(), "{msg}");
+        raise(&s, &assistant, "c2", crate::mcp::permissions::EXIT_PLAN, json!({"plan": "# Plan: send it"})).await;
+        let msg = next_push(&mut got, &ua).await;
+        assert_eq!(msg["body"], "Plan ready for approval");
+        assert!(msg.get("answer").is_none());
+        raise(&s, &assistant, "c3", "mcp__gmail__send", json!({"to": "someone@example.com"})).await;
+        let msg = next_push(&mut got, &ua).await;
+        assert_eq!(msg["body"], "Approve mcp__gmail__send?");
+        assert!(msg["answer"]["token"].is_string());
+        assert!(!msg.to_string().contains("example.com"), "a tool's input was pushed: {msg}");
+        // Nothing of the project task's.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(got.try_recv().is_err());
+    })
+}
+
+#[test]
+fn a_prompt_on_a_linked_host_is_answered_through_the_link() {
+    testing::run(async || {
+        let hub = testing::state();
+        let remote = testing::state_as(crate::state::Identity {
+            host_id: "remote".into(),
+            host_name: "assistant box".into(),
+            token: "remote-token".into(),
+            hub_token: String::new(),
+            internal_url: String::new(),
+        });
+        let (url, mut got) = push_service(Arc::new(AtomicU16::new(201))).await;
+        let ua = subscribe_device(&hub, &url, json!({"prompts": "all"})).await;
+        // The remote's events reach the hub over the link.
+        let mut events = remote.events.subscribe();
+        let to = hub.clone();
+        tokio::spawn(async move {
+            while let Ok(mut ev) = events.recv().await {
+                ev["host_id"] = json!("remote");
+                let _ = to.hub_events.send(ev);
+            }
+        });
+        // As the remote takes the hub's requests: with its token.
+        let signed_in = crate::api::router(remote.clone()).layer(axum::middleware::map_request(|mut req: axum::http::Request<axum::body::Body>| async move {
+            req.headers_mut().insert("authorization", "Bearer remote-token".parse().unwrap());
+            req
+        }));
+        crate::hosts::hub::link_http(&hub, "remote", signed_in, crate::hosts::proto::API_VERSION).await;
+        start(&hub);
+        let task = running_task(&remote, Some("assistant"));
+        let (request, told) = raise(&remote, &task, "c1", "Bash", json!({})).await;
+        let msg = next_push(&mut got, &ua).await;
+        assert_eq!(msg["tag"], format!("remote:{}:{request}", task.id));
+        let token = msg["answer"]["token"].as_str().unwrap().to_string();
+        // The hub keeps the token; the remote never sees it.
+        assert_eq!(crate::integrations::push_answers::status_of(&remote.db(), &request), None);
+
+        // While the link is down it says so, and the token still works after.
+        let link = hub.links.lock().unwrap().remove("remote").unwrap();
+        let (status, v) = answer_from_push(&hub, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (503, Some("offline")), "{v}");
+        hub.links.lock().unwrap().insert("remote".into(), link);
+        let (status, v) = answer_from_push(&hub, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (200, Some("allowed")), "{v}");
+        assert_eq!(told.await.unwrap()["behavior"], "allow");
+        // Answering the remote's prompt with the remote's own push-answer route (which has no token for it) fails.
+        assert_eq!(answer_from_push(&remote, &request, &token, "allow").await.0, 403);
     })
 }

@@ -1,7 +1,10 @@
 import { enc, type Http } from "./http";
 
-/** Which of the board's notifications a device gets by push (see notifications.ts). */
-export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean>;
+/** Whose permission prompts a device gets by push, with Allow and Deny on them (API 96): the assistant's by default. */
+export type PushPrompts = "off" | "assistant" | "all";
+
+/** Which of the board's notifications a device gets by push (see notifications.ts), and its permission prompts (left as they are, or the default, without). */
+export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & { prompts?: PushPrompts };
 
 /** A device that gets the board's notifications by Web Push (API 74; see server/src/integrations/push.rs). */
 export interface PushDevice {
