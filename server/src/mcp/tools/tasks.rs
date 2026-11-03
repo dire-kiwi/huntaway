@@ -146,6 +146,11 @@ pub(super) fn created(s: &Shared, ctx: &Ctx, mut t: Task, marks: &[(&str, Value)
     Ok(t)
 }
 
+/// Task `t`, just made by `create_task`, in "now" like every task made from the board, unless the caller said `now: false`.
+pub(super) fn new_in_now(s: &Shared, args: &Value, t: Task) -> Task {
+    if args["now"].as_bool() == Some(false) { t } else { crate::agent::focus::put_in_now(s, &t.id).unwrap_or(t) }
+}
+
 /// `starred`, `remind_at`, `reminder` and (on update_task) `now` from `create_task` or `update_task`, with the time made
 /// absolute (see reminder_time). The API checks the rest.
 pub(super) fn reminder_args(args: &Value) -> std::result::Result<Map<String, Value>, ToolError> {

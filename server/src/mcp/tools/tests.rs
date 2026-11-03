@@ -529,7 +529,7 @@ fn puts_tasks_in_now_and_later() {
         let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
         project(&s, &p, "kiwicd", "KIW");
         let me = ctx(&p);
-        let t = call(&s, &me, "create_task", json!({"title": "Soon", "project_id": "KIW"})).await.unwrap();
+        let t = call(&s, &me, "create_task", json!({"title": "Soon", "project_id": "KIW", "now": false})).await.unwrap();
         assert!(t["now"].is_null());
         let t = call(&s, &me, "update_task", json!({"task_id": "KIW-1", "now": true})).await.unwrap();
         assert_eq!(t["now"].as_bool(), Some(true));
@@ -543,7 +543,7 @@ fn puts_tasks_in_now_and_later() {
 }
 
 #[test]
-fn a_task_an_agent_creates_and_starts_stays_in_later() {
+fn a_task_an_agent_creates_and_starts_is_in_now() {
     testing::run(async || {
         crate::agent::runs::TEST_CAN_RUN.set(true);
         let s = state();
@@ -555,7 +555,57 @@ fn a_task_an_agent_creates_and_starts_stays_in_later() {
         let t = call(&s, &me, "create_task", json!({"title": "Second", "project_id": "KIW", "depends_on": [first["id"]], "start": true})).await.unwrap();
         let t = db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap();
         assert!(t.waiting, "started");
-        assert_eq!(t.now_at, None);
+        assert!(t.now_at.is_some());
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
+fn created_tasks_start_in_now() {
+    testing::run(async || {
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let now_at = |t: &Value| db::get_task(&s.db(), t["id"].as_str().unwrap()).unwrap().unwrap().now_at;
+        let t = call(&s, &me, "create_task", json!({"title": "Default", "project_id": "KIW"})).await.unwrap();
+        assert!(now_at(&t).is_some());
+        let t = call(&s, &me, "create_task", json!({"title": "Explicit", "project_id": "KIW", "now": true})).await.unwrap();
+        assert!(now_at(&t).is_some());
+        let t = call(&s, &me, "create_task", json!({"title": "Later", "project_id": "KIW", "now": false})).await.unwrap();
+        assert_eq!(now_at(&t), None);
+        let t = call(&s, &me, "create_task", json!({"title": "Scratch", "type": "scratch"})).await.unwrap();
+        assert!(now_at(&t).is_some());
+    });
+}
+
+#[test]
+fn updating_a_task_puts_it_in_now() {
+    testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = state();
+        let p = insert_profile(&s.db(), "personal", &[], None).unwrap();
+        project(&s, &p, "kiwicd", "KIW");
+        let me = ctx(&p);
+        let now_at = |id: &Value| db::get_task(&s.db(), id.as_str().unwrap()).unwrap().unwrap().now_at;
+        let later = async |title: &str, extra: Value| {
+            let mut args = json!({"title": title, "project_id": "KIW", "now": false});
+            args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            let t = call(&s, &me, "create_task", args).await.unwrap();
+            assert_eq!(now_at(&t["id"]), None);
+            t
+        };
+        let (edited, kept, first) = (later("Edited", json!({})).await, later("Kept in later", json!({})).await, later("First", json!({})).await);
+        // Any update puts it in Now, whoever makes it...
+        call(&s, &me, "update_task", json!({"task_id": edited["id"], "description": "More"})).await.unwrap();
+        assert!(now_at(&edited["id"]).is_some());
+        // ...unless the same call says where it goes.
+        call(&s, &me, "update_task", json!({"task_id": kept["id"], "description": "More", "now": false})).await.unwrap();
+        assert_eq!(now_at(&kept["id"]), None);
+        // A message from another agent (a parent starting its subproject's tasks) too. Held for what it depends on, so nothing runs.
+        let messaged = later("Messaged", json!({"depends_on": [first["id"]]})).await;
+        call(&s, &me, "send_to_task", json!({"task_id": messaged["id"], "message": "Go"})).await.unwrap();
+        assert!(now_at(&messaged["id"]).is_some());
         crate::agent::runs::TEST_CAN_RUN.set(false);
     })
 }

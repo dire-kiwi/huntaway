@@ -102,7 +102,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             };
             let marks = new_task_marks(args)?;
             let t = api::create_scratch_task_inner(s, &board.id, body)?;
-            Ok(summarize(s, &created(s, ctx, t, &marks)?))
+            let t = created(s, ctx, t, &marks)?;
+            Ok(summarize(s, &new_in_now(s, args, t)))
         }
         "create_task" => {
             let parent = match str_arg("subproject").as_deref() {
@@ -149,7 +150,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             };
             let marks = new_task_marks(args)?;
             let t = api::create_task_inner(s, &project.id, body)?;
-            Ok(summarize(s, &created(s, ctx, t, &marks)?))
+            let t = created(s, ctx, t, &marks)?;
+            Ok(summarize(s, &new_in_now(s, args, t)))
         }
         "update_task" => {
             let t = resolve_task(s, ctx, &str_arg("task_id").unwrap_or_default(), profile)?;
@@ -164,6 +166,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             }
             body.extend(reminder_args(args)?);
             let t = api::update_task_inner(s, &t.id, &body).await?;
+            // Updated by an agent, the task is in "now" like one updated from the board (unless `now` says otherwise).
+            let t = crate::agent::focus::updated(s, t, &body);
             Ok(summarize(s, &t))
         }
         "delete_task" => {
@@ -183,6 +187,8 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
                 return Err(ToolError::Other("cannot send a message to your own task".into()));
             }
             let t = runner::send_from_agent(s, &t.id, &str_arg("message").unwrap_or_default())?;
+            // A task another agent has sent to (a parent starting its subproject's tasks, say) is in "now".
+            let t = crate::agent::focus::put_in_now(s, &t.id).unwrap_or(t);
             Ok(summarize(s, &t))
         }
         "get_project" | "update_project" => {
