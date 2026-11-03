@@ -1,6 +1,6 @@
 //! Which file in a data dir the database is in. Builds from the move onto agent-threads on (HA-128) use `FILE`, which
 //! they copy from the file older builds use (`OLDER`) on their first start, and migrate. The older file is only ever
-//! read, so an older build started on the data dir again opens it as it was at the switch, at a version it knows.
+//! read (which leaves an empty `-wal` beside it if it had none, as any reader does), so an older build started on the data dir again opens it as it was at the switch, at a version it knows.
 //! What was done in between is only in `FILE`.
 //!
 //! The copy records the older file's state then (`db_origin`). If an older build has used it since, the next start
