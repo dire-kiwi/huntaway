@@ -8,3 +8,4 @@ pub mod pty;
 pub mod relay;
 pub mod ssh;
 pub mod terminal;
+pub mod uplink;

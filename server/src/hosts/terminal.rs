@@ -141,6 +141,10 @@ async fn list_sessions(s: &Shared) -> Vec<(String, u32)> {
 /// Where a task's terminal starts: its worktree once there is one, otherwise where its agent
 /// would run.
 pub fn working_dir(s: &Shared, task: &Task) -> Result<String> {
+    // The assistant's workspace, if it's its own (not a symlink to another's, see assistant::memory::checked).
+    if task.is_assistant() {
+        return crate::agent::assistant::memory::checked(s, task).map(|d| path_str(&d));
+    }
     // A scratch task's shell (or one that makes only documents) opens in its folder, where its agent works.
     if let Some(d) = crate::agent::documents::work_dir(s, task) {
         return Ok(path_str(&d));
