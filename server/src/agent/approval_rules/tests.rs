@@ -67,8 +67,13 @@ fn the_google_defaults_read_and_draft_ask_to_send_and_never_delete() {
 
 #[test]
 fn rules_are_tidied_and_checked_for_saving() {
-    let r = rules(&[(" mcp__a ", Allow), ("", Ask), ("MCP__A", Never), ("mcp__b", Ask)]).checked().unwrap();
+    let r = rules(&[(" mcp__a ", Allow), ("", Ask), ("mcp__b", Ask)]).checked().unwrap();
     assert_eq!(r.rules, vec![rule("mcp__a", Allow), rule("mcp__b", Ask)]);
+    // A pattern twice is refused, whatever its case or decisions, rather than one of them dropped.
+    for dup in [&[("Bash", Allow), ("Bash", Never)][..], &[(" mcp__a ", Never), ("MCP__A", Allow)][..], &[("x", Ask), ("x", Ask)][..]] {
+        let err = rules(dup).checked().unwrap_err();
+        assert!(err.contains("more than one rule"), "{err}");
+    }
     assert!(rules(&[("send mail", Ask)]).checked().is_err());
     assert!(Rules { expiry_minutes: MAX_EXPIRY_MINUTES + 1, ..rules(&[]) }.checked().is_err());
     let many: Vec<(String, Decision)> = (0..=MAX_RULES).map(|i| (format!("t{i}"), Ask)).collect();

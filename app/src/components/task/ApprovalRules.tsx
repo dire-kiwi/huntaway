@@ -72,6 +72,9 @@ export function RulesSection({ task }: { task: Task }) {
   );
 }
 
+/** What two rules with the same tool or pattern have in common, as the host compares them. */
+const patternKey = (tool: string) => tool.trim().toLowerCase();
+
 /** The rule that asks before the assistant creates a task, if it has one. */
 const createTaskRules = (r: ApprovalRules) => r.create_task_tools.map((t) => `mcp__${r.board_server}__${t}`);
 
@@ -87,6 +90,13 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
   const expiryOk = expiry.trim() !== "" && Number.isInteger(minutes) && minutes >= 0 && minutes <= 7 * 24 * 60;
   const dirty = JSON.stringify(draft) !== JSON.stringify(rules.rules) || expiry !== String(rules.expiry_minutes);
   const decided = useMemo(() => (tryTool.trim() ? ruleFor(draft, tryTool.trim()) : undefined), [draft, tryTool]);
+  // A tool or pattern with more than one rule isn't saved (the host refuses it too): which would hold isn't for it to guess.
+  const repeated = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of draft) if (patternKey(r.tool)) counts.set(patternKey(r.tool), (counts.get(patternKey(r.tool)) ?? 0) + 1);
+    return new Set([...counts].filter(([, n]) => n > 1).map(([k]) => k));
+  }, [draft]);
+  const firstRepeated = draft.find((r) => repeated.has(patternKey(r.tool)))?.tool.trim();
 
   const change = (i: number, r: Partial<ApprovalRule>) => setDraft((d) => d.map((x, j) => (j === i ? { ...x, ...r } : x)));
   const setCreates = (on: boolean) =>
@@ -94,6 +104,7 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
   const submit = () =>
     save.run(async () => {
       if (!expiryOk) throw new Error("The expiry is a whole number of minutes, at most a week (10080)");
+      if (firstRepeated) throw new Error(`"${firstRepeated}" has more than one rule: keep one for each tool or pattern`);
       const saved = await api.setApprovalRules(task.host_id, task.profile_id, { rules: draft.filter((r) => r.tool.trim()), expiry_minutes: minutes });
       onSaved(saved);
       onClose();
@@ -121,8 +132,9 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
               <Input
                 value={r.tool}
                 aria-label={`Rule ${i + 1}'s tool`}
+                aria-invalid={repeated.has(patternKey(r.tool)) || undefined}
                 placeholder="mcp__server__tool, or a pattern with *"
-                className="h-7 flex-1 font-mono text-[12px]"
+                className={clsx("h-7 flex-1 font-mono text-[12px]", repeated.has(patternKey(r.tool)) && "border-red-500/60")}
                 onChange={(e) => change(i, { tool: e.target.value })}
               />
               <select
@@ -144,6 +156,11 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
           ))}
           {draft.length === 0 && <div className="py-2 text-faint">No rules: the thread's mode decides everything.</div>}
         </div>
+        {firstRepeated && (
+          <div role="alert" className="text-red-400">
+            "{firstRepeated}" has more than one rule: keep one for each tool or pattern.
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={() => setDraft((d) => [...d, { tool: "", decision: "ask" }])}>
             <Plus size={13} /> Add a rule
@@ -207,7 +224,7 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
         <ModalFooter className="flex items-center justify-end gap-2">
           {save.error && <span className="mr-auto text-xs text-red-400">{save.error}</span>}
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={save.busy || !dirty} onClick={submit}>
+          <Button variant="primary" disabled={save.busy || !dirty || !!firstRepeated} onClick={submit}>
             Save rules
           </Button>
         </ModalFooter>

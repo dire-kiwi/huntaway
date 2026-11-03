@@ -151,3 +151,31 @@ test("the assistant's rules can be changed, and a draft isn't saved until it's s
     await ui.run(["click actions", "wait Nothing yet"]);
   });
 });
+
+// HA-123 review: two rules for one tool aren't saved with one of them dropped; the dialog says so, and what's saved decides as
+// its Try a tool showed.
+test("the rules dialog won't save two rules for one tool, and what it saves decides as it showed", async () => {
+  const [profile] = await server.api("GET", "/profiles");
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run(["goto /assistant/Default", "wait Message your assistant", "click Edit rules", "wait Approval rules"]);
+    const rows = await page.locator("[aria-label='Rules'] input").count();
+    // Bash: allow, then bash: never beneath it.
+    for (const [tool, decision] of [["Bash", "allow"], ["bash", "never"]]) {
+      await ui.run(["click Add a rule"]);
+      const n = await page.locator("[aria-label='Rules'] input").count();
+      await page.getByRole("textbox", { name: `Rule ${n}'s tool` }).fill(tool);
+      await page.getByRole("combobox", { name: `Rule ${n}'s decision` }).selectOption(decision);
+    }
+    assert.equal(await page.locator("[aria-label='Rules'] input").count(), rows + 2);
+    await ui.run(["click css=[aria-label='A tool name to try the rules on']", "type Bash", "wait never (bash)", "wait has more than one rule"]);
+    assert.equal(await page.getByRole("button", { name: "Save rules" }).isDisabled(), true);
+    assert.equal(await page.locator("[aria-label='Rules'] input[aria-invalid='true']").count(), 2);
+    // The allow goes: saved, it's never, as shown.
+    await ui.run([`click Remove rule ${rows + 1}`, "gone has more than one rule", "wait never (bash)", "click Save rules", "gone Approval rules"]);
+    const saved = await server.api("GET", `/profiles/${profile.id}/approval-rules`);
+    assert.deepEqual(saved.rules.filter((r) => r.tool.toLowerCase() === "bash"), [{ tool: "bash", decision: "never" }]);
+    // Put back for the other tests.
+    await server.api("POST", `/profiles/${profile.id}/approval-rules`, { reset: true });
+  });
+});

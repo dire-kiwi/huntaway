@@ -197,16 +197,15 @@ impl Rules {
         best
     }
 
-    /// Checked and tidied for saving: patterns trimmed, empty ones dropped, each at most once.
+    /// Checked and tidied for saving: patterns trimmed and empty ones dropped; a pattern given twice
+    /// (whatever its case) is refused.
     pub fn checked(mut self) -> Result<Self, String> {
+        self.rules = self.rules.into_iter().map(|r| Rule { tool: r.tool.trim().to_string(), ..r }).filter(|r| !r.tool.is_empty()).collect();
+        // One rule for each tool or pattern: which of two would hold isn't for the board to guess.
         let mut seen = std::collections::HashSet::new();
-        self.rules = self
-            .rules
-            .into_iter()
-            .map(|r| Rule { tool: r.tool.trim().to_string(), ..r })
-            .filter(|r| !r.tool.is_empty())
-            .filter(|r| seen.insert(r.tool.to_lowercase()))
-            .collect();
+        if let Some(r) = self.rules.iter().find(|r| !seen.insert(r.tool.to_lowercase())) {
+            return Err(format!("\"{}\" has more than one rule: keep one for each tool or pattern", r.tool));
+        }
         if self.rules.len() > MAX_RULES {
             return Err(format!("at most {MAX_RULES} rules"));
         }
