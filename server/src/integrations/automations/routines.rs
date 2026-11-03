@@ -29,7 +29,7 @@ pub(super) fn message(s: &Shared, a: &Automation, vars: &Vars, how: &str, messag
     let fail = |e: ApiError| Outcome::Failed(None, e.1);
     let assistant = assistant::get_or_create(s, &a.profile_id).map_err(fail)?;
     let (body, untrusted) = render(message, vars, Out::Text);
-    let note = if untrusted { untrusted_note(&a.name, false) } else { String::new() };
+    let note = if untrusted { untrusted_note(vars, false) } else { String::new() };
     match mode {
         AssistantMode::Thread => {
             let text = format!("From your routine \"{}\", {how}:\n\n{note}{}", a.name, body.trim());

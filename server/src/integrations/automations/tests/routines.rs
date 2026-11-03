@@ -290,7 +290,7 @@ fn a_precheck_skips_a_run_or_fills_in_what_it_found() {
         let q = db::get_task(&s.db(), &t.id).unwrap().unwrap().queued_message.unwrap();
         // It ran in the project's folder, and what it printed is data from outside.
         assert!(q.contains("Look: <untrusted-data>New: &lt;b&gt;release 2.0&lt;/b&gt;</untrusted-data>"), "{q}");
-        assert!(q.contains("precheck command"), "{q}");
+        assert!(q.contains("**Note:** parts of this come from what the precheck command of the automation \"Feed\" printed"), "{q}");
 
         // Exit 1: nothing new, so the run is skipped, and says what it printed.
         std::fs::write(dir.join("feed.txt"), "").unwrap();

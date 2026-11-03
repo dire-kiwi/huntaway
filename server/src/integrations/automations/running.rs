@@ -95,7 +95,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
             let (body, body_untrusted) = render(description, vars, Out::Text);
             let mut text = String::new();
             if title_untrusted || body_untrusted {
-                text.push_str(&untrusted_note(&a.name, title_untrusted));
+                text.push_str(&untrusted_note(vars, title_untrusted));
             }
             if !body.trim().is_empty() {
                 text.push_str(body.trim_end());
@@ -123,7 +123,7 @@ fn act(s: &Shared, a: &Automation, vars: &Vars, event: Option<&str>) -> Result<O
         Action::SendToTask { task_id, message } => {
             let t = target_task(&s.db(), &project, task_id).map_err(fail)?;
             let (body, untrusted) = render(message, vars, Out::Text);
-            let note = if untrusted { untrusted_note(&a.name, false) } else { String::new() };
+            let note = if untrusted { untrusted_note(vars, false) } else { String::new() };
             let text = format!("From the automation \"{}\", {how}:\n\n{note}{}", a.name, body.trim());
             crate::agent::runner::send_from_agent(s, &t.id, &text).map_err(|e| Outcome::Failed(Some(t.id.clone()), e.1))?;
             Ok(Some(t.id))

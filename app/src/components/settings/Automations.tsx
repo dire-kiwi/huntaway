@@ -782,7 +782,9 @@ export function AutomationEditor({
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-[13px]">
                 At
-                <Input type="datetime-local" className="w-56" aria-label="At" value={d.at} onChange={(e) => set("at", e.target.value)} />
+                <div className="w-60">
+                  <Input type="datetime-local" aria-label="At" value={d.at} onChange={(e) => set("at", e.target.value)} />
+                </div>
               </div>
               <div className="text-[12px] text-faint">It runs once (late, if the server was down then), and then turns itself off.</div>
             </div>
@@ -985,9 +987,13 @@ function GuardFields({ draft: d, set, routine }: { draft: Draft; set: <K extends
         {d.active && (
           <div className="flex flex-wrap items-center gap-2 pl-1 text-[13px]">
             From
-            <Input type="time" className="w-28" aria-label="Active from" value={d.activeStart} onChange={(e) => set("activeStart", e.target.value)} />
+            <div className="w-32">
+              <Input type="time" aria-label="Active from" value={d.activeStart} onChange={(e) => set("activeStart", e.target.value)} />
+            </div>
             to
-            <Input type="time" className="w-28" aria-label="Active until" value={d.activeEnd} onChange={(e) => set("activeEnd", e.target.value)} />
+            <div className="w-32">
+              <Input type="time" aria-label="Active until" value={d.activeEnd} onChange={(e) => set("activeEnd", e.target.value)} />
+            </div>
             on
             {WEEKDAYS.map((w) => {
               const on = d.activeDays.includes(w);
@@ -1013,7 +1019,9 @@ function GuardFields({ draft: d, set, routine }: { draft: Draft; set: <K extends
         <Input className="font-mono text-[12px]" value={d.precheck} onChange={(e) => set("precheck", e.target.value)} placeholder="./new-mail.sh || exit 1" />
       </Field>
       <Field label="Budget a day (USD)" hint="Once its runs today have cost this much, it's skipped until tomorrow. Blank for no limit.">
-        <Input type="number" min={0} step="0.05" className="w-32" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="no limit" />
+        <div className="w-32">
+          <Input type="number" min={0} step="0.05" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="no limit" />
+        </div>
       </Field>
     </div>
   );

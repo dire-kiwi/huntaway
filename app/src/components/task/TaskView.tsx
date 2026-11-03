@@ -128,6 +128,22 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     setTab(openingTab(useStore.getState().tasks[taskId]));
     setMounted([]);
   }, [taskId, found]);
+  // A thread off every list the board loads (a routine's run of the assistant, API 98) is fetched by itself, from the
+  // hosts that have them, when it's opened by its link.
+  const [seeking, setSeeking] = useState(false);
+  useEffect(() => {
+    if (found || !loaded) return;
+    const hosts = useStore.getState().hosts.filter((h) => h.connected && hasRoutines(h));
+    if (!hosts.length) return;
+    let live = true;
+    setSeeking(true);
+    Promise.allSettled(
+      hosts.map((h) => api.task(h.id, taskId).then((d) => live && d.task && useStore.getState().upsertTask({ ...d.task, host_id: h.id }))),
+    ).then(() => live && setSeeking(false));
+    return () => {
+      live = false;
+    };
+  }, [taskId, found, loaded]);
   // Wide enough for the details column: their tab is gone, and the thread shows instead. Not
   // dropped before the width is known, so a task opening on its details keeps that tab when narrow.
   useEffect(() => {
@@ -153,7 +169,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             <PanelButtons expanded={mode === "expanded"} />
           </div>
         )}
-        <div className="p-8 text-muted">{loaded ? "Task not found." : "Loading task…"}</div>
+        <div className="p-8 text-muted">{loaded && !seeking ? "Task not found." : "Loading task…"}</div>
       </div>
     );
   if (task.kind === "review") return <ReviewThreadView thread={task} mode={mode} />;
@@ -326,6 +342,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               <span title="A scratch task: in no project, on its profile's board">{profileName}</span>
             ) : assistant ? (
               <span title="The profile's assistant: in no project, and off the board">{profileName}</span>
+            ) : routine ? (
+              <span title="A routine's run of the profile's assistant: back to the assistant">{profileName}'s assistant</span>
             ) : (
               project?.name
             )}
