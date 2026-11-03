@@ -64,12 +64,17 @@ pub fn router(state: Shared) -> Router {
         .route("/push/subscriptions", post(crate::integrations::push::subscribe))
         .route("/push/subscriptions/{id}", axum::routing::patch(crate::integrations::push::update).delete(crate::integrations::push::unsubscribe))
         .route("/push/subscriptions/{id}/test", post(crate::integrations::push::test))
+        .route("/devices", get(crate::devices::list_handler))
+        .route("/devices/pairing", post(crate::devices::new_code))
+        .route("/devices/{id}", axum::routing::patch(crate::devices::rename).delete(crate::devices::revoke))
         .route("/h/{host_id}/{*rest}", any(hub::proxy))
         .route("/ws", get(hub::ws))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
     Router::new()
         .route("/api/health", get(health))
         .route("/api/hub/connect", get(hub::accept))
+        // Without the board's token: the one-time code from Settings → Network access is swapped for a device's own.
+        .route("/api/devices/pair", post(crate::devices::pair))
         // Without the board's token: the token in its path reaches only its own automation.
         .route("/api/hooks/{id}/{token}", post(automations::webhook).layer(DefaultBodyLimit::max(automations::MAX_BODY)))
         .nest("/api", host_api.merge(hub_api).fallback(no_route).method_not_allowed_fallback(wrong_method))
@@ -212,22 +217,20 @@ fn host_routes() -> Router<Shared> {
         .route("/host/ws", get(ws))
 }
 
-async fn auth(State(s): State<Shared>, headers: HeaderMap, req: Request, next: Next) -> Response {
-    let header_ok = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| same_secret(t, &s.token));
-    let query_ok = req
-        .uri()
-        .query()
-        .map(|q| q.split('&').any(|kv| kv.strip_prefix("token=").is_some_and(|t| same_secret(t, &s.token))))
-        .unwrap_or(false);
-    if header_ok || query_ok {
-        next.run(req).await
-    } else {
-        (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))).into_response()
+/// Lets in requests with the board's token, or a paired device's (see devices.rs), as a bearer token or `?token=`.
+/// A device's request carries a `DeviceAuth`, which its websockets use to close when it's revoked.
+async fn auth(State(s): State<Shared>, headers: HeaderMap, mut req: Request, next: Next) -> Response {
+    let bearer = headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::to_string);
+    let query: Vec<String> = req.uri().query().unwrap_or("").split('&').filter_map(|kv| kv.strip_prefix("token=")).map(|t| t.to_string()).collect();
+    let mut tokens = bearer.into_iter().chain(query);
+    if tokens.clone().any(|t| same_secret(&t, &s.token)) {
+        return next.run(req).await;
     }
+    if let Some(device) = tokens.find_map(|t| crate::devices::authenticate(&s, &t)) {
+        req.extensions_mut().insert(device);
+        return next.run(req).await;
+    }
+    (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))).into_response()
 }
 
 /// Pick known keys out of a JSON body as (column, value) pairs.
@@ -237,7 +240,8 @@ fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)
 
 /// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
 async fn health(State(s): State<Shared>) -> Json<Value> {
-    Json(json!({"ok": true, "commit": s.meta.running_commit}))
+    // API 96: and its API version, which the mobile app checks before pairing.
+    Json(json!({"ok": true, "commit": s.meta.running_commit, "api_version": crate::hosts::proto::API_VERSION}))
 }
 
 async fn info(State(s): State<Shared>) -> Json<Value> {
@@ -263,8 +267,8 @@ async fn info(State(s): State<Shared>) -> Json<Value> {
 
 // ---------- websocket ----------
 
-async fn ws(State(s): State<Shared>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| ws_loop(s, socket))
+async fn ws(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, upgrade: WebSocketUpgrade) -> Response {
+    upgrade.on_upgrade(move |socket| crate::devices::until_revoked(s.clone(), device.map(|d| d.0), ws_loop(s, socket)))
 }
 
 async fn ws_loop(s: Shared, mut socket: WebSocket) {

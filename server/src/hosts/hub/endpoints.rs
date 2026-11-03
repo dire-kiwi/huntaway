@@ -56,6 +56,7 @@ fn is_websocket(req: &Request) -> bool {
 async fn proxy_ws(s: Shared, host_id: String, rest: String, req: Request) -> Response {
     let path = host_path(&rest, req.uri().query());
     let (mut parts, body) = req.into_parts();
+    let device = parts.extensions.get::<crate::devices::DeviceAuth>().cloned();
     if host_id == s.host_id {
         let Some(router) = s.local_router.get().cloned() else {
             return (StatusCode::SERVICE_UNAVAILABLE, "router not ready").into_response();
@@ -71,6 +72,10 @@ async fn proxy_ws(s: Shared, host_id: String, rest: String, req: Request) -> Res
         if let Some(upgrade) = parts.extensions.remove::<hyper::upgrade::OnUpgrade>() {
             local.extensions_mut().insert(upgrade);
         }
+        // So that a paired device's terminal closes when it's revoked.
+        if let Some(device) = device {
+            local.extensions_mut().insert(device);
+        }
         return router.oneshot(local).await.into_response();
     }
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &s).await {
@@ -81,7 +86,7 @@ async fn proxy_ws(s: Shared, host_id: String, rest: String, req: Request) -> Res
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "host is offline"}))).into_response();
     };
     match link.open_ws(&path).await {
-        Ok(pipe) => upgrade.on_upgrade(move |ws| relay::bridge(ws, pipe)),
+        Ok(pipe) => upgrade.on_upgrade(move |ws| crate::devices::until_revoked(s, device, relay::bridge(ws, pipe))),
         Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({"error": format!("{e:#}")}))).into_response(),
     }
 }
@@ -213,8 +218,8 @@ pub(super) fn hub_url(s: &Shared, headers: &HeaderMap) -> String {
 }
 
 /// Merged events from every host, for the UI.
-pub async fn ws(State(s): State<Shared>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| ui_loop(s, socket))
+pub async fn ws(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, upgrade: WebSocketUpgrade) -> Response {
+    upgrade.on_upgrade(move |socket| crate::devices::until_revoked(s.clone(), device.map(|d| d.0), ui_loop(s, socket)))
 }
 
 async fn ui_loop(s: Shared, mut socket: WebSocket) {

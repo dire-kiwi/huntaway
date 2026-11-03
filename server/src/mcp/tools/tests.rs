@@ -847,7 +847,7 @@ fn agents_delete_tasks_only_once_the_user_confirms() {
         let asked = async {
             let a = approval_asked(&s).await;
             assert!(permissions::pending_approvals(&s, false, false).unwrap().is_empty());
-            assert_eq!(permissions::pending(&s, Some(&caller.id)).unwrap().len(), 1);
+            assert_eq!(permissions::pending(&s, Some(&caller.id), None).unwrap().len(), 1);
             answer_approval(&s, true).await;
             a
         };

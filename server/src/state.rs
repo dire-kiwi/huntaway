@@ -82,6 +82,8 @@ pub struct AppState {
     pub deleting: Mutex<HashMap<String, usize>>,
     /// Web Push to devices (see integrations/push.rs).
     pub push: crate::integrations::push::PushState,
+    /// Pairing codes, and revocations of paired devices (see devices.rs).
+    pub devices: crate::devices::Devices,
     /// A test state's `data_dir`, removed when the state goes (see testing::state).
     #[cfg(test)]
     pub test_dir: OnceLock<crate::testing::TempDir>,
@@ -127,6 +129,7 @@ impl AppState {
             relocating: Mutex::new(Default::default()),
             deleting: Mutex::new(HashMap::new()),
             push: Default::default(),
+            devices: Default::default(),
             #[cfg(test)]
             test_dir: OnceLock::new(),
         })
