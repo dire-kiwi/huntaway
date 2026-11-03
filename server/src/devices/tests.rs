@@ -358,6 +358,12 @@ fn what_a_device_may_do() {
         ("POST", "/api/h/x/permissions/p"),
         ("GET", "/api/h/x/attachments/a/photo%20one.jpg"),
         ("GET", "/api/h/my%20host/profiles"),
+        ("GET", "/api/push"),
+        ("POST", "/api/push/subscriptions"),
+        ("PATCH", "/api/push/subscriptions/s1"),
+        ("DELETE", "/api/push/subscriptions/s1"),
+        ("POST", "/api/push/subscriptions/s1/test"),
+        ("POST", "/api/permissions/p/push-answer"),
     ] {
         assert_eq!(refused(m, p), None, "{m} {p}");
     }
@@ -365,6 +371,9 @@ fn what_a_device_may_do() {
         ("GET", "/api/hosts/join"),
         ("GET", "/api/h/x/hosts/join"),
         ("GET", "/api/h/x/ws"),
+        ("GET", "/api/h/x/push"),
+        ("POST", "/api/h/x/push/subscriptions"),
+        ("GET", "/api/push/subscriptions"),
         ("GET", "/api/h/x/devices"),
         ("DELETE", "/api/h/x/devices/d1"),
         ("PATCH", "/api/devices/d1"),

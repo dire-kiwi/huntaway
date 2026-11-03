@@ -8,8 +8,8 @@
 //! token), and is only kept in memory, so a restart forgets it. The QR code never holds `auth_token`.
 //!
 //! Paired devices can only use the routes the mobile app needs (see `HUB`): profiles, projects, tasks and their
-//! threads, attachments, permission prompts, the board's events and hosts, and the devices list, from which they may
-//! only unpair themselves. Nothing that would outlast revoking them: not the routes that hand out the board's or hub's
+//! threads, attachments, permission prompts, the board's events and hosts, the devices list, from which they may
+//! only unpair themselves, and their own push subscriptions. Nothing that would outlast revoking them: not the routes that hand out the board's or hub's
 //! token or a Claude login, linking hosts, terminals (a shell on the host), settings or admin.
 //!
 //! Revoking a device stops the device. It doesn't undo what was done with it before: whoever held it could have had an
@@ -106,6 +106,14 @@ const HUB: &[(&str, &str)] = &[
     ("GET", "devices"),
     // Only itself (see `revoke`).
     ("DELETE", "devices/*"),
+    // The app's push (API 101), only its own subscriptions (see integrations/push.rs).
+    ("GET", "push"),
+    ("POST", "push/subscriptions"),
+    ("PATCH", "push/subscriptions/*"),
+    ("DELETE", "push/subscriptions/*"),
+    ("POST", "push/subscriptions/*/test"),
+    // Needs no token at all (the push's own answers only its prompt), so it's here only for a device that sends one.
+    ("POST", "permissions/*/push-answer"),
 ];
 const HOST: &[(&str, &str)] = &[
     ("GET", "profiles"),
@@ -323,10 +331,14 @@ pub async fn revoke(State(s): State<Shared>, device: Option<Extension<DeviceAuth
     if device.as_ref().is_some_and(|d| d.id != id) {
         not_from_device(&device)?;
     }
-    let n = s.db().execute("DELETE FROM device_tokens WHERE id=?1", [&id])?;
+    let c = s.db();
+    let n = c.execute("DELETE FROM device_tokens WHERE id=?1", [&id])?;
     if n == 0 {
         return Err(ApiError::not_found("device"));
     }
+    // Its push subscriptions (the app's) go with it: a revoked phone gets no more pushes, nor their tokens for Allow and Deny.
+    c.execute("DELETE FROM push_subscriptions WHERE device_id=?1", [&id])?;
+    drop(c);
     s.devices.revoked.send_modify(|n| *n += 1);
     tracing::info!("revoked device {id}");
     Ok(Json(json!({"ok": true})))

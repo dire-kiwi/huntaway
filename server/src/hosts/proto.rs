@@ -17,7 +17,8 @@ pub const PROTOCOL: u32 = 1;
 /// API 99: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
 /// API 100: paired devices (devices.rs): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
 /// `GET /permissions?profile_id=`.
-pub const API_VERSION: u32 = 100;
+/// API 101: native push through Expo (`kind` `expo` on `/push/subscriptions`, which paired devices may use for their own).
+pub const API_VERSION: u32 = 101;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.

@@ -86,11 +86,11 @@ fn the_vapid_key_is_made_once_and_signs_tokens_for_the_push_service() {
     assert!(key.verify(b"something else", &b64(parts[2])).is_err());
 }
 
-fn task(status: &str) -> Value {
+pub(super) fn task(status: &str) -> Value {
     json!({"id": "t1", "kind": "task", "number": 3, "title": "Fix the login", "status": status, "running": false, "review": null, "attention_reason": null})
 }
 
-fn with(mut t: Value, fields: Value) -> Value {
+pub(super) fn with(mut t: Value, fields: Value) -> Value {
     for (k, v) in fields.as_object().unwrap() {
         t[k] = v.clone();
     }
@@ -127,7 +127,7 @@ fn task_changes_notify_as_the_ui_does() {
 }
 
 /// A push service on this machine: it takes what's posted to it, answering with `status`.
-async fn push_service(status: Arc<AtomicU16>) -> (String, mpsc::UnboundedReceiver<(HeaderMap, Bytes)>) {
+pub(super) async fn push_service(status: Arc<AtomicU16>) -> (String, mpsc::UnboundedReceiver<(HeaderMap, Bytes)>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let app = axum::Router::new().route(
         "/push/{id}",
@@ -145,7 +145,7 @@ async fn push_service(status: Arc<AtomicU16>) -> (String, mpsc::UnboundedReceive
     (url, rx)
 }
 
-async fn api(s: &Shared, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+pub(super) async fn api(s: &Shared, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let req = axum::http::Request::builder()
         .method(method)
         .uri(path)
@@ -159,7 +159,7 @@ async fn api(s: &Shared, method: &str, path: &str, body: Option<Value>) -> (u16,
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
-fn device() -> (agreement::PrivateKey, Value) {
+pub(super) fn device() -> (agreement::PrivateKey, Value) {
     let ua = device_key();
     let keys = json!({"p256dh": B64.encode(public_key(&ua).unwrap()), "auth": B64.encode([9u8; 16])});
     (ua, keys)
@@ -210,7 +210,7 @@ fn devices_subscribe_change_their_events_and_unsubscribe() {
 }
 
 /// The board's task event for task `t` on this host.
-fn emit(s: &Shared, t: &Value) {
+pub(super) fn emit(s: &Shared, t: &Value) {
     let _ = s.hub_events.send(json!({"type": "task", "task": t, "host_id": s.host_id}));
 }
 
@@ -415,7 +415,7 @@ fn a_subscription_its_push_service_has_dropped_is_deleted() {
 // ---------- permission prompts ----------
 
 /// A task with a run going (so it can raise prompts), of `task_type` if given.
-fn running_task(s: &Shared, task_type: Option<&str>) -> db::Task {
+pub(super) fn running_task(s: &Shared, task_type: Option<&str>) -> db::Task {
     let profile = db::insert_profile(&s.db(), &format!("p{}", crate::util::new_id()), &[], None).unwrap();
     let new = db::NewTask {
         profile_id: &profile.id,
@@ -440,7 +440,7 @@ fn running_task(s: &Shared, task_type: Option<&str>) -> db::Task {
 }
 
 /// Raises a prompt for `tool` from `task` and waits until it's asked: its request id, and what the agent is told.
-async fn raise(s: &Shared, task: &db::Task, call: &str, tool: &str, input: Value) -> (String, tokio::task::JoinHandle<Value>) {
+pub(super) async fn raise(s: &Shared, task: &db::Task, call: &str, tool: &str, input: Value) -> (String, tokio::task::JoinHandle<Value>) {
     let (s2, t2, call2, tool2) = (s.clone(), task.clone(), call.to_string(), tool.to_string());
     let told = tokio::spawn(async move { crate::mcp::permissions::prompt(&s2, &t2, &call2, &tool2, &input, None).await.unwrap() });
     loop {
@@ -452,19 +452,19 @@ async fn raise(s: &Shared, task: &db::Task, call: &str, tool: &str, input: Value
 }
 
 /// A device subscribed to `url` that wants `events`.
-async fn subscribe_device(s: &Shared, url: &str, events: Value) -> agreement::PrivateKey {
+pub(super) async fn subscribe_device(s: &Shared, url: &str, events: Value) -> agreement::PrivateKey {
     let (ua, keys) = device();
     let (status, sub) = api(s, "POST", "/api/push/subscriptions", Some(json!({"endpoint": url, "keys": keys, "events": events}))).await;
     assert_eq!(status, 200, "{sub}");
     ua
 }
 
-async fn next_push(got: &mut mpsc::UnboundedReceiver<(HeaderMap, Bytes)>, ua: &agreement::PrivateKey) -> Value {
+pub(super) async fn next_push(got: &mut mpsc::UnboundedReceiver<(HeaderMap, Bytes)>, ua: &agreement::PrivateKey) -> Value {
     let (_, body) = tokio::time::timeout(Duration::from_secs(10), got.recv()).await.expect("no push").unwrap();
     serde_json::from_slice(&decrypt(ua, &[9u8; 16], &body)).unwrap()
 }
 
-async fn answer_from_push(s: &Shared, request: &str, token: &str, decision: &str) -> (u16, Value) {
+pub(super) async fn answer_from_push(s: &Shared, request: &str, token: &str, decision: &str) -> (u16, Value) {
     let req = axum::http::Request::builder()
         .method("POST")
         .uri(format!("/api/permissions/{request}/push-answer"))
@@ -478,7 +478,7 @@ async fn answer_from_push(s: &Shared, request: &str, token: &str, decision: &str
 }
 
 /// Waits until the board has noted prompt `request`'s tokens as `status`.
-async fn settled_as(s: &Shared, request: &str, status: &str) {
+pub(super) async fn settled_as(s: &Shared, request: &str, status: &str) {
     for _ in 0..500 {
         if crate::integrations::push_answers::status_of(&s.db(), request).as_deref() == Some(status) {
             return;
