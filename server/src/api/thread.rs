@@ -325,7 +325,7 @@ pub(super) async fn terminal_ws(
 #[derive(Deserialize)]
 pub(super) struct PermissionsQuery {
     task_id: Option<String>,
-    /// API 99: only one profile's (the mobile app's inbox).
+    /// API 100: only one profile's (the mobile app's inbox).
     profile_id: Option<String>,
 }
 

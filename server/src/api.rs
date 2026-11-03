@@ -119,6 +119,12 @@ fn host_routes() -> Router<Shared> {
         // Scratch chats, of which there are none since they became scratch tasks (for older boards).
         .route("/profiles/{id}/scratch", get(list_profile_scratch))
         .route("/profiles/{id}/assistant", get(get_assistant).post(send_to_assistant))
+        .route("/profiles/{id}/assistant/memory", get(assistant::memory::overview))
+        .route("/profiles/{id}/assistant/memory/file", get(assistant::memory::read).post(assistant::memory::write))
+        .route("/profiles/{id}/assistant/memory/history", get(assistant::memory::history))
+        .route("/profiles/{id}/assistant/memory/diff", get(assistant::memory::diff))
+        .route("/profiles/{id}/assistant/memory/restore", post(assistant::memory::restore))
+        .route("/profiles/{id}/assistant/memory/import", post(assistant::memory::import))
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))
         .route("/profiles/{id}/context-stats", get(crate::analytics::context))
@@ -248,7 +254,7 @@ fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)
 
 /// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
 async fn health(State(s): State<Shared>) -> Json<Value> {
-    // API 99: and its API version, which the mobile app checks before pairing.
+    // API 100: and its API version, which the mobile app checks before pairing.
     Json(json!({"ok": true, "commit": s.meta.running_commit, "api_version": crate::hosts::proto::API_VERSION}))
 }
 
