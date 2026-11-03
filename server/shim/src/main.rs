@@ -76,13 +76,15 @@ fn main() {
     write_atomic(run_dir, "exit", &exit);
 }
 
-/// Feed the program `prompt`, then `input.jsonl` as it grows, until `input.closed` appears.
+/// Feed the program `prompt` (if there is one), then `input.jsonl` as it grows, until `input.closed` appears.
 /// Returns (closing the pipe) once that's done or the program stops reading.
 fn relay_input(dir: &Path, mut pipe: ChildStdin) {
     let file = |name: &str| -> PathBuf { dir.join(name) };
-    let Ok(prompt) = fs::read(file("prompt")) else { return };
+    // A run of agent-threads' shim spawner (see threads/engine.rs) has no `prompt`: everything comes through `input.jsonl`.
     let Ok(mut input) = File::open(file("input.jsonl")) else { return };
-    if pipe.write_all(&prompt).is_err() {
+    if let Ok(prompt) = fs::read(file("prompt"))
+        && pipe.write_all(&prompt).is_err()
+    {
         return;
     }
     let mut buf = vec![0u8; 64 * 1024];

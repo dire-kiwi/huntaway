@@ -128,6 +128,8 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     // Every run but a `/compact` takes messages while it works (see `can_steer`); the prompt is
     // its first.
     let input = run.kind != "compact";
+    // As it is, for agent-threads (see threads/engine.rs), which sends it itself.
+    let prompt_text = prompt.clone();
     let prompt = if input { format!("{}\n", user_input(&crate::util::new_id(), &prompt)) } else { prompt };
 
     let permission_mode = task.effective_permission_mode(&state.db(), project.as_ref())?;
@@ -205,6 +207,35 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         writable_roots.extend(cache_dirs());
         writable_roots.extend(own_dir.clone());
         writable_roots.extend(tmp.clone());
+        if crate::threads::engine::uses(&task) {
+            let mut allowed = board_tools_allowed(&permission_mode, task.kind == "review");
+            if !own_gh {
+                allowed.extend(gh_allowed(&task).iter().map(|t| format!("mcp__{}__{t}", crate::mcp::gh_mcp::SERVER_NAME)));
+            }
+            allowed.extend(tools.allowed.iter().cloned());
+            let skills = tools.skills_dir.as_ref().map(|d| skill_dirs(&std::path::Path::new(d).join(".claude/skills"))).unwrap_or_default();
+            let spec = crate::threads::engine::Spec {
+                codex: true,
+                cwd: cwd.clone(),
+                text: prompt_text,
+                compact: run.kind == "compact",
+                model,
+                effort,
+                permission_mode,
+                system_prompt: instructions,
+                args: Vec::new(),
+                allowed,
+                add_dirs: writable_roots,
+                env: tmp_env,
+                config_dir: db::task_config_dir(&state.db(), &task)?,
+                mcp_servers: tools.mcp_servers,
+                skills,
+                github_account: github_account.clone(),
+            };
+            crate::threads::engine::launch(state, run, spec).await?;
+            not_rewound(state, task_id, rewind);
+            return Ok(());
+        }
         let spec = crate::agent::codex::Spec {
             cwd: cwd.clone(),
             thread_id: task.session_id.clone(),
@@ -270,35 +301,40 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         profile: &profile,
         tmp: tmp.as_deref(),
     };
-    push("--append-system-prompt", &instructions(base, &task, &to));
+    let system_prompt = instructions(base, &task, &to);
+    push("--append-system-prompt", &system_prompt);
     push("--permission-mode", &permission_mode);
     if permission_mode != "bypassPermissions" {
         push("--permission-prompt-tool", &format!("mcp__{MCP_SERVER_NAME}__permission_prompt"));
     }
+    // What agent-threads doesn't set itself (see threads/engine.rs): the hook, and the tools allowed and turned off.
+    let mut extra: Vec<String> = Vec::new();
     if gh_tools {
-        push("--settings", &gh_hook_settings(&state.exe));
+        extra.extend(["--settings".to_string(), gh_hook_settings(&state.exe)]);
     }
     // Our board tools never need approval, nor do some of the gh server's (see gh_allowed).
-    args.push("--allowedTools".to_string());
-    args.extend(board_tools_allowed(&permission_mode, task.kind == "review"));
+    let mut allowed = board_tools_allowed(&permission_mode, task.kind == "review");
     let own_gh = tools.mcp_servers.contains_key(crate::mcp::gh_mcp::SERVER_NAME);
     let gh_tool = |t: &str| format!("mcp__{}__{t}", crate::mcp::gh_mcp::SERVER_NAME);
     if !own_gh {
-        args.extend(gh_allowed(&task).iter().map(|t| gh_tool(t)));
+        allowed.extend(gh_allowed(&task).iter().map(|t| gh_tool(t)));
     }
-    args.extend(tools.allowed.iter().cloned());
+    allowed.extend(tools.allowed.iter().cloned());
     let mut disallowed = tools.disallowed.clone();
     if task.kind == "review" {
         // Reviewers read and report; they don't change the work.
-        args.extend(crate::review::ALLOWED_TOOLS.iter().map(|t| t.to_string()));
+        allowed.extend(crate::review::ALLOWED_TOOLS.iter().map(|t| t.to_string()));
         disallowed.extend(crate::review::DISALLOWED_TOOLS.iter().map(|t| t.to_string()));
         if !own_gh {
             disallowed.extend(crate::mcp::gh_mcp::WRITES.iter().map(|t| gh_tool(t)));
         }
     }
+    extra.push("--allowedTools".to_string());
+    extra.extend(allowed.iter().cloned());
     if !disallowed.is_empty() {
-        args.extend(["--disallowedTools".to_string(), disallowed.join(" ")]);
+        extra.extend(["--disallowedTools".to_string(), disallowed.join(" ")]);
     }
+    args.extend(extra.iter().cloned());
     add_dirs.extend(tools.skills_dir.clone());
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
     if let Some(sid) = &task.session_id {
@@ -320,6 +356,29 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         add_dirs.push(path_str(&attachments));
     }
     add_dirs.extend(tmp.clone());
+    if crate::threads::engine::uses(&task) {
+        let spec = crate::threads::engine::Spec {
+            codex: false,
+            cwd: cwd.clone(),
+            text: prompt_text,
+            compact: run.kind == "compact",
+            model,
+            effort: effort.as_deref().map(|e| claude_effort(e).to_string()),
+            permission_mode,
+            system_prompt,
+            args: extra,
+            allowed,
+            add_dirs,
+            env: tmp_env,
+            config_dir: db::task_config_dir(&state.db(), &task)?,
+            mcp_servers: tools.mcp_servers,
+            skills: Vec::new(),
+            github_account,
+        };
+        crate::threads::engine::launch(state, run, spec).await?;
+        not_rewound(state, task_id, rewind);
+        return Ok(());
+    }
     for d in &add_dirs {
         push("--add-dir", d);
     }
@@ -353,6 +412,26 @@ fn rewound(state: &Shared, task_id: &str, rewind: Option<crate::git::checkpoints
     if let Some(r) = rewind {
         state.add_event(task_id, "info", format!("The conversation goes on from before turn {}", r.turn), None);
     }
+}
+
+/// A rewind asked for on an agent-threads task (see threads/engine.rs), which doesn't rewind yet: it's
+/// dropped, and the conversation goes on as it was.
+fn not_rewound(state: &Shared, task_id: &str, rewind: Option<crate::git::checkpoints::Rewind>) {
+    if rewind.is_none() {
+        return;
+    }
+    if let Err(e) = state.update_task(task_id, &[("rewind", Value::Null)]) {
+        tracing::warn!(task = task_id, "clearing the conversation rollback: {e:#}");
+    }
+    state.add_event(task_id, "warn", "This task's agent runs on agent-threads, which can't rewind its conversation yet: it goes on as it was", None);
+}
+
+/// The skills in a `.claude/skills` directory: its folders with a SKILL.md.
+fn skill_dirs(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut dirs: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.join("SKILL.md").is_file()).collect();
+    dirs.sort();
+    dirs
 }
 
 async fn started(state: &Shared, run: &Run, launch: Launch) -> Result<()> {

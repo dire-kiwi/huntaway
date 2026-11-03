@@ -389,8 +389,15 @@ async fn serve(args: ServeArgs) -> Result<()> {
         app = app.route("/api/open-token", axum::routing::get(open_token(token, args.host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()))));
     }
 
+    // The agent-threads backend, which runs the agents of the tasks on it (see threads/engine.rs), before the
+    // board's runs are loaded, which may start some on it.
+    threads::engine::start(&state);
     // Agents kept running while we were down; catch up on their output.
     runner::load_active(&state)?;
+    {
+        let state = state.clone();
+        tokio::spawn(async move { threads::engine::recover(&state).await });
+    }
     runner::auto_compact(&state);
     usage::resume_loop(&state);
     window::start(&state);
@@ -449,6 +456,8 @@ async fn serve(args: ServeArgs) -> Result<()> {
     println!("IA_READY {}", serde_json::json!({"port": port, "token": ready_token}));
     // Agents keep running under ia-shim; we pick them up again on the next start.
     axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
+    // agent-threads' runs too, which it re-attaches to then (see threads::engine::recover).
+    threads::engine::close(&state).await;
     Ok(())
 }
 

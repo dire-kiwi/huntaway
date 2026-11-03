@@ -14,6 +14,7 @@ pub(super) async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Valu
         "public_url": db::get_setting(&c, "public_url")?,
         "now_expiry_hours": crate::agent::focus::expiry_hours(&c),
         "release_prereleases": db::get_setting(&c, crate::update::release::PRERELEASES)?.as_deref() == Some("true"),
+        "agent_threads_new_tasks": crate::threads::engine::new_tasks_on(&c),
     })))
 }
 
@@ -25,7 +26,8 @@ pub(super) async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Valu
 /// URLs are shown with. And whether release checks include prereleases (`release_prereleases`,
 /// API 88), which checks again when it changes. And how many hours a task can go without activity
 /// in the board's Now view before it goes back to Later (`now_expiry_hours`, API 97; 0 for never,
-/// null for the default of a day).
+/// null for the default of a day). And whether new tasks' agents run on agent-threads
+/// (`agent_threads_new_tasks`, see threads/engine.rs), which a client that doesn't get it can't set.
 pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.
     for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
@@ -70,6 +72,11 @@ pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<S
         Some(v) => Some(v.as_bool() == Some(true)),
         None => None,
     };
+    let engine = match b.get(crate::threads::engine::NEW_TASKS) {
+        Some(v) if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("agent_threads_new_tasks must be true, false or null")),
+        Some(v) => Some(v.as_bool() == Some(true)),
+        None => None,
+    };
     let tools = match b.get("terminal_tools").filter(|v| !v.is_null()) {
         Some(v) => Some(terminal::parse_tools(v).map_err(ApiError::bad)?),
         None => None,
@@ -85,6 +92,9 @@ pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<S
     if let Some(tools) = tools {
         let v = (!tools.is_empty()).then(|| json!(tools).to_string());
         db::set_setting(&s.db(), "terminal_tools", v.as_deref())?;
+    }
+    if let Some(on) = engine {
+        db::set_setting(&s.db(), crate::threads::engine::NEW_TASKS, on.then_some("true"))?;
     }
     if let Some(on) = prereleases {
         if crate::update::release::prereleases(&s)? != on {

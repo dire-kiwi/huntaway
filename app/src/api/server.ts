@@ -123,6 +123,8 @@ export interface HostSettings {
   release_prereleases?: boolean;
   /** Hours a task can go without activity in Now before it goes back to Later (API 97): 0 for never, null for the default of a day. */
   now_expiry_hours?: number | null;
+  /** Whether new tasks' agents run on agent-threads rather than the board's own runner; a task keeps the engine its first run started on. Absent on hosts that don't have it. */
+  agent_threads_new_tasks?: boolean;
 }
 
 export const serverApi = {

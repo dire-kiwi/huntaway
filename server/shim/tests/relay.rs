@@ -70,3 +70,21 @@ fn without_input_reads_the_prompt_file() {
     wait_for(&dir.join("exit"));
     assert_eq!(fs::read_to_string(dir.join("out.jsonl")).unwrap(), "only\n");
 }
+
+/// agent-threads' shim spawner (see threads/engine.rs) writes no `prompt`: the program's input is
+/// `input.jsonl` alone.
+#[test]
+fn relays_input_without_a_prompt() {
+    let dir = run_dir();
+    fs::write(dir.join("input.jsonl"), "").unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_ia-shim")).arg(&*dir).args(["--", "cat"]).status().unwrap();
+    assert!(status.success());
+    wait_for(&dir.join("pid"));
+    let mut input = fs::OpenOptions::new().append(true).open(dir.join("input.jsonl")).unwrap();
+    input.write_all(b"first\n").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!dir.join("exit").exists(), "its input stays open");
+    fs::write(dir.join("input.closed"), "").unwrap();
+    wait_for(&dir.join("exit"));
+    assert_eq!(fs::read_to_string(dir.join("out.jsonl")).unwrap(), "first\n");
+}

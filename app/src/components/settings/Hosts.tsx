@@ -1087,6 +1087,19 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           hours without activity <span className="text-faint">(0 keeps them there until you move them)</span>
         </label>
       )}
+      {settings.agent_threads_new_tasks !== undefined && (
+        <label className="mt-3 flex items-start gap-2 text-[12.5px] text-muted">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            checked={settings.agent_threads_new_tasks}
+            onChange={(e) => save({ agent_threads_new_tasks: e.target.checked })}
+          />
+          <span>
+            Run new tasks' agents on agent-threads <span className="text-faint">(experimental: a task keeps the engine its first run started on)</span>
+          </span>
+        </label>
+      )}
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
     </div>
   );

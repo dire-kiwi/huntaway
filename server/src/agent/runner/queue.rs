@@ -40,8 +40,18 @@ pub(super) fn steer_or_queue(state: &Shared, task_id: &str, message: &db::Queued
         return Ok(Some(task));
     }
     let plan = task.kind == "task" && documents::plan_command(text).is_some();
-    let run = db::get_run(&state.db(), &handle.run_id)?.filter(|r| !is_compact(text) && !(plan && !writes_documents(&r.id)) && can_steer(state, r));
+    // An agent-threads run takes messages once it has started, and is sent those from before then as it does
+    // (see threads/engine.rs).
+    let engine = crate::threads::engine::uses(&task);
+    let can = |r: &Run| if engine { r.kind != "compact" && (r.status == "preparing" || crate::threads::engine::takes_messages(r)) } else { can_steer(state, r) };
+    let run = db::get_run(&state.db(), &handle.run_id)?.filter(|r| !is_compact(text) && !(plan && !writes_documents(&r.id)) && can(r));
     let task = match run {
+        Some(run) if engine && crate::threads::engine::takes_messages(&run) => crate::threads::engine::steer(state, &task, text, from_agent)?,
+        Some(run) if engine => {
+            let mut steering = task.steering;
+            steering.push(db::Steer { id: crate::util::new_id(), text: text.to_string(), from_agent, run_id: run.id, written: false });
+            db::update_task(&state.db(), task_id, &[("steering", json!(steering))])?
+        }
         Some(run) => {
             let mut steering = task.steering;
             let id = crate::util::new_id();

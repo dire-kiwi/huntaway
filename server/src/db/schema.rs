@@ -879,7 +879,23 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         summarizers(&conn)?;
         conn.execute_batch(&format!("{SCHEMA_V85} PRAGMA user_version=85; COMMIT;"))?;
     }
+    if version < 86 {
+        conn.execute_batch("BEGIN;")?;
+        run_engines(&conn)?;
+        conn.execute_batch("PRAGMA user_version=86; COMMIT;")?;
+    }
     Ok(conn)
+}
+
+/// Which engine runs a task's agent (see threads/engine.rs): `legacy` (the board's own runner) or `agent_threads`,
+/// fixed when its first run starts, and null until then. The tasks from before are all legacy. Added only if it
+/// isn't there, in case another migration takes this version first.
+fn run_engines(conn: &Connection) -> Result<()> {
+    let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='run_engine'", [], |r| r.get(0))?;
+    if !has {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN run_engine TEXT; UPDATE tasks SET run_engine='legacy';")?;
+    }
+    Ok(())
 }
 
 /// Several summarizers for a project or profile (see Project::summarizers). The `summarizer` saved before is read
@@ -934,7 +950,7 @@ fn call_usage_ids(conn: &Connection) -> Result<()> {
 }
 
 /// The latest database version (`PRAGMA user_version`).
-pub const VERSION: i64 = 85;
+pub const VERSION: i64 = 86;
 
 /// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
 /// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON

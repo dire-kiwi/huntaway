@@ -82,6 +82,9 @@ pub struct AppState {
     pub deleting: Mutex<HashMap<String, usize>>,
     /// Web Push to devices (see integrations/push.rs).
     pub push: crate::integrations::push::PushState,
+    /// The agent-threads backend that runs the agents of tasks on that engine (see threads/engine.rs), once it's
+    /// set up (see threads::live::install): it comes after the state, as its store is on the state's database.
+    pub agent_threads: OnceLock<agent_threads::AgentThreads>,
     /// A test state's `data_dir`, removed when the state goes (see testing::state).
     #[cfg(test)]
     pub test_dir: OnceLock<crate::testing::TempDir>,
@@ -127,6 +130,7 @@ impl AppState {
             relocating: Mutex::new(Default::default()),
             deleting: Mutex::new(HashMap::new()),
             push: Default::default(),
+            agent_threads: OnceLock::new(),
             #[cfg(test)]
             test_dir: OnceLock::new(),
         })

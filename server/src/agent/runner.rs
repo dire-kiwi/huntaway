@@ -85,6 +85,8 @@ fn start_run(
         return Err(ApiError::bad("This host can't run agents (it has no claude or codex CLI, or no ia-shim)"));
     }
     let task = db::get_task(&state.db(), task_id)?.ok_or_else(|| ApiError::not_found("task"))?;
+    // What runs its agent is fixed with its first run (see threads/engine.rs).
+    let task = crate::threads::engine::fix(state, task)?;
     let agent = if db::task_is_codex(&state.db(), &task)? { "codex" } else { "claude" };
     if !runs::has_agent(agent) {
         return Err(ApiError::bad(format!("This host has no {agent} CLI for this thread's config")));
@@ -239,6 +241,10 @@ fn stop_run(state: &Shared, task_id: &str, kill: bool) -> bool {
             return true;
         }
     }
+    if db::get_task(&state.db(), task_id).ok().flatten().is_some_and(|t| crate::threads::engine::uses(&t)) {
+        crate::threads::engine::stop(state, task_id, &run_id, kill);
+        return true;
+    }
     if !kill && interrupt(state, &run_id, &stop_id) {
         return true;
     }
@@ -335,6 +341,14 @@ pub fn load_active(state: &Shared) -> Result<()> {
     let active = db::active_runs(&state.db())?;
     for run in active {
         state.runs.lock().unwrap().insert(run.task_id.clone(), RunHandle { run_id: run.id.clone(), cancel: None });
+        // An agent-threads task's run: the backend re-attaches to its thread's run (see threads::engine::recover),
+        // which ends it if it's over.
+        if db::get_task(&state.db(), &run.task_id)?.is_some_and(|t| crate::threads::engine::uses(&t)) {
+            if run.status == "preparing" {
+                finish(state, &run.id, Outcome::Failed("Interrupted by a server restart before the agent started".into()));
+            }
+            continue;
+        }
         if runs::exists(state, &run.id) && runs::format(state, &run.id) > runs::RUN_FORMAT {
             // Written by a newer build (a downgrade); we can't follow it safely, so its agent is
             // stopped rather than left working (and calling the board's tools) unfollowed.

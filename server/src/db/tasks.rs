@@ -168,6 +168,10 @@ pub struct Task {
     /// than queueing them for when it ends.
     #[serde(default)]
     pub steerable: bool,
+    /// What runs its agent (see threads/engine.rs): `legacy` or `agent_threads`, fixed when its first run
+    /// starts; none until then.
+    #[serde(default)]
+    pub run_engine: Option<String>,
     pub model: Option<String>,
     /// Overrides the host's default effort when set.
     pub effort: Option<String>,
@@ -286,6 +290,7 @@ impl Task {
             queued_user_text: r.get("queued_user_text")?,
             steering: json_or_default(r.get::<_, Option<String>>("steering")?),
             steerable: r.get("steerable")?,
+            run_engine: r.get("run_engine")?,
             model: r.get("model")?,
             effort: r.get("effort")?,
             permission_mode: r.get("permission_mode")?,
@@ -820,7 +825,7 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
     "base_branch", "start_from", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "merge_approval", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "now_at", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "queued_message", "steering", "steerable", "run_engine", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "now_at", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.
