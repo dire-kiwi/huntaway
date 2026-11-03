@@ -98,6 +98,9 @@ pub async fn status(state: &Shared) -> Result<Value> {
         "running_agents": running_agents,
         "restart": job,
     });
+    // API 104: which file the database is in, and whether an older build has changed the one it was copied from.
+    let database = crate::db::file::status(&state.data_dir, &state.db())?;
+    v["database"] = json!(database);
     // API 88: with --release-updates, the release this server could update to.
     if let Some(release) = crate::update::release::status(state)? {
         v["release"] = release;
@@ -210,6 +213,20 @@ pub fn start(state: &Shared, rebuild: bool) -> ApiResult<()> {
     begin(state, move |st| async move { run(&st, rebuild).await })
 }
 
+/// Copy the older builds' database into this build's again and restart onto it (see db/file.rs), as a restart job.
+/// Only when an older build has changed it since it was copied: that discards what's been done since in this one.
+pub fn recopy_database(state: &Shared) -> ApiResult<()> {
+    let status = crate::db::file::status(&state.data_dir, &state.db())?;
+    let Some(older) = status.older_changed else {
+        return Err(ApiError::bad("the older builds' database hasn't changed since it was copied"));
+    };
+    begin(state, move |st| async move {
+        log_line(&st, &format!("copying {older} into {} again as the server restarts", status.file));
+        crate::db::file::request_recopy(&st.data_dir)?;
+        run(&st, false).await
+    })
+}
+
 /// Start a restart job that runs `job` in the background, unless one is running. `job` only returns on failure,
 /// which the job then shows (the restart log has whatever it logged). Release updates use it too (see update/release.rs),
 /// with the phases `downloading`, `verifying` and `installing` before `restarting`.
@@ -314,22 +331,36 @@ pub(crate) async fn restart_into(state: &Shared, exe: &Path, env: &[(&str, OsStr
     // Give the websocket a moment to deliver the final events.
     tokio::time::sleep(Duration::from_millis(300)).await;
     tracing::info!("re-executing {}", exe.display());
-    exec(exe, &state.meta.args, env)
+    exec(exe, &restart_args(&state.meta.args), env)
+}
+
+/// The serve flag and its environment variable that ask the start they're given to for something once (copying the
+/// database again, see db/file.rs). A restart leaves them out: an older build that Roll back starts wouldn't know the
+/// flag and would exit, and a newer one would do it again.
+const ONE_SHOT_ARGS: &[&str] = &["--recopy-db"];
+const ONE_SHOT_ENV: &[&str] = &["IA_RECOPY_DB"];
+
+/// This server's arguments, for a restart: without `ONE_SHOT_ARGS`.
+fn restart_args(args: &[OsString]) -> Vec<OsString> {
+    args.iter().filter(|a| !ONE_SHOT_ARGS.iter().any(|o| a.as_os_str() == *o)).cloned().collect()
 }
 
 /// Replace this process with a fresh server. Only returns on failure.
 #[cfg(all(unix, not(test)))]
 fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
     use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(exe).args(args).envs(env.iter().map(|(k, v)| (k, v))).exec();
+    let mut cmd = std::process::Command::new(exe);
+    ONE_SHOT_ENV.iter().for_each(|k| _ = cmd.env_remove(k));
+    let err = cmd.args(args).envs(env.iter().map(|(k, v)| (k, v))).exec();
     anyhow!("failed to exec {}: {}", exe.display(), truncate(&err.to_string(), 500))
 }
 
 /// Tests don't replace themselves: they can see what would have been exec'd at `testing::reached("exec")` (and
-/// the environment it would have added in `exec_env`), and then it fails.
+/// the environment it would have added in `exec_env`, and its arguments in `exec_args`), and then it fails.
 #[cfg(test)]
-fn exec(exe: &Path, _args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
+fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
     EXEC_ENV.with_borrow_mut(|e| *e = Some(env.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()));
+    EXEC_ARGS.with_borrow_mut(|a| *a = Some(args.to_vec()));
     crate::testing::reached("exec");
     anyhow!("failed to exec {}: not in a test", exe.display())
 }
@@ -362,6 +393,13 @@ pub fn reap_inherited() {
 #[cfg(test)]
 thread_local! {
     static EXEC_ENV: std::cell::RefCell<Option<Vec<(String, OsString)>>> = const { std::cell::RefCell::new(None) };
+    static EXEC_ARGS: std::cell::RefCell<Option<Vec<OsString>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The arguments of the last exec on this thread (see `exec`).
+#[cfg(test)]
+pub(crate) fn exec_args() -> Option<Vec<OsString>> {
+    EXEC_ARGS.with_borrow(|a| a.clone())
 }
 
 /// The environment the last exec on this thread would have added (see `exec`).
@@ -372,7 +410,9 @@ pub(crate) fn exec_env() -> Option<Vec<(String, OsString)>> {
 
 #[cfg(all(not(unix), not(test)))]
 fn exec(exe: &Path, args: &[OsString], env: &[(&str, OsString)]) -> anyhow::Error {
-    match std::process::Command::new(exe).args(args).envs(env.iter().map(|(k, v)| (k, v))).spawn() {
+    let mut cmd = std::process::Command::new(exe);
+    ONE_SHOT_ENV.iter().for_each(|k| _ = cmd.env_remove(k));
+    match cmd.args(args).envs(env.iter().map(|(k, v)| (k, v))).spawn() {
         Ok(_) => std::process::exit(0),
         Err(e) => anyhow!("failed to start {}: {e}", exe.display()),
     }

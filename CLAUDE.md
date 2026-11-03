@@ -106,7 +106,8 @@ Keep test servers fully separate from it:
     `.task.status`, not `.status`. `pending_permissions` is a count.
   - `GET /api/permissions[?task_id=…]` lists pending permission prompts, and
     `POST /api/permissions/{id}` with `{"decision": "allow"}` (or `deny`) answers one. They're in
-    the `permission_requests` table of `<data dir>/huntaway.db`.
+    the `permission_requests` table of `<data dir>/huntaway-2.db` (`huntaway.db` on a master build from
+    before the switch; see *The database file* in `README.md`).
   - `<data dir>/runs/<run id>/spec.json` shows how a run was launched (model, permission mode,
     config dir), so you can check launch flags without waiting for the model.
 - Build in the worktree, never in the main checkout (the board project's repository path), which is

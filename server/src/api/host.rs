@@ -182,6 +182,12 @@ pub(super) async fn roll_back_release(State(s): State<Shared>) -> ApiResult<Json
     Ok(Json(json!({"ok": true})))
 }
 
+/// Copy the older builds' database into this build's again, as a restart job (API 104; see db/file.rs).
+pub(super) async fn recopy_database(State(s): State<Shared>) -> ApiResult<Json<Value>> {
+    admin::recopy_database(&s)?;
+    Ok(Json(json!({"ok": true})))
+}
+
 #[derive(Deserialize)]
 pub(super) struct UpdateBody {
     /// Missing from a hub that runs a release, which only release hosts can update from.
