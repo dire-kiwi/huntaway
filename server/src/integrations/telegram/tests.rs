@@ -846,3 +846,35 @@ fn reports_go_by_push_telegram_or_both_as_chosen() {
         assert_eq!((old.events.replies, old.events.reports, old.events.merge), (false, false, true));
     });
 }
+
+#[test]
+fn a_compactions_end_is_no_reply() {
+    testing::run(async || {
+        let (s, f, p, mut pushed) = pushing_board().await;
+        let a = assistant_id(&s, &p);
+        subscribe_phone(&s, "phone", json!({"replies": true})).await;
+        set_telegram_events(&s, &p, true, true).await;
+        turn(&s, &a, "The plan for Monday");
+        assert_eq!(next_push(&mut pushed).await["data"]["event"], "reply");
+        until("the reply on Telegram", || f.sent_texts().iter().any(|t| t == "The plan for Monday")).await;
+
+        // The thread is compacted (the board does it once it's been idle a while): its run ends as a turn does, with
+        // no message of the user's before it.
+        let run = db::insert_run(&s.db(), &a, "compact").unwrap();
+        let result = json!({"type": "result", "subtype": "success", "is_error": false, "result": "Compacted", "num_turns": 0});
+        crate::agent::runner::record_result(&s, &run, None, result).unwrap();
+        let last = db::list_messages(&s.db(), &a).unwrap().into_iter().rev().find(|m| m.kind == "claude").unwrap();
+        assert_eq!(last.data["compact"], true, "the compaction's result isn't marked");
+        until("its end to be looked at", || progress(&s.db(), &p).replied == last.id).await;
+        no_push(&mut pushed, "a compaction's end").await;
+
+        // A turn that ends saying nothing new doesn't say the one before's reply again.
+        s.add_message(&a, "claude", json!({"type": "result", "subtype": "success", "result": ""})).unwrap();
+        no_push(&mut pushed, "a turn with nothing new said").await;
+        // (A marker, to know Telegram has had everything sent before it.)
+        report(&s, &a, "Marker");
+        until("the marker", || f.sent_texts().iter().any(|t| t.contains("Marker"))).await;
+        let texts = f.sent_texts();
+        assert_eq!(texts.iter().filter(|t| t.contains("The plan for Monday") || t.contains("Compacted")).count(), 1, "{texts:?}");
+    });
+}

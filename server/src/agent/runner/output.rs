@@ -293,6 +293,10 @@ fn record_turn_end(state: &Shared, run: &Run, error: Option<String>, mut result:
     }
     state.db().execute("UPDATE runs SET saw_result=1, between_turns=1, result_error=?1 WHERE id=?2", rusqlite::params![error, run.id])?;
     let status = if stopping == 1 { "stopped" } else if error.is_some() { "failed" } else { "done" };
+    // A compaction's end isn't a reply (see telegram::on_turn_end), though it's recorded as a turn's.
+    if run.kind == "compact" {
+        result["compact"] = json!(true);
+    }
     crate::git::checkpoints::after_turn(state, &run.id, status);
     // A turn that ended isn't waiting any more, even if the agent gave up on the call.
     crate::mcp::wait::ended(state, &run.task_id, &run.id);

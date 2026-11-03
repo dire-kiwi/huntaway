@@ -1094,7 +1094,7 @@ fn on_message(s: &Shared, m: &Value) {
         // Every assistant's, for push (push::REPLY_EVENT), whether or not it has a bot.
         let task = m["task_id"].as_str().and_then(|id| db::get_task(&s.db(), id).ok().flatten()).filter(Task::is_assistant);
         if let Some(task) = task {
-            on_turn_end(s, &task, m["id"].as_i64().unwrap_or_default());
+            on_turn_end(s, &task, m["id"].as_i64().unwrap_or_default(), data["compact"] == json!(true));
         }
         return;
     }
@@ -1126,9 +1126,11 @@ fn on_message(s: &Shared, m: &Value) {
 
 /// The assistant's turn ended (its `result`, message `message_id`): its reply goes back if a message
 /// from Telegram was waiting for one, or if every reply is to. Either way it's announced for push
-/// (`announce_reply`), which sends the replies that weren't asked for on Telegram.
-fn on_turn_end(s: &Shared, task: &Task, message_id: i64) {
-    let text = reply_text(s, task, message_id);
+/// (`announce_reply`), which sends the replies that weren't asked for on Telegram. The end of a compaction
+/// (`compact`: a `/compact` run's, the user's or the board's after the thread was idle a while) is no reply: it's
+/// only noted as looked at, and leaves a message from Telegram waiting for the next turn.
+fn on_turn_end(s: &Shared, task: &Task, message_id: i64, compact: bool) {
+    let text = if compact { None } else { reply_text(s, task, message_id) };
     let Some((_, cfg, _)) = linked(&s.db(), &task.profile_id) else {
         // No bot: nothing came from Telegram, and the turn's result comes once.
         if text.is_some() {
@@ -1143,6 +1145,9 @@ fn on_turn_end(s: &Shared, task: &Task, message_id: i64) {
             return None;
         }
         p.replied = message_id;
+        if compact {
+            return None;
+        }
         let asked = p.awaiting;
         p.awaiting = asked && more;
         Some((asked || cfg.events.replies, asked))
@@ -1155,12 +1160,18 @@ fn on_turn_end(s: &Shared, task: &Task, message_id: i64) {
     }
 }
 
-/// What the assistant said in the turn that ended with message `message_id`: since the user's last message. None
-/// if it said nothing.
+/// What the assistant said in the turn that ended with message `message_id`: since the user's last message, and
+/// since the turn before ended (so a turn that said nothing doesn't say the last one's reply again). None if it said
+/// nothing.
 fn reply_text(s: &Shared, task: &Task, message_id: i64) -> Option<String> {
     let c = s.db();
     let asked: i64 = c
-        .query_row("SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='user' AND id < ?2", rusqlite::params![task.id, message_id], |r| r.get(0))
+        .query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND id < ?2
+               AND (kind='user' OR (kind='claude' AND json_extract(data,'$.type')='result'))",
+            rusqlite::params![task.id, message_id],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
     db::last_assistant_text_after(&c, &task.id, asked).ok().flatten().filter(|t| !t.trim().is_empty())
 }
@@ -1178,17 +1189,22 @@ fn run_ended(s: &Shared, task: &Task) {
     if !task.is_assistant() || linked(&s.db(), &task.profile_id).is_none() {
         return;
     }
-    let last_result: i64 = s
+    let (last_result, compact): (i64, bool) = s
         .db()
         .query_row(
-            "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result'",
+            "SELECT id, COALESCE(json_extract(data,'$.compact'), 0) FROM messages
+              WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result' ORDER BY id DESC LIMIT 1",
             [&task.id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)),
         )
-        .unwrap_or(0);
+        .unwrap_or((0, false));
     let replied = progress(&s.db(), &task.profile_id).replied;
     if last_result > replied {
-        return on_turn_end(s, task, last_result);
+        on_turn_end(s, task, last_result, compact);
+        // A compaction answered nothing: as a run that stopped without a turn's end.
+        if !compact {
+            return;
+        }
     }
     let more = task.queued_message.is_some() || !task.steering.is_empty();
     if !more {
