@@ -72,14 +72,16 @@ fn syncs_the_skills_dir() {
         description: String::new(),
         content: content.into(),
         enabled: true,
+        source_id: None,
+        source_path: None,
         created_at: String::new(),
         updated_at: String::new(),
     };
     let (a, b) = (skill("a", "A"), skill("b", "B"));
-    sync_skills(&dir, &[&a, &b]).unwrap();
+    sync_skills(&dir, &[&a, &b], &dir).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("b/SKILL.md")).unwrap(), "B");
     let a2 = skill("a", "A2");
-    sync_skills(&dir, &[&a2]).unwrap();
+    sync_skills(&dir, &[&a2], &dir).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("a/SKILL.md")).unwrap(), "A2");
     assert!(!dir.join("b").exists());
     std::fs::remove_dir_all(&dir).unwrap();
@@ -327,6 +329,8 @@ fn adds_the_boards_skills_a_user_can_call() {
         description: format!("{name} (board)"),
         content: format!("---\nname: {name}\ndescription: d\n{extra}---\n"),
         enabled: true,
+        source_id: None,
+        source_path: None,
         created_at: String::new(),
         updated_at: String::new(),
     };

@@ -11,6 +11,10 @@
 //! connectors, the repository) can be turned off per project: they're denied with
 //! `--disallowedTools Skill(<name>)` / `mcp__<server>`. To list them, each run's `init`
 //! message records what the agent had, per Claude config ("seen").
+//!
+//! A global skill can also come from a **skill source**, a git repository the host clones (see
+//! `sources`): its skills are global skills with a `source_id`, so profiles and projects switch them
+//! on and off like any other, and a run gets the skill's whole folder, not just its `SKILL.md`.
 
 use std::path::{Path as FsPath, PathBuf};
 
@@ -24,6 +28,9 @@ use crate::agent::runner::MCP_SERVER_NAME;
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{new_id, now};
 
+mod sources;
+pub use sources::*;
+
 #[derive(Serialize, Clone, Debug)]
 pub struct Skill {
     pub id: String,
@@ -35,6 +42,12 @@ pub struct Skill {
     pub content: String,
     /// As for `McpServer::enabled`.
     pub enabled: bool,
+    /// The skill source (a git repository) it comes from, if it does: it can't be edited or deleted
+    /// by itself then.
+    pub source_id: Option<String>,
+    /// Its folder in the source's clone, relative to the clone's root ("" for the root).
+    #[serde(skip)]
+    pub source_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -49,6 +62,8 @@ impl Skill {
             description: frontmatter(&content).map(|f| f.description).unwrap_or_default(),
             content,
             enabled: r.get("enabled")?,
+            source_id: r.get("source_id")?,
+            source_path: r.get("source_path")?,
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
         })
@@ -322,6 +337,7 @@ fn overview(c: &Connection, project: &crate::db::Project) -> ApiResult<Value> {
         "seen": o.seen,
         "global_skills": list_skills(c, None)?,
         "global_mcp_servers": list_mcp_servers(c, None)?,
+        "skill_sources": list_sources(c)?,
         "profile_switches": switches(c, "profile", &project.profile_id)?,
         "project_switches": switches(c, "project", &project.id)?,
     }))
@@ -375,6 +391,7 @@ pub async fn get_global(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     Ok(Json(json!({
         "skills": list_skills(&c, None)?,
         "mcp_servers": list_mcp_servers(&c, None)?,
+        "skill_sources": list_sources(&c)?,
         "profile_switches": profiles,
     })))
 }
@@ -384,7 +401,10 @@ pub struct SwitchBody {
     /// "profile" or "project".
     scope: String,
     scope_id: String,
-    item_id: String,
+    /// A global skill or server. Either this or `source_id` is given.
+    item_id: Option<String>,
+    /// Every skill of a skill source, as they are now.
+    source_id: Option<String>,
     /// None clears it: a profile's default goes back to off, a project follows its profile.
     enabled: Option<bool>,
 }
@@ -400,17 +420,31 @@ pub async fn set_switch(State(s): State<Shared>, Json(b): Json<SwitchBody>) -> A
     if !exists {
         return Err(ApiError::not_found(&b.scope));
     }
-    if get_skill(&c, None, &b.item_id)?.is_none() && get_mcp_server(&c, None, &b.item_id)?.is_none() {
-        return Err(ApiError::not_found("global skill or MCP server"));
-    }
-    match b.enabled {
-        Some(on) => c.execute(
-            "INSERT INTO agent_tool_switches (scope, scope_id, item_id, enabled) VALUES (?1,?2,?3,?4)
-             ON CONFLICT(scope, scope_id, item_id) DO UPDATE SET enabled=?4",
-            params![b.scope, b.scope_id, b.item_id, on],
-        )?,
-        None => c.execute("DELETE FROM agent_tool_switches WHERE scope=?1 AND scope_id=?2 AND item_id=?3", params![b.scope, b.scope_id, b.item_id])?,
+    let items: Vec<String> = match (&b.item_id, &b.source_id) {
+        (Some(id), _) => {
+            if get_skill(&c, None, id)?.is_none() && get_mcp_server(&c, None, id)?.is_none() {
+                return Err(ApiError::not_found("global skill or MCP server"));
+            }
+            vec![id.clone()]
+        }
+        (None, Some(source)) => {
+            if get_source(&c, source)?.is_none() {
+                return Err(ApiError::not_found("skill source"));
+            }
+            c.prepare("SELECT id FROM agent_skills WHERE source_id=?1")?.query_map([source], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+        }
+        (None, None) => return Err(ApiError::bad("item_id or source_id is needed")),
     };
+    for item in items {
+        match b.enabled {
+            Some(on) => c.execute(
+                "INSERT INTO agent_tool_switches (scope, scope_id, item_id, enabled) VALUES (?1,?2,?3,?4)
+                 ON CONFLICT(scope, scope_id, item_id) DO UPDATE SET enabled=?4",
+                params![b.scope, b.scope_id, item, on],
+            )?,
+            None => c.execute("DELETE FROM agent_tool_switches WHERE scope=?1 AND scope_id=?2 AND item_id=?3", params![b.scope, b.scope_id, item])?,
+        };
+    }
     Ok(Json(json!({"ok": true})))
 }
 
@@ -434,6 +468,9 @@ fn create_skill_in(c: &Connection, project_id: Option<&str>, b: SkillBody) -> Ap
 
 fn update_skill_in(c: &Connection, project_id: Option<&str>, id: &str, b: SkillBody) -> ApiResult<Skill> {
     let skill = get_skill(c, project_id, id)?.ok_or_else(|| ApiError::not_found("skill"))?;
+    if skill.source_id.is_some() && b.content.is_some() {
+        return Err(ApiError::bad("this skill comes from a skill source: change it in its repository, then update the source"));
+    }
     let (name, content) = match b.content {
         Some(content) => {
             let f = check_skill(&content)?;
@@ -481,6 +518,9 @@ fn forget_board_skill(c: &Connection, project_id: Option<&str>, name: &str) -> a
 
 fn delete_in(c: &Connection, table: &str, project_id: Option<&str>, id: &str) -> ApiResult<Json<Value>> {
     let skill = if table == "agent_skills" { get_skill(c, project_id, id)? } else { None };
+    if skill.as_ref().is_some_and(|s| s.source_id.is_some()) {
+        return Err(ApiError::bad("this skill comes from a skill source: remove the source to delete its skills"));
+    }
     let n = c.execute(&format!("DELETE FROM {table} WHERE project_id IS ?1 AND id=?2"), params![project_id, id])?;
     if n == 0 {
         return Err(ApiError::not_found(if table == "agent_skills" { "skill" } else { "MCP server" }));
@@ -652,7 +692,7 @@ fn run_tools(state: &Shared, project_id: &str, sync: bool) -> anyhow::Result<Run
     let enabled: Vec<&Skill> = skills.iter().collect();
     let root = skills_root(state, project_id);
     if sync {
-        sync_skills(&root.join(".claude").join("skills"), &enabled)?;
+        sync_skills(&root.join(".claude").join("skills"), &enabled, &sources_root(state))?;
     }
     let mut t = RunTools { skills_dir: (!enabled.is_empty()).then(|| crate::util::path_str(&root)), ..Default::default() };
     for s in servers {
@@ -668,8 +708,9 @@ fn run_tools(state: &Shared, project_id: &str, sync: bool) -> anyhow::Result<Run
 }
 
 /// Make `dir` hold exactly these skills. Files that are already right are left alone, since
-/// other agents in the project may be reading them.
-fn sync_skills(dir: &FsPath, skills: &[&Skill]) -> std::io::Result<()> {
+/// other agents in the project may be reading them. A skill from a source (cloned in `sources`) is
+/// its whole folder, with the scripts and references it comes with.
+fn sync_skills(dir: &FsPath, skills: &[&Skill], sources: &FsPath) -> std::io::Result<()> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
@@ -680,6 +721,14 @@ fn sync_skills(dir: &FsPath, skills: &[&Skill]) -> std::io::Result<()> {
         }
     }
     for s in skills {
+        if let (Some(id), Some(path)) = (&s.source_id, &s.source_path) {
+            let from = sources.join(id).join(path);
+            if from.join("SKILL.md").is_file() {
+                copy_skill(&from, &dir.join(&s.name))?;
+                continue;
+            }
+        }
+        // Not a source's, or its clone has gone (the next update brings it back): the saved SKILL.md.
         let file = dir.join(&s.name).join("SKILL.md");
         if std::fs::read_to_string(&file).ok().as_deref() != Some(s.content.as_str()) {
             std::fs::create_dir_all(dir.join(&s.name))?;

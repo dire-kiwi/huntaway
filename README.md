@@ -867,6 +867,22 @@ skipped. Auto-compacting idle sessions is Claude-only.
   They're denied with `--disallowedTools` (`Skill(<name>)`, `mcp__<server>`). The settings list
   what the project's runs reported in their `init` message over the last two weeks, and anything
   else can be turned off by name. Changes apply from each thread's next message.
+- **Skill sources** (API 101): global skills can come from a git repository, as with `npx skills add`.
+  Settings → Skills and MCP servers → *Add from git* takes a git URL (https, ssh or a local path),
+  `git@host:owner/repo` or `owner/repo` for GitHub, and optionally a branch or tag. The host clones it
+  (shallow, into `<data-dir>/skill-sources/<id>/`, with its own git setup, so a private repository needs
+  credentials there) and every folder with a `SKILL.md` in it (the repository's root too, and `skills/`,
+  `.claude/skills` and so on, up to six folders down) becomes a global skill, **off** for every profile
+  and project. Switch them on like any global skill: per profile (a source's chip switches all its skills at
+  once, or each skill's own chips) and per project (*Profile default*, *On* or *Off*). A run gets the skill's
+  whole folder in the project's skills folder, so its scripts and references come with it. *Update* clones
+  the repository again: new skills appear (off), changed ones are updated, ones that went are removed with
+  their switches, and if the clone fails the skills stay as they were and the source shows why. A source's
+  skills can't be edited or deleted one by one, and one whose name another global skill has is left out
+  (the source lists what it left out). `POST /agent-tools/skill-sources` (`url`, `ref`) adds one,
+  `POST /agent-tools/skill-sources/{id}/update` updates it, `DELETE /agent-tools/skill-sources/{id}`
+  removes it, and `POST /agent-tools/switches` takes a `source_id` instead of an `item_id` to switch all of
+  a source's skills.
 - **Tasks** start their agent when you press Start, drag the card into *In progress*, or tick
   "Start agent now". The first prompt is the task title and description. Replies resume the
   same Claude session (`--resume`). While the agent works, the card shows how long it has been
