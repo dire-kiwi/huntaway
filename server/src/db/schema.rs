@@ -854,8 +854,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
     }
     if version < 82 {
         // agent-threads' store (see threads/store.rs). IF NOT EXISTS, in case another migration takes this version first.
-        // Builds of this before it was version 82 had it as 81, so a database that took it then skipped 81's
-        // call ids, which are added here if they aren't there.
+        // Builds of this before it was version 82 had it as 80, then 81, so a database that took it then skipped
+        // 80's call_usage or 81's call ids, which are added here if they aren't there.
         conn.execute_batch("BEGIN;")?;
         call_usage_ids(&conn)?;
         conn.execute_batch(&format!("{SCHEMA_V82} PRAGMA user_version=82; COMMIT;"))?;
@@ -864,8 +864,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 }
 
 /// Which call each `call_usage` row is from (a call has a row for each model it used). The rows
-/// written before were one call's if they agree on all but the model. Only adds what isn't there.
+/// written before were one call's if they agree on all but the model. Only adds what isn't there,
+/// `call_usage` itself included: a database that took the agent-threads tables as version 80 skipped it.
 fn call_usage_ids(conn: &Connection) -> Result<()> {
+    conn.execute_batch(SCHEMA_V80)?;
     let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('call_usage') WHERE name='call_id'", [], |r| r.get(0))?;
     let add = if has { "" } else { "ALTER TABLE call_usage ADD COLUMN call_id TEXT;" };
     conn.execute_batch(&format!(

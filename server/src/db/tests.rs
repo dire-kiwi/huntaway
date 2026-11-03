@@ -368,24 +368,33 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
 }
 
 #[test]
-fn a_database_that_had_the_agent_threads_tables_as_81_gets_the_call_ids_it_skipped() {
-    // Builds of the agent-threads store had its tables as version 81, which master's call ids then took.
-    let path = crate::testing::temp_dir().join("huntaway.db");
-    {
+fn a_database_that_had_the_agent_threads_tables_as_80_or_81_gets_what_it_skipped() {
+    // Builds of the agent-threads store had its tables as version 80 (skipping call_usage), then 81 (skipping
+    // call_usage's call ids).
+    let skipped = [
+        (80, "DROP TABLE call_usage;"),
+        (81, "INSERT INTO call_usage (at, purpose, model, runtime) VALUES ('2026-11-01T00:00:00Z', 'title', 'haiku', 'claude');
+              ALTER TABLE call_usage DROP COLUMN call_id;"),
+    ];
+    for (version, dropped) in skipped {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(&format!("{dropped} PRAGMA user_version={version};")).unwrap();
+        }
         let c = open(&path).unwrap();
-        c.execute_batch(
-            "INSERT INTO call_usage (at, purpose, model, runtime, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
-             VALUES ('2026-11-01T00:00:00Z', 'title', 'haiku', 'claude', 1, 1, 0, 0, 0);
-             ALTER TABLE call_usage DROP COLUMN call_id; PRAGMA user_version=81;",
-        )
-        .unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('call_usage') WHERE name='call_id'", [], |r| r.get(0)).unwrap();
+        assert!(has, "version {version}: call_usage.call_id");
+        let unset: i64 = c.query_row("SELECT COUNT(*) FROM call_usage WHERE call_id IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(unset, 0, "version {version}");
+        let tables: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'at\\_%' ESCAPE '\\'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tables, 4, "version {version}");
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
-    let c = open(&path).unwrap();
-    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
-    let ids: i64 = c.query_row("SELECT COUNT(call_id) FROM call_usage", [], |r| r.get(0)).unwrap();
-    assert_eq!(ids, 1);
-    let tables: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'at\\_%' ESCAPE '\\'", [], |r| r.get(0)).unwrap();
-    assert_eq!(tables, 4);
 }
 
 #[test]
