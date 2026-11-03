@@ -2,6 +2,7 @@
 //! folder, context window and plan usage.
 
 pub mod agent_tools;
+pub mod approval_rules;
 pub mod assistant;
 pub mod codex;
 pub mod context;

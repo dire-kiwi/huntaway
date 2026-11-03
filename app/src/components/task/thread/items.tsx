@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bot, Brain, Check, ChevronRight, CircleAlert, Layers, ShieldQuestion } from "lucide-react";
+import { Bot, Brain, Check, ChevronRight, CircleAlert, Clock, Layers, ShieldQuestion } from "lucide-react";
 import { memo, useState, type ReactNode } from "react";
 import { api } from "../../../api";
 import { useSubagentView, subagentTitle } from "../../../subagents";
@@ -129,14 +129,18 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
         )}
       </div>
       {pending ? <ToolInput name={data.tool_name} input={data.input} /> : <div className="truncate font-mono text-[12px] text-faint">{m.summary}</div>}
+      <PromptRule data={data} pending={pending} />
       {pending && (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")} className="narrow:px-4">
             <Check size={13} /> Allow
           </Button>
-          <Button size="sm" disabled={busy} onClick={() => decide("allow_always")} className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal">
-            Always allow {data.tool_name} for this thread
-          </Button>
+          {/* What an approval rule asks about is asked each time (API 102). */}
+          {!data.rule && (
+            <Button size="sm" disabled={busy} onClick={() => decide("allow_always")} className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal">
+              Always allow {data.tool_name} for this thread
+            </Button>
+          )}
           <Button size="sm" variant="danger" disabled={busy} onClick={() => decide("deny")} className="narrow:px-4">
             Deny
           </Button>
@@ -146,6 +150,28 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
     </div>
   );
 });
+
+/** Why a prompt asks (an approval rule, API 102), and when one from a routine run is denied if nobody answers it. */
+function PromptRule({ data, pending }: { data: Any; pending: boolean }) {
+  const expires = typeof data.expires_at === "string" ? new Date(data.expires_at) : null;
+  if (!data.rule && !expires) return null;
+  const at = expires?.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return (
+    <div className="mt-2 space-y-0.5 text-[11.5px] text-muted">
+      {data.rule && (
+        <div>
+          Your approval rule <span className="font-mono">{data.rule.tool}</span> asks first, whatever the thread's mode.
+        </div>
+      )}
+      {expires && pending && (
+        <div className="flex items-center gap-1">
+          <Clock size={11} /> From a routine run: denied at {at} if nobody answers, and the agent carries on without it.
+        </div>
+      )}
+      {expires && data.status === "expired" && data.note && <div>Nobody answered in time, so it was denied.</div>}
+    </div>
+  );
+}
 
 function tokens(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);

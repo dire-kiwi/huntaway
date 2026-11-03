@@ -106,7 +106,7 @@ const HUB: &[(&str, &str)] = &[
     ("GET", "devices"),
     // Only itself (see `revoke`).
     ("DELETE", "devices/*"),
-    // The app's push (API 102), only its own subscriptions (see integrations/push.rs).
+    // The app's push (API 103), only its own subscriptions (see integrations/push.rs).
     ("GET", "push"),
     ("POST", "push/subscriptions"),
     ("PATCH", "push/subscriptions/*"),

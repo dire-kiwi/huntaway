@@ -15,7 +15,7 @@ export interface Board {
   apiVersion: number;
   /** The profile (by name: boards merge profiles across their hosts by name) picked on it, if any. */
   profile: string | null;
-  /** Push to this phone from it (API 102): on unless turned off here. */
+  /** Push to this phone from it (API 103): on unless turned off here. */
   push?: boolean;
   pairedAt: string;
 }

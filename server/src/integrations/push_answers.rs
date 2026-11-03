@@ -31,7 +31,9 @@ fn hash(token: &str) -> String {
 
 /// A new token that answers prompt `request_id` (of task `task_id`) on host `host_id`. A prompt can
 /// have several (each push about it gets one), and the first answer with any of them settles it.
-pub fn mint(c: &Connection, host_id: &str, request_id: &str, task_id: &str) -> anyhow::Result<String> {
+/// A prompt that expires (`expires_at`, from a routine run, see permissions::expiry) can't be
+/// answered from its notifications after that, even if the hub hasn't heard yet.
+pub fn mint(c: &Connection, host_id: &str, request_id: &str, task_id: &str, expires_at: Option<&str>) -> anyhow::Result<String> {
     let cutoff = (chrono::Utc::now() - chrono::Duration::days(KEEP_DAYS)).to_rfc3339();
     c.execute("DELETE FROM push_answer_tokens WHERE created_at < ?1", [cutoff])?;
     let token = new_token();
@@ -41,8 +43,8 @@ pub fn mint(c: &Connection, host_id: &str, request_id: &str, task_id: &str) -> a
         .optional()?
         .unwrap_or_else(|| "pending".into());
     c.execute(
-        "INSERT INTO push_answer_tokens (token_hash, request_id, host_id, task_id, status, created_at) VALUES (?1,?2,?3,?4,?5,?6)",
-        params![hash(&token), request_id, host_id, task_id, status, now()],
+        "INSERT INTO push_answer_tokens (token_hash, request_id, host_id, task_id, status, created_at, expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![hash(&token), request_id, host_id, task_id, status, now(), expires_at],
     )?;
     Ok(token)
 }
@@ -76,6 +78,7 @@ fn settled(status: &str) -> Response {
         "denied" => reply(StatusCode::CONFLICT, "answered", "It was already denied."),
         "answering" => reply(StatusCode::CONFLICT, "answered", "It's being answered from another notification."),
         "expired" => reply(StatusCode::CONFLICT, "expired", "It expired: the agent's run ended before it was answered."),
+        "timed_out" => reply(StatusCode::CONFLICT, "expired", "It expired: nobody answered it in time, so it was denied."),
         _ => reply(StatusCode::CONFLICT, "closed", "It isn't waiting for an answer any more."),
     }
 }
@@ -88,15 +91,17 @@ pub async fn answer(State(s): State<Shared>, Path(id): Path<String>, Json(b): Js
         "deny" => false,
         _ => return reply(StatusCode::BAD_REQUEST, "invalid", "decision must be allow or deny"),
     };
-    let row: rusqlite::Result<Option<(String, String)>> = s
+    let row: rusqlite::Result<Option<(String, String, Option<String>)>> = s
         .db()
-        .query_row("SELECT host_id, status FROM push_answer_tokens WHERE token_hash=?1 AND request_id=?2", [hash(b.token.trim()), id.clone()], |r| {
-            Ok((r.get(0)?, r.get(1)?))
+        .query_row("SELECT host_id, status, expires_at FROM push_answer_tokens WHERE token_hash=?1 AND request_id=?2", [hash(b.token.trim()), id.clone()], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
         })
         .optional();
     let host = match row {
-        Ok(Some((host, status))) if status == "pending" || status == "answering" => host,
-        Ok(Some((_, status))) => return settled(&status),
+        // Its prompt expired, though its host may not have said so yet.
+        Ok(Some((_, status, Some(at)))) if (status == "pending" || status == "answering") && at <= now() => return settled("timed_out"),
+        Ok(Some((host, status, _))) if status == "pending" || status == "answering" => host,
+        Ok(Some((_, status, _))) => return settled(&status),
         Ok(None) => return reply(StatusCode::FORBIDDEN, "invalid", "This notification can't answer that prompt."),
         Err(e) => return ApiError::from(anyhow::Error::from(e)).into_response(),
     };
@@ -147,7 +152,7 @@ async fn forward(s: &Shared, host: &str, id: &str, allow: bool) -> Response {
     let linked = || host == s.host_id || s.links.lock().unwrap().contains_key(host);
     let decision = if allow { "allow" } else { "deny" };
     let path = format!("/api/permissions/{}", urlencoding(id));
-    match crate::hosts::hub::host_request(s, host, "POST", &path, Some(json!({"decision": decision}))).await {
+    match crate::hosts::hub::host_request(s, host, "POST", &path, Some(json!({"decision": decision, "via": "push"}))).await {
         Ok(_) => {
             let status = if allow { "allowed" } else { "denied" };
             release(status);

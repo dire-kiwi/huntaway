@@ -1,4 +1,4 @@
-// Native push (API 102), apart from Expo's modules so it can be tested: the app's subscription on each paired board
+// Native push (API 103), apart from Expo's modules so it can be tested: the app's subscription on each paired board
 // (a board's hub watches every host on it, so one per board), and what a notification does. Tapping one opens its task
 // on the board it came from. A prompt's Allow and Deny answer it with the push's own one-time token
 // (`POST /api/permissions/{id}/push-answer`), which needs no device token, so they work from the lock screen, where
