@@ -532,6 +532,7 @@ pub async fn delete_last(s: &Shared, t: &db::Task, delete_branch: bool) -> ApiRe
 /// Stop a task's agents, remove its worktree and delete it.
 pub(crate) async fn delete_one(s: &Shared, t: &db::Task, delete_branch: bool) -> ApiResult<()> {
     runner::abort(s, &t.id);
+    crate::threads::engine::delete(s, &t.id).await;
     // Settled before the thread goes, so the dialog asking about them goes too.
     permissions::expire_for_task(s, &t.id);
     // Its review threads go with it.

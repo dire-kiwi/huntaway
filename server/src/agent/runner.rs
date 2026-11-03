@@ -242,7 +242,8 @@ fn stop_run(state: &Shared, task_id: &str, kill: bool) -> bool {
         }
     }
     if db::get_task(&state.db(), task_id).ok().flatten().is_some_and(|t| crate::threads::engine::uses(&t)) {
-        crate::threads::engine::stop(state, task_id, &run_id, kill);
+        // Deleting the task deletes its thread (see threads::engine::delete).
+        crate::threads::engine::stop(state, task_id);
         return true;
     }
     if !kill && interrupt(state, &run_id, &stop_id) {

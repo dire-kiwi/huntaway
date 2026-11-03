@@ -108,7 +108,11 @@ pub fn build(state: &Shared) -> AgentThreads {
 /// `build`, with these processes and harnesses (for tests).
 pub(crate) fn build_with(state: &Shared, spawner: Arc<dyn agent_threads::Spawner>, claude: ClaudeCodeOptions, codex: CodexOptions) -> AgentThreads {
     let weak = Arc::downgrade(state);
-    let on_error: Arc<dyn Fn(agent_threads::Error) + Send + Sync> = Arc::new(|e| tracing::warn!("agent-threads: {e}"));
+    let on_error: Arc<dyn Fn(agent_threads::Error) + Send + Sync> = Arc::new(|e| match &e {
+        // A thread whose task was deleted while its harness was being stopped (see `delete`) can't be saved.
+        agent_threads::Error::Store(s) if s.kind == agent_threads::StoreErrorKind::NotFound => tracing::debug!("agent-threads: {e}"),
+        _ => tracing::warn!("agent-threads: {e}"),
+    });
     let handler = {
         let weak = weak.clone();
         Arc::new(move |m: &HarnessMessage| {
@@ -410,24 +414,37 @@ async fn sender(state: Weak<AppState>, mut rx: mpsc::UnboundedReceiver<(String, 
     }
 }
 
-/// Stops the turn of an agent-threads task's run `run_id`: the crate interrupts it (and stops its process if it
-/// doesn't end in time), and `follow` ends the run as stopped. With `kill` (the task is being deleted), its
-/// thread is stopped and deleted, and the run ends with it.
-pub fn stop(state: &Shared, task_id: &str, run_id: &str, kill: bool) {
+/// Stops the turn of an agent-threads task's run: the crate interrupts it (and stops its process if it doesn't end
+/// in time), and `follow` ends the run as stopped.
+pub fn stop(state: &Shared, task_id: &str) {
     let Some(b) = backend(state).cloned() else { return };
-    let (s, id, run_id) = (state.clone(), task_id.to_string(), run_id.to_string());
+    let id = task_id.to_string();
     tokio::spawn(async move {
-        let done = if kill { b.delete(&id).await.map(|_| ()) } else { b.interrupt(&id).await };
-        if let Err(e) = done {
+        if let Err(e) = b.interrupt(&id).await {
             tracing::warn!(task = %id, "stopping the agent: {e}");
         }
-        if kill {
-            ALLOWED.lock().unwrap().remove(&id);
-            OPEN.lock().unwrap().remove(&id);
-            // Its row goes with the task (and then its handle, see runner::finish), else it ends as stopped.
-            crate::agent::runner::finish(&s, &run_id, crate::agent::runner::Outcome::Cancelled);
+    });
+}
+
+/// The task is being deleted: its thread goes first, its harness stopped (its rows would go with the task's,
+/// but the backend would keep it, and fail to save it). Waits up to 5s for the harness, then lets it go on being
+/// deleted in the background. Nothing for a task without a thread.
+pub async fn delete(state: &Shared, task_id: &str) {
+    ALLOWED.lock().unwrap().remove(task_id);
+    OPEN.lock().unwrap().remove(task_id);
+    let Some(b) = backend(state).cloned() else { return };
+    let (st, id) = (state.clone(), task_id.to_string());
+    let deleting = tokio::spawn(async move {
+        if let Err(e) = b.delete(&id).await {
+            tracing::warn!(task = %id, "deleting the agent's thread: {e}");
+        }
+        // Its run ends with it (or, if the task has gone meanwhile, its handle goes: see runner::finish).
+        let run_id = st.runs.lock().unwrap().get(&id).map(|h| h.run_id.clone());
+        if let Some(run_id) = run_id {
+            crate::agent::runner::finish(&st, &run_id, crate::agent::runner::Outcome::Cancelled);
         }
     });
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), deleting).await;
 }
 
 // ---------- following threads ----------
@@ -625,7 +642,14 @@ pub async fn settle(state: &Shared, task_id: &str) {
         Some(ThreadStatus::Waiting) if in_turn(backend, task_id).await => return,
         _ => {}
     }
-    let Ok(Some(run)) = current_run(state, task_id) else { return };
+    let run_id = state.runs.lock().unwrap().get(task_id).map(|h| h.run_id.clone());
+    let Some(run_id) = run_id else { return };
+    let run = match db::get_run(&state.db(), &run_id) {
+        Ok(Some(r)) if r.status != "exited" => r,
+        // Gone with its task: so is the handle (as runner::finish does).
+        Ok(None) => return crate::agent::runner::finish(state, &run_id, crate::agent::runner::Outcome::Cancelled),
+        _ => return,
+    };
     // Still being prepared: `launch` settles it once it's started.
     if run.status == "preparing" {
         return;

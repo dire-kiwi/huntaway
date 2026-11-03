@@ -218,8 +218,8 @@ stop() {
   if [[ -n $pid ]] && owns "$pid" "$dir"; then
     stop_pid "$pid"
   fi
-  # Agent runs outlive the server (each under its own ia-shim); stop those too.
-  for run in "$dir"/runs/*/; do
+  # Agent runs outlive the server (each under its own ia-shim); stop those too, agent-threads' (at-runs) included.
+  for run in "$dir"/runs/*/ "$dir"/at-runs/*/; do
     [[ -d $run ]] || continue
     local shim agent
     shim="$(cat "$run/shim.pid" 2>/dev/null || true)"

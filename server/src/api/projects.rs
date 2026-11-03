@@ -586,6 +586,7 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
     let mut files = std::collections::HashSet::new();
     for t in &tasks {
         runner::abort(s, &t.id);
+        crate::threads::engine::delete(s, &t.id).await;
         permissions::expire_for_task(s, &t.id);
         terminal::kill_all(s, &t.id).await;
         files.extend(crate::attachments::of_task(&s.db(), &t.id)?);

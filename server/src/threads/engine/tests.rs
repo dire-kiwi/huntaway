@@ -229,3 +229,37 @@ fn migration_86_makes_older_tasks_legacy_once() {
     let c = db::open(&path).unwrap();
     assert_eq!(db::get_task(&c, &new.id).unwrap().unwrap().run_engine, None);
 }
+
+#[test]
+fn deleting_a_task_deletes_its_thread_and_ends_its_run() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        start_fake(&s, &[("IA_FAKE_CLAUDE_SLEEP", "30")]);
+        let t = new_task(&s);
+        runner::send(&s, &t.id, "take your time").unwrap();
+        until(&s, &t.id, "its run going", |_| db::active_runs(&s.db()).unwrap().iter().any(|r| r.status == "running")).await;
+        crate::api::delete_one(&s, &t, false).await.unwrap();
+        for _ in 0..200 {
+            if !s.is_running(&t.id) && backend(&s).unwrap().get(&t.id).await.unwrap().is_none() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("still running {} / thread {:?}", s.is_running(&t.id), backend(&s).unwrap().get(&t.id).await.unwrap().map(|t| t.status));
+    })
+}
+
+/// Stopping a task's agents without deleting it (as fanout's retire does) keeps its thread.
+#[test]
+fn an_abort_keeps_the_thread() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        start_fake(&s, &[("IA_FAKE_CLAUDE_SLEEP", "30")]);
+        let t = new_task(&s);
+        runner::send(&s, &t.id, "take your time").unwrap();
+        until(&s, &t.id, "its run going", |_| db::active_runs(&s.db()).unwrap().iter().any(|r| r.status == "running")).await;
+        assert!(runner::abort(&s, &t.id));
+        until(&s, &t.id, "stopped", |t| !t.running).await;
+        assert!(backend(&s).unwrap().get(&t.id).await.unwrap().is_some());
+    })
+}
