@@ -120,7 +120,7 @@ const HOST: &[(&str, &str)] = &[
     ("GET", "profiles"),
     ("GET", "profiles/*/projects"),
     ("GET", "profiles/*/tasks"),
-    // The profile's assistant (API 104), which the app's Assistant tab opens; its thread is a task's. Not its memory.
+    // The profile's assistant (API 105), which the app's Assistant tab opens; its thread is a task's. Not its memory.
     ("GET", "profiles/*/assistant"),
     ("POST", "profiles/*/assistant"),
     ("GET", "projects/*"),

@@ -61,7 +61,7 @@ describe("what a share puts in the composer", () => {
 });
 
 describe("which board a share goes to", () => {
-  const b = (id: string, apiVersion = 104): Board => ({ id, url: `https://${id}`, name: id, deviceId: "", apiVersion, profile: null, pairedAt: "" });
+  const b = (id: string, apiVersion = 105): Board => ({ id, url: `https://${id}`, name: id, deviceId: "", apiVersion, profile: null, pairedAt: "" });
   const ok = () => ({ unauthorized: false, tooOld: false });
 
   test("the only board that can take it is used without asking", () => {

@@ -76,15 +76,25 @@ impl Queued {
     }
 }
 
-/// Add a message to the one queued on a thread.
+/// Add a message to the one queued on a thread. One with no text (an automation's start of a task
+/// it made, held back, see runner::send_from_automation) leaves only its automation runs, for the
+/// next run of the thread (see `take_parked_runs`).
 pub fn queue(c: &Connection, task_id: &str, message: Queued) -> Result<Option<Task>> {
     let Some(task) = get_task(c, task_id)? else { return Ok(None) };
+    if message.text.trim().is_empty() {
+        if !message.routine_runs.is_empty() {
+            let runs: Vec<String> = queued_routine_runs(c, task_id)?.into_iter().chain(message.routine_runs).collect();
+            c.execute("UPDATE tasks SET queued_routine_runs=?2 WHERE id=?1", params![task_id, json!(runs).to_string()])?;
+        }
+        return get_task(c, task_id);
+    }
     let queued = match task.queued_message.filter(|q| !q.trim().is_empty()) {
         Some(text) => {
             let (from_agent, routine) = queued_from(c, task_id)?;
             Queued { text, from_agent, user_text: task.queued_user_text, routine, routine_runs: queued_routine_runs(c, task_id)? }.then(message)
         }
-        None => message,
+        // Runs left with no text go with it.
+        None => Queued { routine_runs: queued_routine_runs(c, task_id)?.into_iter().chain(message.routine_runs).collect(), ..message },
     };
     c.execute(
         "UPDATE tasks SET queued_message=?2, queued_from_agent=?3, queued_user_text=?4, queued_routine=?5, queued_routine_runs=?6, updated_at=?7 WHERE id=?1",
@@ -103,7 +113,24 @@ fn queued_routine_runs(c: &Connection, task_id: &str) -> Result<Vec<String>> {
     Ok(json_or_default(v))
 }
 
-/// Take the message queued on a thread.
+/// The automation runs left on a thread with no text (see `queue`), taken by the run that starts.
+/// None while a message is queued: the runs are its, for the run that takes it in (an automatic
+/// prompt, such as a review's fixes, starts without it).
+pub fn take_parked_runs(c: &Connection, task_id: &str) -> Result<Vec<String>> {
+    let Some(task) = get_task(c, task_id)? else { return Ok(Vec::new()) };
+    if task.queued_message.is_some_and(|q| !q.trim().is_empty()) {
+        return Ok(Vec::new());
+    }
+
+    let runs = queued_routine_runs(c, task_id)?;
+    if !runs.is_empty() {
+        c.execute("UPDATE tasks SET queued_routine_runs=NULL WHERE id=?1", [task_id])?;
+    }
+    Ok(runs)
+}
+
+/// Take the message queued on a thread. With none, automation runs left with no text stay (see
+/// `take_parked_runs`).
 pub fn take_queued(c: &Connection, task_id: &str) -> Result<Option<Queued>> {
     let queued = get_task(c, task_id)?
         .and_then(|t| Some((t.queued_message.filter(|q| !q.trim().is_empty())?, t.queued_user_text)))
@@ -112,7 +139,9 @@ pub fn take_queued(c: &Connection, task_id: &str) -> Result<Option<Queued>> {
             Ok::<_, anyhow::Error>(Queued { text, from_agent, user_text, routine, routine_runs: queued_routine_runs(c, task_id)? })
         })
         .transpose()?;
-    clear_queued(c, task_id)?;
+    if queued.is_some() {
+        clear_queued(c, task_id)?;
+    }
     Ok(queued)
 }
 

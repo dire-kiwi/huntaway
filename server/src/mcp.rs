@@ -471,7 +471,7 @@ fn automation_tools(profile: &Value, project_one: &str) -> Vec<Value> {
             "required": ["start", "end"]
         }));
         p.insert("precheck".into(), json!({"type": ["string", "null"], "description": "A bash command run before each run, in the assistant's workspace (or the project's folder): exit 0 runs it, with what it printed as {{precheck}}; exit 1 skips the run (nothing new); anything else fails it. null or blank for none"}));
-        p.insert("budget_usd".into(), json!({"type": ["number", "null"], "description": "What its runs may cost a day (host time zone): once they have, it's skipped until tomorrow. null or 0 for no limit"}));
+        p.insert("budget_usd".into(), json!({"type": ["number", "null"], "description": "What its runs may cost a day (host time zone): once they have, it's skipped until tomorrow. A run's cost is its agent's: a routine's thread (or the assistant's run that took its message), or for a project's automation the first run of the task it made and started, or the run that took its message in. null or 0 for no limit"}));
     };
     let tools = json!([
         {

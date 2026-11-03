@@ -395,9 +395,10 @@ fn deliveries_outside_active_hours_are_skipped_and_a_still_running_thread_holds_
         )
         .unwrap();
         let app = api::router(s.clone());
-        let (status, v) = deliver(&app, &a.hook_path(), &[], r#"{"x": 1}"#).await;
-        assert_eq!(v["status"], "skipped", "{status} {v}");
-        assert!(v["detail"].as_str().unwrap().starts_with("Skipped: outside its active hours"), "{v}");
+        let (_, v) = deliver(&app, &a.hook_path(), &[], r#"{"x": 1}"#).await;
+        let r = ran(&s, &v).await;
+        assert_eq!(r.status, "skipped");
+        assert!(r.detail.as_deref().unwrap().starts_with("Skipped: outside its active hours"), "{r:?}");
         // In them, a fresh run makes a thread; while it's still working, the next is skipped.
         let _ = update_handler(State(s.clone()), Path(a.id.clone()), Json(json!({"active_hours": null}).as_object().unwrap().clone())).await.unwrap();
         let t = db::insert_routine_task(&s.db(), &assistant, "w").unwrap();
@@ -406,8 +407,9 @@ fn deliveries_outside_active_hours_are_skipped_and_a_still_running_thread_holds_
         r.task_id = Some(t.id.clone());
         insert_run(&s.db(), &r).unwrap();
         let (_, v) = deliver(&app, &a.hook_path(), &[], r#"{"x": 2}"#).await;
-        assert_eq!(v["status"], "skipped");
-        assert_eq!(v["detail"], format!("Skipped: its last run (A-{}) is still going", t.number));
+        let r = ran(&s, &v).await;
+        assert_eq!(r.status, "skipped");
+        assert_eq!(r.detail.unwrap(), format!("Skipped: its last run (A-{}) is still going", t.number));
     })
 }
 
@@ -544,7 +546,7 @@ fn an_assistant_run_that_took_several_routines_messages_splits_its_cost_between_
         s.db().execute("UPDATE runs SET cost_usd=3 WHERE id=?1", [&run.id]).unwrap();
         // While it works, and once it's ended.
         assert!((routines::spent(&s.db(), &a.id).unwrap() - 3.0).abs() < 1e-9);
-        routines::assistant_run_ended(&s, &run.id);
+        routines::agent_run_ended(&s, &run.id);
         for id in &ids {
             assert_eq!(get_run(&s.db(), id).unwrap().unwrap().cost_usd, Some(1.5));
         }
@@ -665,9 +667,11 @@ fn a_routine_thread_has_its_assistants_workspace_and_memory() {
 }
 
 // HA-122 review: a webhook sender that hangs up during a slow precheck dropped the handler's future,
-// which killed the precheck and left the run `running` with nothing done.
+// which killed the precheck and left the run `running` with nothing done. HA-161: and one that
+// waited for it past its timeout (GitHub's is 10 seconds) counted the delivery as failed, though it
+// ran: a delivery is answered as soon as its run is recorded.
 #[test]
-fn a_delivery_whose_sender_hangs_up_mid_precheck_still_runs() {
+fn a_delivery_is_answered_at_once_and_its_slow_precheck_carries_on() {
     testing::run(async || {
         let s = testing::state();
         let p = profile(&s);
@@ -680,21 +684,62 @@ fn a_delivery_whose_sender_hangs_up_mid_precheck_still_runs() {
                    "action": {"kind": "message_assistant", "mode": "thread", "message": "{{precheck}}"}}),
         )
         .unwrap();
-        let delivery = Delivery { body: json!({}), ..Default::default() };
-        let body = b"{}".to_vec();
-        let hung_up = tokio::time::timeout(std::time::Duration::from_millis(200), receive(&s, &a, delivery, Some((&body, None)))).await;
-        assert!(hung_up.is_err(), "the precheck takes a second");
-        let mut r = last_run(&s, &a);
+        let app = api::router(s.clone());
+        let answered = tokio::time::timeout(std::time::Duration::from_millis(500), deliver(&app, &a.hook_path(), &[], "{}")).await;
+        let (status, v) = answered.expect("answered before its precheck is done");
+        assert_eq!((status, v["status"].as_str()), (202, Some("running")), "{v}");
+        assert!(db::get_task(&s.db(), &assistant.id).unwrap().unwrap().queued_message.is_none());
+        let r = ran(&s, &v).await;
+        assert_eq!((r.status.as_str(), r.task_id.as_deref()), ("ok", Some(assistant.id.as_str())), "{:?}", r.detail);
+        let queued = db::get_task(&s.db(), &assistant.id).unwrap().unwrap().queued_message.unwrap();
+        assert!(queued.contains("found it"), "{queued}");
+    })
+}
+
+// HA-161: the scheduler ran due automations one after another, so one's slow precheck held up every
+// other's schedule.
+#[test]
+fn a_slow_precheck_doesnt_hold_up_another_automations_run() {
+    testing::run(async || {
+        let (s, p) = setup();
+        let t = api::create_task_inner(&s, &p.id, CreateTask { title: "Watch".into(), ..Default::default() }).unwrap();
+        busy(&s, &t.id);
+        let dir = testing::temp_dir();
+        s.db().execute("UPDATE projects SET repo_path=?2 WHERE id=?1", params![p.id, crate::util::path_str(&dir)]).unwrap();
+        let every_hour = |name: &str, precheck: Value| {
+            new(&s, &p.id, json!({"name": name, "trigger": {"kind": "interval", "every_minutes": 60}, "precheck": precheck,
+                                  "action": {"kind": "send_to_task", "task_id": t.id, "message": name}}))
+            .unwrap()
+        };
+        let slow = every_hour("Slow", json!("sleep 2"));
+        let quick = every_hour("Quick", Value::Null);
+        let now = Utc::now();
+        for a in [&slow, &quick] {
+            set_next(&s, a, now - chrono::TimeDelta::seconds(1));
+        }
+        let started = start_due(&s, now, &Local);
+        assert_eq!(started.len(), 2);
+        let mut r = last_run(&s, &quick);
         for _ in 0..100 {
             if r.status != "running" {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            r = last_run(&s, &a);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            r = last_run(&s, &quick);
         }
-        assert_eq!((r.status.as_str(), r.task_id.as_deref()), ("ok", Some(assistant.id.as_str())), "{:?}", r.detail);
-        let queued = db::get_task(&s.db(), &assistant.id).unwrap().unwrap().queued_message.unwrap();
-        assert!(queued.contains("found it"), "{queued}");
+        assert_eq!(r.status, "ok", "{:?}", r.detail);
+        assert_eq!(last_run(&s, &slow).status, "running", "its precheck takes two seconds");
+        // Due again before its run is over, it isn't started again: it waits, still due.
+        set_next(&s, &slow, now);
+        assert!(start_due(&s, now + chrono::TimeDelta::seconds(1), &Local).is_empty());
+        assert_eq!(runs(&s.db(), &slow.id, 10).unwrap().len(), 1);
+        for run in started {
+            run.await.unwrap();
+        }
+        assert_eq!(last_run(&s, &slow).status, "ok");
+        // Once it's over, it runs.
+        tick(&s, now + chrono::TimeDelta::seconds(1)).await;
+        assert_eq!(statuses(&s, &slow), ["ok", "ok"]);
     })
 }
 

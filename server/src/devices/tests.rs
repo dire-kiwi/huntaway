@@ -311,7 +311,7 @@ fn a_device_cant_get_the_boards_tokens_or_a_shell() {
     })
 }
 
-/// The app's Assistant tab (API 104): a device reaches the profile's assistant on the board, through the hub's proxy to
+/// The app's Assistant tab (API 105): a device reaches the profile's assistant on the board, through the hub's proxy to
 /// the host it's on (`?local=1`, as the app asks for it), and its thread; not the assistant's memory.
 #[test]
 fn a_device_reaches_the_profiles_assistant() {

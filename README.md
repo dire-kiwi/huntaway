@@ -484,7 +484,7 @@ token still works later, and the notification keeps its buttons.
 
 `mobile/` is an Expo app for Android and iOS (API 100) that follows and drives your tasks on several
 boards at once, a work hub and a personal board say. Its home tab is the **Assistant** (from API
-104): the selected board's assistant for its picked profile, on the host the profile's assistant is
+105): the selected board's assistant for its picked profile, on the host the profile's assistant is
 on (an assistant host of its own, perhaps, which the tab says is offline when it is), with the
 board and profile switchers above it; on an older board the tab is hidden and the Inbox is home.
 Then an **Inbox** of what's waiting for you on every
@@ -527,7 +527,7 @@ app then says it was unpaired. A device can't pair others or manage them (`POST
 list them and unpair itself, which removing the board in the app does. Pairing the same board again
 unpairs the phone's old token there. A device can only use the routes the app does (`HUB` and
 `HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, each profile's
-assistant (API 104, but not its memory), attachments, permission prompts, the board's events and
+assistant (API 105, but not its memory), attachments, permission prompts, the board's events and
 hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
@@ -890,8 +890,38 @@ files or database. Set it up like this:
    there in the profiles whose assistant runs on it then act on your boards with that profile's access
    (see above); other profiles on that host stay out. The assistant's Details panel
    shows the host it runs on and whether it can use this board.
-6. **Google and Telegram** are set up on the assistant host only. *(Coming with the next steps of the
-   personal mode: the Google Workspace MCP server with its OAuth client, and the Telegram bot.)*
+6. **Google and Telegram** are set up on the assistant host only. For Telegram, see
+   [Telegram](#telegram) below. *(Google comes with the next step of the personal mode: the Google
+   Workspace MCP server with its OAuth client.)*
+
+### Telegram
+
+You can talk to a profile's assistant from Telegram, and it can reach you there. Its bot runs on the
+host the assistant runs on, which long-polls Telegram for messages, so it needs no open port and
+keeps working while that host's link to the hub is down.
+
+1. **Make a bot**: message [@BotFather](https://t.me/BotFather) with `/newbot`, and copy the token it
+   gives you (`123456789:AAH…`).
+2. **Give it to the assistant**: open the assistant, and in its Details panel under **Telegram**,
+   paste the token and **Save token**. The host checks it with Telegram and keeps it in its settings;
+   the board never shows it again. One bot serves one profile's assistant, and one host reads it at
+   a time.
+3. **Link your chat**: **Link a chat…** shows a one-time code that lasts ten minutes. Send
+   `/start <code>` to the bot from a private chat with it (or tap **Open in Telegram**). That chat is
+   then the only one the bot listens to and writes to. Messages and button presses from anyone else
+   are dropped, logged and counted in the panel.
+
+What you send the bot (text, and photos, voice notes and files up to 10 MB, saved as attachments) goes
+to the assistant as your message, and its reply comes back, formatted for Telegram and split if it's
+long. Besides those, the assistant's prompts (with **Allow** and **Deny** buttons) and questions
+(answered by replying), and word that it needs attention, go by push (to the devices that chose them
+in Settings → Notifications) and, as you choose, Telegram too. Its routines' reports, and its replies
+to what you send from the board, go only to Telegram, if you turn them on: push doesn't send those. A
+prompt answered from Telegram is answered as the board's buttons answer it (the approval rules and a
+routine's expiry hold the same, and the action log says *on Telegram*), and its message is edited to
+say how it ended, however it did. What can't be sent while Telegram is unreachable is kept and tried
+again, across restarts. Moving the assistant to another host removes its bot from the host it left
+(if that host is online): set it up again on the new one.
 
 ### Reaching a host from anywhere
 

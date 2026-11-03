@@ -176,7 +176,8 @@ start() {
   # What `restart` needs to start the same server again.
   {
     declare -p bin serve
-    for v in IA_CLAUDE_BIN IA_CODEX_BIN $(compgen -e IA_FAKE_CLAUDE_ || true); do
+    # IA_TELEGRAM_API too: a test server restarted without it would reach the real Telegram with its bots' tokens.
+    for v in IA_CLAUDE_BIN IA_CODEX_BIN IA_TELEGRAM_API $(compgen -e IA_FAKE_CLAUDE_ || true); do
       [[ -n ${!v+x} ]] && printf 'export %s=%q\n' "$v" "${!v}"
     done
   } > "$dir/launch"
