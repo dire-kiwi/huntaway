@@ -100,7 +100,7 @@ function Assistant({ board }: { board: Board }) {
           host={host}
           taskId={task.id}
           bottom={0}
-          placeholder="Message your assistant"
+          placeholder="Ask your assistant"
           onSent={(sent) => t.detail.setData(sent)}
           prefill={prefill}
           onPrefilled={(id) => shares.clear(id)}

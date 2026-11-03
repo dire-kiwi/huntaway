@@ -180,9 +180,9 @@ export function Composer({
           <ErrorText>{error}</ErrorText>
         </Text>
       )}
-      <View style={[s.row, { alignItems: "flex-end" }]}>
-        <Button title="📷" small kind="ghost" busy={uploads > 0} onPress={() => addPhoto("camera")} />
-        <Button title="🖼" small kind="ghost" disabled={uploads > 0} onPress={() => addPhoto("library")} />
+      <View style={[s.row, { alignItems: "flex-end", gap: 2 }]}>
+        <Button title="📷" small kind="ghost" busy={uploads > 0} onPress={() => addPhoto("camera")} style={icon} />
+        <Button title="🖼" small kind="ghost" disabled={uploads > 0} onPress={() => addPhoto("library")} style={icon} />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={speech.mode === "dictate" ? "Stop dictating" : "Dictate"}
@@ -194,12 +194,12 @@ export function Composer({
           onPress={dictate}
           onLongPress={record}
           delayLongPress={400}
-          style={({ pressed }) => [s.button, s.small, s.ghost, { paddingHorizontal: 10 }, speech.mode === "note" && s.disabled, pressed && s.pressed]}
+          style={({ pressed }) => [s.button, s.small, s.ghost, icon, speech.mode === "note" && s.disabled, pressed && s.pressed]}
         >
           <Text style={{ fontSize: 16, color: speech.mode ? colors.red : colors.fg }}>{speech.mode === "dictate" ? "■" : "🎤"}</Text>
         </Pressable>
         <TextInput
-          style={[s.input, { flex: 1, maxHeight: 140, paddingTop: 10 }]}
+          style={[s.input, { flex: 1, maxHeight: 140, paddingTop: 10, marginHorizontal: 4 }]}
           value={text}
           onChangeText={setText}
           // While dictating, the field shows what's heard: typing then would be written over.
@@ -223,3 +223,6 @@ export function Composer({
     </View>
   );
 }
+
+/** The icon buttons beside the field, narrow enough to leave it room on a phone. */
+const icon = { paddingHorizontal: 7 };

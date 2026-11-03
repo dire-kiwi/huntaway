@@ -65,6 +65,8 @@ function options(mode: SpeechMode, onDevice: boolean): ExpoSpeechRecognitionOpti
   };
 }
 
+const NO_ACCESS = "Microphone or speech recognition access is off for Huntaway: allow it in Settings.";
+
 /** Whose session it is: only the composer that started one acts on its events (a task's thread can be open over the Assistant tab). */
 let owner: object | null = null;
 
@@ -109,6 +111,7 @@ export function useSpeech({ onText, onNote }: { onText: (said: string) => void; 
       return;
     }
     if (ev.error === "no-speech" || ev.error === "speech-timeout") setError("Nothing was heard.");
+    else if (ev.error === "not-allowed") setError(NO_ACCESS);
     else setError(ev.message || `Speech recognition failed (${ev.error}).`);
   });
   useSpeechRecognitionEvent("end", () => {
@@ -159,7 +162,7 @@ export function useSpeech({ onText, onNote }: { onText: (said: string) => void; 
     if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) return setError("Speech recognition isn't available on this phone.");
     if (next === "note" && !ExpoSpeechRecognitionModule.supportsRecording()) return setError("Voice notes need Android 13 or later.");
     const perm = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!perm.granted) return setError("Microphone or speech recognition access is off for Huntaway: allow it in Settings.");
+    if (!perm.granted) return setError(NO_ACCESS);
     const local = ExpoSpeechRecognitionModule.supportsOnDeviceRecognition();
     owner = me;
     st.current = { heard: NOTHING_HEARD, uri: null, mode: next, onDevice: local, retry: false, retried: false, cancelled: false };
