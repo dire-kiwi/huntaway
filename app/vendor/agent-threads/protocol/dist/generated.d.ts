@@ -1,0 +1,906 @@
+/**
+ * A command, told apart by type.
+ */
+export type Command = SendCommand | InterruptCommand | RespondCommand | SetOptionsCommand | RewindCommand | NewSessionCommand | CompactCommand;
+/**
+ * default: ask (via the permission policy) for anything the harness would ask about. accept_edits: file edits in cwd are allowed without asking. plan: the agent plans and doesn't change anything. bypass: nothing is asked, and what would be is allowed. dont_ask: nothing is asked, and what would be (a question included) is denied.
+ */
+export type PermissionMode = "default" | "accept_edits" | "plan" | "bypass" | "dont_ask";
+/**
+ * What a tool does, for permission policies and for picking a renderer. shell: runs a command. read: reads files. edit: writes or patches files. search: finds files or text (glob, grep). web: fetches or searches the web. mcp: a tool on an external MCP server. app: a tool the app defined. subagent: starts a subagent. todo: updates the agent's plan or todo list. other: anything else.
+ */
+export type ToolKind = "shell" | "read" | "edit" | "search" | "web" | "mcp" | "app" | "subagent" | "todo" | "other";
+/**
+ * An event, told apart by type. All but delta are saved, and each saved event's seq is one more than the one before it in the thread.
+ */
+export type ThreadEvent = ThreadUpdatedEvent | TurnStartedEvent | TurnCompletedEvent | ItemAddedEvent | ItemUpdatedEvent | ItemsRemovedEvent | DeltaEvent | RequestOpenedEvent | RequestResolvedEvent;
+/**
+ * idle: no turn is running. running: a turn is running. waiting: a turn is waiting on a request (permission or question). error: the last turn failed, or the harness couldn't start; the next send tries again.
+ */
+export type ThreadStatus = "idle" | "running" | "waiting" | "error";
+/**
+ * One entry in a thread, told apart by type.
+ */
+export type Item = UserMessage | AssistantMessage | Reasoning | ToolCall | Compaction | Notice | TurnResult;
+/**
+ * pending: called, not started (e.g. waiting for permission). running: started, no result yet. completed: it returned. failed: it returned an error. denied: permission was refused. cancelled: the turn ended (e.g. was interrupted) before it returned.
+ */
+export type ToolStatus = "pending" | "running" | "completed" | "failed" | "denied" | "cancelled";
+/**
+ * running: it's working. completed: it finished. failed: it ended with an error. stopped: it was stopped (killed, interrupted, or its harness process ended) before it finished.
+ */
+export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
+/**
+ * A request, told apart by type: open, or resolved (with its resolution).
+ */
+export type ThreadRequest = PermissionRequest | QuestionRequest | PlanRequest;
+/**
+ * Send the agent a message. It starts a turn if none is running, and steers the running one if one is.
+ */
+export interface SendCommand {
+    type: "send";
+    thread_id: string;
+    text: string;
+    attachments?: Attachment[];
+    /**
+     * The client's own id for the message, copied to the user_message item.
+     */
+    client_id?: string;
+}
+/**
+ * A file sent with a message: inline as base64 data, or by path on the backend's machine.
+ */
+export interface Attachment {
+    kind: "image" | "file";
+    name?: string;
+    media_type?: string;
+    data?: string;
+    path?: string;
+}
+/**
+ * Stop the running turn. Does nothing if none is running.
+ */
+export interface InterruptCommand {
+    type: "interrupt";
+    thread_id: string;
+}
+/**
+ * Answer an open request.
+ */
+export interface RespondCommand {
+    type: "respond";
+    thread_id: string;
+    request_id: string;
+    resolution: Resolution;
+}
+/**
+ * How a request was answered: sent in respond, and repeated in request.resolved.
+ */
+export interface Resolution {
+    /**
+     * allow, deny: for a permission or a plan. answer: for a question. cancel: for any, when the user dismisses it or the turn ends first.
+     */
+    outcome: "allow" | "deny" | "answer" | "cancel";
+    /**
+     * allow, deny, for a permission: apply the same answer to matching calls for the rest of the thread, without asking. It's kept in the thread's standing_answers.
+     */
+    always?: boolean;
+    /**
+     * deny: why, which the agent is told (for a plan, the user's feedback on it). answer: a note with the answers.
+     */
+    message?: string;
+    permission_mode?: PermissionMode;
+    /**
+     * answer: for each question id, the chosen option labels or the free text.
+     */
+    answers?: {
+        [k: string]: string[] | undefined;
+    };
+}
+/**
+ * Change the thread's options. Fields left out stay as they are. They apply from the next turn, or straight away where the harness allows.
+ */
+export interface SetOptionsCommand {
+    type: "set_options";
+    thread_id: string;
+    model?: string;
+    effort?: string;
+    permission_mode?: PermissionMode;
+    /**
+     * Replaces the thread's standing answers ([] clears them).
+     */
+    standing_answers?: StandingAnswer[];
+}
+/**
+ * An answer that stands for a tool: its kind, its MCP server (for an mcp tool) and its name, as in a PermissionRequest.
+ */
+export interface StandingAnswer {
+    kind: ToolKind;
+    /**
+     * The MCP server, for a tool of kind mcp.
+     */
+    server?: string;
+    /**
+     * The tool's name, as in PermissionRequest.name.
+     */
+    name: string;
+    outcome: "allow" | "deny";
+}
+/**
+ * Take the conversation back to before a turn: the harness forgets that turn and every one after it, and their items are removed from the thread. Refused while a turn is running.
+ */
+export interface RewindCommand {
+    type: "rewind";
+    thread_id: string;
+    /**
+     * The turn to go back to before (a turn_id of the thread's items).
+     */
+    turn_id: string;
+}
+/**
+ * Start a new conversation with the harness at the next turn, in the same thread: its session_id is cleared, so the agent doesn't remember the turns before. The items stay. Refused while a turn is running.
+ */
+export interface NewSessionCommand {
+    type: "new_session";
+    thread_id: string;
+}
+/**
+ * Compact the harness's context now: a turn of its own, with no user_message, that adds a compaction item. Refused while a turn is running, or when the thread has no session yet.
+ */
+export interface CompactCommand {
+    type: "compact";
+    thread_id: string;
+}
+/**
+ * The thread's own state changed (status, model, usage, run...). Carries all of it.
+ */
+export interface ThreadUpdatedEvent {
+    type: "thread.updated";
+    thread_id: string;
+    seq: number;
+    thread: Thread;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * A thread's own state. Sent whole in thread.updated and in snapshots.
+ */
+export interface Thread {
+    /**
+     * The thread's id, chosen by the backend.
+     */
+    id: string;
+    /**
+     * The harness driver that runs it: "claude" or "codex" in v1.
+     */
+    harness: string;
+    status: ThreadStatus;
+    title?: string;
+    /**
+     * The model the next turn uses, as the harness names it.
+     */
+    model?: string;
+    /**
+     * Reasoning effort, as the harness names it (e.g. low, medium, high).
+     */
+    effort?: string;
+    permission_mode?: PermissionMode;
+    /**
+     * The working directory the harness runs in.
+     */
+    cwd?: string;
+    /**
+     * The harness's own session or thread id, used to resume it.
+     */
+    session_id?: string;
+    /**
+     * Where the next turn takes up session_id, after a rewind: Claude Code resumes it at this message (--resume-session-at), Codex reverts it to before this turn (thread/revert). Cleared once the harness has done it.
+     */
+    resume_at?: string;
+    /**
+     * The running turn's mark so far, as the harness gives it (its turn_result's session.at to be): kept so that a turn lost when the backend stops still has it. Absent with no turn running, or until the harness gives one.
+     */
+    turn_at?: string;
+    usage?: Usage;
+    /**
+     * What went wrong, when status is error.
+     */
+    error?: string;
+    run?: Run;
+    /**
+     * Answers that stand for the rest of the thread: a permission request for a tool one matches gets its outcome without asking. Added by a respond with always, and set by the app (when it creates the thread, or with set_options).
+     */
+    standing_answers?: StandingAnswer[];
+    /**
+     * The usage limits of the account the harness runs on, as it last reported them in this thread, sorted by id. Absent until it reports one.
+     */
+    rate_limits?: RateLimit[];
+    /**
+     * The app's own data, given when the thread was created. Backends store it and pass it to tools; they don't read it.
+     */
+    metadata?: {
+        [k: string]: unknown | undefined;
+    };
+    created_at: string;
+    updated_at?: string;
+}
+/**
+ * Token counts.
+ */
+export interface Usage {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+    /**
+     * What the tokens cost, when the harness says.
+     */
+    cost_usd?: number;
+}
+/**
+ * A harness process. A run started under the shim can outlive the backend: after a restart the backend re-attaches to it and sets reattached_at.
+ */
+export interface Run {
+    /**
+     * The run's id (with the shim, its run directory's name).
+     */
+    id: string;
+    /**
+     * direct: a child process of the backend, which ends with it. shim: supervised by agent-threads-shim, so it survives a backend restart.
+     */
+    spawner: "direct" | "shim";
+    started_at?: string;
+    /**
+     * When a restarted backend last re-attached to the run. Absent if it never has.
+     */
+    reattached_at?: string;
+}
+/**
+ * A usage limit of the account the harness runs on (a subscription's session or weekly limit, say), as the harness last reported it.
+ */
+export interface RateLimit {
+    /**
+     * Which limit, by the harness's name for it: Claude Code's rateLimitType (five_hour, seven_day, seven_day_opus...), Codex's primary and secondary windows.
+     */
+    id: string;
+    /**
+     * allowed: there's room. warning: it's nearly used up, or used up with extra usage carrying on. rejected: the harness refuses turns until it resets.
+     */
+    status: "allowed" | "warning" | "rejected";
+    /**
+     * How much of it is used, from 0 to 100, when the harness says.
+     */
+    used_percent?: number;
+    /**
+     * When it resets, when the harness says.
+     */
+    resets_at?: string;
+    /**
+     * How long its window is, when the harness says.
+     */
+    window_minutes?: number;
+}
+/**
+ * A turn started: the agent is working on a message.
+ */
+export interface TurnStartedEvent {
+    type: "turn.started";
+    thread_id: string;
+    seq: number;
+    turn_id: string;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * A turn ended, however it ended. Its turn_result item comes just before.
+ */
+export interface TurnCompletedEvent {
+    type: "turn.completed";
+    thread_id: string;
+    seq: number;
+    turn_id: string;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * An item was added to the end of the thread. If the thread already has an item with its id, it replaces that one in place.
+ */
+export interface ItemAddedEvent {
+    type: "item.added";
+    thread_id: string;
+    seq: number;
+    item: Item;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * A message to the agent from the user (or the app on their behalf).
+ */
+export interface UserMessage {
+    id: string;
+    type: "user_message";
+    text: string;
+    attachments?: Attachment[];
+    /**
+     * Sent while a turn was running, so it joined that turn instead of starting one.
+     */
+    steered?: boolean;
+    /**
+     * Sent, but the harness hasn't taken it in yet. An item.updated clears it once it has.
+     */
+    queued?: boolean;
+    /**
+     * The client_id of the send command that made it, so a client can match it to what it showed while waiting.
+     */
+    client_id?: string;
+    /**
+     * The id of the subagent tool_call this item belongs to. Absent for the main conversation.
+     */
+    parent_id?: string;
+    /**
+     * The turn the item was made in.
+     */
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload this came from, for debugging. Backends can leave it out; clients mustn't depend on it.
+     */
+    raw?: unknown;
+}
+/**
+ * Text from the agent. While it streams, delta events append to text; an item.updated sets the final text.
+ */
+export interface AssistantMessage {
+    id: string;
+    type: "assistant_message";
+    /**
+     * Markdown.
+     */
+    text: string;
+    /**
+     * The id of the subagent tool_call this item belongs to. Absent for the main conversation.
+     */
+    parent_id?: string;
+    /**
+     * The turn the item was made in.
+     */
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload this came from, for debugging. Backends can leave it out; clients mustn't depend on it.
+     */
+    raw?: unknown;
+}
+/**
+ * The agent's thinking, or a summary of it, as the harness gives it. Streams like assistant_message.
+ */
+export interface Reasoning {
+    id: string;
+    type: "reasoning";
+    text: string;
+    /**
+     * The id of the subagent tool_call this item belongs to. Absent for the main conversation.
+     */
+    parent_id?: string;
+    /**
+     * The turn the item was made in.
+     */
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload this came from, for debugging. Backends can leave it out; clients mustn't depend on it.
+     */
+    raw?: unknown;
+}
+/**
+ * A tool the agent called, with its result once it has one. A subagent is a tool_call of kind subagent: the items it makes have its id as their parent_id. The optional fields after input are the same facts for every harness, set when the kind has them, so a UI can show a call without knowing the harness's tool names.
+ */
+export interface ToolCall {
+    /**
+     * The harness's id for the call (Claude's tool_use id, Codex's item id).
+     */
+    id: string;
+    type: "tool_call";
+    /**
+     * The tool's name as the harness gave it (Bash, Read, apply_patch...). For an MCP tool, the tool's own name; server has the server's.
+     */
+    name: string;
+    kind: ToolKind;
+    /**
+     * The tool's arguments as the harness gave them, usually an object.
+     */
+    input: unknown;
+    status: ToolStatus;
+    result?: ToolResult;
+    /**
+     * A short summary of the call, e.g. a subagent's description.
+     */
+    title?: string;
+    /**
+     * shell: the command line.
+     */
+    command?: string;
+    /**
+     * read, search: the file or directory.
+     */
+    path?: string;
+    /**
+     * edit: the files it changes.
+     */
+    changes?: FileChange[];
+    /**
+     * search: the pattern. web: the search query.
+     */
+    query?: string;
+    /**
+     * web: the URL fetched.
+     */
+    url?: string;
+    /**
+     * mcp: the MCP server's name.
+     */
+    server?: string;
+    /**
+     * todo: the whole list after the call.
+     */
+    todos?: Todo[];
+    subagent?: SubagentState;
+    /**
+     * The id of the subagent tool_call this item belongs to. Absent for the main conversation.
+     */
+    parent_id?: string;
+    /**
+     * The turn the item was made in.
+     */
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload this came from, for debugging. Backends can leave it out; clients mustn't depend on it.
+     */
+    raw?: unknown;
+}
+/**
+ * What a tool returned. For a failed call, content is the error.
+ */
+export interface ToolResult {
+    /**
+     * The result as text. Images become [image].
+     */
+    content: string;
+    /**
+     * Structured output, when the tool gave some (an app tool's return value, MCP structuredContent).
+     */
+    structured?: unknown;
+    /**
+     * content was cut short before it was saved.
+     */
+    truncated?: boolean;
+    /**
+     * shell: the command's exit code.
+     */
+    exit_code?: number;
+}
+export interface FileChange {
+    path: string;
+    op: "add" | "update" | "delete";
+    /**
+     * A unified diff of the change, or the content of an added file.
+     */
+    diff?: string;
+    /**
+     * The file's new path, when the change renames it.
+     */
+    move_to?: string;
+}
+export interface Todo {
+    text: string;
+    status: "pending" | "in_progress" | "completed";
+}
+/**
+ * A subagent, as its call (a tool_call of kind subagent) shows it: how it's getting on, and how it ended.
+ */
+export interface SubagentState {
+    status: SubagentStatus;
+    /**
+     * It runs in the background: its call returned as soon as it started, and it carries on (its items keep arriving, after its turn has ended too) until it ends.
+     */
+    background?: boolean;
+    /**
+     * What kind of agent it is (Claude's subagent_type, e.g. general-purpose).
+     */
+    agent_type?: string;
+    /**
+     * The model it runs on.
+     */
+    model?: string;
+    /**
+     * What it's doing, as of its latest progress report (e.g. Reading notes.txt).
+     */
+    activity?: string;
+    /**
+     * How many tool calls it has made.
+     */
+    tool_uses?: number;
+    /**
+     * A background subagent's final report, once it has ended. (A foreground one's is its call's result.)
+     */
+    summary?: string;
+}
+/**
+ * The harness compacted the conversation's context.
+ */
+export interface Compaction {
+    id: string;
+    type: "compaction";
+    trigger?: "auto" | "manual";
+    summary?: string;
+    tokens_before?: number;
+    /**
+     * The id of the subagent tool_call this item belongs to. Absent for the main conversation.
+     */
+    parent_id?: string;
+    /**
+     * The turn the item was made in.
+     */
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload this came from, for debugging. Backends can leave it out; clients mustn't depend on it.
+     */
+    raw?: unknown;
+}
+/**
+ * Something to tell the user that isn't the agent talking: an error, a retry, hook output, a run re-attached after a restart.
+ */
+export interface Notice {
+    id: string;
+    type: "notice";
+    level: "info" | "warning" | "error";
+    text: string;
+    /**
+     * What kind of notice it is, for apps that treat some specially. Known codes: run.reattached (a restarted backend picked up a run that was still going), run.lost (a restarted backend couldn't pick up the run a turn was running in, so the turn ended), retry, hook, stderr.
+     */
+    code?: string;
+    /**
+     * More text, e.g. a stack trace or a hook's full output.
+     */
+    detail?: string;
+    /**
+     * The id of the subagent tool_call this item belongs to. Absent for the main conversation.
+     */
+    parent_id?: string;
+    /**
+     * The turn the item was made in.
+     */
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload this came from, for debugging. Backends can leave it out; clients mustn't depend on it.
+     */
+    raw?: unknown;
+}
+/**
+ * How a turn ended. The last item of each turn.
+ */
+export interface TurnResult {
+    id: string;
+    type: "turn_result";
+    /**
+     * The turn finished without an error. An interrupted turn isn't ok.
+     */
+    ok: boolean;
+    /**
+     * The turn was stopped by an interrupt command.
+     */
+    interrupted?: boolean;
+    error?: string;
+    usage?: Usage;
+    duration_ms?: number;
+    session?: TurnSession;
+    /**
+     * The id of the subagent tool_call this item belongs to. Absent for the main conversation.
+     */
+    parent_id?: string;
+    /**
+     * The turn the item was made in.
+     */
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload this came from, for debugging. Backends can leave it out; clients mustn't depend on it.
+     */
+    raw?: unknown;
+}
+/**
+ * Where a turn left the harness's session.
+ */
+export interface TurnSession {
+    /**
+     * The thread's session_id when the turn ended.
+     */
+    id: string;
+    /**
+     * The harness's own mark for the turn: Claude Code's last message in it (its uuid), Codex's id for the turn (its first, for a turn that went on after a plan). Absent if the harness gave none (the turn failed before it did anything).
+     */
+    at?: string;
+    /**
+     * The turn started the session: the thread had no session_id when it began.
+     */
+    started?: boolean;
+    /**
+     * The turn was lost (the backend stopped while it ran) before the harness gave its mark, so what it left in the session isn't known: a rewind that would need to know is refused.
+     */
+    lost?: boolean;
+}
+/**
+ * An item changed: patch's fields replace the item's, and a field set to null is removed. id and type never change.
+ */
+export interface ItemUpdatedEvent {
+    type: "item.updated";
+    thread_id: string;
+    seq: number;
+    item_id: string;
+    /**
+     * Top-level fields of the item to set, e.g. {"status": "completed", "result": {...}}.
+     */
+    patch: {
+        [k: string]: unknown | undefined;
+    };
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * Items were removed from the thread (a rewind took the conversation back to before them). Ids the thread doesn't have are skipped. A window's start and context move down by the removed items before them (see indices).
+ */
+export interface ItemsRemovedEvent {
+    type: "items.removed";
+    thread_id: string;
+    seq: number;
+    item_ids: string[];
+    /**
+     * The removed items' indices in the thread's whole list of items before they were removed, ascending, one for each of item_ids: what lets a window or a page placed by index move with them.
+     */
+    indices: number[];
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * Streamed text to append to an assistant_message (kind text) or reasoning (kind reasoning) item's text, at offset. Not saved, and doesn't advance seq: its seq is that of the last saved event. An item.updated with the final text follows.
+ */
+export interface DeltaEvent {
+    type: "delta";
+    thread_id: string;
+    seq: number;
+    item_id: string;
+    kind: "text" | "reasoning";
+    /**
+     * Where text goes in the item's text: its length before this delta, in UTF-16 code units (JavaScript's string length). A client that already has the text up to offset + text's length (from a snapshot taken after the delta) skips it.
+     */
+    offset: number;
+    text: string;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * The agent is waiting on the user for a permission or an answer.
+ */
+export interface RequestOpenedEvent {
+    type: "request.opened";
+    thread_id: string;
+    seq: number;
+    request: ThreadRequest;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * The agent wants to call a tool, and the permission policy said ask. Answered with outcome allow or deny.
+ */
+export interface PermissionRequest {
+    id: string;
+    type: "permission";
+    /**
+     * The tool_call item it's for, when there is one.
+     */
+    tool_call_id?: string;
+    /**
+     * The tool's name, as in ToolCall.name.
+     */
+    name: string;
+    kind: ToolKind;
+    /**
+     * The MCP server, for a tool of kind mcp, as in ToolCall.server.
+     */
+    server?: string;
+    /**
+     * The tool's arguments, as in ToolCall.input.
+     */
+    input: unknown;
+    /**
+     * A short summary of what's asked, e.g. the command line.
+     */
+    title?: string;
+    /**
+     * Why the harness asks, when it says.
+     */
+    reason?: string;
+    /**
+     * The subagent tool_call that's asking, if one is.
+     */
+    parent_id?: string;
+    resolution?: Resolution;
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * The agent asks the user one or more questions (Claude's AskUserQuestion, Codex's requestUserInput). Answered with outcome answer.
+ */
+export interface QuestionRequest {
+    id: string;
+    type: "question";
+    /**
+     * @minItems 1
+     */
+    questions: [Question, ...Question[]];
+    /**
+     * The tool_call item it's for, when there is one.
+     */
+    tool_call_id?: string;
+    /**
+     * The subagent tool_call that's asking, if one is.
+     */
+    parent_id?: string;
+    resolution?: Resolution;
+    turn_id?: string;
+    /**
+     * How many user_message items the thread had when it was asked: the conversation has moved on since once it has more (see keeping questions open after their turn).
+     */
+    user_messages?: number;
+    created_at?: string;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+export interface Question {
+    /**
+     * Unique within the request; the key for its answer.
+     */
+    id: string;
+    question: string;
+    /**
+     * A very short label for it.
+     */
+    header?: string;
+    /**
+     * Choices. With none, the answer is free text.
+     */
+    options?: QuestionOption[];
+    /**
+     * More than one option can be chosen.
+     */
+    multi_select?: boolean;
+    /**
+     * Free text is accepted as well as the options.
+     */
+    allow_other?: boolean;
+    /**
+     * The answer is a secret: don't show or log it.
+     */
+    secret?: boolean;
+}
+export interface QuestionOption {
+    /**
+     * The option's text, which is also its answer.
+     */
+    label: string;
+    description?: string;
+}
+/**
+ * The agent has made a plan and asks to start on it (Claude's ExitPlanMode; a proposed plan from Codex in plan mode). Answered with outcome allow, to start on it in the resolution's permission_mode, or deny, to keep planning, with the message as the user's feedback.
+ */
+export interface PlanRequest {
+    id: string;
+    type: "plan";
+    /**
+     * The plan, as Markdown.
+     */
+    plan: string;
+    /**
+     * The tool_call item it's for, when there is one.
+     */
+    tool_call_id?: string;
+    /**
+     * The subagent tool_call that's asking, if one is.
+     */
+    parent_id?: string;
+    resolution?: Resolution;
+    turn_id?: string;
+    created_at?: string;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * A request was answered or cancelled, and is no longer open.
+ */
+export interface RequestResolvedEvent {
+    type: "request.resolved";
+    thread_id: string;
+    seq: number;
+    request_id: string;
+    resolution: Resolution;
+    /**
+     * The harness's own payload, for debugging.
+     */
+    raw?: unknown;
+}
+/**
+ * A thread's state as of seq: what applying its events, in order, from the start gives. A window (a snapshot taken with a limit) has only its last items, and what they need from before them (start, context).
+ */
+export interface Snapshot {
+    thread: Thread;
+    items: Item[];
+    /**
+     * The thread's requests, oldest first: the open ones, and the resolved ones with their resolution. A window has the open ones, and the resolved ones its items have (see PROTOCOL.md, Windows).
+     */
+    requests: ThreadRequest[];
+    /**
+     * The seq of the last saved event it includes; 0 for none.
+     */
+    seq: number;
+    /**
+     * A window: the index, in the thread's whole list of items, of the first item of the window. The items before it are left out, but for those in context. Absent (or 0): items has them all.
+     */
+    start?: number;
+    /**
+     * A window: the indices, in the thread's whole list of items, of the items from before start it has anyway because the window needs them (the subagent calls its items and open requests belong to, the open requests' tool calls, and the subagents still running, with the subagents those belong to). They're the first context.length of items, in order; the rest are the thread's items from start on.
+     */
+    context?: number[];
+}
+/**
+ * The thread's items before an index (a window's start), a page at a time, for a client that has a window to load earlier items into.
+ */
+export interface ItemPage {
+    thread_id: string;
+    /**
+     * The items of context, then the thread's items from start up to the index asked for.
+     */
+    items: Item[];
+    /**
+     * The requests its items (after the context ones) have, oldest first.
+     */
+    requests: ThreadRequest[];
+    /**
+     * The index, in the thread's whole list of items, of its first item after the context ones. 0: there are none before it.
+     */
+    start: number;
+    /**
+     * The indices of the items from before start it has anyway because its items need them (the subagent calls they belong to): the first context.length of items, in order.
+     */
+    context: number[];
+    /**
+     * The seq of the last saved event its items and requests include.
+     */
+    seq: number;
+}

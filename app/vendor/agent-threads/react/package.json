@@ -1,0 +1,24 @@
+{
+  "name": "@dire-kiwi/agent-threads-react",
+  "version": "0.0.0-b00945478",
+  "description": "React hooks and components for agent-threads.",
+  "license": "MIT",
+  "repository": "github:dire-kiwi/agent-threads",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "dependencies": {
+    "@dire-kiwi/agent-threads-protocol": "file:../protocol"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

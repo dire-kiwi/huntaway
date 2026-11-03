@@ -1,0 +1,86 @@
+import { jsx as _jsx } from "react/jsx-runtime";
+import { AppIcon, BotIcon, FileIcon, GlobeIcon, ListIcon, MapIcon, PencilIcon, PlugIcon, SearchIcon, TerminalIcon, WrenchIcon } from "./icons.js";
+const str = (x) => (typeof x === "string" ? x : "");
+/** `path` relative to `cwd`, when it's inside it. */
+export function relative(path, cwd) {
+    if (!path)
+        return "";
+    if (cwd && path.startsWith(cwd.endsWith("/") ? cwd : cwd + "/"))
+        return path.slice(cwd.length).replace(/^\//, "");
+    return path;
+}
+/** The built-in summary of a call. */
+export function toolMeta(call, cwd) {
+    const input = call.input && typeof call.input === "object" ? call.input : {};
+    const rel = (p) => relative(p, cwd);
+    switch (call.kind) {
+        case "shell":
+            return { icon: _jsx(TerminalIcon, {}), label: "Ran", summary: call.command ?? str(input.command) };
+        case "read":
+            return { icon: _jsx(FileIcon, {}), label: "Read", summary: rel(call.path ?? str(input.file_path ?? input.path)) };
+        case "edit": {
+            const changes = call.changes ?? [];
+            const label = call.name === "Write" || (changes.length > 0 && changes.every((c) => c.op === "add"))
+                ? "Wrote"
+                : changes.length > 0 && changes.every((c) => c.op === "delete")
+                    ? "Deleted"
+                    : "Edited";
+            const paths = changes.length ? changes.map((c) => rel(c.path)) : [rel(call.path ?? str(input.file_path ?? input.notebook_path))];
+            return { icon: _jsx(PencilIcon, {}), label, summary: paths.join(", ") };
+        }
+        case "search": {
+            const query = call.query ?? str(input.pattern ?? input.query);
+            const path = call.path ?? str(input.path);
+            if (call.name === "Glob")
+                return { icon: _jsx(SearchIcon, {}), label: "Listed", summary: query };
+            return { icon: _jsx(SearchIcon, {}), label: "Searched", summary: path ? `${query}  in ${rel(path)}` : query };
+        }
+        case "web": {
+            const url = call.url ?? str(input.url);
+            if (url)
+                return { icon: _jsx(GlobeIcon, {}), label: "Fetched", summary: url };
+            return { icon: _jsx(GlobeIcon, {}), label: "Searched the web", summary: call.query ?? str(input.query) };
+        }
+        case "mcp":
+            return { icon: _jsx(PlugIcon, {}), label: call.server ? `${call.server} · ${call.name}` : call.name, summary: call.title ?? brief(input) };
+        case "app":
+            return { icon: _jsx(AppIcon, {}), label: call.name, summary: call.title ?? brief(input) };
+        case "subagent":
+            return { icon: _jsx(BotIcon, {}), label: "Subagent", summary: call.title ?? str(input.description ?? input.prompt).split("\n")[0] };
+        case "todo": {
+            const todos = call.todos ?? [];
+            const done = todos.filter((t) => t.status === "completed").length;
+            return { icon: _jsx(ListIcon, {}), label: "Updated the plan", summary: todos.length ? `${done} of ${todos.length} done` : "" };
+        }
+        default:
+            if (call.name === "ExitPlanMode")
+                return { icon: _jsx(MapIcon, {}), label: "Plan", summary: planTitle(str(input.plan)) };
+            return { icon: _jsx(WrenchIcon, {}), label: call.name.replace(/^mcp__/, "").replace(/__/g, " · "), summary: call.title ?? brief(input) };
+    }
+}
+/**
+ * A plan's title: its first line, if that's a heading, as plain text ("# Plan: add a `cache`" is
+ * "add a cache"); none if it's just "Plan".
+ */
+export function planTitle(plan) {
+    const first = plan.split("\n").map((l) => l.trim()).find((l) => l) ?? "";
+    if (!first.startsWith("#"))
+        return "";
+    const title = first.replace(/^#+\s*/, "").replace(/[`*_]/g, "");
+    return /^plan$/i.test(title) ? "" : title.replace(/^plan:\s*/i, "");
+}
+/** A short line for an input: its first few simple fields. */
+export function brief(input) {
+    if (input == null || typeof input !== "object")
+        return input == null ? "" : String(input);
+    const parts = [];
+    for (const [k, v] of Object.entries(input)) {
+        if (v == null || typeof v === "object" || v === "" || v === false)
+            continue;
+        parts.push(`${k}: ${String(v).split("\n")[0]}`);
+        if (parts.length === 3)
+            break;
+    }
+    const line = parts.join(", ");
+    return line.length > 120 ? line.slice(0, 119) + "…" : line;
+}

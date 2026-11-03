@@ -2,3 +2,5 @@ node_modules
 dist
 release
 *.tsbuildinfo
+# agent-threads' packages, built (scripts/vendor-agent-threads.sh).
+!/vendor/agent-threads/*/dist/

@@ -1,0 +1,14 @@
+{
+  "name": "@dire-kiwi/agent-threads-protocol",
+  "version": "0.0.0-b00945478",
+  "description": "agent-threads' protocol: types generated from spec/, and the applyEvent reducer.",
+  "license": "MIT",
+  "repository": "github:dire-kiwi/agent-threads",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}
