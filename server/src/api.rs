@@ -72,6 +72,8 @@ pub fn router(state: Shared) -> Router {
         .route("/api/hub/connect", get(hub::accept))
         // Without the board's token: the token in its path reaches only its own automation.
         .route("/api/hooks/{id}/{token}", post(automations::webhook).layer(DefaultBodyLimit::max(automations::MAX_BODY)))
+        // Without the board's token: the token in its body answers only its own prompt, once (from a notification).
+        .route("/api/permissions/{id}/push-answer", post(crate::integrations::push_answers::answer))
         .nest("/api", host_api.merge(hub_api).fallback(no_route).method_not_allowed_fallback(wrong_method))
         // The nested fallback covers `/api` but not `/api/`.
         .route("/api/", any(no_route))

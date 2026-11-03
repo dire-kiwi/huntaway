@@ -7,6 +7,10 @@
 //! does), and sends each subscription the ones it wants, encrypted for it (RFC 8291) and signed with
 //! the board's VAPID key (RFC 8292), whose public half the browser subscribed with. Tapping one opens
 //! the task (app/public/sw.js).
+//!
+//! A permission prompt is pushed too (the assistant's, or any task's, as each device chooses), with
+//! a one-time token (push_answers.rs) for its Allow and Deny actions, which answer it from the
+//! notification without the board's token.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, Weak, atomic::{AtomicBool, Ordering}};
@@ -150,7 +154,8 @@ fn authorization(v: &Vapid, endpoint: &str, sub: &str, now: i64) -> Result<Strin
 
 // ---------- subscriptions ----------
 
-/// Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults.
+/// Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults, and
+/// permission prompts.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Events {
     #[serde(default = "yes")]
@@ -161,6 +166,22 @@ pub struct Events {
     pub merge: bool,
     #[serde(default)]
     pub done: bool,
+    /// Whose permission prompts it gets, with Allow and Deny (API 96).
+    #[serde(default)]
+    pub prompts: Prompts,
+}
+
+/// Whose permission prompts a device gets pushed.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Prompts {
+    Off,
+    /// The assistant's (its thread's, and its routines'), whose prompts are for actions outside the
+    /// board, and which isn't on the board's columns to notify otherwise.
+    #[default]
+    Assistant,
+    /// Every task's.
+    All,
 }
 
 fn yes() -> bool {
@@ -169,7 +190,7 @@ fn yes() -> bool {
 
 impl Default for Events {
     fn default() -> Self {
-        Self { attention: true, review: true, merge: false, done: false }
+        Self { attention: true, review: true, merge: false, done: false, prompts: Prompts::Assistant }
     }
 }
 
@@ -180,8 +201,24 @@ impl Events {
             Event::Review => self.review,
             Event::Merge => self.merge,
             Event::Done => self.done,
+            // Depends on the task: see wants_prompt.
+            Event::Prompt => false,
         }
     }
+
+    /// Whether it wants task `t`'s permission prompts.
+    fn wants_prompt(&self, t: &Value) -> bool {
+        match self.prompts {
+            Prompts::Off => false,
+            Prompts::Assistant => is_assistant(t),
+            Prompts::All => t["kind"] == "task",
+        }
+    }
+}
+
+/// Whether task `t` is the assistant's (personal mode): its thread, or one of its routines' runs.
+fn is_assistant(t: &Value) -> bool {
+    t["kind"] == "task" && matches!(t["task_type"].as_str(), Some("assistant" | "routine"))
 }
 
 /// A device's subscription, as the API shows it: its endpoint's push service, but not its keys.
@@ -254,6 +291,20 @@ pub struct Message {
     pub task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<Event>,
+    /// For a permission prompt, the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// For a prompt that can be answered from the notification: where its Allow and Deny post, with
+    /// the token that answers it (see push_answers.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<Answer>,
+}
+
+/// How a notification answers its prompt: `POST url` with `{"token", "decision"}`.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Answer {
+    pub url: String,
+    pub token: String,
 }
 
 /// Sends `msg` to `sub`, and notes how it went. A subscription its push service says is gone (the
@@ -339,13 +390,15 @@ pub enum Event {
     Review,
     Merge,
     Done,
+    /// A permission prompt was raised.
+    Prompt,
 }
 
 impl Event {
     /// The column it's about, where a move the user made doesn't notify (see `PushState::moved`).
     fn status(self) -> &'static str {
         match self {
-            Event::Attention => "needs_attention",
+            Event::Attention | Event::Prompt => "needs_attention",
             Event::Review => "in_review",
             Event::Merge => "ready_for_merge",
             Event::Done => "done",
@@ -411,6 +464,7 @@ pub fn notification_text(e: Event, t: &Value, key: &str) -> (String, String) {
             "wont_fix" => "Closed: won't fix".into(),
             _ => "Done".into(),
         },
+        Event::Prompt => "Waiting for your answer".into(),
     };
     let body = if body.chars().count() > 200 { format!("{}…", body.chars().take(199).collect::<String>()) } else { body };
     (format!("{key} {}", t["title"].as_str().unwrap_or("")), body)
@@ -447,6 +501,8 @@ pub struct PushState {
     pending: Mutex<HashSet<String>>,
     /// The columns tasks were moved to by the user lately (through this board's API), by `<host>:<id>`.
     moves: Mutex<HashMap<String, (String, Instant)>>,
+    /// The permission prompts raised while the board watched that are still waiting, by `<host>:<task id>`.
+    prompts: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 impl Default for PushState {
@@ -458,6 +514,7 @@ impl Default for PushState {
             tasks: Default::default(),
             pending: Default::default(),
             moves: Default::default(),
+            prompts: Default::default(),
         }
     }
 }
@@ -483,6 +540,9 @@ impl PushState {
 /// Watches the task events of every host on the board and pushes the ones devices want.
 pub fn start(s: &Shared) {
     s.push.watching.store(true, Ordering::Relaxed);
+    if let Err(e) = super::push_answers::recover(&s.db()) {
+        tracing::warn!("push: recovering prompts' answers: {e:#}");
+    }
     let st = s.clone();
     let mut rx = s.hub_events.subscribe();
     tokio::spawn(async move {
@@ -514,6 +574,8 @@ pub fn start(s: &Shared) {
                         st.push.tasks.lock().unwrap().remove(&format!("{host}:{id}"));
                     }
                 }
+                Some("message") => observe_prompt(&st, &host, &ev["message"]),
+                Some("message_updated") => prompt_settled(&st, &host, &ev["message"]),
                 Some("resync") => sync_host(&st, &host).await,
                 Some("hosts_changed") => {
                     let now = linked(&st);
@@ -570,6 +632,8 @@ async fn load_host(s: &Shared, host: &str) {
         }
         all
     };
+    // Prompts it raised that the board heard of may have been answered while it wasn't listening.
+    s.push.prompts.lock().unwrap().retain(|k, _| !k.starts_with(&format!("{host}:")));
     let mut known = s.push.tasks.lock().unwrap();
     for t in tasks {
         if let Some(id) = t["id"].as_str() {
@@ -586,6 +650,10 @@ fn local_tasks(s: &Shared) -> Result<Vec<Value>> {
 fn observe(s: &Shared, host: &str, t: &Value) {
     let Some(id) = t["id"].as_str() else { return };
     let key = format!("{host}:{id}");
+    // Its prompts end with its run (if the board missed hearing so).
+    if t["running"] == json!(false) {
+        s.push.prompts.lock().unwrap().remove(&key);
+    }
     let Some(prev) = s.push.tasks.lock().unwrap().insert(key.clone(), t.clone()) else { return };
     let Some(e) = task_event(&prev, t) else { return };
     if s.push.moved(&key, e) {
@@ -617,18 +685,121 @@ fn spawn_notify(s: &Shared, host: &str, t: Value, e: Event) {
 
 /// Pushes event `e` of task `t` to the devices that want it.
 async fn notify(s: &Shared, host: &str, t: &Value, e: Event) {
+    let id = t["id"].as_str().unwrap_or_default();
+    // Waiting on a prompt the devices that want it were pushed already, with its Allow and Deny.
+    let prompted = e == Event::Attention && s.push.prompts.lock().unwrap().get(&format!("{host}:{id}")).is_some_and(|p| !p.is_empty());
     let subs = match list(&s.db()) {
-        Ok(subs) => subs.into_iter().filter(|x| x.events.wants(e)).collect::<Vec<_>>(),
+        Ok(subs) => subs.into_iter().filter(|x| x.events.wants(e) && !(prompted && x.events.wants_prompt(t))).collect::<Vec<_>>(),
         Err(e) => return tracing::warn!("push: reading the subscriptions: {e:#}"),
     };
     if subs.is_empty() {
         return;
     }
     let (title, body) = notification_text(e, t, &task_key(s, host, t).await);
-    let id = t["id"].as_str().unwrap_or_default();
-    let msg = Message { title, body, url: format!("/t/{id}"), tag: format!("{host}:{id}"), task_id: Some(id.into()), event: Some(e) };
+    let msg = Message { title, body, url: format!("/t/{id}"), tag: format!("{host}:{id}"), task_id: Some(id.into()), event: Some(e), request_id: None, answer: None };
     for sub in subs {
         let _ = send(s, &sub, &msg, e == Event::Attention).await;
+    }
+}
+
+// ---------- permission prompts ----------
+
+/// A thread message as it is now: a permission prompt that has just been raised is pushed.
+fn observe_prompt(s: &Shared, host: &str, m: &Value) {
+    let data = &m["data"];
+    if m["kind"] != "permission" || data["status"] != "pending" {
+        return;
+    }
+    let (Some(task_id), Some(request)) = (m["task_id"].as_str(), data["request_id"].as_str()) else { return };
+    s.push.prompts.lock().unwrap().entry(format!("{host}:{task_id}")).or_default().insert(request.into());
+    let (st, host, task_id, data) = (s.clone(), host.to_string(), task_id.to_string(), data.clone());
+    tokio::spawn(async move { notify_prompt(&st, &host, &task_id, &data).await });
+}
+
+/// A thread message changed: a prompt answered or expired is no longer waiting, and the tokens that
+/// would answer it from a notification stop working.
+fn prompt_settled(s: &Shared, host: &str, m: &Value) {
+    let data = &m["data"];
+    let (Some(task_id), Some(request), Some(status)) = (m["task_id"].as_str(), data["request_id"].as_str(), data["status"].as_str()) else { return };
+    if m["kind"] != "permission" || status == "pending" {
+        return;
+    }
+    let key = format!("{host}:{task_id}");
+    let mut prompts = s.push.prompts.lock().unwrap();
+    if let Some(p) = prompts.get_mut(&key) {
+        p.remove(request);
+        if p.is_empty() {
+            prompts.remove(&key);
+        }
+    }
+    drop(prompts);
+    if let Err(e) = super::push_answers::settle(&s.db(), host, request, status) {
+        tracing::warn!("push: settling prompt {request}'s tokens: {e:#}");
+    }
+}
+
+/// The task with id `id` on `host`, as the board last saw it or else as it is now.
+async fn find_task(s: &Shared, host: &str, id: &str) -> Option<Value> {
+    if let Some(t) = s.push.tasks.lock().unwrap().get(&format!("{host}:{id}")) {
+        return Some(t.clone());
+    }
+    if host == s.host_id {
+        return db::get_task(&s.db(), id).ok().flatten().map(|t| json!(t));
+    }
+    crate::hosts::hub::host_request(s, host, "GET", &format!("/api/tasks/{id}"), None).await.ok().map(|v| v["task"].clone()).filter(Value::is_object)
+}
+
+/// What a prompt's notification says it asks (not what the tool would do: pushes pass through push
+/// services, so they carry no tool inputs).
+fn prompt_text(data: &Value) -> String {
+    let tool = data["tool_name"].as_str().unwrap_or("a tool");
+    match data["kind"].as_str() {
+        Some("project") => "Approve a project change?".into(),
+        Some("delete_task") => "Delete a task?".into(),
+        Some("automation") => "Approve an automation?".into(),
+        _ if crate::mcp::permissions::is_question(tool) => "The agent has questions for you".into(),
+        _ if tool == crate::mcp::permissions::EXIT_PLAN => "Plan ready for approval".into(),
+        _ => format!("Approve {tool}?"),
+    }
+}
+
+/// Pushes prompt `data` (its thread message's) of task `task_id` to the devices that want it, with
+/// a token for its Allow and Deny if it can be answered from the notification.
+async fn notify_prompt(s: &Shared, host: &str, task_id: &str, data: &Value) {
+    let Some(request) = data["request_id"].as_str() else { return };
+    let Some(t) = find_task(s, host, task_id).await else { return };
+    let subs = match list(&s.db()) {
+        Ok(subs) => subs.into_iter().filter(|x| x.events.wants_prompt(&t)).collect::<Vec<_>>(),
+        Err(e) => return tracing::warn!("push: reading the subscriptions: {e:#}"),
+    };
+    if subs.is_empty() {
+        return;
+    }
+    let answer = if super::push_answers::answerable(data) {
+        match super::push_answers::mint(&s.db(), host, request, task_id) {
+            Ok(token) => Some(Answer { url: format!("/api/permissions/{request}/push-answer"), token }),
+            Err(e) => {
+                tracing::warn!("push: minting a token for prompt {request}: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let key = task_key(s, host, &t).await;
+    let msg = Message {
+        title: format!("{key} {}", t["title"].as_str().unwrap_or("")),
+        body: prompt_text(data),
+        url: format!("/t/{task_id}"),
+        // Each prompt its own, so that two at once can each be answered.
+        tag: format!("{host}:{task_id}:{request}"),
+        task_id: Some(task_id.into()),
+        event: Some(Event::Prompt),
+        request_id: Some(request.into()),
+        answer,
+    };
+    for sub in subs {
+        let _ = send(s, &sub, &msg, true).await;
     }
 }
 
@@ -727,6 +898,8 @@ pub async fn test(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<
         tag: "test".into(),
         task_id: None,
         event: None,
+        request_id: None,
+        answer: None,
     };
     send(&s, &sub, &msg, true).await.map_err(|e| ApiError(axum::http::StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
     Ok(Json(json!({"ok": true})))
