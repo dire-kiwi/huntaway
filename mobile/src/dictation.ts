@@ -2,7 +2,7 @@
 // device where it can be, else the phone's recognition service (Apple's or Google's). Dictation writes what's heard
 // into the field as it's heard. A voice note records as well (Android 13 and later, and iOS), and is attached as audio
 // with what was heard of it, which is what the agent can read: Claude doesn't listen to audio files.
-import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent, type ExpoSpeechRecognitionOptions } from "expo-speech-recognition";
+import { ExpoSpeechRecognitionModule, type ExpoSpeechRecognitionNativeEventMap, type ExpoSpeechRecognitionOptions } from "expo-speech-recognition";
 import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 
@@ -45,6 +45,8 @@ export const MAX_NOTE_MS = 4 * 60 * 1000;
 
 export type SpeechMode = "dictate" | "note";
 
+const NO_ACCESS = "Microphone or speech recognition access is off for Huntaway: allow it in Settings.";
+
 /** The language to hear: the phone's. */
 function lang(): string {
   try {
@@ -67,107 +69,153 @@ function options(mode: SpeechMode, onDevice: boolean): ExpoSpeechRecognitionOpti
   };
 }
 
-const NO_ACCESS = "Microphone or speech recognition access is off for Huntaway: allow it in Settings.";
+// ---------- the session ----------
+//
+// There's one recognizer, and two composers can be mounted at once (a task's thread pushed over the Assistant tab), so
+// the session lives here: the composer that started it gets its events, through listeners on the module added once.
+// A session that was dropped (cancelled, or its screen closed) still sends its last events, an `end` at least; they're
+// swallowed, so they can't end the next session.
 
-/** Whose session it is: only the composer that started one acts on its events (a task's thread can be open over the Assistant tab). */
-let owner: object | null = null;
+type Events = { [K in keyof ExpoSpeechRecognitionNativeEventMap]?: (ev: ExpoSpeechRecognitionNativeEventMap[K]) => void };
+const EVENTS = ["result", "audioend", "error", "end"] as const;
+
+/** The composer whose session it is (claimed before the permission prompt, so a second tap can't start another). */
+let owner: { events: Events } | null = null;
+/** Dropped sessions whose `end` hasn't come yet, and when the last was dropped. */
+let dropped = 0;
+let droppedAt = 0;
+let subscribed = false;
+
+function subscribe() {
+  if (subscribed) return;
+  subscribed = true;
+  for (const name of EVENTS) {
+    const listener = (ev: unknown) => {
+      if (dropped > 0) {
+        if (name === "end") dropped--;
+        return;
+      }
+      (owner?.events[name] as ((ev: unknown) => void) | undefined)?.(ev);
+    };
+    ExpoSpeechRecognitionModule.addListener(name, listener as never);
+  }
+}
+
+/** Stops listening for the composer that owns the session, and swallows what the session still sends. */
+function drop() {
+  owner = null;
+  dropped++;
+  droppedAt = Date.now();
+  ExpoSpeechRecognitionModule.abort();
+}
 
 /**
  * Dictation and voice notes for one composer. `onText` gets what's been said so far, while dictating; `onNote` gets a
  * finished voice note's recording and what was heard of it.
  */
 export function useSpeech({ onText, onNote }: { onText: (said: string) => void; onNote: (uri: string, transcript: string) => void }) {
-  const me = useRef({}).current;
+  // This composer's handlers (set below), the same object for as long as it's mounted.
+  const me = useRef<{ events: Events }>({ events: {} }).current;
+  const onDeviceRef = useRef(false);
   const [mode, setMode] = useState<SpeechMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState(0);
   const [, tick] = useState(0);
   const [onDevice, setOnDevice] = useState(false);
   const [transcript, setTranscript] = useState("");
-  const st = useRef({ heard: NOTHING_HEARD, uri: null as string | null, mode: null as SpeechMode | null, onDevice: false, retry: false, retried: false, cancelled: false });
+  const st = useRef({ heard: NOTHING_HEARD, uri: null as string | null, mode: null as SpeechMode | null, retry: false, retried: false, failed: false });
   const cb = useRef({ onText, onNote });
   cb.current = { onText, onNote };
 
-  const mine = () => owner === me;
+  const fail = (message: string) => {
+    st.current.failed = true;
+    setError(message);
+  };
   const finish = () => {
     if (owner === me) owner = null;
     st.current.mode = null;
     setMode(null);
   };
 
-  useSpeechRecognitionEvent("result", (ev) => {
-    if (!mine() || !st.current.mode) return;
-    st.current.heard = heard(st.current.heard, ev.results[0]?.transcript ?? "", ev.isFinal);
-    const said = spoken(st.current.heard);
-    setTranscript(said);
-    if (st.current.mode === "dictate") cb.current.onText(said);
-  });
-  useSpeechRecognitionEvent("audioend", (ev) => {
-    if (mine() && ev.uri) st.current.uri = ev.uri;
-  });
-  useSpeechRecognitionEvent("error", (ev) => {
-    if (!mine() || ev.error === "aborted") return;
-    // The language isn't on the device: hear it with the phone's service instead, once, when this try has ended.
-    if (st.current.onDevice && !st.current.retried && (ev.error === "language-not-supported" || ev.error === "service-not-allowed")) {
-      st.current.retry = true;
-      return;
-    }
-    if (ev.error === "no-speech" || ev.error === "speech-timeout") setError("Nothing was heard.");
-    else if (ev.error === "not-allowed") setError(NO_ACCESS);
-    else setError(ev.message || `Speech recognition failed (${ev.error}).`);
-  });
-  useSpeechRecognitionEvent("end", () => {
-    if (!mine()) return;
-    const again = st.current.mode;
-    if (st.current.retry && again && !st.current.cancelled) {
-      st.current = { ...st.current, retry: false, retried: true, onDevice: false };
-      setOnDevice(false);
-      try {
-        ExpoSpeechRecognitionModule.start(options(again, false));
+  me.events = {
+    result: (ev) => {
+      if (!st.current.mode) return;
+      st.current.heard = heard(st.current.heard, ev.results[0]?.transcript ?? "", ev.isFinal);
+      const said = spoken(st.current.heard);
+      setTranscript(said);
+      if (st.current.mode === "dictate") cb.current.onText(said);
+    },
+    audioend: (ev) => {
+      if (ev.uri) st.current.uri = ev.uri;
+    },
+    error: (ev) => {
+      if (ev.error === "aborted") return;
+      // The language isn't on the device: hear it with the phone's service instead, once, when this try has ended.
+      if (onDeviceRef.current && !st.current.retried && (ev.error === "language-not-supported" || ev.error === "service-not-allowed")) {
+        st.current.retry = true;
         return;
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
       }
-    }
-    const { mode: was, uri, cancelled } = st.current;
-    finish();
-    if (was === "note" && uri && !cancelled) cb.current.onNote(uri, spoken(st.current.heard));
-    else if (was === "note" && !cancelled) setError("The voice note couldn't be recorded on this phone.");
-  });
+      if (ev.error === "no-speech" || ev.error === "speech-timeout") fail("Nothing was heard.");
+      else if (ev.error === "not-allowed") fail(NO_ACCESS);
+      else fail(ev.message || `Speech recognition failed (${ev.error}).`);
+    },
+    end: () => {
+      const again = st.current.mode;
+      if (st.current.retry && again) {
+        st.current = { ...st.current, retry: false, retried: true };
+        onDeviceRef.current = false;
+        setOnDevice(false);
+        try {
+          ExpoSpeechRecognitionModule.start(options(again, false));
+          return;
+        } catch (e) {
+          fail(e instanceof Error ? e.message : String(e));
+        }
+      }
+      const { mode: was, uri, failed } = st.current;
+      finish();
+      if (was === "note" && uri) cb.current.onNote(uri, spoken(st.current.heard));
+      // Without a recording, and nothing said why.
+      else if (was === "note" && !failed) setError("The voice note couldn't be recorded on this phone.");
+    },
+  };
 
   // The elapsed time on the recording bar, and a voice note's limit.
   useEffect(() => {
     if (!mode) return;
     const timer = setInterval(() => tick((n) => n + 1), 1000);
-    const limit = mode === "note" ? setTimeout(() => mine() && ExpoSpeechRecognitionModule.stop(), MAX_NOTE_MS) : undefined;
+    const limit = mode === "note" ? setTimeout(() => owner === me && ExpoSpeechRecognitionModule.stop(), MAX_NOTE_MS) : undefined;
     return () => {
       clearInterval(timer);
       if (limit) clearTimeout(limit);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, me]);
   // Gone mid-session (the screen closed): stop listening.
   useEffect(
     () => () => {
-      if (owner === me) {
-        st.current.cancelled = true;
-        owner = null;
-        ExpoSpeechRecognitionModule.abort();
-      }
+      if (owner === me) drop();
     },
     [me],
   );
 
   const start = async (next: SpeechMode) => {
     setError(null);
-    if (owner) return setError("The microphone is already listening.");
+    subscribe();
+    // A dropped session whose end never came (it had ended already): don't wait for it for ever.
+    if (dropped && Date.now() - droppedAt > 3000) dropped = 0;
+    if (owner || dropped) return setError("The microphone is still busy: try again in a moment.");
     if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) return setError("Speech recognition isn't available on this phone.");
     if (next === "note" && !ExpoSpeechRecognitionModule.supportsRecording()) return setError("Voice notes need Android 13 or later.");
-    const perm = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!perm.granted) return setError(NO_ACCESS);
-    const local = ExpoSpeechRecognitionModule.supportsOnDeviceRecognition();
     owner = me;
-    st.current = { heard: NOTHING_HEARD, uri: null, mode: next, onDevice: local, retry: false, retried: false, cancelled: false };
+    const perm = await ExpoSpeechRecognitionModule.requestPermissionsAsync().catch(() => ({ granted: false }));
+    if (owner !== me) return;
+    if (!perm.granted) {
+      owner = null;
+      return setError(NO_ACCESS);
+    }
+    const local = ExpoSpeechRecognitionModule.supportsOnDeviceRecognition();
+    st.current = { heard: NOTHING_HEARD, uri: null, mode: next, retry: false, retried: false, failed: false };
+    onDeviceRef.current = local;
     setStartedAt(Date.now());
     setTranscript("");
     setOnDevice(local);
@@ -182,14 +230,15 @@ export function useSpeech({ onText, onNote }: { onText: (said: string) => void; 
 
   /** Stops listening: what was heard stays (and a voice note is attached once its file is written). */
   const stop = () => {
-    if (mine()) ExpoSpeechRecognitionModule.stop();
+    if (owner !== me) return;
+    st.current.retry = false;
+    ExpoSpeechRecognitionModule.stop();
   };
 
   /** Drops a voice note being recorded. */
   const cancel = () => {
-    if (!mine()) return;
-    st.current.cancelled = true;
-    ExpoSpeechRecognitionModule.abort();
+    if (owner !== me) return;
+    drop();
     finish();
   };
 

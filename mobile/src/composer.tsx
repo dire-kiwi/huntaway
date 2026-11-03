@@ -97,6 +97,8 @@ export function Composer({
     onPrefilled?.(prefill.id);
     setErr(null);
     setText((t) => withDraft(t, prefill.text));
+    // While dictating, the field is rewritten from what it held before, which the share now joins.
+    if (speech.mode === "dictate") before.current = withDraft(before.current, prefill.text);
     void upload(prefill.files.map((f) => ({ name: f.name, data: () => readFile(f.uri, f.name) })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill?.id]);

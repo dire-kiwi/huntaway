@@ -184,6 +184,90 @@ describe("the mic", () => {
     expect(screen.queryByText(/Voice note/)).toBeNull();
   });
 
+  const plain = { send: jest.fn(), uploadAttachment: jest.fn() };
+
+  test("a dropped voice note's late end doesn't end the next session", async () => {
+    await render(<Composer client={plain} host="h" taskId="t" bottom={0} onSent={() => {}} />);
+    await fireEvent(screen.getByRole("button", { name: "Dictate" }), "longPress");
+    await waitFor(() => expect(mod.start).toHaveBeenCalledTimes(1));
+    // This abort's end is slow to come.
+    mod.abort.mockImplementationOnce(() => {});
+    await fireEvent.press(screen.getByRole("button", { name: "Cancel" }));
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    await waitFor(() => expect(screen.getByText(/still busy/)).toBeTruthy());
+    expect(mod.start).toHaveBeenCalledTimes(1);
+    await act(async () => speech.emit("end"));
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    await waitFor(() => expect(mod.start).toHaveBeenCalledTimes(2));
+    await act(async () => speech.emit("result", speech.result("hello")));
+    expect(screen.getByText("Listening · on this phone")).toBeTruthy();
+    expect(screen.getByLabelText("Message").props.value).toBe("hello");
+  });
+
+  test("only the composer that started a session hears it, and the other says the mic is busy", async () => {
+    await render(
+      <>
+        <Composer client={plain} host="h" taskId="assistant" bottom={0} onSent={() => {}} placeholder="A" />
+        <Composer client={plain} host="h" taskId="task" bottom={0} onSent={() => {}} placeholder="B" />
+      </>,
+    );
+    const [a, b] = screen.getAllByRole("button", { name: "Dictate" });
+    await fireEvent.press(a);
+    await waitFor(() => expect(mod.start).toHaveBeenCalledTimes(1));
+    await act(async () => speech.emit("result", speech.result("for A")));
+    expect(screen.getByPlaceholderText("A").props.value).toBe("for A");
+    expect(screen.getByPlaceholderText("B").props.value).toBe("");
+    await fireEvent.press(b);
+    await waitFor(() => expect(screen.getByText(/still busy/)).toBeTruthy());
+    expect(mod.start).toHaveBeenCalledTimes(1);
+  });
+
+  test("two quick taps start one session", async () => {
+    let grant: (v: { granted: boolean }) => void = () => {};
+    mod.requestPermissionsAsync.mockImplementationOnce(() => new Promise((r) => (grant = r)));
+    await render(<Composer client={plain} host="h" taskId="t" bottom={0} onSent={() => {}} />);
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    await act(async () => grant({ granted: true }));
+    await waitFor(() => expect(mod.start).toHaveBeenCalledTimes(1));
+    expect(mod.requestPermissionsAsync).toHaveBeenCalledTimes(1);
+  });
+
+  test("a voice note that failed says why, not that the phone can't record", async () => {
+    await render(<Composer client={plain} host="h" taskId="t" bottom={0} onSent={() => {}} />);
+    await fireEvent(screen.getByRole("button", { name: "Dictate" }), "longPress");
+    await waitFor(() => expect(mod.start).toHaveBeenCalled());
+    await act(async () => {
+      speech.emit("error", { error: "network", message: "The network went away." });
+      speech.emit("end");
+    });
+    expect(screen.getByText("The network went away.")).toBeTruthy();
+    expect(screen.queryByText(/couldn't be recorded/)).toBeNull();
+  });
+
+  test("Done while it's switching to the phone's service stops it", async () => {
+    await render(<Composer client={plain} host="h" taskId="t" bottom={0} onSent={() => {}} />);
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    await waitFor(() => expect(mod.start).toHaveBeenCalledTimes(1));
+    await act(async () => speech.emit("error", { error: "language-not-supported", message: "" }));
+    await fireEvent.press(screen.getByRole("button", { name: "Done" }));
+    await act(async () => speech.emit("end"));
+    expect(mod.start).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Listening/)).toBeNull();
+  });
+
+  test("a share that comes while dictating stays in the field", async () => {
+    const props = { client: plain, host: "h", taskId: "t", bottom: 0, onSent: () => {} };
+    const view = await render(<Composer {...props} />);
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    await waitFor(() => expect(mod.start).toHaveBeenCalled());
+    await act(async () => speech.emit("result", speech.result("first")));
+    await view.rerender(<Composer {...props} prefill={{ id: 9, text: "https://example.com", files: [] }} />);
+    await act(async () => speech.emit("result", speech.result("first words")));
+    expect(screen.getByLabelText("Message").props.value).toContain("https://example.com");
+    expect(screen.getByLabelText("Message").props.value).toContain("first words");
+  });
+
   test("says why when it can't listen", async () => {
     mod.supportsRecording.mockReturnValueOnce(false);
     await render(<Composer client={{ send: jest.fn(), uploadAttachment: jest.fn() }} host="h" taskId="t" bottom={0} onSent={() => {}} />);

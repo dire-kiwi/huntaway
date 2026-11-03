@@ -1,5 +1,5 @@
 import { createClient, type Host, type Profile } from "@huntaway/client";
-import { hasAssistantTab, homeOf, openAssistant, showsAssistant, unavailableNote } from "../src/assistant";
+import { hasAssistantTab, homeOf, openAssistant, showsAssistant, stillOpen, unavailableNote } from "../src/assistant";
 import type { BoardProfiles } from "../src/boardData";
 import { loadProfiles } from "../src/boardData";
 import { memoryStorage } from "../src/pairing";
@@ -62,5 +62,23 @@ describe("the Assistant tab", () => {
     expect(profiles.allHosts.map((h) => h.id)).toEqual(["desk", "vps"]);
     expect(profiles.byName.get("Ivan")?.[0].profile.host_id).toBe("desk");
     expect(homeOf(profiles, "Ivan")).toEqual({ hostId: "vps", unavailable: "offline" });
+  });
+});
+
+describe("the assistant the tab keeps open", () => {
+  const here = { hostId: "vps", profileId: "p9" };
+  test("stays open while its host is offline, so the thread and the draft stay", () => {
+    const opened = stillOpen(undefined, "Ivan", here);
+    expect(opened).toEqual({ profile: "Ivan", home: here });
+    expect(stillOpen(opened, "Ivan", { ...here })).toBe(opened);
+    expect(stillOpen(opened, "Ivan", { hostId: "vps", unavailable: "offline" })).toBe(opened);
+  });
+  test("another profile or host starts again", () => {
+    const opened = stillOpen(undefined, "Ivan", here);
+    expect(stillOpen(opened, "Work", { hostId: "vps", unavailable: "offline" })).toBeUndefined();
+    expect(stillOpen(opened, "Ivan", { hostId: "desk", unavailable: "offline" })).toBeUndefined();
+    expect(stillOpen(opened, "Ivan", { hostId: "desk", profileId: "p1" })).toEqual({ profile: "Ivan", home: { hostId: "desk", profileId: "p1" } });
+    expect(stillOpen(undefined, "Ivan", { hostId: "vps", unavailable: "offline" })).toBeUndefined();
+    expect(stillOpen(opened, "Ivan", undefined)).toBeUndefined();
   });
 });

@@ -21,6 +21,23 @@ export function homeOf(profiles: BoardProfiles, name: string): AssistantHome | u
   return assistantHome(all, profiles.allHosts, name);
 }
 
+/** The assistant the tab has open, and whose it is. */
+export interface Opened {
+  profile: string;
+  home: AssistantHome;
+}
+
+/**
+ * The assistant to keep open: where `profile`'s is now, if it can be opened there; else, while its host is only
+ * unreachable for now (offline, say), the one already open, so its thread and the composer's draft stay. Another
+ * profile, or another host, starts again.
+ */
+export function stillOpen(prev: Opened | undefined, profile: string | null, home: AssistantHome | undefined): Opened | undefined {
+  if (!profile || !home) return undefined;
+  if (home.profileId) return prev?.profile === profile && prev.home.hostId === home.hostId && prev.home.profileId === home.profileId ? prev : { profile, home };
+  return prev?.profile === profile && prev.home.hostId === home.hostId ? prev : undefined;
+}
+
 /** The assistant's task, made by its host the first time it's asked for, with the host it's on. */
 export async function openAssistant(client: Pick<Client, "assistant">, home: AssistantHome): Promise<Task> {
   if (!home.profileId) throw new Error("The assistant can't be opened there");

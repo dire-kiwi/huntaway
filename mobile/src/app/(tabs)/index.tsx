@@ -3,8 +3,9 @@
 // own, perhaps), and says so when that host is offline. A board older than API 101 has no tab: the Inbox is home then.
 import { Redirect, Tabs } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
-import { KeyboardAvoidingView, Platform, View } from "react-native";
-import { homeOf, openAssistant, showsAssistant, unavailableNote } from "../../assistant";
+import { useRef } from "react";
+import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
+import { homeOf, openAssistant, showsAssistant, stillOpen, unavailableNote, type Opened } from "../../assistant";
 import { BoardPicker } from "../../boardPicker";
 import { loadProfiles, pickedProfile, profilesOf } from "../../boardData";
 import type { Board } from "../../boards";
@@ -12,6 +13,7 @@ import { Composer } from "../../composer";
 import { boards, clientFor, statusOf, useBoards, useBoardStatuses, useLoad, useRefetchOn } from "../../session";
 import { shares, usePendingShare } from "../../share";
 import { ThreadMessages, useThread } from "../../threadView";
+import { colors } from "../../theme";
 import { Button, Empty, ErrorText, s } from "../../ui";
 
 export default function AssistantTab() {
@@ -33,7 +35,11 @@ function Assistant({ board }: { board: Board }) {
   const profile = pickedProfile(board, profiles);
   const home = profiles && profile ? homeOf(profiles, profile) : undefined;
   const hostName = home ? (profiles?.allHosts.find((h) => h.id === home.hostId)?.name ?? home.hostId) : "";
-  const assistant = useLoad(async () => (home?.profileId ? openAssistant(client, home) : undefined), [board.id, home?.hostId, home?.profileId]);
+  // Kept while its host is offline for a while, so the thread and what's typed stay.
+  const opened = useRef<Opened | undefined>(undefined);
+  opened.current = stillOpen(opened.current, profile, home);
+  const open = opened.current?.home;
+  const assistant = useLoad(async () => (open ? openAssistant(client, open) : undefined), [board.id, open?.hostId, open?.profileId]);
   // A host coming back (or going), or the profile's assistant host changed: where it is may have changed.
   useRefetchOn((b, ev) => b === board.id && ["profiles_changed", "hosts_changed", "resync"].includes(ev.type), loaded.reload);
 
@@ -69,7 +75,12 @@ function Assistant({ board }: { board: Board }) {
         }}
       />
       <BoardPicker board={board} profiles={profiles} profile={profile} only={(b) => showsAssistant(b, statusOf(statuses, b.id))} />
-      {note ? (
+      {note && task && (
+        <View style={[s.card, { borderColor: colors.amber }]}>
+          <Text style={s.muted}>{note}</Text>
+        </View>
+      )}
+      {note && !task ? (
         <Empty title={note}>
           <Button title="Try again" small onPress={retry} />
         </Empty>
@@ -92,7 +103,7 @@ function Assistant({ board }: { board: Board }) {
           {pending?.boardId === board.id && !task && !assistant.loading && <Empty title="What you shared waits here until the assistant opens." />}
         </>
       )}
-      {task && !note && (
+      {task && (
         <Composer
           // Its draft and attachments belong to this assistant's host.
           key={`${host}/${task.id}`}
