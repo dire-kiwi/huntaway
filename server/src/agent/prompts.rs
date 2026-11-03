@@ -19,7 +19,7 @@ pub const DEFAULT_MERGE: &str = "Commit any outstanding work, then merge its pul
 otherwise merge the branch directly. Follow the project's own merge instructions (e.g. in CLAUDE.md) and resolve any \
 conflicts.";
 
-/// What the summarizer writes, unless its reviewer settings have instructions of their own (API 101).
+/// What the summarizer writes, unless its reviewer settings have instructions of their own (API 102).
 pub const DEFAULT_SUMMARY: &str = "The user reads your summary before they merge the work, to see what it does without reading the whole diff. \
 Write it in Markdown, briefly: start with a sentence or two on what changed and why, then the main changes (grouped by area, naming the \
 files or modules where it helps), any decisions or behaviour changes worth knowing about, and how to try it if that isn't obvious. Leave \
@@ -29,7 +29,7 @@ out what the diff makes plain at a glance, and don't review the work or pad it o
 pub const FIELDS: [(&str, &str); 3] = [("start_prompt", DEFAULT_START), ("review_prompt", DEFAULT_REVIEW), ("merge_prompt", DEFAULT_MERGE)];
 
 /// `GET /default-prompts`: the instructions a project without its own uses, by field, and the
-/// summarizer's (`summary_prompt`, API 101).
+/// summarizer's (`summary_prompt`, API 102).
 pub fn defaults() -> Value {
     let mut all: serde_json::Map<String, Value> = FIELDS.iter().map(|(k, v)| (k.to_string(), json!(v))).collect();
     all.insert("summary_prompt".into(), json!(DEFAULT_SUMMARY));

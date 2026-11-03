@@ -861,19 +861,41 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         ))?;
     }
     if version < 82 {
-        // The board skills a review thread was given on top of its project's (see review::apply_reviewer).
-        conn.execute_batch(&format!("BEGIN; {SCHEMA_V82} PRAGMA user_version=82; COMMIT;"))?;
+        // The effort the reviewed task's agent worked at when its review was submitted (see review/stats.rs). The rows
+        // from before are given the task's effort now, which is what it was unless the user changed it since. Added only
+        // if it isn't there: a `review_stats` made at version 79 or later by this build has it already.
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('review_stats') WHERE name='effort'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE review_stats ADD COLUMN effort TEXT;")?;
+            crate::review::stats::backfill_efforts(&conn)?;
+        }
+        conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
+    }
+    if version < 83 {
+        // The effort each run was started with, as its agent was given it (see runner/launch.rs): an empty one is the
+        // agent's own default, and null a run from before this, whose reviews' efforts are their tasks' (see review/stats.rs).
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name='effort'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE runs ADD COLUMN effort TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version=83; COMMIT;")?;
+    }
+    if version < 84 {
+        // The board skills a review or summary thread was given on top of its project's (see review::start).
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V84} PRAGMA user_version=84; COMMIT;"))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 82;
+pub const VERSION: i64 = 84;
 
 /// The board skills (by name) a review or summary thread has on top of its project's, from its
 /// reviewer's `skills` when the review started (see agent/agent_tools.rs, `for_run`).
-const SCHEMA_V82: &str = r#"
+const SCHEMA_V84: &str = r#"
 CREATE TABLE IF NOT EXISTS review_thread_skills (
   task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
   skills TEXT NOT NULL DEFAULT '[]'
@@ -890,7 +912,8 @@ CREATE TABLE IF NOT EXISTS review_thread_skills (
 /// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed,
 /// with when its review round started (`round`).
 /// `minor` is how many minor issues it listed, null for reviews from before they were listed;
-/// `minor_noted` whether it found any or its summary mentions them.
+/// `minor_noted` whether it found any or its summary mentions them. `effort` (version 82) is the effort
+/// the reviewed task's agent was set to work at, null for the agent's own default.
 const SCHEMA_V79: &str = r#"
 CREATE TABLE IF NOT EXISTS token_usage (
   run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -916,7 +939,8 @@ CREATE TABLE IF NOT EXISTS review_stats (
   serious INTEGER NOT NULL DEFAULT 0,
   minor INTEGER,
   minor_noted INTEGER NOT NULL DEFAULT 0,
-  label TEXT
+  label TEXT,
+  effort TEXT
 );
 CREATE INDEX IF NOT EXISTS review_stats_task ON review_stats(task_id, at);
 CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);

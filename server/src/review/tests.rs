@@ -203,6 +203,45 @@ fn each_submission_is_kept_for_statistics() {
 }
 
 #[test]
+fn a_submission_keeps_the_effort_the_work_was_done_at() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 3);
+        let effort = |thread: &Task| s.db().query_row("SELECT effort FROM review_stats WHERE thread_id=?1", [&thread.id], |r| r.get::<_, Option<String>>(0)).unwrap();
+        let work = |at: &str, effort: Option<&str>| {
+            let r = db::insert_run(&s.db(), &task.id, "prompt").unwrap();
+            s.db().execute("UPDATE runs SET created_at=?1, effort=?2 WHERE id=?3", rusqlite::params![at, effort, r.id]).unwrap();
+        };
+        // A task from before runs kept their efforts: what it's set to now, the host's default while it has none of its own.
+        db::set_setting(&s.db(), "default_effort", Some("medium")).unwrap();
+        work("2000-01-01T00:00:00.000Z", None);
+        submit(&s, &threads[0], "run1", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        // The work run's own effort, as its agent was given it (see runner/launch.rs), whatever the task and the host are set to after.
+        work("2000-01-02T00:00:00.000Z", Some("low"));
+        s.update_task(&task.id, &[("effort", json!("xhigh"))]).unwrap();
+        db::set_setting(&s.db(), "default_effort", Some("max")).unwrap();
+        submit(&s, &threads[1], "run2", &json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["x"]})).unwrap();
+        // A run the agent's own default.
+        work("2000-01-03T00:00:00.000Z", Some(""));
+        submit(&s, &threads[2], "run3", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        assert_eq!((effort(&threads[0]).as_deref(), effort(&threads[1]).as_deref(), effort(&threads[2]).as_deref()), (Some("medium"), Some("low"), None));
+        // And the report has it, with the model the task's agent used before the review.
+        let c = s.db();
+        let run = |at: &str, kind: &str, model: &str, out: i64| {
+            let r = db::insert_run(&c, &task.id, kind).unwrap();
+            c.execute("UPDATE runs SET created_at=?1 WHERE id=?2", [at, &r.id]).unwrap();
+            c.execute("INSERT INTO token_usage (run_id, model, runtime, output_tokens) VALUES (?1, ?2, 'claude', ?3)", rusqlite::params![r.id, model, out]).unwrap();
+        };
+        run("2000-01-01T00:00:00.000Z", "prompt", "sonnet", 100);
+        run("2000-01-02T00:00:00.000Z", "prompt", "opus", 100);
+        run("2000-01-02T00:00:00.000Z", "compact", "haiku", 100);
+        run("2100-01-01T00:00:00.000Z", "prompt", "haiku", 100);
+        let r = crate::analytics::token_report(&c, &task.profile_id, "2000-01-01T00:00:00.000Z", "2200-01-01T00:00:00.000Z").unwrap();
+        assert_eq!(r.reviews.iter().map(|v| (v.effort.as_deref(), v.task_model.as_deref())).collect::<Vec<_>>(), [(Some("medium"), Some("opus")), (Some("low"), Some("opus")), (None, Some("opus"))]);
+    })
+}
+
+#[test]
 fn a_review_started_before_rounds_were_kept_is_one_round() {
     crate::testing::run(async || {
         let s = crate::testing::state();

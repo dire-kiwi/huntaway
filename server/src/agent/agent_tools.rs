@@ -634,7 +634,8 @@ fn effective(c: &Connection, project: &crate::db::Project) -> rusqlite::Result<(
 
 /// What's on in a project (see `effective`) and the skills of the board's called `extra`, which a review
 /// or summary thread has on top of the project's whether or not they're on for it: a project's own one
-/// before a global one of that name, and only one that isn't switched off itself.
+/// before a global one of that name. A project's own skill switched off for the project's runs can still be picked
+/// for a thread; a global one that's switched off can't.
 fn effective_with(c: &Connection, project: &crate::db::Project, extra: &[String]) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
     let (profile, own) = (switches(c, "profile", &project.profile_id)?, switches(c, "project", &project.id)?);
     let on = |id: &str| own.get(id).or_else(|| profile.get(id)).and_then(|v| v.as_bool()).unwrap_or(false);
@@ -659,7 +660,7 @@ fn effective_with(c: &Connection, project: &crate::db::Project, extra: &[String]
             if skills.iter().any(|s| s.name == *name) {
                 continue;
             }
-            if let Some(i) = more.iter().position(|s| s.enabled && s.name == *name) {
+            if let Some(i) = more.iter().position(|s| (s.enabled || s.project_id.is_some()) && s.name == *name) {
                 skills.push(more.remove(i));
             }
         }

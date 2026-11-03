@@ -73,6 +73,10 @@ export interface UReview {
   model: string | null;
   /** Which of its task's rounds of review it was in, from 1. */
   round: number;
+  /** The effort the reviewed task's agent was set to work at; null is the agent's own default (or a host that doesn't say). */
+  effort: string | null;
+  /** The model the reviewed task's agent used most in the run before the review, if known. */
+  taskModel: string | null;
 }
 
 /** One round of review of a task: its reviewers' submissions together. */
@@ -372,4 +376,73 @@ export function byReviewer(reviews: UReview[]) {
   const groups = new Map<string, UReview[]>();
   for (const r of reviews) groups.set(r.reviewer, [...(groups.get(r.reviewer) ?? []), r]);
   return [...groups].map(([reviewer, rs]) => ({ reviewer, summary: summarise(rs, []) })).sort((a, b) => b.summary.reviews - a.summary.reviews);
+}
+
+/** How many serious issues reviews found in the work of one model, at one effort or all of them. */
+export interface IssueCell {
+  tasks: number;
+  reviews: number;
+  /** Reviews that found serious issues. */
+  withIssues: number;
+  serious: number;
+}
+
+export interface IssueRow {
+  /** The model that did the work. */
+  model: string;
+  /** All of its efforts. */
+  all: IssueCell;
+  byEffort: Record<string, IssueCell>;
+}
+
+/** The key an effort is kept under: the agent's own default has none of its own. */
+export const DEFAULT_EFFORT = "default";
+
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+export const effortLabel = (e: string) => (e === DEFAULT_EFFORT ? "Default" : e);
+
+/** The model that did the work a review is of: the one its task's agent used before the review, else the task's most used. */
+export function implementerOf(d: Pick<TokenData, "threads">, r: UReview) {
+  return r.taskModel ?? d.threads[r.taskId]?.model ?? "Unknown";
+}
+
+/**
+ * The serious issues reviews found, by the model that did the work and the effort it worked at, with the totals of each
+ * model across its efforts (`all`), of each effort across the models (`total.byEffort`) and of everything (`total.all`).
+ * `efforts` are the efforts seen, lowest first, the agent's default last.
+ */
+export function issuesByModelAndEffort(d: Pick<TokenData, "threads">, reviews: UReview[]): { efforts: string[]; models: IssueRow[]; total: IssueRow } {
+  type Acc = { tasks: Set<string>; reviews: number; withIssues: number; serious: number };
+  const acc = (): Acc => ({ tasks: new Set(), reviews: 0, withIssues: 0, serious: 0 });
+  const cell = (a: Acc): IssueCell => ({ tasks: a.tasks.size, reviews: a.reviews, withIssues: a.withIssues, serious: a.serious });
+  const rows = new Map<string, { all: Acc; byEffort: Map<string, Acc> }>();
+  const total = { all: acc(), byEffort: new Map<string, Acc>() };
+  const put = (a: Acc, r: UReview) => {
+    a.tasks.add(r.taskId);
+    a.reviews++;
+    if (r.verdict === "issues") a.withIssues++;
+    a.serious += r.serious;
+  };
+  for (const r of reviews) {
+    const model = implementerOf(d, r);
+    const effort = r.effort?.trim() || DEFAULT_EFFORT;
+    let row = rows.get(model);
+    if (!row) rows.set(model, (row = { all: acc(), byEffort: new Map() }));
+    for (const g of [row, total]) {
+      put(g.all, r);
+      let a = g.byEffort.get(effort);
+      if (!a) g.byEffort.set(effort, (a = acc()));
+      put(a, r);
+    }
+  }
+  const rank = (e: string) => (e === DEFAULT_EFFORT ? Infinity : EFFORT_ORDER.includes(e) ? EFFORT_ORDER.indexOf(e) : EFFORT_ORDER.length);
+  const efforts = [...total.byEffort.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const out = (model: string, g: { all: Acc; byEffort: Map<string, Acc> }): IssueRow => ({
+    model,
+    all: cell(g.all),
+    byEffort: Object.fromEntries([...g.byEffort].map(([e, a]) => [e, cell(a)])),
+  });
+  const models = [...rows].map(([m, g]) => out(m, g)).sort((a, b) => b.all.serious - a.all.serious || b.all.reviews - a.all.reviews || a.model.localeCompare(b.model));
+  return { efforts, models, total: out("All models", total) };
 }

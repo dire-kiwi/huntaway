@@ -392,6 +392,7 @@ fn a_thread_can_have_board_skills_the_project_doesnt() {
     skill(None, "global", true);
     skill(None, "dead", false);
     skill(Some("a"), "own", true);
+    skill(Some("a"), "local-off", false);
     skill(Some("a"), "dup", true);
     skill(None, "dup", true);
     let on = |extra: &[&str]| {
@@ -400,8 +401,10 @@ fn a_thread_can_have_board_skills_the_project_doesnt() {
     };
     // Global skills aren't on for the project unless switched on, and it has its own.
     assert_eq!(on(&[]).iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), ["dup", "own"]);
-    let got = on(&["global", "dead", "missing", "dup", "own"]);
-    assert_eq!(got.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), ["dup", "own", "global"]);
+    let got = on(&["global", "dead", "missing", "dup", "own", "local-off"]);
+    assert_eq!(got.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), ["dup", "own", "global", "local-off"]);
+    // A project's own skill that's off for its runs can still be picked for a thread, and is off for the others.
+    assert!(!on(&[]).iter().any(|s| s.0 == "local-off"));
     // The project's own skill of a name wins over a global one, as it does for the project.
     assert_eq!(got[0].1.as_deref(), Some("a"));
 }

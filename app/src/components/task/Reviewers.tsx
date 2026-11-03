@@ -26,7 +26,7 @@ export interface BoardSkill {
   description: string;
 }
 
-/** What a reviewer's instructions and skills are picked from, once the host takes them (API 101). */
+/** What a reviewer's instructions and skills are picked from, once the host takes them (API 102). */
 export interface ReviewerExtras {
   /** The board's skills: the project's own and the global ones. */
   skills: BoardSkill[];
@@ -49,7 +49,7 @@ export function useReviewerExtras(hostId: string, kind: "review" | "summary", pr
       const [defaults, skills] = await Promise.all([
         api.defaultPrompts(hostId),
         projectId
-          ? api.agentTools(hostId, projectId).then((t) => [...t.skills, ...(t.global_skills ?? [])].filter((s) => s.enabled))
+          ? api.agentTools(hostId, projectId).then((t) => [...t.skills, ...(t.global_skills ?? []).filter((s) => s.enabled)])
           : api.globalAgentTools(hostId).then((t) => t.skills.filter((s) => s.enabled)),
       ]);
       const seen = new Set<string>();

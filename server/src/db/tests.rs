@@ -368,6 +368,22 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
 }
 
 #[test]
+fn a_database_from_version_83_gets_review_thread_skills() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch("DROP TABLE review_thread_skills; PRAGMA user_version=83;").unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert!(c.query_row("SELECT COUNT(*) FROM pragma_table_info('review_thread_skills')", [], |r| r.get::<_, i64>(0)).unwrap() > 0);
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[test]
 fn a_database_from_version_54_gets_automations() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
@@ -659,6 +675,29 @@ fn a_database_from_version_80_gets_call_ids_shared_by_each_calls_rows() {
     assert_eq!(ids[0], ids[1]);
     let distinct: std::collections::HashSet<&String> = ids.iter().collect();
     assert_eq!(distinct.len(), 4, "{ids:?}");
+}
+
+#[test]
+fn a_database_from_version_81_gets_its_reviews_the_efforts_of_their_tasks() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (own, default) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        let new = || NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (a, b) = (insert_task(&c, new()).unwrap(), insert_task(&c, new()).unwrap());
+        c.execute("UPDATE tasks SET effort='high' WHERE id=?1", [&a.id]).unwrap();
+        set_setting(&c, "default_effort", Some("low")).unwrap();
+        c.execute_batch("ALTER TABLE review_stats DROP COLUMN effort; PRAGMA user_version=81;").unwrap();
+        for t in [&a, &b] {
+            c.execute("INSERT INTO review_stats (task_id, thread_id, round, at, verdict) VALUES (?1, 'r', '1', '1', 'pass')", [&t.id]).unwrap();
+        }
+        (a.id, b.id)
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let effort = |id: &str| c.query_row("SELECT effort FROM review_stats WHERE task_id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+    // Its own, or the host's default.
+    assert_eq!((effort(&own).as_deref(), effort(&default).as_deref()), (Some("high"), Some("low")));
 }
 
 #[test]
