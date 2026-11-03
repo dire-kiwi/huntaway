@@ -146,7 +146,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         };
         let (approval_policy, approvals_reviewer, sandbox) = crate::agent::codex::policy(&permission_mode, task.kind == "review");
         let tools = match &project {
-            Some(p) => crate::agent::agent_tools::for_run(state, &p.id)?,
+            Some(p) => crate::agent::agent_tools::for_run(state, &p.id, (task.kind == "review").then_some(task_id))?,
             None => Default::default(),
         };
         let gh_tools = uses_gh_server(&tools);
@@ -235,7 +235,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     }
     // The project's own skills and MCP servers, and the ones it turns off.
     let tools = match &project {
-        Some(p) => crate::agent::agent_tools::for_run(state, &p.id)?,
+        Some(p) => crate::agent::agent_tools::for_run(state, &p.id, (task.kind == "review").then_some(task_id))?,
         None => Default::default(),
     };
     let gh_tools = uses_gh_server(&tools);

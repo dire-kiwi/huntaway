@@ -127,7 +127,15 @@ pub(super) fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
             let c = state.db();
             if let Some(t) = db::get_task(&c, task_id)?.filter(|t| t.project_id.is_some()) {
                 let config = db::task_claude_config(&c, &t)?;
-                crate::agent::agent_tools::record_seen(&c, t.project_id.as_deref().unwrap(), config.as_ref().map(|c| c.id.as_str()), &v)?;
+                // The skills a review thread has on top of its project's aren't the project's to list or turn off.
+                let mut init = v.clone();
+                if t.kind == "review" {
+                    let extra = db::thread_skills(&c, &t.id)?;
+                    if let Some(a) = init["skills"].as_array_mut() {
+                        a.retain(|s| !s.as_str().is_some_and(|s| extra.iter().any(|e| e == s)));
+                    }
+                }
+                crate::agent::agent_tools::record_seen(&c, t.project_id.as_deref().unwrap(), config.as_ref().map(|c| c.id.as_str()), &init)?;
             }
         }
         // From `/compact`, or Claude Code compacting by itself when the context fills up.

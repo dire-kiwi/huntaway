@@ -1115,6 +1115,19 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
+- **Instructions and skills per reviewer** (API 101): each reviewer, and the summarizer, can have
+  instructions of its own and skills on in its thread (*Instructions and skills* beside it in the
+  project's and the profile's settings; `prompt` and `skills` in each `reviewers` entry and in
+  `summarizer`). A reviewer's instructions replace the project's *In review* prompt for it only (what
+  to look for: the board still adds where the changes are and how to report), so one reviewer can look
+  for security holes while another reviews the project's way. The summarizer's replace how it writes
+  the summary (the default is `summary_prompt` in `GET /default-prompts`). Empty ones follow the
+  project's. `skills` are the names of board skills (the project's own and the global ones, see
+  *Skills and MCP servers*) that are on in that thread whether or not they're on for the project:
+  they're written for the thread to its own folder, so the project's other agents don't get them,
+  and show in the thread's `/` menu. The settings are copied to the thread as each review starts, so
+  they apply from the next review, and a reviewer keeps its thread as long as its config, model and
+  effort stay.
 - **A profile's reviewers and summarizer** (API 87): a profile's settings (*Settings → Profiles →
   Edit*) pick the *Reviewers* and *Summarizer* for its projects, and each project's *Review*
   settings use *The profile's* until you switch to *This project's own*, which starts from the

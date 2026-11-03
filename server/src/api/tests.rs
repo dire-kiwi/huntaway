@@ -147,6 +147,27 @@ fn profiles_choose_reviewers_and_a_summarizer_that_projects_can_override() {
 }
 
 #[test]
+fn a_reviewers_prompt_and_skills_are_tidied_and_limited() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let create = |b: Value| create_profile(State(s.clone()), Json(serde_json::from_value(b).unwrap()));
+        let Json(p) = create(json!({"name": "work", "reviewers": [{"prompt": "  Only security.\n", "skills": [" b ", "a", "", "b"]}], "summarizer": {"prompt": "  ", "skills": ["c"]}}))
+            .await
+            .unwrap();
+        assert_eq!(p["reviewers"], json!([{"claude_config_id": null, "model": null, "effort": null, "prompt": "Only security.", "skills": ["a", "b"]}]));
+        assert_eq!(p["summarizer"], json!({"claude_config_id": null, "model": null, "effort": null, "skills": ["c"]}));
+        // Instructions or skills alone make a reviewer that isn't the default.
+        let Json(p) = create(json!({"name": "home", "reviewers": [{"skills": ["a"]}]})).await.unwrap();
+        assert_eq!(p["reviewers"].as_array().map(Vec::len), Some(1));
+        let long = "x".repeat(20_001);
+        assert!(create(json!({"name": "bad", "reviewers": [{"prompt": long}]})).await.is_err());
+        let many: Vec<String> = (0..51).map(|i| format!("s{i}")).collect();
+        assert!(create(json!({"name": "bad", "reviewers": [{"skills": many}]})).await.is_err());
+        assert!(create(json!({"name": "bad", "summarizer": {"skills": ["x".repeat(65)]}})).await.is_err());
+    })
+}
+
+#[test]
 fn a_deleted_reviewer_config_doesnt_stop_saving_other_settings() {
     crate::testing::run(async || {
         let s = crate::testing::state();

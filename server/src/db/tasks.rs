@@ -525,6 +525,25 @@ pub fn review_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
+/// The board skills (names) a review or summary thread has on top of its project's.
+pub fn thread_skills(c: &Connection, thread_id: &str) -> Result<Vec<String>> {
+    let v: Option<String> = c.query_row("SELECT skills FROM review_thread_skills WHERE task_id=?1", [thread_id], |r| r.get(0)).optional()?;
+    Ok(v.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
+}
+
+/// Sets the board skills a review or summary thread has on top of its project's (none removes them).
+pub fn set_thread_skills(c: &Connection, thread_id: &str, skills: &[String]) -> Result<()> {
+    if skills.is_empty() {
+        c.execute("DELETE FROM review_thread_skills WHERE task_id=?1", [thread_id])?;
+    } else {
+        c.execute(
+            "INSERT INTO review_thread_skills (task_id, skills) VALUES (?1,?2) ON CONFLICT(task_id) DO UPDATE SET skills=?2",
+            params![thread_id, json!(skills).to_string()],
+        )?;
+    }
+    Ok(())
+}
+
 /// A task's summary threads (review threads that summarise its changes, see review/summary.rs), oldest first.
 pub fn summary_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' AND task_type='summary' ORDER BY created_at, number")?;

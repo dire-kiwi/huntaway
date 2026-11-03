@@ -139,6 +139,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
         return Err(ApiError::conflict(format!("the summary thread's agent ({label}) is busy; wait for it to finish or stop it")));
     }
     let after_run = Some(db::latest_run(&state.db(), &thread.id, None)?.unwrap_or_default());
+    db::set_thread_skills(&state.db(), &thread.id, &spec.skills)?;
     let summary = ChangeSummary {
         thread_id: thread.id.clone(),
         label,
@@ -150,7 +151,7 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     };
     let commit = &head[..head.len().min(10)];
     let last_message = if elsewhere { db::last_assistant_text(&state.db(), &task.id)? } else { None };
-    let text = prompt(&key, &task, &branch, base.as_deref(), commit, elsewhere, own_start, last_message.as_deref());
+    let text = prompt(&key, &task, &branch, base.as_deref(), commit, elsewhere, own_start, last_message.as_deref(), crate::agent::prompts::summary(&spec));
     // A fresh conversation for each summary; the thread keeps every one's messages.
     state.update_task(&thread.id, &[("session_id", Value::Null)])?;
     crate::agent::context::clear(state, &thread.id)?;
@@ -180,9 +181,9 @@ const LAST_MESSAGE_CHARS: usize = 6000;
 
 /// Where the work is (on the branch, or `elsewhere` when the branch has no commits of its own and
 /// the agent's `last_message` says where; `own_start` when it starts after where it left its base
-/// branch, at `base`, see worktree::work_scope), and how to write the summary.
+/// branch, at `base`, see worktree::work_scope), and how to write the summary (`instructions`, the summarizer's or the default).
 #[allow(clippy::too_many_arguments)]
-fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str, elsewhere: bool, own_start: bool, last_message: Option<&str>) -> String {
+fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str, elsewhere: bool, own_start: bool, last_message: Option<&str>, instructions: &str) -> String {
     let mut p = format!("Summarise the changes made for task {key}: \"{}\".\n", task.title);
     if !task.description.trim().is_empty() {
         p.push_str(&format!("\nThe task's description:\n\n{}\n", task.description.trim()));
@@ -229,14 +230,10 @@ fn prompt(key: &str, task: &Task, branch: &str, base: Option<&str>, commit: &str
     if let Some(r) = task.review.as_ref().and_then(|r| r.summary.as_deref()).map(str::trim).filter(|s| !s.is_empty()) {
         p.push_str(&format!("\nIts review passed. The reviewer said:\n\n{}\n", r.lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n")));
     }
-    p.push_str(
-        "\nThe user reads your summary before they merge the work, to see what it does without reading the whole diff. Write \
-         it in Markdown, briefly: start with a sentence or two on what changed and why, then the main changes (grouped by \
-         area, naming the files or modules where it helps), any decisions or behaviour changes worth knowing about, and \
-         how to try it if that isn't obvious. Leave out what the diff makes plain at a glance, and don't review the work or \
-         pad it out. Don't change anything. Your last message is the summary, shown as it is on the task: end your turn \
-         with only the summary, without a preamble.",
-    );
+    p.push_str(&format!(
+        "\n{instructions}\n\nYour last message is the summary, shown as it is on the task: end your turn with only the summary, without a \
+         preamble."
+    ));
     p
 }
 
@@ -329,12 +326,37 @@ mod tests {
         let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
         let mut task = db::insert_task(&c, t).unwrap();
         task.review = Some(db::Review { state: "passed".into(), summary: Some("Looks good.".into()), ..Default::default() });
-        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, false, None);
+        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", false, false, None, crate::agent::prompts::DEFAULT_SUMMARY);
         for want in ["task X-1: \"Fix it\"", "`pr_view` tool (pr `ia/x-1`)", "`git diff master...HEAD`", "> Looks good.", "end your turn with only the summary"] {
             assert!(text.contains(want), "{want:?} not in {text}");
         }
-        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", true, false, Some("Done in o/deploy#4."));
+        let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", true, false, Some("Done in o/deploy#4."), "Write it as a haiku.");
         assert!(text.contains("no commits of its own") && text.contains("> Done in o/deploy#4."), "{text}");
+        // The summarizer's own instructions replace the default ones, before what the board relies on.
+        assert!(!text.contains("The user reads your summary") && text.find("Write it as a haiku.") < text.find("end your turn with only the summary"), "{text}");
+    }
+
+    #[test]
+    fn a_summarizer_with_instructions_and_skills_of_its_own_gets_them() {
+        crate::testing::run(async || {
+            crate::agent::runs::TEST_CAN_RUN.set(true);
+            let s = crate::testing::state();
+            let task = passed(&s);
+            let own = db::Reviewer { prompt: Some("Write it as a haiku.".into()), skills: vec!["terse".into()], ..Default::default() };
+            db::update_project(&s.db(), "pr", &[("summarizer", json!(json!(own).to_string()))]).unwrap();
+            start(&s, &task.id, false).await.map_err(|e| e.1).unwrap().expect("it starts");
+            let thread = db::summary_threads(&s.db(), &task.id).unwrap().remove(0);
+            let prompt = db::list_messages(&s.db(), &thread.id).unwrap().into_iter().find(|m| m.kind == "user").unwrap();
+            let text = prompt.data["text"].as_str().unwrap();
+            assert!(text.contains("Write it as a haiku.") && !text.contains("The user reads your summary"), "{text}");
+            assert_eq!(db::thread_skills(&s.db(), &thread.id).unwrap(), ["terse"]);
+            reply(&s, &thread, Some("A summary."));
+            // Taking them out takes them off the thread, and the default instructions come back.
+            db::update_project(&s.db(), "pr", &[("summarizer", json!(json!(db::Reviewer::default()).to_string()))]).unwrap();
+            start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().unwrap();
+            assert!(db::thread_skills(&s.db(), &thread.id).unwrap().is_empty());
+            crate::agent::runs::TEST_CAN_RUN.set(false);
+        })
     }
 
     /// A task in review whose review passed, in a project that summarises, with a worktree branch with a commit.

@@ -194,6 +194,14 @@ pub struct Reviewer {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    /// This reviewer's own instructions (API 101), replacing the project's *In review* prompt for it (what to look
+    /// for), or the default summary instructions for a summarizer. None follows the project's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// Names of board skills (a project's own or global ones) that are on in this reviewer's thread whether or not they
+    /// are for the project (API 101).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 /// A task's latest review (see review.rs), stored on the task as JSON. With several reviewers,

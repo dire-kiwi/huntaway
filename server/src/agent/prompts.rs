@@ -19,12 +19,21 @@ pub const DEFAULT_MERGE: &str = "Commit any outstanding work, then merge its pul
 otherwise merge the branch directly. Follow the project's own merge instructions (e.g. in CLAUDE.md) and resolve any \
 conflicts.";
 
+/// What the summarizer writes, unless its reviewer settings have instructions of their own (API 101).
+pub const DEFAULT_SUMMARY: &str = "The user reads your summary before they merge the work, to see what it does without reading the whole diff. \
+Write it in Markdown, briefly: start with a sentence or two on what changed and why, then the main changes (grouped by area, naming the \
+files or modules where it helps), any decisions or behaviour changes worth knowing about, and how to try it if that isn't obvious. Leave \
+out what the diff makes plain at a glance, and don't review the work or pad it out. Don't change anything.";
+
 /// The project fields holding each prompt's instructions, and their defaults.
 pub const FIELDS: [(&str, &str); 3] = [("start_prompt", DEFAULT_START), ("review_prompt", DEFAULT_REVIEW), ("merge_prompt", DEFAULT_MERGE)];
 
-/// `GET /default-prompts`: the instructions a project without its own uses, by field.
+/// `GET /default-prompts`: the instructions a project without its own uses, by field, and the
+/// summarizer's (`summary_prompt`, API 101).
 pub fn defaults() -> Value {
-    Value::Object(FIELDS.iter().map(|(k, v)| (k.to_string(), json!(v))).collect())
+    let mut all: serde_json::Map<String, Value> = FIELDS.iter().map(|(k, v)| (k.to_string(), json!(v))).collect();
+    all.insert("summary_prompt".into(), json!(DEFAULT_SUMMARY));
+    Value::Object(all)
 }
 
 fn pick<'a>(own: Option<&'a String>, default: &'a str) -> &'a str {
@@ -47,6 +56,16 @@ pub fn review(project: Option<&Project>) -> &str {
     pick(project.and_then(|p| p.review_prompt.as_ref()), DEFAULT_REVIEW)
 }
 
+/// What the reviewer `own` looks for: its own instructions if it has some, else the project's.
+pub fn review_by(project: Option<&Project>, own: &crate::db::Reviewer) -> String {
+    pick(own.prompt.as_ref(), review(project)).to_string()
+}
+
+/// What the summarizer `own` writes.
+pub fn summary(own: &crate::db::Reviewer) -> &str {
+    pick(own.prompt.as_ref(), DEFAULT_SUMMARY)
+}
+
 /// How the agent merges, after which branch to merge into which.
 pub fn merge(project: Option<&Project>) -> &str {
     pick(project.and_then(|p| p.merge_prompt.as_ref()), DEFAULT_MERGE)
@@ -55,6 +74,18 @@ pub fn merge(project: Option<&Project>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reviewers_own_instructions_win_over_the_projects() {
+        let mut own = crate::db::Reviewer::default();
+        assert_eq!(summary(&own), DEFAULT_SUMMARY);
+        assert_eq!(review_by(None, &own), DEFAULT_REVIEW);
+        own.prompt = Some("  Look at the SQL only.  ".into());
+        assert_eq!(review_by(None, &own), "Look at the SQL only.");
+        assert_eq!(summary(&own), "Look at the SQL only.");
+        own.prompt = Some("   ".into());
+        assert_eq!(review_by(None, &own), DEFAULT_REVIEW);
+    }
 
     #[test]
     fn a_project_without_its_own_uses_the_default() {

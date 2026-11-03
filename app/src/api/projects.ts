@@ -114,7 +114,14 @@ export interface Reviewer {
   claude_config_id: string | null;
   model: string | null;
   effort: string | null;
+  /** Its own instructions, over the project's In review prompt (a summarizer's: over the default summary instructions). Unset follows the project's (API 101). */
+  prompt?: string | null;
+  /** Names of board skills that are on in its thread whether or not they are for the project (API 101). */
+  skills?: string[];
 }
+
+/** From this API a reviewer and the summarizer can have instructions and skills of their own. */
+export const REVIEWER_OPTIONS_API = 101;
 
 export const projectsApi = {
   /** The profile's projects, or with `archived` its archived ones (API 46), which are left out otherwise. */
@@ -133,7 +140,7 @@ export const projectsApi = {
   startSetupThread: (h: string, id: string, message: string) => on(h).post<Task>(`/projects/${enc(id)}/setup-thread`, { message }),
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
-  defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
+  defaultPrompts: (h: string) => on(h).get<Record<PromptField, string> & { summary_prompt?: string }>("/default-prompts"),
   /** The branches of the project's repository, latest first; those only on a remote named with it (API 96). */
   projectBranches: (h: string, id: string) => on(h).get<{ branches: { name: string; remote: boolean }[] }>(`/projects/${enc(id)}/branches`),
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */

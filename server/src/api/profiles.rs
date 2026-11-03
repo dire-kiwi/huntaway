@@ -283,6 +283,10 @@ pub(super) fn check_config_ids(c: &rusqlite::Connection, ids: Vec<String>) -> Ap
     Ok(out)
 }
 
+/// The most skills and the longest prompt a reviewer can have.
+const MAX_REVIEWER_SKILLS: usize = 50;
+const MAX_REVIEWER_PROMPT: usize = 20_000;
+
 /// Reviewers, with blank fields as None and each config checked, except those in `saved` (the
 /// ones already saved), which may have been deleted since: their reviews fall back to the task's
 /// config, and saving other changes keeps them.
@@ -293,7 +297,17 @@ fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>, saved: &[&
     let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let mut out = Vec::new();
     for r in list {
-        let r = db::Reviewer { claude_config_id: blank(r.claude_config_id), model: blank(r.model), effort: blank(r.effort) };
+        let mut skills: Vec<String> = r.skills.iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect();
+        skills.sort();
+        skills.dedup();
+        if skills.len() > MAX_REVIEWER_SKILLS || skills.iter().any(|n| n.len() > 64) {
+            return Err(ApiError::bad(format!("a reviewer can have at most {MAX_REVIEWER_SKILLS} skills, with names of at most 64 characters")));
+        }
+        let prompt = blank(r.prompt);
+        if prompt.as_ref().is_some_and(|p| p.chars().count() > MAX_REVIEWER_PROMPT) {
+            return Err(ApiError::bad(format!("a reviewer's prompt can be at most {MAX_REVIEWER_PROMPT} characters")));
+        }
+        let r = db::Reviewer { claude_config_id: blank(r.claude_config_id), model: blank(r.model), effort: blank(r.effort), prompt, skills };
         if let Some(id) = &r.claude_config_id {
             if !saved.iter().any(|s| s.claude_config_id.as_ref() == Some(id)) && db::get_claude_config(c, id)?.is_none() {
                 return Err(ApiError::bad(format!("no Claude config {id}")));
@@ -309,7 +323,7 @@ fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>, saved: &[&
 /// a project's is kept, so it reviews with the task's config rather than the profile's reviewers.
 pub(super) fn reviewers_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
     let list: Option<Vec<db::Reviewer>> =
-        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort, prompt, skills}"))?;
     let list = list.map(|l| check_reviewers(c, l, saved)).transpose()?.filter(|l| !l.is_empty() && !(defaults_too && *l == [db::Reviewer::default()]));
     Ok(json!(list.map(|l| json!(l).to_string())))
 }
@@ -319,7 +333,7 @@ pub(super) fn reviewers_value(c: &rusqlite::Connection, v: &Value, defaults_too:
 /// rather than the profile's summarizer.
 pub(super) fn summarizer_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
     let spec: Option<db::Reviewer> =
-        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("summarizer must be null or {claude_config_id, model, effort}"))?;
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("summarizer must be null or {claude_config_id, model, effort, prompt, skills}"))?;
     let spec = spec.map(|r| check_reviewers(c, vec![r], saved)).transpose()?.and_then(|l| l.into_iter().next()).filter(|r| !(defaults_too && *r == db::Reviewer::default()));
     Ok(json!(spec.map(|r| json!(r).to_string())))
 }

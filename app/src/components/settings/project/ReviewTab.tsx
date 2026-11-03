@@ -10,7 +10,7 @@ import {
   type WatchPullRequests,
 } from "../../../api";
 import { useStore } from "../../../store";
-import { DEFAULT_REVIEWER, InheritPicker, isDefaultReviewer, ReviewerList, ReviewerRow, reviewerLabel } from "../../task/Reviewers";
+import { DEFAULT_REVIEWER, InheritPicker, isDefaultReviewer, ReviewerList, ReviewerRow, reviewerLabel, useReviewerExtras } from "../../task/Reviewers";
 import { Field, Input, Toggle } from "../../ui";
 
 /** The Review tab: reviews, summaries, pull requests and their previews, merge approval, and what happens once a task is merged. */
@@ -175,11 +175,12 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
   const inherits = hostSupports(host, PROFILE_REVIEWERS_API);
   const own = !!project.reviewers?.length;
+  const extras = useReviewerExtras(project.host_id, "review", project.id, project.review_prompt);
   const profiles = profile?.reviewers?.length ? profile.reviewers : [DEFAULT_REVIEWER];
   return (
     <Field
       label="Reviewers"
-      hint="Each reviews in a thread of its own, e.g. one with Codex and one with Claude. Once they've all finished, the serious issues they found go to the task's agent together."
+      hint="Each reviews in a thread of its own, e.g. one with Codex and one with Claude, and can have its own instructions and skills. Once they've all finished, the serious issues they found go to the task's agent together."
     >
       <div className="space-y-2">
         {inherits && (
@@ -197,6 +198,7 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
             models={{ project: project.model, profile: profile?.default_model }}
             value={project.reviewers ?? []}
             onChange={onChange}
+            extras={extras}
           />
         )}
       </div>
@@ -210,6 +212,7 @@ function ProjectSummarizer({ project, host, onChange }: { project: Project; host
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
   const inherits = hostSupports(host, PROFILE_REVIEWERS_API);
   const own = project.summarizer != null;
+  const extras = useReviewerExtras(project.host_id, "summary", project.id);
   const profiles = profile?.summarizer ?? DEFAULT_REVIEWER;
   return (
     <Field label="Summarizer" hint="The agent that writes the summaries. A quick, cheap model is usually enough.">
@@ -232,6 +235,7 @@ function ProjectSummarizer({ project, host, onChange }: { project: Project; host
             // from then on it's this project's choice, over the profile's.
             onChange={(v) => onChange(inherits ? (v ?? DEFAULT_REVIEWER) : isDefaultReviewer(v) ? null : v)}
             removable={false}
+            extras={extras}
           />
         )}
       </div>

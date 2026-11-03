@@ -380,6 +380,33 @@ fn global_ones_follow_the_profile_unless_the_project_overrides() {
 }
 
 #[test]
+fn a_thread_can_have_board_skills_the_project_doesnt() {
+    use crate::db::{NewProject, insert_profile, insert_project};
+    let c = crate::db::open(FsPath::new(":memory:")).unwrap();
+    let profile = insert_profile(&c, "p", &[], None).unwrap();
+    let new = NewProject { id: "a", profile_id: &profile.id, name: "a", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+    let a = insert_project(&c, new).unwrap();
+    let skill = |project: Option<&str>, name: &str, enabled: bool| {
+        create_skill_in(&c, project, SkillBody { content: Some(format!("---\nname: {name}\ndescription: d\n---\n")), enabled: Some(enabled) }).unwrap()
+    };
+    skill(None, "global", true);
+    skill(None, "dead", false);
+    skill(Some("a"), "own", true);
+    skill(Some("a"), "dup", true);
+    skill(None, "dup", true);
+    let on = |extra: &[&str]| {
+        let extra: Vec<String> = extra.iter().map(|s| s.to_string()).collect();
+        effective_with(&c, &a, &extra).unwrap().0.into_iter().map(|s| (s.name, s.project_id)).collect::<Vec<_>>()
+    };
+    // Global skills aren't on for the project unless switched on, and it has its own.
+    assert_eq!(on(&[]).iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), ["dup", "own"]);
+    let got = on(&["global", "dead", "missing", "dup", "own"]);
+    assert_eq!(got.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), ["dup", "own", "global"]);
+    // The project's own skill of a name wins over a global one, as it does for the project.
+    assert_eq!(got[0].1.as_deref(), Some("a"));
+}
+
+#[test]
 fn records_what_runs_had() {
     let c = crate::db::open(FsPath::new(":memory:")).unwrap();
     c.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
