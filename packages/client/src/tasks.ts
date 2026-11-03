@@ -534,6 +534,6 @@ export const tasksApi = ({ on, storage }: Http) => ({
   unmerged: (h: string, id: string) => on(h).get<{ unmerged: boolean }>(`/tasks/${enc(id)}/unmerged`),
   /** A task's document for one of its labels (API 71; a host before then has the one its type makes, API 42): the
    *  latest version, or `version`. */
-  document: (h: string, id: string, label: DocumentType, version?: number) =>
+  document: (h: string, id: string, label: DocumentType | "brief", version?: number) =>
     on(h).get<TaskDocument>(`/tasks/${enc(id)}/document?label=${label}${version ? `&version=${version}` : ""}`),
 });

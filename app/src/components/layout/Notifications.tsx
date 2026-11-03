@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Bell, Smartphone, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { api, type PushDevice, type PushEvents, type PushPrompts } from "../../api";
+import { api, hasBrief, type PushDevice, type PushEvents, type PushPrompts } from "../../api";
 import {
   NOTIFY_EVENTS,
   NOTIFY_MODES,
@@ -14,6 +14,7 @@ import {
   type NotifySettings,
 } from "../../notifications";
 import { chime, notifyPermission, showNotification, unlockSound } from "../../notifier";
+import { useStore } from "../../store";
 import { currentSubscription, pushSupport, subscribe, unsubscribe } from "../../push";
 import { Button, IconButton, timeAgo, Toggle } from "../ui";
 
@@ -256,6 +257,8 @@ const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
 /** The events a device gets by push, and whose permission prompts. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   const prompts = device.events.prompts ?? "assistant";
+  // Pushes are the board's own host's (API 102 for reports).
+  const reports = hasBrief(useStore((s) => s.hosts.find((h) => h.local)));
   return (
     <div className={clsx(compact ? "flex flex-wrap items-center gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>
       {NOTIFY_EVENTS.map((e) => (
@@ -288,6 +291,20 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
         </select>
         {!compact && <span className="basis-full text-faint">With Allow and Deny on the notification. It names the tool, but not what it's run with.</span>}
       </label>
+      {reports && (
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            checked={device.events.reports ?? true}
+            onChange={(ev) => onChange({ ...device.events, reports: ev.target.checked })}
+          />
+          <span>
+            <span className="text-fg">Routine reports</span>
+            {!compact && <span className="text-faint"> · What the assistant's routines post, such as the morning brief: its first line</span>}
+          </span>
+        </label>
+      )}
     </div>
   );
 }

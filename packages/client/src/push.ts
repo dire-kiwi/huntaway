@@ -4,7 +4,11 @@ import { enc, type Http } from "./http";
 export type PushPrompts = "off" | "assistant" | "all";
 
 /** Which of the board's notifications a device gets by push (see notifications.ts), and its permission prompts (left as they are, or the default, without). */
-export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & { prompts?: PushPrompts };
+export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & {
+  prompts?: PushPrompts;
+  /** The reports the assistant's routines post, such as the morning brief's (API 102; on unless turned off). */
+  reports?: boolean;
+};
 
 /** A device that gets the board's notifications by Web Push (API 74; see server/src/integrations/push.rs). */
 export interface PushDevice {
