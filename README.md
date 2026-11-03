@@ -369,9 +369,29 @@ push services (a `mailto:` or `https:` URL; the default is this project's page).
 is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, so it always loads
 the board's current UI.
 
+**Permission prompts** (API 96) are pushed too, with **Allow** and **Deny** on the notification, so
+you can answer one from the lock screen. Each device picks whose: *None*, *The assistant's* (the
+default) or *Every task's*. A device that gets a task's prompt isn't also told the task needs
+attention. Questions, plans and approvals of changes to the board (projects, deletions,
+automations) are pushed without the buttons: tapping opens the thread. A push carries the task's
+key and title and the tool's name, but never the tool's input, as it passes through the push
+service. Android's Chrome shows the buttons; iOS doesn't show buttons on web notifications, so
+there you tap through to the board.
+
+The buttons don't use the board's token. Each push about a prompt carries a one-time token that
+answers only that prompt: the service worker posts it to `POST /api/permissions/{id}/push-answer`
+(`{"token", "decision": "allow" | "deny"}`, no `Authorization`), and shows what came of it in
+the notification's place (`result` is `allowed` or `denied`, or `answered`, `expired`, `closed`,
+`invalid`, `offline` or `failed`, with a `message`). The board that sends the push mints the
+token and keeps only its hash (`push_answer_tokens`), so that's where it's checked; a prompt on a
+linked host is then answered through the link, as the UI's `/api/h/<host>/permissions/{id}` is.
+The first answer settles it: a token stops working once its prompt has been answered (from a
+notification, the board or anywhere else) or has expired with its run. If the host is offline the
+token still works later, and the notification keeps its buttons.
+
 ### The mobile app
 
-`mobile/` is an Expo app for Android and iOS (API 96) that follows and drives your tasks on several
+`mobile/` is an Expo app for Android and iOS (API 98) that follows and drives your tasks on several
 boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
 paired board together, each item labelled with its board (tasks that need attention, permission
 prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
@@ -380,7 +400,7 @@ reply streaming in, the composer, photos from the camera or library as attachmen
 stop and move. A **Boards** tab lists the paired boards, picks the profile shown on each, and opens
 a board on the web for what the app leaves out (terminals, diffs and commits, settings,
 analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
-the network changes. A board older than API 96 says so rather than failing.
+the network changes. A board older than API 98 says so rather than failing.
 
 The phone reaches a board over **HTTPS**: iOS and Android refuse plain HTTP, and the app adds no
 exception. With Tailscale, run `tailscale serve --bg 7878` on the board's machine, as for push

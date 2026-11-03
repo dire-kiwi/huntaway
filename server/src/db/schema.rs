@@ -763,15 +763,32 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=75; COMMIT;")?;
     }
     if version < 76 {
+        // The one-time tokens that answer a permission prompt from a notification (see integrations/push_answers.rs).
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS push_answer_tokens (
+               token_hash TEXT PRIMARY KEY,
+               request_id TEXT NOT NULL,
+               host_id TEXT NOT NULL,
+               task_id TEXT NOT NULL,
+               status TEXT NOT NULL DEFAULT 'pending',
+               created_at TEXT NOT NULL,
+               claimed_at TEXT
+             );
+             CREATE INDEX IF NOT EXISTS push_answer_tokens_request ON push_answer_tokens(request_id, host_id);
+             PRAGMA user_version=76; COMMIT;",
+        )?;
+    }
+    if version < 77 {
         // Devices paired with the board, each with a token of its own (see devices.rs).
-        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=76; COMMIT;", crate::devices::TABLE))?;
+        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=77; COMMIT;", crate::devices::TABLE))?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 76;
+pub const VERSION: i64 = 77;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
 /// `start_tokens` what its first request to the model held) and for

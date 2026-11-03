@@ -77,6 +77,8 @@ pub fn router(state: Shared) -> Router {
         .route("/api/devices/pair", post(crate::devices::pair))
         // Without the board's token: the token in its path reaches only its own automation.
         .route("/api/hooks/{id}/{token}", post(automations::webhook).layer(DefaultBodyLimit::max(automations::MAX_BODY)))
+        // Without the board's token: the token in its body answers only its own prompt, once (from a notification).
+        .route("/api/permissions/{id}/push-answer", post(crate::integrations::push_answers::answer))
         .nest("/api", host_api.merge(hub_api).fallback(no_route).method_not_allowed_fallback(wrong_method))
         // The nested fallback covers `/api` but not `/api/`.
         .route("/api/", any(no_route))
@@ -245,7 +247,7 @@ fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)
 
 /// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
 async fn health(State(s): State<Shared>) -> Json<Value> {
-    // API 96: and its API version, which the mobile app checks before pairing.
+    // API 98: and its API version, which the mobile app checks before pairing.
     Json(json!({"ok": true, "commit": s.meta.running_commit, "api_version": crate::hosts::proto::API_VERSION}))
 }
 
