@@ -466,3 +466,97 @@ fn a_prompt_before_two_calls_with_its_id_is_for_the_one_with_its_input() {
     // The agents never got results.
     assert_eq!(codes(&c), ["duplicate_call", "ambiguous_call", "no_result"]);
 }
+
+/// A task (on Codex with `codex`) with a run that's going, so its agent's prompts are asked.
+fn running(s: &crate::state::Shared, codex: bool) -> crate::db::Task {
+    let config = codex.then(|| crate::db::insert_claude_config(&s.db(), "Codex", "", "codex").unwrap().id);
+    let ids: Vec<String> = config.iter().cloned().collect();
+    let profile = crate::db::insert_profile(&s.db(), "p", &ids, None).unwrap();
+    let t = crate::db::NewTask {
+        profile_id: &profile.id,
+        project_id: None,
+        kind: "task",
+        title: "t",
+        description: "",
+        status: "in_progress",
+        use_worktree: false,
+        model: None,
+        effort: None,
+        claude_config_id: config.as_deref(),
+    };
+    let task = crate::db::insert_task(&s.db(), t).unwrap();
+    let run = crate::db::insert_run(&s.db(), &task.id, "prompt").unwrap();
+    s.db().execute("UPDATE runs SET status='running' WHERE id=?1", [&run.id]).unwrap();
+    s.runs.lock().unwrap().insert(task.id.clone(), crate::state::RunHandle { run_id: run.id.clone(), cancel: None });
+    s.update_task(&task.id, &[("running", json!(true))]).unwrap().unwrap()
+}
+
+/// The questions in `input` asked by `tool` as the board asks them, answered with `answers` as the board answers
+/// them, and the thread's messages then.
+async fn answered(codex: bool, tool: &str, input: Value, answers: Vec<Vec<&str>>) -> (crate::db::Task, Vec<Message>) {
+    use crate::mcp::permissions;
+    let s = testing::state();
+    let task = running(&s, codex);
+    let (s2, t2, tool2, input2) = (s.clone(), task.clone(), tool.to_string(), input.clone());
+    let told = tokio::spawn(async move { permissions::prompt(&s2, &t2, "call", &tool2, &input2, None).await.unwrap() });
+    let id = loop {
+        if let Ok(id) = s.db().query_row("SELECT id FROM permission_requests WHERE call_id='call'", [], |r| r.get::<_, String>(0)) {
+            break id;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    };
+    let answers = answers.into_iter().map(|a| a.into_iter().map(String::from).collect()).collect();
+    permissions::answer(&s, &id, true, false, None, permissions::Reply { answers: Some(answers), ..Default::default() }).unwrap();
+    told.await.unwrap();
+    let messages = crate::db::list_messages(&s.db(), &task.id).unwrap();
+    (task, messages)
+}
+
+#[test]
+fn answers_to_claudes_questions_as_the_board_keeps_them() {
+    testing::run(async || {
+        let input = json!({"questions": [
+            {"question": "Which season?", "header": "Season", "multiSelect": false, "options": [{"label": "Summer"}, {"label": "Winter"}]},
+            {"question": "Which pets?", "header": "Pets", "multiSelect": true, "options": [{"label": "Cats"}, {"label": "Dogs"}]},
+            {"question": "Anything else?", "options": [{"label": "No"}]}
+        ]});
+        let (task, messages) = answered(false, crate::mcp::permissions::ASK_USER, input, vec![vec!["Summer"], vec!["Cats", "a lizard"], vec![]]).await;
+        let c = convert(&Source { task: &task, harness: "claude", messages: &messages }).unwrap();
+        let request = serde_json::to_value(&c.snapshot.requests[0]).unwrap();
+        assert_eq!(request["resolution"], json!({"outcome": "answer", "answers": {"0": ["Summer"], "1": ["Cats", "a lizard"]}}));
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+    })
+}
+
+#[test]
+fn answers_to_codexs_questions_as_the_board_keeps_them() {
+    testing::run(async || {
+        let input = json!({"questions": [
+            {"id": "name", "question": "Which name?", "options": [{"label": "a.txt", "description": ""}], "isOther": true, "isSecret": false},
+            {"id": "token", "question": "Your token?", "options": [], "isOther": true, "isSecret": true}
+        ]});
+        let (task, messages) = answered(true, crate::mcp::permissions::CODEX_QUESTIONS, input, vec![vec!["b.txt"], vec!["s3cret"]]).await;
+        let c = convert(&Source { task: &task, harness: "codex", messages: &messages }).unwrap();
+        let request = serde_json::to_value(&c.snapshot.requests[0]).unwrap();
+        assert_eq!(request["questions"][1], json!({"id": "token", "question": "Your token?", "allow_other": true, "secret": true}));
+        // The secret stays hidden, as the board kept it.
+        assert_eq!(request["resolution"], json!({"outcome": "answer", "answers": {"name": ["b.txt"], "token": ["(hidden)"]}}));
+        assert!(c.warnings.is_empty(), "{:?}", c.warnings);
+    })
+}
+
+#[test]
+fn a_prompt_matching_no_call_with_its_reused_id_is_for_none() {
+    let c = convert_all(&[
+        bash(1, "s1", "ls a"),
+        msg(2, "claude", json!({"type": "user", "session_id": "s1", "message": {"content": [{"type": "tool_result", "tool_use_id": "c", "content": "a"}]}})),
+        msg(3, "permission", json!({"tool_name": "Bash", "input": {"command": "rm c"}, "tool_use_id": "c", "request_id": "r", "status": "denied"})),
+        bash(4, "s2", "ls b"),
+        bash_denied(5, "s2"),
+    ]);
+    assert!(serde_json::to_value(&c.snapshot.requests[0]).unwrap().get("tool_call_id").is_none());
+    let items = items(&c);
+    assert_eq!((&items["c"]["status"], &items["legacy:4:0"]["status"]), (&json!("completed"), &json!("failed")));
+    // (The test task's session is s1.)
+    assert_eq!(codes(&c), ["ambiguous_call", "duplicate_call", "session_mismatch"]);
+}

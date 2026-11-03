@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 use crate::db::{Message, Task};
 
 /// Changes when what `convert` makes of the same messages does: imported threads record it.
-pub const CONVERTER_VERSION: u32 = 4;
+pub const CONVERTER_VERSION: u32 = 5;
 
 /// Tool results longer than this were cut short when they were stored (runner/output.rs's `slim`).
 const STORED_RESULT_MAX: usize = 30_000;
@@ -390,9 +390,7 @@ impl Builder {
         }
         let session = self.last_session.clone();
         let mut found = self.candidates(id, |o, seen| !seen || (self.waiting(o, true) && same_session(o.session.as_deref(), session.as_deref())));
-        if found.len() > 1 {
-            found.retain(|(o, _)| o.input == *input);
-        }
+        found.retain(|(o, _)| o.input == *input);
         if let [(o, _)] = found.as_slice() {
             return Some(o.clone());
         }
@@ -547,16 +545,12 @@ impl Builder {
                 if questions.is_empty() {
                     return self.retain(m, "empty_question", "a question prompt with no questions".into());
                 }
-                // The answers are kept by question text, joined with ", ".
                 if resolution["outcome"] == "allow" {
-                    let answers: Map<String, Value> = questions
-                        .iter()
-                        .filter_map(|q| {
-                            let a = d["answers"][q["question"].as_str()?].as_str().or_else(|| d["answers"][q["id"].as_str()?].as_str())?;
-                            Some((q["id"].as_str()?.to_string(), json!([a])))
-                        })
-                        .collect();
-                    resolution = json!({"outcome": "answer", "answers": answers});
+                    let answers = answers(&d["answers"], &questions);
+                    if answers.is_none() {
+                        self.warn(Some(m.id), "missing_answers", "an answered question prompt whose answers can't be read");
+                    }
+                    resolution = json!({"outcome": "answer", "answers": answers.unwrap_or_default()});
                 } else if resolution["outcome"] == "deny" {
                     resolution["outcome"] = json!("cancel");
                 }
@@ -946,6 +940,44 @@ impl Builder {
     }
 }
 
+/// The answers stored on an answered question prompt, by the converted questions' ids. The board keeps
+/// them as a list of answers for each question, in order (permissions.rs's `shown_answers`: a secret's
+/// are "(hidden)"); a map of each question's text (or id) to its answers is read too. None if they're
+/// neither.
+fn answers(stored: &Value, questions: &[Value]) -> Option<Map<String, Value>> {
+    let strings = |v: &Value| -> Option<Vec<Value>> {
+        match v {
+            Value::String(s) => Some(vec![json!(s)]),
+            Value::Array(a) => a.iter().map(|x| x.as_str().map(|s| json!(s))).collect(),
+            // Codex's answers by id, as its tool takes them.
+            Value::Object(o) => o.get("answers").and_then(|a| a.as_array()).and_then(|a| a.iter().map(|x| x.as_str().map(|s| json!(s))).collect()),
+            _ => None,
+        }
+    };
+    let id = |q: &Value| q["id"].as_str().unwrap_or_default().to_string();
+    let mut out = Map::new();
+    match stored {
+        Value::Array(lists) => {
+            for (q, list) in questions.iter().zip(lists) {
+                let list = strings(list)?;
+                if !list.is_empty() {
+                    out.insert(id(q), Value::Array(list));
+                }
+            }
+        }
+        Value::Object(map) => {
+            for q in questions {
+                let found = q["question"].as_str().and_then(|t| map.get(t)).or_else(|| map.get(&id(q)));
+                if let Some(list) = found.map(strings) {
+                    out.insert(id(q), Value::Array(list?));
+                }
+            }
+        }
+        _ => return None,
+    }
+    Some(out)
+}
+
 /// A protocol Question from an AskUserQuestion question, or a request_user_input card.
 fn question(q: &Value, id: String) -> Value {
     let mut out = json!({"id": id, "question": q["question"].as_str().unwrap_or_default()});
@@ -971,8 +1003,11 @@ fn question(q: &Value, id: String) -> Value {
     if q["multi_select"] == true || q["multiSelect"] == true {
         out["multi_select"] = json!(true);
     }
-    if q["allow_other"] == true {
+    if q["allow_other"] == true || q["isOther"] == true {
         out["allow_other"] = json!(true);
+    }
+    if q["isSecret"] == true || q["secret"] == true {
+        out["secret"] = json!(true);
     }
     out
 }
