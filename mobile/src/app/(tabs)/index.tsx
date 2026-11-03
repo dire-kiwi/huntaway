@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { loadBoardInbox, mergeInbox, type InboxItem } from "../../inbox";
-import { PermissionCard, QuestionCard } from "../../prompts";
+import { isQuestionTool, PermissionCard, QuestionCard } from "../../prompts";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad, useRefetchOn } from "../../session";
 import { colors } from "../../theme";
 import { BoardLabel, Button, Empty, ErrorText, s } from "../../ui";
@@ -77,7 +77,7 @@ export default function Inbox() {
                   <BoardLabel name={item.board.name} />
                   {!!item.taskKey && <Text style={s.faint}>{item.taskKey}</Text>}
                   <Text style={[s.faint, { marginLeft: "auto", color: item.kind === "attention" ? colors.amber : colors.accent }]}>
-                    {item.kind === "permission" ? "Permission" : item.kind === "question" ? "Question" : "Needs attention"}
+                    {item.kind === "permission" ? (isQuestionTool(item.permission.tool_name) ? "Question" : "Permission") : item.kind === "question" ? "Question" : "Needs attention"}
                   </Text>
                 </View>
                 <Text style={s.title} numberOfLines={2}>
