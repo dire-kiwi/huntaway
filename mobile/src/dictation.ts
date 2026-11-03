@@ -4,6 +4,7 @@
 // with what was heard of it, which is what the agent can read: Claude doesn't listen to audio files.
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent, type ExpoSpeechRecognitionOptions } from "expo-speech-recognition";
 import { useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 
 /** What's been heard so far: the finished parts, and the part still being heard. */
 export interface Heard {
@@ -57,7 +58,8 @@ function options(mode: SpeechMode, onDevice: boolean): ExpoSpeechRecognitionOpti
   return {
     lang: lang(),
     interimResults: true,
-    continuous: true,
+    // Until it's stopped; Android 12 and older can't, and stop after a pause (they can't record voice notes either).
+    continuous: Platform.OS !== "android" || Number(Platform.Version) >= 33,
     addsPunctuation: true,
     requiresOnDeviceRecognition: onDevice,
     // 16 kHz, 16-bit: about 2 MB a minute (Android records that anyway).
