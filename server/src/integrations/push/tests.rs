@@ -680,3 +680,45 @@ fn a_prompt_the_board_missed_the_end_of_doesnt_keep_its_task_from_notifying() {
         assert_eq!((msg["event"].as_str(), msg["body"].as_str()), (Some("attention"), Some("Needs attention: The run failed")));
     })
 }
+
+#[test]
+fn an_answer_cut_off_part_way_doesnt_hold_its_prompt_after_a_restart_or_its_lease() {
+    testing::run(async || {
+        let hub = testing::state();
+        let remote = testing::state_as(crate::state::Identity {
+            host_id: "remote".into(),
+            host_name: "assistant box".into(),
+            token: "remote-token".into(),
+            hub_token: String::new(),
+            internal_url: String::new(),
+        });
+        let signed_in = crate::api::router(remote.clone()).layer(axum::middleware::map_request(|mut req: axum::http::Request<axum::body::Body>| async move {
+            req.headers_mut().insert("authorization", "Bearer remote-token".parse().unwrap());
+            req
+        }));
+        crate::hosts::hub::link_http(&hub, "remote", signed_in, crate::hosts::proto::API_VERSION).await;
+        let task = running_task(&remote, Some("assistant"));
+        let (request, told) = raise(&remote, &task, "c1", "Bash", json!({})).await;
+        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id).unwrap();
+        // The hub claimed it to answer, and stopped before it could (the claim is in its database).
+        let claim = |request: &str, at: String| {
+            hub.db().execute("UPDATE push_answer_tokens SET status='answering', claimed_at=?1 WHERE request_id=?2", [at.as_str(), request]).unwrap()
+        };
+        assert_eq!(claim(&request, crate::util::now()), 1);
+        let (status, v) = answer_from_push(&hub, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (409, Some("answered")), "a claim under way holds: {v}");
+        // Started again: no answer is under way.
+        start(&hub);
+        let (status, v) = answer_from_push(&hub, &request, &token, "deny").await;
+        assert_eq!((status, v["result"].as_str()), (200, Some("denied")), "{v}");
+        assert_eq!(told.await.unwrap()["behavior"], "deny");
+
+        // A claim older than any answer takes runs out without a restart.
+        let (request, told) = raise(&remote, &task, "c2", "Bash", json!({})).await;
+        let token = crate::integrations::push_answers::mint(&hub.db(), "remote", &request, &task.id).unwrap();
+        assert_eq!(claim(&request, (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339()), 1);
+        let (status, v) = answer_from_push(&hub, &request, &token, "allow").await;
+        assert_eq!((status, v["result"].as_str()), (200, Some("allowed")), "{v}");
+        assert_eq!(told.await.unwrap()["behavior"], "allow");
+    })
+}

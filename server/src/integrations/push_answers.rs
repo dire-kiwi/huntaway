@@ -95,13 +95,19 @@ pub async fn answer(State(s): State<Shared>, Path(id): Path<String>, Json(b): Js
         })
         .optional();
     let host = match row {
-        Ok(Some((host, status))) if status == "pending" => host,
+        Ok(Some((host, status))) if status == "pending" || status == "answering" => host,
         Ok(Some((_, status))) => return settled(&status),
         Ok(None) => return reply(StatusCode::FORBIDDEN, "invalid", "This notification can't answer that prompt."),
         Err(e) => return ApiError::from(anyhow::Error::from(e)).into_response(),
     };
-    // Taken by one answer at a time: a second tap, or another device's, finds it answering.
-    let claim = s.db().execute("UPDATE push_answer_tokens SET status='answering' WHERE request_id=?1 AND host_id=?2 AND status='pending'", [&id, &host]);
+    // Taken by one answer at a time: a second tap, or another device's, finds it answering. A claim
+    // older than any answer takes was abandoned (see CLAIM_LEASE) and can be taken again.
+    let stale = (chrono::Utc::now() - CLAIM_LEASE).to_rfc3339();
+    let claim = s.db().execute(
+        "UPDATE push_answer_tokens SET status='answering', claimed_at=?3 WHERE request_id=?1 AND host_id=?2
+         AND (status='pending' OR (status='answering' AND (claimed_at IS NULL OR claimed_at < ?4)))",
+        params![id, host, now(), stale],
+    );
     match claim {
         Ok(0) => {
             let now: Option<String> = s.db().query_row("SELECT status FROM push_answer_tokens WHERE request_id=?1 AND host_id=?2", [&id, &host], |r| r.get(0)).ok();
@@ -110,20 +116,48 @@ pub async fn answer(State(s): State<Shared>, Path(id): Path<String>, Json(b): Js
         Ok(_) => {}
         Err(e) => return ApiError::from(anyhow::Error::from(e)).into_response(),
     }
-    let release = |status: &str| {
-        let _ = s.db().execute("UPDATE push_answer_tokens SET status=?1 WHERE request_id=?2 AND host_id=?3 AND status='answering'", params![status, id, host]);
-    };
-    if host != s.host_id && !s.links.lock().unwrap().contains_key(&host) {
-        release("pending");
-        return reply(StatusCode::SERVICE_UNAVAILABLE, "offline", "Its host is offline: try again once it's back, or answer it on the board.");
+    // Carried through in a task of its own, so that a device that gives up waiting (the connection
+    // dropped) doesn't leave the claim behind it.
+    let st = s.clone();
+    match tokio::spawn(async move { forward(&st, &host, &id, allow).await }).await {
+        Ok(res) => res,
+        Err(e) => reply(StatusCode::INTERNAL_SERVER_ERROR, "failed", &format!("It couldn't be answered: {e}")),
     }
+}
+
+/// How long a claim on a prompt holds (see `answer`): longer than a request to a host can take (5
+/// minutes), so only an answer that was abandoned (its hub stopped part-way) runs out.
+const CLAIM_LEASE: chrono::Duration = chrono::Duration::minutes(6);
+
+/// Abandoned claims: once the board starts again, no answer is under way any more.
+pub fn recover(c: &Connection) -> anyhow::Result<()> {
+    c.execute("UPDATE push_answer_tokens SET status='pending', claimed_at=NULL WHERE status='answering'", [])?;
+    Ok(())
+}
+
+/// Answers prompt `id` on `host` (which the caller has claimed), and settles or releases the claim.
+async fn forward(s: &Shared, host: &str, id: &str, allow: bool) -> Response {
+    let release = |status: &str| {
+        let _ = s.db().execute(
+            "UPDATE push_answer_tokens SET status=?1, claimed_at=NULL WHERE request_id=?2 AND host_id=?3 AND status='answering'",
+            params![status, id, host],
+        );
+    };
+    let offline = || reply(StatusCode::SERVICE_UNAVAILABLE, "offline", "Its host is offline: try again once it's back, or answer it on the board.");
+    let linked = || host == s.host_id || s.links.lock().unwrap().contains_key(host);
     let decision = if allow { "allow" } else { "deny" };
-    let path = format!("/api/permissions/{}", urlencoding(&id));
-    match crate::hosts::hub::host_request(&s, &host, "POST", &path, Some(json!({"decision": decision}))).await {
+    let path = format!("/api/permissions/{}", urlencoding(id));
+    match crate::hosts::hub::host_request(s, host, "POST", &path, Some(json!({"decision": decision}))).await {
         Ok(_) => {
             let status = if allow { "allowed" } else { "denied" };
             release(status);
             reply(StatusCode::OK, status, if allow { "Allowed." } else { "Denied." })
+        }
+        // Its host isn't linked (host_request says so with a 409, as a prompt that's no longer pending
+        // does): the prompt still waits, and the token keeps working.
+        Err(ApiError(StatusCode::CONFLICT, e)) if !linked() || e.ends_with("is offline") => {
+            release("pending");
+            offline()
         }
         // Answered on the board meanwhile, expired, or gone with its thread.
         Err(ApiError(code, _)) if matches!(code, StatusCode::CONFLICT | StatusCode::NOT_FOUND) => {

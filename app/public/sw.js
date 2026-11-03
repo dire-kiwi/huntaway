@@ -50,6 +50,15 @@ self.addEventListener("notificationclick", (e) => {
   e.waitUntil(open(new URL(data.url || "/", self.location.origin).href, data.task_id));
 });
 
+/** Opens `url` (a task's page): in the board's window if one is open, where the page opens the task itself (main.tsx). */
+async function open(url, taskId) {
+  const board = (await windows()).find((w) => new URL(w.url).origin === self.location.origin);
+  if (!board) return self.clients.openWindow(url);
+  // Focus is only allowed while handling a tap; the task opens in the board either way.
+  await board.focus().catch(() => {});
+  board.postMessage(taskId ? { type: "open-task", task_id: taskId } : { type: "open", url });
+}
+
 /** Answers a prompt's notification's request with its token, and shows how that went in its place. */
 async function answer(data, decision) {
   let text;

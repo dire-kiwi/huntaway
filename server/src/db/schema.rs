@@ -772,7 +772,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                host_id TEXT NOT NULL,
                task_id TEXT NOT NULL,
                status TEXT NOT NULL DEFAULT 'pending',
-               created_at TEXT NOT NULL
+               created_at TEXT NOT NULL,
+               claimed_at TEXT
              );
              CREATE INDEX IF NOT EXISTS push_answer_tokens_request ON push_answer_tokens(request_id, host_id);
              PRAGMA user_version=76; COMMIT;",

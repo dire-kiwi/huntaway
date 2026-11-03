@@ -540,6 +540,9 @@ impl PushState {
 /// Watches the task events of every host on the board and pushes the ones devices want.
 pub fn start(s: &Shared) {
     s.push.watching.store(true, Ordering::Relaxed);
+    if let Err(e) = super::push_answers::recover(&s.db()) {
+        tracing::warn!("push: recovering prompts' answers: {e:#}");
+    }
     let st = s.clone();
     let mut rx = s.hub_events.subscribe();
     tokio::spawn(async move {

@@ -216,15 +216,27 @@ test("a push shows a notification, and a tap opens its task", async () => {
       return (await self.registration.getNotifications()).map((n) => n.title);
     });
     assert.deepEqual(shown, ["Huntaway"]);
-    // A tap on a task's notification, with the board open: the page opens the task without loading again.
+    // A tap on a task's notification, with the board open: the page opens the task without loading again. Dispatched
+    // to the worker's own notificationclick handler, as a tap on the notification's body is.
     await page.evaluate(() => (window.loadedOnce = true));
+    const errors = [];
+    sw.on("console", (m) => m.type() === "error" && errors.push(m.text()));
     await sw.evaluate(async ([id]) => {
-      const [board] = await self.clients.matchAll({ type: "window" });
-      board.postMessage({ type: "open-task", task_id: id });
+      self.__errors = [];
+      self.addEventListener("error", (e) => self.__errors.push(String(e.message)));
+      self.addEventListener("unhandledrejection", (e) => self.__errors.push(String(e.reason)));
+      await self.registration.showNotification("DEMO-1 A task", { body: "Needs attention", tag: "tap", data: { url: `/t/${id}`, task_id: id } });
+      const [n] = await self.registration.getNotifications({ tag: "tap" });
+      const waits = [];
+      const e = new Event("notificationclick");
+      Object.assign(e, { notification: n, action: "", waitUntil: (p) => waits.push(p) });
+      self.dispatchEvent(e);
+      await Promise.all(waits);
     }, [t.id]);
     // Not its title, which its card on the board already shows.
     await page.waitForURL((url) => url.searchParams.get("task") === t.id);
     assert.equal(await page.evaluate(() => window.loadedOnce), true);
+    assert.deepEqual([errors, await sw.evaluate(() => self.__errors)], [[], []]);
   });
 });
 
