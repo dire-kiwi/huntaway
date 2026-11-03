@@ -64,18 +64,23 @@ One backend in `AppState::agent_threads` runs them, on the store, with Claude Co
   options: the profile's config dir, `--add-dir`s (Codex: writable roots), `--settings` with the gh hook,
   `--allowedTools`/`--disallowedTools` and `TMPDIR`. It also gets the model, effort and permission mode (Claude's
   `auto` as an extra `--permission-mode auto`), the system prompt as its capability, and the board's `huntaway mcp`
-  and `gh-mcp` helpers (with the run's `IA_RUN_ID`) and the project's servers as MCP servers. Then it's sent the
-  message, or compacts.
+  and `gh-mcp` helpers and the project's servers as MCP servers. Then it's sent the message, or compacts. The helpers
+  call the board as the thread (`IA_RUN_ID=thread:<task id>`, which the board takes as the task's run at the time
+  of each call, as their process outlives a run), and read the board's token from a 0600 file (`IA_TOKEN_FILE`),
+  since Claude Code gets its MCP config on its command line. Codex threads get the sandbox's network, as legacy
+  Codex runs do.
 - It runs with `user_settings: true` (Codex: `user_config: true`). Skills behave as on a legacy run (checked
   with Claude on a test server): the project's skills load through `--add-dir`, a disabled skill's
   `Skill(name)` in `--disallowedTools` is refused, and the crate's own skills plugin isn't used. Codex gets the
   project's skills as the crate's skills.
 - A board run covers one stretch of the thread's work, until the thread stops running. A message sent meanwhile
   goes to the crate, which steers the turn or carries the message into its next one, and goes in the board's thread
-  as steered at once. A stop interrupts, and deleting the task deletes its thread. The thread's state is mirrored
-  onto the task: its session, a turn's outcome, and questions and plans (needs attention while one is open). The
-  run ends through `runner::finish`, as a legacy run's exit does. A turn the thread starts by itself (an answer to
-  a question kept open after its turn) gets a board run of its own.
+  as steered at once. A stop interrupts (a message after it starts a new turn in the same run, which is then no longer
+  stopped), and deleting the task deletes its thread. The thread's state is mirrored onto the task: its session,
+  questions and plans (needs attention while one is open). The follower reads the thread's events in order, and a
+  run ends with its last turn's `turn.completed`, with the outcome the thread has for that turn, through
+  `runner::finish`, as a legacy run's exit does. A turn the thread starts by itself (an answer to a question kept
+  open after its turn) gets a board run of its own.
 - Tool permissions go to the board's own prompts (`mcp::permissions::prompt`: auto-allow, the mode as it is now,
   the permission card, `/api/permissions`). The crate's questions and plans stay its own requests, which the
   thread API (HA-145) answers.
@@ -85,7 +90,8 @@ One backend in `AppState::agent_threads` runs them, on the store, with Claude Co
   profile, MCP approvals and `auto` mode, Codex rate limits and cost, and context usage. The board's readers of
   raw messages (reviews' `changes_code`, summaries, titles, `last_message`) don't see the agent's items until
   HA-144. A thread's harness process stays alive between turns (one idle process per task), until AT-31 lets
-  the board close it.
+  the board close it. Codex's MCP tool timeouts for the board's servers (a `wait` lasts up to an hour) wait for
+  AT-32, as does Claude Code's MCP config in a private file rather than on its command line.
 
 Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
 task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and

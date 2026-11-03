@@ -159,7 +159,7 @@ pub(crate) fn start_with(state: &Shared, backend: AgentThreads) {
     if let Err(e) = write_token_file(state) {
         tracing::error!("writing the agents' token file {}: {e:#}", token_file(state).display());
     }
-    let (tx, rx) = mpsc::unbounded_channel();
+    let (tx, rx) = mpsc::unbounded_channel::<(String, Cmd)>();
     SENDS.lock().unwrap().insert(key(state), tx);
     tokio::spawn(sender(Arc::downgrade(state), rx));
     tokio::spawn(follow(Arc::downgrade(state), events));
@@ -451,7 +451,7 @@ fn sent(state: &Shared, task: &Task, text: &str, from_agent: bool) -> Result<()>
     let plan = plan_file.as_deref().zip(crate::agent::documents::plan_command(text)).map(|(f, rest)| crate::agent::documents::plan_prompt(f, rest, false));
     let tx = SENDS.lock().unwrap().get(&key(state)).cloned().context("the agent-threads backend isn't running")?;
     let origin = Origin { from_agent, ..Default::default() };
-    tx.send((task.id.clone(), plan.unwrap_or_else(|| text.to_string()), origin)).map_err(|_| anyhow!("the agent-threads backend has stopped"))?;
+    tx.send((task.id.clone(), Cmd::Send(plan.unwrap_or_else(|| text.to_string()), origin))).map_err(|_| anyhow!("the agent-threads backend has stopped"))?;
     let mut msg = json!({"text": text, "steered": true});
     if from_agent {
         msg["from_agent"] = json!(true);
@@ -514,35 +514,48 @@ fn record_origin(_state: &Shared, thread_id: &str, item_id: &str, origin: &Origi
     Ok(())
 }
 
-/// Messages for each state's threads, sent one at a time in the order they were queued (see `sent`).
-static SENDS: LazyLock<Mutex<HashMap<usize, mpsc::UnboundedSender<(String, String, Origin)>>>> = LazyLock::new(Default::default);
+/// What goes to a thread in order: a message (see `sent`), or a stop (see `stop`), which a message sent after it
+/// mustn't overtake ("stop, then do this instead"), as a legacy run's input has them in order.
+enum Cmd {
+    Send(String, Origin),
+    Interrupt,
+}
+
+/// Messages and stops for each state's threads, carried out one at a time in the order they were queued.
+static SENDS: LazyLock<Mutex<HashMap<usize, mpsc::UnboundedSender<(String, Cmd)>>>> = LazyLock::new(Default::default);
 
 /// A state's key in SENDS.
 fn key(state: &Shared) -> usize {
     Arc::as_ptr(state) as usize
 }
 
-async fn sender(state: Weak<AppState>, mut rx: mpsc::UnboundedReceiver<(String, String, Origin)>) {
-    while let Some((task_id, text, origin)) = rx.recv().await {
+async fn sender(state: Weak<AppState>, mut rx: mpsc::UnboundedReceiver<(String, Cmd)>) {
+    while let Some((task_id, cmd)) = rx.recv().await {
         let Some(s) = state.upgrade() else { return };
         let Some(b) = backend(&s) else { continue };
-        if let Err(e) = b.send(&task_id, &text, send_options(&task_id, origin)).await {
-            tracing::warn!(task = %task_id, "sending a message to the agent: {e}");
-            s.add_event(&task_id, "error", "Couldn't send the message to the agent", Some(format!("{e}\n\n{text}")));
+        match cmd {
+            Cmd::Send(text, origin) => {
+                if let Err(e) = b.send(&task_id, &text, send_options(&task_id, origin)).await {
+                    tracing::warn!(task = %task_id, "sending a message to the agent: {e}");
+                    s.add_event(&task_id, "error", "Couldn't send the message to the agent", Some(format!("{e}\n\n{text}")));
+                }
+            }
+            Cmd::Interrupt => {
+                if let Err(e) = b.interrupt(&task_id).await {
+                    tracing::warn!(task = %task_id, "stopping the agent: {e}");
+                }
+            }
         }
     }
 }
 
 /// Stops the turn of an agent-threads task's run: the crate interrupts it (and stops its process if it doesn't end
-/// in time), and `follow` ends the run as stopped.
+/// in time), and `follow` ends the run as stopped. Ahead of any message sent after it (see `Cmd`).
 pub fn stop(state: &Shared, task_id: &str) {
-    let Some(b) = backend(state).cloned() else { return };
-    let id = task_id.to_string();
-    tokio::spawn(async move {
-        if let Err(e) = b.interrupt(&id).await {
-            tracing::warn!(task = %id, "stopping the agent: {e}");
-        }
-    });
+    let tx = SENDS.lock().unwrap().get(&key(state)).cloned();
+    if tx.is_none_or(|tx| tx.send((task_id.to_string(), Cmd::Interrupt)).is_err()) {
+        tracing::warn!(task = task_id, "the agent-threads backend isn't running, so the agent can't be stopped");
+    }
 }
 
 /// The task is being deleted: its thread goes first, its harness stopped (its rows would go with the task's,
