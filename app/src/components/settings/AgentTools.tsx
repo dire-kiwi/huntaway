@@ -679,7 +679,7 @@ export function GlobalAgentToolsPanel() {
     }
   };
   const isOn = (profileId: string, id: string) => !!tools?.profile_switches[profileId]?.[id];
-  const supportsSources = hosts.some((h) => h.id === hostId && hostSupports(h, 102));
+  const supportsSources = hosts.some((h) => h.id === hostId && hostSupports(h, 103));
   const ownSkills = tools?.skills.filter((s) => !s.source_id) ?? [];
   const row = (item: ProjectSkill | ProjectMcpServer, kind: "skill" | "server") => (
     <div key={item.id} className="space-y-1.5 px-3 py-2.5">
