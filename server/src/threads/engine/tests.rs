@@ -19,6 +19,13 @@ fn start_fake(s: &Shared, env: &[(&str, &str)]) {
     start_with(s, build_with(s, agent_threads::direct(), claude, CodexOptions::default()));
 }
 
+/// Stops the backend's processes (they stay alive between turns), so they leave nothing behind.
+async fn close_fake(s: &Shared) {
+    if let Some(b) = backend(s) {
+        b.close(true).await.unwrap();
+    }
+}
+
 /// A task (no project) on `s`, with new tasks on agent-threads.
 fn new_task(s: &Shared) -> Task {
     db::set_setting(&s.db(), NEW_TASKS, Some("true")).unwrap();
@@ -87,6 +94,7 @@ fn the_engine_is_fixed_with_the_first_run() {
         s.db().execute("UPDATE tasks SET kind='review' WHERE id=?1", [&t.id]).unwrap();
         let t = db::get_task(&s.db(), &t.id).unwrap().unwrap();
         assert_eq!(fix(&s, t).unwrap().run_engine.as_deref(), Some(LEGACY));
+        close_fake(&s).await;
     })
 }
 
@@ -115,6 +123,7 @@ fn a_task_runs_a_turn_and_a_follow_up_on_agent_threads() {
         assert!(last_reply(&s, &t.id).await.contains("and again"));
         let sessions: i64 = s.db().query_row("SELECT COUNT(DISTINCT session_id) FROM runs WHERE task_id=?1", [&t.id], |r| r.get(0)).unwrap();
         assert_eq!(sessions, 1, "the follow-up resumes the session");
+        close_fake(&s).await;
     })
 }
 
@@ -139,6 +148,7 @@ fn a_message_sent_while_it_works_steers_the_turn() {
             s.db().query_row("SELECT COUNT(*) FROM messages WHERE task_id=?1 AND kind='user' AND json_extract(data,'$.steered')=1", [&t.id], |r| r.get(0)).unwrap();
         assert_eq!(steers, 2, "the board's thread has them");
         assert!(db::get_task(&s.db(), &t.id).unwrap().unwrap().steering.is_empty());
+        close_fake(&s).await;
     })
 }
 
@@ -155,6 +165,7 @@ fn a_stop_interrupts_the_turn() {
         assert_eq!((t.status.as_str(), t.attention_reason.as_deref()), ("needs_attention", Some("Stopped by user")));
         let snap = backend(&s).unwrap().snapshot(&t.id).await.unwrap();
         assert!(snap.items.iter().any(|i| matches!(i, Item::TurnResult(r) if r.interrupted)), "the turn ended as interrupted");
+        close_fake(&s).await;
     })
 }
 
@@ -176,6 +187,7 @@ fn permissions_are_the_boards_prompts() {
 
         // Allowed tools (the board's own, say) aren't asked about.
         assert!(is_allowed(&["mcp__huntaway".into()], "mcp__huntaway__get_task") && !is_allowed(&["mcp__huntaway".into()], "mcp__huntaway2__x"));
+        close_fake(&s).await;
     })
 }
 
@@ -203,6 +215,7 @@ fn a_restart_leaves_runs_to_the_engine() {
         let t = until(&s, &t.id, "its run ended", |t| !t.running).await;
         assert_eq!(t.status, "needs_attention");
         assert!(!s.is_running(&t.id));
+        close_fake(&s).await;
     })
 }
 
@@ -241,7 +254,7 @@ fn deleting_a_task_deletes_its_thread_and_ends_its_run() {
         crate::api::delete_one(&s, &t, false).await.unwrap();
         for _ in 0..200 {
             if !s.is_running(&t.id) && backend(&s).unwrap().get(&t.id).await.unwrap().is_none() {
-                return;
+                return close_fake(&s).await;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
@@ -261,6 +274,7 @@ fn an_abort_keeps_the_thread() {
         assert!(runner::abort(&s, &t.id));
         until(&s, &t.id, "stopped", |t| !t.running).await;
         assert!(backend(&s).unwrap().get(&t.id).await.unwrap().is_some());
+        close_fake(&s).await;
     })
 }
 
@@ -296,6 +310,7 @@ fn messages_not_wholly_the_users_carry_their_origin() {
         let ids: Vec<String> = users.iter().filter_map(|u| u.1.clone()).collect();
         let left = ORIGINS.lock().unwrap();
         assert!(ids.iter().all(|c| !left.contains_key(c)), "the follower took their origins");
+        close_fake(&s).await;
     })
 }
 
@@ -308,12 +323,17 @@ fn a_message_after_a_stop_carries_on_in_a_new_turn() {
         start_fake(&s, &[("IA_FAKE_CLAUDE_SLEEP", "3")]);
         let t = new_task(&s);
         runner::send(&s, &t.id, "the first thing").unwrap();
-        until(&s, &t.id, "its run going", |_| db::active_runs(&s.db()).unwrap().iter().any(|r| r.status == "running")).await;
+        // Once the agent is at work on its turn (it has said its session): a stop before then ends the run as
+        // stopped, as an agent that hasn't started its turn has nothing to interrupt.
+        until(&s, &t.id, "its agent at work", |t| t.running && t.session_id.is_some()).await;
         assert!(runner::stop(&s, &t.id));
         runner::send(&s, &t.id, "do this instead").unwrap();
         let done = until(&s, &t.id, "its run ended", |t| !t.running).await;
-        assert!(last_reply(&s, &t.id).await.contains("do this instead"));
-        assert_eq!((done.status.as_str(), done.attention_reason.as_deref()), ("in_review", None));
+        let snap = backend(&s).unwrap().snapshot(&t.id).await.unwrap();
+        let items: Vec<String> = snap.items.iter().map(|i| serde_json::to_string(i).unwrap()).collect();
+        assert!(last_reply(&s, &t.id).await.contains("do this instead"), "{}", items.join("\n"));
+        assert_eq!((done.status.as_str(), done.attention_reason.as_deref()), ("in_review", None), "{}", items.join("\n"));
+        close_fake(&s).await;
     })
 }
 
@@ -345,6 +365,7 @@ fn fast_turns_on_many_tasks_end_their_runs_once_each() {
             assert_eq!(failed, 0);
             assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().status, "in_review");
         }
+        close_fake(&s).await;
     })
 }
 
@@ -392,6 +413,7 @@ fn a_late_answer_gets_a_run_that_the_board_tools_reach() {
         until(&s, &t.id, "to in_review", |t| !t.running && t.status == "in_review").await;
         let runs: i64 = s.db().query_row("SELECT COUNT(*) FROM runs WHERE task_id=?1", [&t.id], |r| r.get(0)).unwrap();
         assert_eq!(runs, 2);
+        close_fake(&s).await;
     })
 }
 
@@ -428,7 +450,12 @@ fn the_helpers_read_the_token_from_a_private_file() {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(token_file(&s)).unwrap().permissions().mode() & 0o777, 0o600);
         }
+        // Codex's timeouts for the board's servers, as its adapter has them: a wait lasts up to an hour.
+        assert_eq!(servers["huntaway"].codex_settings().unwrap()["tool_timeout_sec"], json!(crate::mcp::wait::MAX_SECS + 300));
+        assert_eq!(servers["huntaway"].codex_settings().unwrap()["default_tools_approval_mode"], json!("approve"));
+        assert_eq!(servers["gh"].codex_settings().unwrap()["tool_timeout_sec"], json!(600));
         // Codex's sandbox has the network, as the board's own adapter gives it.
         assert_eq!(codex_config()["sandbox_workspace_write.network_access"], json!(true));
+        close_fake(&s).await;
     })
 }

@@ -11,8 +11,8 @@ default-members = [".", "shim", "broker"]
 
 [dependencies]
 # Threads of agents on Claude Code and Codex, the library extracted from Huntaway's thread layer (see
-# docs/agent-threads-feasibility.md). Its store and the history import (src/threads/) use it so far.
-agent-threads = { git = "https://github.com/dire-kiwi/agent-threads", rev = "b00945478bbaf09ae55ad4c41df5b73b2c932ca8" }
+# docs/agent-threads-feasibility.md). Its store, the history import and the engine (src/threads/) use it.
+agent-threads = { git = "https://github.com/dire-kiwi/agent-threads", rev = "c67cdbbc2d6beb68d69b1b0744ca2af2651ba112" }
 anyhow = "1.0.104"
 # agent-threads' Store trait is an async_trait.
 async-trait = "0.1.92"

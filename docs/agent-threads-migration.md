@@ -13,7 +13,7 @@ measurement or a prediction of migration time.
 
 ## Status: the importer's first steps (HA-128)
 
-Huntaway now depends on agent-threads (a git dependency pinned to `b009454`, which adds no second copy of any crate)
+Huntaway now depends on agent-threads (a git dependency pinned to `b009454`, since moved to `c67cdbb` for the engine; it adds no second copy of any crate)
 and has the first steps of the safe importer below, in `server/src/threads/`. Nothing in the server reads the new
 tables yet: running agents, the API and the UI are unchanged. (Since then, see *Engine core* below.)
 
@@ -67,8 +67,9 @@ One backend in `AppState::agent_threads` runs them, on the store, with Claude Co
   and `gh-mcp` helpers and the project's servers as MCP servers. Then it's sent the message, or compacts. The helpers
   call the board as the thread (`IA_RUN_ID=thread:<task id>`, which the board takes as the task's run at the time
   of each call, as their process outlives a run), and read the board's token from a 0600 file (`IA_TOKEN_FILE`),
-  since Claude Code gets its MCP config on its command line. Codex threads get the sandbox's network, as legacy
-  Codex runs do.
+  as their environment is the agent's. For Codex, the board's servers have the timeouts and approvals its adapter
+  gives them (a `wait` lasts up to an hour), and threads get the sandbox's network, as legacy Codex runs do. Claude
+  Code's MCP config is a 0600 file (agent-threads `c67cdbb`, AT-32), not on its command line.
 - It runs with `user_settings: true` (Codex: `user_config: true`). Skills behave as on a legacy run (checked
   with Claude on a test server): the project's skills load through `--add-dir`, a disabled skill's
   `Skill(name)` in `--disallowedTools` is refused, and the crate's own skills plugin isn't used. Codex gets the
@@ -90,8 +91,7 @@ One backend in `AppState::agent_threads` runs them, on the store, with Claude Co
   profile, MCP approvals and `auto` mode, Codex rate limits and cost, and context usage. The board's readers of
   raw messages (reviews' `changes_code`, summaries, titles, `last_message`) don't see the agent's items until
   HA-144. A thread's harness process stays alive between turns (one idle process per task), until AT-31 lets
-  the board close it. Codex's MCP tool timeouts for the board's servers (a `wait` lasts up to an hour) wait for
-  AT-32, as does Claude Code's MCP config in a private file rather than on its command line.
+  the board close it.
 
 Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
 task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and

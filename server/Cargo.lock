@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "agent-threads"
 version = "0.0.0"
-source = "git+https://github.com/dire-kiwi/agent-threads?rev=b00945478bbaf09ae55ad4c41df5b73b2c932ca8#b00945478bbaf09ae55ad4c41df5b73b2c932ca8"
+source = "git+https://github.com/dire-kiwi/agent-threads?rev=c67cdbbc2d6beb68d69b1b0744ca2af2651ba112#c67cdbbc2d6beb68d69b1b0744ca2af2651ba112"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

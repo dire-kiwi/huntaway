@@ -309,16 +309,26 @@ fn mcp_servers(state: &Shared, run: &Run, spec: &Spec) -> BTreeMap<String, McpSe
         env
     };
     let mut servers = BTreeMap::new();
-    let board = McpServer::Stdio { command: exe.clone(), args: vec!["mcp".into()], env: env(&[]) };
+    // For Codex, as its adapter has them (agent/codex/adapter.rs): the board's tools never need approval, and a
+    // `wait` blocks for as long as it's asked to (send_to_task can take a while too), as can gh. Claude Code
+    // ignores these, and has MCP_TOOL_TIMEOUT (see `launch`).
+    let board = McpServer::Stdio { command: exe.clone(), args: vec!["mcp".into()], env: env(&[]), codex: Map::new() }
+        .codex("tool_timeout_sec", crate::mcp::wait::MAX_SECS + 300)
+        .codex("default_tools_approval_mode", "approve");
     servers.insert(crate::agent::runner::MCP_SERVER_NAME.to_string(), board);
     let account: Vec<(&str, &str)> = spec.github_account.as_deref().map(|a| (crate::mcp::gh_mcp::ACCOUNT_ENV, a)).into_iter().collect();
-    let gh = McpServer::Stdio { command: exe, args: vec!["gh-mcp".into()], env: env(&[[("IA_CWD", spec.cwd.as_str())].as_slice(), &account].concat()) };
+    let gh = McpServer::Stdio { command: exe, args: vec!["gh-mcp".into()], env: env(&[[("IA_CWD", spec.cwd.as_str())].as_slice(), &account].concat()), codex: Map::new() }
+        .codex("tool_timeout_sec", 600);
     servers.insert(crate::mcp::gh_mcp::SERVER_NAME.to_string(), gh);
     for (name, server) in &spec.mcp_servers {
         if name == crate::agent::runner::MCP_SERVER_NAME {
             continue;
         }
         match McpServer::from_json(server) {
+            // One the project allows without asking (`--allowedTools mcp__<name>`) needs no approval in Codex either.
+            Some(s) if spec.allowed.contains(&crate::agent::agent_tools::tool_prefix(name)) => {
+                servers.insert(name.clone(), s.codex("default_tools_approval_mode", "approve"));
+            }
             Some(s) => {
                 servers.insert(name.clone(), s);
             }
