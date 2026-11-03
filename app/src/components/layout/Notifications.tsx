@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Bell, Smartphone, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { api, type PushDevice, type PushEvents, type PushPrompts } from "../../api";
+import { api, ASSISTANT_PUSH_EVENTS, type PushDevice, type PushEvents, type PushPrompts } from "../../api";
 import {
   NOTIFY_EVENTS,
   NOTIFY_MODES,
@@ -256,7 +256,7 @@ const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
   { id: "all", label: "Every task's" },
 ];
 
-/** The events a device gets by push, and whose permission prompts. */
+/** The events a device gets by push (the board's, and the assistant's replies and reports), and whose permission prompts. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   const prompts = device.events.prompts ?? "assistant";
   return (
@@ -267,6 +267,20 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
             type="checkbox"
             className="mt-0.5 accent-accent"
             checked={device.events[e.id]}
+            onChange={(ev) => onChange({ ...device.events, [e.id]: ev.target.checked })}
+          />
+          <span>
+            <span className="text-fg">{e.label}</span>
+            {!compact && <span className="text-faint"> · {e.hint}</span>}
+          </span>
+        </label>
+      ))}
+      {ASSISTANT_PUSH_EVENTS.map((e) => (
+        <label key={e.id} className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            checked={!!device.events[e.id]}
             onChange={(ev) => onChange({ ...device.events, [e.id]: ev.target.checked })}
           />
           <span>

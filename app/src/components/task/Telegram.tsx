@@ -2,7 +2,7 @@ import { Copy, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type Task, type Telegram, type TelegramEvents, type TelegramLink } from "../../api";
 import { onTelegram } from "../../store";
-import { Ago, Button, copyText, IconButton, Input, Toggle, useAsyncAction, useConfirm } from "../ui";
+import { Ago, Button, copyText, IconButton, Input, useAsyncAction, useConfirm } from "../ui";
 
 /** A profile's Telegram bot on its assistant's host (API 104), loaded and kept up to date as it changes there. */
 function useTelegram(hostId: string, profileId: string) {
@@ -27,17 +27,13 @@ function useTelegram(hostId: string, profileId: string) {
   return { tg, setTg, error };
 }
 
-/** Events push sends too (to the devices that chose them in Settings → Notifications): each goes by push alone, or by
- *  push and Telegram. */
+/** What the bot can send, which push sends too (to the devices that chose it in Settings → Notifications): each goes by
+ *  push alone, or by push and Telegram. */
 const PUSHED: { key: keyof TelegramEvents; label: string }[] = [
   { key: "prompts", label: "Its prompts (Allow and Deny) and questions" },
   { key: "attention", label: "When it needs attention" },
-];
-
-/** Events push doesn't send: Telegram or nowhere. */
-const TELEGRAM_ONLY: { key: keyof TelegramEvents; label: string }[] = [
   { key: "reports", label: "Its routines' reports" },
-  { key: "replies", label: "Its replies to what you send from the board too" },
+  { key: "replies", label: "Its replies to what you send from the board" },
 ];
 
 /** The assistant's Telegram, in its details: the bot's token, the chat it's linked to, and what it sends there. */
@@ -196,11 +192,10 @@ export function TelegramSection({ task }: { task: Task }) {
             </select>
           </label>
         ))}
-        <div className="text-faint">Push goes to the devices that chose these in Settings → Notifications.</div>
-        <div className="pt-1 text-fg">On Telegram only (push doesn't send these):</div>
-        {TELEGRAM_ONLY.map((e) => (
-          <Toggle key={e.key} checked={tg.events[e.key]} onChange={(on) => setEvent(e.key, on)} label={<span className="text-left text-[12.5px]">{e.label}</span>} />
-        ))}
+        <div className="text-faint">
+          Push goes to the devices that chose these in Settings → Notifications (replies and reports are off there until chosen). Replies to what
+          you send here aren't pushed.
+        </div>
       </div>
 
       {tg.last_error && (

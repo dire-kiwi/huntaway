@@ -124,7 +124,7 @@ test("a device turns push on in Settings and gets the board's notifications", as
     assert.equal(subscriptions[0].endpoint, endpoint);
     assert.match(subscriptions[0].name, /^Chrome on \w+$/);
     // The events this browser notifies of, to start with.
-    assert.deepEqual(subscriptions[0].events, { attention: true, review: true, merge: false, done: false, prompts: "assistant" });
+    assert.deepEqual(subscriptions[0].events, { attention: true, review: true, merge: false, done: false, prompts: "assistant", replies: false, reports: false });
 
     // A test.
     await ui.run(["click Send a test", "wait It should show on this device"]);
@@ -153,7 +153,14 @@ test("a device turns push on in Settings and gets the board's notifications", as
 
     // The device's own events: Done too, and not attention.
     await ui.run(["click role=group[name^='Events pushed to'] >> text=Done", "click role=group[name^='Events pushed to'] >> text=Needs attention", "sleep 300"]);
-    assert.deepEqual((await server.api("GET", "/push")).subscriptions[0].events, { attention: false, review: true, merge: false, done: true, prompts: "assistant" });
+    const events = { attention: false, review: true, merge: false, done: true, prompts: "assistant", replies: false, reports: false };
+    assert.deepEqual((await server.api("GET", "/push")).subscriptions[0].events, events);
+    // The assistant's routines' reports (HA-162), kept over a reload.
+    await ui.run(["click role=group[name^='Events pushed to'] >> text=Routine reports", "sleep 300"]);
+    assert.deepEqual((await server.api("GET", "/push")).subscriptions[0].events, { ...events, reports: true });
+    await ui.run(["goto /settings", "wait On for this device"]);
+    assert.equal(await ui.page.getByRole("checkbox", { name: /Routine reports/ }).isChecked(), true);
+    assert.equal(await ui.page.getByRole("checkbox", { name: /Assistant's replies/ }).isChecked(), false);
     // And whose permission prompts.
     await ui.page.getByLabel(/^Permission prompts pushed to/).selectOption("all");
     await ui.run(["sleep 300"]);
