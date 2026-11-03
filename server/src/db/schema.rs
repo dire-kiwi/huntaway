@@ -880,8 +880,12 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(&format!("{SCHEMA_V85} PRAGMA user_version=85; COMMIT;"))?;
     }
     if version < 86 {
-        // IF NOT EXISTS, in case another migration takes this version first.
+        // Where the database file was copied from (see db/file.rs).
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V86} PRAGMA user_version=86; COMMIT;"))?;
+    }
+    if version < 87 {
+        // IF NOT EXISTS, in case another migration takes this version first.
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V87} PRAGMA user_version=87; COMMIT;"))?;
     }
     Ok(conn)
 }
@@ -938,7 +942,7 @@ fn call_usage_ids(conn: &Connection) -> Result<()> {
 }
 
 /// The latest database version (`PRAGMA user_version`).
-pub const VERSION: i64 = 86;
+pub const VERSION: i64 = 87;
 
 /// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
 /// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON
@@ -972,10 +976,23 @@ CREATE INDEX IF NOT EXISTS at_runs_thread ON at_runs(thread_id);
 CREATE INDEX IF NOT EXISTS at_runs_active ON at_runs(active, started_at, id);
 "#;
 
+/// The older database file this one was copied from when this build first started on its data dir (see
+/// db/file.rs): its name in the data dir, its `user_version`, and its state then (`file::FileState`, as JSON), to tell
+/// whether an older build has used it since. One row at most, replaced when it's copied again.
+const SCHEMA_V86: &str = r#"
+CREATE TABLE IF NOT EXISTS db_origin (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  source TEXT NOT NULL,
+  source_version INTEGER NOT NULL,
+  source_state TEXT NOT NULL,
+  copied_at TEXT NOT NULL
+);
+"#;
+
 /// What the board knows about agent-threads threads' items that the items don't say (see threads/history.rs):
 /// who sent a user message, say, as JSON (its Origin), and when each item was added (`at`, the time the store
 /// was given it, unless it said), by item. They go with their thread.
-const SCHEMA_V86: &str = r#"
+const SCHEMA_V87: &str = r#"
 CREATE TABLE IF NOT EXISTS at_item_origins (
   thread_id TEXT NOT NULL REFERENCES at_threads(id) ON DELETE CASCADE,
   item_id TEXT NOT NULL,

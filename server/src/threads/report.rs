@@ -133,17 +133,21 @@ pub fn task_report(c: &Connection, task: &db::Task, key: String) -> Result<(Task
     Ok((report, None))
 }
 
-/// Opens `path` (read-only unless `write`), at the version this build would migrate it to.
+/// Opens `path` (read-only unless `write`), at the version this build would migrate it to. A data dir is its
+/// `db::file::FILE`.
 pub(super) fn open(path: &Path, write: bool) -> Result<Connection> {
+    let in_dir = path.join(db::file::FILE);
+    let path = if path.is_dir() { in_dir.as_path() } else { path };
     let flags = if write { OpenFlags::SQLITE_OPEN_READ_WRITE } else { OpenFlags::SQLITE_OPEN_READ_ONLY } | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let c = Connection::open_with_flags(path, flags).with_context(|| format!("opening {}", path.display()))?;
     c.execute_batch(if write { "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;" } else { "PRAGMA busy_timeout=5000;" })?;
     let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version != db::VERSION {
         bail!(
-            "{} is at database version {version}, and this build reads version {}: run it on a copy that this build has opened (a test server on it, say)",
+            "{} is at database version {version}, and this build reads version {}: run it on a copy that this build has opened (a test server's {}, say)",
             path.display(),
-            db::VERSION
+            db::VERSION,
+            db::file::FILE
         );
     }
     Ok(c)

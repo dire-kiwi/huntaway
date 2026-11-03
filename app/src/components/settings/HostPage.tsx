@@ -6,7 +6,7 @@ import { navigate } from "../../router";
 import { profileConfigLabel, useStore } from "../../store";
 import { HostClaudeConfigs } from "./ClaudeConfigs";
 import { AgentDefaultsRow, CopyLoginModal, HostVersion, ProfileForm, TerminalToolsRow } from "./Hosts";
-import { installName, PHASES, Releases, RestartModal, ServerPanel, ShellNotice, stagedRelease } from "./Server";
+import { DatabaseLine, installName, PHASES, Releases, RestartModal, ServerPanel, ShellNotice, stagedRelease } from "./Server";
 import { Button, IconButton, MenuButton, Modal, timeAgo, useConfirm } from "../ui";
 
 const MODE: Record<string, string> = { local: "this hub's own host", outbound: "linked by URL", inbound: "dials in", ssh: "over SSH" };
@@ -177,7 +177,7 @@ function RemoteServer({ hostId }: { hostId: string }) {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [watching, setWatching] = useState<string | null>(null); // boot id before the restart
   const [down, setDown] = useState(false);
-  const [asking, setAsking] = useState<"restart" | "release" | "rollback" | null>(null);
+  const [asking, setAsking] = useState<"restart" | "release" | "rollback" | "recopy" | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
   // A background download's progress is worth following more closely.
   const downloading = !!status?.release?.download && status.release.download.phase !== "failed";
@@ -266,6 +266,7 @@ function RemoteServer({ hostId }: { hostId: string }) {
             ) : (
               !release && <div>Not running from a source checkout, so it can restart but not rebuild.</div>
             )}
+            <DatabaseLine status={status} onRecopy={() => setAsking("recopy")} />
             <div>Agents keep running through a restart.</div>
           </>
         ) : (
@@ -291,6 +292,7 @@ function RemoteServer({ hostId }: { hostId: string }) {
           status={status}
           hostId={hostId}
           release={asking === "release" ? "update" : asking === "rollback" ? "rollback" : undefined}
+          recopy={asking === "recopy"}
           onStarted={() => setWatching(status.boot_id)}
           onClose={() => setAsking(null)}
         />

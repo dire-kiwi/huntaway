@@ -15,11 +15,12 @@ measurement or a prediction of migration time.
 
 Huntaway now depends on agent-threads (a git dependency pinned to `b009454`, which adds no second copy of any crate)
 and has the first steps of the safe importer below, in `server/src/threads/`. The board's features that read a thread
-read it as items (below), and nothing else reads the new tables yet: running agents, the API and the UI are unchanged.
+read it as items, and the API serves agent-threads threads (below); running agents and the UI are unchanged.
 
-- **Store** (`threads/store.rs`): agent-threads' `Store` on huntaway.db, in `at_threads`, `at_events`,
-  `at_snapshots` and `at_runs` (migration 85), and `at_item_origins` and `at_item_times` (migration 86, see the
-  readers below): appending an `item.added` records when the item was added (as it says, or the time it's saved). It passes the crate's store conformance cases
+- **Store** (`threads/store.rs`): agent-threads' `Store` on the board's database, in `at_threads`, `at_events`,
+  `at_snapshots` and `at_runs` (migration 85), and `at_item_origins` and `at_item_times` (migration 87, see the
+  readers below): appending an `item.added` records when the item was added (as it says, or the time it's saved). It
+  passes the crate's store conformance cases
   (`spec/conformance/store.json`, copied next to it at the pinned revision). A thread whose `metadata.task_id`
   names a task is deleted with it.
 - **Converter** (`threads/import.rs`): a pure function from a task's stored messages to a `Thread`, saved
@@ -60,6 +61,9 @@ harness's id for a second call with an id; Claude's task id for a subagent; a tu
   raw-message versions are gone. Their tests run each reader on a legacy thread and on its staged import, and expect
   the same answers. `huntaway threads-readers --db <copy> [--json [--no-times]] [tasks]` prints every reader's
   answers and times for each task, to compare two builds on a copy of a live board.
+- **API and live updates** (`threads/live.rs`, API 105): a task's thread in windows and pages, its saved events
+  after a seq, `respond`/`compact`/`new_session`, and every thread's events on `/api/ws` as `thread_event`s,
+  through the hub too. See [agent-threads-api.md](agent-threads-api.md). A staged import is read as saved.
 
 On a scrubbed copy of the live board (2026-11-03, a debug build), all 1,373 tasks converted: 243,246 messages
 (602 MB) gave 226,094 events (536 MB) in about a minute. 224,551 rows converted, 18,689 were redundant (mostly
@@ -79,6 +83,21 @@ most 20 ms (2,999 messages); all the tool calls at most 44 ms (3,271 messages, a
 a debug build); and a subagent lookup that has to read a whole thread about 90 ms, which the wait tool only needs for
 a terminal notification that names no call while its agent waits. In a debug build on the largest threads,
 `last_message` went from 0.1 ms to 2–5 ms and the replies from 3–7 ms to 7–38 ms.
+
+- **A database file of its own** (`db/file.rs`, HA-153): these builds use `huntaway-2.db`, copied from
+  `huntaway.db` (or `issue-agent.db`) on their first start and migrated (version 86 records where it came from), so
+  going back to an older build just opens the older file as it was at the switch. When an older build has used
+  it since, the server warns, and copies it again only on request (`--recopy-db`, or Copy again in Settings →
+  Server). See *The database file* in the README.
+
+For the release notes of the first release with it:
+
+> **A new database file.** This version keeps the board in `huntaway-2.db` in the data dir, a copy of
+> `huntaway.db` (or `issue-agent.db`) made the first time it starts, which takes a few seconds on a big board.
+> The old file isn't changed, so going back to an earlier version (Roll back) returns to the board as it was
+> before this update: tasks, messages and runs from in between aren't there. Coming back to this version after
+> that shows a warning in Settings → Server, with **Copy again** to start over from the old file. The old file
+> can be deleted once you won't go back.
 
 Not done yet, from the steps below: an import record with the source-to-item mapping and the report kept per
 task, the cutover gate and `run_engine` marker, loading an imported thread in a backend and continuing it, and

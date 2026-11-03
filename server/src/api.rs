@@ -151,6 +151,11 @@ fn host_routes() -> Router<Shared> {
         .route("/tasks/{id}", get(get_task).patch(update_task).delete(delete_task))
         .route("/tasks/{id}/messages", get(list_messages).post(send_message))
         .route("/tasks/{id}/questions/{message_id}", post(answer_question))
+        // API 105: the task's agent-threads thread (see threads/live.rs, docs/agent-threads-api.md).
+        .route("/tasks/{id}/thread", get(get_agent_thread))
+        .route("/tasks/{id}/thread/items", get(agent_thread_items))
+        .route("/tasks/{id}/thread/events", get(agent_thread_events))
+        .route("/tasks/{id}/thread/commands", post(agent_thread_command))
         .route("/tasks/{id}/stop", post(stop_task))
         .route("/tasks/{id}/queue", axum::routing::delete(unqueue_message))
         .route("/tasks/{id}/wait-for-limit", post(crate::agent::usage::wait_for_reset))
@@ -212,6 +217,7 @@ fn host_routes() -> Router<Shared> {
         .route("/admin/release/check", post(check_releases))
         .route("/admin/release/update", post(update_to_release))
         .route("/admin/release/rollback", post(roll_back_release))
+        .route("/admin/database/recopy", post(recopy_database))
         .route("/host/ws", get(ws))
 }
 
