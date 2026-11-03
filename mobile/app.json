@@ -45,6 +45,15 @@
           "cameraPermission": "Huntaway uses the camera to take photos for tasks.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#0f0f13"
+        }
       ]
     ],
     "scheme": "huntaway",

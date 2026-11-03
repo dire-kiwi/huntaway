@@ -508,8 +508,9 @@ the server, which makes a new one (browsers, and hubs that link this host, then 
 The app is `nz.net.ivan.huntaway` on both platforms, as the desktop app is, and takes the release's
 version: `mobile/scripts/release-version.js` writes it into `app.json` before a release build, with
 Android's `versionCode` worked out from it (1.2.3 → 10203999, 1.2.3-rc.2 → 10203002), so each
-release installs over the one before. The repository keeps 1.0.0. Its icons are rendered from the
-board's (`app/public/icon.svg`) by `mobile/scripts/icons.sh`.
+release installs over the one before. The repository keeps 1.0.0. Its icons and launch screen
+(`expo-splash-screen`) are rendered from the board's icon (`app/public/icon.svg`) by
+`mobile/scripts/icons.sh`.
 
 **Android** is built by the release workflow's `android` job (`.github/workflows/release.yml`) on
 GitHub's runner, with `npx expo prebuild` and Gradle, rather than on EAS: it needs no Expo account

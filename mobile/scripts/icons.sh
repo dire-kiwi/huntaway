@@ -7,7 +7,8 @@
 #   android-icon-foreground.png  its front layer, the dog: 108dp, of which the launcher shows the middle 72dp (the
 #                                board's 512 units), masked to a circle or squircle, so the body runs on past the edges
 #   android-icon-monochrome.png  Android 13's themed icon: one colour, the dark fur, with the tan and eyes cut out
-#   splash-icon.png, favicon.png the board's rounded icon
+#   splash-icon.png              the launch screen's: the icon in a circle, as Android 12 masks it to one
+#   favicon.png                  the board's rounded icon
 set -euo pipefail
 cd "$(dirname "$0")/../assets"
 out=$(mktemp -d)
@@ -42,6 +43,8 @@ svg() { echo "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"$1\"><defs>$gr
 svg "0 0 512 512" 0 "<rect width=\"512\" height=\"512\" fill=\"url(#bg)\"/><g clip-path=\"url(#c)\">$(dog "${colours[@]}")</g>" > "$out/icon.svg"
 # The board's own, rounded.
 svg "0 0 512 512" 112 "<rect width=\"512\" height=\"512\" rx=\"112\" fill=\"url(#bg)\"/><g clip-path=\"url(#c)\">$(dog "${colours[@]}")</g>" > "$out/rounded.svg"
+# The splash: in a circle.
+svg "0 0 512 512" 0 "<clipPath id=\"o\"><circle cx=\"256\" cy=\"256\" r=\"256\"/></clipPath><g clip-path=\"url(#o)\"><rect width=\"512\" height=\"512\" fill=\"url(#bg)\"/>$(dog "${colours[@]}")</g>" > "$out/splash.svg"
 # Adaptive layers: 768 units (108dp) around the board's 512 (72dp).
 svg "-128 -128 768 768" 0 "<rect x=\"-128\" y=\"-128\" width=\"768\" height=\"768\" fill=\"url(#bg)\"/>" > "$out/background.svg"
 svg "-128 -128 768 768" 0 "$(dog "${colours[@]}")" > "$out/foreground.svg"
@@ -54,8 +57,8 @@ render icon 1024 icon.png
 render background 1024 android-icon-background.png
 render foreground 1024 android-icon-foreground.png
 render monochrome 1024 android-icon-monochrome.png
-render rounded 1024 splash-icon.png
+render splash 1024 splash-icon.png
 render rounded 48 favicon.png
 # iOS refuses an icon with an alpha channel.
-magick icon.png -background "#4f46e5" -alpha remove -alpha off icon.png
+magick icon.png -background "#4f46e5" -alpha remove -alpha off -define png:exclude-chunks=date,time icon.png
 ls -l icon.png android-icon-*.png splash-icon.png favicon.png
