@@ -7,9 +7,10 @@
 //! The code is good for five minutes and one pairing (`POST /devices/pair` swaps it and the device's name for its
 //! token), and is only kept in memory, so a restart forgets it. The QR code never holds `auth_token`.
 //!
-//! Paired devices can use the board as its token can, except what would outlast revoking them (see `forbidden`):
-//! the routes that hand out the board's or hub's token or a Claude login, and terminals, which are a shell on the host.
-//! Nor can they pair more devices or manage the others: they may only list them and unpair themselves.
+//! Paired devices can only use the routes the mobile app needs (see `HUB`): profiles, projects, tasks and their
+//! threads, attachments, permission prompts, the board's events and hosts, and the devices list, from which they may
+//! only unpair themselves. Nothing that would outlast revoking them: not the routes that hand out the board's or hub's
+//! token or a Claude login, linking hosts, terminals (a shell on the host), settings or admin.
 //!
 //! Revoking a device stops the device. It doesn't undo what was done with it before: whoever held it could have had an
 //! agent read the board's files (its `auth_token` among them), as any agent run can. After a phone is lost and may
@@ -91,24 +92,101 @@ pub async fn until_revoked(s: Shared, device: Option<DeviceAuth>, work: impl Fut
     }
 }
 
-/// Why a paired device can't make a request to `path` (an `/api/...` path, maybe through the hub as
-/// `/api/h/<host>/...`), if it can't: what it would get outlasts revoking the device.
-pub fn forbidden(path: &str) -> Option<&'static str> {
-    let path = path.strip_prefix("/api").unwrap_or(path);
-    // Through the hub, to a host: the host's own route.
-    let path = match path.strip_prefix("/h/") {
-        Some(rest) => rest.find('/').map_or("", |i| &rest[i..]),
-        None => path,
+/// What a paired device may do: the routes the mobile app uses, by method and path after `/api`, with `*` for one path
+/// parameter. Everything else gets a 403, so a route added to the API is closed to devices until it's added here. It's
+/// an allowlist rather than a list of what to refuse because that list missed routes twice (`hosts/copy-claude-config`
+/// moves a Claude login to another host, and an encoded path got past it), and what a device must not reach (tokens,
+/// Claude logins, terminals, host linking, settings, admin) is most of the API.
+///
+/// `HUB` routes are the board's own (`/api/<route>`), `HOST` routes a host's, also reached through the hub as
+/// `/api/h/<host>/<route>`, where the request is made with the board's or the link's token.
+const HUB: &[(&str, &str)] = &[
+    ("GET", "ws"),
+    ("GET", "hosts"),
+    ("GET", "devices"),
+    // Only itself (see `revoke`).
+    ("DELETE", "devices/*"),
+];
+const HOST: &[(&str, &str)] = &[
+    ("GET", "profiles"),
+    ("GET", "profiles/*/projects"),
+    ("GET", "profiles/*/tasks"),
+    ("GET", "projects/*"),
+    ("GET", "projects/*/tasks"),
+    ("POST", "projects/*/tasks"),
+    ("GET", "tasks/*"),
+    ("PATCH", "tasks/*"),
+    ("GET", "tasks/*/messages"),
+    ("POST", "tasks/*/messages"),
+    ("POST", "tasks/*/questions/*"),
+    ("POST", "tasks/*/stop"),
+    ("POST", "attachments"),
+    ("GET", "attachments/*/*"),
+    ("GET", "permissions"),
+    ("POST", "permissions/*"),
+];
+
+/// The segments of `path` (an `/api/...` path as the client sent it) as the router sees them, percent-decoded, or
+/// `None` where that's in doubt: an encoded `/`, `\` or `%` (a proxied request is decoded once more on its host, so
+/// `%252F` would become a `/` there), an empty segment, `.` or `..`, or bytes that aren't UTF-8.
+fn segments(path: &str) -> Option<Vec<String>> {
+    path.strip_prefix("/api/")?
+        .split('/')
+        .map(|raw| percent_decode(raw).filter(|seg| !seg.is_empty() && seg != "." && seg != ".." && !seg.contains(['/', '\\', '%'])))
+        .collect()
+}
+
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match (b[i] == b'%').then(|| b.get(i + 1..i + 3)).flatten().and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok()) {
+            Some(c) => {
+                out.push(c);
+                i += 3;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Whether segments match a route pattern of `HUB` or `HOST`.
+fn matches(segs: &[String], pattern: &str) -> bool {
+    let pattern: Vec<&str> = pattern.split('/').collect();
+    pattern.len() == segs.len() && pattern.iter().zip(segs).all(|(p, s)| *p == "*" || p == s)
+}
+
+/// Why a paired device can't make this request, if it can't (see `HUB`): `path` is the whole path, as the client sent
+/// it, `/api/...` or `/api/h/<host>/...`. The auth middleware checks it, and the hub's proxy again on the path it
+/// forwards with its own token.
+pub fn refused(method: &str, path: &str) -> Option<&'static str> {
+    let Some(segs) = segments(path) else {
+        return Some("a paired device's request must be a plain path: no encoded '/', '%' or '\\', empty segments, '.' or '..'");
     };
-    let parts: Vec<&str> = path.trim_end_matches('/').split('/').skip(1).collect();
-    match parts.as_slice() {
-        // The board's token and the hub's, which a host joins with.
-        ["hosts", "join", ..] => Some("a paired device can't get the board's tokens: link hosts from the board"),
-        // A shell on the host, which can read anything the board can.
-        ["tasks", _, "terminal", ..] => Some("a paired device can't open terminals: use the web board"),
-        // A Claude login, with its credentials.
-        ["claude-configs", _, "archive"] | ["profiles", _, "claude-config"] => Some("a paired device can't export or import Claude logins: use the web board"),
-        _ => None,
+    let allowed = match segs.as_slice() {
+        [h, _host, rest @ ..] if h == "h" => HOST.iter().any(|(m, p)| *m == method && matches(rest, p)),
+        _ => HUB.iter().chain(HOST).any(|(m, p)| *m == method && matches(&segs, p)),
+    };
+    (!allowed).then_some("a paired device can't use this part of the API (tokens, Claude logins, terminals, hosts, settings): use the web board")
+}
+
+/// `refused` for the path the hub's proxy forwards to a host (`rest`, after `/api/h/<host>/`, as decoded by the router).
+pub fn refused_on_host(method: &str, rest: &str) -> Option<&'static str> {
+    refused(method, &format!("/api/h/-/{rest}"))
+}
+
+/// The second check, in the handlers of what must never reach a device whatever `refused` lets through: the board's
+/// tokens, Claude logins, terminals and linking hosts. Through the hub's proxy, the request to this host carries the
+/// device too (but a linked host's, made with the link's token, doesn't: there it's `refused` alone).
+pub fn board_only(device: &Option<Extension<DeviceAuth>>, what: &str) -> ApiResult<()> {
+    match device {
+        Some(_) => Err(ApiError(StatusCode::FORBIDDEN, format!("a paired device can't {what}: use the web board"))),
+        None => Ok(()),
     }
 }
 

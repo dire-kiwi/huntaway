@@ -4,6 +4,14 @@ use super::*;
 
 /// `/api/h/{host_id}/{*rest}`: the UI's way of talking to any host.
 pub async fn proxy(State(s): State<Shared>, Path((host_id, rest)): Path<(String, String)>, req: Request) -> Response {
+    // A paired device's request was checked on its path as sent (in api::auth), and is again on the one forwarded
+    // with our token, as the router decoded it.
+    let device = req.extensions().get::<crate::devices::DeviceAuth>().cloned();
+    if device.is_some()
+        && let Some(why) = crate::devices::refused_on_host(req.method().as_str(), &rest)
+    {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": why}))).into_response();
+    }
     if is_websocket(&req) {
         return proxy_ws(s, host_id, rest, req).await;
     }
@@ -21,7 +29,7 @@ pub async fn proxy(State(s): State<Shared>, Path((host_id, rest)): Path<(String,
         s.push.note_move(&host_id, id, &status);
     }
     let result = if host_id == s.host_id {
-        local_request(&s, &method, &path, (!bytes.is_empty()).then(|| bytes.to_vec())).await
+        local_request_as(&s, &method, &path, (!bytes.is_empty()).then(|| bytes.to_vec()), device).await
     } else {
         let Some(link) = s.links.lock().unwrap().get(&host_id).cloned() else {
             let name = db::get_link(&s.db(), &host_id).ok().flatten().map(|l| l.name).unwrap_or(host_id);
@@ -142,7 +150,8 @@ pub struct AddHost {
 }
 
 /// Link a host we can reach directly.
-pub async fn add_host(State(s): State<Shared>, Json(b): Json<AddHost>) -> ApiResult<Json<Value>> {
+pub async fn add_host(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, Json(b): Json<AddHost>) -> ApiResult<Json<Value>> {
+    crate::devices::board_only(&device, "link hosts")?;
     let url = b.url.trim().trim_end_matches('/').to_string();
     let endpoint = crate::hosts::broker::resolve(&url, None).await.map_err(|e| ApiError::bad(format!("can't resolve {url}: {e:#}")))?;
     let info: Value = http()
@@ -190,10 +199,10 @@ pub async fn remove_host(State(s): State<Shared>, Path(id): Path<String>) -> Api
     Ok(Json(json!({"ok": true})))
 }
 
-/// What a host needs to dial in to this hub: its tokens, which a paired device never gets (see devices::forbidden).
+/// What a host needs to dial in to this hub: its tokens, which a paired device never gets (see devices::HUB).
 pub async fn join_info(State(s): State<Shared>, device: Option<axum::Extension<crate::devices::DeviceAuth>>, headers: HeaderMap) -> Response {
-    if device.is_some() {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "a paired device can't get the board's tokens: link hosts from the board"}))).into_response();
+    if let Err(e) = crate::devices::board_only(&device, "get the board's tokens") {
+        return e.into_response();
     }
     Json(json!({
         "hub_token": s.hub_token,

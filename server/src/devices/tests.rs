@@ -151,10 +151,9 @@ fn revoking_a_device_closes_its_websockets() {
 
         // The board's events (the hub's), this host's own, and the tablet's, which stays open.
         let mut ui = open("/ws", &phone).await;
-        let mut host = open("/host/ws", &phone).await;
         let mut other = open("/ws", &tablet).await;
         assert_eq!(call(&app, "DELETE", &format!("/api/devices/{phone_id}"), BOARD, None).await.0, 200);
-        for ws in [&mut ui, &mut host] {
+        for ws in [&mut ui] {
             let end = tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
                     match ws.next().await {
@@ -216,31 +215,92 @@ fn the_inbox_lists_one_profiles_prompts() {
     })
 }
 
+/// A task, and a Claude login with a credentials file, for a device to try to reach.
+fn task_and_login(s: &Shared, dir: &std::path::Path) -> (String, String) {
+    let p = crate::db::insert_profile(&s.db(), "work", &[], None).unwrap();
+    let t = crate::db::NewTask {
+        profile_id: &p.id,
+        project_id: None,
+        kind: "task",
+        title: "t",
+        description: "",
+        status: "in_progress",
+        use_worktree: false,
+        model: None,
+        effort: None,
+        claude_config_id: None,
+    };
+    let t = crate::db::insert_task(&s.db(), t).unwrap();
+    std::fs::write(dir.join(".credentials.json"), "SECRET-LOGIN").unwrap();
+    let id = crate::util::new_id();
+    s.db()
+        .execute("INSERT INTO claude_configs (id, name, config_dir, created_at) VALUES (?1, 'login', ?2, ?3)", params![id, dir.to_string_lossy(), now()])
+        .unwrap();
+    (t.id, id)
+}
+
 #[test]
 fn a_device_cant_get_the_boards_tokens_or_a_shell() {
     crate::testing::run(async || {
         let s = state();
         let app = crate::api::router(s.clone());
+        let dir = crate::testing::temp_dir();
+        let (task, login) = task_and_login(&s, &dir);
         let (phone, phone_id) = pair_device(&app, "phone").await;
         // The board's own token still gets them.
         let (status, join) = call(&app, "GET", "/api/hosts/join", BOARD, None).await;
         assert_eq!((status, &join["host_token"]), (200, &json!(BOARD)));
-        for path in [
-            "/api/hosts/join",
-            "/api/h/h/hosts/join",
-            "/api/tasks/t1/terminal",
-            "/api/tasks/t1/terminal/ws?cols=80",
-            "/api/h/h/tasks/t1/terminal/ws",
-            "/api/claude-configs/c1/archive",
-            "/api/h/other-host/claude-configs/c1/archive",
-            "/api/profiles/p1/claude-config",
+        let (status, archive) = call(&app, "GET", &format!("/api/h/h/claude-configs/{login}/archive"), BOARD, None).await;
+        assert_eq!(status, 200, "{archive}");
+        assert_eq!(call(&app, "GET", &format!("/api/h/h/tasks/{task}/terminal"), BOARD, None).await.0, 200);
+
+        let get = |p: &str| ("GET", p.replace("{task}", &task).replace("{login}", &login));
+        for (method, path) in [
+            get("/api/hosts/join"),
+            get("/api/h/h/hosts/join"),
+            get("/api/tasks/{task}/terminal"),
+            get("/api/tasks/{task}/terminal/ws?cols=80"),
+            get("/api/h/h/tasks/{task}/terminal/ws"),
+            get("/api/claude-configs/{login}/archive"),
+            get("/api/h/other-host/claude-configs/{login}/archive"),
+            get("/api/profiles/p1/claude-config"),
+            // Encoded, through the hub's proxy, which forwards the decoded path with the board's token.
+            get("/api/h/h/tasks/{task}%2Fterminal"),
+            get("/api/h/h/tasks/{task}%2fterminal"),
+            get("/api/h/h/tasks/{task}/%74erminal"),
+            get("/api/h/h/tasks/{task}%2Fterminal%2Fws"),
+            get("/api/h/h/claude-configs/{login}%2Farchive"),
+            get("/api/h/h/%63laude-configs/{login}/archive"),
+            get("/api/h/h/claude-configs/{login}/%2561rchive"),
+            get("/api/h/h/hosts%2Fjoin"),
+            // Empty and dot segments.
+            get("/api/h/h/tasks//terminal"),
+            get("/api/h/h/tasks/{task}/./terminal"),
+            get("/api/h/h/profiles/../tasks/{task}/terminal"),
+            get("/api/h/h/tasks/{task}/"),
+            // Moving a Claude login to another host, linking one, and the rest of what the app doesn't use.
+            ("POST", "/api/hosts/copy-claude-config".into()),
+            ("POST", "/api/h/h/hosts/copy-claude-config".into()),
+            ("POST", "/api/hosts".into()),
+            ("POST", "/api/hosts/ssh".into()),
+            get("/api/settings"),
+            get("/api/h/h/settings"),
+            ("POST", "/api/h/h/admin/restart".into()),
+            get("/api/host/ws"),
+            ("DELETE", "/api/h/h/tasks/{task}".replace("{task}", &task)),
         ] {
-            let (status, body) = call(&app, "GET", path, &phone, None).await;
-            assert_eq!(status, 403, "{path}: {body}");
-            assert!(!body.to_string().contains(BOARD), "{path}");
+            let body = json!({"from_host": "h", "to_host": "other", "config": "login", "url": "http://127.0.0.1:1", "token": "x"});
+            let (status, out) = call(&app, method, &path, &phone, (method == "POST").then_some(body)).await;
+            assert_eq!(status, 403, "{method} {path}: {out}");
+            assert!(!out.to_string().contains(BOARD) && !out.to_string().contains("archive\":"), "{path}");
         }
         // As ?token= too.
         assert_eq!(call(&app, "GET", &format!("/api/hosts/join?token={phone}"), "", None).await.0, 403);
+        // What the app uses works.
+        for path in ["/api/hosts", "/api/devices", "/api/profiles", "/api/h/h/profiles", "/api/h/h/permissions", "/api/h/h/tasks/{task}", "/api/h/h/tasks/{task}/messages"] {
+            let path = path.replace("{task}", &task);
+            assert_eq!(call(&app, "GET", &path, &phone, None).await.0, 200, "{path}");
+        }
         // Revoked, it has nothing left that works.
         assert_eq!(call(&app, "DELETE", &format!("/api/devices/{phone_id}"), BOARD, None).await.0, 200);
         assert_eq!(call(&app, "GET", "/api/hosts/join", &phone, None).await.0, 401);
@@ -248,12 +308,84 @@ fn a_device_cant_get_the_boards_tokens_or_a_shell() {
     })
 }
 
+/// The second check: the handlers of what a device must never reach refuse a request that carries one, as a request
+/// through the hub's proxy to this host does, whatever the path check let through.
 #[test]
-fn forbidden_paths() {
-    for p in ["/api/hosts/join", "/hosts/join", "/api/h/x/hosts/join", "/api/tasks/a/terminal/keepalive", "/api/profiles/p/claude-config"] {
-        assert!(forbidden(p).is_some(), "{p}");
+fn credential_handlers_refuse_a_device_themselves() {
+    crate::testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let dir = crate::testing::temp_dir();
+        let (task, login) = task_and_login(&s, &dir);
+        for (method, path) in [
+            ("GET", "/api/hosts/join".to_string()),
+            ("POST", "/api/hosts".into()),
+            ("POST", "/api/hosts/ssh".into()),
+            ("POST", "/api/hosts/copy-claude-config".into()),
+            ("GET", format!("/api/claude-configs/{login}/archive")),
+            ("POST", format!("/api/claude-configs/{login}/archive")),
+            ("GET", "/api/profiles/p1/claude-config".into()),
+            ("POST", "/api/profiles/p1/claude-config".into()),
+            ("GET", format!("/api/tasks/{task}/terminal")),
+            ("DELETE", format!("/api/tasks/{task}/terminal")),
+            ("POST", format!("/api/tasks/{task}/terminal/keepalive?tool=x")),
+        ] {
+            let body = json!({"from_host": "h", "to_host": "other", "config": "login", "url": "http://127.0.0.1:1", "token": "x", "target": "x", "archive": ""});
+            let req = Request::builder().method(method).uri(&path).header("authorization", format!("Bearer {BOARD}"));
+            let mut req = req.header("content-type", "application/json").body(axum::body::Body::from(body.to_string())).unwrap();
+            req.extensions_mut().insert(DeviceAuth { id: "d".into(), revoked: s.devices.revoked.subscribe() });
+            let res = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(res.status().as_u16(), 403, "{method} {path}");
+        }
+    })
+}
+
+#[test]
+fn what_a_device_may_do() {
+    for (m, p) in [
+        ("GET", "/api/ws"),
+        ("GET", "/api/hosts"),
+        ("DELETE", "/api/devices/d1"),
+        ("GET", "/api/h/x/profiles"),
+        ("GET", "/api/profiles/p/tasks"),
+        ("POST", "/api/h/x/projects/p/tasks"),
+        ("PATCH", "/api/h/x/tasks/a"),
+        ("GET", "/api/h/x/tasks/a/messages"),
+        ("POST", "/api/h/x/tasks/a/questions/7"),
+        ("POST", "/api/h/x/permissions/p"),
+        ("GET", "/api/h/x/attachments/a/photo%20one.jpg"),
+        ("GET", "/api/h/my%20host/profiles"),
+    ] {
+        assert_eq!(refused(m, p), None, "{m} {p}");
     }
-    for p in ["/api/hosts", "/api/h/x/tasks/a/messages", "/api/tasks/terminal", "/api/claude-configs/c/models", "/api/profiles/p/tasks", "/api/h/hosts/join"] {
-        assert!(forbidden(p).is_none(), "{p}");
+    for (m, p) in [
+        ("GET", "/api/hosts/join"),
+        ("GET", "/api/h/x/hosts/join"),
+        ("GET", "/api/h/x/ws"),
+        ("GET", "/api/h/x/devices"),
+        ("DELETE", "/api/h/x/devices/d1"),
+        ("PATCH", "/api/devices/d1"),
+        ("POST", "/api/devices/pairing"),
+        ("POST", "/api/hosts/copy-claude-config"),
+        ("DELETE", "/api/tasks/a"),
+        ("GET", "/api/tasks/a/terminal"),
+        ("GET", "/api/h/x/tasks/a%2Fterminal"),
+        ("GET", "/api/h/x/tasks/a/%74erminal"),
+        ("GET", "/api/h/x/tasks/a%252Fmessages"),
+        ("GET", "/api/h/x/tasks/a%5Cmessages"),
+        ("GET", "/api/h/x/tasks//messages"),
+        ("GET", "/api/h/x/tasks/./messages"),
+        ("GET", "/api/h/x/tasks/../tasks/a"),
+        ("GET", "/api/h/x/h/y/profiles"),
+        ("GET", "/api/h/x/attachments/a/%FF"),
+        ("GET", "/api/profiles/"),
+        ("GET", "/api"),
+        ("GET", "/profiles"),
+    ] {
+        assert!(refused(m, p).is_some(), "{m} {p}");
     }
+    // The proxy's own check, on the path it forwards.
+    assert_eq!(refused_on_host("GET", "tasks/a/messages"), None);
+    assert!(refused_on_host("GET", "tasks/a/terminal").is_some());
+    assert!(refused_on_host("GET", "hosts/join").is_some());
 }

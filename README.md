@@ -419,10 +419,16 @@ last use, to rename or revoke; revoking one cuts it off at once, open websockets
 app then says it was unpaired. A device can't pair others or manage them (`POST
 /devices/pairing`, `PATCH` and `DELETE /devices/{id}` are for the board's own token), but it can
 list them and unpair itself, which removing the board in the app does. Pairing the same board again
-unpairs the phone's old token there. A device sees the board as its token does, every profile on
-it, except what would outlast revoking it: it can't get the board's or hub's tokens (`GET
-/hosts/join`), open a task's terminal (a shell on the host) or export or import a Claude login, on
-the board or through it on a linked host.
+unpairs the phone's old token there. A device can only use the routes the app does (`HUB` and
+`HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, attachments,
+permission prompts, the board's events and hosts, and the devices list, on every profile, on the
+board or through it on a linked host. Everything else gets a 403, so a new route is closed to
+devices until it's added there. That keeps out what would outlast revoking a device: the board's
+and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
+host), linking hosts, terminals (a shell on the host), settings and admin. A device's path is
+checked percent-decoded, and refused with an encoded `/`, `\` or `%`, an empty segment, `.` or
+`..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
+host linking and terminals refuse a device's request themselves.
 
 Revoking a phone stops the phone, not what was done with it before: whoever held it could have
 started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost

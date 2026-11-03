@@ -1,5 +1,5 @@
-// Answering what an agent waits on, in place: a permission prompt (Allow or Deny; AskUserQuestion's questions by
-// picking answers) and a question asked with request_user_input (pick options or type an answer).
+// Answering what an agent waits on, in place: a permission prompt (Allow or Deny; the questions of Claude's
+// AskUserQuestion and of Codex, which come as a request_user_input prompt, by picking or typing answers) and a question asked with request_user_input (pick options or type an answer).
 import type { Client, PermissionReply } from "@huntaway/client";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
@@ -9,7 +9,9 @@ import { Button, ErrorText, s } from "./ui";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
 
+/** The tools whose prompts are questions for the user, not requests for permission (server: permissions::is_question). */
 const QUESTION_TOOLS = ["AskUserQuestion", "request_user_input"];
+export const isQuestionTool = (tool: string) => QUESTION_TOOLS.includes(tool);
 
 /** One line saying what a tool call does, from its input. */
 export function toolSummary(input: Any): string {
@@ -21,16 +23,38 @@ export function toolSummary(input: Any): string {
   return json.length > 300 ? `${json.slice(0, 300)}…` : json;
 }
 
-type Asked = { question: string; options: { label: string; description?: string }[]; multiSelect?: boolean };
+/** A question as AskUserQuestion asks it, with Codex's `isOther` (whether it takes an answer of the user's own) and `isSecret`. */
+type Asked = { question: string; header?: string; options: { label: string; description?: string }[]; multiSelect: boolean; takesText: boolean; secret: boolean };
 
-function askedQuestions(input: Any): Asked[] {
+/**
+ * The questions of a question prompt: Claude's AskUserQuestion, or Codex's questions, which come as a prompt for
+ * `request_user_input`. Claude's always take a typed answer; Codex says which do, and one without options needs one.
+ */
+export function askedQuestions(tool: string, input: Any): Asked[] {
   const list = input?.questions;
   if (!Array.isArray(list)) return [];
-  return list.map((q: Any) => ({
-    question: String(q?.question ?? ""),
-    options: (Array.isArray(q?.options) ? q.options : []).map((o: Any) => (typeof o === "string" ? { label: o } : { label: String(o?.label ?? ""), description: o?.description })),
-    multiSelect: q?.multiSelect === true,
-  }));
+  const codex = tool === "request_user_input";
+  return list
+    .filter((q: Any) => q && typeof q === "object")
+    .map((q: Any) => {
+      const options = (Array.isArray(q.options) ? q.options : [])
+        .map((o: Any) => (typeof o === "string" ? { label: o } : { label: String(o?.label ?? ""), description: o?.description || undefined }))
+        .filter((o: { label: string }) => o.label);
+      return {
+        question: String(q.question ?? "") || "(no question)",
+        header: typeof q.header === "string" && q.header ? q.header : undefined,
+        options,
+        multiSelect: q.multiSelect === true,
+        takesText: !codex || q.isOther !== false || !options.length,
+        secret: q.isSecret === true,
+      };
+    });
+}
+
+/** The answers to a question: with several, the options picked and what's typed; with one, what's typed or else the option. */
+export function answerOf(q: Asked, a: Answer): string[] {
+  const typed = q.takesText && a.text.trim() ? [a.text.trim()] : [];
+  return q.multiSelect ? [...a.picked, ...typed] : typed.length ? typed : a.picked;
 }
 
 function Options({ options, picked, onPick }: { options: { label: string; description?: string }[]; picked: string[]; onPick: (label: string) => void }) {
@@ -55,18 +79,35 @@ function Options({ options, picked, onPick }: { options: { label: string; descri
   );
 }
 
-/** A pending permission prompt with its answers. `onDone` runs once it's answered. */
-export function PermissionCard({ client, hostId, id, tool, input, onDone }: { client: Client; hostId: string; id: string; tool: string; input: Any; onDone: () => void }) {
+/**
+ * A pending permission prompt with its answers. `onDone` runs once it's answered. A question prompt (AskUserQuestion,
+ * or Codex's `request_user_input`) is answered with the user's answers, question by question, rather than allowed.
+ */
+export function PermissionCard({
+  client,
+  hostId,
+  id,
+  tool,
+  input,
+  onDone,
+}: {
+  client: Pick<Client, "resolvePermission">;
+  hostId: string;
+  id: string;
+  tool: string;
+  input: Any;
+  onDone: () => void;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const questions = tool === "AskUserQuestion" ? askedQuestions(input) : [];
-  const [answers, setAnswers] = useState<string[][]>(() => questions.map(() => []));
+  const questions = isQuestionTool(tool) ? askedQuestions(tool, input) : [];
+  const [drafts, setDrafts] = useState<Answer[]>(() => questions.map(() => ({ picked: [], text: "" })));
 
-  const answer = async (decision: "allow" | "deny", reply?: PermissionReply) => {
+  const answer = async (decision: "allow" | "deny", message?: string, reply?: PermissionReply) => {
     setBusy(decision);
     setErr(null);
     try {
-      await client.resolvePermission(hostId, id, decision, undefined, reply);
+      await client.resolvePermission(hostId, id, decision, message, reply);
       onDone();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -76,23 +117,41 @@ export function PermissionCard({ client, hostId, id, tool, input, onDone }: { cl
   };
 
   if (questions.length) {
+    const answers = questions.map((q, i) => answerOf(q, drafts[i] ?? { picked: [], text: "" }));
+    const set = (i: number, f: (a: Answer) => Answer) => setDrafts((all) => all.map((a, j) => (j === i ? f(a) : a)));
     return (
       <View style={{ gap: 10 }}>
         {questions.map((q, i) => (
           <View key={i} style={{ gap: 6 }}>
-            <Text style={[s.title, { fontWeight: "500" }]}>{q.question}</Text>
-            <Options
-              options={q.options}
-              picked={answers[i] ?? []}
-              onPick={(label) =>
-                setAnswers((a) => a.map((x, j) => (j !== i ? x : q.multiSelect ? (x.includes(label) ? x.filter((l) => l !== label) : [...x, label]) : [label])))
-              }
-            />
+            <Text style={[s.title, { fontWeight: "500" }]}>
+              {q.header ? <Text style={s.faint}>{q.header} · </Text> : null}
+              {q.question}
+            </Text>
+            {q.options.length > 0 && <Options options={q.options} picked={drafts[i]?.picked ?? []} onPick={(label) => set(i, (a) => pickOption(a, label, q.multiSelect))} />}
+            {q.takesText && (
+              <TextInput
+                style={[s.input, { minHeight: 44 }]}
+                value={drafts[i]?.text ?? ""}
+                onChangeText={(t) => set(i, (a) => typeAnswer(a, t, q.multiSelect))}
+                placeholder={q.options.length ? (q.multiSelect ? "Something else too (optional)" : "Or type an answer") : "Your answer"}
+                placeholderTextColor={colors.faint}
+                accessibilityLabel={`Your answer to: ${q.question}`}
+                secureTextEntry={q.secret}
+                multiline={!q.secret}
+              />
+            )}
           </View>
         ))}
         <View style={s.row}>
-          <Button title="Send answers" kind="primary" small busy={busy === "allow"} disabled={answers.some((a) => !a.length)} onPress={() => answer("allow", { answers })} />
-          <Button title="Decline" small busy={busy === "deny"} onPress={() => answer("deny")} />
+          <Button
+            title={questions.length === 1 ? "Answer" : "Send answers"}
+            kind="primary"
+            small
+            busy={busy === "allow"}
+            disabled={answers.some((a) => !a.length)}
+            onPress={() => answer("allow", undefined, { answers })}
+          />
+          <Button title="Dismiss" small busy={busy === "deny"} onPress={() => answer("deny", "The user dismissed these questions without answering them.")} />
         </View>
         {err && <ErrorText>{err}</ErrorText>}
       </View>
@@ -185,4 +244,3 @@ export function QuestionCard({ client, hostId, taskId, messageId, data, onDone }
   );
 }
 
-export const isQuestionTool = (tool: string) => QUESTION_TOOLS.includes(tool);

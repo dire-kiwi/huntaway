@@ -1,13 +1,12 @@
 // A task's thread: its messages (the agent's as markdown, with its reply streaming in), the prompts and questions it
 // waits on, and the composer, with photos from the camera or library as attachments. Start, stop and move are in the
 // header. Diffs, commits and the terminal are on the web board.
-import { STATUSES, type Attachment, type Message, type Status, type Task } from "@huntaway/client";
-import * as ImagePicker from "expo-image-picker";
+import { STATUSES, type Message, type Status, type Task } from "@huntaway/client";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useMemo, useState } from "react";
-import { FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, Text, TextInput, View } from "react-native";
+import { FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { photoName, withAttachments } from "../../../../attachments";
+import { Composer } from "../../../../composer";
 import { Markdown } from "../../../../markdown";
 import { PermissionCard, QuestionCard, toolSummary } from "../../../../prompts";
 import { boards, clientFor, useBoardEvents, useBoards, useLoad } from "../../../../session";
@@ -203,78 +202,4 @@ function Row({ item, client, host, taskId, onAnswered }: { item: ThreadItem; cli
         </View>
       );
   }
-}
-
-function Composer({ client, host, taskId, bottom, onSent }: { client: ReturnType<typeof clientFor>; host: string; taskId: string; bottom: number; onSent: (t: Task) => void }) {
-  const [text, setText] = useState("");
-  const [files, setFiles] = useState<Attachment[]>([]);
-  const [busy, setBusy] = useState<"send" | "photo" | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const addPhoto = async (from: "camera" | "library") => {
-    setErr(null);
-    const perm = from === "camera" ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setErr(from === "camera" ? "Camera access is off for Huntaway: allow it in Settings." : "Photo access is off for Huntaway: allow it in Settings.");
-      return;
-    }
-    const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], base64: true, quality: 0.7, allowsMultipleSelection: from === "library", selectionLimit: 5 };
-    const picked = from === "camera" ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
-    if (picked.canceled) return;
-    setBusy("photo");
-    try {
-      for (const a of picked.assets) {
-        if (!a.base64) continue;
-        const att = await client.uploadAttachment(host, photoName(a.fileName, a.mimeType), a.base64);
-        setFiles((f) => [...f, att]);
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const send = async () => {
-    setBusy("send");
-    setErr(null);
-    try {
-      onSent(await client.send(host, taskId, withAttachments(text, files)));
-      setText("");
-      setFiles([]);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <View style={{ borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.panel, padding: 8, paddingBottom: 8 + bottom, gap: 6 }}>
-      {files.length > 0 && (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-          {files.map((f) => (
-            <Pressable key={f.id} onPress={() => setFiles((x) => x.filter((y) => y.id !== f.id))} accessibilityLabel={`Remove ${f.name}`} style={[s.chip, { height: 28 }]}>
-              <Text style={s.faint}>📎 {f.name} ✕</Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
-      {err && <ErrorText>{err}</ErrorText>}
-      <View style={[s.row, { alignItems: "flex-end" }]}>
-        <Button title="📷" small kind="ghost" busy={busy === "photo"} onPress={() => addPhoto("camera")} />
-        <Button title="🖼" small kind="ghost" disabled={busy === "photo"} onPress={() => addPhoto("library")} />
-        <TextInput
-          style={[s.input, { flex: 1, maxHeight: 140, paddingTop: 10 }]}
-          value={text}
-          onChangeText={setText}
-          placeholder="Message the agent"
-          placeholderTextColor={colors.faint}
-          multiline
-          accessibilityLabel="Message"
-        />
-        <Button title="Send" small kind="primary" busy={busy === "send"} disabled={!text.trim() && !files.length} onPress={send} />
-      </View>
-    </View>
-  );
 }
