@@ -1,9 +1,10 @@
 import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../agents";
 import { agentOf, type ClaudeConfig, type Reviewer } from "../../api";
 import { useStore } from "../../store";
 import { ModelPicker } from "../layout/newTask/ModelPicker";
-import { Button, IconButton } from "../ui";
+import { Button, IconButton, Input, Textarea } from "../ui";
 
 export const DEFAULT_REVIEWER: Reviewer = { claude_config_id: null, model: null, effort: null };
 const MAX_REVIEWERS = 6;
@@ -54,6 +55,136 @@ export function ReviewerList({
   );
 }
 
+/** Skill names as typed, separated by commas or spaces, with the `/` or `$` they're called with taken off. */
+const parseSkills = (text: string) => [...new Set(text.split(/[\s,]+/).map((k) => k.replace(/^[/$]+/, "")).filter(Boolean))];
+
+/** The most summarizers (the host's limit on reviewers). */
+const MAX_SUMMARIZERS = 6;
+
+/** Summarizers, each writing a summary in a thread of its own, so which skills and prompts summarise best can be compared; there's always at least one. */
+export function SummarizerList({
+  hostId,
+  configs,
+  models,
+  value,
+  onChange,
+  skills,
+}: {
+  hostId: string;
+  configs: ClaudeConfig[];
+  models: InheritedModels;
+  value: Reviewer[];
+  onChange: (v: Reviewer[]) => void;
+  /** Skills the project has, offered as the skills to pick from. */
+  skills?: string[];
+}) {
+  const list = value.length ? value : [DEFAULT_REVIEWER];
+  // Each row keeps its own draft and open prompt as others come and go, so rows are told apart by an id rather than their place.
+  const ids = useRef<number[]>([]);
+  const nextId = useRef(0);
+  while (ids.current.length < list.length) ids.current.push(nextId.current++);
+  ids.current.length = list.length;
+  const change = (i: number, r: Reviewer | null) => {
+    if (!r) ids.current.splice(i, 1);
+    onChange(r ? list.map((x, j) => (j === i ? r : x)) : list.filter((_, j) => j !== i));
+  };
+  return (
+    <div className="space-y-2.5">
+      {list.map((r, i) => (
+        <SummarizerRow
+          key={ids.current[i]}
+          hostId={hostId}
+          configs={configs}
+          models={models}
+          value={r}
+          onChange={(v) => change(i, v)}
+          removable={list.length > 1}
+          skills={skills}
+        />
+      ))}
+      {list.length < MAX_SUMMARIZERS && (
+        <Button size="sm" variant="ghost" onClick={() => onChange([...list, DEFAULT_REVIEWER])}>
+          <Plus size={12} /> Add summarizer
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** One summarizer: its agent config, model and effort, a name, the skills it uses and a prompt of its own. */
+function SummarizerRow({
+  hostId,
+  configs,
+  models,
+  value,
+  onChange,
+  removable,
+  skills,
+}: {
+  hostId: string;
+  configs: ClaudeConfig[];
+  models: InheritedModels;
+  value: Reviewer;
+  onChange: (v: Reviewer | null) => void;
+  removable: boolean;
+  skills?: string[];
+}) {
+  const given = value.skills ?? [];
+  // What's typed, which can end in a comma, until the skills change from elsewhere (a row removed above this one).
+  const [draft, setDraft] = useState(given.join(", "));
+  useEffect(() => setDraft((d) => (parseSkills(d).join(",") === given.join(",") ? d : given.join(", "))), [given.join(",")]);
+  const [open, setOpen] = useState(!!value.prompt);
+  const listId = `skills-${hostId}`;
+  return (
+    <div className="space-y-1.5 rounded-md border border-line p-2">
+      <ReviewerRow hostId={hostId} configs={configs} models={models} value={value} onChange={onChange} removable={removable} />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="w-40">
+          <Input
+            className="h-7 text-[12.5px]"
+            title="What to call this summarizer where its summary is shown"
+            placeholder="Name"
+            value={value.name ?? ""}
+            onChange={(e) => onChange({ ...value, name: e.target.value || null })}
+          />
+        </div>
+        <div className="min-w-48 flex-1">
+          <Input
+            className="h-7 text-[12.5px]"
+            title="Skills it uses while writing the summary, separated by commas"
+            placeholder="Skills to use, e.g. tldr, changelog"
+            list={skills?.length ? listId : undefined}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              onChange({ ...value, skills: parseSkills(e.target.value) });
+            }}
+          />
+        </div>
+        {skills?.length ? (
+          <datalist id={listId}>
+            {skills.map((k) => (
+              <option key={k} value={k} />
+            ))}
+          </datalist>
+        ) : null}
+        <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>
+          {open ? "Hide prompt" : value.prompt ? "Prompt" : "Add a prompt"}
+        </Button>
+      </div>
+      {open && (
+        <Textarea
+          rows={4}
+          className="text-[12.5px]"
+          placeholder="How to write the summary. Replaces the board's instructions (what to cover, how long, its format); the board still asks it to end with only the summary."
+          value={value.prompt ?? ""}
+          onChange={(e) => onChange({ ...value, prompt: e.target.value || null })}
+        />
+      )}
+    </div>
+  );
+}
+
 /** One reviewer (or the summarizer): its agent config, model and effort. */
 export function ReviewerRow({
   hostId,
@@ -81,7 +212,7 @@ export function ReviewerRow({
         title="Agent config"
         value={value.claude_config_id ?? ""}
         // Another agent has other models.
-        onChange={(e) => onChange({ claude_config_id: e.target.value || null, model: null, effort: null })}
+        onChange={(e) => onChange({ ...value, claude_config_id: e.target.value || null, model: null, effort: null })}
       >
         <option value="">The task's config</option>
         {configs.map((c) => (

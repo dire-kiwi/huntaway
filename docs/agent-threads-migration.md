@@ -18,7 +18,7 @@ and has the first steps of the safe importer below, in `server/src/threads/`. No
 tables yet: running agents, the API and the UI are unchanged.
 
 - **Store** (`threads/store.rs`): agent-threads' `Store` on huntaway.db, in `at_threads`, `at_events`,
-  `at_snapshots` and `at_runs` (migration 84). It passes the crate's store conformance cases
+  `at_snapshots` and `at_runs` (migration 85). It passes the crate's store conformance cases
   (`spec/conformance/store.json`, copied next to it at the pinned revision). A thread whose `metadata.task_id`
   names a task is deleted with it.
 - **Converter** (`threads/import.rs`): a pure function from a task's stored messages to a `Thread`, saved

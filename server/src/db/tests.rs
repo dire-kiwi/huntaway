@@ -370,12 +370,13 @@ fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skip
 #[test]
 fn a_database_that_had_the_agent_threads_tables_as_an_earlier_version_gets_what_it_skipped() {
     // Builds of the agent-threads store had its tables as version 80 (skipping call_usage), then 81 (skipping
-    // call_usage's call ids), then 82 (skipping the review and run efforts).
+    // call_usage's call ids), then 82 (skipping the review and run efforts), then 84 (skipping summarizers).
     let skipped = [
         (80, "DROP TABLE call_usage;"),
         (81, "INSERT INTO call_usage (at, purpose, model, runtime) VALUES ('2026-11-01T00:00:00Z', 'title', 'haiku', 'claude');
               ALTER TABLE call_usage DROP COLUMN call_id;"),
         (82, "ALTER TABLE review_stats DROP COLUMN effort; ALTER TABLE runs DROP COLUMN effort;"),
+        (84, "ALTER TABLE projects DROP COLUMN summarizers; ALTER TABLE profiles DROP COLUMN summarizers;"),
     ];
     for (version, dropped) in skipped {
         let path = crate::testing::temp_dir().join("huntaway.db");
@@ -385,7 +386,8 @@ fn a_database_that_had_the_agent_threads_tables_as_an_earlier_version_gets_what_
         }
         let c = open(&path).unwrap();
         assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
-        for (table, column) in [("call_usage", "call_id"), ("review_stats", "effort"), ("runs", "effort")] {
+        let columns = [("call_usage", "call_id"), ("review_stats", "effort"), ("runs", "effort"), ("projects", "summarizers"), ("profiles", "summarizers")];
+        for (table, column) in columns {
             let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();
             assert!(has, "version {version}: {table}.{column}");
         }
@@ -807,6 +809,30 @@ fn a_database_at_version_66_gets_the_summary_columns() {
     assert_eq!(p.summarizer, None);
     let t = insert_task(&c, NewTask { profile_id: "p", project_id: Some("pr"), kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None }).unwrap();
     assert!(t.summary.is_none());
+}
+
+#[test]
+fn a_database_at_version_83_keeps_its_summarizer_as_the_only_one() {
+    // As master's build left it (83), with a project and a profile each with a summarizer and no list of them yet.
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE projects DROP COLUMN summarizers;
+                 ALTER TABLE profiles DROP COLUMN summarizers;
+                 PRAGMA user_version=83;
+                 INSERT INTO profiles (id,name,created_at,summarizer) VALUES ('p','p','1','{\"model\":\"haiku\"}');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at,summarizer)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1','{\"model\":\"sonnet\"}');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let p = get_project(&c, "pr").unwrap().unwrap();
+    assert_eq!(p.summarizers.iter().map(|r| r.model.as_deref()).collect::<Vec<_>>(), [Some("sonnet")]);
+    assert_eq!(get_profile(&c, "p").unwrap().unwrap().summarizers.len(), 1);
+    assert_eq!(summarizers_for(&c, &p).unwrap().len(), 1);
 }
 
 #[test]

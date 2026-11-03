@@ -863,17 +863,36 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch("PRAGMA user_version=83; COMMIT;")?;
     }
     if version < 84 {
+        conn.execute_batch("BEGIN;")?;
+        summarizers(&conn)?;
+        conn.execute_batch("PRAGMA user_version=84; COMMIT;")?;
+    }
+    if version < 85 {
         // agent-threads' store (see threads/store.rs). IF NOT EXISTS, in case another migration takes this version first.
-        // Builds of this before it was version 84 had it as 80, 81 or 82, so a database that took it then skipped what
-        // those versions and the ones after them up to 83 add (call_usage and its call ids, and the review and run
-        // efforts), which is added here if it isn't there.
+        // Builds of this before it was version 85 had it as 80, 81, 82 or 84, so a database that took it then skipped
+        // what those versions and the ones after them up to 84 add (call_usage and its call ids, the review and run
+        // efforts, and summarizers), which is added here if it isn't there.
         conn.execute_batch("BEGIN;")?;
         call_usage_ids(&conn)?;
         review_efforts(&conn)?;
         run_efforts(&conn)?;
-        conn.execute_batch(&format!("{SCHEMA_V84} PRAGMA user_version=84; COMMIT;"))?;
+        summarizers(&conn)?;
+        conn.execute_batch(&format!("{SCHEMA_V85} PRAGMA user_version=85; COMMIT;"))?;
     }
     Ok(conn)
+}
+
+/// Several summarizers for a project or profile (see Project::summarizers). The `summarizer` saved before is read
+/// as the only one until they're saved again. Added only if they aren't there, in case another migration takes
+/// this version first.
+fn summarizers(conn: &Connection) -> Result<()> {
+    for table in ["projects", "profiles"] {
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name='summarizers'", [table], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN summarizers TEXT;"))?;
+        }
+    }
+    Ok(())
 }
 
 /// The effort the reviewed task's agent worked at when its review was submitted (see review/stats.rs). The rows
@@ -915,12 +934,12 @@ fn call_usage_ids(conn: &Connection) -> Result<()> {
 }
 
 /// The latest database version (`PRAGMA user_version`).
-pub const VERSION: i64 = 84;
+pub const VERSION: i64 = 85;
 
 /// The tables of agent-threads' `Store` on this database (see threads/store.rs), under names of their
 /// own: the crate's own SQLite store would take `runs`, which is Huntaway's. Values are kept as the JSON
 /// text they were given. A thread can belong to a task (its `metadata.task_id`), and goes with it.
-const SCHEMA_V84: &str = r#"
+const SCHEMA_V85: &str = r#"
 CREATE TABLE IF NOT EXISTS at_threads (
   id TEXT PRIMARY KEY,
   task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
