@@ -43,9 +43,11 @@ pub fn put_in_now(s: &Shared, task_id: &str) -> Option<Task> {
 }
 
 /// Task `t` after a change made to it through `update_task` (the API's or the MCP tool's, `body` being what was asked for): a task
-/// that's been updated at all, by the user or an agent, is in "now" (for another day). Unless the change itself said where it goes (`now`).
+/// that's been updated at all, by the user or an agent, is in "now" (for another day). Unless the change itself said where it goes (`now`),
+/// or only reorders it: the board renumbers a whole column's `position`s when a card is dropped, and the other cards weren't touched.
 pub fn updated(s: &Shared, t: Task, body: &serde_json::Map<String, Value>) -> Task {
-    if body.get("now").is_some_and(|v| !v.is_null()) { t } else { put_in_now(s, &t.id).unwrap_or(t) }
+    let reorder_only = !body.is_empty() && body.keys().all(|k| k == "position");
+    if reorder_only || body.get("now").is_some_and(|v| !v.is_null()) { t } else { put_in_now(s, &t.id).unwrap_or(t) }
 }
 
 /// Sends the tasks in "now" with nothing happening on them since `cutoff` back to "later". How many.

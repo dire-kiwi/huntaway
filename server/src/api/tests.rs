@@ -352,7 +352,10 @@ fn updating_a_task_from_the_api_puts_it_in_now() {
         let (shown, kept) = patch(json!({"description": "Even more"})).await;
         assert!(kept.is_some() && shown == json!(kept));
         patch(json!({"now": false})).await;
-        assert!(patch(json!({"status": "in_progress"})).await.1.is_some());
+        // The board renumbers a column's positions when a card is dropped: that touches no other card.
+        assert_eq!(patch(json!({"position": 7.5})).await, (Value::Null, None));
+        // The dropped card's own request moves it too.
+        assert!(patch(json!({"status": "in_progress", "position": 8.5})).await.1.is_some());
     });
 }
 

@@ -977,7 +977,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
 - **Now and Later** (HA-109, API 97): every task is in *Later* until it's put in *Now*, which is
   what you're working on at the moment. A prompt you send a task from its thread or the new task
   dialog, or an answer to one of its question cards (not one from an automation or the board itself) puts it in Now. So does any
-  update to it (`PATCH /tasks/{id}` or an agent's `update_task`, unless the same request sets `now`), an agent's `send_to_task`
+  update to it (`PATCH /tasks/{id}` or an agent's `update_task`, unless the same request sets `now` or only changes `position`, as the board does renumbering a column), an agent's `send_to_task`
   (a parent starting its subproject's tasks, say), and creating it with `create_task` (`now: false` starts it in Later). So does
   *Move to Now* in its right-click menu (*Move to Later* puts
   it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
