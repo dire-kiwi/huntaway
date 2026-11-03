@@ -371,6 +371,10 @@ fn a_workspace_that_is_a_symlink_is_refused() {
         std::fs::remove_dir_all(&my_dir).unwrap();
         std::os::unix::fs::symlink(&their_dir, &my_dir).unwrap();
         assert!(checked(&s, &mine).is_err());
+        // Its agent, its wait commands and its terminal don't start there either.
+        assert!(crate::agent::runner::work_dir(&s, &mine).is_err());
+        assert!(crate::hosts::terminal::working_dir(&s, &mine).is_err());
+        assert_eq!(crate::agent::runner::work_dir(&s, &theirs).unwrap(), their_dir);
         let base = format!("/api/profiles/{}/assistant/memory", a.id);
         for (method, path, body) in [
             ("GET", base.clone(), None),

@@ -74,8 +74,8 @@ test("the Memory tab edits the assistant's files and shows their history", async
   });
 });
 
-// HA-121 review: what's typed while a save is on its way isn't lost when it's saved, and Ctrl+S on a file you haven't
-// changed (a daily log not written yet, say) saves nothing.
+// HA-121 review: what's typed while a save is on its way isn't lost when it's saved, even in the editor of the file opened
+// again meanwhile, and Ctrl+S on a file you haven't changed (a daily log not written yet, say) saves nothing.
 test("an edit made while the Memory tab saves stays", async () => {
   const [profile] = await server.api("GET", "/profiles");
   const base = `/profiles/${profile.id}/assistant/memory`;
@@ -102,6 +102,11 @@ test("an edit made while the Memory tab saves stays", async () => {
     await page.keyboard.type("- first");
     await page.keyboard.press("Control+s");
     await sent;
+    // Another file is opened and this one again while it saves (a new editor), and more typed there.
+    await ui.run(["click USER.md", "wait About the user", "click MEMORY.md"]);
+    await page.waitForFunction(() => document.querySelector("textarea[aria-label='Edit MEMORY.md']")?.value === "# Memory\n- first");
+    await page.getByRole("textbox", { name: "Edit MEMORY.md" }).click();
+    await page.keyboard.press("Control+End");
     await page.keyboard.type(" and second");
     release();
     await ui.run(["click History", "wait You"]);

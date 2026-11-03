@@ -29,6 +29,10 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         None => None,
     };
 
+    // The assistant works only in a workspace of its own: not one that's become a symlink, which could be another's.
+    if task.is_assistant() {
+        crate::agent::assistant::memory::checked(state, &task).context("the assistant's workspace")?;
+    }
     // Resolve the working directory for this thread.
     let mut add_dirs: Vec<String> = Vec::new();
     // (`work_dir` says the same for a thread whose run is going.)

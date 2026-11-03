@@ -16,6 +16,22 @@ interface Draft {
 const drafts = new Map<string, Draft>();
 const draftKey = (task: Task, path: string) => `${task.host_id}:${task.id}:${path}`;
 
+// Each file's save on its way, and one refused because the assistant changed the file, by the same key: kept here rather
+// than in the editor, which goes when another file or tab is opened, so the editor shown when the save ends (a new one, if
+// the file was opened again) is told, and takes it in without losing what was typed meanwhile (see `saved`).
+const saving = new Set<string>();
+const conflicts = new Set<string>();
+const editors = new Map<string, Set<(saved?: string) => void>>();
+/** Tell the file's editors that its save state changed, and with `saved`, what the save wrote. */
+const tell = (key: string, saved?: string) => editors.get(key)?.forEach((f) => f(saved));
+
+/** A save of `key` wrote `content`: the draft, if more was typed since, is now an edit of that. */
+function saved(key: string, content: string) {
+  const d = drafts.get(key);
+  if (!d || d.content === content) drafts.delete(key);
+  else drafts.set(key, { content: d.content, base: content });
+}
+
 const n = (x: number) => x.toLocaleString("en");
 
 /** Files a run is told: USER.md and MEMORY.md, and today's and yesterday's logs. */
@@ -158,8 +174,10 @@ function FileEditor({
   const [base, setBase] = useState<string | null>();
   const [content, setContent] = useState(() => drafts.get(key)?.content ?? "");
   const [error, setError] = useState<string>();
-  const [conflict, setConflict] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // Whether it's being saved, or a save was refused (see `saving`), re-read when the file's editors are told.
+  const [, changed] = useState(0);
+  const busy = saving.has(key);
+  const conflict = conflicts.has(key);
   const [showHistory, setShowHistory] = useState(false);
   const [viewing, setViewing] = useState<MemoryCommit>();
   const exists = !!file?.modified;
@@ -190,42 +208,54 @@ function FileEditor({
     // Again when the assistant changes it (its modified time), unless there's a draft.
   }, [key, fetchFile, file?.modified]);
 
+  // A save that ends, whichever editor of the file started it: what it wrote is the new base, and the draft (what was
+  // typed since, in this editor or one before it) stays on top of it.
+  useEffect(() => {
+    const listen = (written?: string) => {
+      if (written !== undefined) {
+        setBase(written);
+        setContent(drafts.get(key)?.content ?? written);
+      }
+      changed((n) => n + 1);
+    };
+    const set = editors.get(key) ?? new Set();
+    editors.set(key, set.add(listen));
+    return () => void set.delete(listen);
+  }, [key]);
+
   const dirty = base !== undefined && content !== (base ?? "");
-  // What's in the editor now, for a save that ends after more was typed.
-  const latest = useRef(content);
-  latest.current = content;
   const edit = (c: string) => {
-    latest.current = c;
     setContent(c);
     if (base === undefined) return;
-    if (c === (base ?? "")) drafts.delete(key);
+    // While a save is on its way, even a change back to what was there is kept, as it isn't what's being saved.
+    if (c === (base ?? "") && !saving.has(key)) drafts.delete(key);
     else drafts.set(key, { content: c, base });
   };
 
   const save = async (force = false) => {
     // Nothing to save (Ctrl+S on a file as it is, or a log not written yet, which would make it empty).
-    if (base === undefined || busy || (!dirty && !force)) return;
-    setBusy(true);
+    if (base === undefined || saving.has(key) || (!dirty && !force)) return;
+    saving.add(key);
+    conflicts.delete(key);
+    tell(key);
     setError(undefined);
+    let written: string | undefined;
     try {
-      const w = await api.writeMemoryFile(task.host_id, task.profile_id, path, content, base, force);
-      // What was typed while it saved stays, as an edit of what was saved.
-      const now = latest.current;
-      if (now === w.content) drafts.delete(key);
-      else drafts.set(key, { content: now, base: w.content });
-      setBase(w.content);
-      setConflict(false);
-      onSaved();
+      written = (await api.writeMemoryFile(task.host_id, task.profile_id, path, content, base, force)).content;
+      saved(key, written);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) setConflict(true);
+      if (e instanceof ApiError && e.status === 409) conflicts.add(key);
       else setError((e as Error).message);
     } finally {
-      setBusy(false);
+      saving.delete(key);
+      tell(key, written);
     }
+    if (written !== undefined) onSaved();
   };
   const discard = async () => {
     drafts.delete(key);
-    setConflict(false);
+    conflicts.delete(key);
+    tell(key);
     setError(undefined);
     try {
       const c = await fetchFile().catch(() => null);
