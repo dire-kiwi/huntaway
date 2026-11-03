@@ -1,10 +1,12 @@
-// Boards: the paired boards, each with its status and the profile picked on it; pair another, open one on the web
-// (for what the app leaves out: terminals, diffs, settings, analytics) or remove one, which unpairs the phone there.
+// Boards: the paired boards, each with its status and the profile picked on it; pair another, set what one pushes to
+// this phone, open one on the web (for what the app leaves out: terminals, diffs, settings, analytics) or remove one,
+// which unpairs the phone there.
 import type { Board } from "../../boards";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { loadProfiles, pickedProfile, profilesOf } from "../../boardData";
+import { registrar, usePushState } from "../../notifications";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad, type BoardStatus } from "../../session";
 import { colors } from "../../theme";
 import { Button, Chip, s } from "../../ui";
@@ -33,13 +35,13 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
   const profile = pickedProfile(board, profiles.data);
   const [busy, setBusy] = useState(false);
   const st = statusText(status);
+  const push = usePushState().subscribed[board.id];
 
   const remove = async () => {
     if (!(await confirm(`Remove ${board.name}?`, "The app forgets it, and this phone is unpaired from it.", "Remove"))) return;
     setBusy(true);
-    // Unpairs itself on the board too, if it can reach it.
-    if (board.deviceId && !status.unauthorized) await clientFor(board).revokeDevice(board.deviceId).catch(() => {});
-    await boards.remove(board.id);
+    // Unpairs itself on the board too (which ends its push), now or once it can reach it.
+    await registrar.removeBoard(board.id);
     setBusy(false);
   };
 
@@ -56,6 +58,9 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
         {board.url}
       </Text>
       <Text style={[s.faint, { color: st.color }]}>{st.text}</Text>
+      {push?.final && board.push !== false && (
+        <Text style={[s.faint, { color: colors.amber }]}>It turned this phone's push down: {push.error}</Text>
+      )}
       {(profiles.data?.names.length ?? 0) > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
           {profiles.data!.names.map((n) => (
@@ -65,6 +70,7 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
       )}
       <View style={[s.row, { marginTop: 6, flexWrap: "wrap" }]}>
         {status.unauthorized && <Button title="Pair again" small kind="primary" onPress={() => router.push("/pair")} />}
+        <Button title="Notifications" small onPress={() => router.push({ pathname: "/notifications/[board]", params: { board: board.id } })} />
         <Button title="Open on the web" small onPress={() => void Linking.openURL(board.url)} />
         <Button title="Remove" small kind="danger" busy={busy} onPress={remove} />
       </View>

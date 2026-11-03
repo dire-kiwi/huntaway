@@ -15,6 +15,8 @@ export interface Board {
   apiVersion: number;
   /** The profile (by name: boards merge profiles across their hosts by name) picked on it, if any. */
   profile: string | null;
+  /** Push to this phone from it (API 103): on unless turned off here. */
+  push?: boolean;
   pairedAt: string;
 }
 
@@ -93,7 +95,8 @@ export class Boards {
     await this.store.set(tokenKey(board.id), token);
     this.tokens.set(board.id, token);
     const old = this.board(board.id);
-    const next = { ...board, profile: board.profile ?? old?.profile ?? null };
+    // Paired again: what was picked for it here stays (its profile, and push turned off).
+    const next = { ...board, profile: board.profile ?? old?.profile ?? null, push: board.push ?? old?.push };
     const boards = old ? this.state.boards.map((b) => (b.id === board.id ? next : b)) : [...this.state.boards, next];
     this.set({ ...this.state, boards, selected: board.id });
     await this.saveList();
