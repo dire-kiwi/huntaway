@@ -325,8 +325,13 @@ fn a_switched_over_import_is_read_from_the_backend() {
         stage_example(&s, &t.id).await;
         make_running(&s).await;
         install(&s, backend(&s));
-        // A database with the engine's column, and the task switched over.
-        s.db().execute_batch("ALTER TABLE tasks ADD COLUMN run_engine TEXT NOT NULL DEFAULT 'legacy'").unwrap();
+        // A database with the engine's column (null until a task's first run starts, then legacy or agent_threads).
+        s.db().execute_batch("ALTER TABLE tasks ADD COLUMN run_engine TEXT").unwrap();
+        for engine in [None, Some("legacy")] {
+            s.db().execute("UPDATE tasks SET run_engine=?2 WHERE id=?1", rusqlite::params![t.id, engine]).unwrap();
+            let (_, state) = call(&app, "GET", &format!("/api/tasks/{}/thread", t.id), None).await;
+            assert_eq!((&state["seq"], &state["thread"]["status"]), (&json!(36), &json!("running")), "{engine:?}: read as saved");
+        }
         s.db().execute("UPDATE tasks SET run_engine='agent_threads' WHERE id=?1", [&t.id]).unwrap();
         let (status, state) = call(&app, "GET", &format!("/api/tasks/{}/thread", t.id), None).await;
         assert_eq!(status, 200, "{state}");

@@ -85,8 +85,10 @@ fn is_live(c: &Connection, task_id: &str, id: &str) -> rusqlite::Result<bool> {
     if !imported {
         return Ok(true);
     }
-    // `run_engine` is the engine's column; a database without it has no switched-over tasks.
-    let engine: Option<String> = c.query_row("SELECT run_engine FROM tasks WHERE id=?1", [task_id], |r| r.get(0)).optional().unwrap_or(None);
+    // `run_engine` is the engine's column: null until the task's first run starts, then `legacy` or
+    // `agent_threads`. A database without it has no switched-over tasks.
+    let engine = c.query_row("SELECT run_engine FROM tasks WHERE id=?1", [task_id], |r| r.get::<_, Option<String>>(0));
+    let engine = engine.ok().flatten();
     Ok(engine.as_deref() == Some("agent_threads"))
 }
 
