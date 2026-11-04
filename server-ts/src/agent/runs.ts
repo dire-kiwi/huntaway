@@ -74,6 +74,16 @@ export class Cell<T> {
 /** Lets a test act as a host that runs agents, without starting any. */
 export const TEST_CAN_RUN = new Cell(false);
 
+/**
+ * The watches for agents to stop (`watch_to_reap`, `watch_orphan`) that are going: the server's, as a Rust runtime's
+ * spawned tasks are. `end_watches` ends them where they are (leaving their marker files), as a server that stops does:
+ * Rust's tests end a runtime for that.
+ */
+let watches = 0;
+export function end_watches() {
+  watches++;
+}
+
 const log = {
   info: (...a: any[]) => console.error(new Date().toISOString(), " INFO runs:", ...a),
   warn: (...a: any[]) => console.error(new Date().toISOString(), " WARN runs:", ...a),
@@ -311,10 +321,12 @@ export function resume_reaping(state: Shared): void {
  */
 function watch_to_reap(state: Shared, run_id: string): void {
   const dir = run_dir(state, run_id);
+  const server = watches;
   (async () => {
     const since = Date.now();
     let stopping: number | null = null;
     while (!existsSync(join(dir, "exit"))) {
+      if (watches !== server) return;
       const pid = read_pid(dir, "pid");
       if (pid === null) {
         if (Date.now() - since >= timing.REAP_WAIT) break;
@@ -524,6 +536,7 @@ export function stop_orphan(dir: string): void {
 
 /** Stop the agent of a run marked `orphan`, killing it if it hasn't gone in time. */
 function watch_orphan(dir: string): void {
+  const server = watches;
   (async () => {
     const since = Date.now();
     let sig: NodeJS.Signals = "SIGTERM";
@@ -535,6 +548,7 @@ function watch_orphan(dir: string): void {
     }
     // The group, which may outlive its leader. (Its id isn't given to a new process while it's in use.)
     while (group_alive(pid)) {
+      if (watches !== server) return;
       if (sig === "SIGTERM" || Date.now() - since >= timing.REAP_GRACE) {
         signal(-pid, sig);
         sig = "SIGKILL";

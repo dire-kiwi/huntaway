@@ -1615,13 +1615,12 @@ test("a_queued_message_another_run_sent_isnt_sent_again", () => {
   assert.equal(events, 0);
 });
 
-// Rust stops the first runtime (the server, with its watch for the agent) before the restart; here the first watch
-// may still be going, so this checks that the restart's watch, at least, doesn't leave the agent running.
 test("an_agent_that_starts_late_is_stopped_after_a_restart", async () => {
   const [s, , run] = running(true);
   writeFileSync(join(runs.run_dir(s, run.id), "spec.json"), "{}");
   launch_ended(s, run, new Error("the agent didn't start in time"));
   // The server stops (with its watch for the agent), and ia-shim starts the agent once it's back.
+  runs.end_watches();
   load_active(s);
   const agent = agent_process("sleep", ["30"]);
   writeFileSync(join(runs.run_dir(s, run.id), "pid"), String(agent.pid));
@@ -1651,6 +1650,7 @@ test("an_agent_being_stopped_is_killed_after_a_restart", async () => {
   await sleep(300);
   assert.ok(existsSync(join(dir, "reap")));
   // The server stops before killing it.
+  runs.end_watches();
   assert.ok(!exited(agent));
   load_active(s);
   since = Date.now();

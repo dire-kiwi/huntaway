@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import * as api from "../api.ts";
@@ -11,7 +12,7 @@ import * as runner from "../agent/runner.ts";
 import * as worktree from "../git/worktree.ts";
 import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as testing from "../testing.ts";
-import { ApiError, type AppState } from "../state.ts";
+import { ApiError, AppState } from "../state.ts";
 import type { Req } from "../http.ts";
 import { Pick_default, get, pick_inner, type Pick } from "./fanout.ts";
 
@@ -243,10 +244,71 @@ test("an_agent_at_work_is_stopped_before_its_task_is_completed", async () => {
   assert.deepEqual([t.status, t.resolution, t.running], ["done", "not_done", false]);
 });
 
-// Rust's `a_task_is_completed_only_once_the_runner_has_written_its_runs_end` isn't ported: it picks from inside
-// `runner::finish` (at its "finish:exited" point), running the whole pick to its end there on a runtime of its own.
-// Here `finish` is synchronous and a pick can't run to its end inside it, so the race it covers (another thread
-// picking between the run being marked exited and its end being written to the task) can't happen.
+/**
+ * Runs `pick_inner(<a state on the database at db_path>, id, Pick_default())` to its end on a worker thread, with this
+ * thread blocked meanwhile: as Rust's test picks on a runtime of its own from inside `runner::finish`. (`finish` is
+ * synchronous here, so a pick on this thread could only run once it has returned.) The worker's state has a database
+ * connection of its own and no runs (`finish` has taken the run out of `s.runs` by then).
+ */
+function pick_on_another_thread(db_path: string, data_dir: string, id: string): any {
+  const url = (p: string) => new URL(p, import.meta.url).href;
+  const done = new Int32Array(new SharedArrayBuffer(4));
+  const { port1, port2 } = new MessageChannel();
+  const code = `
+    const { workerData: w } = require("node:worker_threads");
+    (async () => {
+      let out;
+      try {
+        const db = await import(w.db), { AppState } = await import(w.state), fanout = await import(w.fanout);
+        const meta = { boot_id: "", started_at: "", source_dir: null, running_commit: null, update_from: null, release: null, args: [] };
+        const ids = { host_id: "h", host_name: "desktop", token: "", hub_token: "", internal_url: "" };
+        const s = new AppState(db.open(w.db_path), w.data_dir, ids, meta);
+        out = { ok: await fanout.pick_inner(s, w.id, fanout.Pick_default()) };
+      } catch (e) {
+        out = { err: String(e && e.stack || e) };
+      }
+      w.port.postMessage(JSON.parse(JSON.stringify(out)));
+      Atomics.store(w.done, 0, 1);
+      Atomics.notify(w.done, 0);
+    })();`;
+  const workerData = { db: url("../db.ts"), state: url("../state.ts"), fanout: url("./fanout.ts"), db_path, data_dir, id, done, port: port2 };
+  const worker = new Worker(code, { eval: true, workerData, transferList: [port2] });
+  try {
+    assert.equal(Atomics.wait(done, 0, 0, 30_000), "ok", "the pick on the worker didn't end");
+    const out = receiveMessageOnPort(port1)!.message;
+    if (out.err) throw new Error(out.err);
+    return out.ok;
+  } finally {
+    worker.terminate();
+    port1.close();
+  }
+}
+
+// HA-51 review: the run was marked exited before the runner wrote its end to the task, and picking in between
+// completed the task only for the runner to move it to Needs attention.
+test("a_task_is_completed_only_once_the_runner_has_written_its_runs_end", async () => {
+  // On a database file, which the worker's pick opens too.
+  const dir = testing.temp_dir();
+  const db_path = join(dir, "huntaway.db");
+  const s = new AppState(db.open(db_path), dir, { host_id: "h", host_name: "desktop", token: "", hub_token: "", internal_url: "" }, testing.meta());
+  const [, ts] = await fanned_out(s);
+  const run = db.insert_run(s.db(), ts[1].id, "prompt");
+  db.run(s.db(), "UPDATE runs SET status='running', between_turns=1 WHERE id=?1", run.id);
+  s.runs.set(ts[1].id, { run_id: run.id, cancel: null });
+  s.update_task(ts[1].id, [["running", true], ["status", "in_progress"], ["pr_url", "https://github.com/o/r/pull/1"]]);
+  // Picked once the run is marked exited, before its end is written to the task.
+  let v: any = null;
+  testing.when("finish:exited", () => {
+    v = pick_on_another_thread(db_path, dir, ts[0].id);
+  });
+  runner.finish(s, run.id, "Cancelled");
+  const r = v.results[0];
+  assert.deepEqual([r.completed, r.worktree], [false, "kept"]);
+  assert.ok(r.notes[0].includes("didn't stop in time"), JSON.stringify(r.notes));
+  // Left as the runner left it, not completed and then moved back.
+  const t = task(s, ts[1].id);
+  assert.deepEqual([t.status, t.resolution ?? null], ["needs_attention", null]);
+});
 
 test("one_whose_agent_does_not_stop_is_left_as_it_is", async () => {
   const s = testing.state();
