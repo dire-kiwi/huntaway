@@ -7,6 +7,8 @@ import { err_str } from "../../util.ts";
 import * as admin from "../../update/admin.ts";
 import { VERSION } from "../proto.ts";
 import * as ssh from "../ssh.ts";
+import * as db from "../../db.ts";
+import { changed, spawn_outbound } from "../hub.ts";
 
 /** Call any host's API (this one or a linked one). */
 export async function host_request(s: AppState, host_id: string, method: string, path: string, body: any = null): Promise<any> {
@@ -101,15 +103,31 @@ export async function ssh_key(s: AppState) {
   return { public_key: await ssh.public_key(s) };
 }
 
-/** Link a host over SSH: not in the TypeScript server (see hosts/ssh.ts). */
+/** Link a host over SSH: starts it on the target if needed, then keeps a tunnel to it. */
 export async function add_ssh_host(s: AppState, r: Req) {
-  const t = r.body ?? {};
-  if (typeof t.target !== "string") throw new ApiError(422, "Failed to deserialize the JSON body into the target type: missing field `target`");
-  if (!t.target.trim().includes("@")) throw ApiError.bad("enter the target as user@host");
+  let t: ssh.Target;
   try {
-    await ssh.ensure(s, { target: t.target.trim(), ssh_port: t.ssh_port ?? 22, remote_port: t.remote_port ?? 7878 });
+    t = ssh.Target_from_json(r.body);
+  } catch (e) {
+    throw new ApiError(422, `Failed to deserialize the JSON body into the target type: ${err_str(e)}`);
+  }
+  t = { ...t, target: t.target.trim() };
+  if (!t.target.includes("@")) throw ApiError.bad("enter the target as user@host");
+  let details: any;
+  try {
+    details = await ssh.ensure(s, t);
   } catch (e) {
     throw ApiError.bad(err_str(e));
   }
-  throw ApiError.bad(ssh.UNSUPPORTED);
+  const info = details?.info;
+  const host_id = typeof info?.host_id === "string" ? (info.host_id as string) : null;
+  if (host_id === null) throw ApiError.bad("the host didn't report an id");
+  if (host_id === s.host_id) throw ApiError.bad("that's this host");
+  const name = typeof info.host_name === "string" ? (info.host_name as string) : host_id;
+  let link = db.upsert_link(s.db(), host_id, name, "ssh", null, typeof details.token === "string" ? details.token : null);
+  db.run(s.db(), "UPDATE links SET ssh=?1 WHERE id=?2", JSON.stringify(t), host_id);
+  link = db.get_link(s.db(), host_id) ?? link;
+  spawn_outbound(s, link);
+  changed(s);
+  return { id: link.id, name: link.name, started: details.started ?? null };
 }

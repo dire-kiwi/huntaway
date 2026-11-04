@@ -3,14 +3,25 @@
 # A server started from a `node --test` file (the browser tests) is not a test process itself.
 unset NODE_TEST_CONTEXT
 here=$(dirname "$(readlink -f "$0")")
+# Node: $IA_NODE, else on PATH, else where installers put it (an SSH host's forced command runs with sshd's short PATH).
+node=${IA_NODE:-}
+if [ -z "$node" ]; then
+  node=$(command -v node 2>/dev/null) || node=
+  for n in /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node "$HOME/.volta/bin/node" "$HOME/.local/share/mise/shims/node" \
+    "$HOME/.local/bin/node" $(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1); do
+    [ -n "$node" ] && break
+    [ -x "$n" ] && node=$n
+  done
+  node=${node:-node}
+fi
 # Agents' MCP helper runs once per agent: started straight from its module, it doesn't load the whole server.
 if [ "$1" = mcp ]; then
   shift
-  exec node --disable-warning=ExperimentalWarning "$here/../src/mcp.ts" "$@"
+  exec "$node" --disable-warning=ExperimentalWarning "$here/../src/mcp.ts" "$@"
 fi
 case "$1" in
   "" | serve) ;;
-  *) exec node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" ;;
+  *) exec "$node" --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" ;;
 esac
 
 # `serve` runs node as this shell's child, so the server keeps this process's id when it restarts, as the Rust server
@@ -54,7 +65,7 @@ stop() {
 trap stop TERM INT HUP
 # A background job's stdin would be /dev/null: node gets this shell's (when it has one).
 if [ -r /dev/stdin ]; then exec 3<&0; else exec 3</dev/null; fi
-node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" <&3 3<&- &
+"$node" --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" <&3 3<&- &
 child=$!
 exec 3<&-
 while :; do

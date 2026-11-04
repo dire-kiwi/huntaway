@@ -45,7 +45,7 @@ export { NO_ROUTE, no_route_error } from "./http.ts";
 export function router(s: AppState): Router {
   const r = new Router();
   r.route("/health", { GET: health }, { auth: false });
-  r.ws("/hub/connect", hub.accept, { auth: false });
+  r.ws("/hub/connect", hub.accept, { auth: false, pre: hub.accept_check });
   // Without the board's token: the token in its path reaches only its own automation.
   r.route("/hooks/{id}/{token}", { POST: automations.webhook }, { auth: false, limit: automations.MAX_BODY ?? 1 << 20 });
   host_routes(r);

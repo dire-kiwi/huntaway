@@ -1,17 +1,14 @@
 // Port of server/src/mcp/tools/tests.rs.
 //
-// Left out (linked hosts are out of scope for the TypeScript server, see PORTING.md):
-// reads_task_fields_on_new_and_legacy_linked_hosts and marks_only_go_to_hosts_that_can_set_them, which link fake hosts
-// with hub::link_http.
-//
 // Rust's tests cut a call short with a timeout, which drops its future. A promise can't be dropped, so here
 // `cut_short` does what a restart does to a call waiting for the user: it forgets the call (calls_inflight) and its
 // waiter (perm_waiters), leaving it to wait for good, and the retry finds it recorded as executing.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as db from "../../db.ts";
 import type { Task } from "../../db.ts";
 import type { Shared } from "../../state.ts";
@@ -24,11 +21,13 @@ import * as worktree from "../../git/worktree.ts";
 import * as pr_watch from "../pr_watch.ts";
 import * as permissions from "../permissions.ts";
 import * as testing from "../../testing.ts";
+import * as hub from "../../hosts/hub.ts";
+import { readBody } from "../../http.ts";
 import { now, path_str, sleep } from "../../util.ts";
 import { ToolError, msg, type Ctx } from "../tools.ts";
-import { TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT, handle_mcp, handle_remote, needs_project_settings_api, too_old, type McpCall } from "./dispatch.ts";
+import { MARKS_API, TASK_FIELDS_API, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT, dispatch, handle_mcp, handle_remote, needs_project_settings_api, too_old, type McpCall } from "./dispatch.ts";
 import { local } from "./local.ts";
-import { reminder_time, task_overview } from "./tasks.ts";
+import { reminder_time, task_field, task_overview } from "./tasks.ts";
 
 const state = testing.state;
 
@@ -373,6 +372,88 @@ test("task_fields_use_the_same_profile_access_and_key_resolution", async () => {
   assert.ok(await fails(get({ task_id: "LAB-1" })));
 });
 
+/** Fake linked hosts' servers, closed when the file's tests end. */
+const servers: Array<() => void> = [];
+after(() => {
+  for (const f of servers.splice(0)) f();
+});
+
+/**
+ * Link `s` to a fake host `name` on API `api`, which answers `POST /api/tools/{tool}` with `answer(tool, body)` (Rust's
+ * `hub::link_http` with an axum router).
+ */
+async function link_fake_host(s: Shared, name: string, api_version: number, answer: (tool: string, body: any) => any) {
+  const srv = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    const m = (req.url ?? "").match(/^\/api\/tools\/([^/?]+)$/);
+    if (req.method !== "POST" || !m) return void res.writeHead(404).end();
+    const body = JSON.parse((await readBody(req, 1 << 20)).toString() || "null");
+    let out: any;
+    try {
+      out = { result: answer(decodeURIComponent(m[1]), body) };
+    } catch (e) {
+      return void res.writeHead(500).end(String(e));
+    }
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(out));
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  servers.push(() => {
+    srv.closeAllConnections();
+    srv.close();
+  });
+  const conn = hub.link_http(s, name, `http://127.0.0.1:${(srv.address() as any).port}`, api_version);
+  servers.push(() => conn.kind.type === "http" && conn.kind.agent.destroy());
+}
+
+test("reads_task_fields_on_new_and_legacy_linked_hosts", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  const me = ctx(p);
+  const calls: Array<[string, string, any]> = [];
+  for (const [name, api_version] of [["old", TASK_FIELDS_API - 1], ["new", TASK_FIELDS_API]] as const) {
+    await link_fake_host(s, name, api_version, (tool, body) => {
+      calls.push([name, tool, body]);
+      const details = { id: "remote", description: "ā🙂x".repeat(10000), title: "Remote task" };
+      if (api_version === TASK_FIELDS_API && tool === "get_task" && body.task_fields === true) return task_overview(details);
+      if (api_version === TASK_FIELDS_API && tool === "get_task_field") return task_field(details, body.args);
+      if (tool === "get_task") return details;
+      throw new Error(`sent ${tool} to a legacy host`);
+    });
+  }
+  // An explicit host and fallback lookup both pass through compatibility handling.
+  for (const host of ["old", "new", null]) {
+    const args: any = { task_id: "work:REMOTE-1", profile: "work" };
+    if (host) args.host = host;
+    const overview = await dispatch(s, me, "get_task", { ...args });
+    assert.equal(overview.field_lengths.description, 30000);
+    assert.equal(overview.description, undefined);
+    Object.assign(args, { field: "description", offset: 1, limit: 2 });
+    const page = await dispatch(s, me, "get_task_field", args);
+    assert.equal(page.content, "🙂x");
+    assert.equal(page.next_offset, 3);
+  }
+  // An old helper on an upgraded calling host still needs full details from both old and upgraded destinations; the
+  // forwarding host's version is not a capability.
+  const legacy = ctx(p, { task_fields: false });
+  for (const host of ["old", "new", null]) {
+    const args: any = { task_id: "work:REMOTE-1", profile: "work" };
+    if (host) args.host = host;
+    const full = await dispatch(s, legacy, "get_task", args);
+    assert.ok(full.description === "ā🙂x".repeat(10000), "forwarding hid legacy details");
+    assert.equal(full.omitted_fields, undefined);
+  }
+  assert.ok(calls.some(([host, tool]) => host === "new" && tool === "get_task_field"));
+  for (const [host, tool, body] of calls) {
+    assert.equal(body.profile, "personal");
+    assert.equal(body.args.task_id, "work:REMOTE-1");
+    assert.equal(body.args.profile, "work");
+    if (host === "old") {
+      assert.equal(tool, "get_task");
+      assert.equal(body.args.offset, undefined);
+      assert.equal(body.task_fields, false);
+    }
+  }
+});
+
 test("leaves_archived_projects_out_of_lists", async () => {
   const s = state();
   const p = db.insert_profile(s.db(), "personal", [], null);
@@ -667,7 +748,34 @@ test("scratch_tasks_get_their_marks_too", async () => {
   }
 });
 
-// marks_only_go_to_hosts_that_can_set_them: left out (linked hosts, see the top of the file).
+test("marks_only_go_to_hosts_that_can_set_them", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  const me = ctx(p);
+  // Linked hosts that answer every tool call, and note which they were sent.
+  const calls: Array<[string, string]> = [];
+  for (const [name, api_version] of [["old", MARKS_API - 1], ["new", MARKS_API]] as const) {
+    await link_fake_host(s, name, api_version, (tool) => {
+      calls.push([name, tool]);
+      return { ok: true };
+    });
+  }
+  const sent = () => calls.splice(0);
+  // Named, an older host is refused, clearing a mark too; anything else still goes.
+  for (const marks of [{ remind_at: "2h" }, { starred: false }, { reminder: "" }]) {
+    const e = await err(dispatch(s, me, "update_task", { ...marks, task_id: "OLD-1", host: "old" }));
+    assert.ok(e.includes("old runs an older build"), `${JSON.stringify(marks)}: ${e}`);
+  }
+  const e = await err(dispatch(s, me, "create_task", { title: "T", host: "old", starred: true }));
+  assert.ok(e.includes("older build"), e);
+  assert.deepEqual(sent(), []);
+  await dispatch(s, me, "update_task", { task_id: "OLD-1", host: "old", title: "T" });
+  await dispatch(s, me, "update_task", { task_id: "NEW-1", host: "new", remind_at: "2h" });
+  assert.deepEqual(sent(), [["old", "update_task"], ["new", "update_task"]]);
+  // Not found here, it's only tried on the hosts that can do it.
+  await dispatch(s, me, "update_task", { task_id: "ELSE-1", starred: true });
+  assert.deepEqual(sent(), [["new", "update_task"]]);
+});
 
 test("reads_reminder_times", () => {
   const nowt = new Date("2026-10-26T10:00:00Z");

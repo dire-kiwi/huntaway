@@ -2,7 +2,7 @@
 // requests to them go back over that websocket.
 import type WebSocket from "ws";
 import * as db from "../../db.ts";
-import type { Req } from "../../http.ts";
+import { ApiError, type Req } from "../../http.ts";
 import type { AppState } from "../../state.ts";
 import { err_str, same_secret } from "../../util.ts";
 import { PROTOCOL } from "../proto.ts";
@@ -13,14 +13,21 @@ import { LinkConn, Version_from_info, changed, forward_event, register, unregist
 /** The close code a hub refuses a host's tunnel with (a policy violation). */
 export const REFUSED = 1008;
 
-/**
- * `/api/hub/connect`. (Rust answers a wrong token with a 401 before the upgrade; websocket routes here are handed the
- * socket once it's upgraded, so it's closed as refused instead, which a dialling host reports the same way.)
- */
-export function accept(s: AppState, r: Req, ws: WebSocket) {
+/** Whether a request to `/api/hub/connect` carries this hub's token. */
+function hub_token_ok(s: AppState, r: Req): boolean {
   const auth = r.headers["authorization"];
   const token = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7) : null;
-  if (token === null || !same_secret(token, s.hub_token)) {
+  return token !== null && same_secret(token, s.hub_token);
+}
+
+/** `/api/hub/connect`'s check before the upgrade: a wrong hub token is a 401, as in Rust. */
+export function accept_check(s: AppState, r: Req) {
+  if (!hub_token_ok(s, r)) throw new ApiError(401, "unauthorized");
+}
+
+/** `/api/hub/connect`. (A caller that skipped `accept_check` still gets a refusal: the socket closes as refused.) */
+export function accept(s: AppState, r: Req, ws: WebSocket) {
+  if (!hub_token_ok(s, r)) {
     ws.close(REFUSED, "unauthorized");
     return;
   }
@@ -114,12 +121,16 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
   }
   // A websocket ping for hosts from before `Down::Ping`, which answer it whatever their version; `ping` for the
   // others, which gets through a broker.
-  const ping = setInterval(() => {
+  const send_ping = () => {
     try {
       ws.ping();
     } catch {}
     tx({ t: "ping" });
-  }, relay.PING);
+  };
+  // At once too, as tokio's interval ticks: a host that answers is known to before anything can go wrong, so through a
+  // broker (whose relay answers websocket pings) the hub then goes by its answers alone.
+  send_ping();
+  const ping = setInterval(send_ping, relay.PING);
   forward_event(s, host_id, { type: "resync" });
   console.error(`host ${name} connected in`);
   // The hello doesn't carry the commit; ask once the tunnel is up.

@@ -1,5 +1,5 @@
-// Port of server/src/hosts/hub/tests.rs. (`a_host_dialled_in_through_a_broker_over_a_dead_connection_reconnects` isn't
-// ported: brokers aren't in the TypeScript server, see hosts/broker.ts.)
+// Port of server/src/hosts/hub/tests.rs. (The broker in `a_host_dialled_in_through_a_broker_over_a_dead_connection_reconnects`
+// is the Rust one, run as a process: see hosts/broker/test_broker.ts.)
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -13,6 +13,8 @@ import type { AppState } from "../../state.ts";
 import { err_str, now, sleep } from "../../util.ts";
 import * as relay from "../relay.ts";
 import * as release from "../../update/release.ts";
+import * as broker from "../broker.ts";
+import * as test_broker from "../broker/test_broker.ts";
 import { API_VERSION, VERSION } from "../proto.ts";
 import { dial_out, find_link, host_request, hub_url, link_http, list_hosts, spawn_outbound, tunnel_to, type LinkConn } from "../hub.ts";
 
@@ -297,6 +299,31 @@ test("a_host_dialled_over_a_dead_connection_is_dialled_again", async () => {
   assert.notEqual(first, second);
   await sleep(relay.SILENCE * 2);
   assert.equal(find_link(hub, "host"), second);
+});
+
+test("a_host_dialled_in_through_a_broker_over_a_dead_connection_reconnects", test_broker.needs_broker(), async () => {
+  const BROKER_TOKEN = "broker-token-0123456789";
+  const b = await test_broker.start_test_broker(BROKER_TOKEN, {}, cleanups);
+  // The hub is on the broker, which it reaches its own API from.
+  const hub = node("hub", "hub");
+  hub.internal_url = `http://${await serve(hub)}`;
+  cleanups.push(broker.dial_out(hub, b, BROKER_TOKEN, "hub", "hub-key"));
+
+  // The host dials the hub at the broker, over a connection that dies.
+  const host = node("host", "laptop");
+  api.router(host);
+  const p = await proxy(b.replace("http://", ""));
+  dial(host, `http://${p.addr}/_broker/h/hub`, "hub-hub");
+  const first = await until("the host to dial in", () => find_link(hub, "host"));
+  assert.equal((await first.request("GET", "/api/info"))[0], 200);
+
+  // The hub's relay to the broker answers its websocket pings, but the host doesn't answer its `Down::Ping`.
+  p.freeze();
+  const second = await until("the host to dial in again", () => {
+    const l = find_link(hub, "host");
+    return l !== first && l;
+  });
+  assert.equal((await second.request("GET", "/api/info"))[0], 200);
 });
 
 test("a_host_added_again_drops_its_old_connection", async () => {

@@ -25,16 +25,20 @@ Everything a single machine's board does is ported: the API, the database and it
 checkpoints and the git views, reviews, automations, status scripts, terminals, hub links (`--hub`, hosts added by URL)
 and Web Push, restarting, rebuilding from a checkout (the UI, `npm ci` when `server-ts`'s lockfile changed, and the Rust
 `ia-shim`) and release updates (downloaded into `<data dir>/app/`, Update and Roll back onto a release, which is the Rust
-server). These are thin: SSH hosts and the broker answer that they aren't supported. `PORTING.md` has the conventions the
-port follows (one TS file per Rust file, Rust's names).
+server), SSH hosts (`ssh-host`, and hosts added over SSH) and the broker (`--broker`: the legacy relay, and managed
+tunnels with cloudflared). An SSH target runs `bin/huntaway ssh-host` from its `authorized_keys`: `bin/huntaway` finds `node` on
+the PATH, in the usual install folders, or at `$IA_NODE`. `PORTING.md` has the conventions the port follows
+(one TS file per Rust file, Rust's names).
 
 Restarts: the Rust server execs (itself, a rebuild or a release), which keeps its process id, arguments and environment.
 Node can't, so `bin/huntaway` (a shell) runs `node` as its child for `serve`: to restart, the server writes what to exec
 to the file the wrapper named in `IA_RESTART_FILE` and exits with 75, and the wrapper execs it as the same process (see
 `update/admin.ts`'s `exec`). TERM, INT and HUP to the wrapper stop node; node stops by itself if the wrapper is killed.
 
-Tests: 657 unit tests ported from the Rust server's 745 (the rest are the broker's, SSH's and a few that
-need a linked host), and all 220 browser checks in `app/tests/ui/` pass against it.
+Tests: every Rust test that applies is ported (737 TS tests: `src/**/*.test.ts` beside their modules, and
+`tests/` for `server/tests/`). Not ported: `state.rs`'s two tests of the database lock, which the TS server doesn't have,
+and `testing.rs`'s tests of the cargo test harness. All 220 browser checks in `app/tests/ui/` pass against it. The broker
+tests run the Rust broker's `test_broker` example (`cargo build -p huntaway-broker --example test_broker`).
 
 ## Memory
 
