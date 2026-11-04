@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ClipboardList, Code, Copy, Download, Eye, ListChecks, Loader2, MessagesSquare, NotebookPen, Sparkles, Workflow, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, ChevronUp, ClipboardList, Code, Copy, Download, Eye, ListChecks, Loader2, MessagesSquare, NotebookPen, Sparkles, Workflow, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { api, hostSupports, type DocumentType, type Message, type Task, type TaskDocument, type TaskType } from "../../api";
 import { frameDoc } from "./htmlFrame";
@@ -136,6 +136,8 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
 
   const messages = useThreadMessages(task.id);
   const reply = useMemo(() => (task.running ? null : lastReply(messages)), [messages, task.running]);
+  // The agent's last reply covers the bottom of the document, so it's closed until asked for.
+  const [showReply, setShowReply] = useState(false);
 
   const versions = doc?.versions ?? [];
   const latest = versions[versions.length - 1];
@@ -341,7 +343,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
         ref={overlay}
         className={clsx(floating ? "pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-bg from-60% to-transparent pt-6" : "shrink-0 pt-2")}
       >
-        {reply && (
+        {reply && showReply && (
           <div className="pointer-events-auto mx-auto w-full max-w-3xl px-5">
             <div className="max-h-28 overflow-y-auto rounded-lg border border-line bg-panel px-3 py-2 [&_.prose-chat]:text-[12.5px]!">
               <Markdown text={reply} />
@@ -374,7 +376,17 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
               </Button>
             </span>
           )}
-          <button className="pointer-events-auto ml-auto flex items-center gap-1 hover:text-fg" onClick={onShowThread} title="The whole conversation with its agent">
+          {reply && (
+            <button
+              className="pointer-events-auto ml-auto flex items-center gap-1 hover:text-fg"
+              onClick={() => setShowReply(!showReply)}
+              aria-expanded={showReply}
+              title={showReply ? "Hide the agent's last reply" : "Show the agent's last reply"}
+            >
+              {showReply ? <ChevronDown size={12} /> : <ChevronUp size={12} />} Summary
+            </button>
+          )}
+          <button className={clsx("pointer-events-auto flex items-center gap-1 hover:text-fg", !reply && "ml-auto")} onClick={onShowThread} title="The whole conversation with its agent">
             <MessagesSquare size={12} /> Thread
           </button>
         </div>
