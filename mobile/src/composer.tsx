@@ -118,11 +118,13 @@ export function Composer({
 
   const dictate = () => {
     if (speech.mode) return speech.stop();
+    // Not while a message is going: what's said goes after the field as it is once it's sent.
+    if (inFlight.current) return;
     before.current = text;
     void speech.start("dictate");
   };
   const record = () => {
-    if (speech.mode) return;
+    if (speech.mode || inFlight.current) return;
     void speech.start("note");
   };
 
@@ -136,6 +138,9 @@ export function Composer({
     try {
       onSent(await client.send(host, taskId, withAttachments(sent.text, sent.files)));
       setText((now) => afterSend(now, sent.text));
+      // Dictation (started meanwhile, say, while its permission was asked) rewrites the field from what it held
+      // before: that mustn't bring the sent text back.
+      before.current = afterSend(before.current, sent.text);
       setFiles((now) => now.filter((f) => !sent.files.some((x) => x.id === f.id)));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -189,14 +194,14 @@ export function Composer({
           accessibilityRole="button"
           accessibilityLabel={speech.mode === "dictate" ? "Stop dictating" : "Dictate"}
           accessibilityHint="Hold to record a voice note instead"
-          accessibilityState={{ disabled: speech.mode === "note", selected: !!speech.mode }}
+          accessibilityState={{ disabled: speech.mode === "note" || (sending && !speech.mode), selected: !!speech.mode }}
           accessibilityActions={[{ name: "activate" }, { name: "longpress", label: "Record a voice note" }]}
           onAccessibilityAction={(e) => (e.nativeEvent.actionName === "longpress" ? record() : dictate())}
-          disabled={speech.mode === "note"}
+          disabled={speech.mode === "note" || (sending && !speech.mode)}
           onPress={dictate}
           onLongPress={record}
           delayLongPress={400}
-          style={({ pressed }) => [s.button, s.small, s.ghost, icon, speech.mode === "note" && s.disabled, pressed && s.pressed]}
+          style={({ pressed }) => [s.button, s.small, s.ghost, icon, (speech.mode === "note" || (sending && !speech.mode)) && s.disabled, pressed && s.pressed]}
         >
           <Text style={{ fontSize: 16, color: speech.mode ? colors.red : colors.fg }}>{speech.mode === "dictate" ? "■" : "🎤"}</Text>
         </Pressable>

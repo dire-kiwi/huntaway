@@ -1,6 +1,6 @@
 // The Assistant, the app's home tab: the selected board's assistant for its picked profile, with the composer (and
 // whatever was shared into the app, filled in). It's on the host the profile's assistant is on (an assistant host of its
-// own, perhaps), and says so when that host is offline. A board older than API 101 has no tab: the Inbox is home then.
+// own, perhaps), and says so when that host is offline. A board older than API 106 has no tab: the Inbox is home then.
 import { Redirect, Tabs } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useRef } from "react";
@@ -12,6 +12,7 @@ import type { Board } from "../../boards";
 import { Composer } from "../../composer";
 import { boards, clientFor, statusOf, useBoards, useBoardStatuses, useLoad, useRefetchOn } from "../../session";
 import { shares, usePendingShare } from "../../share";
+import { WaitingShare } from "../../shareCard";
 import { ThreadMessages, useThread } from "../../threadView";
 import { colors } from "../../theme";
 import { Button, Empty, ErrorText, s } from "../../ui";
@@ -75,6 +76,7 @@ function Assistant({ board }: { board: Board }) {
         }}
       />
       <BoardPicker board={board} profiles={profiles} profile={profile} only={(b) => showsAssistant(b, statusOf(statuses, b.id))} />
+      {!assistant.loading && <WaitingShare pending={pending} board={board} boardName={(id) => boards.board(id)?.name} taking={!!prefill} />}
       {note && task && (
         <View style={[s.card, { borderColor: colors.amber }]}>
           <Text style={s.muted}>{note}</Text>
@@ -100,7 +102,6 @@ function Assistant({ board }: { board: Board }) {
           ) : (
             <View style={{ flex: 1 }} />
           )}
-          {pending?.boardId === board.id && !task && !assistant.loading && <Empty title="What you shared waits here until the assistant opens." />}
         </>
       )}
       {task && (

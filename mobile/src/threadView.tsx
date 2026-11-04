@@ -2,7 +2,7 @@
 // its reply streaming in), the prompts and questions it waits on, kept current from the board's events, with earlier
 // pages on request.
 import type { Client, Message, Task } from "@huntaway/client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { FlatList, Text, View } from "react-native";
 import { Markdown } from "./markdown";
 import { PermissionCard, QuestionCard, toolSummary } from "./prompts";
@@ -20,9 +20,18 @@ export function useThread(boardId: string, client: Client | undefined, host: str
     async () => (client && id ? client.messagePage(host, id, { limit: PAGE }) : { messages: [] as Message[], more: false, subagents: [] }),
     [boardId, host, id],
   );
-  const [delta, setDelta] = useState("");
-  const [olderBusy, setOlderBusy] = useState(false);
-  const [olderError, setOlderError] = useState<string | null>(null);
+  // The streamed reply and a request for earlier messages belong to one thread: the Assistant tab keeps this mounted
+  // when it shows another profile's assistant, so what's left of the last thread's is kept apart and dropped.
+  const key = `${boardId}/${host}/${id}`;
+  const current = useRef(key);
+  current.current = key;
+  const [streamed, setStreamed] = useState({ key, text: "" });
+  const delta = streamed.key === key ? streamed.text : "";
+  const setDelta = (f: (d: string) => string) => setStreamed((was) => ({ key, text: f(was.key === key ? was.text : "") }));
+  const [olderState, setOlderState] = useState<{ key: string; busy: boolean; error: string | null }>({ key, busy: false, error: null });
+  const mine = olderState.key === key;
+  const olderBusy = mine && olderState.busy;
+  const olderError = mine ? olderState.error : null;
 
   useBoardEvents((b, ev) => {
     if (b !== boardId || !id) return;
@@ -35,7 +44,7 @@ export function useThread(boardId: string, client: Client | undefined, host: str
     if (ev.type === "task" && ev.task?.id === id) detail.setData(ev.task as Task);
     else if ((ev.type === "message" || ev.type === "message_updated") && ev.task_id === id) {
       const m = ev.message as Message;
-      if (endsDelta(m)) setDelta("");
+      if (endsDelta(m)) setDelta(() => "");
       thread.setData((t) => ({ more: t?.more ?? false, subagents: t?.subagents ?? [], messages: withMessage(t?.messages ?? [], m) }));
     } else if ((ev.type === "delta" || ev.type === "delta_reset") && ev.task_id === id) setDelta((d) => applyDelta(d, ev));
   });
@@ -47,15 +56,21 @@ export function useThread(boardId: string, client: Client | undefined, host: str
   const older = async () => {
     const first = thread.data?.messages[0];
     if (!client || !first) return;
-    setOlderBusy(true);
-    setOlderError(null);
+    const asked = key;
+    setOlderState({ key: asked, busy: true, error: null });
+    let error: string | null = null;
     try {
       const page = await client.messagePage(host, id, { before: first.id, limit: PAGE });
-      thread.setData((t) => ({ more: page.more, subagents: t?.subagents ?? [], messages: [...page.messages, ...(t?.messages ?? [])] }));
+      // Another thread's shown now: these aren't its messages.
+      if (current.current !== asked) return;
+      thread.setData((t) => {
+        const have = new Set((t?.messages ?? []).map((m) => m.id));
+        return { more: page.more, subagents: t?.subagents ?? [], messages: [...page.messages.filter((m) => !have.has(m.id)), ...(t?.messages ?? [])] };
+      });
     } catch (e) {
-      setOlderError(e instanceof Error ? e.message : String(e));
+      error = e instanceof Error ? e.message : String(e);
     }
-    setOlderBusy(false);
+    setOlderState((was) => (was.key === asked ? { key: asked, busy: false, error } : was));
   };
 
   return { detail, thread, delta, shown, older, olderBusy, olderError, task: detail.data };

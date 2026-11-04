@@ -268,6 +268,35 @@ describe("the mic", () => {
     expect(screen.getByLabelText("Message").props.value).toContain("first words");
   });
 
+  test("a message being sent can't be dictated over, and doesn't come back when dictation started before it went", async () => {
+    let release: (t: unknown) => void = () => {};
+    const send = jest.fn(() => new Promise((r) => (release = r)) as never);
+    await render(<Composer client={{ send, uploadAttachment: jest.fn() }} host="h" taskId="t" bottom={0} onSent={() => {}} />);
+    await fireEvent.changeText(screen.getByLabelText("Message"), "First message");
+    const pressed = fireEvent.press(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    // While it's going, the mic is off.
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    expect(mod.start).not.toHaveBeenCalled();
+    release({ id: "t" });
+    await act(async () => pressed);
+    expect(screen.getByLabelText("Message").props.value).toBe("");
+
+    // Dictation asked for the mic first, and the message went while the permission was asked.
+    let grant: (v: { granted: boolean }) => void = () => {};
+    mod.requestPermissionsAsync.mockImplementationOnce(() => new Promise((r) => (grant = r)));
+    await fireEvent.changeText(screen.getByLabelText("Message"), "Third message");
+    await fireEvent.press(screen.getByRole("button", { name: "Dictate" }));
+    const again = fireEvent.press(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await act(async () => grant({ granted: true }));
+    await waitFor(() => expect(mod.start).toHaveBeenCalledTimes(1));
+    release({ id: "t" });
+    await act(async () => again);
+    await act(async () => speech.emit("result", speech.result("Fourth message")));
+    expect(screen.getByLabelText("Message").props.value).toBe("Fourth message");
+  });
+
   test("says why when it can't listen", async () => {
     mod.supportsRecording.mockReturnValueOnce(false);
     await render(<Composer client={{ send: jest.fn(), uploadAttachment: jest.fn() }} host="h" taskId="t" bottom={0} onSent={() => {}} />);
