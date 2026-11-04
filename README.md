@@ -489,7 +489,11 @@ token still works later, and the notification keeps its buttons.
 ### The mobile app
 
 `mobile/` is an Expo app for Android and iOS (API 100) that follows and drives your tasks on several
-boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
+boards at once, a work hub and a personal board say. Its home tab is the **Assistant** (from API
+106): the selected board's assistant for its picked profile, on the host the profile's assistant is
+on (an assistant host of its own, perhaps, which the tab says is offline when it is), with the
+board and profile switchers above it; on an older board the tab is hidden and the Inbox is home.
+Then an **Inbox** of what's waiting for you on every
 paired board together, each item labelled with its board (tasks that need attention, permission
 prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
 project's tasks by status and a sheet to add one; and each task's **thread**, with the agent's
@@ -498,6 +502,17 @@ stop and move. A **Boards** tab lists the paired boards, picks the profile shown
 a board on the web for what the app leaves out (terminals, diffs and commits, settings,
 analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
 the network changes.
+
+What you **share** from another app (a link, text, photos or a file, from Android's share sheet or
+the iOS share extension, *Huntaway Share*) opens the Assistant with its composer filled in, after
+whatever was typed there, and the files uploading as attachments to the assistant's host. With
+several boards that can take it, the app asks which, with the last one picked first. A share only
+ever becomes a draft: it's never taken as an address or a token. Every composer (the assistant's and
+each task's) has a **mic** button: tap it to dictate into the field with the phone's own speech
+recognition (on the phone where it can be, else Apple's or Google's service), and hold it to
+record a **voice note** (iOS, and Android 13 or later), which is attached as a WAV file with what
+the phone heard of it in the message, since agents read text and not audio. Voice notes stop at
+four minutes, well under an attachment's 10 MB.
 
 **Installing it.** Nothing needs building:
 
@@ -550,9 +565,9 @@ to rename or revoke; revoking one cuts it off at once, open websockets included,
 says it was unpaired. A device can't pair others or manage them (`POST /devices/pairing`, `PATCH`
 and `DELETE /devices/{id}` are for the board's own token), but it can list them and unpair itself,
 which removing the board in the app does. A device can only use the routes the app does (`HUB`
-and `HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, attachments,
-permission prompts, the board's events and hosts, the devices list and its own push subscriptions,
-on every profile, on the
+and `HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, each profile's
+assistant (API 106, but not its memory), attachments, permission prompts, the board's events and
+hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
 and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
@@ -650,9 +665,11 @@ up, once:
 2. In `mobile/`: `npx eas-cli login`, then `npx eas-cli init`, which makes the Expo project and
    writes its `owner` and `extra.eas.projectId` into `app.json`; commit them.
 3. `npx eas-cli credentials --platform ios` (production): sign in with the Apple account, and let
-   it make the distribution certificate and provisioning profile, a push key (APNs, for
+   it make the distribution certificate and provisioning profiles, a push key (APNs, for
    notifications), and an App Store Connect API key for EAS Submit. EAS keeps them, not this
-   repository.
+   repository. There are two profiles: the app's and the share extension's
+   (`nz.net.ivan.huntaway.share-extension`, from `extra.eas` in `app.json`), and EAS registers both
+   bundle ids and their app group, `group.nz.net.ivan.huntaway`, with Apple.
 4. In App Store Connect, add the app (bundle id `nz.net.ivan.huntaway`), and put its Apple ID (the
    number under App Information) and your team id in `eas.json`'s `submit.production.ios` as
    `ascAppId` and `appleTeamId`.
@@ -679,8 +696,11 @@ npx eas-cli build --profile development --platform ios   # or android: a dev bui
 npm run typecheck && npm test # what CI's Tests / mobile runs
 ```
 
-It uses native modules that Expo Go lacks (the camera's scanner, secure storage), so it runs as a
-dev build (`expo-dev-client`). A dev build lets the app pair with a board on plain HTTP (an
+It uses native modules that Expo Go lacks (the camera's scanner, secure storage, share intents and
+speech recognition), so it runs as a dev build (`expo-dev-client`). The share extension is an iOS
+target of its own (`HuntawayShare`, bundle `nz.net.ivan.huntaway.share-extension`, in the app group
+`group.nz.net.ivan.huntaway`), which `expo-share-intent`'s config plugin adds at prebuild and
+`extra.eas` in `app.json` declares for EAS Build's credentials. A dev build lets the app pair with a board on plain HTTP (an
 emulator's `10.0.2.2`, say); release builds won't.
 
 ### Desktop config

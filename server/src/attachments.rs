@@ -67,6 +67,13 @@ fn mime(name: &str) -> &'static str {
         "pdf" => "application/pdf",
         "json" => "application/json",
         "txt" | "md" | "log" | "csv" | "diff" | "patch" => "text/plain",
+        // Voice notes from the app (API 106), and audio shared into it.
+        "wav" => "audio/wav",
+        "m4a" | "mp4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "mp3" => "audio/mpeg",
+        "ogg" | "oga" | "opus" => "audio/ogg",
+        "caf" => "audio/x-caf",
         _ => "application/octet-stream",
     }
 }
@@ -243,6 +250,13 @@ mod tests {
         crate::db::update_task(&state.db(), &task.id, &[("steering", steer)]).unwrap();
         assert!(of_task(&state.db(), &task.id).unwrap().contains(a));
         assert!(referenced(&state.db()).unwrap().contains(a));
+    }
+
+    #[test]
+    fn voice_notes_are_audio() {
+        assert_eq!(mime("voice-note-1.wav"), "audio/wav");
+        assert_eq!(mime("memo.M4A"), "audio/mp4");
+        assert_eq!(mime("x.caf"), "audio/x-caf");
     }
 
     #[test]

@@ -39,7 +39,7 @@
         "expo-camera",
         {
           "cameraPermission": "Huntaway uses the camera to scan a board's pairing QR code and to take photos for tasks.",
-          "microphonePermission": false,
+          "microphonePermission": "Huntaway uses the microphone to dictate messages and record voice notes for your assistant and tasks.",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }
@@ -49,7 +49,36 @@
         {
           "photosPermission": "Huntaway attaches the photos you pick to your tasks.",
           "cameraPermission": "Huntaway uses the camera to take photos for tasks.",
-          "microphonePermission": false
+          "microphonePermission": "Huntaway uses the microphone to dictate messages and record voice notes for your assistant and tasks."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Huntaway uses the microphone to dictate messages and record voice notes for your assistant and tasks.",
+          "speechRecognitionPermission": "Huntaway turns what you say into text for your messages, on this phone where it can."
+        }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "iosShareExtensionName": "Huntaway Share",
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsWebPageWithMaxCount": 1,
+            "NSExtensionActivationSupportsImageWithMaxCount": 5,
+            "NSExtensionActivationSupportsFileWithMaxCount": 5
+          },
+          "androidIntentFilters": [
+            "text/*",
+            "image/*",
+            "audio/*",
+            "application/pdf"
+          ],
+          "androidMultiIntentFilters": [
+            "image/*"
+          ]
         }
       ],
       [
@@ -66,6 +95,27 @@
     "backgroundColor": "#0f0f13",
     "experiments": {
       "typedRoutes": false
+    },
+    "extra": {
+      "eas": {
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "HuntawayShare",
+                  "bundleIdentifier": "nz.net.ivan.huntaway.share-extension",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.nz.net.ivan.huntaway"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }

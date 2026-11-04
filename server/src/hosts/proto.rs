@@ -27,7 +27,9 @@ pub const PROTOCOL: u32 = 1;
 /// API 105: Google and the morning brief: `/profiles/{id}/assistant/google` (the Google card, and adding the Google
 /// server), `/profiles/{id}/assistant/brief` (the routine template) and `/brief/feedback` (ratings into MEMORY.md), the
 /// assistant's `brief` document, `{{google}}` in routines, and `reports` in a push subscription's events.
-pub const API_VERSION: u32 = 105;
+/// API 106: paired devices reach a profile's assistant (`GET`/`POST /profiles/{id}/assistant`, `?local=1` too), for the
+/// app's Assistant tab, and attachments know audio types (voice notes).
+pub const API_VERSION: u32 = 106;
 
 /// Oldest API version a client (a hub's UI) may be built against and still work with this
 /// host. Raise it only for a breaking change, after keeping the old behaviour for a while.

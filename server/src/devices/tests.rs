@@ -311,6 +311,33 @@ fn a_device_cant_get_the_boards_tokens_or_a_shell() {
     })
 }
 
+/// The app's Assistant tab (API 106): a device reaches the profile's assistant on the board, through the hub's proxy to
+/// the host it's on (`?local=1`, as the app asks for it), and its thread; not the assistant's memory.
+#[test]
+fn a_device_reaches_the_profiles_assistant() {
+    crate::testing::run(async || {
+        let s = state();
+        let app = crate::api::router(s.clone());
+        let p = crate::db::insert_profile(&s.db(), "work", &[], None).unwrap();
+        let (phone, _) = pair_device(&app, "phone").await;
+        let (status, a) = call(&app, "GET", &format!("/api/profiles/{}/assistant", p.id), &phone, None).await;
+        assert_eq!((status, &a["task_type"], &a["host_id"]), (200, &json!("assistant"), &json!("h")), "{a}");
+        let (status, again) = call(&app, "GET", &format!("/api/h/h/profiles/{}/assistant?local=1", p.id), &phone, None).await;
+        assert_eq!((status, &again["id"]), (200, &a["id"]), "{again}");
+        let id = a["id"].as_str().unwrap();
+        assert_eq!(call(&app, "GET", &format!("/api/h/h/tasks/{id}/messages"), &phone, None).await.0, 200);
+        assert_eq!(refused("POST", &format!("/api/h/h/profiles/{}/assistant", p.id)), None);
+        for path in ["memory", "memory/file?path=USER.md", "memory/history", "memory/diff"] {
+            let path = format!("/api/h/h/profiles/{}/assistant/{path}", p.id);
+            assert_eq!(call(&app, "GET", &path, &phone, None).await.0, 403, "{path}");
+        }
+        for path in ["memory/file", "memory/restore", "memory/import"] {
+            let path = format!("/api/profiles/{}/assistant/{path}", p.id);
+            assert_eq!(call(&app, "POST", &path, &phone, Some(json!({}))).await.0, 403, "{path}");
+        }
+    })
+}
+
 /// The second check: the handlers of what a device must never reach refuse a request that carries one, as a request
 /// through the hub's proxy to this host does, whatever the path check let through.
 #[test]
@@ -358,6 +385,8 @@ fn what_a_device_may_do() {
         ("POST", "/api/h/x/permissions/p"),
         ("GET", "/api/h/x/attachments/a/photo%20one.jpg"),
         ("GET", "/api/h/my%20host/profiles"),
+        ("GET", "/api/profiles/p/assistant"),
+        ("POST", "/api/h/x/profiles/p/assistant"),
         ("GET", "/api/push"),
         ("POST", "/api/push/subscriptions"),
         ("PATCH", "/api/push/subscriptions/s1"),
@@ -396,6 +425,8 @@ fn what_a_device_may_do() {
         ("GET", "/api/h/x/tasks/a%23/messages"),
         ("POST", "/api/h/x/permissions/p%3Fx"),
         ("GET", "/api/profiles/"),
+        ("GET", "/api/h/x/profiles/p/assistant/memory"),
+        ("POST", "/api/profiles/p/assistant/memory/import"),
         ("GET", "/api"),
         ("GET", "/profiles"),
     ] {

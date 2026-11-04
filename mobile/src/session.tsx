@@ -82,6 +82,11 @@ export const usable = (s: BoardStatus) => !s.unauthorized && !s.tooOld;
 type Listener = (boardId: string, ev: BoardEvent) => void;
 const eventListeners = new Set<Listener>();
 
+/** Hands an event from board `boardId` to every listener (LiveUpdates does, for each board's websocket). */
+export function emitBoardEvent(boardId: string, ev: BoardEvent) {
+  for (const l of eventListeners) l(boardId, ev);
+}
+
 /** Calls `fn` with each event from every paired board (the latest `fn`, without resubscribing). */
 export function useBoardEvents(fn: Listener) {
   const ref = useRef(fn);
@@ -153,7 +158,7 @@ export function LiveUpdates() {
       const socket = new BoardSocket(
         () => client.wsUrl(),
         (ev) => {
-          for (const l of eventListeners) l(b.id, ev);
+          emitBoardEvent(b.id, ev);
         },
         undefined,
         (connected) => {

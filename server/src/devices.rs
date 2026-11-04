@@ -8,9 +8,10 @@
 //! token), and is only kept in memory, so a restart forgets it. The QR code never holds `auth_token`.
 //!
 //! Paired devices can only use the routes the mobile app needs (see `HUB`): profiles, projects, tasks and their
-//! threads, attachments, permission prompts, the board's events and hosts, the devices list, from which they may
-//! only unpair themselves, and their own push subscriptions. Nothing that would outlast revoking them: not the routes that hand out the board's or hub's
-//! token or a Claude login, linking hosts, terminals (a shell on the host), settings or admin.
+//! threads, each profile's assistant, attachments, permission prompts, the board's events and hosts, the devices list,
+//! from which they may only unpair themselves, and their own push subscriptions. Nothing that would outlast revoking
+//! them: not the routes that hand out the board's or hub's token or a Claude login, linking hosts, terminals (a shell
+//! on the host), settings or admin.
 //!
 //! Revoking a device stops the device. It doesn't undo what was done with it before: whoever held it could have had an
 //! agent read the board's files (its `auth_token` among them), as any agent run can. After a phone is lost and may
@@ -119,6 +120,9 @@ const HOST: &[(&str, &str)] = &[
     ("GET", "profiles"),
     ("GET", "profiles/*/projects"),
     ("GET", "profiles/*/tasks"),
+    // The profile's assistant (API 106), which the app's Assistant tab opens; its thread is a task's. Not its memory.
+    ("GET", "profiles/*/assistant"),
+    ("POST", "profiles/*/assistant"),
     ("GET", "projects/*"),
     ("GET", "projects/*/tasks"),
     ("POST", "projects/*/tasks"),
