@@ -17,6 +17,7 @@ detail.
 | [t3code-source-control.md](t3code-source-control.md) | Worktrees, git actions, checkpoints, the diff pane, code hosts, PR review, project settings, terminal, browser, files, secrets |
 | [t3code-remote.md](t3code-remote.md) | Install, the `t3` CLI, background service, updates, remote access and T3 Connect, pairing, guest links, devices, mobile and desktop apps, telemetry |
 | [t3code-architecture.md](t3code-architecture.md) | Status and goals, stack, monorepo layout, data model, transport, restarts, the full API and MCP surface, server settings, undocumented features |
+| [t3code-multiple-claude-accounts.md](t3code-multiple-claude-accounts.md) | How Theo runs several Claude subscriptions (a CLIProxyAPI hub, not T3 Code), and what T3 Code supports itself (HA-166) |
 | [huntaway-features.md](huntaway-features.md) | Huntaway's features, area by area, in the same order as T3 Code's |
 | [huntaway-ui-details.md](huntaway-ui-details.md) | Every Huntaway page, card badge, menu, dialog and shortcut, and UI gaps |
 | [huntaway-server-details.md](huntaway-server-details.md) | Huntaway's CLI, API routes, data model, how runs are launched, what agents are told, and limits |
