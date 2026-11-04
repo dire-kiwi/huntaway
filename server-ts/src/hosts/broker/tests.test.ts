@@ -219,10 +219,17 @@ async function unread_ws(base: string, path: string): Promise<Socket> {
 }
 
 /** A websocket client, open. */
+/**
+ * A websocket client, paused once it's open: a message that comes with the handshake is emitted on the next tick, before
+ * the caller's `await` resumes, so the caller attaches its listeners and then calls `resume()` (sending works paused).
+ */
 function ws_client(url: string, headers: Record<string, string> = {}): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, { headers, perMessageDeflate: false });
-    ws.once("open", () => resolve(ws));
+    ws.once("open", () => {
+      ws.pause();
+      resolve(ws);
+    });
     ws.once("unexpected-response", (_req, res) => reject(Object.assign(new Error(`HTTP ${res.statusCode}`), { status: res.statusCode })));
     ws.once("error", reject);
     cleanups.push(() => ws.terminate());
@@ -564,7 +571,9 @@ test("clients_that_stop_reading_cant_keep_others_out", needs_broker, async () =>
   // More downloads than the host may have in flight, none of them read.
   const conns: Socket[] = [];
   for (let i = 0; i < 12; i++) conns.push(await unread(b, "/test/big"));
-  await sleep(1500);
+  // Rust waits 1.5 s, for the streams' windows to fill and count as stuck (the broker's EVICT_AFTER, 1 s): the Node host
+  // fills them more slowly on a busy runner, and the broker drops stalled ones only after 3 s.
+  await sleep(2000);
   // A request still gets through, in place of one of them, at once.
   const started = Date.now();
   assert.equal((await call("GET", `${b}/api/info?token=desktop-tok`))[0], 200);
@@ -693,6 +702,7 @@ test("relays_websockets", needs_broker, async () => {
   events.on("message", (m, binary) => {
     if (!binary) got.push(JSON.parse(m.toString()));
   });
+  events.resume();
   await until("hello", 5000, () => got.length > 0);
   assert.deepEqual(got[0], { type: "hello" });
   s.events.send({ type: "test", n: 1 });
