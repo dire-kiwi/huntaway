@@ -12,11 +12,12 @@
 //   --keep      leave the two servers running (prints their env files)
 //
 // The Rust server is the newer of server/target/{release,debug}/huntaway (RUST_BIN overrides); build release for a fair
-// comparison. The TS server runs on the node on PATH (NODE_OPTIONS such as --max-old-space-size pass through).
+// comparison. The TS server runs on the node on PATH (NODE_OPTIONS such as --max-old-space-size pass through), under
+// server-ts/bin/huntaway, a shell that keeps the server's process id across restarts: the node under it is measured.
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -44,6 +45,21 @@ function start(name, bin) {
   // copy-live-board restarts the server: its pid is in the data dir.
   const pid = Number(readFileSync(join(vars.IA_TEST_DATA_DIR, "server.pid"), "utf8").trim() || vars.IA_TEST_PID);
   return { name, bin, file, url: vars.IA_TEST_URL, token: vars.IA_TEST_TOKEN, dataDir: vars.IA_TEST_DATA_DIR, pid };
+}
+
+/** The process that serves for `pid`: itself, or the node that the TS server's bin/huntaway (a shell) runs as its child. */
+function serving(pid) {
+  for (;;) {
+    let exe;
+    try {
+      exe = basename(readlinkSync(`/proc/${pid}/exe`));
+    } catch {
+      return pid;
+    }
+    const kids = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim().split(/\s+/).filter(Boolean).map(Number);
+    if (!/^(ba|da|k|z)?sh$/.test(exe) || kids.length !== 1) return pid;
+    pid = kids[0];
+  }
 }
 
 function mem(pid) {
@@ -86,7 +102,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const servers = [start("rust", rustBin), start("ts", tsBin)];
 const rows = [];
 const note = (phase) => {
-  for (const s of servers) rows.push({ phase, server: s.name, ...mem(s.pid) });
+  for (const s of servers) rows.push({ phase, server: s.name, ...mem(serving(s.pid)) });
 };
 try {
   await sleep(3000);
@@ -110,6 +126,8 @@ try {
   const line = (cells) => cells.map((c, i) => String(c).padEnd(w[i])).join("");
   console.log(line(["phase", "server", "RSS", "peak RSS", "PSS", "threads"]));
   for (const r of rows) console.log(line([r.phase, r.server, mb(r.rss), mb(r.hwm), mb(r.pss), r.threads]));
+  const ts = servers.find((s) => s.name === "ts");
+  if (serving(ts.pid) !== ts.pid) console.log(line(["(bin/huntaway's shell, besides)", "ts", mb(mem(ts.pid).rss), "", mb(mem(ts.pid).pss), ""]));
   // Every agent run starts its own `huntaway mcp` (the board's tools) and `huntaway gh-mcp` (GitHub) helpers.
   console.log("\nper-agent helpers, idle (each agent run starts one of each):");
   for (const sub of ["mcp", "gh-mcp"]) {

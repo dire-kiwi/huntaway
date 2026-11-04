@@ -5,8 +5,9 @@ Rust server's. It runs on Node 24+ straight from the `.ts` files (Node strips th
 `bin/huntaway serve …` takes the same arguments as the Rust binary. `ia-shim` and `huntaway-broker` stay in Rust (they're
 separate binaries); the TS server runs the Rust `ia-shim` (see `agent/runs.ts`).
 
-Scope: a single-machine board. Linking hosts (hub links, relay, SSH, broker), self-update from a checkout and release
-updates, and Web Push delivery are thin ports: just enough for their routes to answer and their browser tests to pass.
+Scope: a single-machine board. Linking hosts (hub links, relay, SSH, broker) and Web Push delivery are thin ports: just
+enough for their routes to answer and their browser tests to pass. Restarts, self-update from a checkout and release
+updates are ported in full: `bin/huntaway` execs for the server (see `update/admin.ts`'s `exec`).
 
 ## Conventions (keep to them: several people port modules at once, and call each other's code by these rules)
 

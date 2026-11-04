@@ -1,18 +1,28 @@
 // Port of server/src/update/admin.rs: rebuild-and-restart from the server's own source checkout, so changes merged to
 // the branch it runs from can be picked up from the UI.
 //
-// Thin in the TypeScript server: what the server reports (`status`, `updates_from`, the commit `--update-from`'s
-// deployment runs) is ported, and so is the bundle a hub sends a linked host, but this process can't replace itself
-// (Node has no exec), so restarting, rebuilding and updating from a hub answer with an error.
-import { readFileSync, realpathSync, rmSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+// The Rust server restarts by exec'ing (itself again, a rebuilt binary, or a release), which keeps its process id, its
+// arguments and its environment. Node can't exec, so `bin/huntaway` supervises `node` for `serve` and does it for this
+// server: `exec` writes what to run to the file the wrapper named (`IA_RESTART_FILE`) and exits with `EXEC_CODE`, and the
+// wrapper, whose process id is the server's, execs that. See bin/huntaway.
+import { spawn } from "node:child_process";
+import { accessSync, constants as fs_constants, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { writeFile, rm } from "node:fs/promises";
+import { delimiter, dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { ApiError } from "../http.ts";
-import type { AppState } from "../state.ts";
-import { err_str, now, path_str } from "../util.ts";
+import { default_exe, type AppState } from "../state.ts";
+import { err_str, home_dir, new_id, now, path_str, reached, sleep, truncate } from "../util.ts";
 import * as worktree from "../git/worktree.ts";
 import * as release from "./release.ts";
 import type { Config } from "./release.ts";
+
+const log = {
+  info: (m: string) => console.error(`${new Date().toISOString()}  INFO huntaway::update::admin: ${m}`),
+  warn: (m: string) => console.error(`${new Date().toISOString()}  WARN huntaway::update::admin: ${m}`),
+  error: (m: string) => console.error(`${new Date().toISOString()} ERROR huntaway::update::admin: ${m}`),
+};
 
 /** Facts about this server process, captured at startup. */
 export interface ServerMeta {
@@ -44,9 +54,6 @@ export interface Deployed {
   checked_at: string;
   error: string | null;
 }
-
-/** What the TypeScript server says when asked to restart. */
-export const NO_RESTART = "restarting isn't supported by the TypeScript server; restart it by hand";
 
 /**
  * How this server updates when a hub asks it to (API 89): `checkout` (fast-forward and rebuild its source checkout),
@@ -83,8 +90,10 @@ export function detect_source_dir(explicit: string | null): string | null {
 }
 
 /**
- * The commit a server without a checkout runs: what its deployment says (`IA_COMMIT`). (Rust release builds also
- * know the commit they were built from, which this server never is.)
+ * The commit a server without a checkout runs: the one it was built from (`IA_BUILD_COMMIT` when it was compiled, which
+ * release builds set; the TypeScript server is never built), else what its deployment says (`IA_COMMIT`). A release it
+ * updated to, in `app/`, inherits the deployment's environment, so there `IA_COMMIT` is the deployed bundle's commit
+ * rather than its own.
  */
 export function bundle_commit(from_app: boolean): string | null {
   return pick_bundle_commit(null, process.env.IA_COMMIT ?? null, from_app);
@@ -160,9 +169,9 @@ const DEPLOYED_EVERY = 5 * 60_000;
 export function start_update_check(state: AppState) {
   const url = state.meta.update_from;
   if (url === null) return;
-  if (state.meta.source_dir === null) return void console.error("--update-from needs a source checkout to update; ignoring it");
-  console.error(`following the commit deployed at ${url}`);
-  const check = () => check_deployed(state, url).catch((e) => console.error(`checking ${url}: ${err_str(e)}`));
+  if (state.meta.source_dir === null) return void log.warn("--update-from needs a source checkout to update; ignoring it");
+  log.info(`following the commit deployed at ${url}`);
+  const check = () => check_deployed(state, url).catch((e) => log.warn(`checking ${url}: ${err_str(e)}`));
   check();
   setInterval(check, DEPLOYED_EVERY).unref();
 }
@@ -193,7 +202,7 @@ export async function check_deployed(state: AppState, url: string) {
     }
     deployed = { commit: c, checked_at: now(), error: null };
   } catch (e) {
-    console.error(`checking ${url} for updates: ${err_str(e)}`);
+    log.warn(`checking ${url} for updates: ${err_str(e)}`);
     deployed = { commit: previous?.commit ?? null, checked_at: now(), error: err_str(e) };
   }
   state.deployed = deployed;
@@ -207,29 +216,30 @@ async function has_commit(dir: string, commit: string): Promise<boolean> {
   }
 }
 
-/**
- * Start a restart in the background. With `rebuild`, the UI and server are rebuilt first. Not in the TypeScript
- * server: it can't replace itself.
- */
+/** Start a restart in the background. With `rebuild`, the UI and server are rebuilt first and the restart is abandoned if either build fails. */
 export function start(state: AppState, rebuild: boolean) {
   if (rebuild && state.meta.source_dir === null) throw ApiError.bad("source checkout not found; start the server with --source-dir");
-  throw ApiError.bad(NO_RESTART);
+  begin(state, (st) => run(st, rebuild));
 }
 
 /**
- * Start a restart job that runs `job` in the background, unless one is running. `job` only returns on failure, which
- * the job then shows (the restart log has whatever it logged). Release updates use it too (see update/release.ts).
+ * Start a restart job that runs `job` in the background, unless one is running. `job` only returns on failure, which the
+ * job then shows (the restart log has whatever it logged). Release updates use it too (see update/release.ts), with the
+ * phases `downloading`, `verifying` and `installing` before `restarting`.
  */
 export function begin(state: AppState, job: (s: AppState) => Promise<void>) {
   if (state.restart && job_active(state.restart)) throw ApiError.conflict("a restart is already in progress");
   state.restart = { phase: "starting", log: "", error: null };
-  job(state).then(
-    () => {},
-    (e) => {
-      const msg = err_str(e);
-      console.error(`restart failed: ${msg}`);
-      set_phase(state, "failed", msg);
-    },
+  // Started on the next tick, as tokio::spawn's task would be: the request that began it is answered first.
+  setImmediate(() =>
+    job(state).then(
+      () => {},
+      (e) => {
+        const msg = err_str(e);
+        log.error(`restart failed: ${msg}`);
+        set_phase(state, "failed", msg);
+      },
+    ),
   );
 }
 
@@ -251,17 +261,180 @@ export function log_line(state: AppState, line: string) {
   state.emit({ type: "restart_log", line });
 }
 
+/** Run a build step, streaming stdout and stderr into the restart log. */
+async function step(state: AppState, dir: string, program: string, args: string[]) {
+  log_line(state, `$ ${program} ${args.join(" ")}`);
+  const env = { ...process.env };
+  // Servers launched from a desktop session may not have ~/.cargo/bin on PATH.
+  const home = home_dir();
+  if (home !== null) {
+    const cargo_bin = join(home, ".cargo/bin");
+    const paths = (env.PATH ?? "").split(delimiter).filter((p) => p !== "");
+    if (is_dir(cargo_bin) && !paths.includes(cargo_bin)) env.PATH = [...paths, cargo_bin].join(delimiter);
+  }
+  const child = spawn(program, args, { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
+  const lines = (stream: NodeJS.ReadableStream) =>
+    new Promise<void>((done) => {
+      const rl = createInterface({ input: stream, crlfDelay: Infinity });
+      rl.on("line", (l) => log_line(state, l));
+      rl.on("close", () => done());
+    });
+  const exited = new Promise<[number | null, NodeJS.Signals | null]>((ok, fail) => {
+    child.once("error", (e) => fail(new Error(`failed to run ${program}`, { cause: e })));
+    child.once("close", (code, signal) => ok([code, signal]));
+  });
+  await Promise.all([lines(child.stdout!), lines(child.stderr!)]);
+  const [code, signal] = await exited;
+  if (code !== 0) throw new Error(`\`${program} ${args.join(" ")}\` failed with ${signal ? `signal: ${signal}` : `exit status: ${code}`}`);
+}
+
+const is_dir = (p: string) => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const mtime = (p: string) => {
+  try {
+    return statSync(p).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
 /**
- * Replace this process with `exe`, in the `restarting` phase. Only returns on failure, which here it always is: Node
- * can't exec.
+ * Whether `npm ci` has to run in `dir` (server-ts): its lockfile is newer than the one npm keeps of what it installed
+ * (`node_modules/.package-lock.json`), as after a pull that changed it, or nothing is installed.
  */
-export async function restart_into(_state: AppState, _exe: string, _env: Array<[string, string]>): Promise<Error> {
-  return new Error(NO_RESTART);
+export function lockfile_changed(dir: string): boolean {
+  const lock = mtime(join(dir, "package-lock.json"));
+  const installed = mtime(join(dir, "node_modules/.package-lock.json"));
+  return lock !== null && (installed === null || lock > installed);
+}
+
+async function run(state: AppState, rebuild: boolean) {
+  let exe = state.exe;
+  if (rebuild) {
+    const src = state.meta.source_dir;
+    if (src === null) throw new Error("source checkout not found");
+    set_phase(state, "building_ui", null);
+    // --no-save, so the build never rewrites the tracked package-lock.json: a hub's Update refuses a checkout with
+    // uncommitted changes, so that would stop the next one.
+    await step(state, join(src, "app"), "npm", ["install", "--no-save", "--no-audit", "--no-fund"]);
+    await step(state, join(src, "app"), "npm", ["run", "build"]);
+    set_phase(state, "building_server", null);
+    // The TypeScript server runs from its sources: what it builds is its dependencies, when its lockfile changed, and the
+    // Rust ia-shim its agents run under (see agent/runs.ts's shim_path).
+    const ts = join(src, "server-ts");
+    if (lockfile_changed(ts)) await step(state, ts, "npm", ["ci", "--no-audit", "--no-fund"]);
+    await step(state, join(src, "server"), "cargo", ["build", "--release", "-p", "ia-shim"]);
+    exe = join(ts, "bin/huntaway");
+  }
+  throw await restart_into(state, exe, []);
 }
 
 /**
- * Reap the children this process inherited from the server it replaced. A TypeScript server never replaces another
- * process (it can't exec), and Node can't wait on a process it didn't start, so there's nothing to do.
+ * Replace this process with `exe`, run with this one's arguments and environment (and `env` on top), in the
+ * `restarting` phase. Only returns on failure.
+ */
+export async function restart_into(state: AppState, exe: string, env: Array<[string, string]>): Promise<Error> {
+  // Agents keep running under ia-shim; the new process resumes following them.
+  set_phase(state, "restarting", null);
+  // Give the websocket a moment to deliver the final events.
+  await sleep(300);
+  log.info(`re-executing ${exe}`);
+  return exec(exe, state.meta.args, env);
+}
+
+/** The exit code with which this server asks `bin/huntaway` to exec what it wrote to its restart file. */
+export const EXEC_CODE = 75;
+
+/** `bin/huntaway`'s restart file, and its process id, when it started this server (see `take_supervisor`). */
+let supervisor: { file: string; pid: number } | null = null;
+
+/**
+ * Take `bin/huntaway`'s `IA_RESTART_FILE` and `IA_SUPERVISOR_PID` out of the environment, so that nothing this server
+ * starts sees them, and keep them when they're this process's parent's. Call first thing in `serve`.
+ */
+export function take_supervisor() {
+  const file = process.env.IA_RESTART_FILE, pid = Number(process.env.IA_SUPERVISOR_PID);
+  delete process.env.IA_RESTART_FILE;
+  delete process.env.IA_SUPERVISOR_PID;
+  supervisor = file && pid > 1 && process.ppid === pid ? { file, pid } : null;
+}
+
+/** Whether this server can exec (`bin/huntaway` started it). */
+export function can_exec(): boolean {
+  return supervisor !== null;
+}
+
+/** Call `gone` once `bin/huntaway` has gone (killed with SIGKILL, say), so this server doesn't outlive its process id. */
+export function watch_supervisor(gone: () => void) {
+  const sup = supervisor;
+  if (sup === null) return;
+  const timer = setInterval(() => {
+    if (process.ppid !== sup.pid) {
+      clearInterval(timer);
+      log.warn(`bin/huntaway (${sup.pid}) has gone; shutting down`);
+      gone();
+    }
+  }, 1000);
+  timer.unref();
+}
+
+/** The path this server runs as (Rust's `current_exe`): `bin/huntaway`. */
+export function current_exe(): string {
+  return default_exe();
+}
+
+/** An argument for `sh`, single-quoted. */
+const sh_quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+
+/**
+ * Replace this process with `exe`. Only returns on failure. `bin/huntaway` does it: this writes what to run to its
+ * restart file and exits with `EXEC_CODE`, and the wrapper execs it, as the same process.
+ *
+ * Tests can see what would have been exec'd at `reached("exec")` (and the environment it would have added in
+ * `exec_env`); a test isn't run by `bin/huntaway`, so then it fails.
+ */
+export function exec(exe: string, args: string[], env: Array<[string, string]>): Error {
+  EXEC_ENV = env.map(([k, v]) => [k, v]);
+  reached("exec");
+  if (supervisor === null) return new Error(`failed to exec ${exe}: not started by bin/huntaway, which execs for this server`);
+  try {
+    accessSync(exe, fs_constants.X_OK);
+    if (!statSync(exe).isFile()) throw new Error("Permission denied (os error 13)");
+  } catch (e) {
+    return new Error(`failed to exec ${exe}: ${truncate(err_str(e), 500)}`);
+  }
+  const bad = env.find(([k]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k));
+  if (bad) return new Error(`failed to exec ${exe}: ${JSON.stringify(bad[0])} isn't a variable name`);
+  const script = [`next=${sh_quote(exe)}`, `set -- ${args.map(sh_quote).join(" ")}`, ...env.map(([k, v]) => `${k}=${sh_quote(v)}; export ${k}`)].join("\n");
+  const tmp = `${supervisor.file}.${new_id()}.tmp`;
+  try {
+    writeFileSync(tmp, `${script}\n`, { mode: 0o600 });
+    renameSync(tmp, supervisor.file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    return new Error(`failed to exec ${exe}: writing ${supervisor.file}: ${truncate(err_str(e), 500)}`);
+  }
+  process.exit(EXEC_CODE);
+}
+
+let EXEC_ENV: Array<[string, string]> | null = null;
+
+/** Tests: the environment the last exec would have added (see `exec`). */
+export function exec_env(): Array<[string, string]> | null {
+  return EXEC_ENV;
+}
+
+/**
+ * Reap the children this process inherited from the server it replaced (see `exec`). Node is never exec'd into: it's
+ * always `bin/huntaway`'s new child, which has none. The process that is (a server exec'ing `bin/huntaway`, such as a
+ * release rolling back to this one) is that shell, which reaps every child it has, its inherited ones too, while it
+ * waits for node. So there's nothing to do here.
  */
 export function reap_inherited() {}
 
@@ -284,15 +457,53 @@ export async function bundle(state: AppState): Promise<any> {
   return { branch, commit, bundle: bytes.toString("base64") };
 }
 
-/** Fast-forward this host's checkout to a hub's bundle, then rebuild and restart: not in the TypeScript server. */
-export async function update_from_bundle(state: AppState, _branch: string, _commit: string, _bundle_b64: string): Promise<any> {
-  if (state.meta.source_dir === null) throw ApiError.bad("this host isn't running from a source checkout; update it by hand");
-  throw ApiError.bad(NO_RESTART);
+/** Fast-forward this host's checkout to a hub's bundle, then rebuild and restart. */
+export async function update_from_bundle(state: AppState, branch: string, commit: string, bundle_b64: string): Promise<any> {
+  const src = state.meta.source_dir;
+  if (src === null) throw ApiError.bad("this host isn't running from a source checkout; update it by hand");
+  const current = (await worktree.git(src, ["symbolic-ref", "--short", "HEAD"])).stdout.trim();
+  if (current !== branch) throw ApiError.conflict(`this host's checkout is on ${current}, the hub's on ${branch}`);
+  if ((await head_commit(src)) === commit && state.meta.running_commit === commit) return { ok: true, up_to_date: true };
+  const dirty = await worktree.git(src, ["status", "--porcelain", "--untracked-files=no"]);
+  if (dirty.stdout.trim() !== "") throw ApiError.conflict("this host's checkout has uncommitted changes");
+  const b64 = bundle_b64.trim();
+  if (b64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) throw ApiError.bad("bad bundle: Invalid input");
+  const bytes = Buffer.from(b64, "base64");
+  const path = join(state.data_dir, "incoming.bundle");
+  await writeFile(path, bytes);
+  const refspec = `refs/heads/${branch}:refs/remotes/hub/${branch}`;
+  const fetched = await worktree.git(src, ["fetch", "--quiet", path_str(path), refspec]);
+  await rm(path, { force: true });
+  if (!fetched.ok) throw ApiError.bad(`fetching the hub's bundle failed: ${fetched.stderr.trim()}`);
+  const merged = await worktree.git(src, ["merge", "--ff-only", commit]);
+  if (!merged.ok) throw ApiError.conflict(`can't fast-forward to the hub's ${branch}: ${merged.stderr.trim()}`);
+  start(state, true);
+  return { ok: true, commit };
 }
 
-/** Fast-forward this host's checkout to `commit`, then rebuild and restart: not in the TypeScript server. */
+/**
+ * Fast-forward this host's checkout to `commit`, fetched from its own `origin`, then rebuild and restart. Only follows
+ * the checkout's own branch: the commit must be on its upstream.
+ */
 export async function update_from_origin(state: AppState, commit: string): Promise<any> {
-  if (state.meta.source_dir === null) throw ApiError.bad("this host isn't running from a source checkout; update it by hand");
+  const src = state.meta.source_dir;
+  if (src === null) throw ApiError.bad("this host isn't running from a source checkout; update it by hand");
   if (state.meta.running_commit === commit) return { ok: true, up_to_date: true };
-  throw ApiError.bad(NO_RESTART);
+  const b = await worktree.git(src, ["symbolic-ref", "--short", "HEAD"]);
+  if (!b.ok) throw ApiError.conflict("this host's checkout isn't on a branch");
+  const branch = b.stdout.trim();
+  const dirty = await worktree.git(src, ["status", "--porcelain", "--untracked-files=no"]);
+  if (dirty.stdout.trim() !== "") throw ApiError.conflict("this host's checkout has uncommitted changes");
+  const fetched = await worktree.git(src, ["fetch", "--quiet", "origin"]);
+  if (!fetched.ok) throw ApiError.bad(`git fetch origin failed: ${fetched.stderr.trim()}`);
+  const upstream = `origin/${branch}`;
+  if (!(await worktree.git(src, ["merge-base", "--is-ancestor", commit, upstream])).ok) {
+    throw ApiError.conflict(`${commit.slice(0, 7)} isn't on ${upstream}; push it, or update this host by hand`);
+  }
+  if ((await head_commit(src)) !== commit) {
+    const merged = await worktree.git(src, ["merge", "--ff-only", commit]);
+    if (!merged.ok) throw ApiError.conflict(`can't fast-forward ${branch}: ${merged.stderr.trim()}`);
+  }
+  start(state, true);
+  return { ok: true, commit };
 }

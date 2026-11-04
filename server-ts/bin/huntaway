@@ -8,4 +8,72 @@ if [ "$1" = mcp ]; then
   shift
   exec node --disable-warning=ExperimentalWarning "$here/../src/mcp.ts" "$@"
 fi
-exec node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@"
+case "$1" in
+  "" | serve) ;;
+  *) exec node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" ;;
+esac
+
+# `serve` runs node as this shell's child, so the server keeps this process's id when it restarts, as the Rust server
+# keeps its own when it execs (scripts/test-server.sh, the desktop app and service managers go by it). To restart (or
+# restart onto a release), the server writes what to exec to $IA_RESTART_FILE and exits with 75 (see update/admin.ts),
+# and this shell execs that: this script again, with the same arguments, or a release's Rust server. TERM, INT and HUP
+# stop node, and so this shell; node stops by itself if this shell is killed (see `watch_supervisor`). Agents run under
+# ia-shim, so they carry on through a restart either way. While it waits, the shell reaps any child it has: those it
+# inherits from a server that exec'd it as well (see `reap_inherited`).
+
+# A shell can't trap a signal it was started with ignored, as a non-interactive shell's `… &` starts it with INT, which
+# the Rust server would still stop on: so start again with INT at its default, where env (GNU) or perl can do that.
+if [ -n "$IA_SERVE_SIGNALS" ]; then
+  unset IA_SERVE_SIGNALS
+else
+  IA_SERVE_SIGNALS=1
+  export IA_SERVE_SIGNALS
+  if env --default-signal=INT true 2>/dev/null; then
+    exec env --default-signal=INT "$0" "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    exec perl -e '$SIG{INT} = "DEFAULT"; exec { $ARGV[0] } @ARGV or die "$ARGV[0]: $!\n"' "$0" "$@"
+  fi
+  unset IA_SERVE_SIGNALS
+fi
+dir=$(mktemp -d "${TMPDIR:-/tmp}/huntaway-serve.XXXXXX") || exit 1
+IA_RESTART_FILE=$dir/next
+IA_SUPERVISOR_PID=$$
+export IA_RESTART_FILE IA_SUPERVISOR_PID
+child=
+stopping=
+# Node handles TERM; a background job starts with INT ignored, so it gets TERM for each.
+stop() {
+  stopping=1
+  if [ -n "$child" ]; then
+    kill -TERM "$child" 2>/dev/null
+  else
+    rm -rf "$dir"
+    exit 143
+  fi
+}
+trap stop TERM INT HUP
+# A background job's stdin would be /dev/null: node gets this shell's (when it has one).
+if [ -r /dev/stdin ]; then exec 3<&0; else exec 3</dev/null; fi
+node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" <&3 3<&- &
+child=$!
+exec 3<&-
+while :; do
+  stopping=
+  wait "$child"
+  code=$?
+  # A signal cut the wait short: wait for node to stop.
+  [ -n "$stopping" ] && kill -0 "$child" 2>/dev/null || break
+done
+if [ "$code" = 75 ] && [ -f "$IA_RESTART_FILE" ] && [ -O "$IA_RESTART_FILE" ]; then
+  next=
+  . "$IA_RESTART_FILE"
+  rm -rf "$dir"
+  unset IA_RESTART_FILE IA_SUPERVISOR_PID
+  if [ -n "$next" ] && [ -x "$next" ]; then
+    exec "$next" "$@"
+  fi
+  echo "huntaway: can't run ${next:-what the server asked for}" >&2
+  exit 1
+fi
+rm -rf "$dir"
+exit "$code"

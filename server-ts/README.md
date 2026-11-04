@@ -23,11 +23,17 @@ cd app && IA_TEST_BIN=$PWD/../server-ts/bin/huntaway npm run test:ui     # the b
 Everything a single machine's board does is ported: the API, the database and its migrations, live events, agent runs
 (Claude and Codex) and their thread output, the board's MCP tools and the gh MCP server, permission prompts, worktrees,
 checkpoints and the git views, reviews, automations, status scripts, terminals, hub links (`--hub`, hosts added by URL)
-and Web Push. These are thin: SSH hosts and the broker answer that they aren't supported, and so do restarting, updating
-from a checkout and updating onto a release (Node can't replace its own process as the Rust server does); release
-checks report as before. `PORTING.md` has the conventions the port follows (one TS file per Rust file, Rust's names).
+and Web Push, restarting, rebuilding from a checkout (the UI, `npm ci` when `server-ts`'s lockfile changed, and the Rust
+`ia-shim`) and release updates (downloaded into `<data dir>/app/`, Update and Roll back onto a release, which is the Rust
+server). These are thin: SSH hosts and the broker answer that they aren't supported. `PORTING.md` has the conventions the
+port follows (one TS file per Rust file, Rust's names).
 
-Tests: 657 unit tests ported from the Rust server's 745 (the rest are the broker's, release downloads', SSH's and a few that
+Restarts: the Rust server execs (itself, a rebuild or a release), which keeps its process id, arguments and environment.
+Node can't, so `bin/huntaway` (a shell) runs `node` as its child for `serve`: to restart, the server writes what to exec
+to the file the wrapper named in `IA_RESTART_FILE` and exits with 75, and the wrapper execs it as the same process (see
+`update/admin.ts`'s `exec`). TERM, INT and HUP to the wrapper stop node; node stops by itself if the wrapper is killed.
+
+Tests: 657 unit tests ported from the Rust server's 745 (the rest are the broker's, SSH's and a few that
 need a linked host), and all 220 browser checks in `app/tests/ui/` pass against it.
 
 ## Memory
