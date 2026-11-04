@@ -6,6 +6,10 @@
 //   on, before it opens the database and migrates it: that covers updating onto this release, whichever server did it;
 // - before this server restarts onto another release (Update or Roll back), as the server it starts may not make one.
 //
+// Without a backup, neither goes ahead: a server that can't make one doesn't start (an update onto it isn't settled, so
+// it's marked bad and the version before it starts again, see update/staging.ts), and an Update or Roll back that can't
+// make one fails, with the running server left as it is. `IA_SKIP_DB_BACKUP=1` goes ahead without one.
+//
 // The newest KEEP are kept. To go back to one: stop the server, move `huntaway.db` (and any `huntaway.db-wal` and
 // `huntaway.db-shm` beside it) aside, and copy the backup to `huntaway.db`.
 import { DatabaseSync } from "node:sqlite";
@@ -87,10 +91,28 @@ export function prune(dir: string) {
   for (const { f } of backups.slice(KEEP)) rmSync(join(dir, f), { force: true });
 }
 
+/** `IA_SKIP_DB_BACKUP=1`: go ahead without a backup when one can't be made. */
+export const SKIP_ENV = "IA_SKIP_DB_BACKUP";
+
+const skip = () => !["", "0", "false", "no", "off"].includes((process.env[SKIP_ENV] ?? "").trim().toLowerCase());
+
+/** `e` as the error that stops what needed the backup, unless IA_SKIP_DB_BACKUP says to go ahead (null). */
+function failed(e: unknown, what: string): Error | null {
+  const why = e instanceof Error ? `${e.message}${(e as any).cause ? `: ${(e as any).cause.message ?? (e as any).cause}` : ""}` : String(e);
+  if (skip()) {
+    console.error(`couldn't back up the database before ${what} (${why}); going ahead without one, as ${SKIP_ENV} says`);
+    return null;
+  }
+  return new Error(
+    `couldn't back up the database before ${what}, so it didn't go ahead: ${why}. Free some space in the data dir (backups go in ` +
+      `backups/ there), or set ${SKIP_ENV}=1 to go ahead without a backup`,
+  );
+}
+
 /**
  * At startup, before the database is opened: back it up if another version last ran on this data dir. Returns the
- * backup's path, or null when none was needed (a new data dir, or the same version). A failed backup is logged, and the
- * server starts all the same.
+ * backup's path, or null when none was needed (a new data dir, or the same version). Throws when it can't make one (see
+ * the top of this file).
  */
 export function on_start(data_dir: string, db_path: string, version: string): string | null {
   if (!existsSync(db_path)) return null;
@@ -101,19 +123,24 @@ export function on_start(data_dir: string, db_path: string, version: string): st
     console.error(`backed up the database from before ${version} to ${path}`);
     return path;
   } catch (e) {
-    console.error(`couldn't back up the database before starting ${version}:`, e);
+    const err = failed(e, `starting ${version}`);
+    if (err) throw err;
     return null;
   }
 }
 
-/** Before restarting onto another release (`to`): back up the database this server has open. */
+/**
+ * Before restarting onto another release (`to`): back up the database this server has open. Throws when it can't make
+ * one (see the top of this file), before anything has changed.
+ */
 export function before_switch(data_dir: string, conn: Conn, from: string, to: string): string | null {
   try {
     const path = backup(data_dir, "the database", `${from}-to-${to}`, conn);
     console.error(`backed up the database before switching to ${to}: ${path}`);
     return path;
   } catch (e) {
-    console.error(`couldn't back up the database before switching to ${to}:`, e);
+    const err = failed(e, `switching to ${to}`);
+    if (err) throw err;
     return null;
   }
 }

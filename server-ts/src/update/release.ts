@@ -681,8 +681,9 @@ async function restart_onto(st: AppState, v: string) {
   const dir = staging.version_dir(app, v);
   if (dir === null) throw new Error("not a version");
   const exe = join(dir, "huntaway");
-  const old = staging.change(st, (s) => (s.trying = v));
+  // Before anything changes: without a backup, the Update fails and this server carries on.
   backup.before_switch(st.data_dir, st.db(), VERSION, v);
+  const old = staging.change(st, (s) => (s.trying = v));
   const err = await admin.restart_into(st, exe, bundled_env(st));
   staging.change(st, (s) => {
     if (s.trying === v) s.trying = old.trying;
@@ -747,8 +748,9 @@ export function rollback(state: AppState) {
     if (target === null) throw new Error("there's no earlier version to roll back to");
     const [exe, previous] = target;
     admin.log_line(st, `Rolling back from ${current} to ${previous ?? "the app's own server"}`);
-    const old = staging.change(st, (s) => rolled_back(s, current, previous));
+    // Before anything changes: without a backup, the Roll back fails and this server carries on.
     backup.before_switch(st.data_dir, st.db(), VERSION, previous ?? "bundled");
+    const old = staging.change(st, (s) => rolled_back(s, current, previous));
     const err = await admin.restart_into(st, exe, []);
     // Only what the rollback changed is put back: a download may have staged a version meanwhile.
     staging.change(st, (s) => not_rolled_back(s, old, current, previous));

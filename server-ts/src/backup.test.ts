@@ -74,10 +74,31 @@ test("only_the_newest_backups_are_kept", () => {
   assert.ok(!left.some((f) => f.startsWith("huntaway-v0-") || f.startsWith("huntaway-v1-") || f.endsWith(".partial")), left.join(" "));
 });
 
-test("a_failed_backup_leaves_no_file_and_the_server_starts", () => {
+test("a_server_that_cant_back_up_the_database_doesnt_start_unless_told_to", () => {
   const dir = temp_dir();
   const path = join(dir, "huntaway.db");
   writeFileSync(path, "not a database");
-  assert.equal(backup.on_start(dir, path, "0.3.0"), null);
+  assert.throws(
+    () => backup.on_start(dir, path, "0.3.0"),
+    (e: any) => e.message.startsWith("couldn't back up the database before starting 0.3.0, so it didn't go ahead: ") && e.message.includes("IA_SKIP_DB_BACKUP=1"),
+  );
+  // Nothing half made is left behind.
   assert.deepEqual(readdirSync(backup.backup_dir(dir)), []);
+  process.env.IA_SKIP_DB_BACKUP = "1";
+  try {
+    assert.equal(backup.on_start(dir, path, "0.3.0"), null);
+  } finally {
+    delete process.env.IA_SKIP_DB_BACKUP;
+  }
+});
+
+test("a_switch_that_cant_back_up_the_database_throws", () => {
+  const dir = temp_dir();
+  const [, c] = board(dir, 1);
+  writeFileSync(backup.backup_dir(dir), "");
+  try {
+    assert.throws(() => backup.before_switch(dir, c, "0.3.0", "0.2.1"), /before switching to 0.2.1, so it didn't go ahead/);
+  } finally {
+    c.close();
+  }
 });

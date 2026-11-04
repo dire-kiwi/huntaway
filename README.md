@@ -448,7 +448,10 @@ Whichever server starts on a data dir that another version last ran on (`<data d
 the Rust server doesn't write it) first copies the database to
 `<data dir>/backups/huntaway-<from>-to-<to>-<time>.db`, before opening and migrating it, and the
 TypeScript server makes one before Update or Roll back restarts it onto another release too. The
-newest five are kept. To go back to one: stop the server, move `huntaway.db` (with any
+newest five are kept. Without a backup nothing goes ahead: an Update or Roll back that can't make one
+fails and leaves the running server as it is, and a server that can't make one at startup doesn't
+start, so the update onto it is never settled and the version before it starts again (it's marked
+bad). `IA_SKIP_DB_BACKUP=1` goes ahead without a backup. To go back to one: stop the server, move `huntaway.db` (with any
 `huntaway.db-wal` and `huntaway.db-shm`) aside, and copy the backup to `huntaway.db`.
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes

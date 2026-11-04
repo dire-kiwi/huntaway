@@ -1109,6 +1109,39 @@ test("rollback_goes_back_to_the_previous_version", async () => {
   assert.deepEqual([after.current, after.previous, after.bad.length], ["0.2.0", "0.1.5", 0]);
 });
 
+/** HA-174 review: an Update or Roll back that can't back up the database fails before it changes anything. */
+test("an_update_that_cant_back_up_the_database_doesnt_go_ahead", async () => {
+  const [, state] = await setup_with((f) => [served(f, "v0.2.0", tarball("0.2.0"), Whole)]);
+  await check(state);
+  assert.equal((await finished(state)).phase, "staged");
+  // Where backups go is a file, so none can be made.
+  writeFileSync(join(state.data_dir, "backups"), "");
+  const events = subscribe(state);
+  assert.equal((await api(state, "POST", "/api/admin/release/update", { version: "0.2.0" }))[0], 200);
+  const [phases, error] = await job_fails(events);
+  // It didn't get as far as restarting (or exec'ing).
+  assert.deepEqual(phases, ["failed"]);
+  assert.ok(error.startsWith("couldn't back up the database before switching to 0.2.0, so it didn't go ahead: "), error);
+  assert.ok(error.includes("IA_SKIP_DB_BACKUP=1"), error);
+  const s = staging.read(staging.app_dir(state));
+  assert.deepEqual([s.trying, s.staged, s.current], [null, "0.2.0", null]);
+});
+
+test("a_rollback_that_cant_back_up_the_database_doesnt_go_ahead", async () => {
+  const state = host_at(config("http://unused"), "0.2.0", ["0.1.5"]);
+  const app = staging.app_dir(state);
+  staging.write(app, { ...staging.Installed_default(), current: "0.2.0", previous: "0.1.5" });
+  writeFileSync(join(state.data_dir, "backups"), "");
+  const events = subscribe(state);
+  assert.equal((await api(state, "POST", "/api/admin/release/rollback"))[0], 200);
+  const [phases, error] = await job_fails(events);
+  // It didn't get as far as restarting (or exec'ing).
+  assert.deepEqual(phases, ["failed"]);
+  assert.ok(error.startsWith("couldn't back up the database before switching to 0.1.5, so it didn't go ahead: "), error);
+  const after = staging.read(app);
+  assert.deepEqual([after.current, after.previous, after.bad.length], ["0.2.0", "0.1.5", 0]);
+});
+
 test("a_failed_rollback_keeps_what_a_download_staged_meanwhile", async () => {
   const state = host_at(config("http://unused"), "0.2.0", ["0.1.5", "0.2.5", "0.3.0"]);
   const app = staging.app_dir(state);
