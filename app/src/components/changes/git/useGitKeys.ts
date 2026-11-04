@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { hasUnstaged } from "../diffs";
 import type { GitActions } from "./useGitActions";
 import type { GitSelection } from "./useGitSelection";
@@ -145,23 +145,34 @@ export function useGitKeys(o: GitKeysOptions) {
     if (dialog || menu || rewinding) return;
     if ((e.target as Element).closest("input, textarea, select, [contenteditable], [data-modal]")) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    // While a change is made, keys wait for it (the next space stages the next line, not one from the old diff), and
-    // in a file's diff, for the diff.
-    const queue = busyRef.current || settling || queued.current.length > 0;
-    if (queue ? KEYS.test(e.key) && (queued.current.push([e.key, e.shiftKey]), true) : handleKey(e.key, e.shiftKey)) {
+    // While a change is made, keys wait for it (the next space stages the next line, not one from the old diff), in a
+    // file's diff, for the diff, and after a key, for what it did to be rendered.
+    const queue = busyRef.current || taking.current || settling || queued.current.length > 0;
+    if (queue ? KEYS.test(e.key) && (queued.current.push([e.key, e.shiftKey]), true) : take(e.key, e.shiftKey)) {
       e.preventDefault();
       e.stopPropagation();
     }
   };
-  // One waiting key a render, each with what the one before it did.
-  const [, setTaken] = useState(0);
+  // A key is taken with what the one before it did: until that's rendered (`taking`), the next keys wait, as this
+  // render's `onKey` and `handleKey` would take them with the state from before it (on a slow machine, an Escape back
+  // to the files, then a `j` that moved the cursor in the diff that was left).
+  const [taken, setTaken] = useState(0);
+  const taking = useRef(false);
+  useLayoutEffect(() => void (taking.current = false), [taken]);
+  const take = (key: string, shift: boolean) => {
+    if (!handleKey(key, shift)) return false;
+    taking.current = true;
+    setTaken((n) => n + 1);
+    return true;
+  };
+  // Waiting keys, one a render.
   useEffect(() => {
-    if (busy || settling || !queued.current.length) return;
+    if (busy || settling || taking.current || !queued.current.length) return;
     // What was typed after a key that opened a dialog wasn't meant as keys.
     if (dialog || menu) return void (queued.current = []);
     const [key, shift] = queued.current.shift()!;
-    handleKey(key, shift);
-    setTaken((n) => n + 1);
+    // One that isn't a key here (now) is dropped, and the next is taken in the next render.
+    if (!take(key, shift)) setTaken((n) => n + 1);
   });
   const handleKey = (key: string, shift: boolean): boolean => {
     if (/^[1-9]$/.test(key) && +key <= sides.length) {
