@@ -1,6 +1,7 @@
 // The Assistant, the app's home tab: the selected board's assistant for its picked profile, with the composer (and
 // whatever was shared into the app, filled in). It's on the host the profile's assistant is on (an assistant host of its
 // own, perhaps), and says so when that host is offline. A board older than API 106 has no tab: the Inbox is home then.
+import type { Client, Task } from "@huntaway/client";
 import { Redirect, Tabs } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useRef } from "react";
@@ -9,7 +10,7 @@ import { homeOf, openAssistant, showsAssistant, stillOpen, unavailableNote, type
 import { BoardPicker } from "../../boardPicker";
 import { loadProfiles, pickedProfile, profilesOf } from "../../boardData";
 import type { Board } from "../../boards";
-import { Composer } from "../../composer";
+import { Composer, type Prefill } from "../../composer";
 import { boards, clientFor, statusOf, useBoards, useBoardStatuses, useLoad, useRefetchOn } from "../../session";
 import { shares, usePendingShare } from "../../share";
 import { WaitingShare } from "../../shareCard";
@@ -45,10 +46,6 @@ function Assistant({ board }: { board: Board }) {
   useRefetchOn((b, ev) => b === board.id && ["profiles_changed", "hosts_changed", "resync"].includes(ev.type), loaded.reload);
 
   const task = assistant.data;
-  const host = task?.host_id ?? "";
-  const t = useThread(board.id, client, host, task?.id ?? "");
-  const shown = t.task ?? task;
-
   const pending = usePendingShare();
   const prefill = pending && pending.boardId === board.id && task ? { id: pending.id, ...pending.draft } : null;
 
@@ -64,17 +61,7 @@ function Assistant({ board }: { board: Board }) {
 
   return (
     <KeyboardAvoidingView style={s.screen} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={headerHeight}>
-      <Tabs.Screen
-        options={{
-          title: profile && profiles && profiles.names.length > 1 ? `${profile}'s assistant` : "Assistant",
-          headerRight: () =>
-            shown?.running ? (
-              <View style={{ marginRight: 8 }}>
-                <Button title="Stop" small kind="danger" onPress={() => void client.stop(host, shown.id).catch(() => {})} />
-              </View>
-            ) : null,
-        }}
-      />
+      <Tabs.Screen options={{ title: profile && profiles && profiles.names.length > 1 ? `${profile}'s assistant` : "Assistant" }} />
       <BoardPicker board={board} profiles={profiles} profile={profile} only={(b) => showsAssistant(b, statusOf(statuses, b.id))} />
       {!assistant.loading && <WaitingShare pending={pending} board={board} boardName={(id) => boards.board(id)?.name} taking={!!prefill} />}
       {note && task && (
@@ -90,34 +77,53 @@ function Assistant({ board }: { board: Board }) {
         <Empty title={`Couldn't open ${profile}'s assistant on ${hostName}: ${assistant.error}`}>
           <Button title="Try again" small onPress={retry} />
         </Empty>
-      ) : (
-        <>
-          {(t.thread.error || t.detail.error || t.olderError) && (
-            <View style={{ padding: 12 }}>
-              <ErrorText>{t.thread.error ?? t.detail.error ?? t.olderError}</ErrorText>
-            </View>
-          )}
-          {task ? (
-            <ThreadMessages t={t} client={client} host={host} taskId={task.id} emptyTitle={`Ask ${profile}'s assistant anything: it remembers you, and works outside every project.`} />
-          ) : (
-            <View style={{ flex: 1 }} />
-          )}
-        </>
-      )}
-      {task && (
-        <Composer
-          // Its draft and attachments belong to this assistant's host.
-          key={`${host}/${task.id}`}
+      ) : task ? (
+        // One assistant's thread, its composer (and the sends under way from it), its earlier pages and its Stop: another
+        // assistant's (another profile's, or the same one's on another host) mounts afresh, so nothing late from this one
+        // can land there.
+        <AssistantThread
+          key={`${board.id}/${task.host_id}/${task.id}`}
+          board={board}
           client={client}
-          host={host}
-          taskId={task.id}
-          bottom={0}
-          placeholder="Ask your assistant"
-          onSent={(sent) => t.detail.setData(sent)}
+          task={task}
+          profile={profile ?? ""}
           prefill={prefill}
-          onPrefilled={(id) => shares.clear(id)}
         />
+      ) : (
+        <View style={{ flex: 1 }} />
       )}
     </KeyboardAvoidingView>
+  );
+}
+
+function AssistantThread({ board, client, task, profile, prefill }: { board: Board; client: Client; task: Task; profile: string; prefill: Prefill | null }) {
+  const host = task.host_id;
+  const t = useThread(board.id, client, host, task.id);
+  const shown = t.task ?? task;
+  return (
+    <>
+      {shown.running && (
+        <View style={[s.row, { paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.line }]}>
+          <Text style={[s.faint, { color: colors.blue, flex: 1 }]}>The assistant is working</Text>
+          <Button title="Stop" small kind="danger" onPress={() => void client.stop(host, shown.id).catch(() => {})} />
+        </View>
+      )}
+      {(t.thread.error || t.detail.error || t.olderError) && (
+        <View style={{ padding: 12 }}>
+          <ErrorText>{t.thread.error ?? t.detail.error ?? t.olderError}</ErrorText>
+        </View>
+      )}
+      <ThreadMessages t={t} client={client} host={host} taskId={task.id} emptyTitle={`Ask ${profile}'s assistant anything: it remembers you, and works outside every project.`} />
+      <Composer
+        client={client}
+        host={host}
+        taskId={task.id}
+        bottom={0}
+        placeholder="Ask your assistant"
+        onSent={t.settled}
+        prefill={prefill}
+        onPrefilled={(id) => shares.clear(id)}
+      />
+    </>
   );
 }

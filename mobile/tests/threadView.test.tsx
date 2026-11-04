@@ -57,4 +57,54 @@ test("earlier messages asked for in one assistant's thread don't land in another
     await asked;
   });
   expect(texts(view.result.current)).toEqual(["B 40", "B 100"]);
+
+  // Back on A: its dropped request left nothing busy, and its earlier messages can be asked for again.
+  await view.rerender({ id: "A" });
+  await waitFor(() => expect(texts(view.result.current)).toEqual(["A 100"]));
+  expect(view.result.current.olderBusy).toBe(false);
+  await act(async () => void (asked = view.result.current.older()));
+  expect(view.result.current.olderBusy).toBe(true);
+  await act(async () => {
+    older.A({ messages: [msg(30, "A")], more: false, subagents: [] });
+    await asked;
+  });
+  expect(texts(view.result.current)).toEqual(["A 30", "A 100"]);
+  expect(view.result.current.olderBusy).toBe(false);
+});
+
+test("a task a request returned for the last thread isn't taken by the next", async () => {
+  const { client } = fakeClient();
+  const view = await renderHook((p: { id: string }) => useThread("b", client, "h", p.id), { initialProps: { id: "A" } });
+  await waitFor(() => expect(view.result.current.task?.id).toBe("A"));
+  // A's composer kept the callback from before the switch.
+  const settledForA = view.result.current.settled;
+  await view.rerender({ id: "B" });
+  await waitFor(() => expect(view.result.current.task?.id).toBe("B"));
+  await act(async () => settledForA({ id: "A", running: true } as never));
+  expect(view.result.current.task?.id).toBe("B");
+  await act(async () => view.result.current.settled({ id: "B", running: false } as never));
+  expect(view.result.current.task).toMatchObject({ id: "B", running: false });
+});
+
+test("an earlier page dropped after a switch leaves nothing busy when the first thread's back", async () => {
+  const { client, older } = fakeClient();
+  const view = await renderHook((p: { id: string }) => useThread("b", client, "h", p.id), { initialProps: { id: "A" } });
+  await waitFor(() => expect(texts(view.result.current)).toEqual(["A 100"]));
+  let asked: Promise<void> = Promise.resolve();
+  await act(async () => void (asked = view.result.current.older()));
+  await view.rerender({ id: "B" });
+  await waitFor(() => expect(texts(view.result.current)).toEqual(["B 100"]));
+  await act(async () => {
+    older.A({ messages: [msg(50, "A")], more: false, subagents: [] });
+    await asked;
+  });
+  await view.rerender({ id: "A" });
+  await waitFor(() => expect(texts(view.result.current)).toEqual(["A 100"]));
+  expect(view.result.current.olderBusy).toBe(false);
+  await act(async () => void (asked = view.result.current.older()));
+  await act(async () => {
+    older.A({ messages: [msg(50, "A")], more: false, subagents: [] });
+    await asked;
+  });
+  expect(texts(view.result.current)).toEqual(["A 50", "A 100"]);
 });

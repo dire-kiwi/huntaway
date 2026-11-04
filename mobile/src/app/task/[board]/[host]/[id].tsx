@@ -81,7 +81,7 @@ export default function TaskScreen() {
         </View>
       )}
       <ThreadMessages t={t} client={client} host={host} taskId={id} />
-      <Composer client={client} host={host} taskId={id} bottom={insets.bottom} onSent={(t) => detail.setData(t)} />
+      <Composer client={client} host={host} taskId={id} bottom={insets.bottom} onSent={t.settled} />
       <Modal visible={moving} transparent animationType="fade" onRequestClose={() => setMoving(false)}>
         <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }} onPress={() => setMoving(false)}>
           <View style={{ backgroundColor: colors.panel, padding: 12, paddingBottom: 32, gap: 4, borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>

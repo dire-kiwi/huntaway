@@ -62,18 +62,25 @@ export function useThread(boardId: string, client: Client | undefined, host: str
     try {
       const page = await client.messagePage(host, id, { before: first.id, limit: PAGE });
       // Another thread's shown now: these aren't its messages.
-      if (current.current !== asked) return;
-      thread.setData((t) => {
-        const have = new Set((t?.messages ?? []).map((m) => m.id));
-        return { more: page.more, subagents: t?.subagents ?? [], messages: [...page.messages.filter((m) => !have.has(m.id)), ...(t?.messages ?? [])] };
-      });
+      if (current.current === asked) {
+        thread.setData((t) => {
+          const have = new Set((t?.messages ?? []).map((m) => m.id));
+          return { more: page.more, subagents: t?.subagents ?? [], messages: [...page.messages.filter((m) => !have.has(m.id)), ...(t?.messages ?? [])] };
+        });
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
     setOlderState((was) => (was.key === asked ? { key: asked, busy: false, error } : was));
   };
 
-  return { detail, thread, delta, shown, older, olderBusy, olderError, task: detail.data };
+  /** The task as a request about it returned (a message sent, say): taken only while it's still the thread shown, since
+   *  `detail` outlives a switch to another, and a send made before the switch can finish after it. */
+  const settled = (t: Task) => {
+    if (t.id === current.current.split("/").pop()) detail.setData(t);
+  };
+
+  return { detail, thread, delta, shown, older, olderBusy, olderError, task: detail.data, settled };
 }
 
 export type Thread = ReturnType<typeof useThread>;
