@@ -20,6 +20,7 @@ import { Button, IconButton } from "../ui";
 import { Details } from "./view/details/Details";
 import { useSubproject } from "./view/hooks";
 import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout";
+import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowTabs } from "./Workflows";
 import { ReviewThreadView } from "./view/ReviewThreadView";
 import { TabContent } from "./view/TabContent";
 import { TitleEditor } from "./view/Title";
@@ -116,6 +117,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   useEffect(() => setMarkErr(null), [taskId]);
   // A subagent's thread stays shown while the task is open: closing it (or opening another) goes back to the main thread.
   useEffect(() => () => useSubagentView.getState().show(taskId, null), [taskId]);
+  const workflows = useWorkflowRuns(task);
   const [tab, setTab] = useState<Tab>(() => openingTab(task));
   // Terminals are mounted from their first visit on, so switching tabs keeps the connection.
   const [mounted, setMounted] = useState<Tab[]>([]);
@@ -171,15 +173,18 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
+  // A tab for each the task's workflow steps show their output in (API 107).
+  const wfTabs = task.kind === "task" ? workflowTabs(workflows).map(workflowTab) : [];
+  tabs.push(...wfTabs);
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
   // Until the effect above drops it, a details tab while wide shows the thread beside the column.
   // A label taken off shows the thread instead.
-  const shown = (wide && tab === "details") || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
+  const shown = (wide && tab === "details") || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isWorkflowTab(tab) && !wfTabs.includes(tab)) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
   const docShown = labels.find((l) => l === shown);
   const key = `${keyPrefix(task, project)}-${task.number}`;
   // Stopping the task also stops its review (API 33), so it can be stopped while only that runs.
-  const reviewing = task.review?.state === "running" && hostSupports(host, 33);
+  const reviewing = (task.review?.state === "running" && hostSupports(host, 33)) || workflowRunning(workflows);
   // A terminal needs the room: from the side panel it expands into the dialog.
   const selectTab = (t: Tab) => {
     if (isTerminalTab(t) && mode === "panel") setPanelExpanded(true);
@@ -214,7 +219,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
   const run =
     task.running || reviewing ? (
-      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
+      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review and the task's workflows"}>
         <Square size={11} fill="currentColor" /> Stop
       </Button>
     ) : dependencyQueued(task) ? (
@@ -261,7 +266,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5", shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
           >
             {t === "review" && <ReviewDot task={task} />}
-            {t}
+            {isWorkflowTab(t) ? <span className="normal-case">{t.slice(3)}</span> : t}
           </button>
         ))}
       </div>

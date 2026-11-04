@@ -15,6 +15,7 @@ import { terminalApi } from "./terminal";
 import { approvalsApi } from "./approvals";
 import { automationsApi } from "./automations";
 import { serverApi } from "./server";
+import { workflowsApi } from "./workflows";
 
 export { ApiError, captureTokenFromUrl, fetchOpenToken, getToken, isOpenBoard, setToken, setUnauthorizedHandler, shouldFetchOpenToken, wsUrl } from "./http";
 export * from "./hosts";
@@ -32,6 +33,7 @@ export * from "./terminal";
 export * from "./approvals";
 export * from "./automations";
 export * from "./server";
+export * from "./workflows";
 
 export const api = {
   ...hostsApi,
@@ -49,4 +51,5 @@ export const api = {
   ...approvalsApi,
   ...automationsApi,
   ...serverApi,
+  ...workflowsApi,
 };
