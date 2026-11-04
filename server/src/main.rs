@@ -29,7 +29,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use agent::{codex, focus, runner, runs, task_tmp, title, usage, window};
 use git::relocate;
 use hosts::{broker, hub, ssh, terminal};
-use integrations::{automations, push};
+use integrations::{automations, push, workflows};
 use mcp::{gh_mcp, pr_watch};
 use review::merged;
 use update::{admin, release, staging};
@@ -380,6 +380,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runs::start_pruner(&state);
     task_tmp::start_sweeper(&state);
     automations::start(&state);
+    workflows::resume(&state);
     merged::start(&state);
     relocate::start_recording(&state);
     admin::start_update_check(&state);

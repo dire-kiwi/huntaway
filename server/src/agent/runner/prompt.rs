@@ -316,7 +316,14 @@ pub(crate) fn system_prompt(
             let key = p.map(|p| p.key.as_str()).unwrap_or("T");
             let (number, title) = parent.map(|t| (t.number, t.title.as_str())).unwrap_or((0, "?"));
             let summary = crate::review::summary::is_summary(task);
-            let role = if summary { "You summarise the changes made" } else { "You are the code reviewer" };
+            let workflow = crate::integrations::workflows::is_workflow(task);
+            let role = if workflow {
+                "You run a step of a workflow"
+            } else if summary {
+                "You summarise the changes made"
+            } else {
+                "You are the code reviewer"
+            };
             let mut s = format!(
                 "{role} for task {key}-{number} (\"{title}\") on the Huntaway board, a kanban \
                  board where each task is worked by its own Claude agent."
@@ -328,7 +335,11 @@ pub(crate) fn system_prompt(
                     t.branch.as_ref().map(|b| format!(" on branch `{b}`")).unwrap_or_default()
                 ));
             }
-            s.push_str(if summary {
+            s.push_str(if workflow {
+                "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the \
+                 board. Don't call `request_user_input`. Each message says what the step is to do and how to report: call \
+                 `submit_review` only when it asks for a verdict."
+            } else if summary {
                 "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the \
                  board. Don't call `request_user_input` or `submit_review`. Your last message is the summary of the changes \
                  the user reads before merging them."

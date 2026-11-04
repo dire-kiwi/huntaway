@@ -389,6 +389,9 @@ pub async fn update_task_inner(s: &Shared, id: &str, b: &Map<String, Value>) -> 
         if t.status == "in_review" && current.status != "in_review" && t.kind == "task" {
             crate::review::on_in_review(s, &t);
         }
+        if t.status != current.status {
+            crate::integrations::workflows::on_status(s, &t);
+        }
         // A finished task's terminal and tools aren't needed any more.
         if t.status == "done" && current.status != "done" {
             let (s, id) = (s.clone(), t.id.clone());

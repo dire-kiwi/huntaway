@@ -22,7 +22,7 @@ pub struct McpCall {
 /// (`wait` and `permission_prompt`, by their call id). A call to another tool that was cut short
 /// may have taken effect, so it isn't run again.
 const RERUNNABLE: &[&str] =
-    &["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations"];
+    &["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations", "list_workflows"];
 
 /// A call being executed, which duplicate deliveries wait on (see `handle_mcp`). Dropped without
 /// `done`, as when its request is cut short, it lets them go: a retry then finds it recorded as
@@ -134,6 +134,7 @@ fn rerunnable(s: &Shared, c: &McpCall) -> bool {
         "update_project" | "create_project" => "project",
         "delete_task" => "delete_task",
         "create_automation" | "update_automation" | "delete_automation" => "automation",
+        "create_workflow" | "update_workflow" | "delete_workflow" => "automation",
         _ => return false,
     };
     s.db()
@@ -188,6 +189,7 @@ async fn execute_mcp(s: &Shared, c: &McpCall) -> std::result::Result<Value, Stri
             };
             Ok(json!({"ok": true, "note": note}))
         }
+        "submit_review" if crate::integrations::workflows::is_workflow(&task) => crate::integrations::workflows::submit(s, &task, &run.id, &c.args).map_err(|e| e.1),
         "submit_review" => crate::review::submit(s, &task, &run.id, &c.args).map_err(|e| e.1),
         "wait" => {
             let ctx = Ctx { profile_id: Some(profile.id), profile_name: profile.name, task: Some(task.clone()), call_id: None, task_fields: c.task_fields };
@@ -387,6 +389,11 @@ const AUTOMATIONS_API: u32 = 67;
 
 const AUTOMATION_TOOLS: &[&str] = &["list_automations", "create_automation", "update_automation", "delete_automation", "run_automation"];
 
+/// The API version from which hosts have workflows (HA-173).
+const WORKFLOWS_API: u32 = 107;
+
+const WORKFLOW_TOOLS: &[&str] = &["list_workflows", "create_workflow", "update_workflow", "delete_workflow", "run_workflow"];
+
 pub const TASK_FIELD_DEFAULT_LIMIT: usize = 2000;
 pub const TASK_FIELD_MAX_LIMIT: usize = 4000;
 
@@ -416,6 +423,9 @@ pub(super) fn too_old(host: &str, api_version: u32, tool: &str, args: &Value) ->
     }
     if AUTOMATION_TOOLS.contains(&tool) && api_version < AUTOMATIONS_API {
         return Some(format!("{host} runs an older build without the automation tools; ask the user to update it, or to set it up in the project's settings"));
+    }
+    if WORKFLOW_TOOLS.contains(&tool) && api_version < WORKFLOWS_API {
+        return Some(format!("{host} runs an older build without workflows; ask the user to update it"));
     }
     (needs_project_settings_api(tool, args) && api_version < PROJECT_SETTINGS_API || move_repo && api_version < MOVE_REPO_API)
         .then(|| format!("{host} runs an older build that can't do this with {tool}; ask the user to update it, or to make the change in the project's settings"))

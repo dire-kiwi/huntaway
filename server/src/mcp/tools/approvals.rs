@@ -22,6 +22,14 @@ fn approval_what(tool: &str, input: &Value) -> String {
     if tool == "delete_task" {
         return format!("deleting {}", input["delete"]["key"].as_str().unwrap_or("the task"));
     }
+    if let Some(op) = tool.strip_suffix("_workflow") {
+        let verb = match op {
+            "create" => "creating",
+            "update" => "changing",
+            _ => "deleting",
+        };
+        return format!("{verb} the workflow \"{}\"", input["workflow"]["name"].as_str().unwrap_or_default());
+    }
     if let Some(op) = tool.strip_suffix("_automation") {
         let verb = match op {
             "create" => "creating",
@@ -42,6 +50,9 @@ pub(super) async fn ask_user(s: &Shared, ctx: &Ctx, tool: &str, input: &Value) -
         "delete_task" => ("delete_task", "task", "ask the user to delete it on the board", "deleted"),
         "create_automation" => ("automation", "project", "ask the user to add it in the project's settings (Automations)", "created"),
         "update_automation" | "delete_automation" => ("automation", "project", "ask the user to do it in the project's settings (Automations)", "changed"),
+        // Workflow changes are asked as automations are (the board shows them by their `workflow`).
+        "create_workflow" => ("automation", "project", "ask the user to add it in the project's settings (Workflows)", "created"),
+        "update_workflow" | "delete_workflow" => ("automation", "project", "ask the user to do it in the project's settings (Workflows)", "changed"),
         "create_project" => ("project", "board", "ask the user to add it on the board", "added"),
         _ => ("project", "project", "ask the user to do it in the project's settings", "changed"),
     };

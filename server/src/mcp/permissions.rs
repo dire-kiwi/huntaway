@@ -116,6 +116,8 @@ pub async fn approve(s: &Shared, task: &Task, call_id: &str, kind: &str, tool: &
     let data = json!({"kind": kind, "tool_name": tool, "input": input});
     let question = match kind {
         "delete_task" => "Delete a task?",
+        "automation" if !input["workflow"].is_null() && input["op"] == "delete" => "Delete a workflow?",
+        "automation" if !input["workflow"].is_null() => "Approve a workflow?",
         "automation" if input["op"] == "delete" => "Delete an automation?",
         "automation" => "Approve an automation?",
         "project" if tool == "create_project" => "Add a project?",
@@ -609,6 +611,15 @@ pub fn expire_for_automation(s: &Shared, automation_id: &str) {
         s,
         "SELECT id, message_id FROM permission_requests WHERE kind='automation' AND status='pending' AND json_extract(input, '$.automation.id')=?1",
         automation_id,
+    );
+}
+
+/// Expire the unanswered requests to change or delete a workflow that's been deleted, asked from any thread.
+pub fn expire_for_workflow(s: &Shared, workflow_id: &str) {
+    expire(
+        s,
+        "SELECT id, message_id FROM permission_requests WHERE kind='automation' AND status='pending' AND json_extract(input, '$.workflow.id')=?1",
+        workflow_id,
     );
 }
 

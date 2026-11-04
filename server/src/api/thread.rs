@@ -71,7 +71,8 @@ pub(super) async fn stop_task(State(s): State<Shared>, Path(id): Path<String>) -
     let agent = runner::stop(&s, &id);
     let review = crate::review::stop(&s, &id);
     let summary = crate::review::summary::stop(&s, &id);
-    Ok(Json(json!({"stopped": agent || review || summary})))
+    let workflows = crate::integrations::workflows::stop(&s, &id);
+    Ok(Json(json!({"stopped": agent || review || summary || workflows})))
 }
 
 /// Summarise the task's changes now (see review/summary.rs).

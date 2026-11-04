@@ -145,7 +145,8 @@ pub async fn start(state: &Shared, task_id: &str, manual: bool) -> ApiResult<Opt
     let specs = db::reviewers_for(&state.db(), &project)?;
     let task_config = db::task_claude_config(&state.db(), &task)?;
     let mut threads = db::review_threads(&state.db(), &task.id)?;
-    threads.retain(|t| !crate::review::summary::is_summary(t));
+    // Summary and workflow threads aren't reviewers'.
+    threads.retain(|t| t.task_type.is_none());
     let key = format!("{}-{}", project.key, task.number);
     let mut parts: Vec<ReviewerRun> = Vec::new();
     // What each reviewer looks for: its own instructions, else the project's.
@@ -335,7 +336,7 @@ const REPLY_CHARS: usize = 2000;
 const REPLY_CONTEXT_CHARS: usize = 1500;
 const REPLIES_CHARS: usize = 12000;
 /// How many of the user's latest messages are read for the prompt, at most (fewer fit when they're long).
-const REPLIES: usize = 100;
+pub(crate) const REPLIES: usize = 100;
 
 /// `instructions` (the project's, or the default) say what to look for; the rest locates the
 /// work, says what the user decided in the task's thread (`replies`, see `db::user_replies`) and
@@ -423,7 +424,7 @@ fn prompt(
 
 /// The prompt's part on what the user told the task's agent, so reviewers don't raise again what
 /// they've decided. The latest messages, up to `REPLIES_CHARS`, after `earlier` ones left out if set.
-fn user_said(replies: &[(Option<String>, String)], earlier: bool) -> String {
+pub(crate) fn user_said(replies: &[(Option<String>, String)], earlier: bool) -> String {
     let quote = |s: &str| s.lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n");
     let (mut parts, mut len, mut cut) = (Vec::new(), 0, earlier);
     for (said, text) in replies.iter().rev() {

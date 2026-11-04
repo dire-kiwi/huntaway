@@ -266,6 +266,37 @@ pub(super) async fn local(s: &Shared, ctx: &Ctx, tool: &str, args: &Value) -> To
             let run = crate::integrations::automations::run_now(s, &a, crate::integrations::automations::RunNow { payload: args.get("payload").filter(|p| !p.is_null()).cloned(), event }).await?;
             Ok(crate::integrations::automations::run_json(&s.db(), &run))
         }
+        "list_workflows" => {
+            let p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?;
+            let list: Vec<Value> = crate::integrations::workflows::list(&s.db(), &p.id)?.iter().map(workflow_json).collect();
+            Ok(json!({"project": {"id": p.id, "key": p.key, "name": p.name}, "workflows": list}))
+        }
+        "create_workflow" | "update_workflow" | "delete_workflow" => {
+            // A call retried after a restart carries on with the approval it asked for.
+            if let Some(saved) = ctx.call_id.as_deref().map(|c| permissions::asked(s, c)).transpose()?.flatten() {
+                return change_workflow(s, ctx, &saved).await;
+            }
+            let input = match tool {
+                "create_workflow" => {
+                    let p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project)?;
+                    workflow_creation(s, ctx, &p, args)?
+                }
+                "update_workflow" => {
+                    let (w, p) = resolve_workflow(s, ctx, args, profile, own_project)?;
+                    match workflow_update(s, ctx, &w, &p, args)? {
+                        Ok(input) => input,
+                        // Nothing that needs asking: turning it off, or renaming it.
+                        Err(apply) => return Ok(workflow_json(&crate::integrations::workflows::update(s, &w.id, &apply)?)),
+                    }
+                }
+                _ => {
+                    let (w, p) = resolve_workflow(s, ctx, args, profile, own_project)?;
+                    workflow_deletion(s, ctx, &w, &p, str_arg("reason"))
+                }
+            };
+            change_workflow(s, ctx, &input).await
+        }
+        "run_workflow" => run_workflow(s, ctx, args, profile, own_project).await,
         other => Err(ToolError::Other(format!("unknown tool {other}"))),
     }
 }

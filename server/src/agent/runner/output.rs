@@ -368,7 +368,9 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         let (s, id) = (state.clone(), task.id.clone());
         rt.spawn(async move { crate::git::worktree::keep_starts(&s, &id).await });
     }
-    if run.kind == "review" && crate::review::summary::is_summary(&task) {
+    if run.kind == "review" && crate::integrations::workflows::is_workflow(&task) {
+        crate::integrations::workflows::finished(state, &task, run_id, &outcome, run.attention.as_deref());
+    } else if run.kind == "review" && crate::review::summary::is_summary(&task) {
         crate::review::summary::finished(state, &task, run_id, &outcome, run.attention.as_deref());
     } else if run.kind == "review" {
         crate::review::finished(state, &task, run_id, &outcome, run.attention.as_deref());
@@ -461,7 +463,11 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
         start_next_merge(state, task.project_id.as_deref());
         crate::git::worktree::find_pr(state, &task);
     }
-    if let Some(t) = updated.filter(|t| is_task && t.status == "in_review" && status == Some("in_review")) {
+    if let Some(t) = updated.clone().filter(|t| is_task && t.status == "in_review" && status == Some("in_review")) {
         crate::review::on_in_review(state, &t);
+    }
+    // The task's workflows that start when it enters the column its run ended in.
+    if let Some(t) = updated.as_ref().filter(|t| is_task && status == Some(t.status.as_str()) && t.status != task.status) {
+        crate::integrations::workflows::on_status(state, t);
     }
 }

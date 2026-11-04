@@ -16,6 +16,11 @@ pub(super) fn task_details(s: &Shared, ctx: &Ctx, t: &Task) -> ToolResult {
     if !created.is_empty() {
         out["created_tasks"] = json!(created.iter().map(|c| summary(s, c)).collect::<Vec<_>>());
     }
+    // What its workflows' latest runs did (see integrations/workflows.rs).
+    let workflows = task_workflows(s, &t.id);
+    if workflows.as_array().is_some_and(|w| !w.is_empty()) {
+        out["workflows"] = workflows;
+    }
     Ok(out)
 }
 

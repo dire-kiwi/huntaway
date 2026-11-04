@@ -20,7 +20,7 @@ use crate::agent::{agent_tools, runner, title};
 use crate::db::{self, NewProject, NewTask, PERMISSION_MODES, STATUSES};
 use crate::git::{git_view, relocate, worktree};
 use crate::hosts::{hub, terminal};
-use crate::integrations::{automations, github};
+use crate::integrations::{automations, github, workflows};
 use crate::mcp::{permissions, tools};
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::update::admin;
@@ -131,6 +131,11 @@ fn host_routes() -> Router<Shared> {
         )
         .route("/automations/{id}/run", post(automations::run_handler))
         .route("/automations/{id}/runs", get(automations::runs_handler))
+        .route("/projects/{id}/workflows", get(workflows::list_handler).post(workflows::create_handler))
+        .route("/workflows/{id}", get(workflows::get_handler).patch(workflows::update_handler).delete(workflows::delete_handler))
+        .route("/workflows/{id}/run", post(workflows::run_handler))
+        .route("/tasks/{id}/workflow-runs", get(workflows::task_runs_handler))
+        .route("/workflow-runs/{id}/stop", post(workflows::stop_run_handler))
         .route("/agent-tools", get(agent_tools::get_global))
         .route("/agent-tools/switches", post(agent_tools::set_switch))
         .route("/agent-tools/skill-sources", post(agent_tools::add_source))

@@ -129,6 +129,7 @@ pub(super) fn send_message(state: &Shared, task_id: &str, message: Option<db::Qu
         // The agent is changing the work under review; it's reviewed again when it finishes.
         crate::review::supersede(state, &task);
         crate::review::summary::supersede(state, &task);
+        crate::integrations::workflows::supersede(state, &task);
     }
     Ok(task)
 }

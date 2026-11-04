@@ -919,12 +919,49 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=87; COMMIT;")?;
     }
+    if version < 88 {
+        // Projects' workflows and their runs on tasks (see integrations/workflows.rs).
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V88} PRAGMA user_version=88; COMMIT;"))?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 87;
+pub const VERSION: i64 = 88;
+
+/// Workflows, graphs of steps that act on a project's tasks, and their runs: each run keeps the graph it started
+/// with, what each node did (`nodes`) and the rounds its sends have used (see integrations/workflows.rs).
+const SCHEMA_V88: &str = r#"
+CREATE TABLE IF NOT EXISTS workflows (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  graph TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workflows_project ON workflows(project_id);
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  state TEXT NOT NULL,
+  head TEXT,
+  task_run TEXT,
+  graph TEXT NOT NULL,
+  nodes TEXT NOT NULL DEFAULT '{}',
+  rounds TEXT NOT NULL DEFAULT '{}',
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS workflow_runs_task ON workflow_runs(task_id, workflow_id);
+CREATE INDEX IF NOT EXISTS workflow_runs_state ON workflow_runs(state);
+"#;
 
 /// The board skills (by name) a review or summary thread has on top of its project's, from its
 /// reviewer's `skills` when the review started (see agent/agent_tools.rs, `for_run`).

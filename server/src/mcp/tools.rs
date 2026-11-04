@@ -33,6 +33,7 @@ mod local;
 mod projects;
 mod resolve;
 mod tasks;
+mod workflows;
 
 pub use dispatch::*;
 pub use projects::*;
@@ -42,6 +43,7 @@ use automations::*;
 use local::*;
 use resolve::*;
 use tasks::*;
+use workflows::*;
 
 #[cfg(test)]
 mod tests;
