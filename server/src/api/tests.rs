@@ -11,6 +11,63 @@ pub(crate) async fn call(app: &Router, method: &str, path: &str) -> (u16, Value)
     (status, serde_json::from_slice(&bytes).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into())))
 }
 
+/// The same with a JSON body.
+async fn call_json(app: &Router, method: &str, path: &str, body: Value) -> (u16, Value) {
+    let req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("authorization", "Bearer ")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status().as_u16();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into())))
+}
+
+#[test]
+fn a_config_s_proxy_keys_are_write_only() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let app = router(s.clone());
+        let (status, cfg) = call_json(&app, "POST", "/api/claude-configs", json!({"name": "pool", "api_url": " http://10.0.0.7:8317/ ", "api_key": "sk-1"})).await;
+        assert_eq!(status, 200, "{cfg}");
+        assert_eq!((&cfg["api_url"], &cfg["has_api_key"], &cfg["has_management_key"]), (&json!("http://10.0.0.7:8317"), &json!(true), &json!(false)));
+        assert!(cfg.get("api_key").is_none() && cfg.get("management_key").is_none(), "{cfg}");
+        let id = cfg["id"].as_str().unwrap().to_string();
+        let path = format!("/api/claude-configs/{id}");
+        // Leaving a key out keeps it; setting another doesn't show it either.
+        let (_, cfg) = call_json(&app, "PATCH", &path, json!({"management_key": "mk", "show_usage": true})).await;
+        assert_eq!((&cfg["has_api_key"], &cfg["has_management_key"]), (&json!(true), &json!(true)));
+        let (_, list) = call(&app, "GET", "/api/claude-configs").await;
+        assert!(!list.to_string().contains("sk-1") && !list.to_string().contains("\"mk\""), "{list}");
+        let stored = db::get_claude_config(&s.db(), &id).unwrap().unwrap();
+        assert_eq!((stored.api_key.as_deref(), stored.management_key.as_deref()), (Some("sk-1"), Some("mk")));
+        // Changing the proxy forgets usage read through the old one.
+        s.usage.lock().unwrap().insert(id.clone(), Default::default());
+        call_json(&app, "PATCH", &path, json!({"api_url": "https://proxy.example/"})).await;
+        assert!(!s.usage.lock().unwrap().contains_key(&id));
+        for (body, error) in [
+            (json!({"api_url": "ftp://x"}), "api_url must be an http:// or https:// URL"),
+            (json!({"api_url": "nope"}), "api_url isn't a URL: relative URL without a base"),
+            (json!({"api_key": 5}), "api_key must be a string"),
+            (json!({"agent": "codex"}), "a proxy is for Claude Code configs; clear api_url first"),
+        ] {
+            assert_eq!(call_json(&app, "PATCH", &path, body.clone()).await, (400, json!({"error": error})), "{body}");
+        }
+        // Blank clears it.
+        let (_, cfg) = call_json(&app, "PATCH", &path, json!({"api_url": "", "api_key": null, "management_key": " "})).await;
+        assert_eq!((&cfg["api_url"], &cfg["has_api_key"], &cfg["has_management_key"]), (&Value::Null, &json!(false), &json!(false)));
+        let (status, _) = call_json(&app, "PATCH", &path, json!({"agent": "codex"})).await;
+        assert_eq!(status, 200);
+        let (status, err) = call_json(&app, "PATCH", &path, json!({"api_url": "http://x:1"})).await;
+        assert_eq!((status, err), (400, json!({"error": "a proxy is for Claude Code configs; clear api_url first"})));
+        let (status, err) = call_json(&app, "POST", "/api/claude-configs", json!({"name": "cx", "agent": "codex", "api_url": "http://x:1"})).await;
+        assert_eq!((status, err), (400, json!({"error": "a proxy is for Claude Code configs"})));
+    })
+}
+
 #[test]
 fn unknown_api_routes_get_a_json_404_not_the_ui() {
     crate::testing::run(async || {

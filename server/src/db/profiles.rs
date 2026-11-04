@@ -18,6 +18,23 @@ pub struct ClaudeConfig {
     /// Whether the board starts its plan's next 5-hour window as soon as one ends (see agent/window.rs).
     #[serde(default)]
     pub restart_window: bool,
+    /// An Anthropic-compatible proxy its Claude Code agents go through instead of the login in its
+    /// directory (API 106), such as CLIProxyAPI, which pools several subscriptions: passed as
+    /// ANTHROPIC_BASE_URL, with `api_key` as ANTHROPIC_AUTH_TOKEN (see `api_env`). The directory's
+    /// settings, skills and history are still used. None for Codex configs.
+    #[serde(default)]
+    pub api_url: Option<String>,
+    /// The key agents present to the proxy. Never sent to the board, which sees `has_api_key`.
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
+    /// CLIProxyAPI's management key, which its accounts' usage is read with (see agent/usage.rs,
+    /// `fetch_proxy`). It can act as any of those accounts, so it's never sent to the board either.
+    #[serde(default, skip_serializing)]
+    pub management_key: Option<String>,
+    #[serde(default)]
+    pub has_api_key: bool,
+    #[serde(default)]
+    pub has_management_key: bool,
     pub created_at: String,
 }
 
@@ -30,8 +47,30 @@ impl ClaudeConfig {
             agent: r.get("agent")?,
             show_usage: r.get("show_usage")?,
             restart_window: r.get("restart_window")?,
+            api_url: r.get("api_url")?,
+            api_key: r.get::<_, Option<String>>("api_key")?,
+            management_key: r.get::<_, Option<String>>("management_key")?,
+            has_api_key: r.get::<_, Option<String>>("api_key")?.is_some(),
+            has_management_key: r.get::<_, Option<String>>("management_key")?.is_some(),
             created_at: r.get("created_at")?,
         })
+    }
+
+    /// The proxy its agents go through, if it has one (see `api_url`).
+    pub fn proxy(&self) -> Option<&str> {
+        self.api_url.as_deref().filter(|u| !self.is_codex() && !u.trim().is_empty())
+    }
+
+    /// What a `claude` started with this config gets in its environment to go through its proxy:
+    /// nothing without one. ANTHROPIC_API_KEY is emptied, as Claude Code would send it to the
+    /// proxy instead of the proxy's key were the server started with one.
+    pub fn api_env(&self) -> Vec<(String, String)> {
+        let Some(url) = self.proxy() else { return vec![] };
+        vec![
+            ("ANTHROPIC_BASE_URL".into(), url.trim().trim_end_matches('/').to_string()),
+            ("ANTHROPIC_AUTH_TOKEN".into(), self.api_key.clone().unwrap_or_default()),
+            ("ANTHROPIC_API_KEY".into(), String::new()),
+        ]
     }
 
     pub fn is_codex(&self) -> bool {
@@ -247,7 +286,7 @@ pub fn insert_claude_config(c: &Connection, name: &str, config_dir: &str, agent:
     Ok(get_claude_config(c, &id)?.unwrap())
 }
 
-const CLAUDE_CONFIG_COLUMNS: &[&str] = &["name", "config_dir", "agent", "show_usage", "restart_window"];
+const CLAUDE_CONFIG_COLUMNS: &[&str] = &["name", "config_dir", "agent", "show_usage", "restart_window", "api_url", "api_key", "management_key"];
 
 pub fn update_claude_config(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<ClaudeConfig>> {
     update_generic(c, "claude_configs", CLAUDE_CONFIG_COLUMNS, id, fields)?;

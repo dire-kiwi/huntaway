@@ -906,12 +906,25 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         // The board skills a review or summary thread was given on top of its project's (see review::start).
         conn.execute_batch(&format!("BEGIN; {SCHEMA_V86} PRAGMA user_version=86; COMMIT;"))?;
     }
+    if version < 87 {
+        // An Anthropic-compatible proxy a Claude config's agents go through, such as CLIProxyAPI, with
+        // the key they use and the key its accounts' usage is read with (see ClaudeConfig::api_url).
+        // Added only if they aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for col in ["api_url", "api_key", "management_key"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('claude_configs') WHERE name=?1", [col], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE claude_configs ADD COLUMN {col} TEXT;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=87; COMMIT;")?;
+    }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 86;
+pub const VERSION: i64 = 87;
 
 /// The board skills (by name) a review or summary thread has on top of its project's, from its
 /// reviewer's `skills` when the review started (see agent/agent_tools.rs, `for_run`).
@@ -1217,7 +1230,10 @@ pub(super) fn migrate_claude_configs(conn: &Connection) -> Result<()> {
            created_at TEXT NOT NULL,
            agent TEXT NOT NULL DEFAULT 'claude',
            show_usage INTEGER NOT NULL DEFAULT 0,
-           restart_window INTEGER NOT NULL DEFAULT 0
+           restart_window INTEGER NOT NULL DEFAULT 0,
+           api_url TEXT,
+           api_key TEXT,
+           management_key TEXT
          );
          ALTER TABLE profiles ADD COLUMN claude_config_ids TEXT NOT NULL DEFAULT '[]';
          ALTER TABLE projects ADD COLUMN claude_config_ids TEXT;

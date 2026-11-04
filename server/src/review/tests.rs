@@ -328,7 +328,7 @@ fn a_review_from_before_several_reviewers_still_finishes() {
 
 #[test]
 fn reviewers_are_labelled_by_config_model_and_effort() {
-    let c = ClaudeConfig { id: "c".into(), name: "Codex".into(), config_dir: String::new(), agent: "codex".into(), show_usage: false, restart_window: false, created_at: String::new() };
+    let c = ClaudeConfig { id: "c".into(), name: "Codex".into(), config_dir: String::new(), agent: "codex".into(), show_usage: false, restart_window: false, api_url: None, api_key: None, management_key: None, has_api_key: false, has_management_key: false, created_at: String::new() };
     assert_eq!(label(Some(&c), Some("gpt-5"), Some("high")), "Codex · gpt-5 · high");
     assert_eq!(label(None, None, None), "Claude");
 }

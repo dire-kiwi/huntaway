@@ -10,6 +10,14 @@
 //! per account, and every host with a copy of the login (PR previews, test servers) would
 //! otherwise poll it too.
 //!
+//! A config with a proxy (CLIProxyAPI, see `ClaudeConfig::api_url`) pools several logins, none of
+//! them in its directory. Its usage is each of the proxy's Claude accounts' (asked for through
+//! the proxy's management API, with each account's own token, see `fetch_proxy`), and its limits
+//! are the pool's: each limit's average over the accounts, resetting when the first of them does
+//! (see `pool_limits`). Its runs' `rate_limit_event`s are about whichever account served them, so
+//! they don't change its limits, only whether it's out (the proxy only passes a refusal on once
+//! every account it could try has refused).
+//!
 //! A config is *out* when a run on it was refused for its usage limit (Claude Code's
 //! `rate_limit_event` with status `rejected`, Codex's `usageLimitExceeded`), until that limit
 //! resets. Usage at 100% alone doesn't make it out: a plan with extra usage carries on past it.
@@ -58,8 +66,22 @@ pub struct Usage {
     /// Until when the config is out of usage (API 81): when the limit a run on it was refused
     /// for resets. Kept in memory, so a restart forgets it until a run is refused again.
     pub out_until: Option<String>,
+    /// For a config with a proxy (API 106): each of the proxy's Claude accounts, whose limits
+    /// `limits` pools. Left out for other configs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accounts: Option<Vec<Account>>,
     #[serde(skip)]
     fetched: Option<Instant>,
+}
+
+/// One of a proxy's Claude accounts (API 106).
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct Account {
+    /// Its email, or the proxy's name for it.
+    pub name: String,
+    pub limits: Vec<Limit>,
+    /// Why its usage couldn't be read, or why the proxy isn't using it.
+    pub error: Option<String>,
 }
 
 impl Usage {
@@ -107,10 +129,22 @@ pub async fn list(State(s): State<Shared>, Query(q): Query<UsageQuery>) -> ApiRe
 /// Fetch the config's usage now: whether that worked (the last numbers stay if it didn't).
 pub async fn refresh(s: &Shared, config: &db::ClaudeConfig) -> bool {
     let (config_id, config_dir) = (config.id.as_str(), config.config_dir.as_str());
-    #[cfg(test)]
-    let result = if config.is_codex() { TEST_CODEX.with_borrow(|r| r.clone()).ok_or("no codex in tests".to_string()).map(|rl| (None, crate::agent::codex::limits(&rl))) } else { fetch(config_dir).await };
-    #[cfg(not(test))]
-    let result = if config.is_codex() { crate::agent::codex::rate_limits(config.dir()).await } else { fetch(config_dir).await };
+    let mut accounts = None;
+    let result = if let Some(url) = config.proxy() {
+        fetch_proxy(url, config.management_key.as_deref()).await.map(|a| {
+            let pooled = (Some(format!("{} account{}", a.len(), if a.len() == 1 { "" } else { "s" })), pool_limits(&a));
+            accounts = Some(a);
+            pooled
+        })
+    } else if config.is_codex() {
+        #[cfg(test)]
+        let r = TEST_CODEX.with_borrow(|r| r.clone()).ok_or("no codex in tests".to_string()).map(|rl| (None, crate::agent::codex::limits(&rl)));
+        #[cfg(not(test))]
+        let r = crate::agent::codex::rate_limits(config.dir()).await;
+        r
+    } else {
+        fetch(config_dir).await
+    };
     let mut cache = s.usage.lock().unwrap();
     let u = cache.entry(config_id.to_string()).or_insert_with(|| Usage { config_id: config_id.to_string(), ..Default::default() });
     u.fetched = Some(Instant::now());
@@ -120,6 +154,7 @@ pub async fn refresh(s: &Shared, config: &db::ClaudeConfig) -> bool {
             u.limits.clear();
             u.merge(limits);
             u.plan = plan;
+            u.accounts = accounts;
             u.updated_at = Some(crate::util::now());
             u.error = None;
             true
@@ -188,6 +223,96 @@ async fn fetch(config_dir: &str) -> Result<(Option<String>, Vec<Limit>), String>
     Ok((oauth.subscription_type, parse_limits(&v)))
 }
 
+/// The usage of each Claude account of the CLIProxyAPI at `url`, read through its management API
+/// with `key`: its credentials, then Anthropic's usage endpoint for each with the account's own
+/// token (`requests/api-call`, which puts the token in for `$TOKEN$`), all at once.
+async fn fetch_proxy(url: &str, key: Option<&str>) -> Result<Vec<Account>, String> {
+    let key = key.filter(|k| !k.trim().is_empty()).ok_or("Add the proxy's management key to this config to see its accounts' usage")?;
+    let base = format!("{}/v8/management", url.trim_end_matches('/'));
+    let v = proxy_json(http().get(format!("{base}/credentials")).bearer_auth(key)).await?;
+    let claude: Vec<&Value> = v["files"].as_array().into_iter().flatten().filter(|c| c["provider"] == "claude" && c["disabled"] != true).collect();
+    let accounts = futures::future::join_all(claude.iter().map(|c| account_usage(&base, key, c))).await;
+    Ok(accounts)
+}
+
+async fn account_usage(base: &str, key: &str, cred: &Value) -> Account {
+    let field = |k: &str| cred[k].as_str().map(str::trim).filter(|t| !t.is_empty());
+    let name = field("email").or(field("label")).or(field("name")).unwrap_or("Claude account").to_string();
+    // A number in some versions.
+    let index = match &cred["auth_index"] {
+        Value::String(t) => t.clone(),
+        v => v.to_string(),
+    };
+    let body = json!({
+        "auth_index": index,
+        "method": "GET",
+        "url": USAGE_URL,
+        "header": {"Authorization": "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20"},
+    });
+    let (limits, mut error) = match proxy_json(http().post(format!("{base}/requests/api-call")).bearer_auth(key).json(&body)).await {
+        Ok(r) if r["status_code"].as_u64() == Some(200) => match serde_json::from_str::<Value>(r["body"].as_str().unwrap_or("")) {
+            Ok(v) => (parse_limits(&v), None),
+            Err(e) => (vec![], Some(format!("Bad usage response: {e}"))),
+        },
+        Ok(r) => {
+            let msg = serde_json::from_str::<Value>(r["body"].as_str().unwrap_or("")).ok().and_then(|v| v["error"]["message"].as_str().map(String::from));
+            (vec![], Some(format!("Usage request failed ({}){}", r["status_code"], msg.map(|m| format!(": {m}")).unwrap_or_default())))
+        }
+        Err(e) => (vec![], Some(e)),
+    };
+    // What the proxy says about it, when it isn't using it (a cooldown, a login that needs renewing).
+    if cred["unavailable"] == true && error.is_none() {
+        error = Some(field("status_message").map(|m| format!("Unavailable: {m}")).unwrap_or_else(|| "Unavailable".into()));
+    }
+    Account { name, limits, error }
+}
+
+/// A management API request's JSON, or why there's none.
+async fn proxy_json(req: reqwest::RequestBuilder) -> Result<Value, String> {
+    let res = req.send().await.map_err(|e| format!("Proxy request failed: {e}"))?;
+    let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    if !status.is_success() {
+        let msg = v["error"].as_str().map(String::from).unwrap_or_else(|| body.chars().take(200).collect());
+        let hint = if msg.contains("remote management disabled") { " (set management.allow-remote: true in its config.yaml)" } else { "" };
+        return Err(format!("Proxy request failed ({status}): {msg}{hint}"));
+    }
+    if v.is_null() {
+        return Err("Bad response from the proxy".into());
+    }
+    Ok(v)
+}
+
+/// A pool's limits from its accounts': for each limit, the average of the accounts that report it
+/// (how much of the pool's room is used, for accounts on the same plan), resetting when the first
+/// of them does (when some room comes back). Accounts without numbers are left out.
+fn pool_limits(accounts: &[Account]) -> Vec<Limit> {
+    let mut out: Vec<Limit> = vec![];
+    let mut counts: Vec<usize> = vec![];
+    for l in accounts.iter().flat_map(|a| &a.limits) {
+        match out.iter().position(|x| x.id == l.id) {
+            Some(i) => {
+                out[i].percent += l.percent;
+                counts[i] += 1;
+                let soonest = match (&out[i].resets_at, &l.resets_at) {
+                    (Some(a), Some(b)) => [a, b].into_iter().min_by_key(|t| parse_time(t)).cloned(),
+                    (a, b) => a.clone().or(b.clone()),
+                };
+                out[i].resets_at = soonest;
+            }
+            None => {
+                out.push(l.clone());
+                counts.push(1);
+            }
+        }
+    }
+    for (l, n) in out.iter_mut().zip(counts) {
+        l.percent = (l.percent / n as f64 * 10.0).round() / 10.0;
+    }
+    out
+}
+
 fn http() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| reqwest::Client::builder().timeout(Duration::from_secs(10)).build().unwrap_or_default())
@@ -234,6 +359,15 @@ fn parse_limits(v: &Value) -> Vec<Limit> {
 /// A `rate_limit_event` from an agent run with `config_id`: update its session and weekly limits,
 /// and whether it's out of usage.
 pub fn on_rate_limit_event(s: &Shared, config_id: &str, v: &Value) {
+    on_rate_limit(s, config_id, v, true);
+}
+
+/// The same for a run through a proxy: only whether it's out, as its limits are one account's.
+pub fn on_proxy_rate_limit_event(s: &Shared, config_id: &str, v: &Value) {
+    on_rate_limit(s, config_id, v, false);
+}
+
+fn on_rate_limit(s: &Shared, config_id: &str, v: &Value, windows: bool) {
     let info = &v["rate_limit_info"];
     // A plan with extra usage reports its used-up limit as rejected while its turns go on, on
     // the extra usage (as Claude Code works out `isUsingOverage`).
@@ -243,6 +377,9 @@ pub fn on_rate_limit_event(s: &Shared, config_id: &str, v: &Value) {
         // Allowed again (or on extra usage), whatever said it was out before.
         Some(_) => set_out(s, config_id, None),
         None => {}
+    }
+    if !windows {
+        return;
     }
     let windows = &info["unifiedWindows"];
     let mut limits = vec![];
@@ -518,6 +655,129 @@ mod tests {
             set_limits(&s, "y", vec![lim("session", 50.0, soon)], None);
             codex_refused(&s, "y");
             assert_eq!(out_until(&s, "y"), None, "no reset known");
+        })
+    }
+
+    #[test]
+    fn a_proxied_run_s_rate_limits_only_mark_it_out() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let soon = chrono::Utc::now().timestamp() + 600;
+            set_limits(&s, "p", vec![Limit { id: "session".into(), label: "Session".into(), percent: 20.0, resets_at: None }], None);
+            let event = |status: &str| json!({"rate_limit_info": {"status": status, "resetsAt": soon, "unifiedWindows": {"five_hour": {"utilization": 0.9, "resetsAt": soon}}}});
+            // One account's numbers aren't the pool's.
+            on_proxy_rate_limit_event(&s, "p", &event("allowed"));
+            assert_eq!(s.usage.lock().unwrap()["p"].limits[0].percent, 20.0);
+            // A refusal the proxy passed on: every account it could try refused.
+            on_proxy_rate_limit_event(&s, "p", &event("rejected"));
+            assert_eq!(out_until(&s, "p"), timestamp(soon));
+            assert_eq!(s.usage.lock().unwrap()["p"].limits[0].percent, 20.0);
+            on_proxy_rate_limit_event(&s, "p", &event("allowed"));
+            assert_eq!(out_until(&s, "p"), None);
+        })
+    }
+
+    #[test]
+    fn a_pool_s_limits_are_its_accounts_averaged_resetting_with_the_first() {
+        let lim = |id: &str, p: f64, at: Option<&str>| Limit { id: id.into(), label: id.into(), percent: p, resets_at: at.map(String::from) };
+        let acct = |limits| Account { name: "a".into(), limits, error: None };
+        let accounts = [
+            acct(vec![lim("session", 100.0, Some("2026-11-04T10:00:00Z")), lim("weekly", 40.0, Some("2026-11-09T00:00:00Z"))]),
+            acct(vec![lim("session", 30.0, Some("2026-11-04T08:30:00+00:00")), lim("weekly", 20.0, None), lim("weekly:opus", 5.0, None)]),
+            // Its usage couldn't be read: it counts for nothing.
+            Account { name: "b".into(), limits: vec![], error: Some("no".into()) },
+        ];
+        assert_eq!(
+            pool_limits(&accounts),
+            vec![
+                lim("session", 65.0, Some("2026-11-04T08:30:00+00:00")),
+                lim("weekly", 30.0, Some("2026-11-09T00:00:00Z")),
+                lim("weekly:opus", 5.0, None)
+            ]
+        );
+        assert_eq!(pool_limits(&[]), vec![]);
+    }
+
+    /// A CLIProxyAPI's management API with two Claude accounts (one whose usage fails), a Codex one
+    /// and a disabled one, answering only `key`. Its address, and the requests it got.
+    async fn fake_proxy(key: &'static str) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
+        use axum::http::{HeaderMap, StatusCode};
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let authed = move |h: &HeaderMap| h.get("authorization").and_then(|v| v.to_str().ok()) == Some(&format!("Bearer {key}"));
+        let creds = move |h: HeaderMap| async move {
+            if !authed(&h) {
+                return (StatusCode::UNAUTHORIZED, Json(json!({"error": "invalid management key"})));
+            }
+            (StatusCode::OK, Json(json!({"files": [
+                {"auth_index": "a1", "provider": "claude", "email": "one@example.com", "name": "claude-one.json", "disabled": false},
+                {"auth_index": 2, "provider": "claude", "name": "claude-two.json", "unavailable": true, "status_message": "cooling down"},
+                {"auth_index": "c1", "provider": "codex", "email": "codex@example.com"},
+                {"auth_index": "d1", "provider": "claude", "email": "off@example.com", "disabled": true},
+            ]})))
+        };
+        let log = seen.clone();
+        let call = move |h: HeaderMap, Json(b): Json<Value>| {
+            let log = log.clone();
+            async move {
+                if !authed(&h) {
+                    return (StatusCode::UNAUTHORIZED, Json(json!({"error": "invalid management key"})));
+                }
+                log.lock().unwrap().push(b.clone());
+                let usage = json!({"five_hour": {"utilization": 40.0, "resets_at": "2026-11-04T10:00:00Z"}, "seven_day": {"utilization": 10.0, "resets_at": null}});
+                let res = match b["auth_index"].as_str() {
+                    Some("a1") => json!({"status_code": 200, "header": {}, "body": usage.to_string()}),
+                    _ => json!({"status_code": 401, "header": {}, "body": json!({"error": {"message": "token expired"}}).to_string()}),
+                };
+                (StatusCode::OK, Json(res))
+            }
+        };
+        let app = axum::Router::new()
+            .route("/v8/management/credentials", axum::routing::get(creds))
+            .route("/v8/management/requests/api-call", axum::routing::post(call));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}/"), seen)
+    }
+
+    #[test]
+    fn a_proxy_config_s_usage_is_its_claude_accounts() {
+        crate::testing::run(async || {
+            let s = crate::testing::state();
+            let (url, seen) = fake_proxy("mk").await;
+            let cfg = {
+                let c = s.db();
+                let cfg = db::insert_claude_config(&c, "pool", "", "claude").unwrap();
+                db::update_claude_config(&c, &cfg.id, &[("show_usage", json!(true)), ("api_url", json!(url)), ("api_key", json!("k"))]).unwrap().unwrap()
+            };
+            // Without the management key, it says what's missing (and doesn't read ~/.claude's login).
+            assert!(!refresh(&s, &cfg).await);
+            assert!(s.usage.lock().unwrap()[&cfg.id].error.as_deref().unwrap().contains("management key"), "{:?}", s.usage.lock().unwrap()[&cfg.id].error);
+            let wrong = db::update_claude_config(&s.db(), &cfg.id, &[("management_key", json!("nope"))]).unwrap().unwrap();
+            assert!(!refresh(&s, &wrong).await);
+            assert!(s.usage.lock().unwrap()[&cfg.id].error.as_deref().unwrap().contains("401"));
+
+            let cfg = db::update_claude_config(&s.db(), &cfg.id, &[("management_key", json!("mk"))]).unwrap().unwrap();
+            assert!(refresh(&s, &cfg).await);
+            let u = s.usage.lock().unwrap()[&cfg.id].clone();
+            assert_eq!(u.error, None);
+            assert_eq!(u.plan.as_deref(), Some("2 accounts"));
+            let accounts = u.accounts.unwrap();
+            assert_eq!(accounts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["one@example.com", "claude-two.json"]);
+            assert_eq!(accounts[0].limits.iter().map(|l| (l.id.as_str(), l.percent)).collect::<Vec<_>>(), [("session", 40.0), ("weekly", 10.0)]);
+            assert_eq!(accounts[1].limits, vec![]);
+            assert_eq!(accounts[1].error.as_deref(), Some("Usage request failed (401): token expired"));
+            // The pool is the accounts that have numbers.
+            assert_eq!(u.limits.iter().map(|l| (l.id.as_str(), l.percent)).collect::<Vec<_>>(), [("session", 40.0), ("weekly", 10.0)]);
+            // Each account's usage was asked for with its own token, by the proxy.
+            let seen = seen.lock().unwrap().clone();
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0]["url"], USAGE_URL);
+            assert_eq!(seen[0]["header"]["Authorization"], "Bearer $TOKEN$");
+            assert_eq!(seen.iter().map(|b| b["auth_index"].as_str().unwrap().to_string()).collect::<Vec<_>>(), ["a1", "2"]);
+            // It's sent to the board with the accounts.
+            let v = serde_json::to_value(&s.usage.lock().unwrap()[&cfg.id]).unwrap();
+            assert_eq!(v["accounts"][1]["name"], "claude-two.json");
         })
     }
 

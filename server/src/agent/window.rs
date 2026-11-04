@@ -75,7 +75,8 @@ pub fn start(s: &Shared) {
         loop {
             tick.tick().await;
             let configs = match db::list_claude_configs(&s.db()) {
-                Ok(c) => c.into_iter().filter(|c| c.restart_window).collect::<Vec<_>>(),
+                // Not through a proxy: it picks the account, so there's no one window to restart.
+                Ok(c) => c.into_iter().filter(|c| c.restart_window && c.proxy().is_none()).collect::<Vec<_>>(),
                 Err(e) => {
                     tracing::warn!("restarting 5-hour windows: {e:#}");
                     continue;

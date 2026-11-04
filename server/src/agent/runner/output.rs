@@ -159,7 +159,10 @@ pub(super) fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
         }
         "rate_limit_event" => {
             if let Some(config) = task_config(state, task_id)? {
-                crate::agent::usage::on_rate_limit_event(state, &config.id, &v);
+                match config.proxy() {
+                    Some(_) => crate::agent::usage::on_proxy_rate_limit_event(state, &config.id, &v),
+                    None => crate::agent::usage::on_rate_limit_event(state, &config.id, &v),
+                }
             }
         }
         "stream_event" => {
@@ -180,7 +183,11 @@ pub(super) fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
             // Claude Code's message for a turn refused for the usage limit says when it resets.
             if v["api_error"] == "usage_limit_reached" && v["api_error_params"]["rate_limit_info"].is_object() {
                 if let Some(config) = task_config(state, task_id)? {
-                    crate::agent::usage::on_rate_limit_event(state, &config.id, &json!({"rate_limit_info": v["api_error_params"]["rate_limit_info"]}));
+                    let info = json!({"rate_limit_info": v["api_error_params"]["rate_limit_info"]});
+                    match config.proxy() {
+                        Some(_) => crate::agent::usage::on_proxy_rate_limit_event(state, &config.id, &info),
+                        None => crate::agent::usage::on_rate_limit_event(state, &config.id, &info),
+                    }
                 }
             }
             if v["type"] == "user" && v["isReplay"] == true {

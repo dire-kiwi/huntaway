@@ -14,6 +14,35 @@ pub(super) struct CreateClaudeConfig {
     config_dir: String,
     /// One of db::AGENTS (API 25); Claude Code by default.
     agent: Option<String>,
+    /// A proxy for its agents, with its keys (API 106, see ClaudeConfig::api_url).
+    #[serde(flatten)]
+    proxy: Map<String, Value>,
+}
+
+/// The fields setting a config's proxy (see ClaudeConfig::api_url).
+const PROXY_FIELDS: [&str; 3] = ["api_url", "api_key", "management_key"];
+
+/// The proxy fields in `b`, checked: strings, trimmed, a blank one cleared (null), and a URL that's
+/// http(s). The keys are write-only, so leaving one out keeps it.
+fn proxy_fields(b: &Map<String, Value>) -> ApiResult<Vec<(&'static str, Value)>> {
+    let mut out = vec![];
+    for key in PROXY_FIELDS {
+        let Some(v) = b.get(key) else { continue };
+        let t = match v {
+            Value::Null => String::new(),
+            Value::String(t) => t.trim().to_string(),
+            _ => return Err(ApiError::bad(format!("{key} must be a string"))),
+        };
+        if key == "api_url" && !t.is_empty() {
+            let url = reqwest::Url::parse(&t).map_err(|e| ApiError::bad(format!("api_url isn't a URL: {e}")))?;
+            if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+                return Err(ApiError::bad("api_url must be an http:// or https:// URL"));
+            }
+        }
+        let t = if key == "api_url" { t.trim_end_matches('/').to_string() } else { t };
+        out.push((key, if t.is_empty() { Value::Null } else { json!(t) }));
+    }
+    Ok(out)
 }
 
 fn check_agent(agent: &str) -> ApiResult<()> {
@@ -29,7 +58,16 @@ pub(super) async fn create_claude_config(State(s): State<Shared>, Json(b): Json<
     }
     let agent = b.agent.as_deref().unwrap_or("claude");
     check_agent(agent)?;
-    let cfg = db::insert_claude_config(&s.db(), b.name.trim(), &b.config_dir, agent)?;
+    let proxy = proxy_fields(&b.proxy)?;
+    if agent == "codex" && proxy.iter().any(|(_, v)| !v.is_null()) {
+        return Err(ApiError::bad("a proxy is for Claude Code configs"));
+    }
+    let c = s.db();
+    let mut cfg = db::insert_claude_config(&c, b.name.trim(), &b.config_dir, agent)?;
+    if !proxy.is_empty() {
+        cfg = db::update_claude_config(&c, &cfg.id, &proxy)?.ok_or_else(|| ApiError::not_found("Claude config"))?;
+    }
+    drop(c);
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!(cfg)))
 }
@@ -48,8 +86,15 @@ pub(super) async fn update_claude_config(State(s): State<Shared>, Path(id): Path
             fields.push((key, json!(v.as_bool().ok_or_else(|| ApiError::bad(format!("{key} must be true or false")))?)));
         }
     }
+    fields.extend(proxy_fields(&b)?);
     let c = s.db();
     let current = db::get_claude_config(&c, &id)?.ok_or_else(|| ApiError::not_found("Claude config"))?;
+    // A Codex config can't have a proxy, nor can one that has a proxy become a Codex config.
+    let agent = fields.iter().find(|(k, _)| *k == "agent").and_then(|(_, v)| v.as_str()).unwrap_or(&current.agent);
+    let url = fields.iter().find(|(k, _)| *k == "api_url").map(|(_, v)| v.as_str()).unwrap_or(current.api_url.as_deref());
+    if agent == "codex" && url.is_some() {
+        return Err(ApiError::bad("a proxy is for Claude Code configs; clear api_url first"));
+    }
     if let Some((_, agent)) = fields.iter().find(|(k, _)| *k == "agent") {
         let agent = agent.as_str().unwrap_or("");
         check_agent(agent)?;
@@ -61,6 +106,10 @@ pub(super) async fn update_claude_config(State(s): State<Shared>, Path(id): Path
     }
     let cfg = db::update_claude_config(&c, &id, &fields)?.ok_or_else(|| ApiError::not_found("Claude config"))?;
     drop(c);
+    // Usage read through the old proxy (or from the directory's login) isn't this config's any more.
+    if fields.iter().any(|(k, _)| PROXY_FIELDS.contains(k)) {
+        s.usage.lock().unwrap().remove(&id);
+    }
     s.emit(json!({"type": "profiles_changed"}));
     Ok(Json(json!(cfg)))
 }

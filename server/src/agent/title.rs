@@ -361,7 +361,7 @@ async fn call_model(config: Option<&db::ClaudeConfig>, cwd: &Path, system_prompt
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     if let Some(config) = config {
-        cmd.env("CLAUDE_CONFIG_DIR", expand_tilde(config.dir()));
+        cmd.env("CLAUDE_CONFIG_DIR", expand_tilde(config.dir())).envs(config.api_env());
     }
     let mut child = cmd.spawn().context("failed to run claude")?;
     let mut stdin = child.stdin.take().context("no stdin")?;
