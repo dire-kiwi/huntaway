@@ -116,7 +116,9 @@ const SERVER_DIR = fileURLToPath(new URL("../../../server/", import.meta.url));
 export function shim_path(state: Shared): string {
   const env = process.env.IA_SHIM_BIN;
   if (env) return env;
-  const built = ["release", "debug"].map((p) => join(SERVER_DIR, "target", p, "ia-shim")).filter(is_file);
+  // Not in tests (`node --test`), which mustn't start real agents unless they ask to (TEST_CAN_RUN), as the Rust tests
+  // can't: their binary has no ia-shim beside it.
+  const built = process.env.NODE_TEST_CONTEXT ? [] : ["release", "debug"].map((p) => join(SERVER_DIR, "target", p, "ia-shim")).filter(is_file);
   if (built.length) return built.sort((a, b) => mtime(b) - mtime(a))[0];
   return join(dirname(state.exe), "ia-shim");
 }
