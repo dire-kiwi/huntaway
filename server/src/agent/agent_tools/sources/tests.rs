@@ -302,7 +302,7 @@ fn a_source_whose_skills_swap_or_pass_on_names_keeps_them() {
         let before = ids(&v);
         let id_of = |name: &str| before.iter().find(|(n, _)| n == name).unwrap().1.clone();
         let profile = crate::db::insert_profile(&state.db(), "p", &[], None).unwrap();
-        set_switch(
+        let _ = set_switch(
             State(state.clone()),
             Json(SwitchBody { scope: "profile".into(), scope_id: profile.id.clone(), item_id: None, source_id: Some(source_id.clone()), enabled: Some(true) }),
         )

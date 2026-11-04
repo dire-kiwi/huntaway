@@ -462,9 +462,9 @@ fn the_users_prompts_put_a_task_in_now_but_agents_and_starts_do_not() {
 
         // A prompt sent on its thread, not an empty one that starts its agent.
         let t = make(json!({"start": true})).await;
-        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "  "})).unwrap())).await.unwrap();
+        let _ = send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "  "})).unwrap())).await.unwrap();
         assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at, None);
-        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "and this"})).unwrap())).await.unwrap();
+        let _ = send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "and this"})).unwrap())).await.unwrap();
         assert!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at.is_some());
         crate::agent::runs::TEST_CAN_RUN.set(false);
     })
