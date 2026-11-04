@@ -1,6 +1,6 @@
-import { act, renderHook, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react-native";
 import { emitBoardEvent } from "../src/session";
-import { useThread } from "../src/threadView";
+import { ThreadMessages, useThread } from "../src/threadView";
 
 const msg = (id: number, task: string) => ({ id, task_id: task, kind: "user", data: { text: `${task} ${id}` }, created_at: "" });
 
@@ -107,4 +107,30 @@ test("an earlier page dropped after a switch leaves nothing busy when the first 
     await asked;
   });
   expect(texts(view.result.current)).toEqual(["A 50", "A 100"]);
+});
+
+test("a routine's report shows in the thread, and opens its routine's thread", async () => {
+  const report = {
+    id: 7,
+    task_id: "asst",
+    kind: "report",
+    data: { automation_id: "a1", automation: "Morning brief", task_id: "r9", key: "A-9", outcome: "reported", text: "3 mails need you." },
+    created_at: "",
+  };
+  const client = {
+    task: jest.fn(async (_h: string, id: string) => ({ task: { id, running: false } })),
+    messagePage: jest.fn(async () => ({ messages: [report], more: false, subagents: [] })),
+  };
+  function Shown({ onOpenTask }: { onOpenTask: (id: string) => void }) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = useThread("b", client as any, "h", "asst");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return <ThreadMessages t={t} client={client as any} host="h" taskId="asst" onOpenTask={onOpenTask} />;
+  }
+  const opened: string[] = [];
+  await render(<Shown onOpenTask={(id) => opened.push(id)} />);
+  await waitFor(() => expect(screen.getByText("3 mails need you.")).toBeTruthy());
+  expect(screen.getByText("Morning brief")).toBeTruthy();
+  fireEvent.press(screen.getByText("Open A-9"));
+  expect(opened).toEqual(["r9"]);
 });

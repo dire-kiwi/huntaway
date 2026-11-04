@@ -2,7 +2,7 @@
 // whatever was shared into the app, filled in). It's on the host the profile's assistant is on (an assistant host of its
 // own, perhaps), and says so when that host is offline. A board older than API 116 has no tab: the Inbox is home then.
 import type { Client, Task } from "@huntaway/client";
-import { Redirect, Tabs } from "expo-router";
+import { Redirect, Tabs, useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useRef } from "react";
 import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
@@ -99,6 +99,8 @@ function Assistant({ board }: { board: Board }) {
 function AssistantThread({ board, client, task, profile, prefill }: { board: Board; client: Client; task: Task; profile: string; prefill: Prefill | null }) {
   const host = task.host_id;
   const t = useThread(board.id, client, host, task.id);
+  const router = useRouter();
+  const openTask = (id: string) => router.push({ pathname: "/task/[board]/[host]/[id]", params: { board: board.id, host, id } });
   const shown = t.task ?? task;
   return (
     <>
@@ -113,7 +115,7 @@ function AssistantThread({ board, client, task, profile, prefill }: { board: Boa
           <ErrorText>{t.thread.error ?? t.detail.error ?? t.olderError}</ErrorText>
         </View>
       )}
-      <ThreadMessages t={t} client={client} host={host} taskId={task.id} emptyTitle={`Ask ${profile}'s assistant anything: it remembers you, and works outside every project.`} />
+      <ThreadMessages t={t} client={client} host={host} taskId={task.id} onOpenTask={openTask} emptyTitle={`Ask ${profile}'s assistant anything: it remembers you, and works outside every project.`} />
       <Composer
         client={client}
         host={host}

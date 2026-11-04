@@ -2,7 +2,7 @@
 // waits on, and the composer, with photos from the camera or library as attachments. Start, stop and move are in the
 // header. Diffs, commits and the terminal are on the web board.
 import { STATUSES, type Status } from "@huntaway/client";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +20,7 @@ export default function TaskScreen() {
   const insets = useSafeAreaInsets();
 
   const t = useThread(boardId, client, host, id);
+  const router = useRouter();
   const { detail, thread, task } = t;
   const [moving, setMoving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -80,7 +81,7 @@ export default function TaskScreen() {
           <ErrorText>{err ?? thread.error ?? detail.error ?? t.olderError}</ErrorText>
         </View>
       )}
-      <ThreadMessages t={t} client={client} host={host} taskId={id} />
+      <ThreadMessages t={t} client={client} host={host} onOpenTask={(task) => router.push({ pathname: "/task/[board]/[host]/[id]", params: { board: boardId, host, id: task } })} taskId={id} />
       <Composer client={client} host={host} taskId={id} bottom={insets.bottom} onSent={t.settled} />
       <Modal visible={moving} transparent animationType="fade" onRequestClose={() => setMoving(false)}>
         <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }} onPress={() => setMoving(false)}>

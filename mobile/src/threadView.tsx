@@ -3,7 +3,7 @@
 // pages on request.
 import type { Client, Message, Task } from "@huntaway/client";
 import { useMemo, useRef, useState } from "react";
-import { FlatList, Text, View } from "react-native";
+import { FlatList, Pressable, Text, View } from "react-native";
 import { Markdown } from "./markdown";
 import { PermissionCard, QuestionCard, toolSummary } from "./prompts";
 import { useBoardEvents, useLoad } from "./session";
@@ -86,7 +86,22 @@ export function useThread(boardId: string, client: Client | undefined, host: str
 export type Thread = ReturnType<typeof useThread>;
 
 /** The thread's messages, newest at the bottom. */
-export function ThreadMessages({ t, client, host, taskId, emptyTitle }: { t: Thread; client: Client; host: string; taskId: string; emptyTitle?: string }) {
+export function ThreadMessages({
+  t,
+  client,
+  host,
+  taskId,
+  emptyTitle,
+  onOpenTask,
+}: {
+  t: Thread;
+  client: Client;
+  host: string;
+  taskId: string;
+  emptyTitle?: string;
+  /** Opens another task on this host: a report's routine thread. */
+  onOpenTask?: (id: string) => void;
+}) {
   const { thread, delta, shown, task } = t;
   return (
     <>
@@ -108,13 +123,27 @@ export function ThreadMessages({ t, client, host, taskId, emptyTitle }: { t: Thr
           ) : undefined
         }
         ListFooterComponent={thread.data?.more ? <Button title="Earlier messages" small kind="ghost" busy={t.olderBusy} onPress={t.older} style={{ margin: 12 }} /> : undefined}
-        renderItem={({ item }) => <Row item={item} client={client} host={host} taskId={taskId} onAnswered={() => thread.reload()} />}
+        renderItem={({ item }) => <Row item={item} client={client} host={host} taskId={taskId} onAnswered={() => thread.reload()} onOpenTask={onOpenTask} />}
       />
     </>
   );
 }
 
-function Row({ item, client, host, taskId, onAnswered }: { item: ThreadItem; client: Client; host: string; taskId: string; onAnswered: () => void }) {
+function Row({
+  item,
+  client,
+  host,
+  taskId,
+  onAnswered,
+  onOpenTask,
+}: {
+  item: ThreadItem;
+  client: Client;
+  host: string;
+  taskId: string;
+  onAnswered: () => void;
+  onOpenTask?: (id: string) => void;
+}) {
   switch (item.type) {
     case "user":
       return (
@@ -150,6 +179,8 @@ function Row({ item, client, host, taskId, onAnswered }: { item: ThreadItem; cli
           {item.tool} · {item.status || "answered"}
         </Text>
       );
+    case "report":
+      return <ReportCard item={item} onOpenTask={onOpenTask} />;
     case "question":
       return item.data?.status === "pending" ? (
         <View style={[s.card, { borderColor: colors.accent }]}>
@@ -161,4 +192,27 @@ function Row({ item, client, host, taskId, onAnswered }: { item: ThreadItem; cli
         </View>
       );
   }
+}
+
+/** How a routine's run ended, as the report's header says it. */
+export const REPORT_OUTCOME: Record<string, string> = { reported: "reported", asked: "asks you", failed: "failed", stopped: "was stopped" };
+
+/** A routine's report: its name and how its run ended, its text, and a link to the routine's thread. */
+function ReportCard({ item, onOpenTask }: { item: Extract<ThreadItem, { type: "report" }>; onOpenTask?: (id: string) => void }) {
+  const bad = item.outcome === "failed" || item.outcome === "stopped";
+  const id = item.taskId;
+  const open = onOpenTask && id ? () => onOpenTask(id) : undefined;
+  return (
+    <View style={[s.card, { borderColor: bad ? colors.red : item.outcome === "asked" ? colors.amber : colors.line }]}>
+      <Text style={[s.muted, { marginBottom: 4 }]}>
+        <Text style={{ color: colors.fg, fontWeight: "600" }}>{item.automation}</Text> {REPORT_OUTCOME[item.outcome] ?? item.outcome}
+      </Text>
+      {!!item.text && <Markdown text={item.text} />}
+      {open && (
+        <Pressable onPress={open} accessibilityRole="link" style={{ marginTop: 6 }}>
+          <Text style={{ color: colors.accent }}>Open {item.taskKey ?? "its thread"}</Text>
+        </Pressable>
+      )}
+    </View>
+  );
 }

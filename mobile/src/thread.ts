@@ -1,6 +1,6 @@
 // What a thread shows on the phone, from its stored messages: the user's messages, the agent's text, its tool calls
-// in one line each (with whether they failed), the board's events, and the prompts and questions (answerable while
-// they're pending). A simpler cut of the web board's threadModel.ts.
+// in one line each (with whether they failed), the board's events, the prompts and questions (answerable while
+// they're pending), and the reports the assistant's routines post. A simpler cut of the web board's threadModel.ts.
 import type { Message } from "@huntaway/client";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -13,6 +13,9 @@ export type ThreadItem =
   | { type: "event"; key: string; level: string; text: string }
   | { type: "permission"; key: string; requestId: string; status: string; tool: string; input: Any }
   | { type: "question"; key: string; id: number; data: Any }
+  /** What one of the assistant's routines posted in its thread (API 111): its name, how its run ended, its text, and the
+   *  routine thread it came from, to open. */
+  | { type: "report"; key: string; automation: string; outcome: string; text: string; taskId?: string; taskKey?: string }
   | { type: "result"; key: string; error: boolean; text: string };
 
 /** Messages in id order, with `m` added or put in place of the one with its id. */
@@ -41,6 +44,16 @@ export function threadItems(messages: Message[]): ThreadItem[] {
     else if (m.kind === "permission")
       items.push({ type: "permission", key: k, requestId: d.request_id ?? "", status: d.status ?? "", tool: d.tool_name ?? d.tool ?? "", input: d.input });
     else if (m.kind === "question") items.push({ type: "question", key: k, id: m.id, data: d });
+    else if (m.kind === "report")
+      items.push({
+        type: "report",
+        key: k,
+        automation: String(d.automation ?? "A routine"),
+        outcome: String(d.outcome ?? "reported"),
+        text: String(d.text ?? ""),
+        taskId: typeof d.task_id === "string" && d.task_id !== m.task_id ? d.task_id : undefined,
+        taskKey: typeof d.key === "string" ? d.key : undefined,
+      });
     else if (m.kind === "claude" && d.type === "assistant") {
       (d.message?.content ?? []).forEach((b: Any, i: number) => {
         const key = `${k}.${i}`;
