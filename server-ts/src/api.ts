@@ -147,7 +147,7 @@ function host_routes(r: Router) {
   r.route("/tasks/{id}/skills", { GET: agent_tools.for_task });
   r.route("/tasks/{id}/document", { GET: documents.get });
   r.route("/tasks/{id}/terminal", { GET: thread.terminal_status, DELETE: thread.kill_terminal });
-  r.ws("/tasks/{id}/terminal/ws", thread.terminal_ws);
+  r.ws("/tasks/{id}/terminal/ws", thread.terminal_ws, { pre: thread.terminal_ws_check });
   r.route("/tasks/{id}/terminal/keepalive", { POST: thread.terminal_keepalive });
   r.route("/claude-configs/{id}/models", { GET: claude_configs.claude_config_models });
   // A config with plugins and skills is easily past the default 2 MB body limit.

@@ -254,22 +254,26 @@ export async function terminal_keepalive(s: AppState, r: Req) {
  * The task's terminal (`?cols=&rows=&tool=`). The Rust server answers a missing task (404) or a host without tmux (503)
  * before the upgrade; here the socket is upgraded already, so it's closed with the reason.
  */
-export function terminal_ws(s: AppState, r: Req, ws: WebSocket) {
-  const fail = (status: number, msg: string) => ws.close(status === 404 ? 4404 : status === 503 ? 4503 : 4400, msg);
+/** The terminal websocket's checks, before the upgrade (a 404 or 503 answers the request, as in Rust). */
+export function terminal_ws_check(s: AppState, r: Req) {
   const t = db.get_task(s.db(), r.params.id);
-  if (!t) return fail(404, "task not found");
-  if (!terminal.available()) return fail(503, "tmux is not installed on this host");
+  if (!t) throw ApiError.not_found("task");
+  if (!terminal.available()) throw new ApiError(503, "tmux is not installed on this host");
   let tool: any;
   try {
     tool = find_tool(s, r.query.tool);
   } catch (e) {
-    return fail(404, err_str(e));
+    throw e instanceof ApiError ? e : new ApiError(404, err_str(e));
   }
   const size = (v: string | undefined, d: number) => {
     const n = v !== undefined && /^\d+$/.test(v) ? Number(v) : NaN;
     return n >= 2 && n <= 1000 ? n : d;
   };
-  const cols = size(r.query.cols, 80), rows = size(r.query.rows, 24);
+  return { t, tool, cols: size(r.query.cols, 80), rows: size(r.query.rows, 24) };
+}
+
+export function terminal_ws(s: AppState, r: Req, ws: WebSocket) {
+  const { t, tool, cols, rows } = r.pre ?? terminal_ws_check(s, r);
   Promise.resolve(terminal.serve(s, t, tool, cols, rows, ws)).catch((e: any) => {
     console.error(`terminal for ${t.id}:`, e);
     ws.close(1011);

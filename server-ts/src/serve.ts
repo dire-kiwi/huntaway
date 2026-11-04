@@ -1,11 +1,11 @@
 // Port of `serve` in server/src/main.rs (main.ts has the command line, and loads this only for `serve`).
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import * as db from "./db.ts";
 import * as api from "./api.ts";
-import { readBody, send, errorAnswer, no_route_error, ApiError } from "./http.ts";
+import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
 import { expand_tilde, new_id, new_token, now, err_str, home_dir } from "./util.ts";
 import * as demo from "./demo.ts";
@@ -22,6 +22,7 @@ import * as pr_watch from "./mcp/pr_watch.ts";
 import * as terminal from "./hosts/terminal.ts";
 import * as hub from "./hosts/hub.ts";
 import * as broker from "./hosts/broker.ts";
+import * as broker_proto from "./hosts/broker/proto.ts";
 import * as attachments from "./attachments.ts";
 import * as automations from "./integrations/automations.ts";
 import * as push from "./integrations/push.ts";
@@ -251,13 +252,31 @@ const statOr = (p: string) => {
   }
 };
 
+/**
+ * `--open-token`'s route: the token for whoever asks, but not through a broker (where whoever asks could be anyone).
+ *
+ * On a loopback-only server (`--host 127.0.0.1`) it also needs a loopback `Host`, so a page on another site that rebinds
+ * its name to 127.0.0.1 can't read the token.
+ */
+export function open_token(token: string, loopback_only: boolean): (headers: Record<string, any>) => Answer {
+  return (headers) => {
+    const json = (status: number, v: any): Answer => ({ status, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(v)) });
+    if (headers[broker.VIA_BROKER] !== undefined || (loopback_only && !loopback_host(headers))) return json(404, no_route_error("GET", "/api/open-token"));
+    return json(200, { token });
+  };
+}
+
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*", vary: "origin" };
 
 export async function serve(args: ServeArgs) {
+  // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
+  admin.take_supervisor();
   admin.reap_inherited();
   let data_dir = args.data_dir ?? default_data_dir();
   mkdirSync(data_dir, { recursive: true });
   data_dir = realpathSync(data_dir);
+  // Before opening the database: a newer release this host updated to takes over.
+  if (args.release_updates?.trim()) release.exec_installed(data_dir);
   const token = args.access_token?.trim() || load_or_create_token(data_dir, "auth_token");
   const hub_token = load_or_create_token(data_dir, "hub_token");
   const host_id = load_or_create_token(data_dir, "host_id");
@@ -279,7 +298,9 @@ export async function serve(args: ServeArgs) {
   const port = (server.address() as any).port as number;
   const internal_url = `http://127.0.0.1:${port}`;
   const source_dir = admin.detect_source_dir(args.source_dir);
-  const running_commit = source_dir ? await admin.head_commit(source_dir) : admin.bundle_commit(false);
+  const from_app = staging.running_from_app(data_dir, admin.current_exe()) !== null;
+  // Without a checkout (e.g. deployed from a CI bundle, or a release), the build or the deployment says which commit it is.
+  const running_commit = source_dir ? await admin.head_commit(source_dir) : admin.bundle_commit(from_app);
   const meta: admin.ServerMeta = {
     boot_id: new_id(),
     started_at: now(),
@@ -287,7 +308,8 @@ export async function serve(args: ServeArgs) {
     running_commit,
     update_from: args.update_from?.trim().replace(/\/+$/, "") || null,
     release: args.release_updates?.trim() ? release.Config_from_env(args.release_updates) : null,
-    args: process.argv.slice(3),
+    // What follows the program, `serve` included (as Rust's `args_os().skip(1)`), to exec bin/huntaway with again.
+    args: process.argv.slice(2),
   };
   const identity: Identity = { host_id, host_name, token, hub_token, internal_url };
   const state = new AppState(conn, data_dir, identity, meta, default_exe());
@@ -324,13 +346,7 @@ export async function serve(args: ServeArgs) {
         res.writeHead(200, { ...CORS, "access-control-max-age": "86400" }).end();
         return;
       }
-      if (path === "/api/open-token" && args.open_token && req.method === "GET") {
-        // Not through a broker (where whoever asks could be anyone), and only for a loopback Host on a loopback-only server.
-        if (req.headers[broker.VIA_BROKER] || (loopback_only && !loopback_host(req.headers))) {
-          send(res, { status: 404, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(no_route_error("GET", "/api/open-token"))) });
-        } else send(res, { status: 200, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify({ token })) });
-        return;
-      }
+      if (path === "/api/open-token" && args.open_token && req.method === "GET") return send(res, open_token(token, loopback_only)(req.headers));
       if (path === "/api" || path.startsWith("/api/")) {
         for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
         const found = state.local_router!.find(path.slice(4));
@@ -349,7 +365,7 @@ export async function serve(args: ServeArgs) {
   });
 
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-  server.on("upgrade", (req, socket, head) => {
+  server.on("upgrade", async (req, socket, head) => {
     const url = req.url ?? "/";
     let path = url.split("?")[0];
     const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
@@ -378,6 +394,15 @@ export async function serve(args: ServeArgs) {
     const r = api.makeReq("GET", `${path}${query ? `?${query.split("&").filter((kv) => !kv.startsWith("token=")).join("&")}` : ""}`, req.headers, Buffer.alloc(0));
     r.params = found.params;
     r.incoming = req;
+    if (found.route.pre) {
+      try {
+        r.pre = await found.route.pre(state, r);
+      } catch (e) {
+        const a = errorAnswer(e);
+        socket.end(`HTTP/1.1 ${a.status} ${STATUS_CODES[a.status] ?? ""}\r\ncontent-type: application/json\r\ncontent-length: ${a.body.length}\r\n\r\n${a.body}`);
+        return;
+      }
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       try {
         found.route.ws!(state, r, ws);
@@ -411,7 +436,22 @@ export async function serve(args: ServeArgs) {
     if (args.hub_token) for (const h of args.hubs) hub.dial_out(state, h, args.hub_token);
     else log.warn("--hub needs --hub-token");
   }
-  if (args.broker?.trim()) log.warn("--broker isn't supported by the TypeScript server");
+  const broker_url = args.broker?.trim();
+  if (broker_url) {
+    const name = args.broker_name?.trim() || null;
+    const t = args.broker_token?.trim() || null;
+    if (t === null) log.warn("--broker needs --broker-token");
+    else if (name !== null && !broker_proto.valid_name(name)) log.warn(`bad --broker-name ${JSON.stringify(name)}: use up to 48 lowercase letters, digits and hyphens`);
+    else {
+      let origin_port: number;
+      try {
+        origin_port = await broker.origin(server);
+      } catch (e) {
+        throw new Error("starting the private tunnel origin", { cause: e });
+      }
+      broker.dial_with_origin(state, broker_url, t, name ?? broker_proto.slug(state.host_name), load_or_create_token(data_dir, "broker_key"), origin_port);
+    }
+  }
   log.info(`host ${state.host_name} (${state.host_id})`);
   log.info(`data dir: ${data_dir}`);
   const token_from_env = !!args.access_token?.trim();
@@ -434,4 +474,5 @@ export async function serve(args: ServeArgs) {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  admin.watch_supervisor(shutdown);
 }

@@ -47,6 +47,8 @@ export interface Req {
   /** The parsed JSON body: `{}` when it's empty, or `null` when it isn't JSON. */
   body: any;
   raw: Buffer;
+  /** What a websocket route's `pre` check returned. */
+  pre?: any;
   /** The node request, for routes served over HTTP (absent for in-process requests). */
   incoming?: IncomingMessage;
 }
@@ -58,6 +60,8 @@ interface Route {
   segs: string[];
   methods: Map<string, Handler>;
   ws?: WsHandler;
+  /** Checks a websocket request before it's upgraded (see RouteOpts.pre). */
+  pre?: (s: AppState, r: Req) => any;
   /** Body limit in bytes. */
   limit: number;
   /** Whether it needs the board's token. */
@@ -69,6 +73,11 @@ export const DEFAULT_LIMIT = 2 << 20;
 export interface RouteOpts {
   limit?: number;
   auth?: boolean;
+  /**
+   * For a websocket route: runs before the upgrade, as an axum handler does before `on_upgrade`. What it throws is the
+   * answer instead (an ApiError's status and `{"error"}`), and what it returns is the handler's `r.pre`.
+   */
+  pre?: (s: AppState, r: Req) => any;
 }
 
 /** A route table: `/tasks/{id}`, `/h/{host_id}/{*rest}`. */
@@ -97,6 +106,7 @@ export class Router {
   ws(path: string, h: WsHandler | undefined, opts: RouteOpts = {}): this {
     const r = this.add(path, opts);
     r.ws = h ?? (() => {});
+    if (opts.pre) r.pre = opts.pre;
     r.methods.set("GET", r.methods.get("GET") ?? (() => new Reply(400, { error: "expected a websocket upgrade" })));
     return this;
   }
