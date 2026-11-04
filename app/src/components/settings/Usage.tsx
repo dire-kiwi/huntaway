@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { ChevronDown, RefreshCw, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { UsageLimit } from "../../api";
+import type { UsageAccount, UsageLimit } from "../../api";
 import { usageKey, useStore } from "../../store";
 import { resetsIn, resetsPhrase, resetTime, usageAlert, usageConfigs, WARN_AT, type UsageAlert } from "../../usageConfigs";
 import { timeAgo } from "../ui";
@@ -38,6 +38,31 @@ function LimitRow({ limit, now }: { limit: UsageLimit; now: number }) {
       </span>
       <span className={clsx("w-7 shrink-0 text-right tabular-nums", left <= 10 ? "text-red-300" : level ? "text-st-attention" : "text-muted")}>{left}%</span>
       <span className="w-11 shrink-0 truncate text-right text-faint tabular-nums">{reset}</span>
+    </div>
+  );
+}
+
+/** One of a proxy's accounts, on one line: what's left of its session and weekly limits. */
+function AccountRow({ account, now }: { account: UsageAccount; now: number }) {
+  const shown = account.limits.filter((l) => l.id === "session" || l.id === "weekly");
+  const detail = account.limits
+    .map((l) => `${l.label}: ${Math.round(100 - Math.min(100, Math.max(0, l.percent)))}% left${l.resets_at ? `, ${resetsPhrase(l.resets_at, now)}` : ""}`)
+    .join("\n");
+  return (
+    <div className="flex items-center gap-1.5 text-[10.5px]" data-account={account.name} title={[account.name, detail, account.error].filter(Boolean).join("\n")}>
+      <span className={clsx("min-w-0 flex-1 truncate", account.error ? "text-faint" : "text-muted")}>{account.name}</span>
+      {account.error && shown.length === 0 ? (
+        <TriangleAlert size={10} className="shrink-0 text-st-attention" aria-label={account.error} />
+      ) : (
+        shown.map((l) => {
+          const left = Math.round(100 - Math.min(100, Math.max(0, l.percent)));
+          return (
+            <span key={l.id} className={clsx("shrink-0 tabular-nums", left <= 10 ? "text-red-300" : l.percent >= WARN_AT ? "text-st-attention" : "text-faint")}>
+              {l.id === "session" ? "S" : "W"} {left}%
+            </span>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -128,12 +153,25 @@ export function UsagePanel({ profile }: { profile: string | undefined }) {
                 <span className="truncate text-fg">{name}</span>
                 <UsageAlertIcon alert={usageAlert(u, now)} />
                 {multiHost && <span className="truncate text-[10px] text-faint">· {hosts.find((h) => h.id === host_id)?.name}</span>}
-                {u.plan && <span className="ml-auto shrink-0 text-[10px] text-faint capitalize">{u.plan}</span>}
+                {u.plan && <span className={clsx("ml-auto shrink-0 text-[10px] text-faint", !u.accounts && "capitalize")}>{u.plan}</span>}
               </div>
               {u.limits.length > 0 ? (
                 <div className="space-y-1">
                   {u.limits.map((l) => (
                     <LimitRow key={l.id} limit={l} now={now} />
+                  ))}
+                  {u.accounts && u.accounts.length > 0 && (
+                    <div className="space-y-0.5 border-l border-line pl-1.5" title="The proxy's accounts: the rows above are their average">
+                      {u.accounts.map((a) => (
+                        <AccountRow key={a.name} account={a} now={now} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : u.accounts && u.accounts.length > 0 ? (
+                <div className="space-y-0.5">
+                  {u.accounts.map((a) => (
+                    <AccountRow key={a.name} account={a} now={now} />
                   ))}
                 </div>
               ) : (

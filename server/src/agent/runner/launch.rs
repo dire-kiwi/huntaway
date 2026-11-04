@@ -327,8 +327,13 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         run_id: run.id.clone(),
         cwd: cwd.clone(),
         args,
-        // Permission prompts block until the user answers in the UI.
-        env: [("MCP_TOOL_TIMEOUT".to_string(), "86400000".to_string())].into_iter().chain(tmp_env).collect(),
+        // Permission prompts block until the user answers in the UI. A config with a proxy sends
+        // its requests there (see ClaudeConfig::api_env).
+        env: [("MCP_TOOL_TIMEOUT".to_string(), "86400000".to_string())]
+            .into_iter()
+            .chain(tmp_env)
+            .chain(config.as_ref().map(|c| c.api_env()).unwrap_or_default())
+            .collect(),
         config_dir: db::task_config_dir(&state.db(), &task)?,
         prompt,
         input,

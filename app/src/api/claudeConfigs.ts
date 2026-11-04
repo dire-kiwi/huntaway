@@ -14,7 +14,22 @@ export interface ClaudeConfig {
   show_usage?: boolean;
   /** Whether the host starts its plan's next 5-hour window as soon as one ends (API 91). */
   restart_window?: boolean;
+  /**
+   * An Anthropic-compatible proxy (such as CLIProxyAPI) its Claude Code agents go through instead of the
+   * directory's login (API 106). Its keys are never sent back: `has_api_key`, `has_management_key` say if they're set.
+   */
+  api_url?: string | null;
+  has_api_key?: boolean;
+  /** Whether it has the proxy's management key, which its accounts' usage is read with. */
+  has_management_key?: boolean;
   created_at: string;
+}
+
+/** What setting a config's proxy takes (API 106): a blank or null value clears it, and a key left out is kept. */
+export interface ProxyFields {
+  api_url?: string | null;
+  api_key?: string | null;
+  management_key?: string | null;
 }
 
 export const AGENTS = [
@@ -47,6 +62,15 @@ export interface UsageLimit {
   resets_at: string | null;
 }
 
+/** One of a proxy's Claude accounts, with its own limits (API 106). */
+export interface UsageAccount {
+  /** Its email, or the proxy's name for it. */
+  name: string;
+  limits: UsageLimit[];
+  /** Why its usage couldn't be read, or why the proxy isn't using it. */
+  error: string | null;
+}
+
 /** A Claude login's subscription usage (API 9): per Claude config from API 20, per profile before. */
 export interface Usage {
   /** Set by the UI from the host it was loaded from. */
@@ -60,6 +84,8 @@ export interface Usage {
   error: string | null;
   /** Until when it's out of usage: a run on it was refused for its limit, which resets then (API 81). */
   out_until?: string | null;
+  /** For a config with a proxy: its accounts, whose limits `limits` pools (each one's average, resetting with the first). */
+  accounts?: UsageAccount[];
 }
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -71,9 +97,13 @@ export const MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
 export const claudeConfigsApi = {
   claudeConfigs: (h: string) => on(h).get<Omit<ClaudeConfig, "host_id">[]>("/claude-configs"),
   /** `agent` needs API 25. */
-  createClaudeConfig: (h: string, b: { name: string; config_dir: string; agent?: Agent }) => on(h).post<ClaudeConfig>("/claude-configs", b),
-  updateClaudeConfig: (h: string, id: string, b: { name?: string; config_dir?: string; agent?: Agent; show_usage?: boolean; restart_window?: boolean }) =>
-    on(h).patch<ClaudeConfig>(`/claude-configs/${enc(id)}`, b),
+  /** The proxy's fields need API 106. */
+  createClaudeConfig: (h: string, b: { name: string; config_dir: string; agent?: Agent } & ProxyFields) => on(h).post<ClaudeConfig>("/claude-configs", b),
+  updateClaudeConfig: (
+    h: string,
+    id: string,
+    b: { name?: string; config_dir?: string; agent?: Agent; show_usage?: boolean; restart_window?: boolean } & ProxyFields,
+  ) => on(h).patch<ClaudeConfig>(`/claude-configs/${enc(id)}`, b),
   /** The models a Codex config offers (API 25); empty for Claude configs. */
   claudeConfigModels: (h: string, id: string) => on(h).get<AgentModel[]>(`/claude-configs/${enc(id)}/models`),
   deleteClaudeConfig: (h: string, id: string) => on(h).del(`/claude-configs/${enc(id)}`),

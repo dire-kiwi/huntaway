@@ -657,6 +657,43 @@ fn a_database_from_version_70_gets_restart_window_off() {
 }
 
 #[test]
+fn a_database_from_version_86_gets_configs_without_a_proxy() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE claude_configs DROP COLUMN api_url; ALTER TABLE claude_configs DROP COLUMN api_key;
+                 ALTER TABLE claude_configs DROP COLUMN management_key; PRAGMA user_version=86;
+                 INSERT INTO claude_configs (id,name,config_dir,created_at) VALUES ('c','work','~/.claude','1');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let cfg = get_claude_config(&c, "c").unwrap().unwrap();
+    assert_eq!((cfg.api_url.as_deref(), cfg.has_api_key, cfg.has_management_key), (None, false, false));
+    assert!(cfg.api_env().is_empty());
+}
+
+#[test]
+fn a_config_with_a_proxy_sends_claude_there() {
+    let c = open(std::path::Path::new(":memory:")).unwrap();
+    let cfg = insert_claude_config(&c, "pool", "~/.claude-personal", "claude").unwrap();
+    let cfg = update_claude_config(&c, &cfg.id, &[("api_url", json!("http://10.0.0.5:8317/")), ("api_key", json!("sk-1"))]).unwrap().unwrap();
+    assert_eq!(cfg.proxy(), Some("http://10.0.0.5:8317/"));
+    let env: Vec<(String, String)> = [("ANTHROPIC_BASE_URL", "http://10.0.0.5:8317"), ("ANTHROPIC_AUTH_TOKEN", "sk-1"), ("ANTHROPIC_API_KEY", "")]
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .into();
+    assert_eq!(cfg.api_env(), env);
+    // The keys stay on the host.
+    let v = serde_json::to_value(&cfg).unwrap();
+    assert_eq!((v.get("api_key"), v.get("management_key"), &v["has_api_key"], &v["has_management_key"]), (None, None, &json!(true), &json!(false)));
+    // Codex doesn't go through it.
+    let codex = update_claude_config(&c, &cfg.id, &[("agent", json!("codex"))]).unwrap().unwrap();
+    assert_eq!((codex.proxy(), codex.api_env().len()), (None, 0));
+}
+
+#[test]
 fn a_database_from_version_80_gets_call_ids_shared_by_each_calls_rows() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {

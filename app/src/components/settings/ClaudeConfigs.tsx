@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Copy, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { AGENTS, agentInfo, agentOf, api, canRunAgents, hostSupports, type Agent, type ClaudeConfig } from "../../api";
+import { AGENTS, agentInfo, agentOf, api, canRunAgents, hostSupports, type Agent, type ClaudeConfig, type ProxyFields } from "../../api";
 import { usageKey, useStore } from "../../store";
 import { usageAlert } from "../../usageConfigs";
 import { CopyLoginModal } from "./Hosts";
@@ -14,8 +14,15 @@ const configHosts = (hosts: ReturnType<typeof useStore.getState>["hosts"]) => ho
 /** A config's directory, with its agent's default for a blank one. */
 export const configDir = (c: ClaudeConfig) => c.config_dir || agentInfo(agentOf(c)).dir;
 
-/** Marks a config that runs Codex rather than Claude Code. */
+/** Marks a config that runs Codex rather than Claude Code, or one whose agents go through a proxy. */
 export function AgentBadge({ config }: { config: ClaudeConfig }) {
+  if (config.api_url && agentOf(config) === "claude") {
+    return (
+      <span className="shrink-0 rounded bg-white/5 px-1 py-px text-[10.5px] text-muted" title={`Its agents go through ${config.api_url}`}>
+        Proxy
+      </span>
+    );
+  }
   if (agentOf(config) !== "codex") return null;
   return <span className="shrink-0 rounded bg-white/5 px-1 py-px text-[10.5px] text-muted">Codex</span>;
 }
@@ -28,7 +35,8 @@ function useUsedBy(c: ClaudeConfig) {
 function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeConfig; label: string; canCopy: boolean; onEdit: () => void; onCopy: () => void }) {
   const usedBy = useUsedBy(config);
   const canShowUsage = useStore((s) => hostSupports(s.hosts.find((h) => h.id === config.host_id), 52));
-  const canRestart = useStore((s) => hostSupports(s.hosts.find((h) => h.id === config.host_id), 91));
+  // Through a proxy, which picks the account, there's no one window to restart.
+  const canRestart = useStore((s) => hostSupports(s.hosts.find((h) => h.id === config.host_id), 91)) && !config.api_url;
   // Usage that's been fetched and has no session limit: a plan without the 5-hour window.
   const noWindow = useStore((s) => {
     const u = s.usage[usageKey(config.host_id, config.id)];
@@ -66,7 +74,11 @@ function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeC
         {canShowUsage && (
           <label
             className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted"
-            title="Check this login's plan limits and show what's left in the sidebar, for the profiles that use it. Off on new hosts, so copies of a login don't all ask."
+            title={
+              config.api_url
+                ? "Check the proxy's Claude accounts' plan limits (with its management key) and show what's left in the sidebar, for the profiles that use it."
+                : "Check this login's plan limits and show what's left in the sidebar, for the profiles that use it. Off on new hosts, so copies of a login don't all ask."
+            }
           >
             <input type="checkbox" className="accent-accent" checked={!!config.show_usage} onChange={(e) => set({ show_usage: e.target.checked })} />
             Show usage
@@ -223,6 +235,11 @@ function ConfigForm({
   };
   const [name, setName] = useState(initial?.name ?? presetName ?? "");
   const [dir, setDir] = useState(initial?.config_dir ?? defaultDir(agent));
+  const proxies = hostSupports(host, 106);
+  const [apiUrl, setApiUrl] = useState(initial?.api_url ?? "");
+  // The keys are never sent back: blank keeps the saved one.
+  const [apiKey, setApiKey] = useState("");
+  const [managementKey, setManagementKey] = useState("");
   const { busy, error: err, run } = useAsyncAction();
   const setAgent = (a: Agent) => {
     // Follow the agent while the directory is still the default one.
@@ -230,9 +247,16 @@ function ConfigForm({
     setAgentState(a);
   };
   const info = agentInfo(agent);
+  const proxied = proxies && agent === "claude" && !!apiUrl.trim();
+  /** What to send about the proxy: none for a host before it, and cleared (keys too) when it's taken away or the agent is Codex. */
+  const proxyFields = (): ProxyFields => {
+    if (!proxies) return {};
+    if (!proxied) return initial?.api_url ? { api_url: null, api_key: null, management_key: null } : {};
+    return { api_url: apiUrl.trim(), ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}), ...(managementKey.trim() ? { management_key: managementKey.trim() } : {}) };
+  };
   const submit = () =>
     run(async () => {
-      const body = { name: name.trim(), config_dir: dir.trim(), ...(agents ? { agent } : {}) };
+      const body = { name: name.trim(), config_dir: dir.trim(), ...(agents ? { agent } : {}), ...proxyFields() };
       const c = initial ? await api.updateClaudeConfig(hostId, initial.id, body) : await api.createClaudeConfig(hostId, body);
       await useStore.getState().loadProfiles();
       onDone({ ...c, host_id: hostId });
@@ -268,6 +292,41 @@ function ConfigForm({
         <Input className="font-mono text-[12px]" value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && submit()} />
       </Field>
       {initial && <div className="text-[12px] text-faint">Changing the directory moves agents to it, but threads already started keep their conversation in the old one.</div>}
+      {proxies && agent === "claude" && (
+        <Field
+          label="Proxy (optional)"
+          hint="An Anthropic-compatible proxy, such as CLIProxyAPI pooling several subscriptions. Its agents, titles and terminals send their requests there (ANTHROPIC_BASE_URL) instead of using the directory's login; the directory's settings, skills and history are still used."
+        >
+          <Input className="font-mono text-[12px]" value={apiUrl} placeholder="http://192.168.1.10:8317" onChange={(e) => setApiUrl(e.target.value)} />
+        </Field>
+      )}
+      {proxied && (
+        <>
+          <Field label="Proxy API key" hint="One of the proxy's client keys (ANTHROPIC_AUTH_TOKEN). It stays on the host.">
+            <Input
+              type="password"
+              autoComplete="off"
+              className="font-mono text-[12px]"
+              value={apiKey}
+              placeholder={initial?.has_api_key ? "Saved; type a new one to replace it" : "sk-…"}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Management key (optional)"
+            hint="CLIProxyAPI's management key, to show its Claude accounts' usage with Show usage (needs management.allow-remote: true in its config). It can act as any of those accounts, so it stays on the host."
+          >
+            <Input
+              type="password"
+              autoComplete="off"
+              className="font-mono text-[12px]"
+              value={managementKey}
+              placeholder={initial?.has_management_key ? "Saved; type a new one to replace it" : ""}
+              onChange={(e) => setManagementKey(e.target.value)}
+            />
+          </Field>
+        </>
+      )}
       <ModalFooter className="space-y-3">
         {err && <div className="text-xs text-red-400">{err}</div>}
         <div className="flex justify-end gap-2">

@@ -167,6 +167,7 @@ async fn ensure_session(s: &Shared, task: &Task, tool: Option<&Tool>, cols: u16,
     tokio::fs::create_dir_all(&cwd).await.ok();
     let config_dir = db::task_config_dir(&s.db(), task)?;
     let codex = db::task_is_codex(&s.db(), task)?;
+    let proxy_env = db::task_claude_config(&s.db(), task)?.map(|c| c.api_env()).unwrap_or_default();
     let (cols, rows) = (cols.to_string(), rows.to_string());
     let name = session_name(&task.id, tool_id);
     let mut env = Vec::new();
@@ -174,6 +175,8 @@ async fn ensure_session(s: &Shared, task: &Task, tool: Option<&Tool>, cols: u16,
     if let Some(d) = config_dir {
         env.push(format!("{}={}", if codex { "CODEX_HOME" } else { "CLAUDE_CONFIG_DIR" }, path_str(&expand_tilde(&d))));
     }
+    // And its proxy, as agents do (see ClaudeConfig::api_env).
+    env.extend(proxy_env.into_iter().map(|(k, v)| format!("{k}={v}")));
     // The temp folder the task's agents use (see agent/task_tmp.rs), until it's done and the folder goes.
     if let Some(d) = (task.status != "done").then(|| crate::agent::task_tmp::ensure(s, task)).flatten() {
         env.push(format!("TMPDIR={}", path_str(&d)));

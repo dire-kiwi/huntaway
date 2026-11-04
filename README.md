@@ -743,6 +743,18 @@ skipped. Auto-compacting idle sessions is Claude-only.
 - **Agent configs** are Claude Code config directories on a host, passed to agents as
   `CLAUDE_CONFIG_DIR`, or Codex homes, passed as `CODEX_HOME` (API 25), so logins, settings and
   history stay separate. A thread's config decides which agent runs it (see *Codex agents*).
+- **A proxy for a Claude config** (API 106): an Anthropic-compatible proxy such as
+  [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), which pools several Claude
+  subscriptions behind one address. Set its URL and one of its client keys in the config's *Edit*
+  dialog (Settings → Agent configs), and the config's agents, task titles and task terminals send
+  their requests there (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, with `ANTHROPIC_API_KEY`
+  emptied) instead of using the directory's login. The directory's settings, skills, memory and
+  history are still used, so a config like `~/.claude-personal` can go through the proxy as it is
+  (Claude Code leaves claude.ai connectors out when it has a key like this). The keys are kept on the host
+  and never sent to the board (`has_api_key`, `has_management_key`); a key left out of an update is
+  kept, and a blank one clears it. Codex configs can't have one. *Restart 5h window* doesn't apply to
+  them (the proxy picks the account). `PATCH /claude-configs/{id}` (and `POST /claude-configs`) take
+  `api_url`, `api_key` and `management_key`.
 - **Profiles** (work / personal) scope projects and tasks, and pick which Claude
   configs their agents can use (the first is the default). A project can pick its own instead.
   When more than one is available, the new task dialog asks which to use. A thread keeps the
@@ -809,6 +821,16 @@ skipped. Auto-compacting idle sessions is Claude-only.
   out). A limit at 80% or more is marked in amber, and one that's used up in red, in the
   sidebar and where a config is picked (the new task dialog's config picker, a task's
   *Config* row), so you can pick another config before starting work.
+  A config with a proxy (API 106) shows the proxy's Claude accounts instead, given CLIProxyAPI's
+  management key in its *Edit* dialog (and `management.allow-remote: true` in the proxy's config,
+  unless it's on the same machine): the host lists its credentials (`GET /v8/management/credentials`)
+  and asks Anthropic's usage endpoint for each Claude one through the proxy, with that account's
+  token (`POST /v8/management/requests/api-call`). The sidebar shows the pool's limits, each the
+  average of the accounts that answered and resetting when the first of them does, and a line
+  per account with what's left of its session and weekly limits (or why it couldn't be read).
+  Agent runs' `rate_limit_event`s are one account's, so they don't change the pool's numbers; a
+  refusal the proxy passes on (every account it tried was out) still marks the config out. The
+  management key can act as any of the proxy's accounts, so it stays on the host.
 - **Restarting the 5-hour window** (API 91): a plan's session limit runs for five hours from
   the first message after the last window ended, so a window that ends while nothing runs leaves
   the next one to start whenever work does. Tick *Restart 5h window* on a config in Settings →
