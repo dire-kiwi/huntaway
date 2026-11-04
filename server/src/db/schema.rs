@@ -762,7 +762,152 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=75; COMMIT;")?;
     }
+    let version = if version >= 76 && version < 87 && ran_personal_mode_as_76(&conn)? { 75 } else { version };
     if version < 76 {
+        // What a task's worktree starts from, when not the project's base branch (see Task::start_from).
+        // Builds of this before it was version 76 had it as version 65, 71, 73, 74 or 75, and skipped what those
+        // versions add, so their columns are added here too if they aren't there (and 73's recount).
+        conn.execute_batch("BEGIN;")?;
+        let cols = [
+            ("tasks", "start_from", "TEXT"),
+            ("tasks", "limit_reset_at", "TEXT"),
+            ("profiles", "limit_wait", "INTEGER NOT NULL DEFAULT 0"),
+            ("profiles", "limit_switch", "INTEGER NOT NULL DEFAULT 0"),
+            ("claude_configs", "restart_window", "INTEGER NOT NULL DEFAULT 0"),
+            ("tasks", "pr_checks", "TEXT"),
+            ("profiles", "require_pr_approval", "INTEGER NOT NULL DEFAULT 0"),
+            ("projects", "require_pr_approval", "INTEGER"),
+        ];
+        for (table, column, kind) in cols {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name='session_id'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE runs ADD COLUMN session_id TEXT; ALTER TABLE runs ADD COLUMN session_cost REAL;")?;
+            recount_run_costs(&conn)?;
+        }
+        conn.execute_batch("PRAGMA user_version=76; COMMIT;")?;
+    }
+    if version < 77 {
+        // When a task went into "now" (see Task::now_at); the others are in "later". Added only if it isn't
+        // there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('tasks') WHERE name='now_at'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN now_at TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version=77; COMMIT;")?;
+    }
+    if version < 79 {
+        // The tokens each run used, per model (see agent/tokens.rs), counted from runs' output as
+        // they end (and from older runs' that are still kept), and what reviewers reported (see
+        // review/stats.rs), with the reviews threads already show. Added only if they aren't
+        // there, in case another migration takes this version first. Builds of this before it was
+        // version 79 had it as version 74, 75, 76 or 78, and skipped what the versions below theirs
+        // add (a database can have taken it as 75, then 76, then 78, skipping them all), or added
+        // less than this does: 74's, 75's and 76's columns are added here if they aren't there, as
+        // are the runs' usage columns, and a `review_stats` from before its rounds were kept is
+        // made again.
+        conn.execute_batch("BEGIN;")?;
+        let cols = [
+            ("tasks", "pr_checks", "TEXT"),
+            ("profiles", "require_pr_approval", "INTEGER NOT NULL DEFAULT 0"),
+            ("projects", "require_pr_approval", "INTEGER"),
+            ("tasks", "start_from", "TEXT"),
+        ];
+        for (table, column, kind) in cols {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            }
+        }
+        let stale: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='review_stats') AND NOT EXISTS(SELECT 1 FROM pragma_table_info('review_stats') WHERE name='round')",
+            [],
+            |r| r.get(0),
+        )?;
+        if stale {
+            conn.execute_batch("DROP TABLE review_stats;")?;
+        }
+        conn.execute_batch(SCHEMA_V79)?;
+        for column in ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT", "usage_tail TEXT"] {
+            let name = column.split(' ').next().unwrap();
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name=?1", [name], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE runs ADD COLUMN {column};"))?;
+            }
+        }
+        crate::review::stats::backfill(&conn)?;
+        conn.execute_batch("PRAGMA user_version=79; COMMIT;")?;
+    }
+    if version < 80 {
+        // The tokens of model calls that aren't runs: task titles and 5-hour window restarts (see
+        // agent/tokens/calls.rs).
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V80} PRAGMA user_version=80; COMMIT;"))?;
+    }
+    if version < 81 {
+        // Which call each `call_usage` row is from (a call has a row for each model it used). The
+        // rows written before were one call's if they agree on all but the model.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('call_usage') WHERE name='call_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { "ALTER TABLE call_usage ADD COLUMN call_id TEXT;" };
+        conn.execute_batch(&format!(
+            "BEGIN; {add}
+             UPDATE call_usage SET call_id=lower(hex(randomblob(16))) WHERE call_id IS NULL AND id IN (SELECT MIN(id) FROM call_usage WHERE call_id IS NULL GROUP BY at, purpose, task_id, config_id);
+             UPDATE call_usage SET call_id=(SELECT c.call_id FROM call_usage c WHERE c.id=(SELECT MIN(d.id) FROM call_usage d WHERE d.at=call_usage.at
+               AND d.purpose=call_usage.purpose AND d.task_id IS call_usage.task_id AND d.config_id IS call_usage.config_id)) WHERE call_id IS NULL;
+             PRAGMA user_version=81; COMMIT;"
+        ))?;
+    }
+    if version < 82 {
+        // The effort the reviewed task's agent worked at when its review was submitted (see review/stats.rs). The rows
+        // from before are given the task's effort now, which is what it was unless the user changed it since. Added only
+        // if it isn't there: a `review_stats` made at version 79 or later by this build has it already.
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('review_stats') WHERE name='effort'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE review_stats ADD COLUMN effort TEXT;")?;
+            crate::review::stats::backfill_efforts(&conn)?;
+        }
+        conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
+    }
+    if version < 83 {
+        // The effort each run was started with, as its agent was given it (see runner/launch.rs): an empty one is the
+        // agent's own default, and null a run from before this, whose reviews' efforts are their tasks' (see review/stats.rs).
+        conn.execute_batch("BEGIN;")?;
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('runs') WHERE name='effort'", [], |r| r.get(0))?;
+        if !has {
+            conn.execute_batch("ALTER TABLE runs ADD COLUMN effort TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version=83; COMMIT;")?;
+    }
+    if version < 84 {
+        // Several summarizers for a project or profile (see Project::summarizers). The `summarizer`
+        // saved before is read as the only one until they're saved again. Added only if they
+        // aren't there, in case another migration takes this version first.
+        conn.execute_batch("BEGIN;")?;
+        for table in ["projects", "profiles"] {
+            let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name='summarizers'", [table], |r| r.get(0))?;
+            if !has {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN summarizers TEXT;"))?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version=84; COMMIT;")?;
+    }
+    if version < 85 {
+        // Git repositories that global skills come from (see agent/agent_tools/sources.rs). A guard
+        // for a database that got `agent_skills.source_id` and then lost its version.
+        let has: bool = conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info('agent_skills') WHERE name='source_id'", [], |r| r.get(0))?;
+        let add = if has { "" } else { SCHEMA_V85_COLUMNS };
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V85} {add} PRAGMA user_version=85; COMMIT;"))?;
+    }
+    if version < 86 {
+        // The board skills a review or summary thread was given on top of its project's (see review::start).
+        conn.execute_batch(&format!("BEGIN; {SCHEMA_V86} PRAGMA user_version=86; COMMIT;"))?;
+    }
+    if version < 87 {
         // The one-time tokens that answer a permission prompt from a notification (see integrations/push_answers.rs).
         conn.execute_batch(
             "BEGIN;
@@ -776,20 +921,20 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                claimed_at TEXT
              );
              CREATE INDEX IF NOT EXISTS push_answer_tokens_request ON push_answer_tokens(request_id, host_id);
-             PRAGMA user_version=76; COMMIT;",
+             PRAGMA user_version=87; COMMIT;",
         )?;
     }
-    if version < 77 {
+    if version < 88 {
         // Each profile's assistant (see Task::is_assistant): one at most, keyed A-<n>, so a project
         // with the key A moves to a free one.
         conn.execute_batch("BEGIN;")?;
         free_task_key(&conn, ASSISTANT_TASK_KEY, "AP")?;
         conn.execute_batch(
             "CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_assistant ON tasks(profile_id) WHERE task_type='assistant';
-             PRAGMA user_version=77; COMMIT;",
+             PRAGMA user_version=88; COMMIT;",
         )?;
     }
-    if version < 78 {
+    if version < 89 {
         // The linked host a profile's assistant runs on (see agent/assistant.rs), and whether a linked
         // host's agents may use this board's tools (see hosts/uplink.rs).
         conn.execute_batch("BEGIN;")?;
@@ -799,13 +944,13 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                 conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
             }
         }
-        conn.execute_batch("PRAGMA user_version=78; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=89; COMMIT;")?;
     }
-    if version < 79 {
+    if version < 90 {
         // Devices paired with the board, each with a token of its own (see devices.rs).
-        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=79; COMMIT;", crate::devices::TABLE))?;
+        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=90; COMMIT;", crate::devices::TABLE))?;
     }
-    if version < 80 {
+    if version < 91 {
         // Routines: automations that belong to a profile rather than a project (see
         // integrations/automations.rs). SQLite can't drop NOT NULL, so the table is rebuilt, with
         // foreign keys off so dropping the old one doesn't take the runs with it; ids, runs and
@@ -813,7 +958,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let has = |table: &str, col: &str| -> rusqlite::Result<bool> {
             conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", [table, col], |r| r.get(0))
         };
-        let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V80 };
+        let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V91 };
         // The routines' runs whose messages are in the one queued on a thread (see db::Queued::routine_runs).
         let queued = if has("tasks", "queued_routine_runs")? { "" } else { "ALTER TABLE tasks ADD COLUMN queued_routine_runs TEXT;" };
         let mut runs = String::new();
@@ -826,10 +971,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             "PRAGMA foreign_keys=OFF; BEGIN; {rebuild} {runs} {queued}
              CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
              CREATE INDEX IF NOT EXISTS automation_runs_agent_run ON automation_runs(agent_run_id);
-             PRAGMA user_version=80; COMMIT; PRAGMA foreign_keys=ON;"
+             PRAGMA user_version=91; COMMIT; PRAGMA foreign_keys=ON;"
         ))?;
     }
-    if version < 81 {
+    if version < 92 {
         // When a prompt from a routine run is denied if nobody has answered it, and the approval
         // rule that asked it (see agent/approval_rules.rs); the notifications' answer tokens stop at
         // the same time; and the action log of the calls that hit an ask or never rule. Columns are
@@ -866,10 +1011,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              );
              CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, created_at);
              CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
-             PRAGMA user_version=81; COMMIT;",
+             PRAGMA user_version=92; COMMIT;",
         )?;
     }
-    if version < 82 {
+    if version < 93 {
         // Native push (integrations/push.rs): a subscription's `kind`, `web` (Web Push, as all of them were before) or
         // `expo` (the mobile app, through Expo's push service: `endpoint` is its Expo push token, and `p256dh` and `auth`
         // are unused), and the paired device that made it, whose subscriptions go when it's revoked.
@@ -880,20 +1025,32 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                 conn.execute_batch(&format!("ALTER TABLE push_subscriptions ADD COLUMN {column} {kind};"))?;
             }
         }
-        conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=93; COMMIT;")?;
     }
     Ok(conn)
 }
 
+/// Whether the database took versions from 76 on for the personal-assistant migrations (87 to 93
+/// now), as builds of them did before they moved above versions 76 to 86. Such a database skipped
+/// what those versions add, so they're run again from 76, as are 87 to 93: each adds only what
+/// isn't there.
+fn ran_personal_mode_as_76(conn: &Connection) -> Result<bool> {
+    let has = |sql: &str| -> rusqlite::Result<bool> { conn.query_row(sql, [], |r| r.get(0)) };
+    Ok(has("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name IN ('push_answer_tokens', 'tasks_one_assistant', 'device_tokens', 'approval_log'))")?
+        || has("SELECT EXISTS(SELECT 1 FROM pragma_table_info('profiles') WHERE name='assistant_host')")?
+        || has("SELECT EXISTS(SELECT 1 FROM pragma_table_info('automations') WHERE name='profile_id')")?
+        || has("SELECT EXISTS(SELECT 1 FROM pragma_table_info('push_subscriptions') WHERE name='kind')")?)
+}
+
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 82;
+pub const VERSION: i64 = 93;
 
 /// Automations get a profile, and a project only if they're a project's (none for a profile's
 /// routine), and the conditions a run is checked against first: the hours it may run in, a
 /// command to run first, and a budget a day. Their runs get how a routine's agent ended and what it cost.
-const SCHEMA_V80: &str = r#"
-CREATE TABLE automations_v80 (
+const SCHEMA_V91: &str = r#"
+CREATE TABLE automations_v91 (
   id TEXT PRIMARY KEY,
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
@@ -911,14 +1068,92 @@ CREATE TABLE automations_v80 (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO automations_v80 (id, profile_id, project_id, name, enabled, trigger, action, token, secret, next_run_at, last_run_at, created_at, updated_at)
+INSERT INTO automations_v91 (id, profile_id, project_id, name, enabled, trigger, action, token, secret, next_run_at, last_run_at, created_at, updated_at)
   SELECT a.id, p.profile_id, a.project_id, a.name, a.enabled, a.trigger, a.action, a.token, a.secret, a.next_run_at, a.last_run_at, a.created_at, a.updated_at
   FROM automations a JOIN projects p ON p.id = a.project_id;
 DROP TABLE automations;
-ALTER TABLE automations_v80 RENAME TO automations;
+ALTER TABLE automations_v91 RENAME TO automations;
 CREATE INDEX IF NOT EXISTS automations_project ON automations(project_id);
 CREATE INDEX IF NOT EXISTS automations_profile ON automations(profile_id);
 DELETE FROM automation_runs WHERE automation_id NOT IN (SELECT id FROM automations);
+"#;
+
+/// The board skills (by name) a review or summary thread has on top of its project's, from its
+/// reviewer's `skills` when the review started (see agent/agent_tools.rs, `for_run`).
+const SCHEMA_V86: &str = r#"
+CREATE TABLE IF NOT EXISTS review_thread_skills (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  skills TEXT NOT NULL DEFAULT '[]'
+);
+"#;
+
+/// What each run used of each model (see agent/tokens.rs): `input_tokens` is what wasn't read
+/// from or written to the cache, and `reasoning_tokens` is the part of `output_tokens` the model
+/// thought in. `estimated` rows are guesses: a run whose output was gone has its cost and no
+/// tokens. A run's `usage_at` says when it was counted, and `usage_session` and `usage_snapshot`
+/// the totals its agent's session (or Codex's threads) had reached, which a later run that resumes
+/// the session goes on from; `usage_tail` the part of them its requests after its last result add.
+///
+/// `review_stats` has a row for each `submit_review` (see review/stats.rs), for the task reviewed,
+/// with when its review round started (`round`).
+/// `minor` is how many minor issues it listed, null for reviews from before they were listed;
+/// `minor_noted` whether it found any or its summary mentions them. `effort` (version 82) is the effort
+/// the reviewed task's agent was set to work at, null for the agent's own default.
+const SCHEMA_V79: &str = r#"
+CREATE TABLE IF NOT EXISTS token_usage (
+  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  runtime TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  estimated INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (run_id, model)
+);
+CREATE TABLE IF NOT EXISTS review_stats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL,
+  round TEXT NOT NULL,
+  run_id TEXT,
+  at TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  serious INTEGER NOT NULL DEFAULT 0,
+  minor INTEGER,
+  minor_noted INTEGER NOT NULL DEFAULT 0,
+  label TEXT,
+  effort TEXT
+);
+CREATE INDEX IF NOT EXISTS review_stats_task ON review_stats(task_id, at);
+CREATE INDEX IF NOT EXISTS review_stats_time ON review_stats(at);
+"#;
+
+/// What each model call that isn't a run used (see agent/tokens/calls.rs), counted as
+/// `token_usage` is: `purpose` `title` for a task's title, written for task `task_id`, and `window`
+/// for the prompt that restarts config `config_id`'s 5-hour window. `cost_usd` is null for Codex,
+/// which doesn't say. From version 81, `call_id` says which call a row is from: a call has a row
+/// for each model it used, and they share it.
+const SCHEMA_V80: &str = r#"
+CREATE TABLE IF NOT EXISTS call_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  config_id TEXT,
+  model TEXT NOT NULL,
+  runtime TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL
+);
+CREATE INDEX IF NOT EXISTS call_usage_time ON call_usage(at);
+CREATE INDEX IF NOT EXISTS call_usage_task ON call_usage(task_id);
 "#;
 
 /// A row for the end of each agent turn (`kind` `turn`: `tokens` is the context it left and
@@ -1175,6 +1410,25 @@ pub(super) fn migrate_claude_configs(conn: &Connection) -> Result<()> {
     }
     Ok(())
 }
+
+/// Skill sources: git repositories whose skills the host offers as global skills. `git_ref` is the
+/// branch or tag cloned (null: the default branch), `notes` a JSON list of what a refresh skipped, and
+/// `error` why the last refresh failed. A skill from one has `source_id` and its folder in the clone.
+const SCHEMA_V85: &str = r#"
+CREATE TABLE IF NOT EXISTS skill_sources (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  git_ref TEXT,
+  name TEXT NOT NULL,
+  commit_sha TEXT,
+  synced_at TEXT,
+  error TEXT,
+  notes TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+"#;
+const SCHEMA_V85_COLUMNS: &str = "ALTER TABLE agent_skills ADD COLUMN source_id TEXT REFERENCES skill_sources(id) ON DELETE CASCADE;
+ALTER TABLE agent_skills ADD COLUMN source_path TEXT;";
 
 /// Per-project skills and MCP servers (see agent/agent_tools.rs).
 const SCHEMA_V19: &str = r#"

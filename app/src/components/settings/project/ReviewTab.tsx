@@ -1,16 +1,20 @@
+import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
+  api,
   hostSupports,
   MERGE_APPROVAL_API,
+  MULTI_SUMMARIZER_API,
   PR_APPROVAL_API,
   PROFILE_REVIEWERS_API,
+  type ClaudeConfig,
   type Host,
   type Project,
   type Reviewer,
   type WatchPullRequests,
 } from "../../../api";
 import { useStore } from "../../../store";
-import { DEFAULT_REVIEWER, InheritPicker, isDefaultReviewer, ReviewerList, ReviewerRow, reviewerLabel } from "../../task/Reviewers";
+import { DEFAULT_REVIEWER, InheritPicker, isDefaultReviewer, ReviewerList, ReviewerRow, reviewerLabel, SummarizerList, useReviewerExtras } from "../../task/Reviewers";
 import { Field, Input, Toggle } from "../../ui";
 
 /** The Review tab: reviews, summaries, pull requests and their previews, merge approval, and what happens once a task is merged. */
@@ -52,7 +56,15 @@ export function ReviewTab({ form, host, set }: { form: Project; host: Host | und
               review. Summarise now in the task's Summary tab writes one at any time.
             </div>
           </div>
-          <ProjectSummarizer project={form} host={host} onChange={(v) => set("summarizer", v)} />
+          <ProjectSummarizer
+            project={form}
+            host={host}
+            onChange={(v) => {
+              // Older hosts have the one, null for the profile's.
+              if (hostSupports(host, MULTI_SUMMARIZER_API)) set("summarizers", v);
+              else set("summarizer", v[0] ?? null);
+            }}
+          />
         </>
       )}
 
@@ -175,11 +187,12 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
   const inherits = hostSupports(host, PROFILE_REVIEWERS_API);
   const own = !!project.reviewers?.length;
+  const extras = useReviewerExtras(project.host_id, project.id, project.review_prompt);
   const profiles = profile?.reviewers?.length ? profile.reviewers : [DEFAULT_REVIEWER];
   return (
     <Field
       label="Reviewers"
-      hint="Each reviews in a thread of its own, e.g. one with Codex and one with Claude. Once they've all finished, the serious issues they found go to the task's agent together."
+      hint="Each reviews in a thread of its own, e.g. one with Codex and one with Claude, and can have its own instructions and skills. Once they've all finished, the serious issues they found go to the task's agent together."
     >
       <div className="space-y-2">
         {inherits && (
@@ -197,6 +210,7 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
             models={{ project: project.model, profile: profile?.default_model }}
             value={project.reviewers ?? []}
             onChange={onChange}
+            extras={extras}
           />
         )}
       </div>
@@ -204,37 +218,77 @@ function ProjectReviewers({ project, host, onChange }: { project: Project; host:
   );
 }
 
-/** Who summarises each task's changes: the profile's summarizer (API 87), or the project's own. */
-function ProjectSummarizer({ project, host, onChange }: { project: Project; host: Host | undefined; onChange: (v: Reviewer | null) => void }) {
+/** Who summarises each task's changes: the profile's summarizers (API 87), or the project's own; from API 103 there can be several. */
+function ProjectSummarizer({ project, host, onChange }: { project: Project; host: Host | undefined; onChange: (v: Reviewer[]) => void }) {
   const configs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project.host_id)));
   const profile = useStore((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id));
   const inherits = hostSupports(host, PROFILE_REVIEWERS_API);
-  const own = project.summarizer != null;
-  const profiles = profile?.summarizer ?? DEFAULT_REVIEWER;
+  const several = hostSupports(host, MULTI_SUMMARIZER_API);
+  const skills = useProjectSkillNames(project, several);
+  // A host from before API 103 has just the one.
+  const own = several ? !!project.summarizers?.length : project.summarizer != null;
+  const profiles: Reviewer[] = several
+    ? profile?.summarizers?.length
+      ? profile.summarizers
+      : [DEFAULT_REVIEWER]
+    : [profile?.summarizer ?? DEFAULT_REVIEWER];
+  const models = { project: project.model, profile: profile?.default_model };
   return (
-    <Field label="Summarizer" hint="The agent that writes the summaries. A quick, cheap model is usually enough.">
+    <Field
+      label={several ? "Summarizers" : "Summarizer"}
+      hint={
+        several
+          ? "The agents that write the summaries, each in a thread of its own. Give them different skills or prompts to compare which summarises best. A quick, cheap model is usually enough."
+          : "The agent that writes the summaries. A quick, cheap model is usually enough."
+      }
+    >
       <div className="space-y-2">
         {inherits && (
           <InheritPicker
             own={own}
-            onChange={(v) => onChange(v ? profiles : null)}
-            what="summarizer"
-            profileHas={`${reviewerLabel(profiles, configs)}. Change it in Settings → Profiles.`}
+            onChange={(v) => onChange(v ? profiles : [])}
+            what={several ? "summarizers" : "summarizer"}
+            profileHas={`${profiles.map((r) => summarizerLabel(r, configs)).join("; ")}. Change ${several ? "them" : "it"} in Settings → Profiles.`}
           />
         )}
-        {(own || !inherits) && (
-          <ReviewerRow
-            hostId={project.host_id}
-            configs={configs}
-            models={{ project: project.model, profile: profile?.default_model }}
-            value={project.summarizer ?? DEFAULT_REVIEWER}
-            // A host from before API 87 saves one with the defaults as none, the task's config;
-            // from then on it's this project's choice, over the profile's.
-            onChange={(v) => onChange(inherits ? (v ?? DEFAULT_REVIEWER) : isDefaultReviewer(v) ? null : v)}
-            removable={false}
-          />
-        )}
+        {(own || !inherits) &&
+          (several ? (
+            <SummarizerList hostId={project.host_id} configs={configs} models={models} value={project.summarizers ?? []} onChange={onChange} skills={skills} />
+          ) : (
+            <ReviewerRow
+              hostId={project.host_id}
+              configs={configs}
+              models={models}
+              value={project.summarizer ?? DEFAULT_REVIEWER}
+              // A host from before API 87 saves one with the defaults as none, the task's config;
+              // from then on it's this project's choice, over the profile's.
+              onChange={(v) => onChange(inherits ? [v ?? DEFAULT_REVIEWER] : isDefaultReviewer(v) ? [] : [v!])}
+              removable={false}
+            />
+          ))}
       </div>
     </Field>
   );
+}
+
+/** Who a summarizer is: its name, if it has one, and its agent, with the skills it uses. */
+function summarizerLabel(r: Reviewer, configs: ClaudeConfig[]) {
+  return [r.name, reviewerLabel(r, configs), r.skills?.length ? `skills ${r.skills.join(", ")}` : "", r.prompt ? "own prompt" : ""].filter(Boolean).join(" · ");
+}
+
+/** The names of the skills the project's agents have from the board (its own and the host's global ones), to pick from. */
+function useProjectSkillNames(project: Project, on: boolean): string[] {
+  const [names, setNames] = useState<string[]>([]);
+  useEffect(() => {
+    if (!on) return;
+    let live = true;
+    api
+      .agentTools(project.host_id, project.id)
+      .then((t) => live && setNames([...new Set([...t.skills, ...(t.global_skills ?? [])].map((s) => s.name))].sort()))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [on, project.host_id, project.id]);
+  return names;
 }

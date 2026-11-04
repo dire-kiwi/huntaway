@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { agentOf, hostSupports, isMerged, LABELS, LABELS_API, type Effort, type Task } from "../../../api";
+import { agentOf, api, documentsOnly, hostSupports, isMerged, isScratch, LABELS, LABELS_API, START_FROM_API, type Effort, type Task } from "../../../api";
 import { effortOptions, inheritedModel, isClaudeModel, modelOptions } from "../../../agents";
 import { harnessesOf, harnessWords, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses";
 import { allValues, lastValue, removeTokens, stripTokens, type Token } from "../taskTokens";
@@ -14,13 +14,14 @@ import { DEFAULT_WORD, LABEL_WORDS, typeWord, type NewTaskType } from "./words";
 export type Tokens = ReturnType<typeof useTokens>;
 
 /**
- * What the description's tokens say: its type and labels, the tasks it waits for, the harnesses it runs with (see
- * useHarnesses) and its effort, and the text its agent is given without them.
+ * What the description's tokens say: its type and labels, the tasks it waits for, what its worktree starts from, the
+ * harnesses it runs with (see useHarnesses) and its effort, and the text its agent is given without them. `subproject`
+ * is the one it's added to, if any.
  */
-export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, saved: Draft | null) {
+export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, saved: Draft | null, subproject: Task | undefined) {
   const { resolve, atVocab, offered, typeOf, host, inProject, noProject, asGroup } = where;
   const { efforts, effort } = agent;
-  const { description, caret, edit } = ed;
+  const { description, caret, edit, found, completing } = ed;
   // Tasks to merge before its agent starts (API 24), as `#` and their key.
   const preTokens = resolve({ "/": offered.map(typeWord) });
   const typeTab = typeOf(lastValue(preTokens, "/"));
@@ -37,6 +38,27 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
     ),
   );
   const depKey = (t: Task) => `${depProject?.key}-${t.number}`;
+  // What its worktree starts from (API 96), as `from:` and another task's key (to stack it on that task's branch), a
+  // branch, a pull request (`#12` or its URL) or a commit, which the host makes out. Not a subproject's task, which
+  // starts from the subproject's branch. A key of the project's that isn't one of its tasks to stack on isn't known.
+  const fromOk = deps && hostSupports(host, START_FROM_API) && !subproject;
+  const fromTasks = fromOk ? depTasks.filter((t) => (t.use_worktree || !!t.branch) && !isScratch(t) && !documentsOnly(t)) : [];
+  const fromKeys = fromTasks.map(depKey);
+  const keyLike = (w: string) => new RegExp(`^${inProject?.key}-\\d+$`, "i").test(w);
+  const fromWords = fromOk ? [...fromKeys, ...found.filter((t) => t.prefix === "from:" && !keyLike(t.word)).map((t) => t.word)] : [];
+  // The project's branches, for the list, once a `from:` is typed.
+  const [branches, setBranches] = useState<{ project: string; list: { name: string; remote: boolean }[] } | null>(null);
+  const fromTyped = fromOk && (found.some((t) => t.prefix === "from:") || completing?.prefix === "from:");
+  useEffect(() => {
+    if (!fromTyped || !inProject || branches?.project === inProject.id) return;
+    const id = inProject.id;
+    setBranches({ project: id, list: [] });
+    api
+      .projectBranches(inProject.host_id, id)
+      .then((r) => setBranches((b) => (b?.project === id ? { project: id, list: r.branches } : b)))
+      .catch(() => {});
+  }, [fromTyped, inProject?.host_id, inProject?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const projectBranches = fromOk && branches && branches.project === inProject?.id ? branches.list : [];
 
   const harnesses = useHarnesses(where, agent, ed, saved);
   const { modelVocab, effortList } = harnesses;
@@ -52,10 +74,13 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
     "!": modelVocab,
     ...(efforts ? { "^": [DEFAULT_WORD, ...effortList] } : {}),
     ...(deps ? { "#": depTasks.map(depKey) } : {}),
+    ...(fromOk ? { "from:": fromWords } : {}),
   });
   const effortAsked = lastValue(tokens, "^");
   const pickedEffort = (effortAsked === undefined ? effort : effortAsked === DEFAULT_WORD ? "" : effortAsked) as Effort | "";
   const dependsOn = allValues(tokens, "#").flatMap((k) => depTasks.filter((t) => depKey(t) === k).map((t) => t.id));
+  const startFrom = lastValue(tokens, "from:");
+  const fromTask = startFrom === undefined ? undefined : fromTasks.find((t) => depKey(t) === startFrom);
   // What its agent is given: the description without its tokens.
   const text = stripTokens(description, tokens);
 
@@ -66,6 +91,18 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
   const asSubproject = taskType === "subproject";
   const codeTask = (taskType === null && !docType) || asSubproject;
   const noun = taskType === "scratch" ? "scratch task" : asGroup && !docType ? "group task" : (docType ?? taskType ?? "task");
+  // What starting from it means, under the editor.
+  const pr = startFrom?.match(/^#(\d+)$|\/pull\/(\d+)/);
+  const fromNote =
+    startFrom === undefined || !codeTask
+      ? null
+      : fromTask
+        ? `Stacked on ${startFrom}: its worktree starts from ${startFrom}'s branch${fromTask.branch ? ` ${fromTask.branch}` : " (set up first if it has none yet)"}, which its pull request targets and its changes are compared with. Once ${startFrom} is merged, it merges where that went.`
+        : pr
+          ? `Its worktree starts from pull request #${pr[1] ?? pr[2]}'s branch, which its pull request targets and its changes are compared with.`
+          : /^(commit:)?[0-9a-f]{7,40}$/i.test(startFrom)
+            ? `Its worktree starts from commit ${startFrom.replace(/^commit:/, "")}, and it merges into the base branch.`
+            : `Its worktree starts from ${startFrom.replace(/^branch:/, "")}, which its pull request targets and its changes are compared with.`;
 
   // Takes tokens out of the text (the "Reads as" row's ×).
   const untoken = (which: (t: Token) => boolean) => {
@@ -81,6 +118,13 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
     depProject,
     depTasks,
     depKey,
+    fromOk,
+    fromTasks,
+    fromKeys,
+    projectBranches,
+    startFrom,
+    fromTask,
+    fromNote,
     labelling,
     labelTypes,
     labelWords,

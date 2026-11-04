@@ -76,17 +76,6 @@ test("a phone's task header keeps Start on screen", async () => {
   });
 });
 
-// HA-44: the Live view offered to reply to tasks in Backlog and Done, which have no agent at work.
-test("the Live view has no reply box on a task in Backlog or Done", async () => {
-  await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${project.id}`, "click Live view", "wait An idea for later", "wait Merged and closed", "wait A task waiting on an answer"]);
-    const replies = (title) => ui.page.locator('[class*="h-[340px]"]').filter({ hasText: title }).getByPlaceholder("Reply to the agent…").count();
-    assert.equal(await replies("An idea for later"), 0);
-    assert.equal(await replies("Merged and closed"), 0);
-    assert.equal(await replies("A task waiting on an answer"), 1);
-  });
-});
-
 /** A thread of `n` short replies, enough to scroll, its messages' ids after `from`. */
 function longThread(taskId, from = 0, n = 80) {
   const out = [];

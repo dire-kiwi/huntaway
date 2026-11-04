@@ -15,6 +15,7 @@ import {
   PR_APPROVAL_API,
   MODEL_ALIASES,
   PERMISSION_MODES,
+  MULTI_SUMMARIZER_API,
   PROFILE_REVIEWERS_API,
   type ClaudeConfig,
   type Compat,
@@ -26,13 +27,14 @@ import {
   type TerminalTool,
 } from "../../api";
 import { useShallow } from "zustand/react/shallow";
+import { NOW_API } from "../../focus";
 import { defaultCloneDir } from "./repoSource";
 import { navigate } from "../../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../../store";
 import { compareVersions } from "./versions";
 import { ConfigPicker } from "./ClaudeConfigs";
 import { AsanaAccount, ASANA_TOGGLE_API, LINKS_API, usesAsana } from "../task/ExternalLinks";
-import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow } from "../task/Reviewers";
+import { DEFAULT_REVIEWER, ReviewerList, ReviewerRow, SummarizerList, useReviewerExtras } from "../task/Reviewers";
 import { Button, Field, IconButton, Input, Modal, ModalFooter, timeAgo, Toggle, useAsyncAction, useConfirm } from "../ui";
 
 const MODE_LABEL: Record<Host["mode"], string> = {
@@ -484,7 +486,7 @@ function CopyLine({ value, secret }: { value: string; secret?: boolean }) {
 // ---------- profiles (per host, merged by name) ----------
 
 /**
- * Whether a linked host's agents can use this board's tools, up the link (API 98). Off by default: an assistant host's agents
+ * Whether a linked host's agents can use this board's tools, up the link (API 108). Off by default: an assistant host's agents
  * can then create and message tasks on this board's projects, with the access their profile has here.
  */
 function UplinkToggle({ host }: { host: Host }) {
@@ -626,7 +628,7 @@ export function ProfileForm({
   const [limitWait, setLimitWait] = useState(!!initial?.limit_wait);
   const [limitSwitch, setLimitSwitch] = useState(!!initial?.limit_switch);
   const [reviewers, setReviewers] = useState<Reviewer[]>(initial?.reviewers ?? []);
-  const [summarizer, setSummarizer] = useState<Reviewer>(initial?.summarizer ?? DEFAULT_REVIEWER);
+  const [summarizers, setSummarizers] = useState<Reviewer[]>(initial?.summarizers?.length ? initial.summarizers : [initial?.summarizer ?? DEFAULT_REVIEWER]);
   const [mergeApproval, setMergeApproval] = useState(!!initial?.merge_approval);
   const [prApproval, setPrApproval] = useState(!!initial?.require_pr_approval);
   const [assistantHost, setAssistantHost] = useState(initial?.assistant_host ?? "");
@@ -641,13 +643,15 @@ export function ProfileForm({
   const asanaToggle = hostSupports(hosts.find((h) => h.id === host), ASANA_TOGGLE_API);
   const limits = hostSupports(hosts.find((h) => h.id === host), LIMITS_API);
   const reviewing = hostSupports(hosts.find((h) => h.id === host), PROFILE_REVIEWERS_API);
+  const severalSummarizers = hostSupports(hosts.find((h) => h.id === host), MULTI_SUMMARIZER_API);
   const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
   const gating = hostSupports(hosts.find((h) => h.id === host), PR_APPROVAL_API);
-  // This board's own profiles can run their assistants on a linked host (API 98).
+  // This board's own profiles can run their assistants on a linked host (API 108).
   const assistantHosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
   const onBoardHost = useStore((s) => !!s.hosts.find((h) => h.id === host)?.local);
   const placing = onBoardHost && (assistantHosts.length > 0 || !!initial?.assistant_host);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
+  const reviewExtras = useReviewerExtras(host);
   // With no configs on the host yet, the directory typed here becomes the first.
   const pick = separate && hostConfigs.length > 0;
   const submit = () =>
@@ -663,7 +667,7 @@ export function ProfileForm({
         ...(asanaToggle ? { asana_enabled: asana } : {}),
         ...(limits ? { limit_wait: limitWait, limit_switch: limitSwitch } : {}),
         // The host saves just the defaults as none, which is the same.
-        ...(reviewing ? { reviewers, summarizer } : {}),
+        ...(reviewing ? (severalSummarizers ? { reviewers, summarizers } : { reviewers, summarizer: summarizers[0] ?? DEFAULT_REVIEWER }) : {}),
         ...(approving ? { merge_approval: mergeApproval } : {}),
         ...(gating ? { require_pr_approval: prApproval } : {}),
         ...(placing ? { assistant_host: assistantHost || null } : {}),
@@ -752,10 +756,26 @@ export function ProfileForm({
       {reviewing && (
         <>
           <Field label="Reviewers" hint="Who reviews the tasks of its projects, each in a thread of its own. A project can choose its own in its Review settings.">
-            <ReviewerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={reviewers} onChange={setReviewers} />
+            <ReviewerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={reviewers} onChange={setReviewers} extras={reviewExtras} />
           </Field>
-          <Field label="Summarizer" hint="Who summarises a task's changes once its review passes, unless its project chooses its own. A quick, cheap model is usually enough.">
-            <ReviewerRow hostId={host} configs={hostConfigs} models={{ profile: model }} value={summarizer} onChange={(v) => setSummarizer(v ?? DEFAULT_REVIEWER)} removable={false} />
+          <Field
+            label={severalSummarizers ? "Summarizers" : "Summarizer"}
+            hint={`Who summarises a task's changes once its review passes, unless its project chooses its own${
+              severalSummarizers ? ", each in a thread of its own: give them different skills or prompts to compare which summarises best" : ""
+            }. A quick, cheap model is usually enough.`}
+          >
+            {severalSummarizers ? (
+              <SummarizerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={summarizers} onChange={setSummarizers} />
+            ) : (
+              <ReviewerRow
+                hostId={host}
+                configs={hostConfigs}
+                models={{ profile: model }}
+                value={summarizers[0] ?? DEFAULT_REVIEWER}
+                onChange={(v) => setSummarizers([v ?? DEFAULT_REVIEWER])}
+                removable={false}
+              />
+            )}
           </Field>
         </>
       )}
@@ -1104,6 +1124,29 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           </Field>
         )}
       </div>
+      {hostSupports(host, NOW_API) && (
+        <label className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">
+          Tasks in Now go back to Later after
+          <Input
+            key={settings.now_expiry_hours ?? "default"}
+            type="number"
+            min={0}
+            max={24 * 365}
+            step={1}
+            aria-label="Hours in Now without activity"
+            defaultValue={settings.now_expiry_hours ?? 24}
+            className="h-7 w-20"
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              const hours = v === "" ? null : Math.round(Number(v));
+              if (hours !== null && !(hours >= 0 && hours <= 24 * 365)) return setErr("Hours must be 0 to 8760");
+              if (hours !== (settings.now_expiry_hours ?? 24)) save({ now_expiry_hours: hours });
+            }}
+            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+          />
+          hours without activity <span className="text-faint">(0 keeps them there until you move them)</span>
+        </label>
+      )}
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
     </div>
   );

@@ -27,7 +27,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tower_http::services::{ServeDir, ServeFile};
 
-use agent::{codex, runner, runs, task_tmp, title, usage, window};
+use agent::{codex, focus, runner, runs, task_tmp, title, usage, window};
 use git::relocate;
 use hosts::{broker, hub, ssh, terminal};
 use integrations::{automations, push};
@@ -394,6 +394,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     runner::auto_compact(&state);
     usage::resume_loop(&state);
     window::start(&state);
+    focus::start(&state);
     pr_watch::watch_in_review(&state);
     terminal::start_reaper(&state);
     attachments::start_pruner(&state);

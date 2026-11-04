@@ -118,7 +118,7 @@ fn profiles_choose_reviewers_and_a_summarizer_that_projects_can_override() {
         };
         let summarizer = || {
             let p = project();
-            db::summarizer_for(&s.db(), &p).unwrap()
+            db::summarizers_for(&s.db(), &p).unwrap().remove(0)
         };
         let codex_reviewer = db::Reviewer { claude_config_id: Some(codex.id.clone()), ..Default::default() };
         let haiku = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
@@ -143,6 +143,81 @@ fn profiles_choose_reviewers_and_a_summarizer_that_projects_can_override() {
         assert_eq!(update(json!({"summarizer": {"effort": "low"}})).await.unwrap().0["reviewers"], json!([]), "kept when other fields change");
         let seven = vec![json!({}); crate::review::MAX_REVIEWERS + 1];
         assert!(update(json!({"reviewers": seven})).await.is_err());
+    })
+}
+
+#[test]
+fn profiles_and_projects_can_have_several_summarizers_with_skills() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let create = |b: Value| create_profile(State(s.clone()), Json(serde_json::from_value(b).unwrap()));
+        let listed = json!([
+            {"name": " Baseline ", "model": "haiku"},
+            {"name": "Skilled", "skills": [" /tldr ", "changelog", "tldr", ""], "prompt": "  Be brief.  "},
+        ]);
+        let Json(p) = create(json!({"name": "work", "summarizers": listed})).await.unwrap();
+        let wanted = json!([
+            {"claude_config_id": null, "model": "haiku", "effort": null, "name": "Baseline"},
+            {"claude_config_id": null, "model": null, "effort": null, "name": "Skilled", "skills": ["tldr", "changelog"], "prompt": "Be brief."},
+        ]);
+        assert_eq!(p["summarizers"], wanted);
+        // Older clients read the first.
+        assert_eq!(p["summarizer"], wanted[0]);
+        let id = p["id"].as_str().unwrap().to_string();
+        let np = db::NewProject { id: "pr", profile_id: &id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+        db::insert_project(&s.db(), np).unwrap();
+        let summarizers = || {
+            let p = db::get_project(&s.db(), "pr").unwrap().unwrap();
+            db::summarizers_for(&s.db(), &p).unwrap()
+        };
+        assert_eq!(summarizers().len(), 2);
+        // A project's own, over the profile's, and back with an empty list.
+        let project = update_project_inner(&s, "pr", json!({"summarizers": [{"skills": ["x"]}]}).as_object().unwrap()).await.unwrap();
+        assert_eq!((project.summarizers.len(), project.summarizer.as_ref().map(|r| r.skills.clone())), (1, Some(vec!["x".to_string()])));
+        assert_eq!(summarizers()[0].skills, ["x"]);
+        let project = update_project_inner(&s, "pr", json!({"summarizers": []}).as_object().unwrap()).await.unwrap();
+        assert_eq!((project.summarizers.len(), project.summarizer.is_none()), (0, true));
+        assert_eq!(summarizers().len(), 2);
+        // A client from before there could be several sends the one, and `summarizers` wins when both are given.
+        update_project_inner(&s, "pr", json!({"summarizer": {"model": "sonnet"}}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers(), [db::Reviewer { model: Some("sonnet".into()), ..Default::default() }]);
+        update_project_inner(&s, "pr", json!({"summarizer": {"model": "sonnet"}, "summarizers": [{}, {}]}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers().len(), 2);
+        update_project_inner(&s, "pr", json!({"summarizer": null}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers().len(), 2, "the profile's again");
+        // A client from before API 103 sends the first as `summarizer` with every save: the rest stay.
+        update_project_inner(&s, "pr", json!({"summarizers": [{"name": "A", "model": "haiku"}, {"name": "B"}, {"name": "C"}]}).as_object().unwrap()).await.unwrap();
+        update_project_inner(&s, "pr", json!({"summarizer": {"claude_config_id": null, "model": "haiku", "effort": null}}).as_object().unwrap()).await.unwrap();
+        assert_eq!(summarizers().iter().map(|r| r.name.clone().unwrap()).collect::<Vec<_>>(), ["A", "B", "C"]);
+        // Changed, it replaces just the first.
+        update_project_inner(&s, "pr", json!({"summarizer": {"model": "sonnet"}}).as_object().unwrap()).await.unwrap();
+        let after = summarizers();
+        assert_eq!((after.len(), after[0].model.as_deref(), after[1].name.as_deref()), (3, Some("sonnet"), Some("B")));
+        update_project_inner(&s, "pr", json!({"summarizers": []}).as_object().unwrap()).await.unwrap();
+        let update_profile_body = |b: Value| update_profile(State(s.clone()), Path(id.clone()), Json(b.as_object().unwrap().clone()));
+        let first = json!({"claude_config_id": null, "model": "haiku", "effort": null});
+        // The same for a profile: a rename from an old UI that sends `summarizer` too keeps its two.
+        let Json(p) = update_profile_body(json!({"name": "renamed", "summarizer": first})).await.unwrap();
+        assert_eq!((p["name"].as_str(), p["summarizers"].as_array().map(Vec::len)), (Some("renamed"), Some(2)));
+        let Json(p) = update_profile_body(json!({"summarizer": null})).await.unwrap();
+        assert_eq!(p["summarizers"], json!([]));
+        // Bad ones.
+        let update = |b: Value| {
+            let s = s.clone();
+            async move { update_project_inner(&s, "pr", b.as_object().unwrap()).await }
+        };
+        assert!(update(json!({"summarizers": [{"skills": ["two words"]}]})).await.is_err());
+        assert!(update(json!({"summarizers": [{"skills": "tldr"}]})).await.is_err());
+        assert!(update(json!({"summarizers": vec![json!({}); crate::review::MAX_REVIEWERS + 1]})).await.is_err());
+        assert!(update(json!({"summarizers": [{"claude_config_id": "nope"}]})).await.is_err());
+        // Reviewers keep their prompt and skills, tidied (HA-142), but not the name only summarizers have.
+        let project = update(json!({"reviewers": [{"name": "x", "skills": [" /audit ", "audit", "b", ""], "prompt": "  Only security.\n"}]})).await.unwrap();
+        let own = db::Reviewer { skills: vec!["audit".into(), "b".into()], prompt: Some("Only security.".into()), ..Default::default() };
+        assert_eq!(project.reviewers, [own]);
+        assert!(update(json!({"reviewers": [{"prompt": "x".repeat(20_001)}]})).await.is_err());
+        assert!(update(json!({"reviewers": [{"skills": ["two words"]}]})).await.is_err());
+        let many: Vec<String> = (0..21).map(|i| format!("s{i}")).collect();
+        assert!(update(json!({"reviewers": [{"skills": many}]})).await.is_err());
     })
 }
 
@@ -260,6 +335,31 @@ fn profiles_connect_to_asana_and_search_it() {
 }
 
 #[test]
+fn updating_a_task_from_the_api_puts_it_in_now() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+        let project = db::insert_project(&s.db(), project).unwrap();
+        let t = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "Fix it"})).unwrap()).unwrap();
+        assert_eq!(t.now_at, None);
+        let patch = async |v: Value| {
+            let Json(t) = update_task(State(s.clone()), Path(t.id.clone()), Json(v.as_object().unwrap().clone())).await.unwrap();
+            (t["now_at"].clone(), db::get_task(&s.db(), &t["id"].as_str().unwrap()).unwrap().unwrap().now_at)
+        };
+        // Asking for Later in the same request keeps it there; any other update is a reason for Now.
+        assert_eq!(patch(json!({"description": "More", "now": false})).await, (Value::Null, None));
+        let (shown, kept) = patch(json!({"description": "Even more"})).await;
+        assert!(kept.is_some() && shown == json!(kept));
+        patch(json!({"now": false})).await;
+        // The board renumbers a column's positions when a card is dropped: that touches no other card.
+        assert_eq!(patch(json!({"position": 7.5})).await, (Value::Null, None));
+        // The dropped card's own request moves it too.
+        assert!(patch(json!({"status": "in_progress", "position": 8.5})).await.1.is_some());
+    });
+}
+
+#[test]
 fn a_tasks_fields_are_checked_for_type_before_theyre_stored() {
     crate::testing::run(async || {
         let s = crate::testing::state();
@@ -312,6 +412,79 @@ fn a_setting_of_the_wrong_type_is_refused_rather_than_cleared() {
         assert_eq!((out["default_model"].as_str(), out["default_effort"].as_str()), (Some("haiku"), Some("high")), "nothing cleared");
         let out = set(json!({"default_model": null, "default_effort": ""})).await.unwrap();
         assert!(out["default_model"].is_null() && out["default_effort"].is_null(), "null and blank clear: {out}");
+    })
+}
+
+/// A task in a project, and a second one waiting for it, to start without an agent running.
+fn waiting_for_another(s: &Shared) -> (db::Project, db::Task) {
+    let p = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+    let project = NewProject { id: "pr", profile_id: &p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
+    let project = db::insert_project(&s.db(), project).unwrap();
+    let first = create_task_inner(s, &project.id, serde_json::from_value(json!({"title": "First"})).unwrap()).unwrap();
+    (project, first)
+}
+
+#[test]
+fn the_users_prompts_put_a_task_in_now_but_agents_and_starts_do_not() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = crate::testing::state();
+        let (project, first) = waiting_for_another(&s);
+        let make = async |v: Value| {
+            let b: CreateTask = serde_json::from_value(json!({"depends_on": [first.id], "title": "T"}).as_object().unwrap().iter().chain(v.as_object().unwrap()).map(|(k, v)| (k.clone(), v.clone())).collect::<Map<_, _>>().into()).unwrap();
+            let t = create_task(State(s.clone()), Path(project.id.clone()), Json(b)).await.unwrap().0;
+            serde_json::from_value::<db::Task>(t).unwrap()
+        };
+        // Made from the board with a prompt, it's in now; started without one (or by an agent: create_task_inner), it isn't.
+        assert!(make(json!({"start": "Do it"})).await.now_at.is_some());
+        // The new task dialog sends `start: true` with the description they typed (its title is made from it).
+        let dialog = json!({"description": "Implement the feature", "start": true, "status": "in_progress"});
+        assert!(make(dialog.clone()).await.now_at.is_some());
+        assert_eq!(make(json!({"start": true})).await.now_at, None);
+        assert_eq!(make(json!({"description": "  ", "start": true})).await.now_at, None);
+        assert_eq!(make(json!({"description": "Implement the feature"})).await.now_at, None);
+        // The same for the dialog's scratch and group tasks, which share it.
+        let profile = project.profile_id.clone();
+        let body = |extra: Value| -> CreateTask { serde_json::from_value(json!({"title": "T"}).as_object().unwrap().iter().chain(extra.as_object().unwrap()).map(|(k, v)| (k.clone(), v.clone())).collect::<Map<_, _>>().into()).unwrap() };
+        let Json(scratch) = create_scratch_task(State(s.clone()), Path(profile.clone()), Json(body(dialog.clone()))).await.unwrap();
+        assert!(serde_json::from_value::<db::Task>(scratch).unwrap().now_at.is_some());
+        let Json(scratch) = create_scratch_task(State(s.clone()), Path(profile.clone()), Json(body(json!({"start": true})))).await.unwrap();
+        assert_eq!(serde_json::from_value::<db::Task>(scratch).unwrap().now_at, None);
+        update_project_inner(&s, &project.id, json!({"group_name": "Shop"}).as_object().unwrap()).await.unwrap();
+        let group = |extra: Value| CreateGroupTask { group: "Shop".into(), task: body(extra) };
+        let Json(g) = create_group_task(State(s.clone()), Path(profile.clone()), Json(group(dialog.clone()))).await.unwrap();
+        assert!(serde_json::from_value::<db::Task>(g).unwrap().now_at.is_some());
+        let Json(g) = create_group_task(State(s.clone()), Path(profile.clone()), Json(group(json!({"start": true})))).await.unwrap();
+        assert_eq!(serde_json::from_value::<db::Task>(g).unwrap().now_at, None);
+        assert_eq!(make(json!({})).await.now_at, None);
+        let by_agent = create_task_inner(&s, &project.id, serde_json::from_value(json!({"title": "T", "depends_on": [first.id], "start": "Do it"})).unwrap()).unwrap();
+        assert_eq!(by_agent.now_at, None);
+
+        // A prompt sent on its thread, not an empty one that starts its agent.
+        let t = make(json!({"start": true})).await;
+        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "  "})).unwrap())).await.unwrap();
+        assert_eq!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at, None);
+        send_message(State(s.clone()), Path(t.id.clone()), Json(serde_json::from_value(json!({"text": "and this"})).unwrap())).await.unwrap();
+        assert!(db::get_task(&s.db(), &t.id).unwrap().unwrap().now_at.is_some());
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
+#[test]
+fn how_long_a_task_stays_in_now_is_a_setting() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let set = async |v: Value| update_settings(State(s.clone()), Json(v.as_object().unwrap().clone())).await.map(|j| j.0);
+        assert_eq!(get_settings(State(s.clone())).await.unwrap().0["now_expiry_hours"], json!(24));
+        assert_eq!(set(json!({"now_expiry_hours": 6})).await.unwrap()["now_expiry_hours"], json!(6));
+        // 0 keeps tasks there for good, and null goes back to a day.
+        assert_eq!(set(json!({"now_expiry_hours": 0})).await.unwrap()["now_expiry_hours"], json!(0));
+        assert_eq!(set(json!({})).await.unwrap()["now_expiry_hours"], json!(0));
+        assert_eq!(set(json!({"now_expiry_hours": null})).await.unwrap()["now_expiry_hours"], json!(24));
+        for bad in [json!({"now_expiry_hours": -1}), json!({"now_expiry_hours": 1.5}), json!({"now_expiry_hours": "soon"}), json!({"now_expiry_hours": 999999})] {
+            let err = set(bad.clone()).await.unwrap_err();
+            assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}: {}", err.1);
+        }
     })
 }
 
@@ -379,6 +552,45 @@ fn cloning_adds_a_clone_thats_there_already_and_checks_what_it_can_first() {
         assert!(!dir.join("other").exists());
         assert!(message(clone_project(State(s.clone()), Path("nope".into()), Json(serde_json::from_value(json!({"repo": "o/r"})).unwrap())).await).contains("profile"));
         std::fs::remove_dir_all(&dir).unwrap();
+    })
+}
+
+#[test]
+fn creates_a_github_repository_and_adds_the_folder_as_a_project() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let profile = db::insert_profile(&s.db(), "p", &[], None).unwrap();
+        let fake = crate::integrations::github::tests::fake_gh_create();
+        let gh = path_str(&fake.join("gh"));
+        let create = |b: Value| create_github_project_inner(&s, &profile.id, serde_json::from_value(b).unwrap(), gh.clone());
+        let path = |n: &str| path_str(&fake.join("projects").join(n));
+        let message = |r: ApiResult<Value>| r.unwrap_err().1;
+
+        let p = create(json!({"repo_path": path("one"), "owner": "o", "visibility": "private", "key": "ab"})).await.unwrap();
+        assert_eq!((p["name"].as_str(), p["key"].as_str(), p["github"]["full_name"].as_str()), (Some("one"), Some("AB"), Some("o/one")));
+        assert!(std::fs::read_to_string(fake.join("create.log")).unwrap().contains("repo create o/one --private"));
+        assert!(fake.join("projects/one/.git").exists());
+        // The repository can be named differently from the folder, and be public.
+        let p = create(json!({"repo_path": path("two"), "repo_name": "other", "owner": "o", "visibility": "public", "name": "Two"})).await.unwrap();
+        assert_eq!((p["name"].as_str(), p["github"]["full_name"].as_str()), (Some("Two"), Some("o/other")));
+        assert!(std::fs::read_to_string(fake.join("create.log")).unwrap().contains("repo create o/other --public"));
+
+        // Checked before anything is made: the visibility, the name, the key, and a project there already.
+        let before = std::fs::read_to_string(fake.join("create.log")).unwrap();
+        assert!(message(create(json!({"repo_path": path("x"), "visibility": "secret"})).await).contains("public or private"));
+        assert!(message(create(json!({"repo_path": path("x"), "visibility": "public", "repo_name": "a b"})).await).contains("repository's name"));
+        assert!(message(create(json!({"repo_path": "x", "visibility": "public"})).await).contains("absolute"));
+        assert!(message(create(json!({"repo_path": path("x"), "visibility": "public", "key": "AB"})).await).contains("already has the key AB"));
+        assert!(message(create(json!({"repo_path": path("one"), "visibility": "public"})).await).contains("already the project \"one\""));
+        assert_eq!(std::fs::read_to_string(fake.join("create.log")).unwrap(), before);
+        assert!(!fake.join("projects/x").exists());
+        // A repository GitHub refuses adds no project and leaves nothing behind.
+        let err = message(create(json!({"repo_path": path("fails"), "visibility": "public"})).await);
+        assert!(err.contains("Name already exists"), "{err}");
+        assert!(!fake.join("projects/fails").exists());
+        assert_eq!(db::list_projects(&s.db(), &profile.id).unwrap().len(), 2);
+        assert!(create_github_project_inner(&s, "nope", serde_json::from_value(json!({"repo_path": path("y"), "visibility": "public"})).unwrap(), gh.clone()).await.is_err());
+        std::fs::remove_dir_all(&fake).unwrap();
     })
 }
 
@@ -1325,6 +1537,8 @@ fn a_merge_waits_for_the_users_approval_of_its_summary() {
         assert_eq!((t.status.as_str(), t.merging, t.merge_approval.as_deref(), t.running), ("ready_for_merge", true, Some("approved"), true));
         assert!(last_prompt(&s, &t.id).contains("The user approved the merge."), "{}", last_prompt(&s, &t.id));
         assert_eq!(approval_cards(&s, &t.id)[0].data["answer"]["choices"], json!(["Approve"]));
+        // The board's own question isn't a prompt of the user's.
+        assert_eq!(t.now_at, None);
         assert_eq!(blocked(&t.id), None);
         assert!(crate::mcp::questions::answer(&s, &t.id, cards[0].id, pick("Deny")).is_err(), "answered once");
         // The run's gh server asks the board.

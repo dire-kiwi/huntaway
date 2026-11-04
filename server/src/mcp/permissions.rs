@@ -335,7 +335,7 @@ pub fn apply_mode_to_pending(s: &Shared, task: &Task) -> ApiResult<()> {
 }
 
 /// Prompts waiting for an answer, oldest first: all of this host's, or one task's.
-/// Pending prompts, of one task, or of one profile's tasks with `profile_id` (API 100).
+/// Pending prompts, of one task, or of one profile's tasks with `profile_id` (API 110).
 pub fn pending(s: &Shared, task_id: Option<&str>, profile_id: Option<&str>) -> ApiResult<Vec<Value>> {
     let c = s.db();
     let mut st = c.prepare(
@@ -492,6 +492,11 @@ pub fn answer_by(s: &Shared, id: &str, allow: bool, always: bool, message: Optio
             v["late"] = json!(true);
         }
     })?;
+    // The user's answers to the agent's questions are a prompt to it: they put the task in "now", like a message does
+    // (not the other permission decisions, which only let the agent carry on).
+    if answers.is_some() {
+        crate::agent::focus::put_in_now(s, &task_id);
+    }
     if let (true, Some(t)) = (always, &task) {
         let mut list = t.auto_allow.clone();
         if !list.contains(&tool_name) {

@@ -47,6 +47,11 @@ pub fn review(project: Option<&Project>) -> &str {
     pick(project.and_then(|p| p.review_prompt.as_ref()), DEFAULT_REVIEW)
 }
 
+/// What the reviewer `own` looks for: its own instructions if it has some, else the project's.
+pub fn review_by(project: Option<&Project>, own: &crate::db::Reviewer) -> String {
+    pick(own.prompt.as_ref(), review(project)).to_string()
+}
+
 /// How the agent merges, after which branch to merge into which.
 pub fn merge(project: Option<&Project>) -> &str {
     pick(project.and_then(|p| p.merge_prompt.as_ref()), DEFAULT_MERGE)
@@ -55,6 +60,16 @@ pub fn merge(project: Option<&Project>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reviewers_own_instructions_win_over_the_projects() {
+        let mut own = crate::db::Reviewer::default();
+        assert_eq!(review_by(None, &own), DEFAULT_REVIEW);
+        own.prompt = Some("  Look at the SQL only.  ".into());
+        assert_eq!(review_by(None, &own), "Look at the SQL only.");
+        own.prompt = Some("   ".into());
+        assert_eq!(review_by(None, &own), DEFAULT_REVIEW);
+    }
 
     #[test]
     fn a_project_without_its_own_uses_the_default() {

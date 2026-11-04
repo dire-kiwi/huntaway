@@ -323,6 +323,67 @@ fn a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelled()
 }
 
 #[test]
+fn a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_skipped() {
+    // Builds of start_from had it as version 65 (skipping that version's limit columns), then 71
+    // (skipping restart_window), then 73 (skipping the runs' sessions), then 74 (skipping pr_checks),
+    // then 75 (skipping require_pr_approval); the first two had no merge_approval (72) either, and
+    // none before 74 had pr_checks.
+    let skipped = [
+        (65, "ALTER TABLE tasks DROP COLUMN limit_reset_at; ALTER TABLE profiles DROP COLUMN limit_wait; ALTER TABLE profiles DROP COLUMN limit_switch; ALTER TABLE profiles DROP COLUMN merge_approval;"),
+        (71, "ALTER TABLE claude_configs DROP COLUMN restart_window; ALTER TABLE profiles DROP COLUMN merge_approval;"),
+        (73, "ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; ALTER TABLE tasks DROP COLUMN pr_checks;"),
+        (74, "ALTER TABLE tasks DROP COLUMN pr_checks;"),
+        (75, "ALTER TABLE profiles DROP COLUMN require_pr_approval; ALTER TABLE projects DROP COLUMN require_pr_approval;"),
+    ];
+    for (version, dropped) in skipped {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(&format!("{dropped} PRAGMA user_version={version};")).unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        let columns = [
+            ("tasks", "start_from"),
+            ("tasks", "limit_reset_at"),
+            ("profiles", "limit_wait"),
+            ("profiles", "limit_switch"),
+            ("claude_configs", "restart_window"),
+            ("profiles", "merge_approval"),
+            ("runs", "session_id"),
+            ("runs", "session_cost"),
+            ("tasks", "pr_checks"),
+            ("profiles", "require_pr_approval"),
+            ("projects", "require_pr_approval"),
+        ];
+        for (table, column) in columns {
+            let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();
+            assert!(has, "version {version}: {table}.{column}");
+        }
+        drop(c);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+}
+
+#[test]
+fn a_database_from_version_85_gets_review_thread_skills() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch("DROP TABLE review_thread_skills; PRAGMA user_version=85;").unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert!(c.query_row("SELECT COUNT(*) FROM pragma_table_info('review_thread_skills')", [], |r| r.get::<_, i64>(0)).unwrap() > 0);
+    drop(c);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}
+
+#[test]
 fn a_database_from_version_54_gets_automations() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
@@ -538,18 +599,69 @@ fn a_database_from_version_61_gets_push_subscriptions() {
     }
 }
 
+// HA-165: builds of the personal assistant had its migrations as versions 76 to 82, which master took for
+// others, so a database they left at 82 would skip master's 76 to 82 and crash on a missing column.
 #[test]
-fn push_subscriptions_from_before_version_82_are_web_push() {
+fn a_database_that_took_76_to_82_for_the_assistant_gets_what_master_added_then() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let has = |c: &Connection, table: &str, column: &str| -> bool {
+        c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", [table, column], |r| r.get(0)).unwrap()
+    };
+    let table = |c: &Connection, name: &str| -> bool { c.query_row("SELECT COUNT(*) > 0 FROM sqlite_master WHERE name=?1", [name], |r| r.get(0)).unwrap() };
+    {
+        // As such a build left it: the assistant's tables and columns, and none of master's 76 to 86.
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE tasks DROP COLUMN start_from; ALTER TABLE tasks DROP COLUMN now_at; ALTER TABLE runs DROP COLUMN effort;
+             ALTER TABLE runs DROP COLUMN usage_at; ALTER TABLE projects DROP COLUMN summarizers; ALTER TABLE profiles DROP COLUMN summarizers;
+             DROP TABLE token_usage; DROP TABLE review_stats; DROP TABLE call_usage; DROP TABLE review_thread_skills;
+             INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+             PRAGMA user_version=82;",
+        )
+        .unwrap();
+        assert!(!has(&c, "tasks", "now_at") && has(&c, "profiles", "assistant_host"));
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    for (t, col) in [("tasks", "start_from"), ("tasks", "now_at"), ("runs", "effort"), ("runs", "usage_at"), ("projects", "summarizers"), ("profiles", "summarizers")] {
+        assert!(has(&c, t, col), "{t}.{col}");
+    }
+    for name in ["token_usage", "review_stats", "call_usage", "review_thread_skills", "push_answer_tokens", "approval_log", "device_tokens"] {
+        assert!(table(&c, name), "{name}");
+    }
+    assert!(has(&c, "call_usage", "call_id") && has(&c, "review_stats", "effort"));
+    // The assistant's are kept, and its rows.
+    assert!(has(&c, "profiles", "assistant_host") && has(&c, "automations", "profile_id") && has(&c, "push_subscriptions", "kind"));
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM profiles WHERE id='p'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    drop(c);
+
+    // A database master's build left at 86 has none of the assistant's: it goes on from there.
+    let path = crate::testing::temp_dir().join("master.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "DROP TABLE push_answer_tokens; DROP INDEX tasks_one_assistant; DROP TABLE device_tokens; DROP TABLE approval_log;
+             ALTER TABLE profiles DROP COLUMN assistant_host; ALTER TABLE push_subscriptions DROP COLUMN kind; PRAGMA user_version=86;",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert!(table(&c, "push_answer_tokens") && table(&c, "approval_log") && has(&c, "profiles", "assistant_host") && has(&c, "push_subscriptions", "kind"));
+}
+
+#[test]
+fn push_subscriptions_from_before_version_93_are_web_push() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
-        // As a board at version 81 left it: no kind or device_id, and a browser's subscription.
+        // As a board at version 92 left it: no kind or device_id, and a browser's subscription.
         let c = open(&path).unwrap();
         c.execute_batch(
             "DROP TABLE push_subscriptions;
              CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
                name TEXT NOT NULL DEFAULT '', events TEXT NOT NULL, created_at TEXT NOT NULL, last_sent_at TEXT, last_error TEXT);
              INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES ('s','https://push.example.com/1','k','a','Chrome','{}','1');
-             PRAGMA user_version=81;",
+             PRAGMA user_version=92;",
         )
         .unwrap();
     }
@@ -625,6 +737,50 @@ fn a_database_from_version_70_gets_restart_window_off() {
     assert_eq!((cfg.show_usage, cfg.restart_window), (true, false));
     let cfg = update_claude_config(&c, "c", &[("restart_window", json!(true))]).unwrap().unwrap();
     assert!(cfg.restart_window);
+}
+
+#[test]
+fn a_database_from_version_80_gets_call_ids_shared_by_each_calls_rows() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE call_usage DROP COLUMN call_id; PRAGMA user_version=80;
+             INSERT INTO call_usage (at, purpose, task_id, config_id, model, runtime) VALUES
+               ('1', 'window', NULL, 'c', 'opus', 'claude'), ('1', 'window', NULL, 'c', 'haiku', 'claude'),
+               ('1', 'window', NULL, 'd', 'haiku', 'claude'), ('2', 'window', NULL, 'c', 'haiku', 'claude'), ('1', 'title', NULL, 'c', 'haiku', 'claude');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let ids: Vec<String> = c.prepare("SELECT call_id FROM call_usage ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    assert_eq!(ids[0], ids[1]);
+    let distinct: std::collections::HashSet<&String> = ids.iter().collect();
+    assert_eq!(distinct.len(), 4, "{ids:?}");
+}
+
+#[test]
+fn a_database_from_version_81_gets_its_reviews_the_efforts_of_their_tasks() {
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    let (own, default) = {
+        let c = open(&path).unwrap();
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        let new = || NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "t", description: "", status: "in_review", use_worktree: false, model: None, effort: None, claude_config_id: None };
+        let (a, b) = (insert_task(&c, new()).unwrap(), insert_task(&c, new()).unwrap());
+        c.execute("UPDATE tasks SET effort='high' WHERE id=?1", [&a.id]).unwrap();
+        set_setting(&c, "default_effort", Some("low")).unwrap();
+        c.execute_batch("ALTER TABLE review_stats DROP COLUMN effort; PRAGMA user_version=81;").unwrap();
+        for t in [&a, &b] {
+            c.execute("INSERT INTO review_stats (task_id, thread_id, round, at, verdict) VALUES (?1, 'r', '1', '1', 'pass')", [&t.id]).unwrap();
+        }
+        (a.id, b.id)
+    };
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let effort = |id: &str| c.query_row("SELECT effort FROM review_stats WHERE task_id=?1", [id], |r| r.get::<_, Option<String>>(0)).unwrap();
+    // Its own, or the host's default.
+    assert_eq!((effort(&own).as_deref(), effort(&default).as_deref()), (Some("high"), Some("low")));
 }
 
 #[test]
@@ -720,6 +876,30 @@ fn a_database_at_version_66_gets_the_summary_columns() {
 }
 
 #[test]
+fn a_database_at_version_83_keeps_its_summarizer_as_the_only_one() {
+    // As master's build left it (83), with a project and a profile each with a summarizer and no list of them yet.
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE projects DROP COLUMN summarizers;
+                 ALTER TABLE profiles DROP COLUMN summarizers;
+                 PRAGMA user_version=83;
+                 INSERT INTO profiles (id,name,created_at,summarizer) VALUES ('p','p','1','{\"model\":\"haiku\"}');
+                 INSERT INTO projects (id,profile_id,name,key,repo_path,scratch_path,worktrees_root,created_at,summarizer)
+                   VALUES ('pr','p','P','P','/x','/s','/w','1','{\"model\":\"sonnet\"}');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    let p = get_project(&c, "pr").unwrap().unwrap();
+    assert_eq!(p.summarizers.iter().map(|r| r.model.as_deref()).collect::<Vec<_>>(), [Some("sonnet")]);
+    assert_eq!(get_profile(&c, "p").unwrap().unwrap().summarizers.len(), 1);
+    assert_eq!(summarizers_for(&c, &p).unwrap().len(), 1);
+}
+
+#[test]
 fn a_database_at_version_67_gets_projects_pull_request_settings() {
     // As master's build left it, with summaries (67) and no pull request settings yet: its projects keep opening them.
     let path = crate::testing::temp_dir().join("huntaway.db");
@@ -741,6 +921,57 @@ fn a_database_at_version_67_gets_projects_pull_request_settings() {
     assert!(p.pull_requests && p.subproject_pull_requests);
     let p = update_project(&c, "pr", &[("pull_requests", json!(false))]).unwrap().unwrap();
     assert!(!p.pull_requests && p.subproject_pull_requests);
+}
+
+#[test]
+fn a_database_at_version_76_has_every_task_in_later() {
+    // As master's build left it, with a worktree start point (76) and no now/later split yet.
+    let path = crate::testing::temp_dir().join("huntaway.db");
+    {
+        let c = open(&path).unwrap();
+        c.execute_batch(
+            "ALTER TABLE tasks DROP COLUMN now_at;
+                 PRAGMA user_version=76;
+                 INSERT INTO profiles (id,name,created_at) VALUES ('p','p','1');
+                 INSERT INTO tasks (id,profile_id,kind,number,title,status,last_activity_at,created_at,updated_at)
+                   VALUES ('t','p','task',1,'t','todo','1','1','1');",
+        )
+        .unwrap();
+    }
+    let c = open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+    assert_eq!(get_task(&c, "t").unwrap().unwrap().now_at, None);
+    let t = update_task(&c, "t", &[("now_at", json!("2030-01-01T00:00:00.000Z"))]).unwrap().unwrap();
+    assert_eq!(t.now_at.as_deref(), Some("2030-01-01T00:00:00.000Z"));
+}
+
+#[test]
+fn a_database_that_had_token_usage_as_an_earlier_version_gets_the_columns_it_skipped() {
+    // Builds of token_usage had it as version 74, then 75, then 76, then 78, so a database that ran them skipped
+    // master's 74, 75 and 76 (pr_checks, require_pr_approval, start_from), and 77 (now_at) ran as master's. The
+    // builds that had it as 78 didn't add those back (but start_from), nor the runs' usage_tail at first.
+    for version in [76, 77, 78] {
+        let path = crate::testing::temp_dir().join("huntaway.db");
+        {
+            let c = open(&path).unwrap();
+            c.execute_batch(&format!(
+                "ALTER TABLE tasks DROP COLUMN pr_checks; ALTER TABLE tasks DROP COLUMN start_from;
+                 ALTER TABLE profiles DROP COLUMN require_pr_approval; ALTER TABLE projects DROP COLUMN require_pr_approval;
+                 ALTER TABLE runs DROP COLUMN usage_tail;
+                 PRAGMA user_version={version};"
+            ))
+            .unwrap();
+        }
+        let c = open(&path).unwrap();
+        assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), VERSION);
+        for (table, column) in [("tasks", "pr_checks"), ("tasks", "start_from"), ("profiles", "require_pr_approval"), ("projects", "require_pr_approval"), ("runs", "usage_tail")] {
+            let has: bool = c.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", params![table, column], |r| r.get(0)).unwrap();
+            assert!(has, "version {version}: {table}.{column}");
+        }
+        // The demo seed, which is what failed on such a database.
+        let p = insert_profile(&c, "p", &[], None).unwrap();
+        assert!(!get_profile(&c, &p.id).unwrap().unwrap().require_pr_approval);
+    }
 }
 
 #[test]
@@ -1399,7 +1630,7 @@ fn a_database_from_version_72_keeps_new_sessions_apart() {
 }
 
 #[test]
-fn a_database_from_version_80_keeps_its_prompts_waiting_without_an_expiry() {
+fn a_database_from_version_91_keeps_its_prompts_waiting_without_an_expiry() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
@@ -1407,7 +1638,7 @@ fn a_database_from_version_80_keeps_its_prompts_waiting_without_an_expiry() {
             "PRAGMA foreign_keys=OFF; DROP INDEX permission_requests_expiry; ALTER TABLE permission_requests DROP COLUMN expires_at; ALTER TABLE permission_requests DROP COLUMN rule;
              ALTER TABLE push_answer_tokens DROP COLUMN expires_at; ALTER TABLE tasks DROP COLUMN queued_routine; DROP TABLE approval_log;
              INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('p','t',1,'Bash','{}','pending','1','c','tool');
-             PRAGMA user_version=80;",
+             PRAGMA user_version=91;",
         )
         .unwrap();
     }

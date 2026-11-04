@@ -6,7 +6,7 @@ fn the_projects_instructions_go_between_where_and_how_to_report() {
     let p = db::insert_profile(&c, "p", &[], None).unwrap();
     let t = NewTask { profile_id: &p.id, project_id: None, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: None, effort: None, claude_config_id: None };
     let task = db::insert_task(&c, t).unwrap();
-    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch, &["the bug".into()], &Default::default(), "Check the docs too.");
+    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch { own_start: false }, &["the bug".into()], &Default::default(), "Check the docs too.");
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s:?} not in {text}"));
     assert!(at("`pr_view` tool (pr `ia/x-1`)") < at("Check the docs too.") && at("Check the docs too.") < at("call `submit_review` once"));
     assert!(at("submit_review") < at("- the bug"));
@@ -20,11 +20,11 @@ fn what_the_user_decided_goes_before_the_instructions() {
     let task = db::insert_task(&c, t).unwrap();
     let replies = vec![(Some("Should it be A or B?\nB is faster.".to_string()), "A, the gap is fine".to_string()), (None, "thanks".to_string())];
     let replies = db::UserReplies { replies, ..Default::default() };
-    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch, &[], &replies, "Check the docs too.");
+    let text = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch { own_start: false }, &[], &replies, "Check the docs too.");
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s:?} not in {text}"));
     assert!(at("`pr_view`") < at("decisions they made there stand") && at("decisions they made") < at("Check the docs too."));
     assert!(at("The agent:\n\n> Should it be A or B?\n> B is faster.\n\nThe user:\n\n> A, the gap is fine\n") < at("The user:\n\n> thanks"));
-    let none = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch, &[], &Default::default(), "Check the docs too.");
+    let none = prompt("X-1", &task, "ia/x-1", Some("master"), "abc", &Work::Branch { own_start: false }, &[], &Default::default(), "Check the docs too.");
     assert!(!none.contains("decisions they made"));
 }
 
@@ -173,6 +173,97 @@ fn the_review_waits_for_every_reviewer_and_combines_their_issues() {
 }
 
 #[test]
+fn each_submission_is_kept_for_statistics() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 2);
+        let mut review = review_of(&s, &task);
+        review.started_at = Some("2026-10-01T10:00:00.000Z".into());
+        set_review(&s, &task.id, &review).unwrap();
+        submit(&s, &threads[0], "run1", &json!({"verdict": "pass", "summary": "Fine at first."})).unwrap();
+        // Submitted again in the same run: this one counts instead.
+        let args = json!({"verdict": "needs_fixes", "summary": "One bug, and a nit.", "serious_issues": ["the bug"], "minor_issues": ["a nit", "another"]});
+        submit(&s, &threads[0], "run1", &args).unwrap();
+        submit(&s, &threads[1], "run2", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        let c = s.db();
+        let mut st = c.prepare("SELECT task_id, thread_id, round, run_id, verdict, serious, minor, minor_noted, label FROM review_stats ORDER BY id").unwrap();
+        type Row = (String, String, String, String, String, i64, Option<i64>, bool, String);
+        let rows: Vec<Row> =
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?))).unwrap().map(Result::unwrap).collect();
+        // Both in the round the review started.
+        let round = "2026-10-01T10:00:00.000Z".to_string();
+        assert_eq!(
+            rows,
+            vec![
+                (task.id.clone(), threads[0].id.clone(), round.clone(), "run1".into(), "issues".into(), 1, Some(2), true, "r0".into()),
+                (task.id.clone(), threads[1].id.clone(), round, "run2".into(), "pass".into(), 0, Some(0), false, "r1".into()),
+            ]
+        );
+    })
+}
+
+#[test]
+fn a_submission_keeps_the_effort_the_work_was_done_at() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let (task, threads) = reviewing(&s, 3);
+        let effort = |thread: &Task| s.db().query_row("SELECT effort FROM review_stats WHERE thread_id=?1", [&thread.id], |r| r.get::<_, Option<String>>(0)).unwrap();
+        let work = |at: &str, effort: Option<&str>| {
+            let r = db::insert_run(&s.db(), &task.id, "prompt").unwrap();
+            s.db().execute("UPDATE runs SET created_at=?1, effort=?2 WHERE id=?3", rusqlite::params![at, effort, r.id]).unwrap();
+        };
+        // A task from before runs kept their efforts: what it's set to now, the host's default while it has none of its own.
+        db::set_setting(&s.db(), "default_effort", Some("medium")).unwrap();
+        work("2000-01-01T00:00:00.000Z", None);
+        submit(&s, &threads[0], "run1", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        // The work run's own effort, as its agent was given it (see runner/launch.rs), whatever the task and the host are set to after.
+        work("2000-01-02T00:00:00.000Z", Some("low"));
+        s.update_task(&task.id, &[("effort", json!("xhigh"))]).unwrap();
+        db::set_setting(&s.db(), "default_effort", Some("max")).unwrap();
+        submit(&s, &threads[1], "run2", &json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["x"]})).unwrap();
+        // A run the agent's own default.
+        work("2000-01-03T00:00:00.000Z", Some(""));
+        submit(&s, &threads[2], "run3", &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        assert_eq!((effort(&threads[0]).as_deref(), effort(&threads[1]).as_deref(), effort(&threads[2]).as_deref()), (Some("medium"), Some("low"), None));
+        // And the report has it, with the model the task's agent used before the review.
+        let c = s.db();
+        let run = |at: &str, kind: &str, model: &str, out: i64| {
+            let r = db::insert_run(&c, &task.id, kind).unwrap();
+            c.execute("UPDATE runs SET created_at=?1 WHERE id=?2", [at, &r.id]).unwrap();
+            c.execute("INSERT INTO token_usage (run_id, model, runtime, output_tokens) VALUES (?1, ?2, 'claude', ?3)", rusqlite::params![r.id, model, out]).unwrap();
+        };
+        run("2000-01-01T00:00:00.000Z", "prompt", "sonnet", 100);
+        run("2000-01-02T00:00:00.000Z", "prompt", "opus", 100);
+        run("2000-01-02T00:00:00.000Z", "compact", "haiku", 100);
+        run("2100-01-01T00:00:00.000Z", "prompt", "haiku", 100);
+        let r = crate::analytics::token_report(&c, &task.profile_id, "2000-01-01T00:00:00.000Z", "2200-01-01T00:00:00.000Z").unwrap();
+        assert_eq!(r.reviews.iter().map(|v| (v.effort.as_deref(), v.task_model.as_deref())).collect::<Vec<_>>(), [(Some("medium"), Some("opus")), (Some("low"), Some("opus")), (None, Some("opus"))]);
+    })
+}
+
+#[test]
+fn a_review_started_before_rounds_were_kept_is_one_round() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        // Its review has no start: its reviewers' runs started half a minute apart.
+        let (task, threads) = reviewing(&s, 2);
+        let run = |thread: &Task, at: &str| {
+            let r = db::insert_run(&s.db(), &thread.id, "review").unwrap();
+            s.db().execute("UPDATE runs SET created_at=?1 WHERE id=?2", [at, &r.id]).unwrap();
+            r.id
+        };
+        let (a, b) = (run(&threads[0], "2026-10-01T10:00:00.000Z"), run(&threads[1], "2026-10-01T10:00:30.000Z"));
+        submit(&s, &threads[0], &a, &json!({"verdict": "pass", "summary": "Fine."})).unwrap();
+        submit(&s, &threads[1], &b, &json!({"verdict": "needs_fixes", "summary": "A bug.", "serious_issues": ["x"]})).unwrap();
+        let c = s.db();
+        let rounds: Vec<String> = c.prepare("SELECT round FROM review_stats ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(rounds, ["2026-10-01T10:00:00.000Z", "2026-10-01T10:00:00.000Z"]);
+        let r = crate::analytics::token_report(&c, &task.profile_id, "2026-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z").unwrap();
+        assert_eq!(r.rounds.iter().map(|x| (x.round, x.verdict.as_str(), x.reviewers)).collect::<Vec<_>>(), [(1, "issues", 2)]);
+    })
+}
+
+#[test]
 fn a_review_passes_when_every_reviewer_passes() {
     crate::testing::run(async || {
         let s = crate::testing::state();
@@ -240,6 +331,42 @@ fn reviewers_are_labelled_by_config_model_and_effort() {
     let c = ClaudeConfig { id: "c".into(), name: "Codex".into(), config_dir: String::new(), agent: "codex".into(), show_usage: false, restart_window: false, created_at: String::new() };
     assert_eq!(label(Some(&c), Some("gpt-5"), Some("high")), "Codex · gpt-5 · high");
     assert_eq!(label(None, None, None), "Claude");
+}
+
+#[test]
+fn each_reviewer_looks_for_what_its_own_instructions_say_and_has_its_own_skills() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        let s = crate::testing::state();
+        let (task, dir) = reviewable(&s);
+        db::update_project(&s.db(), "pr", &[("review_prompt", json!("Check the project's rules."))]).unwrap();
+        let security = db::Reviewer { model: Some("opus".into()), prompt: Some(" Only look for security holes. ".into()), skills: vec!["audit".into()], ..Default::default() };
+        let plain = db::Reviewer { model: Some("haiku".into()), ..Default::default() };
+        db::update_project(&s.db(), "pr", &[("reviewers", json!(json!([security, plain]).to_string()))]).unwrap();
+        start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().expect("it starts");
+        let r = review_of(&s, &task);
+        let text = |i: usize| {
+            let m = db::list_messages(&s.db(), &r.reviewers[i].thread_id).unwrap().into_iter().find(|m| m.kind == "user").unwrap();
+            m.data["text"].as_str().unwrap().to_string()
+        };
+        let (a, b) = (text(0), text(1));
+        assert!(a.contains("Only look for security holes.") && !a.contains("Check the project's rules."), "{a}");
+        assert!(a.contains("Use this skill while you review: `/audit` (invoke each with the `Skill` tool).") && !b.contains("while you review"), "{a}");
+        assert!(b.contains("Check the project's rules.") && !b.contains("security holes"), "{b}");
+        assert_eq!(db::thread_skills(&s.db(), &r.reviewers[0].thread_id).unwrap(), ["audit"]);
+        assert!(db::thread_skills(&s.db(), &r.reviewers[1].thread_id).unwrap().is_empty());
+
+        // Reviewed again with other settings, the same threads follow them.
+        supersede(&s, &task);
+        let security = db::Reviewer { model: Some("opus".into()), skills: vec![], ..Default::default() };
+        db::update_project(&s.db(), "pr", &[("reviewers", json!(json!([security]).to_string()))]).unwrap();
+        start(&s, &task.id, true).await.map_err(|e| e.1).unwrap().expect("it starts again");
+        let r2 = review_of(&s, &task);
+        assert_eq!(r2.reviewers[0].thread_id, r.reviewers[0].thread_id);
+        assert!(db::thread_skills(&s.db(), &r.reviewers[0].thread_id).unwrap().is_empty());
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+        std::fs::remove_dir_all(&dir).unwrap();
+    })
 }
 
 /// A task in a project that reviews automatically, with a worktree branch with a commit.
@@ -441,6 +568,52 @@ fn a_reviewer_started_just_before_a_restart_still_ends_its_part() {
     })
 }
 
+#[test]
+fn a_task_that_started_after_its_base_branch_is_reviewed_from_where_it_started() {
+    crate::testing::run(async || {
+        crate::agent::runs::TEST_CAN_RUN.set(true);
+        // It starts at a commit master doesn't have, or at master's latest, and has a pull request
+        // into master either way.
+        for off_master in [true, false] {
+            let s = crate::testing::state();
+            let (task, dir) = reviewable(&s);
+            let git = ["-c", "user.name=t", "-c", "user.email=t@t"];
+            commit(&dir, &["branch", "-q", "-m", "master"]);
+            let start = match off_master {
+                true => {
+                    commit(&dir, &[&git[..], &["commit", "-q", "--allow-empty", "-m", "someone else's"]].concat());
+                    rev(&dir, "HEAD")
+                }
+                false => rev(&dir, "master"),
+            };
+            commit(&dir, &["checkout", "-q", "-b", "ia/x"]);
+            if off_master {
+                commit(&dir, &["branch", "-q", "-f", "master", "HEAD~1"]);
+            }
+            commit(&dir, &["update-ref", &format!("refs/huntaway/start/{}", task.id), "HEAD"]);
+            commit(&dir, &[&git[..], &["commit", "-q", "--allow-empty", "-m", "its own"]].concat());
+            let fields = [
+                ("base_branch", json!("master")),
+                ("start_from", json!(db::StartFrom::Commit { commit: start.clone() })),
+                ("pr_url", json!("https://github.com/o/r/pull/3")),
+            ];
+            db::update_task(&s.db(), &task.id, &fields).unwrap();
+            super::start(&s, &task.id, true).await.map_err(|e| e.1).unwrap();
+            let thread = db::review_threads(&s.db(), &task.id).unwrap().remove(0);
+            let sent = db::list_messages(&s.db(), &thread.id).unwrap().iter().map(|m| m.data.to_string()).collect::<String>();
+            let own = format!("`git diff {start}...HEAD`) rather than `pr_diff`");
+            match off_master {
+                true => assert!(sent.contains(&own) && sent.contains("only for its description and comments"), "{sent}"),
+                false => assert!(!sent.contains("rather than `pr_diff`") && sent.contains("review the pull request's changes"), "{sent}"),
+            }
+            let task = db::get_task(&s.db(), &task.id).unwrap().unwrap();
+            supersede(&s, &task);
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        crate::agent::runs::TEST_CAN_RUN.set(false);
+    })
+}
+
 /// A task in a project with `rounds` rounds of fixes whose review found an issue after `fixes` of them.
 fn out_of_rounds(s: &Shared, rounds: u32, fixes: u32) -> Task {
     let (task, dir) = reviewable(s);
@@ -541,4 +714,9 @@ fn rounds_added_to_a_cycle_of_fixes_end_with_it() {
         // So the next automatic review, which carries both on, gets the project's rounds.
         assert_eq!((r.state.as_str(), r.fixes, r.extra_rounds), ("passed", 0, 0));
     })
+}
+
+fn rev(dir: &Path, rev: &str) -> String {
+    let out = std::process::Command::new("git").arg("-C").arg(dir).args(["rev-parse", rev]).output().unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
 }

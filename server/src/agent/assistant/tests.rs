@@ -168,14 +168,14 @@ fn no_project_can_have_the_assistants_key() {
 }
 
 #[test]
-fn a_database_at_version_76_frees_the_key_a() {
+fn a_database_at_version_87_frees_the_key_a() {
     let path = testing::temp_dir().join("huntaway.db");
     {
         let c = db::open(&path).unwrap();
         let p = insert_profile(&c, "p", &[], None).unwrap();
         let new = NewProject { id: "apps", profile_id: &p.id, name: "Apps", key: "A", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: None, use_worktrees: false };
         insert_project(&c, new).unwrap();
-        c.execute_batch("DROP INDEX tasks_one_assistant; PRAGMA user_version=76;").unwrap();
+        c.execute_batch("DROP INDEX tasks_one_assistant; PRAGMA user_version=87;").unwrap();
     }
     let c = db::open(&path).unwrap();
     assert_eq!(db::get_project(&c, "apps").unwrap().unwrap().key, "AP");
@@ -190,7 +190,7 @@ fn an_assistant_host_must_be_a_linked_host_with_assistants() {
         let (hub, host) = (node("hub", "desktop"), node("host", "homeserver"));
         let p = insert_profile(&hub.db(), "personal", &[], None).unwrap();
         link_by_url(&hub, &host).await;
-        // A host with assistants but from before assistant hosts (API 97), which is connected, so it can tell.
+        // A host with assistants but from before assistant hosts (API 107), which is connected, so it can tell.
         crate::hosts::hub::link_http(&hub, "old", axum::Router::new(), ASSISTANT_HOST_API - 1).await;
         db::upsert_link(&hub.db(), "old", "old", "outbound", Some("http://x"), None).unwrap();
         let path = format!("/api/profiles/{}", p.id);

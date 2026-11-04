@@ -92,6 +92,14 @@ pub(super) fn summarize(s: &Shared, t: &Task) -> Value {
             v["depends_on"] = json!(deps);
         }
     }
+    if let Some(sf) = &t.start_from {
+        let key = project_key(s, t);
+        v["start_from"] = json!(sf.describe(&s.db(), &key));
+        // Where that took it, once its worktree is made: what its pull request targets.
+        if t.branch.is_some() {
+            v["base_branch"] = json!(t.base_branch);
+        }
+    }
     if t.waiting {
         v["queued_for_dependencies"] = json!(true);
     }
@@ -145,11 +153,16 @@ pub(super) fn created(s: &Shared, ctx: &Ctx, mut t: Task, marks: &[(&str, Value)
     Ok(t)
 }
 
-/// `starred`, `remind_at` and `reminder` from `create_task` or `update_task`, with the time made
+/// Task `t`, just made by `create_task`, in "now" like every task made from the board, unless the caller said `now: false`.
+pub(super) fn new_in_now(s: &Shared, args: &Value, t: Task) -> Task {
+    if args["now"].as_bool() == Some(false) { t } else { crate::agent::focus::put_in_now(s, &t.id).unwrap_or(t) }
+}
+
+/// `starred`, `remind_at`, `reminder` and (on update_task) `now` from `create_task` or `update_task`, with the time made
 /// absolute (see reminder_time). The API checks the rest.
 pub(super) fn reminder_args(args: &Value) -> std::result::Result<Map<String, Value>, ToolError> {
     let mut body = Map::new();
-    for k in ["starred", "reminder"] {
+    for k in ["starred", "reminder", "now"] {
         if !args[k].is_null() {
             body.insert(k.into(), args[k].clone());
         }
@@ -240,6 +253,9 @@ pub(super) fn summary(s: &Shared, t: &Task) -> Value {
     if let Some(at) = &t.remind_at {
         v["remind_at"] = json!(at);
         v["reminder"] = json!(t.reminder);
+    }
+    if t.now_at.is_some() {
+        v["now"] = json!(true);
     }
     v
 }

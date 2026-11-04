@@ -815,8 +815,15 @@ pub(super) async fn open(s: &Shared, profile_id: &str) -> ApiResult<(Task, PathB
 
 /// A profile whose assistant runs on another host (its `assistant_host`) keeps its memory there: asked here, it's a 409
 /// rather than a second assistant made on this host. (The board asks the assistant's host, by its task's host and profile.)
+/// One this host has already is its own, whatever its profile says: a hub that sends a profile's assistant here
+/// (`?local=1`) makes it here even when this host's profile names another assistant host, and its tabs are here too.
 pub(super) fn elsewhere(s: &Shared, profile_id: &str) -> ApiResult<()> {
-    let p = crate::db::get_profile(&s.db(), profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?;
+    let c = s.db();
+    let p = crate::db::get_profile(&c, profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?;
+    if crate::db::assistant_task(&c, profile_id)?.is_some() {
+        return Ok(());
+    }
+    drop(c);
     match p.assistant_host.filter(|h| !h.is_empty() && *h != s.host_id) {
         Some(h) => Err(ApiError::conflict(format!("{}'s assistant runs on another host ({h}): its memory is there", p.name))),
         None => Ok(()),
@@ -831,7 +838,7 @@ routines), my ongoing projects and goals, and anything else you keep in mind abo
 one fact per line, with dates where you know them. Include only what you actually know or remember, without guessing, and \
 leave out passwords and other secrets.";
 
-/// `GET /profiles/{id}/assistant/memory` (API 99): the assistant's workspace and its files, how much of each memory file a
+/// `GET /profiles/{id}/assistant/memory` (API 109): the assistant's workspace and its files, how much of each memory file a
 /// run is told (`cap` characters, or `cap_bytes` bytes), whether there's history, and the prompt for an import.
 pub async fn overview(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> ApiResult<Json<Value>> {
     let (task, dir) = open(&s, &id).await?;

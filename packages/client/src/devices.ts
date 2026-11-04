@@ -1,7 +1,7 @@
 import { enc, type Http } from "./http";
 
-/** Devices paired with a board, such as the mobile app, each with a token of its own (API 100). */
-export const DEVICES_API = 100;
+/** Devices paired with a board, such as the mobile app, each with a token of its own (API 110). */
+export const DEVICES_API = 110;
 
 /** A paired device (see server/src/devices.rs). Its token is only ever given to it, when it pairs. */
 export interface PairedDevice {
@@ -53,7 +53,7 @@ export function parsePairingLink(link: string): { url: string; code: string } | 
 }
 
 export const devicesApi = ({ get, post, patch, del }: Http) => ({
-  /** Needs no token: whether the board is up, and (API 100) its API version. */
+  /** Needs no token: whether the board is up, and (API 110) its API version. */
   health: () => get<{ ok: boolean; commit: string | null; api_version?: number }>("/health"),
   /** The paired devices, and which one this is (`current`, when a device asks). */
   devices: () => get<{ devices: PairedDevice[]; current: string | null }>("/devices"),

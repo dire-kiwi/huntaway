@@ -54,6 +54,7 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
       "reviewers",
       "auto_summary",
       "summarizer",
+      "summarizers",
       "pull_requests",
       "subproject_pull_requests",
       "done_when_merged",

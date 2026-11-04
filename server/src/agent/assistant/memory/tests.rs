@@ -517,6 +517,15 @@ fn an_assistant_on_another_host_keeps_its_memory_there() {
         }
         // No assistant was made here for it.
         assert!(crate::db::assistant_task(&s.db(), &p.id).unwrap().is_none());
+
+        // HA-165: one a hub had made here (`?local=1`) is here, whatever the profile says: its Memory tab and Google card
+        // were refused (the assistantHost UI test, where each board's profile names the other as its assistant host).
+        let (st, r) = call(&app, "GET", &format!("/api/profiles/{}/assistant?local=1", p.id), None).await;
+        assert_eq!(st, 200, "{r}");
+        for path in [base.clone(), format!("{base}/file?path=USER.md"), format!("/api/profiles/{}/assistant/google", p.id)] {
+            let (st, r) = call(&app, "GET", &path, None).await;
+            assert_eq!(st, 200, "{path}: {r}");
+        }
     });
 }
 

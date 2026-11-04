@@ -2,6 +2,24 @@
 
 use super::*;
 
+/// The nearest effort Claude has to one only Codex models offer.
+pub(super) fn claude_effort(e: &str) -> &str {
+    match e {
+        "ultra" => "max",
+        "minimal" => "low",
+        e => e,
+    }
+}
+
+/// Keep the effort a run was started with, as the agent is given it, for the statistics of the reviews of its work
+/// (see review/stats.rs). The agent's own default is kept as an empty effort, so it isn't taken for a run from before this.
+pub(super) fn record_effort(state: &Shared, run_id: &str, effort: Option<&str>) {
+    let effort = effort.map(str::trim).unwrap_or("");
+    if let Err(e) = state.db().execute("UPDATE runs SET effort=?2 WHERE id=?1", rusqlite::params![run_id, effort]) {
+        tracing::warn!(run = run_id, "recording a run's effort: {e:#}");
+    }
+}
+
 /// Prepare the working directory and start claude.
 pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> {
     let task_id = run.task_id.as_str();
@@ -91,11 +109,12 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
         (Some(id), "task") => db::get_task(&state.db(), id)?,
         _ => parent,
     };
+    let told = as_told(state, &task, project.as_ref());
     // A task with its own branch in a repository on GitHub opens a pull request for it.
     let github = match (&project, &task.branch) {
         (Some(p), Some(_)) if task.kind == "task" => {
-            let base = task.base_branch.as_deref().or(p.base_branch.as_deref()).filter(|b| !b.is_empty());
-            worktree::github(std::path::Path::new(&p.repo_path), base).await
+            let base = worktree::remote_base(state, &task, p).await;
+            worktree::github(std::path::Path::new(&p.repo_path), base.as_deref()).await
         }
         _ => None,
     };
@@ -163,13 +182,14 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
             Some(cfg) => codex_run_effort(cfg, model.as_deref(), effort.clone()).await,
             None => effort.clone(),
         };
+        record_effort(state, &run.id, effort.as_deref());
         // The user's approval rules (see agent/approval_rules.rs) may have Codex ask more, or keep it from running.
         let approval_rules = crate::agent::approval_rules::for_task(&state.db(), &task)?.map(|r| r.for_mode(&permission_mode));
         let policy = crate::agent::codex::policy(&permission_mode, task.kind == "review");
         let (approval_policy, approvals_reviewer, sandbox) = crate::agent::approval_rules::codex_policy(approval_rules.as_ref(), policy).map_err(|e| anyhow!(e))?;
         let tools = crate::agent::agent_tools::for_task_run(state, &task, project.as_ref())?;
         let gh_tools = uses_gh_server(&tools);
-        let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+        let base = system_prompt(&told, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
         let profiles = db::list_profiles(&state.db())?;
         let to = Told {
             codex: true,
@@ -259,7 +279,7 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     let tools = crate::agent::agent_tools::for_task_run(state, &task, project.as_ref())?;
     let gh_tools = uses_gh_server(&tools);
     let mut push = |a: &str, b: &str| args.extend([a.to_string(), b.to_string()]);
-    let base = system_prompt(&task, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
+    let base = system_prompt(&told, project.as_ref(), parent.as_ref(), &group, &documents, github.as_ref(), gh_tools);
     let profiles = db::list_profiles(&state.db())?;
     let to = Told {
         codex: false,
@@ -321,13 +341,9 @@ pub(super) async fn launch(state: &Shared, run: &Run, text: &str) -> Result<()> 
     if let Some(m) = &model {
         push("--model", m);
     }
+    record_effort(state, &run.id, effort.as_deref().map(claude_effort));
     if let Some(e) = &effort {
-        // The nearest Claude has to an effort only Codex models offer.
-        push("--effort", match e.as_str() {
-            "ultra" => "max",
-            "minimal" => "low",
-            e => e,
-        });
+        push("--effort", claude_effort(e));
     }
     // Files attached to prompts (see attachments.rs).
     let attachments = crate::attachments::dir(state);

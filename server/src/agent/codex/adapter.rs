@@ -162,6 +162,10 @@ pub async fn run_adapter(spec_path: &str) -> Result<()> {
     }
 
     let model = spec.model.clone().or_else(|| started["model"].as_str().map(String::from));
+    // For the board's count of the tokens each model used (see agent/tokens.rs).
+    if let Some(m) = &model {
+        emit(&json!({"method": "huntaway/model", "params": {"threadId": thread_id, "model": m}}));
+    }
     let turn = Turn { thread_id: &thread_id, spec: &spec, model, read_only };
     let mut turn_id = Some(turn.start(&rpc, &prompt).await?);
     // Steered into the turn, but the model hasn't acted since: (uuid, text).

@@ -115,6 +115,7 @@ fn host_routes() -> Router<Shared> {
         .route("/claude-configs/{id}", axum::routing::patch(update_claude_config).delete(delete_claude_config))
         .route("/profiles/{id}/projects", get(list_projects).post(create_project))
         .route("/profiles/{id}/projects/clone", post(clone_project))
+        .route("/profiles/{id}/projects/github", post(create_github_project))
         .route("/profiles/{id}/tasks", get(list_profile_tasks).post(create_scratch_task))
         // Scratch chats, of which there are none since they became scratch tasks (for older boards).
         .route("/profiles/{id}/scratch", get(list_profile_scratch))
@@ -136,6 +137,7 @@ fn host_routes() -> Router<Shared> {
         .route("/profiles/{id}/group-tasks", get(list_group_tasks).post(create_group_task))
         .route("/profiles/{id}/analytics", get(crate::analytics::get))
         .route("/profiles/{id}/context-stats", get(crate::analytics::context))
+        .route("/profiles/{id}/token-stats", get(crate::analytics::tokens))
         .route("/profiles/{id}/disk-usage", get(crate::disk::get))
         .route("/profiles/{id}/asana/tasks", get(asana_tasks))
         .route("/projects/{id}", get(get_project).patch(update_project).delete(delete_project))
@@ -143,6 +145,7 @@ fn host_routes() -> Router<Shared> {
         .route("/projects/{id}/remove-merged-worktrees", post(remove_merged_worktrees))
         .route("/projects/{id}/setup-thread", post(start_setup_thread))
         .route("/projects/{id}/system-prompt", get(system_prompt_preview))
+        .route("/projects/{id}/branches", get(project_branches))
         .route("/projects/{id}/automations", get(automations::list_handler).post(automations::create_handler))
         .route("/profiles/{id}/automations", get(automations::list_routines_handler).post(automations::create_routine_handler))
         .route(
@@ -153,6 +156,9 @@ fn host_routes() -> Router<Shared> {
         .route("/automations/{id}/runs", get(automations::runs_handler))
         .route("/agent-tools", get(agent_tools::get_global))
         .route("/agent-tools/switches", post(agent_tools::set_switch))
+        .route("/agent-tools/skill-sources", post(agent_tools::add_source))
+        .route("/agent-tools/skill-sources/{source}", axum::routing::delete(agent_tools::delete_source))
+        .route("/agent-tools/skill-sources/{source}/update", post(agent_tools::update_source))
         .route("/agent-tools/skills", post(agent_tools::create_global_skill))
         .route("/agent-tools/skills/{skill}", axum::routing::patch(agent_tools::update_global_skill).delete(agent_tools::delete_global_skill))
         .route("/agent-tools/mcp-servers", post(agent_tools::create_global_mcp_server))
@@ -263,7 +269,7 @@ fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)
 
 /// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
 async fn health(State(s): State<Shared>) -> Json<Value> {
-    // API 100: and its API version, which the mobile app checks before pairing.
+    // API 110: and its API version, which the mobile app checks before pairing.
     Json(json!({"ok": true, "commit": s.meta.running_commit, "api_version": crate::hosts::proto::API_VERSION}))
 }
 

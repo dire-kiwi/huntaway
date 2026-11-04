@@ -494,7 +494,7 @@ pub async fn assistant_moved(s: &Shared, name: &str, profile_id: &str, old_host:
 }
 
 /// The API version from which a host has Telegram.
-pub const TELEGRAM_API: u32 = 104;
+pub const TELEGRAM_API: u32 = 114;
 
 /// Reads profile `profile_id`'s bot's updates for as long as it has its token, handling each in turn
 /// and noting after each that it's done, so that a restart carries on after it.
@@ -1309,7 +1309,7 @@ fn check_profile(s: &Shared, id: &str) -> ApiResult<()> {
     db::get_profile(&s.db(), id)?.map(|_| ()).ok_or_else(|| ApiError::not_found("profile"))
 }
 
-/// `GET /profiles/{id}/telegram` (API 104): the profile's bot, who it's linked to and what it sends.
+/// `GET /profiles/{id}/telegram` (API 114): the profile's bot, who it's linked to and what it sends.
 pub async fn get(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     check_profile(&s, &id)?;
     Ok(Json(view(&s, &id)))

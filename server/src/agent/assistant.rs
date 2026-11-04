@@ -4,7 +4,7 @@
 //! workspace of its own (`assistants/<task id>` in the data dir) and never goes to review or merge.
 //!
 //! `get_or_create` is the one place a profile's assistant is found on a host. A profile can have it run
-//! on a linked host of its own (`assistant_host`, API 98): the hub then sends `/profiles/{id}/assistant`
+//! on a linked host of its own (`assistant_host`, API 108): the hub then sends `/profiles/{id}/assistant`
 //! there (`on_its_host`), to that host's profile of the same name, so its credentials and its agents stay
 //! on that machine. The board's sidebar goes there too (`assistantHome` in the UI).
 
@@ -21,7 +21,7 @@ use crate::state::{ApiError, ApiResult, Shared};
 
 /// The API version from which a host can be a profile's assistant host: it takes the routed requests
 /// (`?local=1`) and passes its agents' board tool calls up its link (see hosts/uplink.rs).
-pub const ASSISTANT_HOST_API: u32 = 98;
+pub const ASSISTANT_HOST_API: u32 = 108;
 
 /// The assistant whose workspace and memory a run of `task` has: the assistant's own, and a routine
 /// thread's its parent's (`parent`), whose workspace it has to be in. None for any other thread.
@@ -107,7 +107,7 @@ pub fn with_host(s: &Shared, t: &Task) -> Value {
 }
 
 /// What profile `profile_id`'s `assistant_host` may be set to, as it's stored: null for this host, else a
-/// linked host that can be an assistant host (API 98).
+/// linked host that can be an assistant host (API 108).
 pub fn check_host(s: &Shared, v: &Value) -> ApiResult<Value> {
     let id = match v {
         Value::Null => return Ok(Value::Null),

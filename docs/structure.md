@@ -27,13 +27,13 @@ The server is one crate, so each module is a file named after its feature (`work
 
 | Folder | Modules |
 |---|---|
-| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, prompts, documents, agent_tools, assistant, approval_rules |
+| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, tokens, prompts, documents, agent_tools, assistant, approval_rules |
 | `mcp/` | (`mcp.rs`, the stdio server) tools, gh_mcp, wait, pr_watch, permissions, questions |
 | `git/` | worktree, worktree_files, checkpoints, git_view, changes, relocate |
 | `hosts/` | hub, broker, proto, relay, ssh, terminal, pty, uplink (board tools up a link) |
 | `update/` | admin, release, staging |
 | `integrations/` | github, asana, push, automations, status_script |
-| `review/` | (`review.rs`, automatic review) summary, merged, merge_gate, fanout |
+| `review/` | (`review.rs`, automatic review) summary, merged, merge_gate, fanout, stats |
 
 `main`, `state`, `util`, `db`, `api`, `testing`, `demo`, `analytics`, `disk` and `attachments`
 stay at the top. A folder's `agent.rs` (and so on) has its `//!` docs and a `pub mod` for each
@@ -94,6 +94,17 @@ Their parts are 100 to 530 lines. `release`, `agent_tools`, `broker`, `relocate`
 `wait`, `permissions`, `git_view` and `changes` (under 1,000 lines of code each) moved their tests
 to `tests.rs`.
 
+### What HA-104 split
+
+HA-101 left these two alone while open PRs #53 (HA-53) and #52 (HA-55) rewrote large parts of them.
+
+| Was | Lines | Now |
+|---|---|---|
+| `git/worktree.rs` | 2,978 (1,629 of code) | `worktree.rs` (running git, the helpers every part uses), `upstream`, `scripts`, `setup`, `start`, `remove`, `pr`, `remote`, `changes`, `tests`, `approval_tests` |
+| `mcp/pr_watch.rs` | 2,431 (1,623 of code) | `pr_watch.rs` (`Target`, `Request`, the fake GitHub for tests), `read`, `seen`, `pr`, `in_review`, `failed`, `tests` |
+
+Their parts are 70 to 460 lines.
+
 ## App modules
 
 The app groups its components by feature (see *bulletproof-react* below): a folder in
@@ -103,7 +114,7 @@ Helpers several features use stay in `app/src/` (`store.ts`, `router.ts`, `threa
 
 | Folder | What's in it |
 |---|---|
-| `board/` | the board and its views (TaskBoard, TaskCard, BoardControls, Graph, Timeline, Triage and Live views, Fanout, Dependencies, ConfirmDone), `boardQuery.ts`, `taskOrder.ts`, `timeline.ts` |
+| `board/` | the board and its views (TaskBoard, TaskCard, BoardControls, Graph and Triage views, PendingPrompts, Fanout, Dependencies, ConfirmDone), `boardQuery.ts`, `taskOrder.ts` |
 | `task/` | the task panel (TaskView, and `view/` for its title, tabs and Details column), the thread (Thread, and `thread/` for its markdown, tool calls, subagents, items and the composer), Approvals, Questions, Review, Reviewers, Context, Rewind, Reminders, ExternalLinks, Attachments, Document, Terminal, WorktreeSetup, SkillMenu, AssistantPage, ApprovalRules, ActionLog; `turns.ts`, `planTheme.ts`, `planAnswers.ts`, `openingTab.ts`, `htmlFrame.ts`, `mermaid.ts` |
 | `changes/` | the Changes tab (Changes, and `git/` for its parts), DiffLines, Compare; `changes.ts`, `lineComments.ts`, `highlight.ts` and its worker |
 | `settings/` | the settings page and its sections (Server, Hosts, HostPage, ClaudeConfigs, AgentTools, Automations, GithubRepos, Usage, DiskUsage, Analytics, chart), NewProjectModal, DirPicker, ArchivedProjects, Onboarding, TokenScreen, and `project/` for project settings, a file per tab; `disk.ts`, `githubRepos.ts`, `versions.ts`, `uiVersion.ts` |
@@ -148,9 +159,10 @@ The largest files left in the app are `Hosts.tsx`, `Automations.tsx` and `Analyt
 
 ### Server: the next files
 
-`mcp/pr_watch.rs` (1,878 lines, 1,304 of code) and `git/worktree.rs` (1,790, 1,153) are the last files
-over 1,000 lines of code. They split as above, with their tests moved to `tests.rs`, once open PRs
-#53 and #52, which rewrite large parts of them, have merged.
+No server file but `db/schema.rs` (1,131 lines, most of them the migrations' SQL) has more than
+1,000 lines of code now. The next largest are `agent/agent_tools.rs` (995), `git/worktree_files.rs`
+(952, 575 of code) and `agent/runs.rs` (937, 629 of code): `agent_tools` would be the next to split,
+and the other two can move their tests to `tests.rs` first.
 
 ### README
 

@@ -8,6 +8,16 @@ export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
 
 export type Resolution = "done" | "not_done" | "wont_fix";
 
+/** What a task's worktree starts from (API 96): its base branch, which its pull request targets, comes from it. */
+export type StartFrom =
+  | { type: "branch"; branch: string }
+  | { type: "task"; task_id: string }
+  | { type: "pull_request"; number: number; repo?: string }
+  | { type: "commit"; commit: string };
+
+/** The API that takes a task's start_from, and lists a project's branches. */
+export const START_FROM_API = 96;
+
 export type Status = "todo" | "in_progress" | "needs_attention" | "in_review" | "ready_for_merge" | "done" | "backlog";
 
 export const STATUSES: { id: Status; label: string }[] = [
@@ -142,6 +152,12 @@ export interface ChangeSummary {
   thread_id: string;
   /** Who writes it, e.g. "Claude · haiku". */
   label: string;
+  /** Its summarizer's name, when it has one (API 103). */
+  name?: string;
+  /** The skills its summarizer was asked to use (API 103). */
+  skills?: string[];
+  /** Its summarizer had a prompt of its own (API 103). */
+  custom_prompt?: boolean;
   state: SummaryState;
   /** The commit summarised. */
   head: string | null;
@@ -183,6 +199,9 @@ export type TaskType = "scratch";
 
 /** A scratch task: its agent works in the task's own folder, with no worktree, on whatever it's asked. In no project
  *  it has no repository (API 47); in a project (API 51) it reads the project's. */
+/** A task's summaries: one from each summarizer (API 103), or the one a host from before then has. */
+export const summariesOf = (t: Pick<Task, "summary" | "summaries">): ChangeSummary[] => t.summaries ?? (t.summary ? [t.summary] : []);
+
 /** A review thread that summarises its task's changes rather than reviewing them (API 84): its type is "summary". */
 export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "summary";
 
@@ -210,7 +229,7 @@ export interface TaskDocument {
   /** The version `content` is, or null before the agent has written anything. */
   version: number | null;
   content: string | null;
-  /** The assistant's brief (API 105): its items to rate, from the run's brief.json of the same day, as the host checked them. */
+  /** The assistant's brief (API 115): its items to rate, from the run's brief.json of the same day, as the host checked them. */
   items?: BriefListItem[];
 }
 
@@ -236,8 +255,8 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task is, if not a code task: a scratch task (API 47), the profile's assistant (API 97, see `isAssistant`) or
-   *  a routine's run of it (API 101, see `isRoutine`).
+  /** What the task is, if not a code task: a scratch task (API 47), the profile's assistant (API 107, see `isAssistant`) or
+   *  a routine's run of it (API 111, see `isRoutine`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
   task_type?: TaskType | "assistant" | "routine" | DocumentType | null;
@@ -263,6 +282,8 @@ export interface Task {
   worktree_path: string | null;
   branch: string | null;
   base_branch: string | null;
+  /** What its worktree starts from instead of the project's base branch, picked before it's made (API 96). */
+  start_from?: StartFrom | null;
   worktree_state: "none" | "setting_up" | "ready" | "tearing_down" | "error";
   worktree_error: string | null;
   session_id: string | null;
@@ -314,10 +335,14 @@ export interface Task {
   remind_at?: string | null;
   /** What the reminder is for (API 48). */
   reminder?: string | null;
+  /** When it was put in Now (API 97); unset for the tasks in Later, where tasks start. */
+  now_at?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
-  /** The latest summary of its changes (API 84). */
+  /** The latest summary of its changes (API 84); the first of `summaries`. */
   summary?: ChangeSummary | null;
+  /** The latest summaries of its changes, one from each summarizer (API 103). */
+  summaries?: ChangeSummary[];
   /** How full its agent's context window is, as of its latest reply (API 40). */
   context?: ContextSummary | null;
   /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
@@ -461,7 +486,7 @@ export const tasksApi = ({ on, storage }: Http) => ({
   /** All of the profile's tasks (not reviews), in every project and none. */
   profileTasks: (h: string, profileId: string) => on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
-   *  assistant (API 97), which is off the board. */
+   *  assistant (API 107), which is off the board. */
   groupTasks: (h: string, profileId: string, assistant = false) =>
     on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${assistant ? "?include_assistant=true" : ""}`),
   createGroupTask: (
@@ -508,10 +533,12 @@ export const tasksApi = ({ on, storage }: Http) => ({
       external_links?: ExternalLink[];
       /** Shared by the tasks made from one prompt (API 61). */
       fanout_id?: string;
+      /** What its worktree starts from: `task:<id>`, a branch, `#12` or a pull request's URL, or a commit (API 96). */
+      start_from?: string;
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (h: string, id: string, b: Partial<Task>) => {
+  updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { now?: boolean; start_from?: StartFrom | string | null }) => {
     // Noted before the request: the task event it causes reaches every tab before the response does.
     if (b.status) noteMove(storage, h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);

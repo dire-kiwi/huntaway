@@ -301,7 +301,7 @@ pub async fn status(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> Ap
     args.extend(folder.as_deref());
     let out = run_ok(&top, &args, None).await?;
     let st = parse_status(&out);
-    let (base_branch, merge_base) = worktree::changes_base(&dir, &task, &project).await;
+    let (base_branch, merge_base) = worktree::changes_base(&s, &dir, &task, &project).await;
     let commits = if st.head.is_some() { commits(&top, merge_base.as_deref(), st.upstream.is_some(), folder.as_deref()).await? } else { vec![] };
     // The repository's stashes aren't the folder's, and can't be used from here.
     let stashes = if folder.is_some() { vec![] } else { stashes(&top).await? };

@@ -20,8 +20,8 @@ import { useOrigin, useProjectRefresh, useWhere } from "./newTask/useWhere";
 
 /**
  * The new task form. Its options are tokens typed in the description (IA-220): `/plan` its type, `@IA` where it goes
- * (or `@group`, `@none`), `!sonnet` its model (several make a task with each, IA-227), `^high` its effort and `#IA-212`
- * a task to merge first. They're taken
+ * (or `@group`, `@none`), `!sonnet` its model (several make a task with each, IA-227), `^high` its effort, `#IA-212`
+ * a task to merge first and `from:IA-12` what its worktree starts from. They're taken
  * out of what its agent is given. With none, it goes where the dialog was opened, with the options last picked there.
  */
 export function NewTaskModal({
@@ -52,7 +52,7 @@ export function NewTaskModal({
   const ed = useEditorText(origin.saved);
   const place = useWhere(opened, origin, ed);
   const agent = useAgentChoice(place, subproject);
-  const tok = useTokens(place, agent, ed, origin.saved);
+  const tok = useTokens(place, agent, ed, origin.saved, subproject);
   const kept = useDraft(origin, place, agent, ed, tok);
   useProjectRefresh(place.project);
   const options = useOptions(place, tok, subproject);

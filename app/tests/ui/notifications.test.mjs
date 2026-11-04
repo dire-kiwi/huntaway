@@ -111,7 +111,7 @@ test("tasks that need you notify once, with their key, title and reason, and the
       localStorage.setItem("ia.notifications", JSON.stringify({ ...s, events: { ...s.events, done: true } }));
     });
     await other.locator(`[data-task="${moved.id}"]`).click({ button: "right" });
-    await other.getByText("Complete", { exact: false }).first().waitFor();
+    await other.getByRole("menu").waitFor();
     await other.getByRole("menuitemradio", { name: "Done" }).or(other.getByRole("menuitem", { name: "Done" })).first().click();
     await sleep(1000);
     assert.equal((await server.api("GET", `/tasks/${moved.id}`)).task.status, "done");

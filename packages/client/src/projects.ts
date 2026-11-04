@@ -69,8 +69,10 @@ export interface Project {
   reviewers?: Reviewer[];
   /** Once a task's review passes, an agent summarises its changes for you to read before merging (API 84). */
   auto_summary?: boolean;
-  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. */
+  /** Who writes those summaries (API 84); null uses the profile's (API 87), before that the task's config with the default model and effort. From API 103 it's the first of `summarizers`. */
   summarizer?: Reviewer | null;
+  /** Who writes those summaries, each in a thread of its own (API 103); empty uses the profile's. */
+  summarizers?: Reviewer[];
   /** Whether its merges wait for your approval of a summary; null follows the profile's (API 92). */
   merge_approval?: boolean | null;
   /** null follows the profile's (API 95). */
@@ -114,7 +116,16 @@ export interface Reviewer {
   claude_config_id: string | null;
   model: string | null;
   effort: string | null;
+  /** Only for a summarizer (API 103): what to call it where its summary is shown. */
+  name?: string | null;
+  /** Skills its agent uses while it works, which are on in its thread if the board has them; for a reviewer from API 105. */
+  skills?: string[];
+  /** Replaces the board's instructions on how to write the summary, or for a reviewer (API 105) the project's In review prompt. */
+  prompt?: string | null;
 }
+
+/** From this API a reviewer can have instructions and skills of its own, like a summarizer. */
+export const REVIEWER_OPTIONS_API = 105;
 
 export const projectsApi = ({ on }: Http) => ({
   /** The profile's projects, or with `archived` its archived ones (API 46), which are left out otherwise. */
@@ -124,6 +135,20 @@ export const projectsApi = ({ on }: Http) => ({
   /** Clone a GitHub repository (`OWNER/REPO`) as the profile's GitHub account into `repo_path` and add it as a project (API 55). */
   cloneProject: (h: string, profileId: string, b: { repo: string; repo_path: string; name: string; key?: string }) =>
     on(h).post<Project>(`/profiles/${enc(profileId)}/projects/clone`, b),
+  /**
+   * Create a GitHub repository (public or private) as the profile's GitHub account for the folder `repo_path` (made a git repository,
+   * or created, if need be), make it the folder's `origin`, push its commits and add the folder as a project (API 102).
+   * `owner` is the account's own login by default, and `repo_name` the folder's name.
+   */
+  createGithubProject: (
+    h: string,
+    profileId: string,
+    b: { repo_path: string; visibility: "public" | "private"; repo_name?: string; owner?: string; name?: string; key?: string },
+  ) =>
+    on(h).post<Project & { github: { full_name: string; pushed: boolean; push_error: string | null } }>(
+      `/profiles/${enc(profileId)}/projects/github`,
+      b,
+    ),
   getProject: (h: string, id: string) => on(h).get<Project>(`/projects/${enc(id)}`),
   /** move_repo with a new repo_path moves the folder there (API 40). */
   /** `archived` archives the project or unarchives it (API 46). */
@@ -134,6 +159,8 @@ export const projectsApi = ({ on }: Http) => ({
   removeMergedWorktrees: (h: string, id: string) => on(h).post<{ results: MergedWorktreeResult[] }>(`/projects/${enc(id)}/remove-merged-worktrees`),
   /** The prompt instructions a project without its own uses (API 27). */
   defaultPrompts: (h: string) => on(h).get<Record<PromptField, string>>("/default-prompts"),
+  /** The branches of the project's repository, latest first; those only on a remote named with it (API 96). */
+  projectBranches: (h: string, id: string) => on(h).get<{ branches: { name: string; remote: boolean }[] }>(`/projects/${enc(id)}/branches`),
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
   systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>
     on(h).get<{ text: string; runtime: Agent; permission_mode: PermissionMode }>(
