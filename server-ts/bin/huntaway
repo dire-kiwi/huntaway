@@ -1,4 +1,11 @@
 #!/bin/sh
 # The TypeScript port of the huntaway server (see server-ts/PORTING.md): `huntaway serve …` and its other subcommands.
+# A server started from a `node --test` file (the browser tests) is not a test process itself.
+unset NODE_TEST_CONTEXT
 here=$(dirname "$(readlink -f "$0")")
+# Agents' MCP helper runs once per agent: started straight from its module, it doesn't load the whole server.
+if [ "$1" = mcp ]; then
+  shift
+  exec node --disable-warning=ExperimentalWarning "$here/../src/mcp.ts" "$@"
+fi
 exec node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@"
