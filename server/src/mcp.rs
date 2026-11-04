@@ -101,6 +101,11 @@ fn submit_review_tool() -> Value {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Problems that must be fixed before merging: bugs that cause wrong behaviour, crashes, data loss, security holes, or a broken build or tests. One entry per issue: where (file:line), what goes wrong, and how to fix it. Empty if there are none. Style, nits and optional suggestions don't belong here."
+            },
+            "minor_issues": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Minor issues and suggestions that don't block merging but may be worth a follow-up: one short entry each. Empty if there are none. Mention them in the summary too."
             }
         }, "required": ["verdict", "summary", "serious_issues"]}
     })
@@ -166,6 +171,10 @@ fn board_tools() -> Value {
     let depends_on = json!({
         "type": "array", "items": {"type": "string"},
         "description": "Tasks in the same project (ids or keys like ABC-12) that have to be merged (done) before this task's agent starts. Until then, starting it queues it in in_progress. Replaces the task's current list; [] clears it."
+    });
+    let start_from = json!({
+        "type": "string",
+        "description": "What the task's git worktree starts from, before it's made (by default the project's base branch): another task's key (e.g. ABC-12) to stack this task on its branch, a branch (local or on the remote), a pull request (#12 or its URL), or a commit SHA. A task or pull request's branch is what this task's pull request targets and its changes are compared with. Prefix with task:, branch:, pr: or commit: if it could be read as another. Only before the task's branch exists; not for a subproject's tasks. Empty string resets it."
     });
     let starred = json!({"type": "boolean", "description": "Star the task (true) or unstar it (false): starred tasks are listed in the board's sidebar"});
     let remind_at = json!({
@@ -277,14 +286,16 @@ fn board_tools() -> Value {
                 "labels": labels,
                 "type": {"type": "string", "enum": ["scratch", "subproject"], "description": "'scratch' for a scratch task, whose agent works in its own folder for whatever the user asks, without a worktree, branch or merge: in no project (keyed S-<n>) unless you give project_id or subproject, where it can read the repository (and the subproject's worktree). Or 'subproject', the same as is_subproject. Leave out for a normal task."},
                 "depends_on": depends_on,
+                "start_from": start_from,
                 "starred": starred,
                 "remind_at": remind_at,
-                "reminder": reminder
+                "reminder": reminder,
+                "now": {"type": "boolean", "default": true, "description": "New tasks start in the board's Now view; pass false to start this one in Later instead."}
             }, "required": ["title"]}
         },
         {
             "name": "update_task",
-            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels or dependencies, star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work (where merges need the user's approval, to summarize it first, and to merge once the user approves), after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
+            "description": "Update a task's title, description, status (and, for a done task, its resolution), pull request, preview URL, labels, dependencies or what its worktree starts from (before it's made), star it, or set a reminder to come back to it later (remind_at, e.g. when the user asks to be reminded or work has to wait until a later date). Moving a task to ready_for_merge asks its agent to merge its work (where merges need the user's approval, to summarize it first, and to merge once the user approves), after which the agent sets it to done (a task with no changes to merge goes straight to done). Tasks merge one at a time: a merge that needs changes moves its task to in_progress with remerge, to let the next task merge while it makes them.",
             "inputSchema": {"type": "object", "properties": {
                 "task_id": task_ref,
                 "profile": profile,
@@ -297,9 +308,11 @@ fn board_tools() -> Value {
                 "labels": labels,
                 "remerge": {"type": "boolean", "description": "With status in_progress, on a task that's merging: it steps out of the merge queue so the next task can merge, and rejoins the end of the queue when its agent's run ends, rather than going to in_review."},
                 "depends_on": depends_on,
+                "start_from": start_from,
                 "starred": starred,
                 "remind_at": remind_at,
-                "reminder": reminder
+                "reminder": reminder,
+                "now": {"type": "boolean", "description": "Put the task in the board's Now view (true) or send it back to Later (false). Tasks start in Now (create_task can start one in Later), and any update to one (or a message to it) puts it back there; a task with no activity for a day (the host's setting) goes back."}
             }, "required": ["task_id"]}
         },
         {
@@ -354,8 +367,8 @@ fn board_tools() -> Value {
                 "auto_review": {"type": "boolean", "description": "Review each task's changes when it moves to in_review"},
                 "review_rounds": {"type": "integer", "minimum": 0, "maximum": 20, "description": "How many times in a row a review's serious issues go back to the agent to fix before the task is left for the user"},
                 "group_name": {"type": "string", "description": "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group"},
-                "reviewers": {"type": ["array", "null"], "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list uses the profile's reviewers (by default one reviewer with the task's own config). claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults.",
-                    "items": {"type": "object", "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}}}},
+                "reviewers": {"type": ["array", "null"], "maxItems": 6, "description": "Who reviews each task, each in its own review thread; their serious issues are combined. An empty list uses the profile's reviewers (by default one reviewer with the task's own config). claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults. prompt replaces the project's review_prompt for this reviewer (what it looks for), and skills are names of skills it uses (named in its prompt); the board's own (a project's own or global ones) among them are on in its thread whether or not they are for the project.",
+                    "items": {"type": "object", "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}, "prompt": {"type": "string"}, "skills": {"type": "array", "items": {"type": "string"}}}}},
                 "permission_mode": {"type": "string", "enum": permission_modes, "description": "Needs approval. What the project's agents may do without asking the user, over the host's default"},
                 "setup_script": {"type": "string", "description": "Needs approval. Runs in a task's new worktree"},
                 "teardown_script": {"type": "string", "description": "Needs approval. Runs in a task's worktree before it's removed"},
@@ -390,8 +403,16 @@ fn board_tools() -> Value {
         );
         props.insert("summarizer".into(), json!({
             "type": ["object", "null"],
-            "description": "Who writes those summaries: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; {} is the task's config with the defaults, and null uses the profile's summarizer.",
+            "description": "The one summarizer, for when there's only one: the same as summarizers with a list of one, and null the same as an empty list. Prefer summarizers.",
             "properties": {"claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"}},
+        }));
+        props.insert("summarizers".into(), json!({
+            "type": ["array", "null"],
+            "description": "Who writes those summaries, each in a thread of its own, so which skills and prompts summarise best can be compared: claude_config_id is an agent config's id (omit it for the task's config), model and effort override the defaults; name says which is which where the summaries are shown; skills are skills it uses while writing (their names, e.g. \"summarize-changes\"); prompt replaces the board's instructions on how to write the summary. [{}] is one with the task's config and the defaults; an empty list or null uses the profile's summarizers.",
+            "items": {"type": "object", "properties": {
+                "claude_config_id": {"type": "string"}, "model": {"type": "string"}, "effort": {"type": "string"},
+                "name": {"type": "string"}, "skills": {"type": "array", "items": {"type": "string"}}, "prompt": {"type": "string"}
+            }},
         }));
     }
     tools.as_array_mut().unwrap().extend(automation_tools(&profile, project_one));

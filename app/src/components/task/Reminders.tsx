@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bell, BellRing, Star } from "lucide-react";
+import { Bell, BellRing, Star, Zap } from "lucide-react";
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { api, hostSupports, type Task } from "../../api";
 import { fromLocalInput, isDue, nextDue, REMINDERS_API, reminderLabel, reminderPresets, toLocalInput } from "../../reminders";
@@ -197,11 +197,16 @@ export function ReminderButton({ task, onError }: { task: Task; onError: (msg: s
   );
 }
 
-/** A card's or row's star and reminder, if it has them. `compact`, on a card: the reminder's icon, and its time once the card has room. */
+/** A card's or row's Now mark, star and reminder, if it has them. `compact`, on a card: the reminder's icon, and its time once the card has room. */
 export function TaskMarks({ task, compact }: { task: Task; compact?: boolean }) {
   const now = useReminderClock(task.remind_at ? [task] : []);
   return (
     <>
+      {task.now_at && (
+        <span className="flex shrink-0 text-accent" title="Now">
+          <Zap size={11} fill="currentColor" aria-label="Now" />
+        </span>
+      )}
       {task.starred && (
         <span className="flex shrink-0 text-amber-300" title="Starred">
           <Star size={11} fill="currentColor" aria-label="Starred" />

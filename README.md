@@ -100,6 +100,17 @@ added first. The dialog remembers which tab was used last. `GET /github-repos?ac
 searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
 `key`) clones one and adds it.
 
+The *Folder* tab can also **create a GitHub repository** for the folder (API 102): tick *Create a GitHub
+repository for it*, pick *Private* (the default) or *Public*, and optionally an owner (an organization;
+the profile's GitHub account by default) and a repository name (the folder's by default). The
+repository is made with `gh repo create` as the profile's GitHub account and becomes the folder's `origin`.
+A folder that isn't a git repository yet is made one (a folder that doesn't exist is created), and a
+repository's commits are pushed; one that already has an `origin`, or is only a subfolder of a repository,
+is turned down, and a repository that can't be made leaves the folder as it was. A push that fails
+after the repository is made still adds the project (`github.push_error` says why).
+`POST /profiles/{id}/projects/github` (`repo_path`, `visibility`: `public` or `private`, `repo_name`,
+`owner`, `name`, `key`) does it and returns the project with `github: {full_name, pushed, push_error}`.
+
 The sidebar lists projects in alphabetical order, with each group in its place by its own name
 and its projects in order inside it. Right-click a project and pick *Add to favorites* to list it
 under *Favorites*, a section of its own above the other projects (in alphabetical order too, and
@@ -1353,6 +1364,22 @@ skipped. Auto-compacting idle sessions is Claude-only.
   They're denied with `--disallowedTools` (`Skill(<name>)`, `mcp__<server>`). The settings list
   what the project's runs reported in their `init` message over the last two weeks, and anything
   else can be turned off by name. Changes apply from each thread's next message.
+- **Skill sources** (API 104): global skills can come from a git repository, as with `npx skills add`.
+  Settings → Skills and MCP servers → *Add from git* takes a git URL (https, ssh or a local path),
+  `git@host:owner/repo` or `owner/repo` for GitHub, and optionally a branch or tag. The host clones it
+  (shallow, into `<data-dir>/skill-sources/<id>/`, with its own git setup, so a private repository needs
+  credentials there) and every folder with a `SKILL.md` in it (the repository's root too, and `skills/`,
+  `.claude/skills` and so on, up to six folders down) becomes a global skill, **off** for every profile
+  and project. Switch them on like any global skill: per profile (a source's chip switches all its skills at
+  once, or each skill's own chips) and per project (*Profile default*, *On* or *Off*). A run gets the skill's
+  whole folder in the project's skills folder, so its scripts and references come with it. *Update* clones
+  the repository again: new skills appear (off), changed ones are updated, ones that went are removed with
+  their switches, and if the clone fails the skills stay as they were and the source shows why. A source's
+  skills can't be edited or deleted one by one, and one whose name another global skill has is left out
+  (the source lists what it left out). `POST /agent-tools/skill-sources` (`url`, `ref`) adds one,
+  `POST /agent-tools/skill-sources/{id}/update` updates it, `DELETE /agent-tools/skill-sources/{id}`
+  removes it, and `POST /agent-tools/switches` takes a `source_id` instead of an `item_id` to switch all of
+  a source's skills.
 - **Tasks** start their agent when you press Start, drag the card into *In progress*, or tick
   "Start agent now". The first prompt is the task title and description. Replies resume the
   same Claude session (`--resume`). While the agent works, the card shows how long it has been
@@ -1433,25 +1460,38 @@ skipped. Auto-compacting idle sessions is Claude-only.
   the browser tab; *Sort* (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
+- **Now and Later** (HA-109, API 97): every task is in *Later* until it's put in *Now*, which is
+  what you're working on at the moment. A prompt you send a task from its thread or the new task
+  dialog, or an answer to one of its question cards (not one from an automation or the board itself) puts it in Now. So does any
+  update to it (`PATCH /tasks/{id}` or an agent's `update_task`, unless the same request sets `now` or only changes `position`, as the board does renumbering a column), an agent's `send_to_task`
+  (a parent starting its subproject's tasks, say), and creating it with `create_task` (`now: false` starts it in Later). So does
+  *Move to Now* in its right-click menu (*Move to Later* puts
+  it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
+  `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
+  (*Now*, *Later*, *All*, which starts on *All* and is kept for every board) applies to every
+  view: the board, list, triage and graph, with the search and filters. A task in
+  Now has a bolt on its card and row, and the switch counts them. A task goes back to Later once
+  nothing has happened on it for a day: no prompt from you, no message in its thread (the
+  agent's included), and its agent not running. The day is the host's *Tasks in Now go back to
+  Later after N hours* setting in its page in Settings (`now_expiry_hours` in `/settings`; 0
+  keeps them in Now until they're moved, null is the default 24), looked at every minute.
+  - **Lasso:** hold Ctrl and drag with the right mouse button on a board, in any view, to draw a
+    loop; the tasks it goes round or over are picked (outlined) as it's drawn, and the browser's
+    own menu stays shut. Add Shift to keep those already picked. Ctrl + right-click (without a
+    drag) on a card picks it, or lets it go if it was. A bar at the foot of the board counts the
+    picked tasks and moves them to *Now* or *Later*; so does the right-click menu of any of them
+    (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
+    use a card's menu button.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
-  *Board* and *List*, the view switch has four more, which show the same tasks (the search and
+  *Board* and *List*, the view switch has two more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
-  1500px the switch names only the current view, and below 1180px none.
+  1500px the switch names only the current view, and below 1320px none.
   - *Triage*: what each task needs from you, most pressing first: an answer (*Needs
     attention*), a review (*In review*), a reminder that's come round, an agent that stopped
     before it finished, a start; then the agents at work. Each shows the agent's last words
     (`GET /tasks/{id}`'s `last_message`); picking one (a click, or `j`/`k`) shows its pending
     permission prompts to allow or deny, its thread's composer (the same draft as its panel's)
     and, in review, *Ready for merge*. `Enter` opens its thread.
-  - *Live*: a tile for each agent that's working, needs you or was active in the last 30
-    minutes (12 at most): the tail of its thread (the user's messages, the agent's text, its tool
-    calls) with the text it's streaming, its permission prompts to allow or deny, and a field to
-    message it.
-  - *Timeline*: a lane for each task with activity in the last hour, 6 hours, day, 3, 7 or 30
-    days (‹ › go back a window at a time), most recent first: its agent's runs and reviews as
-    bars, your prompts as ticks, and since its agent stopped, how long it's waited on you. Above,
-    how many agents ran at once. It's the hosts' analytics report (API 16) for each profile on
-    the board.
   - *Graph*: tasks linked by how they came about: a task follows the task whose agent created
     it, the tasks it waits for (`depends_on`) and the subproject it's in, a column per step, and
     a link that a longer way round already makes is left out. Tasks made from one prompt are
@@ -1590,24 +1630,49 @@ skipped. Auto-compacting idle sessions is Claude-only.
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
-- **A profile's reviewers and summarizer** (API 87): a profile's settings (*Settings → Profiles →
-  Edit*) pick the *Reviewers* and *Summarizer* for its projects, and each project's *Review*
-  settings use *The profile's* until you switch to *This project's own*, which starts from the
+- **Instructions and skills per reviewer** (API 105): each reviewer can have instructions of its own
+  and skills it uses, as a summarizer can (*Instructions and skills* beside it in the project's and
+  the profile's settings; `prompt` and `skills` in each `reviewers` entry). A reviewer's
+  instructions replace the project's *In review* prompt for it only (what to look for: the board still
+  adds where the changes are and how to report), so one reviewer can look for security holes while
+  another reviews the project's way. Its `skills` are named in its prompt (`/name` for Claude Code,
+  `$name` for Codex), and the board's own (a project's and the global ones, see *Skills and MCP
+  servers*) among them, and those a summarizer names, are on in that thread whether or not they're on
+  for the project: they're written for the thread to a folder of its own, so the project's other agents
+  don't get them (a project's own skill that is off for the project can be named too, and wins over a
+  global one of the same name), and they show in the thread's `/` menu. The settings are copied to
+  the thread as each review starts, so they apply from the next review.
+- **A profile's reviewers and summarizers** (API 87, several summarizers in API 103): a profile's settings
+  (*Settings → Profiles → Edit*) pick the *Reviewers* and *Summarizers* for its projects, and each project's
+  *Review* settings use *The profile's* until you switch to *This project's own*, which starts from the
   profile's and overrides them. A project's own can still be one reviewer with the task's config,
-  over a profile's that differ. Through the API a project's `reviewers: []` and `summarizer: null`
-  use the profile's (`reviewers` and `summarizer` on `PATCH /profiles/{id}`), and `get_project`
-  shows the profile's as `profile_reviewers` and `profile_summarizer`.
+  over a profile's that differ. Through the API a project's `reviewers: []` and `summarizers: []`
+  use the profile's (`reviewers` and `summarizers` on `PATCH /profiles/{id}`), and `get_project`
+  shows the profile's as `profile_reviewers` and `profile_summarizers`. (`summarizer`, the first of
+  `summarizers`, is still read and written for clients from before API 103: `null` is `[]`.)
 - **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
   to read before merging: what changed and why, the main changes, and how to try it. It reads the
   pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
   own (a review thread of type `summary`), and its last message is the summary, kept in the task's
-  `summary` with the commit it describes. While the task waits in *In review* with that summary
+  `summaries` with the commit it describes. While the task waits in *In review* with a summary
   (written or being written), its sidebar opens on the *Summary* tab; *Summarise now* there
   writes one at any time. A summary in progress stops when the task's agent works again, and the
-  next review that passes writes a new one. Turn it off, or pick the *Summarizer* (an agent
-  config, model and effort; the profile's, and otherwise the task's config, by default), in the
-  project's *Review* settings (`auto_summary` and `summarizer`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  next review that passes writes a new one. Turn it off, or pick the *Summarizers* (each an agent
+  config, model and effort; the profile's, and otherwise one with the task's config, by default), in the
+  project's *Review* settings (`auto_summary` and `summarizers`, which `update_project` takes too). `POST /tasks/{id}/summary`
   summarises on demand.
+- **Several summarizers, to compare skills and prompts** (API 103): a project or profile can list up
+  to six summarizers, each writing the summary in a thread of its own at the same time, and the task's
+  *Summary* tab shows each one's, boxed and labelled. Besides its agent config, model and effort, a
+  summarizer has a *name* (to tell them apart), the *skills* its agent is asked to use while it writes
+  (`/name` for Claude Code, `$name` for Codex: the project's and host's own skills, or any the
+  config has) and a *prompt* that replaces the board's instructions on how to write the summary (the
+  board still asks it to end with only the summary). So one summarizer with no skills and another with a
+  `tldr` skill or a shorter prompt can be read side by side on the same change. A summarizer's
+  thread is kept from one summary to the next while its config, model, effort, name, skills and prompt
+  stay the same; one added later is written when the next summary is (without redoing the others), and
+  one taken out loses its summary. `summaries` on a task is one `{thread_id, label, name, skills,
+  custom_prompt, state, head, text}` for each, and `summary` is the first.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: *In progress* is sent to the task's agent when
   it starts, after the task's title and description (and before any message it was started
@@ -1711,6 +1776,63 @@ skipped. Auto-compacting idle sessions is Claude-only.
   seconds, and the board comes back, with the thread's task on it, once the folder is ready.
   *Use without worktrees* turns the project's worktrees off instead, and the board shows at once.
   Projects list `has_commits` beside `is_git`.
+- **Starting from elsewhere** (API 96): a task's worktree can start from something other than the
+  project's base branch, picked before it's made: type `from:` in the new task dialog's
+  description (it suggests the project's open tasks and its branches), fill in *Starts from* in
+  the task's *Worktree* details before its first run (or after a setup that failed before making
+  its branch), or give `start_from` to the API and the agents' `create_task`/`update_task`. It
+  takes another task's key (`from:IA-12`), a branch (`from:feature-x`, or `from:origin/feature-x`
+  for one only on a remote), a pull request (`from:#12` or its URL) or a commit (`from:0123abc`, 7
+  to 40 hex digits); `task:`, `branch:`, `pr:` or `commit:` after `from:` says which when it could
+  be read as another. It's kept on the task as `start_from` (`{type: "branch", branch}`, `{type:
+  "task", task_id}`, `{type: "pull_request", number, repo?}` or `{type: "commit", commit}`), and
+  it's worked out as the worktree is first made, which sets the task's base branch:
+  - **Another task** stacks it on that task's branch, which becomes its base: its pull request
+    targets that branch, and its *Changes* tab, reviews and merged checks compare with it, so the
+    other task's changes aren't counted as its own. A task to stack on with no branch yet has its
+    worktree set up first (as a subproject's is for its tasks), and one that's merged already has
+    the task start from where it was merged. Merging a stacked task while the other is open puts
+    its work on the other's branch, as stacked pull requests do, so it reaches the base branch
+    with the other's merge. Once the other is merged, the stacked task goes where that went
+    instead, as GitHub retargets a pull request whose base branch is deleted: its agent is told
+    to merge, and open its pull request, there (retargeting one it has first), its merged checks
+    look there, and its *Changes* and reviews start from the later of its merge bases with that
+    and with where it started, so a squashed parent's work isn't counted as its own before
+    it's rebased, nor after, even once the parent's branch is deleted. Where it started is kept
+    as `refs/huntaway/start/<task id>` in the repository, and goes when the task does. It's moved on
+    to as much of the parent's branch as the task has taken in when either task's agent run ends,
+    when the parent is done, before the parent's worktree or branch is removed, and when *Changes*
+    or a review reads it. *Remove merged worktrees* counts a stacked task merged into the
+    project's base branch as merged too. Stacking doesn't make it wait for the other task: add a
+    dependency for that. A task can't start from one that (by way of others, or a subproject it's
+    in) starts from it. Deleting a merged task keeps the tasks stacked on it going where it went:
+    when that's the branch of a task it was stacked on that isn't merged yet, they're stacked on
+    that one; otherwise one with a branch then starts from the commit where its own work starts,
+    and one without is a task on that branch. A stacked task's pull request goes to the repository
+    the other task's branch is pushed to, or, while that has no remote of its own (it isn't pushed
+    yet), wherever the other task's pull request goes.
+  - **A branch** becomes its base branch, fetched first as the project's is. A remote's branch
+    is the branch of that name when it's on the remote the name alone follows (usually `origin`,
+    where the task's pull request goes). Another remote's (`upstream/feature`) isn't a branch the
+    task's pull request can target: as for a pull request from a fork, the task starts from its
+    latest commit (fetched even if it never was before), with the project's base branch as its
+    own, so its pull request has that branch's commits too, and its *Changes* and reviews start
+    after that commit.
+  - **A pull request** in the project's GitHub repository (the one its tasks open theirs in, going
+    by its base branch's remote; looked up with gh, as the task's GitHub account) is its branch, as
+    for a task, when that's the branch its name alone follows in the project's repository. A merged
+    one is where it was merged; one from a fork, closed, or whose branch the name follows elsewhere
+    (to another remote), starts from its head commit, fetched by its SHA, with the pull request's
+    base as the task's (so its pull request has the other's commits too).
+  - **A commit** is where its branch starts, fetched by its full SHA if the repository doesn't have
+    it; its base branch stays the project's, and its *Changes* and reviews start after the commit
+    when the base branch doesn't have it. Such a review, and the summary of its changes, read the
+    branch's changes from where it started rather than its pull request's diff, which has more.
+  The task's log says where it started. Its branch, base branch and worktree folder are saved as
+  soon as git makes them, so a setup script that fails doesn't lose them. It can't change once the
+  task's branch exists (it's set up again from that branch), a subproject's tasks start from the subproject's branch, and a task
+  that doesn't use a worktree has nothing to start. `base_branch` and `start_from` replace each
+  other. `GET /projects/{id}/branches` lists the branches of a project's repository, latest first.
 - **Temp folders:** each task's agents get a temp folder of their own,
   `<system temp>/ha-<hash of the data dir>/<first 12 hex digits of the task id>` (kept short, as
   sockets in it can't have paths over 107 bytes), as `$TMPDIR` for its runs (Claude and
@@ -1955,6 +2077,22 @@ skipped. Auto-compacting idle sessions is Claude-only.
   merged worktrees* does for each project, and lists what it removed, how much that freed and what it kept; click a worktree to open its task and
   remove it there, which is also the way to remove a worktree no task has. The
   folders are measured when the tab first opens and again on refresh (API 35).
+  The *Tokens* tab (API 98) shows where agents' tokens go: in total and per day, by what they were
+  spent on (tasks' own agents, reviews, summaries, compactions, scratch and group tasks), by model
+  (Claude's and Codex's), and per task, with a review or summary thread's tokens counted towards
+  its task and a subproject's tasks' towards the subproject (expand it to see each). It can measure
+  all tokens (uncached input, cache reads and writes, and output), output tokens, or cost (Claude
+  Code's; Codex doesn't report one). Each run's tokens are counted per model, subagents' included,
+  from its output once it ends (see `server/src/agent/tokens.rs`): runs from before this was kept
+  are counted at startup from the output the board still keeps (14 days of it), and older ones
+  show only what they cost, as estimates. Its *Reviews* part counts each reviewer's submission:
+  how many found serious issues, how many tasks passed their first round, and how many rounds of
+  fixes each model's work took, by the model the task's agent used and by reviewer. A round is a
+  review of the task by all of its reviewers (each submission keeps when its round started), and a
+  task's first round and rounds of fixes count all of its rounds, those outside the range too. Reviewers also
+  list minor issues (`submit_review`'s `minor_issues`); reviews from before that count as noting
+  minor issues when their summary mentions some, and the follow-ups are the tasks the reviewed
+  task's agent created after such a review. `GET /profiles/{id}/token-stats?from=&to=` has the data.
 - **Subagents:** each subagent Claude or Codex starts is a row in the thread
   showing whether it is running (in the foreground or background), done, failed or stopped. Expand
   the row to read its prompt and transcript. They are read-only: you reply to the parent thread,
@@ -1971,7 +2109,8 @@ Each run gets the `huntaway` MCP server (`huntaway mcp`, configured per run):
 *Waiting*), plus the internal `permission_prompt`. Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
-`list_tasks` takes `subproject`.
+`list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see
+*Starting from elsewhere*), and task summaries say what a task started from.
 
 From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:
 small fields stay inline, `field_lengths` lists every available field's length, and

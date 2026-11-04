@@ -34,6 +34,71 @@ export interface ContextStatsReport {
   projects: AnalyticsReport["projects"];
 }
 
+/** The tokens a profile's runs used, per run and model, what reviewers reported, and the follow-up tasks agents created (API 98). */
+export interface TokenStatsReport {
+  /** Runs' rows, and from API 99 the model calls that aren't runs (task titles and window restarts). */
+  usage: {
+    /** Null for a call that isn't a run. */
+    run_id: string | null;
+    /** A call's that isn't a run (API 100): the rows of one call, one for each model it used, share it. */
+    call_id?: string | null;
+    /** The thread the run was in: a task, or a review or summary thread. A title's task; null for a window restart. */
+    task_id: string | null;
+    /** The run's: `prompt`, `compact` or `review`; or the call's: `title` or `window`. */
+    kind: string;
+    at: string;
+    model: string;
+    runtime: "claude" | "codex";
+    /** What wasn't read from or written to the cache. */
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    /** The part of the output the model thought in. */
+    reasoning_tokens: number;
+    /** Claude Code's; Codex doesn't say. */
+    cost_usd: number | null;
+    /** From the run's cost alone (its output was gone), or scaled to it. */
+    estimated: boolean;
+  }[];
+  reviews: {
+    /** The task reviewed. */
+    task_id: string;
+    thread_id: string;
+    at: string;
+    verdict: "pass" | "issues";
+    serious: number;
+    /** Null for reviews from before minor issues were listed. */
+    minor: number | null;
+    /** It listed minor issues, or its summary mentions some. */
+    minor_noted: boolean;
+    label: string | null;
+    /** The model the reviewer's run used most. */
+    model: string | null;
+    /** Which of its task's rounds of review it was in, from 1. */
+    round: number;
+    /** The effort the reviewed task's agent was set to work at (API 101); null is the agent's own default. Hosts before API 101 don't say. */
+    effort?: string | null;
+    /** The model the reviewed task's agent used most in the run before the review (API 101). */
+    task_model?: string | null;
+  }[];
+  /** Every round of review of the tasks `reviews` are for, those before the range included. */
+  rounds: { task_id: string; round: number; at: string; verdict: "pass" | "issues"; serious: number; reviewers: number }[];
+  /** Tasks created by the agents of the tasks listed. */
+  follow_ups: { task_id: string; created_by: string; at: string }[];
+  tasks: (AnalyticsReport["tasks"][number] & {
+    parent_id: string | null;
+    task_type: string | null;
+    subproject: boolean;
+    group_name: string | null;
+    /** The model its own runs used most. */
+    model: string | null;
+  })[];
+  projects: AnalyticsReport["projects"];
+  /** Runs that have ended but whose tokens aren't counted yet. */
+  pending: number;
+}
+
 /** Bytes on disk and the number of files, as `du` counts them. */
 export interface DiskSize {
   bytes: number;
@@ -78,6 +143,10 @@ export const analyticsApi = ({ on }: Http) => ({
   /** Context sizes at the end of the profile's turns, and compactions, in [from, to) (API 86). */
   contextStats: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<ContextStatsReport>(`/profiles/${enc(profileId)}/context-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+
+  /** The tokens the profile's runs that started in [from, to) used, and its reviews then (API 98). */
+  tokenStats: (h: string, profileId: string, from: string, to: string) =>
+    on(h).get<TokenStatsReport>(`/profiles/${enc(profileId)}/token-stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 
   /** How much space the profile's projects and their worktrees take up (API 35). */
   diskUsage: (h: string, profileId: string) => on(h).get<DiskUsageReport>(`/profiles/${enc(profileId)}/disk-usage`),

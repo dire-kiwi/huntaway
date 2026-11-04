@@ -3,8 +3,8 @@
 runner, queue and merge logic without a model.
 
 An agent run (`-p --output-format stream-json`) reads its first prompt, prints a system init,
-one assistant message and a `result`, then exits. Title generation (`--output-format text`)
-prints a title. Each call appends a JSON line (args, cwd, config dir, TMPDIR, prompt) to
+one assistant message and a `result`, then exits. Title generation (`--output-format json`)
+prints a `result` with the title and the tokens it took (`--output-format text`, a bare title). Each call appends a JSON line (args, cwd, config dir, TMPDIR, prompt) to
 $IA_FAKE_CLAUDE_LOG, if set (test-server.sh sets it to <data dir>/fake-claude.log).
 
 Set these in the server's environment (before test-server.sh, which keeps them for `restart`):
@@ -69,8 +69,15 @@ if log:
     with open(log, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-if opt("--output-format") == "text":
-    print(os.environ.get("IA_FAKE_CLAUDE_TITLE", "Fake title"))
+if opt("--output-format") in ("text", "json"):
+    title = os.environ.get("IA_FAKE_CLAUDE_TITLE", "Fake title")
+    if opt("--output-format") == "text":
+        print(title)
+    else:
+        # Title generation's result, with the tokens it took, as Claude Code reports them.
+        usage = {"claude-haiku-fake": {"inputTokens": 2, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 600, "costUSD": 0.0002}}
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": title, "session_id": str(uuid.uuid4()), "total_cost_usd": 0.0002,
+              "modelUsage": usage})
     sys.exit(0)
 
 session = opt("--resume") or str(uuid.uuid4())

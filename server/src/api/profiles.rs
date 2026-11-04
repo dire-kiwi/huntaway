@@ -35,9 +35,12 @@ pub(super) struct CreateProfile {
     /// See `db::Profile::reviewers` (API 87).
     #[serde(default)]
     reviewers: Value,
-    /// See `db::Profile::summarizer` (API 87).
+    /// See `db::Profile::summarizer` (API 87); `summarizers` (API 103) is used instead if it's given.
     #[serde(default)]
     summarizer: Value,
+    /// See `db::Profile::summarizers` (API 103).
+    #[serde(default)]
+    summarizers: Value,
     /// See `db::Profile::merge_approval` (API 92).
     #[serde(default)]
     merge_approval: bool,
@@ -60,13 +63,15 @@ pub(super) async fn create_profile(State(s): State<Shared>, Json(b): Json<Create
     let access = b.agent_access.as_ref().map(|v| check_agent_access(name, v)).transpose()?;
     let github_account = check_github_account(&b.github_account)?;
     let clone_dir = check_clone_dir(&b.clone_dir)?;
-    let (reviewers, summarizer) = (reviewers_value(&c, &b.reviewers, true, &[])?, summarizer_value(&c, &b.summarizer, true, &[])?);
+    let reviewers = reviewers_value(&c, &b.reviewers, true, &[])?;
+    let given = if b.summarizers.is_null() { legacy_summarizer(&[], &b.summarizer) } else { b.summarizers.clone() };
+    let summarizers = summarizers_value(&c, &given, true, &[])?;
     drop(c);
     let assistant_host = assistant::check_host(&s, &b.assistant_host)?;
     let c = s.db();
     let mut p = db::insert_profile(&c, name, &ids, b.default_model.as_deref())?;
     let mut fields = vec![("github_account", github_account), ("clone_dir", clone_dir), ("asana_enabled", json!(b.asana_enabled))];
-    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer)]);
+    fields.extend([("limit_wait", json!(b.limit_wait)), ("limit_switch", json!(b.limit_switch)), ("reviewers", reviewers), ("summarizer", summarizer_mirror(&summarizers)), ("summarizers", summarizers)]);
     fields.push(("merge_approval", json!(b.merge_approval)));
     fields.push(("require_pr_approval", json!(b.require_pr_approval)));
     fields.push(("assistant_host", assistant_host));
@@ -125,12 +130,14 @@ pub(super) async fn update_profile(State(s): State<Shared>, Path(id): Path<Strin
         }
     }
     // Either may name a config deleted since it was saved, as both are sent with every save.
-    let saved: Vec<&db::Reviewer> = current.reviewers.iter().chain(&current.summarizer).collect();
+    let saved: Vec<&db::Reviewer> = current.reviewers.iter().chain(&current.summarizers).collect();
     if let Some(v) = b.get("reviewers") {
         fields.push(("reviewers", reviewers_value(&c, v, true, &saved)?));
     }
-    if let Some(v) = b.get("summarizer") {
-        fields.push(("summarizer", summarizer_value(&c, v, true, &saved)?));
+    if let Some(v) = b.get("summarizers").cloned().or_else(|| b.get("summarizer").map(|v| legacy_summarizer(&current.summarizers, v))) {
+        let value = summarizers_value(&c, &v, true, &saved)?;
+        fields.push(("summarizer", summarizer_mirror(&value)));
+        fields.push(("summarizers", value));
     }
     if let Some(v) = b.get("claude_config_ids") {
         let ids: Vec<String> = serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("claude_config_ids must be a list of config ids"))?;
@@ -254,7 +261,7 @@ pub(super) async fn check_base_branch(v: &Value) -> ApiResult<Value> {
     if name.is_empty() {
         return Ok(Value::Null);
     }
-    if !worktree::valid_branch_name(name).await {
+    if !worktree::valid_branch_name(name) {
         return Err(ApiError::bad(format!("base_branch {name:?} isn't a valid branch name")));
     }
     Ok(json!(name))
@@ -299,43 +306,92 @@ pub(super) fn check_config_ids(c: &rusqlite::Connection, ids: Vec<String>) -> Ap
     Ok(out)
 }
 
-/// Reviewers, with blank fields as None and each config checked, except those in `saved` (the
-/// ones already saved), which may have been deleted since: their reviews fall back to the task's
-/// config, and saving other changes keeps them.
-fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>, saved: &[&db::Reviewer]) -> ApiResult<Vec<db::Reviewer>> {
+/// Reviewers (or summarizers, which keep their name, skills and prompt), with blank fields as
+/// None and each config checked, except those in `saved` (the ones already saved), which may have
+/// been deleted since: their reviews fall back to the task's config, and saving other changes
+/// keeps them.
+fn check_reviewers(c: &rusqlite::Connection, list: Vec<db::Reviewer>, saved: &[&db::Reviewer], summarizers: bool) -> ApiResult<Vec<db::Reviewer>> {
+    let what = if summarizers { "summarizers" } else { "reviewers" };
     if list.len() > crate::review::MAX_REVIEWERS {
-        return Err(ApiError::bad(format!("there can be at most {} reviewers", crate::review::MAX_REVIEWERS)));
+        return Err(ApiError::bad(format!("there can be at most {} {what}", crate::review::MAX_REVIEWERS)));
     }
     let blank = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let mut out = Vec::new();
     for r in list {
-        let r = db::Reviewer { claude_config_id: blank(r.claude_config_id), model: blank(r.model), effort: blank(r.effort) };
-        if let Some(id) = &r.claude_config_id {
+        let mut checked = db::Reviewer { claude_config_id: blank(r.claude_config_id), model: blank(r.model), effort: blank(r.effort), ..Default::default() };
+        if summarizers {
+            checked.name = blank(r.name);
+        }
+        checked.prompt = blank(r.prompt);
+        if checked.prompt.as_ref().is_some_and(|p| p.chars().count() > MAX_PROMPT) {
+            return Err(ApiError::bad(format!("a prompt can be at most {MAX_PROMPT} characters")));
+        }
+        for skill in r.skills {
+            let skill = skill.trim().trim_start_matches(['/', '$']).trim().to_string();
+            if skill.is_empty() || checked.skills.contains(&skill) {
+                continue;
+            }
+            if skill.chars().any(char::is_whitespace) {
+                return Err(ApiError::bad(format!("{skill:?} isn't a skill's name: skills are named without spaces")));
+            }
+            checked.skills.push(skill);
+        }
+        if checked.skills.len() > MAX_SKILLS {
+            return Err(ApiError::bad(format!("a {} can use at most {MAX_SKILLS} skills", if summarizers { "summarizer" } else { "reviewer" })));
+        }
+        if let Some(id) = &checked.claude_config_id {
             if !saved.iter().any(|s| s.claude_config_id.as_ref() == Some(id)) && db::get_claude_config(c, id)?.is_none() {
                 return Err(ApiError::bad(format!("no Claude config {id}")));
             }
         }
-        out.push(r);
+        out.push(checked);
     }
     Ok(out)
 }
+
+/// The most skills a summarizer or reviewer can be asked to use, and the longest prompt it can have.
+const MAX_SKILLS: usize = 20;
+const MAX_PROMPT: usize = 20_000;
 
 /// A project's or profile's `reviewers` as saved: checked, and null when it's empty. With
 /// `defaults_too`, just one reviewer with the defaults is null too (a profile's, which is the same);
 /// a project's is kept, so it reviews with the task's config rather than the profile's reviewers.
 pub(super) fn reviewers_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
     let list: Option<Vec<db::Reviewer>> =
-        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort}"))?;
-    let list = list.map(|l| check_reviewers(c, l, saved)).transpose()?.filter(|l| !l.is_empty() && !(defaults_too && *l == [db::Reviewer::default()]));
+        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("reviewers must be null or a list of {claude_config_id, model, effort, prompt, skills}"))?;
+    let list = list.map(|l| check_reviewers(c, l, saved, false)).transpose()?.filter(|l| !l.is_empty() && !(defaults_too && *l == [db::Reviewer::default()]));
     Ok(json!(list.map(|l| json!(l).to_string())))
 }
 
-/// A project's or profile's `summarizer` as saved, checked. With `defaults_too`, one with the
-/// defaults is null (a profile's); a project's is kept, so it summarises with the task's config
-/// rather than the profile's summarizer.
-pub(super) fn summarizer_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
-    let spec: Option<db::Reviewer> =
-        serde_json::from_value(v.clone()).map_err(|_| ApiError::bad("summarizer must be null or {claude_config_id, model, effort}"))?;
-    let spec = spec.map(|r| check_reviewers(c, vec![r], saved)).transpose()?.and_then(|l| l.into_iter().next()).filter(|r| !(defaults_too && *r == db::Reviewer::default()));
-    Ok(json!(spec.map(|r| json!(r).to_string())))
+/// A project's or profile's `summarizers` as saved, checked like `reviewers_value`'s: null when
+/// it's empty, or with `defaults_too` just one with the defaults (a project's is kept, so it
+/// summarises with the task's config rather than the profile's summarizers).
+pub(super) fn summarizers_value(c: &rusqlite::Connection, v: &Value, defaults_too: bool, saved: &[&db::Reviewer]) -> ApiResult<Value> {
+    let list: Option<Vec<db::Reviewer>> = serde_json::from_value(v.clone())
+        .map_err(|_| ApiError::bad("summarizers must be null or a list of {claude_config_id, model, effort, name, skills, prompt}"))?;
+    let list = list.map(|l| check_reviewers(c, l, saved, true)).transpose()?.filter(|l| !l.is_empty() && !(defaults_too && *l == [db::Reviewer::default()]));
+    Ok(json!(list.map(|l| json!(l).to_string())))
+}
+
+/// The `summarizers` a `summarizer` from a client from before API 103 (which only knows the first)
+/// means, over the `current` ones: null clears them; one that's still the first changes nothing,
+/// as such a client sends it with every save; another replaces just the first, and keeps the rest.
+pub(super) fn legacy_summarizer(current: &[db::Reviewer], v: &Value) -> Value {
+    if v.is_null() {
+        return Value::Null;
+    }
+    let Ok(given) = serde_json::from_value::<db::Reviewer>(v.clone()) else { return json!([v]) };
+    let same = |a: &db::Reviewer, b: &db::Reviewer| (&a.claude_config_id, &a.model, &a.effort) == (&b.claude_config_id, &b.model, &b.effort);
+    match current.split_first() {
+        Some((first, _)) if same(first, &given) => json!(current),
+        Some((_, rest)) => json!([vec![given], rest.to_vec()].concat()),
+        None => json!([given]),
+    }
+}
+
+/// What the `summarizer` column (the first of the summarizers, for clients from before API 103)
+/// has when `summarizers` is saved as `value` (see `summarizers_value`).
+pub(super) fn summarizer_mirror(value: &Value) -> Value {
+    let first = value.as_str().and_then(|v| serde_json::from_str::<Vec<db::Reviewer>>(v).ok()).and_then(|l| l.into_iter().next());
+    json!(first.map(|r| json!(r).to_string()))
 }

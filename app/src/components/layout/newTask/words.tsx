@@ -42,4 +42,5 @@ export const TOKEN_HELP: { prefix: TokenPrefix; what: string; asks: string }[] =
   { prefix: "!", what: "model", asks: "a model (or several, for a task each)" },
   { prefix: "^", what: "effort", asks: "effort" },
   { prefix: "#", what: "waits for", asks: "a task to wait for" },
+  { prefix: "from:", what: "starts from", asks: "what its worktree starts from" },
 ];

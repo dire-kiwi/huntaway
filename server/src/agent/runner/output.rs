@@ -127,7 +127,15 @@ pub(super) fn handle_line(state: &Shared, run: &Run, line: &str) -> Result<()> {
             let c = state.db();
             if let Some(t) = db::get_task(&c, task_id)?.filter(|t| t.project_id.is_some()) {
                 let config = db::task_claude_config(&c, &t)?;
-                crate::agent::agent_tools::record_seen(&c, t.project_id.as_deref().unwrap(), config.as_ref().map(|c| c.id.as_str()), &v)?;
+                // The skills a review thread has on top of its project's aren't the project's to list or turn off.
+                let mut init = v.clone();
+                if t.kind == "review" {
+                    let extra = db::thread_skills(&c, &t.id)?;
+                    if let Some(a) = init["skills"].as_array_mut() {
+                        a.retain(|s| !s.as_str().is_some_and(|s| extra.iter().any(|e| e == s)));
+                    }
+                }
+                crate::agent::agent_tools::record_seen(&c, t.project_id.as_deref().unwrap(), config.as_ref().map(|c| c.id.as_str()), &init)?;
             }
         }
         // From `/compact`, or Claude Code compacting by itself when the context fills up.
@@ -354,11 +362,18 @@ pub(crate) fn finish(state: &Shared, run_id: &str, outcome: Outcome) {
     );
     #[cfg(test)]
     crate::testing::reached("finish:exited");
+    crate::agent::tokens::on_run_ended(state, task_id);
     // What a stopped or failed run had written of its document.
     crate::agent::documents::turn_ended(state, task_id);
     crate::agent::assistant::memory::turn_ended(state, task_id);
     state.emit(json!({"type": "delta_reset", "task_id": task_id}));
     let Ok(Some(task)) = db::get_task(&state.db(), task_id) else { return };
+    // What its agent took in of the branch it's stacked on (see worktree::keep_starts), and what the tasks
+    // stacked on it did of its own.
+    if task.kind == "task" && let Ok(rt) = tokio::runtime::Handle::try_current() {
+        let (s, id) = (state.clone(), task.id.clone());
+        rt.spawn(async move { crate::git::worktree::keep_starts(&s, &id).await });
+    }
     if run.kind == "review" && crate::review::summary::is_summary(&task) {
         crate::review::summary::finished(state, &task, run_id, &outcome, run.attention.as_deref());
     } else if run.kind == "review" {

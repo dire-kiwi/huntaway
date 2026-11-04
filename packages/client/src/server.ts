@@ -121,6 +121,8 @@ export interface HostSettings {
   public_url?: string | null;
   /** Whether release checks include prereleases (API 88). Changing it checks again. */
   release_prereleases?: boolean;
+  /** Hours a task can go without activity in Now before it goes back to Later (API 97): 0 for never, null for the default of a day. */
+  now_expiry_hours?: number | null;
 }
 
 export const serverApi = ({ on }: Http) => ({

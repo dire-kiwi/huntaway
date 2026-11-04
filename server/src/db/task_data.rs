@@ -75,6 +75,45 @@ pub struct Context {
     pub detail_at: Option<String>,
 }
 
+/// What a task's worktree starts from instead of the project's base branch (API 96), stored on
+/// it as JSON. Set before the worktree is made; worktree::setup turns it into the task's base
+/// branch (which its pull request targets and its changes are compared with) and the commit its
+/// branch starts at.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StartFrom {
+    /// A branch, local or on the remote, which becomes the task's base branch.
+    Branch { branch: String },
+    /// Another task in the project (by id): its branch, so the task is stacked on it.
+    Task { task_id: String },
+    /// A pull request in the project's GitHub repository: its branch, as for a task. `repo`
+    /// (`OWNER/REPO`) is the repository its URL named, if it was given one.
+    PullRequest {
+        number: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+    },
+    /// A commit (its SHA, in full when it was found in the repository); the base branch stays
+    /// the project's.
+    Commit { commit: String },
+}
+
+impl StartFrom {
+    /// What it is, as people and agents read it: `task ABC-12` (`key` is its project's key),
+    /// `branch feature`, `pull request #12` or `commit 0123abcd`.
+    pub fn describe(&self, c: &Connection, key: &str) -> String {
+        match self {
+            StartFrom::Branch { branch } => format!("branch {branch}"),
+            StartFrom::Task { task_id } => match get_task(c, task_id).ok().flatten() {
+                Some(t) => format!("task {key}-{}", t.number),
+                None => "a deleted task".into(),
+            },
+            StartFrom::PullRequest { number, repo } => format!("pull request {}#{number}", repo.as_deref().unwrap_or_default()),
+            StartFrom::Commit { commit } => format!("commit {}", &commit[..commit.len().min(12)]),
+        }
+    }
+}
+
 /// What an agent in the `wait` tool is waiting for (see mcp/wait.rs), stored on its task as JSON.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AgentWait {
@@ -161,6 +200,19 @@ pub struct Reviewer {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    /// Only for a summarizer (API 103): what to call it where its summary is shown, so summarizers
+    /// that differ in their skills or prompt can be told apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Skills its agent uses while it works: named in its prompt (for a reviewer too, API 105). The board's skills
+    /// (a project's own or global ones) among them are on in its thread whether or not they are for the project.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    /// Replaces the board's instructions on how to write the summary (for a summarizer), so a prompt can be
+    /// tried against another's, or the project's *In review* prompt, what to look for (for a reviewer, API 105).
+    /// None uses the board's, or the project's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 /// A task's latest review (see review.rs), stored on the task as JSON. With several reviewers,
@@ -188,6 +240,10 @@ pub struct Review {
     #[serde(default)]
     pub extra_rounds: u32,
     pub updated_at: String,
+    /// When this round of review started: the round each reviewer's submission is kept with, for
+    /// statistics (see review/stats.rs). Missing on reviews started before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
     /// Each reviewer's part (API 29). Empty in reviews from before there could be several.
     #[serde(default)]
     pub reviewers: Vec<ReviewerRun>,
@@ -201,6 +257,15 @@ pub struct ChangeSummary {
     /// Who writes it, e.g. "Claude · haiku".
     #[serde(default)]
     pub label: String,
+    /// The summarizer's name, when it has one (see `Reviewer::name`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The skills its summarizer was asked to use.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    /// Whether its summarizer had a prompt of its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom_prompt: bool,
     /// running, done, failed or stopped
     pub state: String,
     /// The commit summarised.
@@ -211,6 +276,17 @@ pub struct ChangeSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_run: Option<String>,
     pub updated_at: String,
+}
+
+/// A task's `summary` column: the list of its summaries, or the one summary saved before there
+/// could be several.
+pub fn summaries_column(v: Option<String>) -> Vec<ChangeSummary> {
+    let Some(v) = v.and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok()) else { return Vec::new() };
+    match v {
+        serde_json::Value::Array(_) => serde_json::from_value(v).unwrap_or_default(),
+        serde_json::Value::Object(_) => serde_json::from_value(v).ok().into_iter().collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// One reviewer's part of a review.

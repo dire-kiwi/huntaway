@@ -9,7 +9,7 @@ before(async () => {
 });
 after(() => server?.stop());
 
-// HA-5: the board's other views (Triage, Live, Timeline and Graph) show its tasks, and the view picked stays.
+// HA-5: the board's other views (Triage and Graph) show its tasks, and the view picked stays.
 test("the board's other views show its tasks, and the one picked stays", async () => {
   const tasks = await server.api("GET", `/projects/${project.id}/tasks`);
   const first = tasks.find((t) => t.title === "Try dragging this card to another column");
@@ -29,16 +29,21 @@ test("the board's other views show its tasks, and the one picked stays", async (
     await ui.run(["click Graph view", "wait Not linked to other tasks", "wait Finished work to look over"]);
     await page.waitForFunction(() => document.querySelectorAll("path[marker-end='url(#arrow-depends)']").length === 1);
 
-    // Timeline: the demo's tasks have never run.
-    await ui.run(["click Timeline view", "wait Agents running", "wait Nothing ran in this window"]);
-    // HA-5 review: the hour's window has its axis whatever minute it is now.
-    await ui.run(["click 1h"]);
-    await page.waitForFunction(() => document.querySelectorAll("[data-tick]").length >= 5);
-
-    // Live: the task waiting on an answer gets a tile to answer it from.
-    await ui.run(["click Live view", "wait A task waiting on an answer", "wait css=input[placeholder='Reply to the agent…']"]);
-
     // The view is kept for the next visit.
-    await ui.run([`goto /p/${project.id}`, "wait css=input[placeholder='Reply to the agent…']", "click Board view", "wait Merged and closed"]);
+    await ui.run([`goto /p/${project.id}`, "wait Not linked to other tasks", "click Board view", "wait Merged and closed"]);
   });
 });
+
+// Clients that last used a removed view should still get a usable board.
+for (const view of ["live", "timeline"]) {
+  test(`saved ${view} view falls back to Board`, async () => {
+    await withBrowser(server, {}, async (ui) => {
+      const { page } = ui;
+      await page.addInitScript((view) => localStorage.setItem("ia.boardView", view), view);
+      await ui.run([`goto /p/${project.id}`, "wait Merged and closed"]);
+      assert.equal(await page.getByTitle(/^Live view/).count(), 0);
+      assert.equal(await page.getByTitle(/^Timeline view/).count(), 0);
+      await ui.run(["click List view", "wait Merged and closed", "click Board view", "wait Merged and closed"]);
+    });
+  });
+}

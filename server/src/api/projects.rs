@@ -156,6 +156,78 @@ pub async fn clone_project_inner(s: &Shared, profile_id: &str, b: CloneProject, 
     job.await.map_err(|e| anyhow::anyhow!("cloning stopped: {e}"))?
 }
 
+#[derive(Deserialize)]
+pub struct NewGithubProject {
+    /// The folder, on this host: a git repository, or a folder that isn't one yet (or doesn't exist yet).
+    pub repo_path: String,
+    #[serde(default)]
+    pub name: String,
+    pub key: Option<String>,
+    /// The GitHub repository's name: by default the folder's.
+    pub repo_name: Option<String>,
+    /// Who owns it: by default the profile's GitHub account (gh's active one without), or an organization it belongs to.
+    pub owner: Option<String>,
+    /// `public` or `private`.
+    pub visibility: String,
+}
+
+pub(super) async fn create_github_project(State(s): State<Shared>, Path(profile_id): Path<String>, Json(b): Json<NewGithubProject>) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(create_github_project_inner(&s, &profile_id, b, crate::mcp::gh_mcp::gh_program()).await?)))
+}
+
+/// Creates a GitHub repository, public or private, as the profile's GitHub account with `gh`, makes
+/// it the `origin` of the folder (a git repository is made of it first if it isn't one) and adds the
+/// folder as a project (API 102). The response is the project, and `github`: `{full_name, pushed,
+/// push_error}`.
+pub async fn create_github_project_inner(s: &Shared, profile_id: &str, b: NewGithubProject, gh: String) -> ApiResult<Value> {
+    let profile = db::get_profile(&s.db(), profile_id)?.ok_or_else(|| ApiError::not_found("profile"))?;
+    let private = match b.visibility.as_str() {
+        "private" => true,
+        "public" => false,
+        _ => return Err(ApiError::bad("visibility must be public or private")),
+    };
+    let dest = expand_tilde(b.repo_path.trim());
+    if b.repo_path.trim().is_empty() || !dest.is_absolute() {
+        return Err(ApiError::bad("repo_path must be an absolute path, or start with ~/"));
+    }
+    if dest.exists() && !dest.is_dir() {
+        return Err(ApiError::bad(format!("{} is not a directory", dest.display())));
+    }
+    let default_name = dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let repo_name = b.repo_name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&default_name);
+    let repo_name = github::check_name(repo_name).ok_or_else(|| ApiError::bad("the repository's name must be letters, digits, - _ and . (up to 100)"))?;
+    // A key that would stop the project being added stops the repository being made first (and is checked again then).
+    let key = b.key.map(|k| k.trim().to_uppercase()).filter(|k| !k.is_empty());
+    if let Some(k) = &key {
+        if reserved(k) {
+            return Err(reserved_key(k));
+        }
+        check_key(s, profile_id, None, k)?;
+    }
+    let owner = b.owner;
+    // Carries on without the request (the dialog closed, a hub gave up), so a repository that's made is also added.
+    let job = tokio::spawn({
+        let (s, profile_id) = (s.clone(), profile_id.to_string());
+        async move {
+            let _folder = github::reserve(&dest).await;
+            let dir = github::folder(&dest);
+            if let Some(p) = db::list_projects(&s.db(), &profile_id)?.into_iter().find(|p| std::path::Path::new(&p.repo_path) == dir) {
+                return Err(ApiError::conflict(format!("{} is already the project \"{}\"", dest.display(), p.name)));
+            }
+            let made = github::create(&gh, profile.github_account.as_deref(), &dest, owner.as_deref(), &repo_name, private).await.map_err(ApiError::bad)?;
+            let c = CreateProject { name: b.name, repo_path: path_str(&dest), key, base_branch: None, use_worktrees: None };
+            let p = create_project_inner(&s, &profile_id, c).await.map_err(|e| ApiError(e.0, format!("created {} on GitHub, but couldn't add the project: {}", made.full_name, e.1)))?;
+            if let Some(e) = &made.push_error {
+                tracing::warn!("{e}");
+            }
+            let mut out = json!(p);
+            out["github"] = json!({"full_name": made.full_name, "pushed": made.pushed, "push_error": made.push_error});
+            Ok(out)
+        }
+    });
+    job.await.map_err(|e| anyhow::anyhow!("creating the repository stopped: {e}"))?
+}
+
 pub(super) async fn get_project(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let p = db::get_project(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("project"))?;
     Ok(Json(json!(p)))
@@ -312,7 +384,7 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
         b,
         &[
             "name", "key", "repo_path", "base_branch", "setup_script", "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model",
-            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
+            "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "summarizers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
             "archived",
             "merge_approval",
             "require_pr_approval",
@@ -329,8 +401,16 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
     // Configs deleted since they were saved, here or in the profile's (which the project's
     // settings start from when it takes its own), are kept (see check_reviewers).
     let profile = db::get_profile(&s.db(), &before.profile_id)?;
-    let from_profile = profile.iter().flat_map(|p| p.reviewers.iter().chain(&p.summarizer));
-    let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizer).chain(from_profile).collect();
+    let from_profile = profile.iter().flat_map(|p| p.reviewers.iter().chain(&p.summarizers));
+    let saved_reviewers: Vec<&db::Reviewer> = before.reviewers.iter().chain(&before.summarizers).chain(from_profile).collect();
+    // A client from before API 103 sends the one `summarizer`: that's the only one, unless it also sends `summarizers`.
+    if !fields.iter().any(|(k, _)| *k == "summarizers") {
+        if let Some(i) = fields.iter().position(|(k, _)| *k == "summarizer") {
+            let (_, v) = fields.remove(i);
+            fields.push(("summarizers", legacy_summarizer(&before.summarizers, &v)));
+        }
+    }
+    fields.retain(|(k, _)| *k != "summarizer");
     for (k, v) in fields.iter_mut() {
         match *k {
             // null (or blank) uses the default (see agent/prompts.rs).
@@ -418,8 +498,8 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             // null (or an empty list) uses the profile's reviewers.
             "reviewers" => *v = reviewers_value(&s.db(), v, false, &saved_reviewers)?,
-            // null uses the profile's summarizer.
-            "summarizer" => *v = summarizer_value(&s.db(), v, false, &saved_reviewers)?,
+            // null (or an empty list) uses the profile's summarizers.
+            "summarizers" => *v = summarizers_value(&s.db(), v, false, &saved_reviewers)?,
             // A script per status; null or a blank script is none.
             "status_scripts" => {
                 let scripts: Option<BTreeMap<String, String>> =
@@ -439,6 +519,10 @@ pub async fn project_fields(s: &Shared, before: &db::Project, b: &Map<String, Va
             }
             _ => {}
         }
+    }
+    // The first of the summarizers is also kept as the `summarizer` older clients read.
+    if let Some(value) = fields.iter().find(|(k, _)| *k == "summarizers").map(|(_, v)| summarizer_mirror(v)) {
+        fields.push(("summarizer", value));
     }
     // A relative worktrees folder would be made against the server's folder but used by git from
     // the repository's, which puts worktrees in the main checkout; and it can't be the checkout.
@@ -511,6 +595,9 @@ pub async fn delete_project_inner(s: &Shared, id: &str) -> ApiResult<()> {
         terminal::kill_all(s, &t.id).await;
         files.extend(crate::attachments::of_task(&s.db(), &t.id)?);
         // Remove worktrees but keep branches so no committed work is lost.
+        if t.start_from.is_some() {
+            worktree::forget_start(&repo, &t.id).await;
+        }
         if let Some(wt) = &t.worktree_path {
             crate::git::checkpoints::forget(s, &t.id, &repo).await;
             let _ = worktree::git(&repo, &["worktree", "remove", "--force", wt]).await;
@@ -574,4 +661,13 @@ pub(super) fn remove_unused_dir(s: &Shared, dir: &std::path::Path, what: &str) -
         tracing::warn!("removing {} after deleting its {what}: {e}", dir.display());
     }
     Ok(())
+}
+
+/// `GET /projects/{id}/branches` (API 96): the branches of the project's repository a task can
+/// start from (see `check_start_from`), the latest commits first: `{branches: [{name, remote}]}`,
+/// local ones as `feature` and those only on a remote as `origin/feature`. Empty for a folder
+/// that isn't a git repository.
+pub(super) async fn project_branches(State(s): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let project = db::get_project(&s.db(), &id)?.ok_or_else(|| ApiError::not_found("project"))?;
+    Ok(Json(json!({"branches": worktree::branches(&expand_tilde(&project.repo_path)).await})))
 }

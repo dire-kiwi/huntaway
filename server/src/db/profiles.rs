@@ -93,8 +93,12 @@ pub struct Profile {
     /// `reviewers_for`). Empty is one reviewer with the task's config.
     #[serde(default)]
     pub reviewers: Vec<Reviewer>,
-    /// Who summarises them, for its projects with no summarizer of their own (API 87, see
-    /// `summarizer_for`). None is the task's config with the default model and effort.
+    /// Who summarises them, each in a thread of its own, for its projects with no summarizers of
+    /// their own (API 103, see `summarizers_for`). Empty is one summarizer with the task's config
+    /// and the default model and effort.
+    #[serde(default)]
+    pub summarizers: Vec<Reviewer>,
+    /// The first of `summarizers`, for clients from before there could be several (API 87).
     #[serde(default)]
     pub summarizer: Option<Reviewer>,
     /// A task moved to "Ready for merge" has its agent summarise what it would merge, and merges
@@ -135,6 +139,7 @@ impl Profile {
             limit_wait: r.get("limit_wait")?,
             limit_switch: r.get("limit_switch")?,
             reviewers: r.get::<_, Option<String>>("reviewers")?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+            summarizers: summarizers_column(r.get("summarizers")?, r.get("summarizer")?),
             summarizer: r.get::<_, Option<String>>("summarizer")?.and_then(|v| serde_json::from_str(&v).ok()),
             merge_approval: r.get("merge_approval")?,
             require_pr_approval: r.get("require_pr_approval")?,
@@ -186,13 +191,24 @@ pub fn reviewers_for(c: &Connection, project: &Project) -> Result<Vec<Reviewer>>
     Ok(if profile.is_empty() { vec![Reviewer::default()] } else { profile })
 }
 
-/// Who summarises `project`'s tasks: its own summarizer, or else its profile's, or else the
-/// task's config with the defaults.
-pub fn summarizer_for(c: &Connection, project: &Project) -> Result<Reviewer> {
-    if let Some(r) = &project.summarizer {
-        return Ok(r.clone());
+/// Who summarises `project`'s tasks: its own summarizers, or else its profile's, or else one
+/// summarizer with the task's config and the defaults. Each writes in a thread of its own.
+pub fn summarizers_for(c: &Connection, project: &Project) -> Result<Vec<Reviewer>> {
+    if !project.summarizers.is_empty() {
+        return Ok(project.summarizers.clone());
     }
-    Ok(get_profile(c, &project.profile_id)?.and_then(|p| p.summarizer).unwrap_or_default())
+    let profile = get_profile(c, &project.profile_id)?.map(|p| p.summarizers).unwrap_or_default();
+    Ok(if profile.is_empty() { vec![Reviewer::default()] } else { profile })
+}
+
+/// A `summarizers` column (a JSON list), or else the single `summarizer` saved before there could
+/// be several, as a list.
+pub fn summarizers_column(list: Option<String>, single: Option<String>) -> Vec<Reviewer> {
+    let list: Vec<Reviewer> = list.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+    if !list.is_empty() {
+        return list;
+    }
+    single.and_then(|v| serde_json::from_str(&v).ok()).into_iter().collect()
 }
 
 pub fn insert_profile(c: &Connection, name: &str, config_ids: &[String], model: Option<&str>) -> Result<Profile> {
@@ -320,7 +336,7 @@ pub fn task_is_codex(c: &Connection, task: &Task) -> Result<bool> {
     Ok(task_claude_config(c, task)?.is_some_and(|cfg| cfg.is_codex()))
 }
 
-const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer", "merge_approval", "require_pr_approval", "assistant_host"];
+const PROFILE_COLUMNS: &[&str] = &["name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled", "limit_wait", "limit_switch", "reviewers", "summarizer", "summarizers", "merge_approval", "require_pr_approval", "assistant_host"];
 
 pub fn update_profile(c: &Connection, id: &str, fields: &[(&str, Value)]) -> Result<Option<Profile>> {
     update_generic(c, "profiles", PROFILE_COLUMNS, id, fields)?;

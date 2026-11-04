@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { useMemo } from "react";
 import { isScratch, taskLabels, type Project, type Task } from "../../api";
 import { openTask, usePanelOpen } from "../../router";
+import { useSelectable } from "../../selection";
 import { keyPrefix, useStore } from "../../store";
 import { RunningDot, StatusIcon, STATUS_COLOR } from "../ui";
 import type { OnMenu, Progress } from "./TaskCard";
@@ -40,11 +41,13 @@ const EDGE_STYLE: Record<EdgeKind, { dash?: string; color: string; label: string
 };
 
 /** Lays out each group of linked tasks left to right, a column per generation, and stacks the groups. */
-function layout(shown: Task[], all: Record<string, Task>) {
+function layout(shown: Task[], all: Record<string, Task>, onBoard: ReadonlySet<string>, keep: (t: Task) => boolean) {
   const nodes = new Map<string, { task: Task; ghost: boolean }>();
   for (const t of shown) nodes.set(t.id, { task: t, ghost: false });
-  // A subproject's tasks aren't on its project's board, but they're what it's made of.
-  for (const t of Object.values(all)) if (t.kind === "task" && t.parent_id && nodes.get(t.parent_id)?.task.subproject && !nodes.has(t.id)) nodes.set(t.id, { task: t, ghost: false });
+  // A subproject's tasks aren't on its project's board, but they're what it's made of: those the board's search,
+  // filters (statuses too) and Now/Later choice keep, whether or not the subproject itself is shown (it's still linked, faded).
+  const inSubproject = (t: Task) => !!t.parent_id && onBoard.has(t.parent_id) && !!all[t.parent_id]?.subproject;
+  for (const t of Object.values(all)) if (t.kind === "task" && inSubproject(t) && !nodes.has(t.id) && keep(t)) nodes.set(t.id, { task: t, ghost: false });
   // One link between two tasks: waiting on it says the most, then being in it (a subproject's agent creates its tasks too).
   const links = new Map<string, Edge>();
   const RANK: Record<EdgeKind, number> = { depends: 0, contains: 1, created: 2 };
@@ -61,7 +64,7 @@ function layout(shown: Task[], all: Record<string, Task>) {
     if (ghost) continue;
     if (t.created_by) link(t.created_by, t.id, "created");
     for (const d of t.depends_on ?? []) link(d, t.id, "depends");
-    if (t.parent_id && nodes.get(t.parent_id)?.task.subproject) link(t.parent_id, t.id, "contains");
+    if (inSubproject(t)) link(t.parent_id!, t.id, "contains");
   }
   // Without the links a longer way round already makes (A → C when A → B → C): a subproject or plan leads to the
   // first of its tasks, and the rest follow from them, rather than a fan of lines across the whole map.
@@ -166,8 +169,10 @@ function layout(shown: Task[], all: Record<string, Task>) {
 
 function Node({ task, ghost, project, progress, onMenu, style }: { task: Task; ghost?: boolean; project?: Project; progress?: Progress; onMenu?: OnMenu; style?: React.CSSProperties }) {
   const open = usePanelOpen(task.id);
+  const selectable = useSelectable(task.id);
   return (
     <div
+      {...(ghost ? undefined : selectable)}
       role="button"
       tabIndex={0}
       aria-current={open || undefined}
@@ -213,18 +218,25 @@ function Node({ task, ghost, project, progress, onMenu, style }: { task: Task; g
 
 export function GraphView({
   tasks,
+  boardTasks,
+  keep,
   projectOf,
   progressOf,
   onMenu,
 }: {
   tasks: Task[];
+  /** Every task on the board, shown or not: the subprojects among them show their tasks. */
+  boardTasks: Task[];
+  /** Whether the board's search, filters (statuses too) and Now/Later choice keep a task, for the subprojects' tasks. */
+  keep: (t: Task) => boolean;
   projectOf: (t: Task) => Project | undefined;
   progressOf: (t: Task) => Progress | undefined;
   onMenu?: OnMenu;
 }) {
   const all = useStore((s) => s.tasks);
   const projects = useStore((s) => s.projects);
-  const { placed, edges, boxes, width, height, unlinked, at } = useMemo(() => layout(tasks, all), [tasks, all]);
+  const onBoard = useMemo(() => new Set(boardTasks.map((t) => t.id)), [boardTasks]);
+  const { placed, edges, boxes, width, height, unlinked, at } = useMemo(() => layout(tasks, all, onBoard, keep), [tasks, all, onBoard, keep]);
   // A ghost's project may not be one of the board's.
   const projectFor = (t: Task) => projectOf(t) ?? projects.find((p) => p.host_id === t.host_id && p.id === t.project_id);
   const PAD = 24;

@@ -12,6 +12,7 @@ pub(super) async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Valu
         "scratch_host": db::get_setting(&c, "scratch_host")?,
         "terminal_tools": terminal::tools(&c),
         "public_url": db::get_setting(&c, "public_url")?,
+        "now_expiry_hours": crate::agent::focus::expiry_hours(&c),
         "release_prereleases": db::get_setting(&c, crate::update::release::PRERELEASES)?.as_deref() == Some("true"),
     })))
 }
@@ -22,7 +23,9 @@ pub(super) async fn get_settings(State(s): State<Shared>) -> ApiResult<Json<Valu
 /// shortcuts in task terminals (`terminal_tools`, a list of `{id?, name, command}`). And the
 /// address it's reached at from outside (`public_url`, API 63), which its automations' webhook
 /// URLs are shown with. And whether release checks include prereleases (`release_prereleases`,
-/// API 88), which checks again when it changes.
+/// API 88), which checks again when it changes. And how many hours a task can go without activity
+/// in the board's Now view before it goes back to Later (`now_expiry_hours`, API 97; 0 for never,
+/// null for the default of a day).
 pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<String, Value>>) -> ApiResult<Json<Value>> {
     // Null (or blank) clears a setting; a value of another type is a mistake, not a clearing.
     for key in ["default_model", "default_effort", "default_permission_mode", "scratch_host", "public_url"] {
@@ -54,6 +57,14 @@ pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<S
         let url = url.to_string();
         b.insert("public_url".into(), json!(url));
     }
+    let now_expiry = match b.get("now_expiry_hours") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => match v.as_u64().filter(|h| *h <= u64::from(crate::agent::focus::MAX_EXPIRY_HOURS)) {
+            Some(h) => Some(Some(h)),
+            None => return Err(ApiError::bad(format!("now_expiry_hours must be a whole number of hours, 0 to {}, or null", crate::agent::focus::MAX_EXPIRY_HOURS))),
+        },
+    };
     let prereleases = match b.get(crate::update::release::PRERELEASES) {
         Some(v) if !(v.is_null() || v.is_boolean()) => return Err(ApiError::bad("release_prereleases must be true, false or null")),
         Some(v) => Some(v.as_bool() == Some(true)),
@@ -67,6 +78,9 @@ pub(super) async fn update_settings(State(s): State<Shared>, Json(b): Json<Map<S
         if let Some(v) = b.get(key) {
             db::set_setting(&s.db(), key, v.as_str())?;
         }
+    }
+    if let Some(hours) = now_expiry {
+        db::set_setting(&s.db(), crate::agent::focus::EXPIRY_SETTING, hours.map(|h| h.to_string()).as_deref())?;
     }
     if let Some(tools) = tools {
         let v = (!tools.is_empty()).then(|| json!(tools).to_string());

@@ -68,7 +68,7 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
       data-modal
       role="menu"
       style={pos}
-      className="fixed z-50 min-w-44 rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50 narrow:max-h-[calc(100%-8px)] narrow:overflow-y-auto"
+      className="fixed z-50 min-w-44 rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50 max-h-[calc(100%-8px)] overflow-y-auto"
       onContextMenu={(e) => e.preventDefault()}
     >
       {title && <div className="px-2 pt-1 pb-1.5 text-[11.5px] text-faint">{title}</div>}

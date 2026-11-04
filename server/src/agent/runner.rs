@@ -33,7 +33,7 @@ pub use send::*;
 use launch::*;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub const MCP_SERVER_NAME: &str = "huntaway";
 /// The board's MCP server name before the rename to Huntaway. Runs started by an older build, and

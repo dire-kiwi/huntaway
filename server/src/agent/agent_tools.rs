@@ -11,6 +11,10 @@
 //! connectors, the repository) can be turned off per project: they're denied with
 //! `--disallowedTools Skill(<name>)` / `mcp__<server>`. To list them, each run's `init`
 //! message records what the agent had, per Claude config ("seen").
+//!
+//! A global skill can also come from a **skill source**, a git repository the host clones (see
+//! `sources`): its skills are global skills with a `source_id`, so profiles and projects switch them
+//! on and off like any other, and a run gets the skill's whole folder, not just its `SKILL.md`.
 
 use std::path::{Path as FsPath, PathBuf};
 
@@ -24,6 +28,9 @@ use crate::agent::runner::MCP_SERVER_NAME;
 use crate::state::{ApiError, ApiResult, Shared};
 use crate::util::{new_id, now};
 
+mod sources;
+pub use sources::*;
+
 #[derive(Serialize, Clone, Debug)]
 pub struct Skill {
     pub id: String,
@@ -35,6 +42,12 @@ pub struct Skill {
     pub content: String,
     /// As for `McpServer::enabled`.
     pub enabled: bool,
+    /// The skill source (a git repository) it comes from, if it does: it can't be edited or deleted
+    /// by itself then.
+    pub source_id: Option<String>,
+    /// Its folder in the source's clone, relative to the clone's root ("" for the root).
+    #[serde(skip)]
+    pub source_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -49,6 +62,8 @@ impl Skill {
             description: frontmatter(&content).map(|f| f.description).unwrap_or_default(),
             content,
             enabled: r.get("enabled")?,
+            source_id: r.get("source_id")?,
+            source_path: r.get("source_path")?,
             created_at: r.get("created_at")?,
             updated_at: r.get("updated_at")?,
         })
@@ -322,6 +337,7 @@ fn overview(c: &Connection, project: &crate::db::Project) -> ApiResult<Value> {
         "seen": o.seen,
         "global_skills": list_skills(c, None)?,
         "global_mcp_servers": list_mcp_servers(c, None)?,
+        "skill_sources": list_sources(c)?,
         "profile_switches": switches(c, "profile", &project.profile_id)?,
         "project_switches": switches(c, "project", &project.id)?,
     }))
@@ -375,6 +391,7 @@ pub async fn get_global(State(s): State<Shared>) -> ApiResult<Json<Value>> {
     Ok(Json(json!({
         "skills": list_skills(&c, None)?,
         "mcp_servers": list_mcp_servers(&c, None)?,
+        "skill_sources": list_sources(&c)?,
         "profile_switches": profiles,
     })))
 }
@@ -384,7 +401,10 @@ pub struct SwitchBody {
     /// "profile" or "project".
     scope: String,
     scope_id: String,
-    item_id: String,
+    /// A global skill or server. Either this or `source_id` is given.
+    item_id: Option<String>,
+    /// Every skill of a skill source, as they are now.
+    source_id: Option<String>,
     /// None clears it: a profile's default goes back to off, a project follows its profile.
     enabled: Option<bool>,
 }
@@ -400,17 +420,31 @@ pub async fn set_switch(State(s): State<Shared>, Json(b): Json<SwitchBody>) -> A
     if !exists {
         return Err(ApiError::not_found(&b.scope));
     }
-    if get_skill(&c, None, &b.item_id)?.is_none() && get_mcp_server(&c, None, &b.item_id)?.is_none() {
-        return Err(ApiError::not_found("global skill or MCP server"));
-    }
-    match b.enabled {
-        Some(on) => c.execute(
-            "INSERT INTO agent_tool_switches (scope, scope_id, item_id, enabled) VALUES (?1,?2,?3,?4)
-             ON CONFLICT(scope, scope_id, item_id) DO UPDATE SET enabled=?4",
-            params![b.scope, b.scope_id, b.item_id, on],
-        )?,
-        None => c.execute("DELETE FROM agent_tool_switches WHERE scope=?1 AND scope_id=?2 AND item_id=?3", params![b.scope, b.scope_id, b.item_id])?,
+    let items: Vec<String> = match (&b.item_id, &b.source_id) {
+        (Some(id), _) => {
+            if get_skill(&c, None, id)?.is_none() && get_mcp_server(&c, None, id)?.is_none() {
+                return Err(ApiError::not_found("global skill or MCP server"));
+            }
+            vec![id.clone()]
+        }
+        (None, Some(source)) => {
+            if get_source(&c, source)?.is_none() {
+                return Err(ApiError::not_found("skill source"));
+            }
+            c.prepare("SELECT id FROM agent_skills WHERE source_id=?1")?.query_map([source], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+        }
+        (None, None) => return Err(ApiError::bad("item_id or source_id is needed")),
     };
+    for item in items {
+        match b.enabled {
+            Some(on) => c.execute(
+                "INSERT INTO agent_tool_switches (scope, scope_id, item_id, enabled) VALUES (?1,?2,?3,?4)
+                 ON CONFLICT(scope, scope_id, item_id) DO UPDATE SET enabled=?4",
+                params![b.scope, b.scope_id, item, on],
+            )?,
+            None => c.execute("DELETE FROM agent_tool_switches WHERE scope=?1 AND scope_id=?2 AND item_id=?3", params![b.scope, b.scope_id, item])?,
+        };
+    }
     Ok(Json(json!({"ok": true})))
 }
 
@@ -434,6 +468,9 @@ fn create_skill_in(c: &Connection, project_id: Option<&str>, b: SkillBody) -> Ap
 
 fn update_skill_in(c: &Connection, project_id: Option<&str>, id: &str, b: SkillBody) -> ApiResult<Skill> {
     let skill = get_skill(c, project_id, id)?.ok_or_else(|| ApiError::not_found("skill"))?;
+    if skill.source_id.is_some() && b.content.is_some() {
+        return Err(ApiError::bad("this skill comes from a skill source: change it in its repository, then update the source"));
+    }
     let (name, content) = match b.content {
         Some(content) => {
             let f = check_skill(&content)?;
@@ -481,6 +518,9 @@ fn forget_board_skill(c: &Connection, project_id: Option<&str>, name: &str) -> a
 
 fn delete_in(c: &Connection, table: &str, project_id: Option<&str>, id: &str) -> ApiResult<Json<Value>> {
     let skill = if table == "agent_skills" { get_skill(c, project_id, id)? } else { None };
+    if skill.as_ref().is_some_and(|s| s.source_id.is_some()) {
+        return Err(ApiError::bad("this skill comes from a skill source: remove the source to delete its skills"));
+    }
     let n = c.execute(&format!("DELETE FROM {table} WHERE project_id IS ?1 AND id=?2"), params![project_id, id])?;
     if n == 0 {
         return Err(ApiError::not_found(if table == "agent_skills" { "skill" } else { "MCP server" }));
@@ -634,15 +674,53 @@ fn skills_root(state: &Shared, project_id: &str) -> PathBuf {
     state.data_dir.join("projects").join(project_id).join("agent")
 }
 
+/// Where a review or summary thread with skills of its own (`thread_skills`) has its skills written, so
+/// that the project's other runs don't lose or gain them.
+fn thread_skills_root(state: &Shared, project_id: &str, thread_id: &str) -> PathBuf {
+    state.data_dir.join("projects").join(project_id).join("agent-threads").join(thread_id)
+}
+
+/// A deleted review or summary thread's skills folder goes with it.
+pub fn remove_thread_skills(state: &Shared, project_id: &str, thread_id: &str) {
+    let dir = thread_skills_root(state, project_id, thread_id);
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("removing {}: {e}", dir.display());
+        }
+    }
+}
+
 /// What's on in a project: its own enabled skills and servers, then the global ones switched on
 /// for it (its override, else its profile's default). A project's own one takes the name while
 /// it's on; switched off, the global one with that name is used if it's on.
 fn effective(c: &Connection, project: &crate::db::Project) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
+    effective_with(c, project, &[])
+}
+
+/// What's on in a project (see `effective`) and the skills of the board's called `extra`, which a review
+/// or summary thread has on top of the project's whether or not they're on for it: a project's own one
+/// before a global one of that name. A project's own skill switched off for the project's runs can still be picked
+/// for a thread; a global one that's switched off can't.
+fn effective_with(c: &Connection, project: &crate::db::Project, extra: &[String]) -> rusqlite::Result<(Vec<Skill>, Vec<McpServer>)> {
     let mut skills = list_skills(c, Some(&project.id))?;
     let mut servers = list_mcp_servers(c, Some(&project.id))?;
     skills.retain(|s| s.enabled);
     servers.retain(|s| s.enabled);
-    add_global(c, &project.profile_id, Some(&project.id), skills, servers)
+    let (mut skills, servers) = add_global(c, &project.profile_id, Some(&project.id), skills, servers)?;
+    if !extra.is_empty() {
+        let mut more = list_skills(c, Some(&project.id))?;
+        more.extend(list_skills(c, None)?);
+        for name in extra {
+            // The project's own skill of a name comes first, and takes the place of a global one the project has on.
+            let Some(i) = more.iter().position(|s| (s.enabled || s.project_id.is_some()) && s.name == *name) else { continue };
+            match skills.iter().position(|s| s.name == *name) {
+                Some(at) if skills[at].id == more[i].id => {}
+                Some(at) => skills[at] = more.remove(i),
+                None => skills.push(more.remove(i)),
+            }
+        }
+    }
+    Ok((skills, servers))
 }
 
 /// What's on for a profile's runs in no project (its assistant, see agent/assistant.rs): the global
@@ -679,22 +757,23 @@ fn add_global(
     Ok((skills, servers))
 }
 
-/// Set up a project's skills and servers for a run.
-pub fn for_run(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
-    run_tools(state, Scope::Project(project_id), true)
+/// Set up a project's skills and servers for a run of thread `thread_id` (a review or summary thread has the
+/// board skills its reviewer asks for as well, see `db::thread_skills`).
+pub fn for_run(state: &Shared, project_id: &str, thread_id: Option<&str>) -> anyhow::Result<RunTools> {
+    run_tools(state, Scope::Project(project_id), thread_id, true)
 }
 
 /// A project's skills and servers as a run would have them, without setting up its skills.
 pub fn for_preview(state: &Shared, project_id: &str) -> anyhow::Result<RunTools> {
-    run_tools(state, Scope::Project(project_id), false)
+    run_tools(state, Scope::Project(project_id), None, false)
 }
 
 /// Set up the skills and servers for a run of `task`: its project's, or for a profile's assistant
 /// (in no project) the global ones its profile switches on. Other tasks in no project get none.
 pub fn for_task_run(state: &Shared, task: &crate::db::Task, project: Option<&crate::db::Project>) -> anyhow::Result<RunTools> {
     match project {
-        Some(p) => for_run(state, &p.id),
-        None if task.is_assistants() => run_tools(state, Scope::Profile(&task.profile_id), true),
+        Some(p) => for_run(state, &p.id, (task.kind == "review").then_some(task.id.as_str())),
+        None if task.is_assistants() => run_tools(state, Scope::Profile(&task.profile_id), None, true),
         None => Ok(RunTools::default()),
     }
 }
@@ -706,14 +785,19 @@ enum Scope<'a> {
     Profile(&'a str),
 }
 
-fn run_tools(state: &Shared, scope: Scope, sync: bool) -> anyhow::Result<RunTools> {
+fn run_tools(state: &Shared, scope: Scope, thread_id: Option<&str>, sync: bool) -> anyhow::Result<RunTools> {
     let (skills, servers, o, root) = {
         let c = state.db();
         match scope {
             Scope::Project(project_id) => {
                 let project = crate::db::get_project(&c, project_id)?.ok_or_else(|| anyhow::anyhow!("project not found"))?;
-                let (skills, servers) = effective(&c, &project)?;
-                (skills, servers, get_overrides(&c, project_id)?, skills_root(state, project_id))
+                let extra = thread_id.map(|t| crate::db::thread_skills(&c, t)).transpose()?.unwrap_or_default();
+                let (skills, servers) = effective_with(&c, &project, &extra)?;
+                let root = match thread_id.filter(|_| !extra.is_empty()) {
+                    Some(t) => thread_skills_root(state, project_id, t),
+                    None => skills_root(state, project_id),
+                };
+                (skills, servers, get_overrides(&c, project_id)?, root)
             }
             // A profile has no list of others' skills and servers to turn off.
             Scope::Profile(profile_id) => {
@@ -724,7 +808,7 @@ fn run_tools(state: &Shared, scope: Scope, sync: bool) -> anyhow::Result<RunTool
     };
     let enabled: Vec<&Skill> = skills.iter().collect();
     if sync {
-        sync_skills(&root.join(".claude").join("skills"), &enabled)?;
+        sync_skills(&root.join(".claude").join("skills"), &enabled, &sources_root(state))?;
     }
     let mut t = RunTools { skills_dir: (!enabled.is_empty()).then(|| crate::util::path_str(&root)), ..Default::default() };
     for s in servers {
@@ -740,8 +824,9 @@ fn run_tools(state: &Shared, scope: Scope, sync: bool) -> anyhow::Result<RunTool
 }
 
 /// Make `dir` hold exactly these skills. Files that are already right are left alone, since
-/// other agents in the project may be reading them.
-fn sync_skills(dir: &FsPath, skills: &[&Skill]) -> std::io::Result<()> {
+/// other agents in the project may be reading them. A skill from a source (cloned in `sources`) is
+/// its whole folder, with the scripts and references it comes with.
+fn sync_skills(dir: &FsPath, skills: &[&Skill], sources: &FsPath) -> std::io::Result<()> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
@@ -752,6 +837,14 @@ fn sync_skills(dir: &FsPath, skills: &[&Skill]) -> std::io::Result<()> {
         }
     }
     for s in skills {
+        if let (Some(id), Some(path)) = (&s.source_id, &s.source_path) {
+            let from = sources.join(id).join(path);
+            if from.join("SKILL.md").is_file() {
+                copy_skill(&from, &dir.join(&s.name))?;
+                continue;
+            }
+        }
+        // Not a source's, or its clone has gone (the next update brings it back): the saved SKILL.md.
         let file = dir.join(&s.name).join("SKILL.md");
         if std::fs::read_to_string(&file).ok().as_deref() != Some(s.content.as_str()) {
             std::fs::create_dir_all(dir.join(&s.name))?;
@@ -827,7 +920,8 @@ pub async fn for_task(State(s): State<Shared>, Path(id): Path<String>) -> ApiRes
         let places = skill_places(&s, &c, &task, project.as_ref())?;
         let (board, board_off, o) = match &project {
             Some(p) => {
-                let on = effective(&c, p)?.0;
+                let extra = if task.kind == "review" { crate::db::thread_skills(&c, &task.id)? } else { Vec::new() };
+                let on = effective_with(&c, p, &extra)?.0;
                 let off = board_skills_off(&c, p, &on)?;
                 (on, off, get_overrides(&c, &p.id)?)
             }

@@ -3,11 +3,12 @@ import { BellRing, ChevronRight, CircleAlert, Eye, GitMerge, MessagesSquare, Pla
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, canRunAgents, dependencyQueued, limitQueued, readyToCheck, type Project, type Task } from "../../api";
 import { openTask, usePanelOpen } from "../../router";
+import { useSelectable } from "../../selection";
 import { keyPrefix, useHost, useStore } from "../../store";
 import { isDue } from "../../reminders";
 import { Composer } from "../task/thread/Composer";
 import { Markdown } from "../task/thread/Markdown";
-import { PendingPrompts } from "./LiveView";
+import { PendingPrompts } from "./PendingPrompts";
 import { ReviewBadge } from "../task/Review";
 import { Button, ChecksMark, Kbd, PrIcon, RunState, StatusIcon, timeAgo, useClock } from "../ui";
 import type { OnMenu } from "./TaskCard";
@@ -71,6 +72,7 @@ function useLastMessage(task: Task, enabled: boolean) {
 
 function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: Task; project?: Project; bucket: BucketId; picked: boolean; onPick: () => void; onMenu?: OnMenu }) {
   const detailed = DETAILED.has(bucket);
+  const selectable = useSelectable(task.id);
   const last = useLastMessage(task, detailed);
   const host = useHost(task.host_id);
   const upsertTask = useStore((s) => s.upsertTask);
@@ -111,6 +113,7 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
     return (
       <div
         data-triage={task.id}
+        {...selectable}
         onClick={() => openTask(task.id)}
         onContextMenu={onMenu && ((e) => onMenu(e, task))}
         className={clsx("flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-[12.5px] hover:bg-white/[0.03]", (picked || open) && "bg-accent/[0.07]")}
@@ -143,6 +146,7 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
   return (
     <div
       data-triage={task.id}
+      {...selectable}
       onContextMenu={onMenu && ((e) => onMenu(e, task))}
       className={clsx("rounded-lg border bg-panel-2 transition-colors", picked ? "border-accent/50" : "border-line hover:border-line-strong", open && "ring-1 ring-accent/60")}
     >

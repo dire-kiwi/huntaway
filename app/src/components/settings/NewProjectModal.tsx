@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Folder, Loader2 } from "lucide-react";
+import { Folder, Globe, Loader2, Lock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, hostSupports } from "../../api";
 import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "./repoSource";
@@ -31,6 +31,16 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
   const cloneDir = profileRow?.clone_dir?.trim() || defaultCloneDir(profileName);
   const [dest, setDest] = useState<string | null>(null);
   const clonePathNow = repo ? (dest ?? clonePath(cloneDir, repo.name)) : "";
+  // Folder tab: also create a GitHub repository for the folder (API 102).
+  const canCreateRepo = !fromGithub && hostSupports(hostRow, 102);
+  const [createRepo, setCreateRepo] = useState(false);
+  const [repoName, setRepoName] = useState("");
+  const [owner, setOwner] = useState("");
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const creating = canCreateRepo && createRepo;
+  const folderName = path.split("/").filter(Boolean).pop() ?? "";
+  // The repository was created and the project added, but its commits weren't pushed: said here rather than closing as if all went well.
+  const [pushFailed, setPushFailed] = useState<{ projectId: string; repo: string; path: string; error: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // A clone can take a while, and the dialog can be closed meanwhile. Open again on each mount, as
@@ -58,9 +68,24 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
       }
       const p = fromGithub
         ? await api.cloneProject(host, pid, { repo: repo!.full_name, repo_path: clonePathNow.trim(), name, key: key || undefined })
-        : await api.createProject(host, pid, { name, repo_path: path, key: key || undefined });
-      useStore.getState().upsertProject({ ...p, host_id: host });
+        : creating
+          ? await api.createGithubProject(host, pid, {
+              repo_path: path,
+              visibility,
+              repo_name: repoName.trim() || undefined,
+              owner: owner.trim() || undefined,
+              name,
+              key: key || undefined,
+            })
+          : await api.createProject(host, pid, { name, repo_path: path, key: key || undefined });
+      const { github, ...project } = p as typeof p & { github?: { full_name: string; push_error: string | null } };
+      useStore.getState().upsertProject({ ...project, host_id: host });
       if (closed.current) return;
+      if (github?.push_error) {
+        setPushFailed({ projectId: p.id, repo: github.full_name, path: p.repo_path, error: github.push_error });
+        setBusy(false);
+        return;
+      }
       onClose();
       navigate({ name: "board", projectId: p.id });
     } catch (e) {
@@ -69,6 +94,37 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
       setBusy(false);
     }
   };
+  if (pushFailed) {
+    return (
+      <Modal title="Project added, but not pushed" onClose={onClose} width="max-w-xl">
+        <div className="space-y-4 text-[13px]">
+          <p>
+            Created <span className="font-mono">{pushFailed.repo}</span> on GitHub and added the project, but its commits weren't pushed:
+          </p>
+          <div role="alert" className="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
+            {pushFailed.error}
+          </div>
+          <p className="text-muted">
+            The repository on GitHub is empty. Once that's sorted out, push it from <span className="font-mono">{pushFailed.path}</span> with{" "}
+            <span className="font-mono">git push -u origin HEAD</span>.
+          </p>
+          <ModalFooter>
+            <div className="flex justify-end">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  onClose();
+                  navigate({ name: "board", projectId: pushFailed.projectId });
+                }}
+              >
+                Open project
+              </Button>
+            </div>
+          </ModalFooter>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal title="Add project" onClose={onClose} width="max-w-xl">
       <div className="space-y-4">
@@ -140,9 +196,50 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
             )}
           </>
         ) : (
-          <Field label="Repository folder">
-            <DirPicker hostId={host} value={path} onChange={setPath} />
-          </Field>
+          <>
+            <Field label="Repository folder">
+              <DirPicker hostId={host} value={path} onChange={setPath} />
+            </Field>
+            {canCreateRepo && (
+              <div className="space-y-3 rounded-lg border border-line bg-panel/50 p-3">
+                <label className="flex items-center gap-2 text-[13px]">
+                  <input type="checkbox" checked={createRepo} onChange={(e) => setCreateRepo(e.target.checked)} />
+                  Create a GitHub repository for it
+                </label>
+                {creating && (
+                  <>
+                    <div className="flex w-fit items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5" role="radiogroup" aria-label="Visibility">
+                      {(["private", "public"] as const).map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          role="radio"
+                          aria-checked={visibility === v}
+                          onClick={() => setVisibility(v)}
+                          className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px]", visibility === v ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                        >
+                          {v === "private" ? <Lock size={12} /> : <Globe size={12} />} {v === "private" ? "Private" : "Public"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Owner" hint="An organization, or leave empty for the profile's GitHub account.">
+                        <Input
+                          value={owner}
+                          placeholder={profileRow?.github_account?.split("/").pop() || "your account"}
+                          onChange={(e) => setOwner(e.target.value)}
+                          spellCheck={false}
+                        />
+                      </Field>
+                      <Field label="Repository name">
+                        <Input value={repoName} placeholder={folderName || "name"} onChange={(e) => setRepoName(e.target.value)} spellCheck={false} />
+                      </Field>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
         )}
         {!profileId && (
           <Field label={`Claude config directory for "${profileName}" on this host`} hint="This host has no such profile yet; it's created with this directory.">
@@ -172,8 +269,9 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
                 {busy && <Loader2 size={13} className="animate-spin" />} {busy ? "Cloning…" : "Clone and add project"}
               </Button>
             ) : (
-              <Button variant="primary" disabled={busy || !path} onClick={submit}>
-                Add project
+              <Button variant="primary" disabled={busy || !path || (creating && !(repoName.trim() || folderName))} onClick={submit}>
+                {busy && creating && <Loader2 size={13} className="animate-spin" />}{" "}
+                {creating ? (busy ? "Creating…" : `Create ${visibility} repository and add project`) : "Add project"}
               </Button>
             )}
           </div>

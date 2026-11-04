@@ -184,7 +184,7 @@ impl AppState {
     /// `update_task`, if `when` holds: it's checked under the lock the change is made with, so
     /// nothing can change what it checks in between. None if it doesn't hold (or there's no task).
     pub fn update_task_if(&self, id: &str, fields: &[(&str, Value)], when: impl FnOnce(&Connection) -> anyhow::Result<bool>) -> anyhow::Result<Option<Task>> {
-        let t = {
+        let (t, finished) = {
             let c = self.db();
             if !when(&c)? {
                 return Ok(None);
@@ -203,8 +203,18 @@ impl AppState {
             }
             // Under the lock, so two changes are broadcast in the order they were made.
             self.emit_task(&t);
-            t
+            let finished = old_status.is_some_and(|old| old != "done") && t.status == "done";
+            (t, finished)
         };
+        // The tasks stacked on it keep where they took its branch up to, which may well be deleted now.
+        if finished && let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let (me, id) = (self.me.upgrade(), t.id.clone());
+            rt.spawn(async move {
+                if let Some(me) = me {
+                    crate::git::worktree::keep_starts(&me, &id).await;
+                }
+            });
+        }
         // A task done with its agents gives up its temp folder.
         if fields.iter().any(|(k, _)| ["status", "running"].contains(k)) {
             self.task_changed(&t);

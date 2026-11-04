@@ -110,6 +110,10 @@ pub struct Task {
     pub worktree_path: Option<String>,
     pub branch: Option<String>,
     pub base_branch: Option<String>,
+    /// What its worktree starts from, when it isn't the project's base branch (API 96): picked
+    /// before the worktree is made, which sets `base_branch` from it (see worktree::setup).
+    #[serde(default)]
+    pub start_from: Option<StartFrom>,
     pub worktree_state: String,
     pub worktree_error: Option<String>,
     pub session_id: Option<String>,
@@ -200,11 +204,20 @@ pub struct Task {
     /// What the reminder is for, set with it.
     #[serde(default)]
     pub reminder: Option<String>,
+    /// When the task went into "now" (UTC, RFC 3339), which the board's Now view lists; unset for the tasks in "later"
+    /// (all of them to begin with). It's set when the user prompts the task or moves it there, and a task with no
+    /// activity for the host's `now_expiry_hours` goes back (see agent/focus.rs).
+    #[serde(default)]
+    pub now_at: Option<String>,
     /// The latest automatic review of the task's work.
     pub review: Option<Review>,
-    /// The latest summary of its changes, written once its review passed (see review/summary.rs).
+    /// The first of its `summaries`, for clients from before there could be several (API 84).
     #[serde(default)]
     pub summary: Option<ChangeSummary>,
+    /// The latest summaries of its changes, one from each summarizer, written once its review
+    /// passed (API 103, see review/summary.rs).
+    #[serde(default)]
+    pub summaries: Vec<ChangeSummary>,
     /// How full its agent's context window is, as of its latest reply (see agent/context.rs).
     #[serde(default)]
     pub context: Option<Context>,
@@ -251,6 +264,7 @@ impl Task {
 
     fn from_row(r: &Row) -> rusqlite::Result<Self> {
         let auto_allow: String = r.get("auto_allow")?;
+        let summaries = summaries_column(r.get("summary")?);
         Ok(Self {
             id: r.get("id")?,
             profile_id: r.get("profile_id")?,
@@ -276,6 +290,7 @@ impl Task {
             worktree_path: r.get("worktree_path")?,
             branch: r.get("branch")?,
             base_branch: r.get("base_branch")?,
+            start_from: r.get::<_, Option<String>>("start_from")?.and_then(|v| serde_json::from_str(&v).ok()),
             worktree_state: r.get("worktree_state")?,
             worktree_error: r.get("worktree_error")?,
             session_id: r.get("session_id")?,
@@ -306,8 +321,10 @@ impl Task {
             starred: r.get("starred")?,
             remind_at: r.get("remind_at")?,
             reminder: r.get("reminder")?,
+            now_at: r.get("now_at")?,
             review: r.get::<_, Option<String>>("review")?.and_then(|v| serde_json::from_str(&v).ok()),
-            summary: r.get::<_, Option<String>>("summary")?.and_then(|v| serde_json::from_str(&v).ok()),
+            summary: summaries.first().cloned(),
+            summaries,
             context: r.get::<_, Option<String>>("context")?.and_then(|v| serde_json::from_str(&v).ok()),
             rewind: r.get::<_, Option<String>>("rewind")?.and_then(|v| serde_json::from_str(&v).ok()),
             cost_usd: r.get("cost_usd")?,
@@ -517,6 +534,16 @@ pub fn created_tasks(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
+/// The tasks stacked on task `task_id`: those that start from it (see StartFrom::Task).
+pub fn stacked_on(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
+    let mut st = c.prepare(
+        "SELECT * FROM tasks WHERE start_from IS NOT NULL AND json_valid(start_from)
+           AND json_extract(start_from, '$.type')='task' AND json_extract(start_from, '$.task_id')=?1 ORDER BY created_at",
+    )?;
+    let rows = st.query_map([task_id], Task::from_row)?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
 /// Scratch chats in no project. There are none since they became scratch tasks, but boards
 /// from before that still ask.
 pub fn list_profile_scratch(c: &Connection, profile_id: &str) -> Result<Vec<Task>> {
@@ -603,6 +630,25 @@ pub fn review_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     Ok(rows)
 }
 
+/// The board skills (names) a review or summary thread has on top of its project's.
+pub fn thread_skills(c: &Connection, thread_id: &str) -> Result<Vec<String>> {
+    let v: Option<String> = c.query_row("SELECT skills FROM review_thread_skills WHERE task_id=?1", [thread_id], |r| r.get(0)).optional()?;
+    Ok(v.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
+}
+
+/// Sets the board skills a review or summary thread has on top of its project's (none removes them).
+pub fn set_thread_skills(c: &Connection, thread_id: &str, skills: &[String]) -> Result<()> {
+    if skills.is_empty() {
+        c.execute("DELETE FROM review_thread_skills WHERE task_id=?1", [thread_id])?;
+    } else {
+        c.execute(
+            "INSERT INTO review_thread_skills (task_id, skills) VALUES (?1,?2) ON CONFLICT(task_id) DO UPDATE SET skills=?2",
+            params![thread_id, json!(skills).to_string()],
+        )?;
+    }
+    Ok(())
+}
+
 /// A task's summary threads (review threads that summarise its changes, see review/summary.rs), oldest first.
 pub fn summary_threads(c: &Connection, task_id: &str) -> Result<Vec<Task>> {
     let mut st = c.prepare("SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' AND task_type='summary' ORDER BY created_at, number")?;
@@ -675,6 +721,43 @@ pub fn subproject_status(sp: &Task, tasks: &[Task]) -> Option<&'static str> {
 /// Whether a task counts as merged for the tasks that depend on it.
 pub fn is_merged(t: &Task) -> bool {
     t.status == "done" && t.resolution.as_deref().is_none_or(|r| r == "done")
+}
+
+/// The branch `task` merges into and is compared with: its base branch, else its project's. One
+/// stacked on another task (see StartFrom) that's merged by now goes where that one went instead,
+/// as GitHub retargets a pull request whose base branch is deleted; so does one that started from
+/// a task that was merged already, and so took that one's base branch, once that goes somewhere else.
+pub fn task_base(c: &Connection, task: &Task, project: Option<&Project>) -> Option<String> {
+    let own = |t: &Task| t.base_branch.clone().or_else(|| project.and_then(|p| p.base_branch.clone())).filter(|b| !b.is_empty());
+    let mut t = task.clone();
+    // Each step is to a task it starts from, which can't lead back (see api::check_start_from); a
+    // few are as deep as stacks go.
+    for _ in 0..16 {
+        let Some(StartFrom::Task { task_id }) = &t.start_from else { break };
+        match get_task(c, task_id).ok().flatten() {
+            // Its base branch came from that task as its worktree was made (its branch, or where it went),
+            // and setting one of its own drops what it starts from (see api::update_task_inner), so it
+            // goes where that went, even once the board has deleted that task's branch.
+            Some(other) if is_merged(&other) => t = other,
+            _ => break,
+        }
+    }
+    own(&t)
+}
+
+/// The task whose branch `task_base` has `task` go to, when that's a task it's stacked on (directly,
+/// or by way of ones merged since) that isn't merged yet.
+pub fn stacked_base(c: &Connection, task: &Task) -> Option<Task> {
+    let mut t = task.clone();
+    for _ in 0..16 {
+        let Some(StartFrom::Task { task_id }) = &t.start_from else { return None };
+        match get_task(c, task_id).ok().flatten() {
+            Some(other) if is_merged(&other) => t = other,
+            Some(other) => return (other.branch.is_some() && other.branch == t.base_branch).then_some(other),
+            None => return None,
+        }
+    }
+    None
 }
 
 /// The tasks `task` depends on that aren't merged yet, in the order it lists them. Deleted
@@ -854,8 +937,8 @@ fn insert_task_now(c: &Connection, t: NewTask) -> Result<Task> {
 
 const TASK_COLUMNS: &[&str] = &[
     "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
-    "base_branch", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "merge_approval", "attention_reason",
-    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+    "base_branch", "start_from", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "merge_approval", "attention_reason",
+    "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "now_at", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
 ];
 
 /// Update whitelisted task columns from a list of (column, json value) pairs.

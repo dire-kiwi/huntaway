@@ -31,8 +31,11 @@ pub fn run(body: impl AsyncFnOnce() + Send + 'static) {
 pub fn run_within(limit: Duration, body: impl AsyncFnOnce() + Send + 'static) {
     let (done, finished) = mpsc::channel();
     let name = std::thread::current().name().unwrap_or("test").to_string();
+    // A main thread's 8 MiB rather than a spawned one's 2: a debug build gives an async test body a stack slot for each
+    // future it awaits, and one that makes many board tool calls outgrew 2 MiB on that alone.
     let worker = std::thread::Builder::new()
         .name(name)
+        .stack_size(8 << 20)
         .spawn(move || {
             IN_RUN.set(true);
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
