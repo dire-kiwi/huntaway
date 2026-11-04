@@ -374,3 +374,25 @@ test("a plan form's reset that its own handler calls off keeps the answers", asy
     assert.equal(await frame.locator("input[name=owner]").inputValue(), "Bob");
   });
 });
+
+test("the agent's last reply is closed under the plan until Summary opens it", async () => {
+  const plan = await demoPlan();
+  await withBrowser(server, { allowErrors: [/open-token/] }, async (ui) => {
+    const { page } = ui;
+    const reply = "I rewrote the approach section around CSS custom properties.";
+    // The demo plan has no reply from its agent: add one to its thread.
+    await page.route(new RegExp(`/tasks/${plan.id}/messages(\\?.*)?$`), async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const res = await route.fetch();
+      const body = await res.json();
+      const list = Array.isArray(body) ? body : body.messages;
+      const at = new Date().toISOString();
+      list.push({ id: 1_000_000, task_id: plan.id, kind: "claude", data: { type: "result", subtype: "success", result: reply }, created_at: at });
+      return route.fulfill({ response: res, json: body });
+    });
+    await openPlan(ui, plan);
+    await ui.run(["wait css=button[aria-expanded=false]:has-text('Summary')"]);
+    assert.equal(await page.getByText(reply).count(), 0);
+    await ui.run(["click Summary", "wait " + reply, "wait css=button[aria-expanded=true]:has-text('Summary')", "click Summary", "gone " + reply]);
+  });
+});
