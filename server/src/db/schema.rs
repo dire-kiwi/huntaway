@@ -762,7 +762,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         }
         conn.execute_batch("PRAGMA user_version=75; COMMIT;")?;
     }
-    if version < 76 {
+    if version < 87 {
         // The one-time tokens that answer a permission prompt from a notification (see integrations/push_answers.rs).
         conn.execute_batch(
             "BEGIN;
@@ -776,20 +776,20 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                claimed_at TEXT
              );
              CREATE INDEX IF NOT EXISTS push_answer_tokens_request ON push_answer_tokens(request_id, host_id);
-             PRAGMA user_version=76; COMMIT;",
+             PRAGMA user_version=87; COMMIT;",
         )?;
     }
-    if version < 77 {
+    if version < 88 {
         // Each profile's assistant (see Task::is_assistant): one at most, keyed A-<n>, so a project
         // with the key A moves to a free one.
         conn.execute_batch("BEGIN;")?;
         free_task_key(&conn, ASSISTANT_TASK_KEY, "AP")?;
         conn.execute_batch(
             "CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_assistant ON tasks(profile_id) WHERE task_type='assistant';
-             PRAGMA user_version=77; COMMIT;",
+             PRAGMA user_version=88; COMMIT;",
         )?;
     }
-    if version < 78 {
+    if version < 89 {
         // The linked host a profile's assistant runs on (see agent/assistant.rs), and whether a linked
         // host's agents may use this board's tools (see hosts/uplink.rs).
         conn.execute_batch("BEGIN;")?;
@@ -799,13 +799,13 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                 conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
             }
         }
-        conn.execute_batch("PRAGMA user_version=78; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=89; COMMIT;")?;
     }
-    if version < 79 {
+    if version < 90 {
         // Devices paired with the board, each with a token of its own (see devices.rs).
-        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=79; COMMIT;", crate::devices::TABLE))?;
+        conn.execute_batch(&format!("BEGIN; {} PRAGMA user_version=90; COMMIT;", crate::devices::TABLE))?;
     }
-    if version < 80 {
+    if version < 91 {
         // Routines: automations that belong to a profile rather than a project (see
         // integrations/automations.rs). SQLite can't drop NOT NULL, so the table is rebuilt, with
         // foreign keys off so dropping the old one doesn't take the runs with it; ids, runs and
@@ -813,7 +813,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
         let has = |table: &str, col: &str| -> rusqlite::Result<bool> {
             conn.query_row("SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name=?2", [table, col], |r| r.get(0))
         };
-        let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V80 };
+        let rebuild = if has("automations", "profile_id")? { "" } else { SCHEMA_V91 };
         // The routines' runs whose messages are in the one queued on a thread (see db::Queued::routine_runs).
         let queued = if has("tasks", "queued_routine_runs")? { "" } else { "ALTER TABLE tasks ADD COLUMN queued_routine_runs TEXT;" };
         let mut runs = String::new();
@@ -826,10 +826,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             "PRAGMA foreign_keys=OFF; BEGIN; {rebuild} {runs} {queued}
              CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
              CREATE INDEX IF NOT EXISTS automation_runs_agent_run ON automation_runs(agent_run_id);
-             PRAGMA user_version=80; COMMIT; PRAGMA foreign_keys=ON;"
+             PRAGMA user_version=91; COMMIT; PRAGMA foreign_keys=ON;"
         ))?;
     }
-    if version < 81 {
+    if version < 92 {
         // When a prompt from a routine run is denied if nobody has answered it, and the approval
         // rule that asked it (see agent/approval_rules.rs); the notifications' answer tokens stop at
         // the same time; and the action log of the calls that hit an ask or never rule. Columns are
@@ -866,10 +866,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
              );
              CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, created_at);
              CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
-             PRAGMA user_version=81; COMMIT;",
+             PRAGMA user_version=92; COMMIT;",
         )?;
     }
-    if version < 82 {
+    if version < 93 {
         // Native push (integrations/push.rs): a subscription's `kind`, `web` (Web Push, as all of them were before) or
         // `expo` (the mobile app, through Expo's push service: `endpoint` is its Expo push token, and `p256dh` and `auth`
         // are unused), and the paired device that made it, whose subscriptions go when it's revoked.
@@ -880,20 +880,20 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
                 conn.execute_batch(&format!("ALTER TABLE push_subscriptions ADD COLUMN {column} {kind};"))?;
             }
         }
-        conn.execute_batch("PRAGMA user_version=82; COMMIT;")?;
+        conn.execute_batch("PRAGMA user_version=93; COMMIT;")?;
     }
     Ok(conn)
 }
 
 /// The latest database version (`PRAGMA user_version`).
 #[cfg(test)]
-pub const VERSION: i64 = 82;
+pub const VERSION: i64 = 93;
 
 /// Automations get a profile, and a project only if they're a project's (none for a profile's
 /// routine), and the conditions a run is checked against first: the hours it may run in, a
 /// command to run first, and a budget a day. Their runs get how a routine's agent ended and what it cost.
-const SCHEMA_V80: &str = r#"
-CREATE TABLE automations_v80 (
+const SCHEMA_V91: &str = r#"
+CREATE TABLE automations_v91 (
   id TEXT PRIMARY KEY,
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
@@ -911,11 +911,11 @@ CREATE TABLE automations_v80 (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO automations_v80 (id, profile_id, project_id, name, enabled, trigger, action, token, secret, next_run_at, last_run_at, created_at, updated_at)
+INSERT INTO automations_v91 (id, profile_id, project_id, name, enabled, trigger, action, token, secret, next_run_at, last_run_at, created_at, updated_at)
   SELECT a.id, p.profile_id, a.project_id, a.name, a.enabled, a.trigger, a.action, a.token, a.secret, a.next_run_at, a.last_run_at, a.created_at, a.updated_at
   FROM automations a JOIN projects p ON p.id = a.project_id;
 DROP TABLE automations;
-ALTER TABLE automations_v80 RENAME TO automations;
+ALTER TABLE automations_v91 RENAME TO automations;
 CREATE INDEX IF NOT EXISTS automations_project ON automations(project_id);
 CREATE INDEX IF NOT EXISTS automations_profile ON automations(profile_id);
 DELETE FROM automation_runs WHERE automation_id NOT IN (SELECT id FROM automations);

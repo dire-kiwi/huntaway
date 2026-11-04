@@ -1,10 +1,10 @@
 import { enc, type Http } from "./http";
 import { type Host, hostSupports } from "./hosts";
 
-/** Approval rules (API 102): what a profile's assistant may do (allow), asks first (ask) or never does, per tool or MCP
+/** Approval rules (API 112): what a profile's assistant may do (allow), asks first (ask) or never does, per tool or MCP
  *  server, whatever its thread's mode; prompts from routine runs expire; and an action log of the calls the rules asked
  *  about or turned away (see server/src/agent/approval_rules.rs). */
-export const APPROVAL_RULES_API = 102;
+export const APPROVAL_RULES_API = 112;
 
 export const hasApprovalRules = (h: Host | undefined) => hostSupports(h, APPROVAL_RULES_API);
 
@@ -46,7 +46,7 @@ export type ApprovalAction = {
   rule: string;
   decision: "ask" | "never";
   outcome: "pending" | "allowed" | "denied" | "expired" | "blocked";
-  /** `user` (on the board), `push` (a notification), `telegram` (its buttons, API 104), `expiry` (nobody, in time), `mode`
+  /** `user` (on the board), `push` (a notification), `telegram` (its buttons, API 114), `expiry` (nobody, in time), `mode`
    *  (Don't ask), `rule`, or `ended` (its run ended first). */
   answered_by: string | null;
   created_at: string;

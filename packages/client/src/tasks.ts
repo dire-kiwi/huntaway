@@ -210,7 +210,7 @@ export interface TaskDocument {
   /** The version `content` is, or null before the agent has written anything. */
   version: number | null;
   content: string | null;
-  /** The assistant's brief (API 105): its items to rate, from the run's brief.json of the same day, as the host checked them. */
+  /** The assistant's brief (API 115): its items to rate, from the run's brief.json of the same day, as the host checked them. */
   items?: BriefListItem[];
 }
 
@@ -236,8 +236,8 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task is, if not a code task: a scratch task (API 47), the profile's assistant (API 97, see `isAssistant`) or
-   *  a routine's run of it (API 101, see `isRoutine`).
+  /** What the task is, if not a code task: a scratch task (API 47), the profile's assistant (API 107, see `isAssistant`) or
+   *  a routine's run of it (API 111, see `isRoutine`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
   task_type?: TaskType | "assistant" | "routine" | DocumentType | null;
@@ -461,7 +461,7 @@ export const tasksApi = ({ on, storage }: Http) => ({
   /** All of the profile's tasks (not reviews), in every project and none. */
   profileTasks: (h: string, profileId: string) => on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
-   *  assistant (API 97), which is off the board. */
+   *  assistant (API 107), which is off the board. */
   groupTasks: (h: string, profileId: string, assistant = false) =>
     on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${assistant ? "?include_assistant=true" : ""}`),
   createGroupTask: (

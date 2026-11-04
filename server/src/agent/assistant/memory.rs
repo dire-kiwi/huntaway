@@ -831,7 +831,7 @@ routines), my ongoing projects and goals, and anything else you keep in mind abo
 one fact per line, with dates where you know them. Include only what you actually know or remember, without guessing, and \
 leave out passwords and other secrets.";
 
-/// `GET /profiles/{id}/assistant/memory` (API 99): the assistant's workspace and its files, how much of each memory file a
+/// `GET /profiles/{id}/assistant/memory` (API 109): the assistant's workspace and its files, how much of each memory file a
 /// run is told (`cap` characters, or `cap_bytes` bytes), whether there's history, and the prompt for an import.
 pub async fn overview(State(s): State<Shared>, UrlPath(id): UrlPath<String>) -> ApiResult<Json<Value>> {
     let (task, dir) = open(&s, &id).await?;

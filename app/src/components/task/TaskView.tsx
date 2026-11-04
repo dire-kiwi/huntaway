@@ -128,7 +128,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     setTab(openingTab(useStore.getState().tasks[taskId]));
     setMounted([]);
   }, [taskId, found]);
-  // A thread off every list the board loads (a routine's run of the assistant, API 101) is fetched by itself, from the
+  // A thread off every list the board loads (a routine's run of the assistant, API 111) is fetched by itself, from the
   // hosts that have them, when it's opened by its link.
   const [seeking, setSeeking] = useState(false);
   useEffect(() => {
@@ -186,7 +186,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
   const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
-  // The assistant's morning brief (API 105), its memory files (API 99), and its routines (API 101).
+  // The assistant's morning brief (API 115), its memory files (API 109), and its routines (API 111).
   if (assistant && hasBrief(host)) tabs.push("brief");
   if (assistant && hasMemory(host)) tabs.push("memory");
   if (assistant && hasRoutines(host)) tabs.push("routines");
@@ -195,7 +195,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
-  // The assistant's action log (API 102): what its approval rules asked about or blocked.
+  // The assistant's action log (API 112): what its approval rules asked about or blocked.
   if (assistant && hasApprovalRules(host)) tabs.push("actions");
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");

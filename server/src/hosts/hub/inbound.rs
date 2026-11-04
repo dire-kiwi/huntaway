@@ -51,7 +51,7 @@ async fn serve_tunnel(s: Shared, ws: WebSocket) -> Result<()> {
         bail!("{name}: {reason}");
     };
     db::note_inbound_link(&s.db(), &host_id, &name)?;
-    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 98 ignore it).
+    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 108 ignore it).
     let hello = Down::Hello { hub_id: s.host_id.clone(), name: s.host_name.clone(), api_version: API_VERSION };
     let _ = conn_tx(&conn).map(|tx| tx.send(hello));
     let writer = tokio::spawn(async move {

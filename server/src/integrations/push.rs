@@ -17,7 +17,7 @@
 //! a message sent on Telegram, which goes back there. A reply says only "Replied"; a report its first line, but not
 //! through Expo (see `observe_report`).
 //!
-//! The mobile app (mobile/, API 103) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and
+//! The mobile app (mobile/, API 113) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and
 //! its pushes go through Expo's push service (see `deliver_expo`), which needs no keys kept here. Expo, Apple and
 //! Google can read those, so they say less (see `Message::summary`). A paired device sees and changes only the
 //! subscriptions it made, and they go when it's revoked.
@@ -176,14 +176,14 @@ pub struct Events {
     pub merge: bool,
     #[serde(default)]
     pub done: bool,
-    /// Whose permission prompts it gets, with Allow and Deny (API 96).
+    /// Whose permission prompts it gets, with Allow and Deny (API 106).
     #[serde(default)]
     pub prompts: Prompts,
     /// The assistant finished a reply, other than one to a message sent to it on Telegram (which answers there; see
     /// `telegram::on_turn_end`). Off unless chosen, also for the subscriptions from before there was a choice.
     #[serde(default)]
     pub replies: bool,
-    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 105). On for a new
+    /// The reports the assistant's routines post in its thread, such as the morning brief's (API 115). On for a new
     /// subscription, unless it says otherwise; off for one stored before it could choose (HA-162), so a device that never
     /// chose isn't suddenly sent them.
     #[serde(default)]
@@ -1223,7 +1223,7 @@ pub async fn info(State(s): State<Shared>, device: Device) -> ApiResult<Json<Val
 #[derive(Deserialize)]
 pub struct Subscribe {
     endpoint: String,
-    /// `web` (the default) or `expo` (API 103).
+    /// `web` (the default) or `expo` (API 113).
     #[serde(default)]
     kind: Kind,
     /// A browser's (not for `expo`).

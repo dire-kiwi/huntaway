@@ -335,7 +335,7 @@ pub fn apply_mode_to_pending(s: &Shared, task: &Task) -> ApiResult<()> {
 }
 
 /// Prompts waiting for an answer, oldest first: all of this host's, or one task's.
-/// Pending prompts, of one task, or of one profile's tasks with `profile_id` (API 100).
+/// Pending prompts, of one task, or of one profile's tasks with `profile_id` (API 110).
 pub fn pending(s: &Shared, task_id: Option<&str>, profile_id: Option<&str>) -> ApiResult<Vec<Value>> {
     let c = s.db();
     let mut st = c.prepare(

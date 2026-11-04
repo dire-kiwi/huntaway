@@ -205,7 +205,7 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
-Each profile has an **assistant** (API 97): one long-lived conversation outside every project,
+Each profile has an **assistant** (API 107): one long-lived conversation outside every project,
 opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
 It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
 `{"text": …}` sends it a message), keyed `A-<n>` (no project can use the key `A`; one that had it
@@ -220,7 +220,7 @@ merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and th
 lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
 whatever access their profile has.
 
-The assistant **remembers** you (API 99) in files in its workspace: `USER.md` (who you are, your
+The assistant **remembers** you (API 109) in files in its workspace: `USER.md` (who you are, your
 preferences), `MEMORY.md` (lasting facts) and a log for each day, `memory/YYYY-MM-DD.md` (in the
 host's time zone). The board, not the CLI, puts them into the instructions of every run, so it's
 the same on Claude Code and Codex and always what the files say now: `USER.md` and `MEMORY.md` up
@@ -249,7 +249,7 @@ assistant's workspace: paths with `..`, in `.git` or through a symlink are refus
 workspace (or `assistants` folder) that's been replaced by a symlink, whose memory isn't loaded or
 committed either.
 
-**Approval rules** (API 102) say what the assistant may do outside the board (*allow*), asks you
+**Approval rules** (API 112) say what the assistant may do outside the board (*allow*), asks you
 first each time (*ask*) or never does (*never*), whatever its thread's permission mode. Edit them
 under *Rules* in its details, or with `GET`/`POST /api/profiles/<id>/approval-rules` (`{"rules":
 [{"tool", "decision"}], "expiry_minutes"}`, or `{"reset": true}`). A rule names a tool
@@ -461,7 +461,7 @@ push services (a `mailto:` or `https:` URL; the default is this project's page).
 is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, so it always loads
 the board's current UI.
 
-**Permission prompts** (API 96) are pushed too, with **Allow** and **Deny** on the notification, so
+**Permission prompts** (API 106) are pushed too, with **Allow** and **Deny** on the notification, so
 you can answer one from the lock screen. Each device picks whose: *None*, *The assistant's* (the
 default) or *Every task's*. A device that gets a task's prompt isn't also told the task needs
 attention. Questions, plans and approvals of changes to the board (projects, deletions,
@@ -470,7 +470,7 @@ key and title and the tool's name, but never the tool's input, as it passes thro
 service. Android's Chrome shows the buttons; iOS doesn't show buttons on web notifications, so
 there you tap through to the board.
 
-**Routine reports** (API 105) are pushed too, once each: what the assistant's routines post in its
+**Routine reports** (API 115) are pushed too, once each: what the assistant's routines post in its
 thread, such as the morning brief's summary (its routine's name and the report's first line), and a
 routine that failed. Each device has them on unless it turns them off (`reports` in its events).
 
@@ -488,9 +488,9 @@ token still works later, and the notification keeps its buttons.
 
 ### The mobile app
 
-`mobile/` is an Expo app for Android and iOS (API 100) that follows and drives your tasks on several
+`mobile/` is an Expo app for Android and iOS (API 110) that follows and drives your tasks on several
 boards at once, a work hub and a personal board say. Its home tab is the **Assistant** (from API
-106): the selected board's assistant for its picked profile, on the host the profile's assistant is
+116): the selected board's assistant for its picked profile, on the host the profile's assistant is
 on (an assistant host of its own, perhaps, which the tab says is offline when it is), with the
 board and profile switchers above it; on an older board the tab is hidden and the Inbox is home.
 Then an **Inbox** of what's waiting for you on every
@@ -525,7 +525,7 @@ four minutes, well under an attachment's 10 MB.
   needs aren't set up, so there are no iPhone builds for now (*Building the mobile app* has the
   steps). Until then, use the board on the iPhone as a web app.
 
-The app works with a board of the same API or newer: a board older than the app's minimum (API 100,
+The app works with a board of the same API or newer: a board older than the app's minimum (API 110,
 `MIN_API` in `mobile/src/pairing.ts`) says so in the app, both when pairing and on a paired board
 that's later found older (after a rollback, say), rather than failing somewhere later. Update that
 board's Huntaway to use it again.
@@ -566,7 +566,7 @@ says it was unpaired. A device can't pair others or manage them (`POST /devices/
 and `DELETE /devices/{id}` are for the board's own token), but it can list them and unpair itself,
 which removing the board in the app does. A device can only use the routes the app does (`HUB`
 and `HOST` in `server/src/devices.rs`): profiles, projects, tasks and their threads, each profile's
-assistant (API 106, but not its memory), attachments, permission prompts, the board's events and
+assistant (API 116, but not its memory), attachments, permission prompts, the board's events and
 hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
@@ -576,7 +576,7 @@ checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, 
 `.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
 host linking and terminals refuse a device's request themselves.
 
-**Push to the app** (API 103). The app subscribes on each paired board (a board's hub watches all
+**Push to the app** (API 113). The app subscribes on each paired board (a board's hub watches all
 its hosts' events, so once per board) with its Expo push token, and the board sends its pushes
 through [Expo's push service](https://docs.expo.dev/push-notifications/sending-notifications/):
 one HTTPS call, with no Apple or Google keys kept on the board. Boards → a board → **Notifications**
@@ -913,7 +913,7 @@ own profile's board and those that let them in (see *Agents across profiles*).
 
 A linked host's agents can use the hub's board too, once the hub lets them: switch on **Let this
 host's agents use this board** for it under Settings → Hosts (off by default; hub and host need API
-98). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
+108). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
 up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the tunnel for
 one that dials in). The hub takes it only from an agent in one of its profiles whose **Assistant host**
 is that host (see *An assistant host*): the host names the caller's profile, and whoever controls it
@@ -2168,12 +2168,12 @@ new GitHub issue to triage. Each one has a trigger and an action, can be switche
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 101:
+  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 111:
   five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
   the host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
-  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 101: it runs once, late if the server was down then,
+  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 111: it runs once, late if the server was down then,
   and turns itself off); or a **webhook**: a POST to `/api/hooks/<id>/<token>` on the host.
-- **Before each run** (API 101): **active hours** (a scheduled run outside them waits for them to
+- **Before each run** (API 111): **active hours** (a scheduled run outside them waits for them to
   start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
   command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
   exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
@@ -2254,7 +2254,7 @@ deliveries wait in the database and run after a restart. A time of day that the 
 (daylight saving starts) runs when they've gone forward; one they repeat runs once. An archived
 project's schedules don't run until it's unarchived.
 
-**Routines** (API 101) are a profile's automations, on the assistant's **Routines** tab
+**Routines** (API 111) are a profile's automations, on the assistant's **Routines** tab
 (`/api/profiles/<id>/automations`): they have no project, and their one action is
 `message_assistant`, which wakes the profile's assistant (on the host the routine is on). By
 default (`mode: fresh`) each run works in a thread of its own under the assistant (`task_type`
@@ -2281,7 +2281,7 @@ routines too (`routines: true`, or an action of kind `message_assistant`; the as
 are about its routines by default), for the caller's own profile only, and changing one asks the
 user as for any automation. The assistant is told to make "remind me…" an *at* routine.
 
-**The morning brief** (API 105) is a routine template: the assistant's **Brief** tab sets it up at the
+**The morning brief** (API 115) is a routine template: the assistant's **Brief** tab sets it up at the
 time and on the days you pick (weekdays at 7:30 by default; `POST
 /api/profiles/<id>/assistant/brief` with `{time, weekdays}`), as a routine called *Morning brief* in a
 fresh thread, which you can change like any other. Its run reads today's calendar, unread and starred

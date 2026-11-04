@@ -484,7 +484,7 @@ function CopyLine({ value, secret }: { value: string; secret?: boolean }) {
 // ---------- profiles (per host, merged by name) ----------
 
 /**
- * Whether a linked host's agents can use this board's tools, up the link (API 98). Off by default: an assistant host's agents
+ * Whether a linked host's agents can use this board's tools, up the link (API 108). Off by default: an assistant host's agents
  * can then create and message tasks on this board's projects, with the access their profile has here.
  */
 function UplinkToggle({ host }: { host: Host }) {
@@ -643,7 +643,7 @@ export function ProfileForm({
   const reviewing = hostSupports(hosts.find((h) => h.id === host), PROFILE_REVIEWERS_API);
   const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
   const gating = hostSupports(hosts.find((h) => h.id === host), PR_APPROVAL_API);
-  // This board's own profiles can run their assistants on a linked host (API 98).
+  // This board's own profiles can run their assistants on a linked host (API 108).
   const assistantHosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
   const onBoardHost = useStore((s) => !!s.hosts.find((h) => h.id === host)?.local);
   const placing = onBoardHost && (assistantHosts.length > 0 || !!initial?.assistant_host);

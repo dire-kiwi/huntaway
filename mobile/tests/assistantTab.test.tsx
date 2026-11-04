@@ -18,7 +18,7 @@ jest.mock("expo-router/react-navigation", () => ({ useHeaderHeight: () => 0 }));
 
 const mockSends: ((t: unknown) => void)[] = [];
 const mockClient = {
-  hosts: jest.fn(async () => [{ id: "h", name: "desk", local: true, connected: true, mode: "local", api_version: 106 }]),
+  hosts: jest.fn(async () => [{ id: "h", name: "desk", local: true, connected: true, mode: "local", api_version: 116 }]),
   profiles: jest.fn(async () => [
     { id: "pa", name: "A" },
     { id: "pb", name: "B" },
@@ -33,7 +33,7 @@ const mockClient = {
 jest.mock("../src/session", () => ({ ...jest.requireActual("../src/session"), clientFor: () => mockClient }));
 
 test("a send to A that finishes after switching to B leaves B's assistant shown, and Stop stops B's", async () => {
-  await boards.add({ id: "home", url: "https://home", name: "home", deviceId: "d", apiVersion: 106, profile: "A", pairedAt: "" }, "token");
+  await boards.add({ id: "home", url: "https://home", name: "home", deviceId: "d", apiVersion: 116, profile: "A", pairedAt: "" }, "token");
   await render(<AssistantTab />);
   await waitFor(() => expect(mockClient.task).toHaveBeenCalledWith("h", "ta"));
   await fireEvent.changeText(await screen.findByLabelText("Message"), "For A");

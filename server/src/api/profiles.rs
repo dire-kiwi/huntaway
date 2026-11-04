@@ -44,7 +44,7 @@ pub(super) struct CreateProfile {
     /// See `db::Profile::require_pr_approval` (API 95).
     #[serde(default)]
     require_pr_approval: bool,
-    /// See `db::Profile::assistant_host` (API 98).
+    /// See `db::Profile::assistant_host` (API 108).
     #[serde(default)]
     assistant_host: Value,
 }

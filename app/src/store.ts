@@ -723,7 +723,7 @@ export function connectEvents() {
   };
 }
 
-/** `projectId` is null for a profile's routine, whose profile is `profileId` (API 101). */
+/** `projectId` is null for a profile's routine, whose profile is `profileId` (API 111). */
 type AutomationListener = (hostId: string, projectId: string | null, automationId: string, profileId?: string) => void;
 /** Told when a task's checkpoints change (API 70): a turn's was taken, or it was rewound. */
 type CheckpointListener = (hostId: string, taskId: string) => void;
@@ -735,7 +735,7 @@ export function onCheckpoints(fn: CheckpointListener) {
   };
 }
 
-/** Told when a profile's approval rules (`rules`) or action log (`log`) change on a host (API 102). */
+/** Told when a profile's approval rules (`rules`) or action log (`log`) change on a host (API 112). */
 type ApprovalRulesListener = (hostId: string, profileId: string, what: "rules" | "log") => void;
 const approvalRulesListeners = new Set<ApprovalRulesListener>();
 export function onApprovalRules(fn: ApprovalRulesListener) {
@@ -745,7 +745,7 @@ export function onApprovalRules(fn: ApprovalRulesListener) {
   };
 }
 
-/** Told when a profile's Telegram bot changes on a host: linked, its settings, an error (API 104). */
+/** Told when a profile's Telegram bot changes on a host: linked, its settings, an error (API 114). */
 type TelegramListener = (hostId: string, profileId: string) => void;
 const telegramListeners = new Set<TelegramListener>();
 export function onTelegram(fn: TelegramListener) {

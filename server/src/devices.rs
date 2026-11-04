@@ -1,4 +1,4 @@
-//! Devices paired with this board, such as the mobile app on a phone (API 100). Each has a token of its own, kept only
+//! Devices paired with this board, such as the mobile app on a phone (API 110). Each has a token of its own, kept only
 //! as its SHA-256 in `device_tokens`, which the API takes as well as the board's own token (`auth_token`), and which
 //! can be revoked: that cuts the device off at once, open websockets included. A lost phone is then no reason to
 //! replace `auth_token`.
@@ -107,7 +107,7 @@ const HUB: &[(&str, &str)] = &[
     ("GET", "devices"),
     // Only itself (see `revoke`).
     ("DELETE", "devices/*"),
-    // The app's push (API 103), only its own subscriptions (see integrations/push.rs).
+    // The app's push (API 113), only its own subscriptions (see integrations/push.rs).
     ("GET", "push"),
     ("POST", "push/subscriptions"),
     ("PATCH", "push/subscriptions/*"),
@@ -120,7 +120,7 @@ const HOST: &[(&str, &str)] = &[
     ("GET", "profiles"),
     ("GET", "profiles/*/projects"),
     ("GET", "profiles/*/tasks"),
-    // The profile's assistant (API 106), which the app's Assistant tab opens; its thread is a task's. Not its memory.
+    // The profile's assistant (API 116), which the app's Assistant tab opens; its thread is a task's. Not its memory.
     ("GET", "profiles/*/assistant"),
     ("POST", "profiles/*/assistant"),
     ("GET", "projects/*"),

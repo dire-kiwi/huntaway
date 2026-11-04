@@ -539,17 +539,17 @@ fn a_database_from_version_61_gets_push_subscriptions() {
 }
 
 #[test]
-fn push_subscriptions_from_before_version_82_are_web_push() {
+fn push_subscriptions_from_before_version_93_are_web_push() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
-        // As a board at version 81 left it: no kind or device_id, and a browser's subscription.
+        // As a board at version 92 left it: no kind or device_id, and a browser's subscription.
         let c = open(&path).unwrap();
         c.execute_batch(
             "DROP TABLE push_subscriptions;
              CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
                name TEXT NOT NULL DEFAULT '', events TEXT NOT NULL, created_at TEXT NOT NULL, last_sent_at TEXT, last_error TEXT);
              INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES ('s','https://push.example.com/1','k','a','Chrome','{}','1');
-             PRAGMA user_version=81;",
+             PRAGMA user_version=92;",
         )
         .unwrap();
     }
@@ -1399,7 +1399,7 @@ fn a_database_from_version_72_keeps_new_sessions_apart() {
 }
 
 #[test]
-fn a_database_from_version_80_keeps_its_prompts_waiting_without_an_expiry() {
+fn a_database_from_version_91_keeps_its_prompts_waiting_without_an_expiry() {
     let path = crate::testing::temp_dir().join("huntaway.db");
     {
         let c = open(&path).unwrap();
@@ -1407,7 +1407,7 @@ fn a_database_from_version_80_keeps_its_prompts_waiting_without_an_expiry() {
             "PRAGMA foreign_keys=OFF; DROP INDEX permission_requests_expiry; ALTER TABLE permission_requests DROP COLUMN expires_at; ALTER TABLE permission_requests DROP COLUMN rule;
              ALTER TABLE push_answer_tokens DROP COLUMN expires_at; ALTER TABLE tasks DROP COLUMN queued_routine; DROP TABLE approval_log;
              INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('p','t',1,'Bash','{}','pending','1','c','tool');
-             PRAGMA user_version=80;",
+             PRAGMA user_version=91;",
         )
         .unwrap();
     }

@@ -181,7 +181,7 @@ pub async fn add_host(State(s): State<Shared>, device: Option<axum::Extension<cr
 pub struct UpdateHost {
     #[serde(default)]
     name: Option<String>,
-    /// Whether its agents may use this board's tools, up the link (API 98, see hosts/uplink.rs).
+    /// Whether its agents may use this board's tools, up the link (API 108, see hosts/uplink.rs).
     #[serde(default)]
     uplink: Option<bool>,
 }

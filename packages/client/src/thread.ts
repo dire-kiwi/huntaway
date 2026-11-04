@@ -50,7 +50,7 @@ export interface ContextDetail {
 export interface Message {
   id: number;
   task_id: string;
-  /** `question`: one asked with request_user_input (API 64). `report`: a routine's report in the assistant's thread (API 101). */
+  /** `question`: one asked with request_user_input (API 64). `report`: a routine's report in the assistant's thread (API 111). */
   kind: "user" | "claude" | "event" | "permission" | "question" | "report";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
@@ -156,7 +156,7 @@ export interface PendingPermission {
 }
 
 export const threadApi = ({ on }: Http) => ({
-  /** Pending permission prompts, oldest first: a task's, or (API 100) one profile's; all of the host's without either. */
+  /** Pending permission prompts, oldest first: a task's, or (API 110) one profile's; all of the host's without either. */
   pendingPermissions: (h: string, q: { task_id?: string; profile_id?: string } = {}) =>
     on(h).get<PendingPermission[]>(`/permissions?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null) as [string, string][])}`),
   messages: (h: string, id: string) => on(h).get<Message[]>(`/tasks/${enc(id)}/messages`),

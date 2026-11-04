@@ -16,7 +16,7 @@ pub struct Link {
     /// For `ssh` links: the target, as JSON.
     pub ssh: Option<String>,
     pub last_seen: Option<String>,
-    /// Its agents may use this board's tools, up the link (API 98, see hosts/uplink.rs). Off by default.
+    /// Its agents may use this board's tools, up the link (API 108, see hosts/uplink.rs). Off by default.
     #[serde(default)]
     pub uplink: bool,
     pub created_at: String,

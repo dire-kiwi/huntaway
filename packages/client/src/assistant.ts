@@ -4,18 +4,18 @@ import type { Automation, Weekday } from "./automations";
 import type { Profile } from "./profiles";
 import type { Task } from "./tasks";
 
-/** Each profile has an assistant (API 97): one long-lived thread in no project, keyed `A-<n>`, that works in a folder of its
+/** Each profile has an assistant (API 107): one long-lived thread in no project, keyed `A-<n>`, that works in a folder of its
  *  own and never goes to review or merge (see server/src/agent/assistant.rs). The sidebar opens it; it's off the board. */
-export const ASSISTANT_API = 97;
+export const ASSISTANT_API = 107;
 
-/** Its memory (API 99): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
+/** Its memory (API 109): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
  *  commits after each turn that changed them (see server/src/agent/assistant/memory.rs). The Memory tab edits them. */
-export const MEMORY_API = 99;
+export const MEMORY_API = 109;
 
-/** Google and the morning brief (API 105): the Google card (whether the assistant's Google Workspace server is connected), the
+/** Google and the morning brief (API 115): the Google card (whether the assistant's Google Workspace server is connected), the
  *  morning brief routine template, the assistant's `brief` document (one version a day) and ratings of its items, which go into
  *  MEMORY.md (see server/src/agent/assistant/google.rs and brief.rs). */
-export const BRIEF_API = 105;
+export const BRIEF_API = 115;
 
 /** Whether the host has the Google card, the brief template and the Brief tab. */
 export const hasBrief = (h: Host | undefined) => hostSupports(h, BRIEF_API);
@@ -80,15 +80,15 @@ export const hasMemory = (h: Host | undefined) => hostSupports(h, MEMORY_API);
 
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "assistant";
 
-/** A routine's run of the assistant (API 101): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
+/** A routine's run of the assistant (API 111): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
 export const isRoutine = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "routine";
 
 /** The assistant or one of its routine threads: off the board. */
 export const isAssistants = (t: Pick<Task, "kind" | "task_type">) => isAssistant(t) || isRoutine(t);
 
 /** A profile can have its assistant run on a linked host of its own (`Profile.assistant_host`), and a linked host's agents can
- *  use the board's tools up the link when Settings → Hosts lets them (`Host.uplink`), from API 98 on both. */
-export const ASSISTANT_HOST_API = 98;
+ *  use the board's tools up the link when Settings → Hosts lets them (`Host.uplink`), from API 108 on both. */
+export const ASSISTANT_HOST_API = 108;
 
 /** Where a profile's assistant is. `profileId` is its profile on that host, missing when it can't be opened there: the host
  *  is `offline`, `old` (from before assistant hosts), or has `no_profile` of that name. */
@@ -120,7 +120,7 @@ export function assistantHome(profiles: Profile[], hosts: Host[], name: string):
 }
 
 /** `here`: the assistant on host `h` itself, as assistantHome found it, rather than wherever that host's profile sends it
- *  (`?local=1`, API 98; older hosts ignore it). Without it a host whose profile names another assistant host sends it on. */
+ *  (`?local=1`, API 108; older hosts ignore it). Without it a host whose profile names another assistant host sends it on. */
 export interface AssistantOn {
   here?: boolean;
 }
@@ -180,12 +180,12 @@ const q = (o: Record<string, string | undefined>) =>
 export const assistantApi = ({ on }: Http) => {
   const memory = (profileId: string) => `/profiles/${enc(profileId)}/assistant/memory`;
   return {
-    /** The profile's assistant, which the host makes the first time it's asked for. From API 98 it has `host_id`: a hub sends this to
+    /** The profile's assistant, which the host makes the first time it's asked for. From API 108 it has `host_id`: a hub sends this to
      *  the profile's assistant host, if it has one, so the task is there (go on to it through `on(host_id)`). */
     assistant: (h: string, profileId: string, opts?: AssistantOn) => on(h).get<Task>(assistantPath(profileId, opts)),
     /** Send the user's message to the profile's assistant (made first if it has none), as a message in its thread does. */
     sendToAssistant: (h: string, profileId: string, text: string, opts?: AssistantOn) => on(h).post<Task>(assistantPath(profileId, opts), { text }),
-    /** The rest are the assistant's memory (API 99), on the host it's on (its task's `host_id` and `profile_id`). */
+    /** The rest are the assistant's memory (API 109), on the host it's on (its task's `host_id` and `profile_id`). */
     /** Its workspace's files and how much of each a run is told. */
     memory: (h: string, profileId: string) => on(h).get<MemoryOverview>(memory(profileId)),
     /** A file, now or as it was in commit `rev`. */
@@ -203,7 +203,7 @@ export const assistantApi = ({ on }: Http) => {
     restoreMemoryFile: (h: string, profileId: string, path: string, rev: string) => on(h).post<MemoryWrite>(`${memory(profileId)}/restore`, { path, rev }),
     /** Send another assistant's answer to the import prompt to the assistant, to fold into its memory. */
     importMemory: (h: string, profileId: string, text: string) => on(h).post<Task>(`${memory(profileId)}/import`, { text }),
-    /** Google and the brief (API 105), on the assistant's host too. */
+    /** Google and the brief (API 115), on the assistant's host too. */
     /** Whether Google is connected; `check` also tries the refresh token with Google. */
     googleStatus: (h: string, profileId: string, check = false) =>
       on(h).get<GoogleStatus>(`/profiles/${enc(profileId)}/assistant/google${check ? "?check=1" : ""}`),

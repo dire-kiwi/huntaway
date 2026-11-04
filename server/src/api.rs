@@ -263,7 +263,7 @@ fn pick<'a>(body: &Map<String, Value>, keys: &[&'a str]) -> Vec<(&'a str, Value)
 
 /// Unauthenticated. API 65: with the commit it runs, for hosts that follow it with `--update-from`.
 async fn health(State(s): State<Shared>) -> Json<Value> {
-    // API 100: and its API version, which the mobile app checks before pairing.
+    // API 110: and its API version, which the mobile app checks before pairing.
     Json(json!({"ok": true, "commit": s.meta.running_commit, "api_version": crate::hosts::proto::API_VERSION}))
 }
 

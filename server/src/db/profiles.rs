@@ -105,7 +105,7 @@ pub struct Profile {
     /// GitHub (API 95). Its projects can say otherwise.
     #[serde(default)]
     pub require_pr_approval: bool,
-    /// The linked host its assistant runs on (API 98, a link id; see agent/assistant.rs). None for this host.
+    /// The linked host its assistant runs on (API 108, a link id; see agent/assistant.rs). None for this host.
     #[serde(default)]
     pub assistant_host: Option<String>,
     pub created_at: String,

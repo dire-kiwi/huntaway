@@ -381,7 +381,7 @@ pub async fn run_outbound(s: &Shared, link: &Link, mode: &str) -> Result<()> {
     let _registered = register(s, conn.clone());
     tracing::info!("connected to host {}", link.name);
     let (mut sink, mut stream) = ws.split();
-    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 98 ignore it).
+    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 108 ignore it).
     sink.send(TMessage::Text(crate::hosts::uplink::hub_hello(s).to_string().into())).await?;
     let (answers_tx, mut answers) = mpsc::unbounded_channel::<ToolAnswer>();
     // Anything missed while disconnected: tell the UI to reload this host.
