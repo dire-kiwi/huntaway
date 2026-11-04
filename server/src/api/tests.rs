@@ -31,9 +31,9 @@ fn a_config_s_proxy_keys_are_write_only() {
     crate::testing::run(async || {
         let s = crate::testing::state();
         let app = router(s.clone());
-        let (status, cfg) = call_json(&app, "POST", "/api/claude-configs", json!({"name": "pool", "api_url": " http://192.168.50.206:8317/ ", "api_key": "sk-1"})).await;
+        let (status, cfg) = call_json(&app, "POST", "/api/claude-configs", json!({"name": "pool", "api_url": " http://10.0.0.7:8317/ ", "api_key": "sk-1"})).await;
         assert_eq!(status, 200, "{cfg}");
-        assert_eq!((&cfg["api_url"], &cfg["has_api_key"], &cfg["has_management_key"]), (&json!("http://192.168.50.206:8317"), &json!(true), &json!(false)));
+        assert_eq!((&cfg["api_url"], &cfg["has_api_key"], &cfg["has_management_key"]), (&json!("http://10.0.0.7:8317"), &json!(true), &json!(false)));
         assert!(cfg.get("api_key").is_none() && cfg.get("management_key").is_none(), "{cfg}");
         let id = cfg["id"].as_str().unwrap().to_string();
         let path = format!("/api/claude-configs/{id}");
