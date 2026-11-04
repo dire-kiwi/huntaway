@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { after, before, test } from "node:test";
+import { after, afterEach, before, test } from "node:test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
@@ -27,6 +27,8 @@ before(async () => {
   wt = task.worktree_path;
 });
 after(() => server?.stop());
+// Nothing staged for the next test, even when one fails (else it fails the next one too).
+afterEach(() => wt && git(wt, "reset", "-q"));
 
 // HA-4: the Changes tab stages the lines picked in a file's diff, and only those.
 test("stages and unstages chosen lines from the keyboard", async () => {
@@ -49,7 +51,23 @@ test("stages and unstages chosen lines from the keyboard", async () => {
     await waitFor(() => git(wt, "diff", "--cached", "--name-only") === "new.txt\n");
     assert.match(ui.page.url(), /task=/);
   });
-  git(wt, "reset", "-q");
+});
+
+// HA-169: a key that came before what the one before it did was rendered (a slow machine) was taken against the old
+// state: after an Escape back to the files, `j` moved the cursor in the diff that was left and space staged app.txt.
+// Keys sent at once, with no render between them, are the same at any speed.
+test("keys pressed before the last one's change is shown wait for it", async () => {
+  writeFileSync(`${wt}/app.txt`, lines(30, (i) => (i === 3 ? "three" : i === 25 ? "twenty-five" : `line ${i}`)));
+  writeFileSync(`${wt}/new.txt`, "a\nb\n");
+  await withBrowser(server, {}, async (ui) => {
+    // Into app.txt's diff, staging its lines ("Select range" is only offered there).
+    await ui.run([`goto /t/${task.id}`, "click changes", "wait new.txt", "press Enter", "wait Select range"]);
+    await ui.page.evaluate(() => {
+      for (const key of ["Escape", "j", " "]) document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => git(wt, "diff", "--cached", "--name-only") === "new.txt\n");
+    assert.match(ui.page.url(), /task=/);
+  });
 });
 
 // Enter on a file before its diff had loaded didn't go into it, so the Escape after it closed the task.
@@ -66,7 +84,6 @@ test("Escape after Enter on a file still loading goes back to the files", async 
     await ui.run(["press Space"]);
     await waitFor(() => git(wt, "diff", "--cached", "--name-only") === "new.txt\n");
   });
-  git(wt, "reset", "-q");
 });
 
 // A dialog opened from a menu (stash options, then its message) had nothing to give the focus back to, so keys

@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { api, type GitCommit, type GitStash, type GitStatus, type Turn } from "../../../api";
 import { fileRows, hasStaged, hasUnstaged, linesPatch, untracked, type FileRow } from "../diffs";
 import { copyText } from "../../ui";
@@ -31,6 +31,10 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
   const { files, commits, tree, collapsed } = sel;
   const { file, chosenRows, drows, hunkMode, setAnchor, activePane, paneFile } = staging;
   const [busy, setBusy] = useState<string | null>(null);
+  // Bumped when a change is done: keys wait (`busyRef`) until what it changed is rendered, not only fetched, or one
+  // pressed in between would be taken against the old status and diffs (a Tab to a staged diff that isn't there yet).
+  const [doneN, setDoneN] = useState(0);
+  useLayoutEffect(() => void (busyRef.current = false), [doneN, busyRef]);
   // The commit message being written, kept when its dialog is closed without committing.
   const draft = useRef("");
 
@@ -54,8 +58,8 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
       const st = await refresh();
       const row = target && st?.files && fileRows(st.files, tree, collapsed).find((r) => r.key === target.key);
       if (row) await diffs.reload(row);
-      busyRef.current = false;
       setBusy(null);
+      setDoneN((n) => n + 1);
     }
     return ok;
   };
