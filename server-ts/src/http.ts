@@ -196,6 +196,8 @@ export function toAnswer(v: any): Answer {
 
 export function errorAnswer(e: any): Answer {
   if (e instanceof ApiError) return jsonAnswer(e.status, { error: e.message });
+  // A Reply thrown is a response made before the handler ran (axum's rejections: a body or query it can't read).
+  if (e instanceof Reply) return toAnswer(e);
   return jsonAnswer(500, { error: err_str(e) });
 }
 
@@ -204,7 +206,7 @@ export async function call(h: Handler, s: AppState, r: Req): Promise<Answer> {
   try {
     return toAnswer(await h(s, r));
   } catch (e) {
-    if (!(e instanceof ApiError)) console.error(`${r.method} ${r.path}:`, e);
+    if (!(e instanceof ApiError) && !(e instanceof Reply)) console.error(`${r.method} ${r.path}:`, e);
     return errorAnswer(e);
   }
 }
