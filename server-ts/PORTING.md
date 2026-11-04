@@ -122,3 +122,15 @@ Things the base already calls, which their parts must provide:
 `AppState.exe` is `server-ts/bin/huntaway` (the command agents' MCP helpers run: `huntaway mcp`). The Rust `ia-shim`
 is found by `runs.ts`'s `shim_path`: `$IA_SHIM_BIN`, else `server/target/{release,debug}/ia-shim` in this checkout
 (the newer one), else `ia-shim` beside `bin/huntaway`.
+
+## Notes from porting so far
+
+- Server code must not import `testing.ts` (it imports `node:test`, which turns a process into a test run). The race
+  hooks `when`/`reached` are in `util.ts` (`testing.ts` re-exports them for tests).
+- db (done): fields serde never writes (`api_key`, `asana_token`, `queued_user_text`, `Project.repo_root`,
+  `Link.token`, …) are non-enumerable properties (`db.hidden(obj, key, value)`): readable, but `JSON.stringify` and
+  spreads leave them out, so copy them by name. `Option` fields serde skips when empty are left off the object.
+  `<Type>_from_json(v)` in `db/task_data.ts` does serde's deserialization of each struct there (defaults, shape checks);
+  `de_str`, `de_opt_str`, `de_vec`, … read single fields. `check_resolution` and `check_dependencies` throw
+  `ApiError.bad` rather than returning an error. `Queued::then` is `queued_then` (a module exporting `then` becomes a
+  thenable).

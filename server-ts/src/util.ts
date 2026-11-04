@@ -157,3 +157,17 @@ export function err_str(e: unknown): string {
 export function context(what: string, e: unknown): Error {
   return new Error(what, { cause: e });
 }
+
+const hooks: Array<[string, () => void]> = [];
+
+/** Tests: run `f` the next time code reaches `point` (see `reached`), to make a race happen at the point where it can. */
+export function when(point: string, f: () => void) {
+  hooks.push([point, f]);
+}
+
+/** A point in the code a test can run something at (see `when`; testing.ts re-exports both). */
+export function reached(point: string) {
+  if (!hooks.length) return;
+  const i = hooks.findIndex(([p]) => p === point);
+  if (i >= 0) hooks.splice(i, 1)[0][1]();
+}
