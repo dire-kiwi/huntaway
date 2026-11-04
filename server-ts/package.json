@@ -1,0 +1,20 @@
+{
+  "name": "huntaway-server-ts",
+  "private": true,
+  "type": "module",
+  "description": "A TypeScript port of the huntaway server (server/), for comparing memory use. Runs on Node 24+ with no build step.",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/main.ts serve",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=8 --test-timeout=60000 'src/**/*.test.ts' 'tests/**/*.test.ts'"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.9.0"
+  }
+}

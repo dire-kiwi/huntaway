@@ -1,0 +1,4 @@
+#!/bin/sh
+# The TypeScript port of the huntaway server (see server-ts/PORTING.md): `huntaway serve …` and its other subcommands.
+here=$(dirname "$(readlink -f "$0")")
+exec node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@"
