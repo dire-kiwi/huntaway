@@ -4,6 +4,11 @@ import { mkdirSync } from "node:fs";
 import { err_str } from "./util.ts";
 
 async function main() {
+  // What bin/huntaway was run as, kept from what this server starts (agents, a test server they run from a checkout).
+  const exe = process.env.IA_TS_EXE ?? null;
+  delete process.env.IA_TS_EXE;
+  // Kept where state.ts's default_exe reads it, without loading the server for every subcommand.
+  (globalThis as any).huntaway_exe = exe;
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
     case undefined: {

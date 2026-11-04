@@ -1,4 +1,6 @@
 // Port of `serve` in server/src/main.rs (main.ts has the command line, and loads this only for `serve`).
+import * as backup from "./backup.ts";
+import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
@@ -169,11 +171,20 @@ export function load_or_create_token(data_dir: string, file: string): string {
   return token;
 }
 
-/** `--ui-dir`, else the checkout's build (`app/dist`). */
-function find_ui_dir(explicit: string | null): string | null {
+/**
+ * `--ui-dir`, else the UI of the package this server runs from (a release's `ui/`, beside its `huntaway`) or the
+ * checkout's build. A release this server updated to (`from_app`) serves its own UI even with `--ui-dir`, which it
+ * inherits from the server it replaced and which names that server's UI.
+ */
+function find_ui_dir(explicit: string | null, from_app: boolean, exe: string): string | null {
+  const own = join(dirname(exe), "ui");
+  if (from_app && existsSync(join(own, "index.html"))) {
+    if (explicit) log.info(`serving this release's own UI rather than --ui-dir ${explicit}`);
+    return own;
+  }
   if (explicit) return explicit;
   const here = dirname(new URL(import.meta.url).pathname);
-  return [join(here, "../ui"), join(here, "../../app/dist")].find((p) => existsSync(join(p, "index.html"))) ?? null;
+  return [own, join(here, "../../ui"), join(here, "../../app/dist")].find((p) => existsSync(join(p, "index.html"))) ?? null;
 }
 
 /** Whether the request's `Host` names this machine (127.0.0.1, localhost or [::1], with any port). */
@@ -288,7 +299,10 @@ export async function serve(args: ServeArgs) {
       host_name = (process.env.HOSTNAME ?? "host").trim();
     }
   }
+  // Another version (or the Rust server) ran on this data dir last: keep a copy of the database before opening it.
+  backup.on_start(data_dir, db_path(data_dir), VERSION);
   const conn = db.open(db_path(data_dir));
+  backup.record_version(data_dir, VERSION);
 
   const server = createServer();
   await new Promise<void>((ok, fail) => {
@@ -332,7 +346,7 @@ export async function serve(args: ServeArgs) {
     }
   }
   api.router(state);
-  const ui = find_ui_dir(args.ui_dir);
+  const ui = find_ui_dir(args.ui_dir, from_app, admin.current_exe());
   if (ui) log.info(`serving UI from ${ui}`);
   else log.warn("no UI build found; API only (build app/ or pass --ui-dir)");
   const loopback_only = ["127.0.0.1", "::1", "localhost"].includes(args.host) || args.host.startsWith("127.");

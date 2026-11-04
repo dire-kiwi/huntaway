@@ -2,9 +2,17 @@
 # The TypeScript port of the huntaway server (see server-ts/PORTING.md): `huntaway serve …` and its other subcommands.
 # A server started from a `node --test` file (the browser tests) is not a test process itself.
 unset NODE_TEST_CONTEXT
-here=$(dirname "$(readlink -f "$0")")
-# Node: $IA_NODE, else on PATH, else where installers put it (an SSH host's forced command runs with sshd's short PATH).
+self=$(readlink -f "$0")
+here=$(dirname "$self")
+# A release's package (see .github/workflows/release.yml) has this script as its `huntaway`, with the server in
+# server-ts/ and Node in node/ beside it; a checkout has it in server-ts/bin/.
+if [ -f "$here/server-ts/src/main.ts" ]; then src=$here/server-ts/src; else src=$here/../src; fi
+# The server goes by it for what runs it (agents' MCP helpers, and which installed release it is).
+IA_TS_EXE=$self
+export IA_TS_EXE
+# Node: $IA_NODE, else the package's own, else on PATH, else where installers put it (an SSH host's forced command runs with sshd's short PATH).
 node=${IA_NODE:-}
+[ -z "$node" ] && [ -x "$here/node/bin/node" ] && node=$here/node/bin/node
 if [ -z "$node" ]; then
   node=$(command -v node 2>/dev/null) || node=
   for n in /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node "$HOME/.volta/bin/node" "$HOME/.local/share/mise/shims/node" \
@@ -17,11 +25,11 @@ fi
 # Agents' MCP helper runs once per agent: started straight from its module, it doesn't load the whole server.
 if [ "$1" = mcp ]; then
   shift
-  exec "$node" --disable-warning=ExperimentalWarning "$here/../src/mcp.ts" "$@"
+  exec "$node" --disable-warning=ExperimentalWarning "$src/mcp.ts" "$@"
 fi
 case "$1" in
   "" | serve) ;;
-  *) exec "$node" --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" ;;
+  *) exec "$node" --disable-warning=ExperimentalWarning "$src/main.ts" "$@" ;;
 esac
 
 # `serve` runs node as this shell's child, so the server keeps this process's id when it restarts, as the Rust server
@@ -65,7 +73,7 @@ stop() {
 trap stop TERM INT HUP
 # A background job's stdin would be /dev/null: node gets this shell's (when it has one).
 if [ -r /dev/stdin ]; then exec 3<&0; else exec 3</dev/null; fi
-"$node" --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@" <&3 3<&- &
+"$node" --disable-warning=ExperimentalWarning "$src/main.ts" "$@" <&3 3<&- &
 child=$!
 exec 3<&-
 while :; do

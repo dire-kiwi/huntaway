@@ -269,8 +269,12 @@ export class AppState {
 export type Shared = AppState;
 
 /** `bin/huntaway`, which runs this server (and its subcommands, such as `mcp`). */
+/**
+ * The command that runs this server: the wrapper that started it (in a release, `huntaway` at the top of the package,
+ * as `app/<v>/huntaway`; main.ts takes `IA_TS_EXE` out of the environment), else this checkout's `bin/huntaway`.
+ */
 export function default_exe(): string {
-  return process.env.IA_TS_EXE || new URL("../bin/huntaway", import.meta.url).pathname;
+  return (globalThis as any).huntaway_exe || process.env.IA_TS_EXE || new URL("../bin/huntaway", import.meta.url).pathname;
 }
 
 /**

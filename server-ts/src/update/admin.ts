@@ -5,6 +5,7 @@
 // arguments and its environment. Node can't exec, so `bin/huntaway` supervises `node` for `serve` and does it for this
 // server: `exec` writes what to run to the file the wrapper named (`IA_RESTART_FILE`) and exits with `EXEC_CODE`, and the
 // wrapper, whose process id is the server's, execs that. See bin/huntaway.
+import { BUILD_COMMIT } from "../hosts/proto.ts";
 import { spawn } from "node:child_process";
 import { accessSync, constants as fs_constants, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { writeFile, rm } from "node:fs/promises";
@@ -96,7 +97,7 @@ export function detect_source_dir(explicit: string | null): string | null {
  * rather than its own.
  */
 export function bundle_commit(from_app: boolean): string | null {
-  return pick_bundle_commit(null, process.env.IA_COMMIT ?? null, from_app);
+  return pick_bundle_commit(BUILD_COMMIT, process.env.IA_COMMIT ?? null, from_app);
 }
 
 export function pick_bundle_commit(built: string | null, deployed: string | null, from_app: boolean): string | null {

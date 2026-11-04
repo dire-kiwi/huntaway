@@ -1,6 +1,7 @@
 {
   "name": "huntaway-server-ts",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "description": "A TypeScript port of the huntaway server (server/), for comparing memory use. Runs on Node 24+ with no build step.",
   "engines": { "node": ">=24" },

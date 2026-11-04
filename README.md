@@ -433,10 +433,23 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
-| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`) and `ia-shim`, with the UI in `ui/` |
 | `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
+
+Releases carry the TypeScript server (`server-ts/`, see its README), not the Rust one in `server/`:
+`scripts/package-server.sh` puts it together with the Node that runs it (the release job's own, so
+hosts don't need Node installed), `ia-shim` and the UI, and both the tarball and the desktop app
+carry that. A host on an earlier, Rust, release updates onto it like onto any release, and Roll back
+returns to the Rust release before it. Checkouts still build and run the Rust server.
+
+Whichever server starts on a data dir that another version last ran on (`<data dir>/server_version`;
+the Rust server doesn't write it) first copies the database to
+`<data dir>/backups/huntaway-<from>-to-<to>-<time>.db`, before opening and migrating it, and the
+TypeScript server makes one before Update or Roll back restarts it onto another release too. The
+newest five are kept. To go back to one: stop the server, move `huntaway.db` (with any
+`huntaway.db-wal` and `huntaway.db-shm`) aside, and copy the backup to `huntaway.db`.
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started

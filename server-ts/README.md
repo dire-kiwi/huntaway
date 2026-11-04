@@ -1,7 +1,9 @@
 # server-ts: the server in TypeScript (HA-174)
 
-A port of the `huntaway` server (`server/src/`, Rust) to TypeScript, made to compare their memory use. It isn't used by
-the desktop app, the install script or deployments. It runs on Node 24+ straight from the `.ts` files (Node strips the
+A port of the `huntaway` server (`server/src/`, Rust) to TypeScript, made to compare their memory use. Releases carry
+it in place of the Rust server (see *Release builds* in the top README): `scripts/package-server.sh` packages it with
+the Node that runs it, `ia-shim` and the UI, for the server tarball and the desktop app. Checkouts, the install script and
+test servers still run the Rust server unless told otherwise (`IA_TEST_BIN`). It runs on Node 24+ straight from the `.ts` files (Node strips the
 types; there's no build step), with `node:sqlite` for the database and `ws` for websockets as its only dependency.
 
 ```sh

@@ -6,6 +6,7 @@
 //
 // A release is the Rust server: the TypeScript server restarts onto one through `bin/huntaway` (see admin.ts's `exec`),
 // which keeps its process id, as the Rust server's exec does.
+import * as backup from "../backup.ts";
 import * as db from "../db.ts";
 import { ApiError } from "../http.ts";
 import { AsyncMutex, type AppState } from "../state.ts";
@@ -681,6 +682,7 @@ async function restart_onto(st: AppState, v: string) {
   if (dir === null) throw new Error("not a version");
   const exe = join(dir, "huntaway");
   const old = staging.change(st, (s) => (s.trying = v));
+  backup.before_switch(st.data_dir, st.db(), VERSION, v);
   const err = await admin.restart_into(st, exe, bundled_env(st));
   staging.change(st, (s) => {
     if (s.trying === v) s.trying = old.trying;
@@ -746,6 +748,7 @@ export function rollback(state: AppState) {
     const [exe, previous] = target;
     admin.log_line(st, `Rolling back from ${current} to ${previous ?? "the app's own server"}`);
     const old = staging.change(st, (s) => rolled_back(s, current, previous));
+    backup.before_switch(st.data_dir, st.db(), VERSION, previous ?? "bundled");
     const err = await admin.restart_into(st, exe, []);
     // Only what the rollback changed is put back: a download may have staged a version meanwhile.
     staging.change(st, (s) => not_rolled_back(s, old, current, previous));
