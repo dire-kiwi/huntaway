@@ -11,6 +11,7 @@ server/src/    the huntaway binary's modules, grouped in agent/, mcp/, git/, hos
                integrations/ and review/ (see docs/structure.md)
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
+server-ts/     a TypeScript port of the server, for comparing memory use (not used by the app; see server-ts/README.md)
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -19,6 +20,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
+               ram-compare.mjs: memory use of the Rust server and its TypeScript port on the same data
                install.sh: install the desktop app from source (Linux, macOS)
 docs/          notes; structure.md: where code goes and how big modules are split
 ```

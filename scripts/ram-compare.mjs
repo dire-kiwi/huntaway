@@ -13,7 +13,7 @@
 //
 // The Rust server is the newer of server/target/{release,debug}/huntaway (RUST_BIN overrides); build release for a fair
 // comparison. The TS server runs on the node on PATH (NODE_OPTIONS such as --max-old-space-size pass through).
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,10 +106,24 @@ try {
   console.log(`data: ${live ? "a copy of the live board" : "--demo"}; messages loaded per round: ${JSON.stringify(counts)}`);
   console.log(`rust: ${rustBin}\nts:   node ${process.version} ${tsBin}\n`);
   const mb = (k) => (Number.isNaN(k) ? "?" : `${(k / 1024).toFixed(1)} MB`);
-  const w = [34, 6, 12, 12, 12, 8];
+  const w = [34, 8, 12, 12, 12, 8];
   const line = (cells) => cells.map((c, i) => String(c).padEnd(w[i])).join("");
   console.log(line(["phase", "server", "RSS", "peak RSS", "PSS", "threads"]));
   for (const r of rows) console.log(line([r.phase, r.server, mb(r.rss), mb(r.hwm), mb(r.pss), r.threads]));
+  // Every agent run starts its own `huntaway mcp` (the board's tools) and `huntaway gh-mcp` (GitHub) helpers.
+  console.log("\nper-agent helpers, idle (each agent run starts one of each):");
+  for (const sub of ["mcp", "gh-mcp"]) {
+    for (const s of servers) {
+      const child = spawn(s.bin, [sub], { stdio: ["pipe", "ignore", "ignore"], env: { ...process.env, IA_URL: s.url, IA_TOKEN: s.token, IA_RUN_ID: "ram-compare" } });
+      await sleep(1500);
+      let m = { rss: NaN, pss: NaN };
+      try {
+        m = mem(child.pid);
+      } catch {}
+      child.kill();
+      console.log(line([`huntaway ${sub}`, s.name, mb(m.rss), "", mb(m.pss), ""]));
+    }
+  }
 } finally {
   if (keep) console.log(`\nkept: ${servers.map((s) => s.file).join(" ")}`);
   else for (const s of servers) execFileSync(join(root, "scripts/test-server.sh"), ["stop", s.dataDir], { stdio: "ignore" });
