@@ -216,7 +216,8 @@ export async function dispatch(s: AppState, req: Req, trusted = false): Promise<
   }
   const h = found.route.methods.get(req.method) ?? found.route.methods.get("ANY") ?? (req.method === "HEAD" ? found.route.methods.get("GET") : undefined);
   if (!h) return { status: 405, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(no_route_error(req.method, req.path))) };
-  if (req.raw.length && req.body === null && found.route.methods.size && req.headers["content-type"]?.includes("json")) {
+  // As axum's Json extractor; the webhook route (no token) takes any body as it is.
+  if (req.raw.length && req.body === null && found.route.auth && req.headers["content-type"]?.includes("json")) {
     return { status: 400, headers: { "content-type": "text/plain" }, body: Buffer.from("Failed to parse the request body as JSON") };
   }
   req.params = found.params;
