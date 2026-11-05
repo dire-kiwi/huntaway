@@ -5,7 +5,7 @@
  *
  * Sizes are what the files take on disk (allocated blocks, like `du`), each hard-linked file counted once per folder.
  * Nothing is cached: the folders are walked when the report is asked for. (The Rust server walks several at a time on
- * threads; this walks them one after another, synchronously.)
+ * threads; this walks them one after another, synchronously, in a worker thread.)
  */
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync, statfsSync, type Stats } from "node:fs";
 import { join, normalize } from "node:path";
@@ -15,6 +15,8 @@ import type { Req } from "./http.ts";
 import type { AppState } from "./state.ts";
 import { path_str } from "./util.ts";
 import * as runs from "./agent/runs.ts";
+import { in_worker } from "./worker.ts";
+import { backup_dir } from "./backup.ts";
 
 export interface Size {
   bytes: number;
@@ -67,15 +69,26 @@ export interface Report {
   runs_kept_days: number;
   /** What the host's database takes up, all profiles' data together (API 59). */
   database: number | null;
+  /** What the database's backups take up (`<data dir>/backups`, see backup.ts), null when there are none (HA-184). */
+  backups: Size | null;
   /** The disk the data dir (and so, usually, the worktrees) is on. */
   filesystem: Filesystem | null;
   elapsed_ms: number;
 }
 
-/** `GET /profiles/{id}/disk-usage`: the profile's projects' disk usage on this host. */
+/**
+ * `GET /profiles/{id}/disk-usage`: the profile's projects' disk usage on this host. The folders are walked on a thread of
+ * their own (see worker.ts), as that takes seconds on a big board (HA-183: 6 s on the live board's), and would hold up
+ * every other request meanwhile.
+ */
 export async function get(s: AppState, r: Req): Promise<any> {
   const rows = read(s.db(), r.params.id);
-  return measure(plan(rows, s.data_dir), s.data_dir);
+  return await in_worker<Report>(new URL(import.meta.url), "report", [rows, s.data_dir]);
+}
+
+/** The report for `rows`: `plan` and `measure` them (run by `get` in a worker). */
+export function report(rows: Rows, data_dir: string): Report {
+  return measure(plan(rows, data_dir), data_dir);
 }
 
 /** A folder to measure, leaving out the folders under it that are measured on their own. */
@@ -353,6 +366,7 @@ export function measure(plan: Plan, data_dir: string): Report {
     runs: runs_size(plan.runs),
     runs_kept_days: runs.KEEP_DAYS,
     database,
+    backups: dir_size(backup_dir(data_dir), []),
     filesystem: filesystem(data_dir),
     elapsed_ms: Date.now() - started,
   };

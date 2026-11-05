@@ -3,14 +3,18 @@
 Where code goes, and how big modules are split. Written for HA-96, which split the server's four
 largest files; HA-101 split the next five and HA-102 grouped the server's modules into folders, and
 HA-103 grouped the app's components into feature folders and split its largest files. The rest of
-the plan, under *Next*, is for follow-up tasks.
+the plan, under *Next*, is for follow-up tasks. Those splits were made in the Rust server (`server/src/`), and its
+TypeScript port in `server-ts/src/`, which is the server now (HA-174, HA-178), kept the same modules and file layout.
+The Rust server was removed in HA-179 (`server-ts/PORTING.md` says how to read it in git history); `server/` keeps
+the Rust that's left, `ia-shim` and the broker.
 
 ## Layout
 
 ```
-server/src/          the huntaway binary: one module per feature, grouped in folders by area
-server/shim/         ia-shim, the per-run supervisor
-server/broker/       huntaway-broker
+server-ts/src/       the server: one module per feature, grouped in folders by area (bin/huntaway runs it)
+server/              the Rust workspace (cargo build -p ia-shim, cargo test), with these two crates:
+server/shim/         ia-shim, the per-run supervisor (Rust)
+server/broker/       huntaway-broker (Rust)
 app/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
 app/src/api/         the API's types and calls, a file per resource
 app/src/components/  React components in a folder per feature (see App modules)
@@ -21,53 +25,50 @@ docs/                notes like this one
 
 ## Server modules
 
-The server is one crate, so each module is a file named after its feature (`worktree.rs`, `hub.rs`,
-`review.rs`…), in a folder for its area of `server/src/`:
+Each module is a file named after its feature (`worktree.ts`, `hub.ts`, `review.ts`…), in a folder for its area of
+`server-ts/src/`:
 
 | Folder | Modules |
 |---|---|
 | `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, tokens, prompts, documents, agent_tools |
-| `mcp/` | (`mcp.rs`, the stdio server) tools, gh_mcp, wait, pr_watch, permissions, questions |
+| `mcp/` | (`mcp.ts`, the stdio server) tools, gh_mcp, wait, pr_watch, permissions, questions |
 | `git/` | worktree, worktree_files, checkpoints, git_view, changes, relocate |
 | `hosts/` | hub, broker, proto, relay, ssh, terminal, pty |
 | `update/` | admin, release, staging |
 | `integrations/` | github, asana, push, automations, status_script |
-| `review/` | (`review.rs`, automatic review) summary, merged, merge_gate, fanout, stats |
+| `review/` | (`review.ts`, automatic review) summary, merged, merge_gate, fanout, stats |
 
-`main`, `state`, `util`, `db`, `api`, `testing`, `demo`, `analytics`, `disk` and `attachments`
-stay at the top. A folder's `agent.rs` (and so on) has its `//!` docs and a `pub mod` for each
-module; `mcp.rs` and `review.rs` are modules of their own as well as their folders'. Paths name the
-folder: `crate::agent::runner::send_message`, `use crate::git::{checkpoints, worktree};`. A new
-module goes in the folder for what it's about, or at the top if it's used everywhere, as `util` is.
+`main`, `serve`, `state`, `util`, `http`, `proc`, `db`, `api`, `testing`, `demo`, `analytics`, `disk`, `backup` and
+`attachments` stay at the top. A folder has no root file of its own (`agent.ts`): import the module itself
+(`../agent/runner.ts`); `mcp.ts` and `review.ts` are modules of their own as well as their folders'. Imports are
+namespace imports with the `.ts` extension, as Rust paths read: `import * as worktree from "../git/worktree.ts"`, then
+`worktree.git(…)`. A new module goes in the folder for what it's about, or at the top if it's used everywhere, as
+`util` is. `server-ts/PORTING.md` has the rest of the conventions (names, types, sync and async).
 
 When a module outgrows one file it becomes a folder too, as `runner`, `db`, `api` and `tools` have:
 
 ```
-server/src/agent/runner.rs         what the module is about (its //! docs), shared items, the core
-server/src/agent/runner/queue.rs   one part of it each, with its own //! line
-server/src/agent/runner/tests.rs   its tests
+server-ts/src/agent/runner.ts              what the module is about, shared items, the core
+server-ts/src/agent/runner/queue.ts        one part of it each
+server-ts/src/agent/runner/tests.test.ts   its tests
 ```
 
-- Rust's file layout: `foo.rs` next to a `foo/` folder for its submodules (rather than
-  `foo/mod.rs`). `foo.rs` keeps the module's docs, its imports and what every part uses.
-- `foo.rs` declares `mod part;` and `pub use part::*;`, so the rest of the crate keeps using
-  `crate::foo::item` and doesn't need to know which file has it. A part with nothing public
-  enough to re-export (only `pub(super)` items) gets `use part::*;` instead: rustc warns about a
-  `pub use` glob that re-exports nothing.
-- Each part starts with `use super::*;`, which brings in `foo.rs`'s imports and the other parts'
-  items. An item another part uses is `pub(super)`; one only its own part uses stays private.
-- Tests go in `foo/tests.rs` (`#[cfg(test)] mod tests;` in `foo.rs`). They're still a child of
-  `foo`, so `use super::*;` reaches everything, private items included.
-- Split by what the code is about, not by kind: `db/tasks.rs` has the `Task` row and the task
-  queries, rather than one file of structs and one of queries. Each `api/` part has the handlers
-  for one resource. The route table stays in `api.rs` (`host_routes`), the one place that lists
+- `foo.ts` sits next to a `foo/` folder for its parts, and re-exports each with `export * from "./foo/part.ts";`, so
+  the rest of the server keeps importing `foo.ts` and doesn't need to know which file has an item.
+- A part imports what it needs from the others (circular imports are fine for functions, but not at module load).
+- Tests are `*.test.ts`: beside a one-file module (`backup.test.ts`), or in its folder (`foo/tests.test.ts`), and
+  `server-ts/tests/` for whole-server tests. `npm test` in `server-ts/` runs them all.
+- Split by what the code is about, not by kind: `db/tasks.ts` has the `Task` row and the task
+  queries, rather than one file of types and one of queries. Each `api/` part has the handlers
+  for one resource. The route table stays in `api.ts` (`host_routes`), the one place that lists
   every route.
 
 A file is due for a split when its code (not counting tests) passes about 1,000 lines, or it has
-parts that change for different reasons. Moving its inline tests out to `tests.rs` is the cheap
-first step: in several modules they're longer than the code.
+parts that change for different reasons.
 
 ### What HA-96 split
+
+These were Rust files (`.rs`); the TypeScript server has the same parts as `.ts` files.
 
 | Was | Lines | Now |
 |---|---|---|
@@ -77,7 +78,7 @@ first step: in several modules they're longer than the code.
 | `mcp/tools.rs` | 4,055 | `tools.rs` (`Ctx`, errors), `dispatch`, `local`, `projects`, `approvals`, `automations`, `resolve`, `tasks`, `tests` |
 
 The largest part is now `db/schema.rs` (about 1,000 lines, mostly the migrations' SQL); the
-others are 60 to 800. A new DB migration goes in `db/schema.rs`.
+others are 60 to 800. A new DB migration goes in `server-ts/src/db/schema.ts`.
 
 ### What HA-101 split
 
@@ -154,10 +155,9 @@ The largest files left in the app are `Hosts.tsx`, `Automations.tsx` and `Analyt
 
 ### Server: the next files
 
-No server file but `db/schema.rs` (1,131 lines, most of them the migrations' SQL) has more than
-1,000 lines of code now. The next largest are `agent/agent_tools.rs` (995), `git/worktree_files.rs`
-(952, 575 of code) and `agent/runs.rs` (937, 629 of code): `agent_tools` would be the next to split,
-and the other two can move their tests to `tests.rs` first.
+The largest files in `server-ts/src/` (not counting tests) are `db/schema.ts` (1,284 lines, most of them the
+migrations' SQL) and `agent/agent_tools.ts` (1,175), which would be the next to split; then `hosts/broker.ts` (920)
+and `mcp.ts` (867).
 
 ### README
 

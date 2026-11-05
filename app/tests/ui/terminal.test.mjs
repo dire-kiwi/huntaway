@@ -39,6 +39,9 @@ for (const tool of [false, true]) test(`${tool ? "lazygit" : "terminal"} opens w
       ws.send(Buffer.from("Terminal output ready\r\n$ "));
     });
     await ui.run([`goto /t/${task.id}`, tool ? "click Open lazygit in a terminal" : "click terminal"]);
+    // xterm (a lazy chunk), the terminal's status and its font load first, which took seconds on a busy CI runner. The
+    // socket opens as xterm is set up, so give it its 5s from then.
+    await page.locator(".xterm").waitFor({ timeout: 20000 });
     for (const end = Date.now() + 5000; !connections && Date.now() < end;) await page.waitForTimeout(50);
     assert.ok(connections, "terminal connects even when a canvas context is unavailable");
     await page.getByText("Terminal output ready", { exact: false }).waitFor();

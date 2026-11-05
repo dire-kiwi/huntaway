@@ -110,7 +110,55 @@ export function list_messages(c: Conn, task_id: string): Message[] {
 // Queries of one task's messages that also filter on `kind` write it `+kind`, which keeps it from using an index: without
 // the database's statistics (it's never ANALYZEd), SQLite takes the (kind, created_at) index over (task_id, id) for
 // `task_id=? AND kind=?`, and reads every message of that kind on the board, not the task's (80 ms a query on a board of
-// 280,000 messages, on every thread's first page: HA-188).
+// 280,000 messages, on every thread's first page: HA-188, and on each subagent's start and end: HA-193).
+//
+// Statistics would fix them all at once, but SQLite then plans from averages that go stale (an ANALYZE says each kind has
+// a fifth of the messages, when nearly all are `claude`, and `PRAGMA optimize`'s sampled ones kept `user_wrote_since` on
+// the kind index), and the tests' fresh databases, which have none, wouldn't check the plans the board runs. Queries
+// for `kind='question'` keep the index: questions are rare (under a hundred on that board), so reading the board's is
+// quicker than reading a long thread.
+
+/** Whether the user sent `task_id`'s agent a message (any, the board's too) at or after `at`. */
+export function user_messaged_since(c: Conn, task_id: string, at: string): boolean {
+  return !!value(c, "SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND +kind='user' AND created_at>=?2)", task_id, at);
+}
+
+/** The call (`tool_use_id`) that started subagent `subagent_task_id` in `task_id`'s thread, from its latest `task_started`. */
+export function subagent_call(c: Conn, task_id: string, subagent_task_id: string | null): string | null {
+  return (
+    value<string | null>(
+      c,
+      `SELECT json_extract(data,'$.tool_use_id') FROM messages WHERE task_id=?1 AND +kind='claude'
+       AND json_extract(data,'$.subtype')='task_started' AND json_extract(data,'$.task_id')=?2 ORDER BY id DESC LIMIT 1`,
+      task_id,
+      subagent_task_id,
+    ) ?? null
+  );
+}
+
+/** Whether `tool_use_id` is an Agent or Task call (a subagent's launch) in `task_id`'s thread. */
+export function is_subagent_call(c: Conn, task_id: string, tool_use_id: string): boolean {
+  return !!value<number>(
+    c,
+    `SELECT EXISTS(SELECT 1 FROM messages m, json_each(m.data,'$.message.content') b
+     WHERE m.task_id=?1 AND +m.kind='claude' AND json_extract(m.data,'$.type')='assistant'
+     AND json_extract(b.value,'$.type')='tool_use' AND json_extract(b.value,'$.name') IN ('Agent','Task')
+     AND json_extract(b.value,'$.id')=?2)`,
+    task_id,
+    tool_use_id,
+  );
+}
+
+/** Whether `task_id`'s thread has an assistant message whose first block has id `id` (a call the board wrote for Codex). */
+export function has_assistant_block(c: Conn, task_id: string, id: string): boolean {
+  return !!value<number>(
+    c,
+    `SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND +kind='claude'
+     AND json_extract(data,'$.type')='assistant' AND json_extract(data,'$.message.content[0].id')=?2)`,
+    task_id,
+    id,
+  );
+}
 
 /** A page stops once it has this much message data, even short of its limit (some tool results are huge). */
 export const PAGE_BYTES = 1 << 20;
@@ -180,7 +228,18 @@ export function subagent_messages(c: Conn, task_id: string, before: number): Mes
   const task_ids = new Set<string>();
   const progress = new Map<string, number>();
   const out: Array<Message | null> = [];
-  const has_call = (data: string) => [...calls].some((id) => data.includes(id));
+  // One pass over a message for all the calls, rather than one per call (HA-183: 70 ms down to 50 ms on a thread with 136
+  // subagents). The loop adds calls as it finds them (only ever adds), which makes the pattern again.
+  let any_call: RegExp | null = null;
+  let any_call_of = 0;
+  const has_call = (data: string) => {
+    if (!calls.size) return false;
+    if (any_call === null || any_call_of !== calls.size) {
+      any_call = new RegExp([...calls].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"));
+      any_call_of = calls.size;
+    }
+    return any_call.test(data);
+  };
   for (const r of st.iterate(task_id, before) as Iterable<any>) {
     const data: string = r.data;
     const call = data.includes('"tool_use"') && (data.includes('"name":"Agent"') || data.includes('"name":"Task"') || has_call(data));

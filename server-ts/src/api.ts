@@ -167,7 +167,8 @@ function host_routes(r: Router) {
   r.route("/fs/dirs", { GET: host.fs_dirs });
   r.route("/admin/server", { GET: host.server_status });
   r.route("/admin/restart", { POST: host.restart_server });
-  r.route("/admin/update", { POST: host.update_from_hub });
+  // A hub's bundle of its branch: older hubs send all of it, several MB.
+  r.route("/admin/update", { POST: host.update_from_hub }, { limit: 256 << 20 });
   r.route("/admin/release/check", { POST: host.check_releases });
   r.route("/admin/release/update", { POST: host.update_to_release });
   r.route("/admin/release/rollback", { POST: host.roll_back_release });
@@ -222,7 +223,7 @@ export async function dispatch(s: AppState, req: Req, trusted = false): Promise<
     return { status: 400, headers: { "content-type": "text/plain" }, body: Buffer.from("Failed to parse the request body as JSON") };
   }
   req.params = found.params;
-  return call(h, s, req);
+  return call(h, s, req, `${req.method} /${found.route.segs.join("/")}`);
 }
 
 /** Run a request against this node's own host API, as an authenticated caller: (status, JSON body or its text). */

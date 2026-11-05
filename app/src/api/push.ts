@@ -3,7 +3,7 @@ import { del, enc, get, patch, post } from "./http";
 /** Which of the board's notifications a device gets by push (see notifications.ts). */
 export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean>;
 
-/** A device that gets the board's notifications by Web Push (API 74; see server/src/integrations/push.rs). */
+/** A device that gets the board's notifications by Web Push (API 74; see server-ts/src/integrations/push.ts). */
 export interface PushDevice {
   id: string;
   /** Its push service's URL for it, which tells this browser's own from the others. */

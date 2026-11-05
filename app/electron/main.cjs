@@ -1,7 +1,7 @@
 // Electron shell for Huntaway.
 //
 // Local mode (default): reuse a server already listening on the configured port,
-// or spawn the Rust `huntaway` binary and stop it on quit. The window loads
+// or spawn the `huntaway` server and stop it on quit. The window loads
 // the UI from the server itself, so the desktop app and remote browsers share
 // one code path.
 //
@@ -143,10 +143,13 @@ function findServerBinary(skip = []) {
     const choice = versions.chooseServer({ appDir: releaseDir(), bundled, minVersion: app.getVersion(), exe: EXE, skip });
     if (choice.version || fs.existsSync(bundled)) return { ...choice, bundled: !choice.version };
   }
-  const bin = [
-    path.join(__dirname, "..", "..", "server", "target", "release", EXE),
-    path.join(__dirname, "..", "..", "server", "target", "debug", EXE),
-  ].find((p) => fs.existsSync(p));
+  // A checkout: the TypeScript server, once its dependencies are installed. A checkout that hasn't run `npm ci` in
+  // server-ts/ since the server moved there (an install whose Rust server rebuilt it) runs the Rust build it has left
+  // from before the Rust server was removed (HA-179) until then.
+  const root = path.join(__dirname, "..", "..");
+  const ts = path.join(root, "server-ts", "bin", "huntaway");
+  if (fs.existsSync(path.join(root, "server-ts", "node_modules", "ws", "package.json"))) return { bin: ts, version: null };
+  const bin = [path.join(root, "server", "target", "release", EXE), path.join(root, "server", "target", "debug", EXE)].find((p) => fs.existsSync(p));
   return bin ? { bin, version: null } : null;
 }
 
@@ -157,11 +160,23 @@ function installKind() {
   return installKindCache;
 }
 
-/** The environment for a server started here: a release build's, whichever binary it runs, turns on release updates. */
+/** The error page's "Start without a backup" was clicked: the next start goes ahead without one (see load). */
+let skipBackupOnce = false;
+
+/**
+ * The environment for a server started here: a release build's, whichever binary it runs, turns on release updates.
+ * `skipDbBackup` in desktop.json, or "Start without a backup" for one start, lets it start without backing up the
+ * database (server-ts/src/backup.ts).
+ */
 function serverEnv() {
-  if (!resourcesDir) return process.env;
-  const desktop = { version: app.getVersion(), shell: frameStampNow(), install: installKind(), bundled: path.join(resourcesDir, EXE) };
-  return { ...process.env, ...versions.releaseEnv(desktop) };
+  const env = { ...process.env };
+  if (resourcesDir) {
+    const desktop = { version: app.getVersion(), shell: frameStampNow(), install: installKind(), bundled: path.join(resourcesDir, EXE) };
+    Object.assign(env, versions.releaseEnv(desktop));
+  }
+  if (config.skipDbBackup === true) env.IA_SKIP_DB_BACKUP = "1";
+  if (skipBackupOnce) env.IA_SKIP_DB_BACKUP_ONCE = "1";
+  return env;
 }
 
 /** Whether `url` is one for a browser (http, https or mailto), rather than a file or another app's scheme. */
@@ -247,7 +262,7 @@ async function startServer(win) {
   const started = versions.startWithFallback({
     choose: (skip) => {
       const choice = findServerBinary(skip);
-      if (!choice) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
+      if (!choice) throw new Error("Could not find the huntaway server. Run `npm ci` in server-ts/, and `cargo build --release -p ia-shim` in server/.");
       return choice;
     },
     start: (choice) =>
@@ -295,6 +310,9 @@ function spawnServer(choice, { onLost, onLate }) {
   if (process.env.IA_DATA_DIR || config.dataDir) args.push("--data-dir", defaultDataDir());
   if (config.host) args.push("--host", config.host);
   console.log(`starting the huntaway server${version ? ` ${version}` : choice.bundled ? " bundled with the app" : ""}: ${bin}`);
+  // A Rust release doesn't record that it ran on the data dir: the server after it needs to know, to back it up.
+  const rust = version ?? (choice.bundled ? app.getVersion() : null);
+  if (rust && versions.noteRustServer(defaultDataDir(), rust)) note(`huntaway ${rust} is a Rust release; recorded it in server_version`);
   const proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: serverEnv() });
   serverProc = proc;
   let ready = false;
@@ -343,7 +361,14 @@ function spawnServer(choice, { onLost, onLate }) {
     });
     ended.then(({ code, signal }) => {
       clearTimeout(timer);
-      reject(Object.assign(new Error(`Server exited with ${signal ? `signal ${signal}` : `code ${code}`}`), { early: true }));
+      // It couldn't back up the database, and says why (server-ts/src/serve.ts): {reason, why, dir}.
+      const m = buf.match(/IA_BACKUP_FAILED (\{.*\})/);
+      let backup = null;
+      try {
+        backup = m ? JSON.parse(m[1]) : null;
+      } catch {}
+      const what = backup ? `It couldn't back up the database: ${backup.why}` : `Server exited with ${signal ? `signal ${signal}` : `code ${code}`}`;
+      reject(Object.assign(new Error(what), { early: true, backup }));
     });
   });
 }
@@ -364,16 +389,36 @@ async function resolveTarget(win) {
 
 // The error page's Retry goes here, and is stopped on its way (a web address, so that it's navigated to like one).
 const RETRY_URL = "https://retry.huntaway.invalid/";
+// Its "Start without a backup", the same way.
+const SKIP_BACKUP_URL = "https://start-without-a-backup.huntaway.invalid/";
 
-function errorPage(message, title = "Huntaway couldn't start") {
-  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const button = (href, label, primary = true) =>
+  `<a href="${href}" style="display:inline-block;margin:8px 8px 0 0;padding:6px 14px;border-radius:6px;background:${primary ? "#6366f1" : "#24242e"};color:#fff;text-decoration:none">${esc(label)}</a>`;
+
+/** The error page: `message`, the server's last output, Retry, and for a backup that failed, why and the way past it. */
+function errorPage(message, title = "Huntaway couldn't start", backup = null) {
   const log = serverLog.length
     ? `<p style="color:#9a9aab;margin-top:24px">The server's last output:</p>
     <pre style="white-space:pre-wrap;font:12px ui-monospace,monospace;color:#c8c8d0;background:#16161d;border:1px solid #24242e;border-radius:8px;padding:12px;max-height:50vh;overflow:auto">${esc(serverLog.join("\n"))}</pre>`
     : "";
+  let body = `<h2>${esc(title)}</h2><pre style="white-space:pre-wrap;color:#f87171">${esc(message)}</pre>`;
+  let buttons = button(RETRY_URL, "Retry");
+  if (backup) {
+    const fix = {
+      space: `Free some space on that disk (older backups in ${backup.dir} can go), then Retry.`,
+      permissions: `Let Huntaway write to ${backup.dir}, then Retry.`,
+    }[backup.reason];
+    body = `<h2>Huntaway couldn't back up its database</h2>
+    <p style="max-width:720px;line-height:1.5">When its version changes, Huntaway copies the database before the new version opens it,
+    so that it can go back with its data if the new version is no good. This time it couldn't:</p>
+    <pre style="white-space:pre-wrap;color:#f87171">${esc(backup.why)}</pre>
+    <p style="max-width:720px;line-height:1.5">${esc(fix ?? "Retry, or start without a backup.")} Start without a backup opens the
+    database as it is: if the new version changes it, there's no copy from before to go back to.</p>`;
+    buttons += button(SKIP_BACKUP_URL, "Start without a backup", false);
+  }
   const html = `<body style="background:#0b0b0e;color:#e6e6ec;font:14px system-ui;padding:40px">
-    <h2>${esc(title)}</h2><pre style="white-space:pre-wrap;color:#f87171">${esc(message)}</pre>${log}
-    <p><a href="${RETRY_URL}" style="display:inline-block;margin-top:8px;padding:6px 14px;border-radius:6px;background:#6366f1;color:#fff;text-decoration:none">Retry</a></p>
+    ${body}<p>${buttons}</p>${log}
     <p style="color:#9a9aab">Config: ${esc(CONFIG_PATH)}</p></body>`;
   return "data:text/html;charset=utf-8," + encodeURIComponent(html);
 }
@@ -445,8 +490,12 @@ async function createWindow() {
   // The error page's Retry; otherwise the window stays on the board: a file dropped outside a drop zone, or
   // a link dragged in, would replace it (a web link opens in the browser instead).
   win.webContents.on("will-navigate", (e, url) => {
-    if (url === RETRY_URL) {
+    if (url === RETRY_URL || url === SKIP_BACKUP_URL) {
       e.preventDefault();
+      if (url === SKIP_BACKUP_URL) {
+        note("starting without a backup of the database, as asked");
+        skipBackupOnce = true;
+      }
       void load(win);
       return;
     }
@@ -476,7 +525,9 @@ async function load(win) {
     boardOrigin = new URL(ui).origin;
     await win.loadURL(`${ui}/${token ? `?token=${encodeURIComponent(token)}` : ""}`);
   } catch (e) {
-    if (!win.isDestroyed()) await win.loadURL(errorPage(e.message || e));
+    if (!win.isDestroyed()) await win.loadURL(errorPage(e.message || e, undefined, e.backup));
+  } finally {
+    skipBackupOnce = false;
   }
 }
 
@@ -508,7 +559,7 @@ async function serverLost(win) {
     await startServer(win);
   } catch (e) {
     if (await healthy(base, 3).catch(() => false)) return;
-    if (!win.isDestroyed()) await win.loadURL(errorPage(`It didn't start again: ${e.message || e}`, "Huntaway's server stopped"));
+    if (!win.isDestroyed()) await win.loadURL(errorPage(`It didn't start again: ${e.message || e}`, "Huntaway's server stopped", e.backup));
   }
 }
 

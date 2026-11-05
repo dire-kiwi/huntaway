@@ -262,9 +262,8 @@ export function log_line(state: AppState, line: string) {
   state.emit({ type: "restart_log", line });
 }
 
-/** Run a build step, streaming stdout and stderr into the restart log. */
-async function step(state: AppState, dir: string, program: string, args: string[]) {
-  log_line(state, `$ ${program} ${args.join(" ")}`);
+/** The environment build steps run in: this process's, with ~/.cargo/bin on PATH. */
+function build_env(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   // Servers launched from a desktop session may not have ~/.cargo/bin on PATH.
   const home = home_dir();
@@ -273,6 +272,22 @@ async function step(state: AppState, dir: string, program: string, args: string[
     const paths = (env.PATH ?? "").split(delimiter).filter((p) => p !== "");
     if (is_dir(cargo_bin) && !paths.includes(cargo_bin)) env.PATH = [...paths, cargo_bin].join(delimiter);
   }
+  return env;
+}
+
+/**
+ * Whether a rebuild builds ia-shim with cargo: unless there's no cargo on `path` and `ts_dir` (server-ts) has a prebuilt
+ * one in `bin/`, from a release (scripts/install.sh puts it there on a machine without Rust). The shim seldom changes.
+ */
+export function builds_shim(path: string | undefined, ts_dir: string): boolean {
+  const cargo = (path ?? "").split(delimiter).some((d) => d !== "" && is_file(join(d, "cargo")));
+  return cargo || !is_file(join(ts_dir, "bin/ia-shim"));
+}
+
+/** Run a build step, streaming stdout and stderr into the restart log. */
+async function step(state: AppState, dir: string, program: string, args: string[]) {
+  log_line(state, `$ ${program} ${args.join(" ")}`);
+  const env = build_env();
   const child = spawn(program, args, { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
   const lines = (stream: NodeJS.ReadableStream) =>
     new Promise<void>((done) => {
@@ -330,7 +345,8 @@ async function run(state: AppState, rebuild: boolean) {
     // Rust ia-shim its agents run under (see agent/runs.ts's shim_path).
     const ts = join(src, "server-ts");
     if (lockfile_changed(ts)) await step(state, ts, "npm", ["ci", "--no-audit", "--no-fund"]);
-    await step(state, join(src, "server"), "cargo", ["build", "--release", "-p", "ia-shim"]);
+    if (builds_shim(build_env().PATH, ts)) await step(state, join(src, "server"), "cargo", ["build", "--release", "-p", "ia-shim"]);
+    else log_line(state, "no cargo on PATH: using the prebuilt ia-shim in server-ts/bin/");
     exe = join(ts, "bin/huntaway");
   }
   throw await restart_into(state, exe, []);
@@ -455,8 +471,13 @@ export function reap_inherited() {}
 
 // ---------- updating from a hub ----------
 
-/** The source checkout's current branch and commit, packed as a git bundle (base64), for a linked host to update from. */
-export async function bundle(state: AppState): Promise<any> {
+/**
+ * The source checkout's current branch and commit, packed as a git bundle (base64), for a linked host to update from.
+ * With `since`, the commit the host runs, it holds only the commits after that one when it's an ancestor of the branch:
+ * the whole branch is several MB, more than a host takes in a request body (2 MB, before the TypeScript server's
+ * `/admin/update` took more), and the host has the rest.
+ */
+export async function bundle(state: AppState, since: string | null = null): Promise<any> {
   const src = state.meta.source_dir;
   if (src === null) throw ApiError.bad("this hub has no source checkout to share");
   const b = await worktree.git(src, ["symbolic-ref", "--short", "HEAD"]);
@@ -465,7 +486,12 @@ export async function bundle(state: AppState): Promise<any> {
   const commit = await head_commit(src);
   if (commit === null) throw ApiError.bad("can't read the hub's commit");
   const path = join(state.data_dir, "outgoing.bundle");
-  const o = await worktree.git(src, ["bundle", "create", path_str(path), branch]);
+  const revs = [branch];
+  // Not one the branch is at (git won't make an empty bundle), and not a commit this checkout lacks or has elsewhere.
+  if (since !== null && /^[0-9a-f]{40}$/.test(since) && since !== commit && (await worktree.git(src, ["merge-base", "--is-ancestor", since, commit])).ok) {
+    revs.push(`^${since}`);
+  }
+  const o = await worktree.git(src, ["bundle", "create", path_str(path), ...revs]);
   if (!o.ok) throw ApiError.bad(`git bundle failed: ${o.stderr.trim()}`);
   const bytes = readFileSync(path);
   rmSync(path, { force: true });

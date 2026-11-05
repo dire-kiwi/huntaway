@@ -4,6 +4,8 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import type { WebSocket } from "ws";
 import type { AppState } from "./state.ts";
 import { err_str } from "./util.ts";
+import { performance } from "node:perf_hooks";
+import * as lag from "./lag.ts";
 
 export class ApiError extends Error {
   status: number;
@@ -211,13 +213,29 @@ export function errorAnswer(e: any): Answer {
   return jsonAnswer(500, { error: err_str(e) });
 }
 
-/** Run a handler on a request, catching what it throws. */
-export async function call(h: Handler, s: AppState, r: Req): Promise<Answer> {
+/**
+ * Run a handler on a request, catching what it throws. `route` (`GET /tasks/{id}`) counts the time it holds the thread
+ * for (its synchronous part and its answer's JSON) in lag.ts.
+ */
+export async function call(h: Handler, s: AppState, r: Req, route?: string): Promise<Answer> {
+  let on_thread = 0;
+  const timed = <T>(f: () => T): T => {
+    const t0 = performance.now();
+    try {
+      return route ? lag.busy_with(`${route} ${r.path}`, f) : f();
+    } finally {
+      on_thread += performance.now() - t0;
+    }
+  };
   try {
-    return toAnswer(await h(s, r));
+    const out = timed(() => h(s, r));
+    const v = out instanceof Promise ? await out : out;
+    return timed(() => toAnswer(v));
   } catch (e) {
     if (!(e instanceof ApiError) && !(e instanceof Reply)) console.error(`${r.method} ${r.path}:`, e);
     return errorAnswer(e);
+  } finally {
+    if (route) lag.record(route, r.path, on_thread);
   }
 }
 
@@ -230,15 +248,24 @@ export function parseBody(raw: Buffer): any {
   }
 }
 
+/**
+ * A request's body, up to `limit` bytes. A longer one is a 413, as axum's limit is: the rest of it is read and dropped
+ * rather than the connection reset, which the client would see as the server going away before it could read the answer
+ * (a hub updating a host heard "unreachable: read ECONNRESET", HA-185). The server closes the connection after the
+ * answer (see serve.ts), so a client can't go on sending.
+ */
 export function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let over = false;
     req.on("data", (c: Buffer) => {
+      if (over) return;
       size += c.length;
       if (size > limit) {
+        over = true;
+        chunks.length = 0;
         reject(new ApiError(413, "length limit exceeded"));
-        req.destroy();
         return;
       }
       chunks.push(c);

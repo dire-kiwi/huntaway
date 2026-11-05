@@ -7,7 +7,8 @@ import * as db from "./db.ts";
 import * as testing from "./testing.ts";
 import { path_str } from "./util.ts";
 import * as runs from "./agent/runs.ts";
-import { dir_size, measure, plan, read } from "./disk.ts";
+import { dir_size, measure, plan, read, type Report } from "./disk.ts";
+import { in_worker } from "./worker.ts";
 
 function write(p: string, bytes: number) {
   mkdirSync(dirname(p), { recursive: true });
@@ -40,7 +41,7 @@ test("sizes_skip_nested_folders_and_count_hard_links_once", () => {
   rmSync(tmp, { recursive: true });
 });
 
-test("reports_repos_worktrees_and_stray_folders", () => {
+test("reports_repos_worktrees_and_stray_folders", async () => {
   const s = testing.state();
   const tmp = testing.temp_dir();
   const repo = join(tmp, "repo");
@@ -110,6 +111,9 @@ test("reports_repos_worktrees_and_stray_folders", () => {
   assert.ok(p.runs.bytes >= 32_000);
   assert.equal(r.runs.files, 1);
   assert.deepEqual([r.runs_kept_days, r.database], [runs.KEEP_DAYS, null]);
+  // The API's report, made in a worker thread (HA-183), is the same.
+  const from_worker = await in_worker<Report>(new URL("./disk.ts", import.meta.url), "report", [read(s.db(), profile), join(tmp, "data")]);
+  assert.deepEqual({ ...from_worker, elapsed_ms: 0, filesystem: null }, { ...r, elapsed_ms: 0, filesystem: null });
   rmSync(tmp, { recursive: true });
 });
 

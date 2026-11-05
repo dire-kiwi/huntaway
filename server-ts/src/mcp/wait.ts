@@ -508,29 +508,8 @@ export function subagent_finished(s: Shared, run: Run, event: any): void {
   const c = s.db();
   const w = db.get_task(c, run.task_id)?.agent_wait;
   if (!w || w.run_id !== run.id || w.subagent_finished != null) return;
-  let id: string | null;
-  if (typeof event.tool_use_id === "string") id = event.tool_use_id;
-  else {
-    id =
-      db.value<string | null>(
-        c,
-        `SELECT json_extract(data,'$.tool_use_id') FROM messages WHERE task_id=?1 AND kind='claude'
-         AND json_extract(data,'$.subtype')='task_started' AND json_extract(data,'$.task_id')=?2 ORDER BY id DESC LIMIT 1`,
-        run.task_id,
-        typeof event.task_id === "string" ? event.task_id : null,
-      ) ?? null;
-  }
-  if (id === null) return;
-  const known = db.value<number>(
-    c,
-    `SELECT EXISTS(SELECT 1 FROM messages m, json_each(m.data,'$.message.content') b
-     WHERE m.task_id=?1 AND m.kind='claude' AND json_extract(m.data,'$.type')='assistant'
-     AND json_extract(b.value,'$.type')='tool_use' AND json_extract(b.value,'$.name') IN ('Agent','Task')
-     AND json_extract(b.value,'$.id')=?2)`,
-    run.task_id,
-    id,
-  );
-  if (!known) return;
+  const id = typeof event.tool_use_id === "string" ? event.tool_use_id : db.subagent_call(c, run.task_id, typeof event.task_id === "string" ? event.task_id : null);
+  if (id === null || !db.is_subagent_call(c, run.task_id, id)) return;
   w.subagent_finished = { status, summary: event.summary ?? null, task_id: event.task_id ?? null, tool_use_id: id };
   const changed = db.update_task(c, run.task_id, [["agent_wait", order_wait(w)]]);
   if (changed) s.emit_task(changed);

@@ -131,6 +131,9 @@ export function DiskUsage() {
               <span key={f.hostName} className="block">
                 {f.hostName}'s data disk: {bytes(f.free)} free of {bytes(f.total)}.
                 {f.database != null && ` Its database takes ${bytes(f.database)}.`}
+                {f.backups != null &&
+                  f.backups.files > 0 &&
+                  ` ${f.backups.files === 1 ? "A backup of it, made when its version changed, takes" : `${f.backups.files} backups of it, made when its version changed, take`} ${bytes(f.backups.bytes)} (in the backups folder of its data dir, where older ones can be deleted).`}
                 {f.runsKeptDays != null && ` It keeps a run's folder for ${plural(f.runsKeptDays, "day")} after the run ends.`}
               </span>
             ))}

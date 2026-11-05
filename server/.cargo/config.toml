@@ -11,7 +11,7 @@ rustc-wrapper = ".cargo/rustc-wrapper"
 debug = false
 
 # Our crates' debuginfo stays in their object files rather than being copied into every binary (the
-# server, ia-shim and each test binary). Debuggers and backtraces read it from there.
+# ia-shim, the broker and each test binary). Debuggers and backtraces read it from there.
 [profile.dev]
 split-debuginfo = "unpacked"
 
