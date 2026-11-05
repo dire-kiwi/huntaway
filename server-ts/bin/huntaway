@@ -31,8 +31,9 @@ fi
 # a server that then goes idle keeps, with whatever garbage is in them (an idle server allocates too little to collect
 # it): 2 MB ones keep an idle server about 20 MB smaller and its heap collected. Under a lower old-space limit V8 grows
 # the heap less eagerly, which roughly halves what's left after a burst of load (loading every thread) at about 10% of
-# its speed. Either is left out when NODE_OPTIONS sets it (the command line would win over NODE_OPTIONS).
-flags=--disable-warning=ExperimentalWarning
+# its speed. Either is left out when NODE_OPTIONS sets it (the command line would win over NODE_OPTIONS). --expose-gc
+# lets the server have a full GC after a burst of work (see src/memory.ts).
+flags="--disable-warning=ExperimentalWarning --expose-gc"
 case " ${NODE_OPTIONS:-} " in *semi-space-size*) ;; *) flags="$flags --max-semi-space-size=2" ;; esac
 case " ${NODE_OPTIONS:-} " in *old-space-size* | *max-heap-size*) ;; *) flags="$flags --max-old-space-size=1024" ;; esac
 # glibc's malloc serves blocks above its mmap threshold with their own mappings, which go back to the system when

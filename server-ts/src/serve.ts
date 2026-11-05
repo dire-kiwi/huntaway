@@ -2,6 +2,7 @@
 import * as backup from "./backup.ts";
 import * as crash from "./crash.ts";
 import * as lag from "./lag.ts";
+import * as memory from "./memory.ts";
 import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
@@ -287,6 +288,7 @@ export async function serve(args: ServeArgs) {
   // starting isn't unhandled: main.ts logs it and exits.
   crash.install();
   lag.start();
+  memory.start();
   // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
   admin.take_supervisor();
   admin.reap_inherited();

@@ -68,17 +68,19 @@ release build of the Rust server and a package of the TS server on Node 26.8, on
 
 | | Rust | TypeScript | TypeScript before HA-181 |
 |---|---|---|---|
-| Idle after start (RSS) | 38 MB | 108 MB | 172 MB |
-| After loading every thread once | 264 MB | 176 MB (peak 242 MB) | 310 MB (peak 347 MB) |
-| After 5 rounds of that | 481 MB | 172 MB (peak 242 MB) | 322 MB (peak 414 MB) |
-| 10 s later, websockets closed | 444 MB | 172 MB | 321 MB |
-| A minute later | 444 MB | 104 MB | |
+| Idle after start (RSS) | 38 MB | 111 MB | 172 MB |
+| After loading every thread once | 331 MB | 198 MB (peak 236 MB) | 310 MB (peak 347 MB) |
+| After 5 rounds of that | 436 MB | 182 MB (peak 246 MB) | 322 MB (peak 414 MB) |
+| 10 s later, websockets closed | 437 MB | 173 MB | 321 MB |
+| A minute later | 437 MB | 98 MB | |
 | Each agent's `huntaway mcp` helper | 9 MB | none since HA-180 | 87 MB |
 | Each agent's `huntaway gh-mcp` helper | 7 MB | none since HA-180 | 90 MB |
 
 On the `--demo` data, idle is 20 MB against 85 MB (128 MB before), and loading the board keeps them at about 26 MB and
 87 MB. A checkout's `.ts` (test servers, `bin/huntaway` in `server-ts/`) idles at 132 MB on the live copy: Node's
 TypeScript compiler, below.
+
+The Rust server's figures vary by 10 to 20% from run to run, the TS server's by a few MB.
 
 - At rest, Node costs about 70 MB more: its runtime and heap, and the server's code. About 45 MB of that is any Node
   process's, most of it the pages of the `node` binary.
@@ -125,6 +127,10 @@ TypeScript compiler.
   `main.ts` takes out of what agents and git inherit): glibc serves blocks above its threshold with mappings of their
   own, which go back to the system when freed, but raises the threshold (up to 32 MB) as they're freed, so the large
   response bodies and query results that follow come from its heap, which kept 50 to 100 MB after a burst of load.
+- **A full GC after a burst** (`src/memory.ts`, with `--expose-gc`): the garbage a burst of requests leaves holds on
+  to malloc'd memory too, which only a full GC frees. V8's memory reducer has one once the heap is quiet, but not
+  reliably: a minute after the same load, a server was back at 105 MB in some runs and still at 180 MB in others. Now a
+  server whose RSS grew by 32 MB since its last full GC has one within 30 s, and is back at about 100 MB every time.
 - `demo.ts` loads only for `--demo`.
 
 ### Over hours
