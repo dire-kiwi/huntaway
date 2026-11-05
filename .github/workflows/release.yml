@@ -31,6 +31,7 @@ on:
       - server-ts/bin/**
       - server-ts/package.json
       - server-ts/package-lock.json
+      - server-ts/tsconfig.build.json
 
 permissions:
   contents: read
@@ -110,9 +111,12 @@ jobs:
       - name: Package the TypeScript server
         run: IA_BUILD_COMMIT=$(git rev-parse HEAD) scripts/package-server.sh release-server "$(command -v node)"
 
-      # It answers --version with the release's version (what a host installing it checks), and starts and serves.
+      # It answers --version with the release's version (what a host installing it checks), and starts and serves. Its
+      # server is compiled to .js, which Node runs without loading its TypeScript compiler (HA-181).
       - name: Check the packaged server
         run: |
+          [ -f release-server/server-ts/src/main.js ] && [ -z "$(find release-server/server-ts/src -name '*.ts')" ] ||
+            { echo "expected the server compiled to .js"; exit 1; }
           out=$(release-server/huntaway --version)
           echo "$out"
           [ "$out" = "huntaway $VERSION" ] || { echo "expected huntaway $VERSION"; exit 1; }
