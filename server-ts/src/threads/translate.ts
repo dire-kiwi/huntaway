@@ -33,7 +33,8 @@ import type {
  * message, without a warning; a prompt that's pending again reopens its request. 3 (HA-218, for the thread view on
  * items): items and requests carry the board's `metadata` (an auto message, a turn's cost and turns, a compaction's
  * tokens after, a request's stored prompt or question and its message id, replaced in place when it changes, a result's
- * text that no message said), subagents their `ended_at`,
+ * text that no message said, a subagent's description and prompt as its task_started says them), subagents their
+ * `ended_at`,
  * and a routine's report is a notice (`routine_report`).
  */
 export const CONVERTER_VERSION = 3;
@@ -131,6 +132,8 @@ interface Call {
   parent_raw: string | null;
   session?: string;
   input: unknown;
+  /** Its item's metadata (a subagent's description and prompt, as its task_started says them). */
+  metadata?: { [k: string]: unknown };
 }
 
 /** What a claude task_* message's `task_id` is about. */
@@ -238,6 +241,7 @@ export class Translator {
         parent_raw: parent ? parent.call_id : (item.parent_id ?? null),
         session: m?.session,
         input,
+        metadata: item.metadata,
       });
       if (m?.session) t.last_session = m.session;
       if (m?.subagent_task) t.jobs.set(m.subagent_task, { agent: item.id });
@@ -904,6 +908,14 @@ export class Translator {
         const title = str(d, "description");
         if (title !== undefined && !c.title) patch.title = c.title = title;
       }
+      // What the board shows as its description and prompt, which a forked Skill's input doesn't have (an Agent call's
+      // does, but this is what it says it's doing), as the latest says them.
+      const said: { [k: string]: unknown } = { ...c.metadata };
+      for (const k of ["description", "prompt"]) {
+        const v = str(d, k);
+        if (v !== undefined) said[k] = v;
+      }
+      if (!same_json(said, c.metadata ?? {})) patch.metadata = c.metadata = said;
       // A background subagent's call is done once it has started it. Claude Code says so with a result too, later; the
       // board's Codex children have none.
       if (s.background && c.status === "running" && !c.has_result) patch.status = c.status = "completed";

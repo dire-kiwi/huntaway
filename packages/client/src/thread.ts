@@ -142,6 +142,23 @@ export interface RewindResult {
   message: { text: string | null; auto: boolean };
 }
 
+/**
+ * The host API whose tasks say whether their threads are kept as items (`thread_items`), and whose items and requests
+ * carry the board's own metadata, so the thread view draws them from `api.thread` and its `thread_event`s (API 114).
+ */
+export const THREAD_VIEW_API = 117;
+
+/**
+ * A page of a thread's saved events after a seq (API 114), or `resync`: the log doesn't go back that far. `E` is the
+ * event type (server-ts/src/threads/protocol.ts's, which the app has as app/src/threads.ts).
+ */
+export interface ThreadEventPage<E> {
+  events: E[];
+  more: boolean;
+  seq: number;
+  resync?: true;
+}
+
 /** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
 export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
 
@@ -167,6 +184,19 @@ export const threadApi = ({ on }: Http) => ({
    *  mode an approved plan carries on in; or the feedback a plan's sent back with. */
   resolvePermission: (h: string, id: string, decision: "allow" | "allow_always" | "deny", message?: string, reply?: PermissionReply) =>
     on(h).post(`/permissions/${enc(id)}`, { decision, message, ...reply }),
+  /**
+   * A task's thread kept as items (API 114, docs/threads-api.md): a snapshot, or with `limit` a window of its last items.
+   * The types are server-ts/src/threads/protocol.ts's (app/src/threads.ts): `S` its Snapshot, `P` its ItemPage.
+   */
+  thread: <S>(h: string, id: string, limit?: number) => on(h).get<S>(`/tasks/${enc(id)}/thread${limit != null ? `?limit=${limit}` : ""}`),
+  /** The thread's items before index `before` (a window's start), `limit` of them. */
+  threadItems: <P>(h: string, id: string, before: number, limit?: number) =>
+    on(h).get<P>(`/tasks/${enc(id)}/thread/items?before=${before}${limit != null ? `&limit=${limit}` : ""}`),
+  /** The thread's saved events after `after`. */
+  threadEvents: <E>(h: string, id: string, after: number) => on(h).get<ThreadEventPage<E>>(`/tasks/${enc(id)}/thread/events?after=${after}`),
+  /** A protocol Command for the task's thread, through the board's own route for it: `{ok, result}` with the route's answer. */
+  threadCommand: <R = unknown>(h: string, id: string, command: { type: string; [k: string]: unknown }) =>
+    on(h).post<{ ok: true; result: R }>(`/tasks/${enc(id)}/thread/commands`, command),
   /** Answer a question an agent asked with request_user_input, from its card (API 64): sent as the user's message. */
   answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
     on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
