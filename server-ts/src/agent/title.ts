@@ -178,25 +178,28 @@ function words_of(s: string): string {
   return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
-/** How a sentence that says to keep the title starts ("Keep the task's current title"), and may end ("… as is"), in `words_of`'s form. */
-const KEEP_HEAD = String.raw`keep(?: (?:the|its|this))?(?: (?:task s|task|current|existing|same|original|present))*`;
-const KEEP_TAIL = String.raw`(?: (?:as is|as it is|unchanged|the same))?`;
-const KEEP_SAYS = new RegExp(`^${KEEP_HEAD} (?:title|it)${KEEP_TAIL}$`, "u");
-const TITLE_FITS = /^(?:the )?(?:(?:task s|task|current|existing) )*title (?:still fits|still applies|is still accurate|is fine|stays|remains|is unchanged)\b/u;
+/** Words a sentence saying the title still fits is made of ("Keep the task's current title as is", "No changes needed"), in `words_of`'s form. */
+const KEEP_FILLER = new Set(
+  ("keep keeping kept the task s title current existing same original present its it this as is unchanged no change changes changed needed " +
+    "still fits fine applies accurate stays remains nothing needs ok good").split(" "),
+);
+/** Those of them that say it: one of these makes a sentence of filler a KEEP. */
+const KEEP_SAYS = /^(?:keep|keeping|kept|unchanged|change|changes|changed|fits|fine|applies|accurate|stays|remains)$/u;
 
 /**
  * A reply (cleaned, see `clean`) that the title (`current`) still fits: KEEP, or KEEP with an explanation after it, or
- * a sentence that says so instead (as Codex sometimes answers: "Keep the task title “Say hello”", "Keep the current
- * title", "The title still fits"). A title that only starts with "Keep" ("Keep the title bar visible", "Keep dark mode
- * in sync") is a title.
+ * a sentence that says so instead (as Codex sometimes answers: "Keep the task title “Say hello”", "The title “Say hello”
+ * still fits", "No changes needed"), in any order: one that, besides the current title (once), is only words like
+ * these, with one that says to keep it. A title that only starts with "Keep" ("Keep the title bar visible", "Keep dark
+ * mode in sync" for a task titled "Dark mode") is a title.
  */
 function is_keep(reply: string, current: string): boolean {
   if (/^KEEP(?![\p{L}\p{N}])/u.test(reply.trim())) return true;
-  const r = words_of(reply);
-  if (r === "keep" || KEEP_SAYS.test(r) || TITLE_FITS.test(r) || /^no change\b/u.test(r)) return true;
-  // Keep it, naming it: "Keep “Say hello”", "Keep the task title “Say hello” as is". (`words_of` leaves nothing to escape.)
+  let r = ` ${words_of(reply)} `;
   const t = words_of(current);
-  return t !== "" && new RegExp(`^${KEEP_HEAD}(?: title)?(?: as)? ${t}${KEEP_TAIL}$`, "u").test(r);
+  if (t !== "") r = r.replace(` ${t} `, " ");
+  const words = r.split(" ").filter((w) => w !== "");
+  return words.length > 0 && words.every((w) => KEEP_FILLER.has(w)) && words.some((w) => KEEP_SAYS.test(w));
 }
 
 /** Whether a message the user sent may say something about what the task is about: it has words besides links and attached files. */

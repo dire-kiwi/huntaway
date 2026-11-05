@@ -102,6 +102,18 @@ test("a_sentence_saying_to_keep_the_title_keeps_it", () => {
     "The title still fits",
     "The current title is fine",
     "No change",
+    "Keep “Say hello” as the title",
+    "Keep the title unchanged: “Say hello”",
+    "Keep the title as is: Say hello",
+    "The title “Say hello” still fits",
+    "Keep as is",
+    "Keep unchanged",
+    "Keep — nothing changed",
+    "Title unchanged",
+    "Unchanged",
+    "No changes",
+    "No changes needed",
+    "No title change",
   ])
     assert.equal(new_title(clean(r), "Say hello"), null, r);
   // A title that starts with "Keep" is still a title, even one that mentions a title or the task's current one.
@@ -112,6 +124,8 @@ test("a_sentence_saying_to_keep_the_title_keeps_it", () => {
     ["Keep dark mode in sync across tabs", "Dark mode"],
     ["Keep it simple", "Fix login"],
     ["Keeper of the logs", "Fix login"],
+    ["Keep the task list sorted", "Say hello"],
+    ["Say hello in French", "Say hello"],
   ])
     assert.equal(new_title(clean(r), current), r);
 });
