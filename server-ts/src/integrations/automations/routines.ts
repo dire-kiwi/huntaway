@@ -14,6 +14,7 @@ import type { Conn, Task } from "../../db.ts";
 import { ApiError } from "../../http.ts";
 import * as api from "../../api.ts";
 import * as assistant from "../../agent/assistant.ts";
+import * as memory from "../../agent/assistant/memory.ts";
 import * as runner from "../../agent/runner.ts";
 import * as worktree from "../../git/worktree.ts";
 import type { Shared } from "../../state.ts";
@@ -237,7 +238,7 @@ function precheck_dir(s: Shared, a: Automation): string {
     throw fail(e instanceof ApiError ? e.message : err_str(e));
   }
   try {
-    return assistant.checked(s, t);
+    return memory.checked(s, t);
   } catch (e) {
     throw fail(`the assistant's workspace: ${err_str(e)}`);
   }
