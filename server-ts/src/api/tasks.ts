@@ -13,6 +13,7 @@ import * as documents from "../agent/documents.ts";
 import * as focus from "../agent/focus.ts";
 import * as title from "../agent/title.ts";
 import * as agent_tools from "../agent/agent_tools.ts";
+import * as assistant from "../agent/assistant.ts";
 import * as task_tmp from "../agent/task_tmp.ts";
 import * as worktree from "../git/worktree.ts";
 import * as permissions from "../mcp/permissions.ts";
@@ -31,16 +32,18 @@ export async function list_project_tasks(s: AppState, r: Req) {
   return db.list_tasks_for_project(c, r.params.id, kind);
 }
 
+/** A profile's tasks; with `include_assistant` (API 107) its assistant too, which is left out otherwise, being off the board. */
 export async function list_profile_tasks(s: AppState, r: Req) {
-  return db.list_tasks_for_profile(s.db(), r.params.id);
+  return db.list_tasks_for_profile(s.db(), r.params.id, query_bool(r, "include_assistant"));
 }
 
 export async function list_profile_scratch(s: AppState, r: Req) {
   return db.list_profile_scratch(s.db(), r.params.id);
 }
 
+/** The profile's tasks in no project: its group and scratch tasks, and with `include_assistant` (API 107) its assistant. */
 export async function list_group_tasks(s: AppState, r: Req) {
-  return db.list_group_tasks(s.db(), r.params.id);
+  return db.list_group_tasks(s.db(), r.params.id, query_bool(r, "include_assistant"));
 }
 
 export async function get_task(s: AppState, r: Req) {
@@ -72,10 +75,14 @@ const has = (fields: Fields, ...ks: string[]) => fields.some(([f]) => ks.include
 export async function update_task_inner(s: AppState, id: string, b: Record<string, any>): Promise<Task> {
   const current = db.get_task(s.db(), id);
   if (!current) throw ApiError.not_found("task");
+  // The profile's assistant lasts: it's never reviewed, merged, done or parked (see agent/assistant.ts).
+  if (db.is_assistant(current) && typeof b.status === "string" && assistant.NOT_FOR_ASSISTANT.includes(b.status) && b.status !== current.status) {
+    throw ApiError.bad("the assistant can't go to review, merge, Done or Backlog");
+  }
   // A task with no changes to merge (and so no pull request) skips the merge and is done.
   const to_merge = b.status === "ready_for_merge" && current.status !== "ready_for_merge" && current.kind === "task";
   // A scratch task, or one that makes only documents (which the board keeps), has nothing to merge.
-  const own_folder = db.is_scratch(current) || documents.documents_only(current);
+  const own_folder = db.is_scratch(current) || db.is_assistant(current) || documents.documents_only(current);
   const nothing_to_merge = to_merge && (own_folder || !(await worktree.has_work_to_merge(s, current)));
   let fields: Fields = pick(b, UPDATABLE);
   check_reminder(current, fields);

@@ -164,11 +164,15 @@ export async function preview(state: Shared, project: Project, o: PreviewOptions
 /** The key a group task's number goes with, in place of a project's key. */
 export const GROUP_TASK_KEY = "G";
 
-/** What goes before a task's number in its key: its project's key, for a group task `G`, or for a scratch task `S`. */
+/**
+ * What goes before a task's number in its key: its project's key, for a group task `G`, for a scratch task `S`, or for a
+ * profile's assistant `A`.
+ */
 export function key_prefix(task: Task, project: Project | null | undefined): string {
   if (project) return project.key;
   if (task.group_name != null) return GROUP_TASK_KEY;
   if (db.is_scratch(task)) return db.SCRATCH_TASK_KEY;
+  if (db.is_assistant(task)) return db.ASSISTANT_TASK_KEY;
   return "T";
 }
 
@@ -180,6 +184,8 @@ export function key_prefix(task: Task, project: Project | null | undefined): str
 export function start_prompt(task: Task, project: Project | null | undefined, text: string): string {
   const key = key_prefix(task, project);
   text = text.trim();
+  // The assistant is a conversation, not a task to start on: its first prompt is the user's message.
+  if (db.is_assistant(task)) return text;
   let p = "";
   if (is_slash_command(text)) p += `${text}\n\n`;
   p += `# ${key}-${task.number}: ${task.title}\n`;
@@ -267,7 +273,26 @@ export function system_prompt(
     "- While they work, wait for them with `wait` (listing them in `tasks`) rather than ending your turn.\n" +
     "- Run tasks that build on each other one after the other, and independent ones in parallel.";
   let s: string;
-  if (task.kind === "task" && db.is_scratch(task)) {
+  if (task.kind === "task" && db.is_assistant(task)) {
+    const dir = task.work_dir ?? "its own folder";
+    s =
+      "You are the personal assistant of this Huntaway profile: one long-lasting conversation with the user, " +
+      `thread A-${task.number} (id ${task.id}) on the Huntaway board, which is a kanban board where each task is worked by its own ` +
+      "Claude agent, grouped into projects. You aren't a coding agent and you aren't in a project or a repository: " +
+      "you help the user with whatever they ask, such as answering questions, looking things up, keeping track " +
+      "of things, and planning and following their work across the board.\n\n" +
+      `Your working directory is your own workspace folder (${dir} in the board's data dir), which lasts ` +
+      "between conversations. Keep notes there that you'll want later.\n\n" +
+      "You can use the skills and MCP servers set up for this profile (beyond any project), and the board's tools.\n\n" +
+      `${tools}\n\n` +
+      "Hand code work to project tasks rather than doing it yourself: find the project with `list_projects`, " +
+      "then `create_task` there (with start=true to start its agent, when the user wants that), and follow it " +
+      "with `get_task` or `wait`. Don't change repositories, commit, push or open pull requests yourself. Tasks " +
+      "you create are recorded as yours.\n\n" +
+      "If you need a decision or information from the user before you can go on, call `request_user_input` " +
+      "with your question (and its `options`, when the choices are known), then end your turn. Otherwise just " +
+      "reply: this thread stays open and never goes to review or merge, so don't move it to another status.";
+  } else if (task.kind === "task" && db.is_scratch(task)) {
     // One from a scratch chat works in the chat's folder, which may be shared.
     const dir =
       task.work_dir != null

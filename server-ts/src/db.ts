@@ -115,6 +115,11 @@ export const SCRATCH = "scratch";
 /** What a task can be besides a code task: `scratch`, for a scratch task (see is_scratch). */
 export const TASK_TYPES = [SCRATCH];
 /**
+ * The task type of a profile's assistant (see is_assistant). Not one of TASK_TYPES: it's made by the board, one per
+ * profile (see agent/assistant.ts), not asked for as a new task's type.
+ */
+export const ASSISTANT = "assistant";
+/**
  * The labels a task can have, each a document its agent writes besides its other work (see Task.labels and
  * agent/documents.rs), in the order the task shows them. They were task types of their own before API 71, which still
  * accepts them as a new task's `task_type`.

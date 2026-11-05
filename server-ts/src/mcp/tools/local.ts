@@ -96,7 +96,9 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
         tasks = [];
         for (const b of bs) {
           const archived = db.list_projects(s.db(), b.id).filter((p) => p.archived_at != null).map((p) => p.id);
-          const list = db.list_tasks_for_profile(s.db(), b.id);
+          // The assistant only when asked for, and only the caller's own (see agent/assistant.ts).
+          const assistant = bool_arg("include_assistant") === true && is_own(ctx, b);
+          const list = db.list_tasks_for_profile(s.db(), b.id, assistant);
           tasks.push(...list.filter((t) => t.project_id === null || !archived.includes(t.project_id)));
         }
       } else {

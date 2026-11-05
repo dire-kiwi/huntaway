@@ -1,6 +1,6 @@
 // Port of server/src/db/tasks.rs: tasks: the `Task` row, and queries over tasks, their dependencies and merges.
 import { ApiError } from "../http.ts";
-import { SCRATCH, all, get_setting, hidden, json_list, json_to_sql, one, run, value, type Conn } from "../db.ts";
+import { ASSISTANT, SCRATCH, all, get_setting, hidden, json_list, json_to_sql, one, run, tx, value, type Conn } from "../db.ts";
 import { err_str, new_id, now } from "../util.ts";
 import { available_configs } from "./profiles.ts";
 import { get_project, list_projects, type Project } from "./projects.ts";
@@ -12,6 +12,8 @@ import {
 
 /** The key scratch tasks' numbers go with (see is_scratch), which no project can have. */
 export const SCRATCH_TASK_KEY = "S";
+/** The key a profile's assistant's number goes with (see is_assistant), which no project can have. */
+export const ASSISTANT_TASK_KEY = "A";
 
 /** Rust's `eq_ignore_ascii_case`. */
 const ascii_lower = (s: string) => s.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
@@ -240,6 +242,14 @@ export function is_scratch(t: Task): boolean {
   return t.kind === "task" && t.task_type === SCRATCH;
 }
 
+/**
+ * A profile's assistant: its one long-lived thread in no project (see agent/assistant.ts), which works in a folder of its
+ * own and never goes to review or merge.
+ */
+export function is_assistant(t: Task): boolean {
+  return t.kind === "task" && t.task_type === ASSISTANT;
+}
+
 /** The column a task sits in while its agent works. */
 export function working_status(t: Task): "ready_for_merge" | "in_progress" {
   return t.merging ? "ready_for_merge" : "in_progress";
@@ -367,9 +377,16 @@ export function project_threads(c: Conn, project_id: string): Task[] {
   return tasks(c, "SELECT * FROM tasks WHERE project_id=?1 ORDER BY created_at", project_id);
 }
 
-/** A profile's group tasks (see Task.group_name), including any whose group is gone. */
-export function list_group_tasks(c: Conn, profile_id: string): Task[] {
-  return tasks(c, "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' ORDER BY position", profile_id);
+/**
+ * A profile's group tasks (see Task.group_name), including any whose group is gone. With `assistant`, the profile's assistant
+ * too, which is off the board (the sidebar opens it).
+ */
+export function list_group_tasks(c: Conn, profile_id: string, assistant: boolean): Task[] {
+  return tasks(
+    c,
+    "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY position",
+    profile_id, assistant,
+  );
 }
 
 /** The projects of a profile's group, by name (archived ones are out of it). */
@@ -409,6 +426,35 @@ export function insert_scratch_task(c: Conn, t: NewTask): Task {
     created.id, SCRATCH, created.profile_id,
   );
   return get_task(c, created.id)!;
+}
+
+/** A profile's assistant, if it has one (see is_assistant). */
+export function assistant_task(c: Conn, profile_id: string): Task | null {
+  return task(c, "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND task_type=?2", profile_id, ASSISTANT);
+}
+
+/** A profile's assistant by number (its key is `A-<n>`). */
+export function assistant_task_by_number(c: Conn, profile_id: string, number: number): Task | null {
+  const t = assistant_task(c, profile_id);
+  return t && t.number === number ? t : null;
+}
+
+/**
+ * Adds a profile's assistant, keyed `A-<n>` and working in `work_dir(<its id>)` (relative to the data dir, see
+ * documents::work_dir). A profile has one at most (the index tasks_one_assistant), so this fails if it has one;
+ * assistant::get_or_create checks first.
+ */
+export function insert_assistant_task(c: Conn, t: NewTask, work_dir: (id: string) => string): Task {
+  return tx(c, () => {
+    const created = insert_task(c, { ...t, project_id: null, kind: "task" });
+    run(
+      c,
+      `UPDATE tasks SET task_type=?2, work_dir=?4, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
+           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type=?2) WHERE id=?1`,
+      created.id, ASSISTANT, created.profile_id, work_dir(created.id),
+    );
+    return get_task(c, created.id)!;
+  });
 }
 
 /** Scratch tasks working in `dir`, which were scratch chats there (see Task.work_dir). */
@@ -451,8 +497,13 @@ export function list_all_tasks(c: Conn): Task[] {
   return tasks(c, "SELECT * FROM tasks WHERE kind='task'");
 }
 
-export function list_tasks_for_profile(c: Conn, profile_id: string): Task[] {
-  return tasks(c, "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' ORDER BY project_id, position", profile_id);
+/** A profile's tasks, and with `assistant` its assistant (see is_assistant), which is off the board. */
+export function list_tasks_for_profile(c: Conn, profile_id: string, assistant: boolean): Task[] {
+  return tasks(
+    c,
+    "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY project_id, position",
+    profile_id, assistant,
+  );
 }
 
 /**

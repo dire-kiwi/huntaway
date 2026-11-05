@@ -15,6 +15,7 @@ import type { Shared } from "../../state.ts";
 import * as api from "../../api.ts";
 import * as au from "../../integrations/automations.ts";
 import * as runner from "../../agent/runner.ts";
+import * as assistant from "../../agent/assistant.ts";
 import * as runs from "../../agent/runs.ts";
 import * as prompts from "../../agent/prompts.ts";
 import * as worktree from "../../git/worktree.ts";
@@ -740,7 +741,7 @@ test("scratch_tasks_get_their_marks_too", async () => {
   assert.ok(t.starred && t.remind_at != null, JSON.stringify(t));
   assert.equal(t.reminder, "Come back to this");
   // Bad ones fail before it's made.
-  const n = () => db.list_tasks_for_profile(s.db(), p.id).length;
+  const n = () => db.list_tasks_for_profile(s.db(), p.id, false).length;
   const before = n();
   for (const bad of [{ remind_at: "whenever" }, { reminder: "No time" }, { starred: "yes" }]) {
     assert.ok(await fails(call(s, me, "create_task", scratch(bad))), JSON.stringify(bad));
@@ -1368,6 +1369,43 @@ test("scratch_tasks_are_made_in_no_project_unless_given_one", async () => {
   assert.deepEqual([t.key, t.project_id], ["S-2", null]);
 });
 
+test("only_its_own_profiles_agents_reach_the_assistant", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  const work = db.insert_profile(s.db(), "work", [], null);
+  project(s, p, "web", "WEB");
+  project(s, work, "sd", "SD");
+  task(s, "web", "build");
+  task(s, "sd", "deploy");
+  const mine = assistant.get_or_create(s, p.id);
+  const theirs = assistant.get_or_create(s, work.id);
+  // Each lets the other's agents in.
+  grant(s, p, ["work"]);
+  grant(s, work, ["personal"]);
+  const me = ctx(p);
+  // Off list_tasks unless it's asked for, and then only the caller's own.
+  assert.deepEqual(keys(await call(s, me, "list_tasks", { project_id: "all" }), "key"), ["personal:WEB-1"]);
+  const all = await call(s, me, "list_tasks", { project_id: "all", include_assistant: true });
+  assert.deepEqual(keys(all, "key"), ["personal:A-1", "personal:WEB-1"]);
+  assert.equal(all[0].type, "assistant");
+  const every = await call(s, me, "list_tasks", { project_id: "all", profile: "all", include_assistant: true });
+  assert.deepEqual(keys(every, "key"), ["personal:A-1", "personal:WEB-1", "work:SD-1"]);
+  // By key or id, its own and not the other profile's.
+  assert.equal((await call(s, me, "get_task", { task_id: "A-1" })).id, mine.id);
+  assert.equal((await call(s, me, "get_task", { task_id: mine.id })).key, "A-1");
+  for (const r of ["work:A-1", theirs.id]) {
+    assert.ok(await fails(call(s, me, "get_task", { task_id: r })), r);
+    assert.ok(await fails(call(s, me, "send_to_task", { task_id: r, message: "hi" })), r);
+    assert.ok(await fails(call(s, me, "update_task", { task_id: r, title: "Mine now" })), r);
+    assert.ok(await fails(call(s, me, "delete_task", { task_id: r })), r);
+  }
+  assert.ok(await fails(call(s, me, "get_task", { task_id: "A-1", profile: "work" })));
+  assert.ok(await fails(handle_remote(s, "get_task", "personal", { task_id: theirs.id }, true)));
+  assert.equal(db.get_task(s.db(), theirs.id)!.title, "Assistant");
+  // The other profile's own agents reach theirs.
+  assert.equal((await call(s, ctx(work), "get_task", { task_id: "A-1" })).id, theirs.id);
+});
+
 test("a_group_task_creates_tasks_in_its_groups_projects", async () => {
   const s = state();
   const p = db.insert_profile(s.db(), "personal", [], null);
@@ -1486,7 +1524,7 @@ test("group_tasks_follow_their_group_when_its_renamed", () => {
   db.update_project(c, "a", [["group_name", null]]);
   db.update_project(c, "b", [["group_name", null]]);
   assert.equal(db.rename_group_tasks(c, p.id, "New", null).length, 0);
-  assert.equal(db.list_group_tasks(c, p.id)[0].group_name, "New");
+  assert.equal(db.list_group_tasks(c, p.id, false)[0].group_name, "New");
 });
 
 test("an_agent_waits_for_the_tasks_it_watches", async () => {

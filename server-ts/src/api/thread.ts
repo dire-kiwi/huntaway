@@ -7,6 +7,7 @@ import { ApiError, Reply, type Req } from "../http.ts";
 import type { AppState } from "../state.ts";
 import { err_str } from "../util.ts";
 import * as runner from "../agent/runner.ts";
+import * as assistant from "../agent/assistant.ts";
 import * as focus from "../agent/focus.ts";
 import * as worktree from "../git/worktree.ts";
 import * as terminal from "../hosts/terminal.ts";
@@ -45,6 +46,19 @@ export async function send_message(s: AppState, r: Req) {
   // The user's reply answers the questions the agent asked (see mcp/questions.rs).
   if (text.trim()) questions.replied(s, t.id);
   return t;
+}
+
+/** `GET /profiles/{id}/assistant` (API 107): the profile's assistant (see agent/assistant.ts), made the first time it's asked for. */
+export async function get_assistant(s: AppState, r: Req) {
+  return assistant.get_or_create(s, r.params.id);
+}
+
+/**
+ * `POST /profiles/{id}/assistant` (API 107): send the user's message to the profile's assistant, as `POST
+ * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
+ */
+export async function send_to_assistant(s: AppState, r: Req) {
+  return assistant.send(s, r.params.id, def_str(json_map(r), "text"));
 }
 
 /** Answer a question an agent asked with request_user_input, from its card (API 64): the answer is sent as the user's message. */

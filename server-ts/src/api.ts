@@ -83,6 +83,7 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/tasks", { GET: tasks.list_profile_tasks, POST: new_task.create_scratch_task });
   // Scratch chats, of which there are none since they became scratch tasks (for older boards).
   r.route("/profiles/{id}/scratch", { GET: tasks.list_profile_scratch });
+  r.route("/profiles/{id}/assistant", { GET: thread.get_assistant, POST: thread.send_to_assistant });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });

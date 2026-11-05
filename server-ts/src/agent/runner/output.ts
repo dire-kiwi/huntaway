@@ -437,6 +437,9 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   } else if (task.remerge) {
     // It stepped out of the merge queue to make changes, and now rejoins it.
     [status, reason] = ["ready_for_merge", null];
+  } else if (db.is_assistant(task)) {
+    // The assistant never goes to review: it waits for the user's next message.
+    [status, reason] = ["todo", null];
   } else {
     [status, reason] = ["in_review", null];
   }

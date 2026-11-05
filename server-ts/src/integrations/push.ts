@@ -400,7 +400,7 @@ export function notification_text(e: Event, t: any, key: string): [string, strin
   return [`${key} ${typeof t?.title === "string" ? t.title : ""}`, body];
 }
 
-/** What goes before a task's number (`keyPrefix`): its project's key, `G` for a group task, `S` for a scratch task. */
+/** What goes before a task's number (`keyPrefix`): its project's key, `G` for a group task, `S` for a scratch task, `A` for a profile's assistant. */
 async function task_key(s: AppState, host_id: string, t: any): Promise<string> {
   let prefix: string | null = null;
   if (typeof t?.project_id === "string") {
@@ -413,6 +413,7 @@ async function task_key(s: AppState, host_id: string, t: any): Promise<string> {
     }
   } else if (typeof t?.group_name === "string") prefix = "G";
   else if (t?.task_type === "scratch") prefix = "S";
+  else if (t?.task_type === "assistant") prefix = "A";
   return `${prefix ?? "T"}-${JSON.stringify(t?.number ?? null)}`;
 }
 
