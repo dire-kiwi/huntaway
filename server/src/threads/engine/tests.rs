@@ -459,3 +459,34 @@ fn the_helpers_read_the_token_from_a_private_file() {
         close_fake(&s).await;
     })
 }
+
+/// A task whose working directory changes between runs (moved to a worktree of its own, its repository
+/// relocated) has its next turn run there, carrying on its conversation.
+#[test]
+fn a_follow_up_runs_where_the_task_works_now() {
+    crate::testing::run(async || {
+        let s = crate::testing::state();
+        let dir = crate::testing::temp_dir();
+        let log = dir.join("fake-claude.log");
+        start_fake(&s, &[("IA_FAKE_CLAUDE_LOG", &path_str(&log))]);
+        let t = new_task(&s);
+        runner::send(&s, &t.id, "here").unwrap();
+        let first = until(&s, &t.id, "to in_review", |t| !t.running && t.status == "in_review").await;
+        let moved = dir.join("worktree");
+        std::fs::create_dir_all(&moved).unwrap();
+        db::update_task(&s.db(), &t.id, &[("work_dir", json!(path_str(&moved)))]).unwrap();
+        runner::send(&s, &t.id, "and now there").unwrap();
+        until(&s, &t.id, "running", |t| t.running).await;
+        until(&s, &t.id, "to in_review again", |t| !t.running && t.status == "in_review").await;
+        let calls: Vec<Value> = std::fs::read_to_string(&log).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        let cwd = |c: &Value| std::fs::canonicalize(c["cwd"].as_str().unwrap()).unwrap();
+        assert_ne!(cwd(&calls[0]), std::fs::canonicalize(&moved).unwrap());
+        assert_eq!(cwd(&calls[1]), std::fs::canonicalize(&moved).unwrap(), "the follow-up runs in the new directory");
+        let resumed = calls[1]["args"].as_array().unwrap().windows(2).any(|w| w[0] == "--resume" && w[1] == json!(first.session_id));
+        assert!(resumed, "it resumes the conversation: {:?}", calls[1]["args"]);
+        assert_eq!(backend(&s).unwrap().get(&t.id).await.unwrap().unwrap().cwd.as_deref().map(std::path::PathBuf::from).map(|p| std::fs::canonicalize(p).unwrap()),
+            Some(std::fs::canonicalize(&moved).unwrap()));
+        close_fake(&s).await;
+    })
+}
