@@ -300,7 +300,10 @@ export type ThreadRequest = PermissionRequest | QuestionRequest | PlanRequest;
 
 interface EventBase {
   thread_id: string;
-  /** Saved events are numbered 1, 2, 3... in their thread with no gaps. A delta has the seq of the last saved event before it. */
+  /**
+   * Saved events are numbered 1, 2, 3... in their thread with no gaps (but for one a rebuild leaves, so that clients from
+   * before it see a gap and take a fresh window). A delta has the seq of the last saved event before it.
+   */
   seq: number;
 }
 
@@ -335,7 +338,13 @@ export interface ItemsRemovedEvent extends EventBase {
   item_ids: string[];
   indices: number[];
 }
-/** Streamed text for an assistant_message (text) or reasoning item, which was `offset` long (UTF-16 code units) before it. Not saved. */
+/**
+ * Streamed text for an assistant_message (text) or reasoning item, which was `offset` long (UTF-16 code units) before it.
+ * Not saved. Huntaway streams into a message before it's saved, so its deltas name an item the thread doesn't have
+ * (`stream:<server>:<n>`, see threads/write.ts): a preview of the agent's next message, which apply_event leaves out. A
+ * client shows it after the thread's items until an item is added to the main conversation (the message saved), or a
+ * delta for another id comes.
+ */
 export interface DeltaEvent extends EventBase {
   type: "delta";
   item_id: string;

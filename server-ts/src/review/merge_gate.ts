@@ -125,11 +125,11 @@ export function settle(s: AppState, task_id: string, status: string): void {
     }
     if (v === null || typeof v !== "object" || Array.isArray(v)) v = {};
     v.status = status;
-    let n = 0;
+    let m: db.Message | null = null;
     try {
-      n = db.run(s.db(), "UPDATE messages SET data=?1 WHERE id=?2 AND json_extract(data, '$.status')='pending'", JSON.stringify(v), id).changes;
+      m = db.update_pending_message(s.db(), id, v);
     } catch {}
-    if (n > 0) questions.emit(s, id);
+    if (m) questions.emit(s, id, m);
   }
 }
 

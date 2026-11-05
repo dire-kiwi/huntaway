@@ -536,6 +536,21 @@ test("how_long_a_task_stays_in_now_is_a_setting", async () => {
   }
 });
 
+test("keeping_threads_as_items_is_a_setting_off_by_default", async () => {
+  const s = testing.state();
+  const set = (v: any) => update_settings(s, req(v));
+  assert.equal((await get_settings(s)).thread_items, false);
+  assert.equal((await set({ thread_items: true })).thread_items, true);
+  assert.equal(db.get_setting(s.db(), "thread_items"), "true");
+  assert.equal((await set({})).thread_items, true);
+  assert.equal((await set({ thread_items: false })).thread_items, false);
+  assert.equal(db.get_setting(s.db(), "thread_items"), null);
+  assert.equal((await set({ thread_items: true })).thread_items, true);
+  assert.equal((await set({ thread_items: null })).thread_items, false);
+  const e = await err(set({ thread_items: "yes" }));
+  assert.equal(e.status, 400);
+});
+
 test("tasks_link_to_asana_tasks", async () => {
   const s = testing.state();
   const p = db.insert_profile(s.db(), "p", [], null);

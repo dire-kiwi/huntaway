@@ -64,6 +64,8 @@ async function main() {
       report.run(report.parse_args(rest));
       return;
     }
+    case "threads-rebuild":
+      return (await import("./threads/rebuild.ts")).main(rest);
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
     case "--version":
