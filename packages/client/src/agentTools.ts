@@ -1,5 +1,5 @@
 import type { Agent } from "./claudeConfigs";
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 
 /** A skill for one project's agents, or a global one (API 22) that profiles and projects switch on. */
 export interface ProjectSkill {
@@ -107,7 +107,7 @@ export interface GlobalAgentTools {
   profile_switches: Record<string, Record<string, boolean>>;
 }
 
-export const agentToolsApi = {
+export const agentToolsApi = ({ on }: Http) => ({
   /** The project's own skills and MCP servers, and the ones from elsewhere it turns off (API 21). */
   agentTools: (h: string, projectId: string) => on(h).get<AgentTools>(`/projects/${enc(projectId)}/agent-tools`),
   updateAgentTools: (h: string, projectId: string, b: { disabled_skills?: string[]; disabled_mcp_servers?: string[] }) =>
@@ -142,4 +142,4 @@ export const agentToolsApi = {
 
   /** The skills the task's agent can be asked to use, for the composer's `/` menu (API 54). */
   taskSkills: (h: string, id: string) => on(h).get<TaskSkills>(`/tasks/${enc(id)}/skills`),
-};
+});

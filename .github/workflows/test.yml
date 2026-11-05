@@ -92,6 +92,7 @@ jobs:
         working-directory: app
         run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
 
+      # The UI, then packages/client on its own (typecheck:client), with no DOM, as the mobile app will use it.
       - name: Typecheck
         working-directory: app
         run: npm run typecheck

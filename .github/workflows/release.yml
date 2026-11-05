@@ -23,6 +23,8 @@ on:
       - app/package-lock.json
       - app/electron/**
       - scripts/package-server.sh
+      - scripts/desktop-app-check.mjs
+      - scripts/fake-claude
       - server/Cargo.toml
       - server/Cargo.lock
       - server/shim/**
@@ -128,9 +130,14 @@ jobs:
           kill "$pid"
           wait "$pid" || true
 
-      # Linux: an AppImage and an Arch package. macOS: a dmg and a zip, ad-hoc signed (there's no Developer ID).
+      # Linux: an AppImage and an Arch package. macOS: a dmg and a zip, ad-hoc signed (there's no Developer ID): every
+      # binary in it, node and ia-shim too, is signed again ad hoc, without the hardened runtime. electron-builder skips
+      # signing in a pull request's build unless CSC_FOR_PULL_REQUEST is set, and an ad-hoc signature takes no secrets,
+      # so pull requests sign too, and the checks below see the app a release ships (HA-185).
       - name: Package the desktop app
         working-directory: app
+        env:
+          CSC_FOR_PULL_REQUEST: "true"
         run: npx electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
 
       # The server the packaged app starts from its resources.
@@ -141,6 +148,56 @@ jobs:
           ls "$res"
           [ "$("$res/huntaway" --version)" = "huntaway $VERSION" ]
           [ -f "$res/server-ts/node_modules/ws/package.json" ] && [ -x "$res/ia-shim" ] && [ -x "$res/issue-agent" ] && [ -f "$res/ui/index.html" ]
+
+      # The packaged app, started as a user starts it (HA-185): its window loads the board from the server it starts
+      # from its resources, with their Node; an agent runs a turn under their ia-shim, and the MCP helper answers.
+      - name: Start the desktop app
+        run: |
+          if [ "${{ matrix.os }}" = mac ]; then exe=$(echo app/release/mac*/Huntaway.app/Contents/MacOS/Huntaway); else exe=app/release/linux-unpacked/huntaway-desktop; fi
+          node scripts/desktop-app-check.mjs "$exe" --version "$VERSION"
+
+      # How macOS sees the app: electron-builder signs it ad hoc (identity "-", no hardened runtime) and nothing is
+      # notarized, so Gatekeeper rejects a downloaded copy until the user allows it (System Settings → Privacy & Security
+      # → Open Anyway, or `xattr -dr com.apple.quarantine`). The server tarball's node keeps the Node.js Foundation's
+      # signature. For the record, nothing here fails the build: the step writes what codesign and spctl say as a notice
+      # on the run (the job's log is too long to read back through the API).
+      - name: Signatures and Gatekeeper (macOS)
+        if: matrix.os == 'mac'
+        run: |
+          app=$(echo app/release/mac*/Huntaway.app)
+          out="$RUNNER_TEMP/signatures.txt"
+          {
+            echo "macOS $(sw_vers -productVersion); $(spctl --status 2>&1)"
+            echo "== spctl --assess (Gatekeeper's verdict on a downloaded copy)"
+            spctl --assess --type execute -vv "$app" 2>&1 | sed "s|$PWD/||" || true
+            echo "== codesign --verify --deep --strict"
+            if v=$(codesign --verify --deep --strict "$app" 2>&1); then echo "valid"; else echo "$v" | sed "s|$PWD/||" | tail -3; fi
+            for f in "$app" "$app/Contents/Resources/node/bin/node" "$app/Contents/Resources/ia-shim" release-server/node/bin/node release-server/ia-shim; do
+              echo "== ${f#"$PWD/"}"
+              codesign -dv --verbose=2 "$f" 2>&1 | grep -E '^(Identifier|CodeDirectory|Authority|Runtime)' || true
+            done
+          } > "$out"
+          cat "$out"
+          node -e 'const t = require("node:fs").readFileSync(process.argv[1], "utf8").trim();
+            console.log(`::notice title=macOS signatures and Gatekeeper::${t.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A")}`)' "$out"
+
+      # The same check on a copy marked as downloaded by a browser (com.apple.quarantine on every file), as the dmg or
+      # zip unpacks it. A runner may have Gatekeeper's assessments switched off (spctl --status above), and nobody is
+      # there to click Open Anyway, so this doesn't fail the build: it says how it went in a notice on the run.
+      - name: Start a quarantined copy of the desktop app (macOS)
+        if: matrix.os == 'mac'
+        run: |
+          dl="$RUNNER_TEMP/downloaded"
+          mkdir -p "$dl"
+          ditto -x -k app/release/*-mac-*.zip "$dl"
+          q="0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)"
+          find "$dl/Huntaway.app" -exec xattr -w com.apple.quarantine "$q" {} +
+          echo "quarantine on node: $(xattr -p com.apple.quarantine "$dl/Huntaway.app/Contents/Resources/node/bin/node")"
+          if node scripts/desktop-app-check.mjs "$dl/Huntaway.app/Contents/MacOS/Huntaway" --version "$VERSION"; then
+            echo "::notice title=Quarantined desktop app::A copy with com.apple.quarantine on every file started its server and ran an agent ($(spctl --status 2>&1))"
+          else
+            echo "::warning title=Quarantined desktop app::A copy with com.apple.quarantine on every file didn't pass the check ($(spctl --status 2>&1)): see the step's log"
+          fi
 
       # What an installed app reads to update itself: the version, and the shell stamp (the frame stamp of
       # app/electron/stamp.cjs: boot.cjs and Electron) of the desktop app, which says whether the update needs a new

@@ -12,6 +12,8 @@ server-ts/     the server, in TypeScript on Node 24+ (node:sqlite): API, events,
 server/shim/   ia-shim (Rust): tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker (Rust): public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
+packages/client/ the board's API client, plain TypeScript with no DOM, shared by app/ (which links it, file:) and the
+               mobile app: createClient() makes a client for one board, from an adapter for its address and token
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)
@@ -1433,6 +1435,15 @@ skipped. Auto-compacting idle sessions is Claude-only.
   deletes another's (a test server's, say). Nothing is deleted unless that folder is a real
   folder (not a link) of the server's user that no one else can write to, and only folders in it
   named after a task are. Files written straight to `/tmp` by name don't go with it.
+  Before a task's folder or worktree goes, what its agents left running there is stopped (TS
+  server, `server-ts/src/agent/leftovers.ts`): test servers whose `--data-dir` is in the folder,
+  or that run the worktree's build or were started in it (unless their data is in another task's
+  folder), the ia-shim runs in their data dirs, the folder or by the worktree's ia-shim, the
+  agents under those shims, and what the servers started. The sweep also stops those whose task
+  is done or deleted and whose folder went already. They're found from `/proc` (`ps` and `lsof`
+  on macOS) by their command line, executable and working directory, and stopped by pid (TERM,
+  then KILL after 5 seconds if it's still the same process); never the board itself, a server on
+  its data dir, or a shim of the board's own runs.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that

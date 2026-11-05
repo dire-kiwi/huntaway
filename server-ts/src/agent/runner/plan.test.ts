@@ -152,13 +152,13 @@ test("a_task_moved_or_run_again_meanwhile_is_left_alone", async () => {
   const r = db.get_run(s.db(), db.value<string>(s.db(), "SELECT id FROM runs WHERE task_id=?1", task.id)!)!;
   // Moved by the user before the column was settled.
   s.update_task(t.id, [["status", "todo"]]);
-  let reviewed = 0;
-  await settle(s, { ...t, status: "in_progress" }, r, () => reviewed++);
+  let entered = 0;
+  await settle(s, { ...t, status: "in_progress" }, r, () => entered++);
   assert.equal(db.get_task(s.db(), t.id)!.status, "todo");
   // Sent another message, which started another run.
   s.update_task(t.id, [["status", "in_progress"]]);
   await sleep(5);
   db.insert_run(s.db(), t.id, "prompt");
-  await settle(s, { ...t, status: "in_progress" }, r, () => reviewed++);
-  assert.deepEqual([db.get_task(s.db(), t.id)!.status, reviewed], ["in_progress", 0]);
+  await settle(s, { ...t, status: "in_progress" }, r, () => entered++);
+  assert.deepEqual([db.get_task(s.db(), t.id)!.status, entered], ["in_progress", 0]);
 });

@@ -31,6 +31,7 @@ import * as broker from "./hosts/broker.ts";
 import * as broker_proto from "./hosts/broker/proto.ts";
 import * as attachments from "./attachments.ts";
 import * as automations from "./integrations/automations.ts";
+import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
 import * as merged from "./review/merged.ts";
 import * as relocate from "./git/relocate.ts";
@@ -39,6 +40,32 @@ const log = {
   info: (...a: any[]) => console.error(new Date().toISOString(), " INFO huntaway:", ...a),
   warn: (...a: any[]) => console.error(new Date().toISOString(), " WARN huntaway:", ...a),
 };
+
+const STAMPED = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/;
+
+/**
+ * `write` (console.log's or console.error's), with the time in front of what it writes, as the modules' own `log`s and
+ * the Rust server's log lines have it: the many plain console lines ("task … starting claude", "connected to host …")
+ * had none, which made a server's log hard to read around an update or an outage (HA-185). A line that starts with a
+ * time already, and `IA_READY`, which the desktop app and the test scripts read, are left as they are.
+ */
+export function stamped(write: (...a: any[]) => void, now: () => Date = () => new Date()): (...a: any[]) => void {
+  return (...a: any[]) => {
+    const first = a[0];
+    if (typeof first === "string" && (STAMPED.test(first) || first.startsWith("IA_READY"))) return write(...a);
+    // In the first string, which is where console takes a format (`%s`) from.
+    if (typeof first === "string") write(`${now().toISOString()} ${first}`, ...a.slice(1));
+    else write(now().toISOString(), ...a);
+  };
+}
+
+/** Put the time in front of every line `huntaway serve` logs with console (see `stamped`). Only for `serve`. */
+function stamp_console() {
+  console.log = stamped(console.log.bind(console));
+  console.info = stamped(console.info.bind(console));
+  console.warn = stamped(console.warn.bind(console));
+  console.error = stamped(console.error.bind(console));
+}
 
 export interface ServeArgs {
   host: string;
@@ -284,6 +311,7 @@ export function open_token(token: string, loopback_only: boolean): (headers: Rec
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*", vary: "origin" };
 
 export async function serve(args: ServeArgs) {
+  stamp_console();
   // A bug in a background job is logged rather than ending the server (see crash.ts). What serve itself throws while
   // starting isn't unhandled: main.ts logs it and exits.
   crash.install();
@@ -393,8 +421,11 @@ export async function serve(args: ServeArgs) {
       if (ui) return serve_ui(ui, req, res);
       res.writeHead(404).end();
     } catch (e) {
-      if (!res.headersSent) send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
-      else res.destroy();
+      if (!res.headersSent) {
+        // A body over the limit, which isn't read to its end (see readBody): the connection goes after the answer.
+        if (e instanceof ApiError && e.status === 413) res.setHeader("connection", "close");
+        send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
+      } else res.destroy();
     }
   };
   // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
@@ -472,6 +503,7 @@ export async function serve(args: ServeArgs) {
   runs.start_pruner(state);
   task_tmp.start_sweeper(state);
   automations.start(state);
+  workflows.resume(state);
   merged.start(state);
   relocate.start_recording(state);
   admin.start_update_check(state);

@@ -87,7 +87,8 @@ export async function update_host(s: AppState, r: Req) {
   // A hub with a checkout sends its code; one deployed without (a container) sends its commit and the host fetches it
   // from its own origin.
   let body: any;
-  if (s.meta.source_dir !== null) body = await admin.bundle(s);
+  // Only the commits the host doesn't have yet, after the one it runs.
+  if (s.meta.source_dir !== null) body = await admin.bundle(s, s.links.get(id)?.version.commit ?? null);
   else if (s.meta.running_commit !== null) body = { commit: s.meta.running_commit };
   // A release install knows its version but not its commit, which only a release host can go by.
   else if (admin.updates_from(s.meta) === "releases") body = {};

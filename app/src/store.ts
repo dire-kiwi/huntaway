@@ -732,6 +732,16 @@ export function onCheckpoints(fn: CheckpointListener) {
 
 const automationListeners = new Set<AutomationListener>();
 
+/** Told when a project's workflows change (`projectId`), or a task's workflow runs do (`taskId`), API 107. */
+type WorkflowListener = (hostId: string, change: { projectId?: string; taskId?: string }) => void;
+const workflowListeners = new Set<WorkflowListener>();
+export function onWorkflowsChanged(fn: WorkflowListener) {
+  workflowListeners.add(fn);
+  return () => {
+    workflowListeners.delete(fn);
+  };
+}
+
 /** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
 export function onAutomationsChanged(fn: AutomationListener) {
   automationListeners.add(fn);
@@ -791,6 +801,12 @@ export function handleEvent(ev: any) {
       break;
     case "automations_changed":
       for (const fn of automationListeners) fn(h, ev.project_id, ev.automation_id);
+      break;
+    case "workflows_changed":
+      for (const fn of workflowListeners) fn(h, { projectId: ev.project_id });
+      break;
+    case "workflow_runs_changed":
+      for (const fn of workflowListeners) fn(h, { taskId: ev.task_id });
       break;
     case "checkpoints":
       for (const fn of checkpointListeners) fn(h, ev.task_id);

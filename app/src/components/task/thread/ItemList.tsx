@@ -1,10 +1,10 @@
 import clsx from "clsx";
 import { History } from "lucide-react";
 import { createContext, memo, useContext, useMemo } from "react";
-import type { Turn } from "../../../api";
+import { isWorkflowApproval, type Turn } from "../../../api";
 import { splitAttachments } from "../../../attachments";
 import type { Item } from "../../../threadModel";
-import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard } from "../Approvals";
+import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "../Approvals";
 import { AttachmentList } from "../Attachments";
 import { CompactLine, EventLine, PromptCard, QuestionRow, ResultLine, Thinking } from "./items";
 import { Markdown } from "./Markdown";
@@ -77,6 +77,7 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
     case "permission":
       if (it.data.kind === "project") return <ProjectChangeCard data={it.data} hostId={hostId} />;
       if (it.data.kind === "delete_task") return <TaskDeletionCard data={it.data} hostId={hostId} />;
+      if (isWorkflowApproval(it.data)) return <WorkflowChangeCard data={it.data} hostId={hostId} />;
       if (it.data.kind === "automation") return <AutomationChangeCard data={it.data} hostId={hostId} />;
       return <PromptCard id={Number(it.key)} data={it.data} hostId={hostId} />;
     case "question":

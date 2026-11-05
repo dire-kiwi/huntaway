@@ -11,6 +11,7 @@ import * as title from "../title.ts";
 import * as usage from "../usage.ts";
 import * as prompts from "../prompts.ts";
 import * as review from "../../review.ts";
+import * as workflows from "../../integrations/workflows.ts";
 import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
 import { AUTO_COMPACT_AFTER, AUTO_COMPACT_UNTIL, start_run, type Take } from "../runner.ts";
@@ -134,6 +135,7 @@ export function send_message(
     // The agent is changing the work under review; it's reviewed again when it finishes.
     review.supersede(state, started);
     summary.supersede(state, started);
+    workflows.supersede(state, started);
   }
   return started;
 }

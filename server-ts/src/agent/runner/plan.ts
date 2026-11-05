@@ -52,9 +52,10 @@ export async function changed_only_plan(state: Shared, task: Task, run: Run): Pr
 /**
  * The column for the end of run `run_id` of `task` (a `candidate` that would otherwise go to "In review"), once its
  * checkpoints are taken: "Needs attention" if it changed only the plan, else "In review". The task is left as it is if
- * a run has started on it since, or it was moved meanwhile. Calls `in_review` with the task if that's where it went.
+ * a run has started on it since, or it was moved meanwhile. Calls `entered` with the task once it's in its column (to
+ * start what entering it starts: a review, the column's workflows).
  */
-export async function settle(state: Shared, task: Task, run: Run, in_review: (t: Task) => void): Promise<void> {
+export async function settle(state: Shared, task: Task, run: Run, entered: (t: Task) => void): Promise<void> {
   let waits = false;
   try {
     waits = await changed_only_plan(state, task, run);
@@ -67,5 +68,5 @@ export async function settle(state: Shared, task: Task, run: Run, in_review: (t:
     const t = db.get_task(c, task.id);
     return t != null && !t.running && t.status === task.status;
   });
-  if (updated && status === "in_review") in_review(updated);
+  if (updated) entered(updated);
 }

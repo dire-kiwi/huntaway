@@ -1,4 +1,4 @@
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 import type { PermissionMode, Task } from "./tasks";
 
 export interface ContextSummary {
@@ -145,7 +145,7 @@ export interface RewindResult {
 /** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
 export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
 
-export const threadApi = {
+export const threadApi = ({ on }: Http) => ({
   messages: (h: string, id: string) => on(h).get<Message[]>(`/tasks/${enc(id)}/messages`),
   /**
    * The latest messages with ids between `after` and `before` (API 56): with a `limit`, that many of the
@@ -170,4 +170,4 @@ export const threadApi = {
   /** Answer a question an agent asked with request_user_input, from its card (API 64): sent as the user's message. */
   answerQuestion: (h: string, taskId: string, messageId: number, answer: { choices: string[]; text: string | null }) =>
     on(h).post<Task>(`/tasks/${enc(taskId)}/questions/${messageId}`, answer),
-};
+});

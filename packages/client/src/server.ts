@@ -1,5 +1,5 @@
 import type { Effort } from "./claudeConfigs";
-import { on } from "./http";
+import { type Http } from "./http";
 import type { PermissionMode } from "./tasks";
 import type { TerminalTool } from "./terminal";
 
@@ -125,7 +125,7 @@ export interface HostSettings {
   now_expiry_hours?: number | null;
 }
 
-export const serverApi = {
+export const serverApi = ({ on }: Http) => ({
   settings: (h: string) => on(h).get<HostSettings>("/settings"),
   updateSettings: (h: string, b: Partial<HostSettings>) => on(h).patch<HostSettings>("/settings", b),
   serverStatus: (h: string) => on(h).get<ServerStatus>("/admin/server"),
@@ -138,4 +138,4 @@ export const serverApi = {
   rollbackRelease: (h: string) => on(h).post<{ ok: boolean }>("/admin/release/rollback"),
   /** Fetch `commit` from the host's origin, fast-forward its checkout to it, then rebuild and restart. */
   updateServer: (h: string, commit: string) => on(h).post<{ ok: boolean; up_to_date?: boolean }>(`/admin/update`, { commit }),
-};
+});
