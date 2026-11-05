@@ -138,7 +138,7 @@ test("the_boards_tools_are_dynamic_tools_called_through_its_dispatch", async () 
   // One namespace, named for the board's server, with every tool the board's MCP server has.
   const ns = board_tools(false);
   assert.deepEqual([ns.type, ns.name], ["namespace", MCP_SERVER_NAME]);
-  assert.deepEqual(ns.tools.map((t: any) => t.name), mcp.tool_names(false));
+  assert.deepEqual(ns.tools.map((t: any) => t.name), mcp.tool_names(false).filter((n) => n !== "permission_prompt"));
   assert.ok(ns.tools.every((t: any) => t.type === "function" && typeof t.description === "string" && t.inputSchema));
   assert.ok(board_tools(true).tools.some((t: any) => t.name === "submit_review"));
 

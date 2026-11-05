@@ -3,7 +3,8 @@
 A task's thread was kept as Claude Code's stream-json: each saved line a row in `messages`, which the app folds into
 what it draws (`app/src/threadModel.ts`). The agent-threads migration (HA-191's plan) keeps each thread as normalized
 **items**, built from the same messages, and served as numbered **events**; since step 10 the items are the source, and
-a task's messages stop being written once it has moved onto them (see "Items are the source"). This file describes
+a task's messages stop being written once it has moved onto them (see "Items are the source"), and since step 11 a
+Codex run writes them straight from its notifications (see "Codex writes items directly"). This file describes
 the model and how it's stored, and its status section says how far the migration has got. Each step updates it.
 
 The ideas come from [agent-threads](https://github.com/dire-kiwi/agent-threads) (`~/personal/agent-threads`), whose
@@ -520,8 +521,86 @@ Steps 8 and 9 move what a Claude run asks the board onto Claude Code's control p
 Both are recorded in `mcp_calls` as `stdio:<run id>:<request id>`, at most once each, and answered before they're
 recorded as done. After a restart, those still executing are taken up again from there (`resume_requests`), since the
 run's output is followed from past them: a prompt is asked again, a `wait` carries on to its deadline, and a call that
-may have taken effect is answered that it was cut short. Codex runs and compactions (which take no input) still use the
-board's HTTP server (mcp/http.ts), until step 11. Nothing here changes what's stored in the thread.
+may have taken effect is answered that it was cut short. Compactions (which take no input) still use the board's HTTP
+server (mcp/http.ts), as do Codex sessions from before step 11 (below). Nothing here changes what's stored in the thread.
+
+## Codex writes items directly
+
+Step 11 (HA-223). A Codex run's adapter (`huntaway codex-run`, agent/codex/adapter.ts) writes the app-server's
+notifications to the run's output as they are, as before; what changes is what the server makes of them, and how the
+run reaches the board.
+
+- **The driver** (`server-ts/src/agent/codex/driver.ts`): for a task whose items are its source, each notification is
+  mapped straight onto the model's events (`map`, which is pure and reads the thread through the store, so a restarted
+  server, or a notification read again, goes on from what's stored), written by `threads/native.ts` in one transaction,
+  and sent to clients once committed. There's no message shaped like Claude Code's in between: agent/codex/output.ts
+  still does that, for a task on messages (a board on the older file, or a run that started before its task moved). The
+  rest of a notification's effects are the messages path's: the session, where a rewind takes the thread back to, the
+  context meter, compactions, rate limits, the wait tool's subagent news, the task's documents, a turn's end.
+- **What it makes** is what the messages path's items were, so the view, the readers and Telegram's turn ends don't
+  change: tool calls have the board's names (Bash, ApplyPatch, `mcp__<server>__<tool>`, WebSearch and WebFetch, Read,
+  TodoWrite) and the translator's normalized fields (`tool_fields`), with Codex's ids; a subagent (a child thread) is an
+  Agent call, `codex-agent-<thread id>`, its items' parent; the agent's messages, reasoning and compactions are items with
+  Codex's ids. The board's own messages in the thread (the user's, its events, prompts and questions, each turn's
+  result) still go through the translator, which `Translator.observe` tells of what the driver wrote, so a prompt for one
+  of its calls (or a subagent's) finds it, and a translator rebuilt from the store (`Translator.from`) has them too. Each
+  of the driver's writes is given a message id (`source.next_id`) as its items' origin, so they keep their order with the
+  board's messages by origin as by position. Streamed text is a preview (`stream:…`), as for Claude.
+- **Requests, with no helper** (`server-ts/src/agent/codex/requests.ts`, run format 5): the adapter writes each of the
+  app-server's requests to the run's output (an approval with the item it's about), and the board answers it on the
+  run's input (`{"type": "codex_response", "id", "result" | "error"}`), through runner/requests.ts's `ask` and `call`, so
+  each is recorded in `mcp_calls` as `stdio:<run id>:codex:<id>`, at most once, and taken up again after a restart.
+  Approvals (a command, a file change, more permissions, an MCP server's elicitation) are permission prompts by
+  mcp/permissions.ts's policy, as the adapter's `permission_prompt` calls were; `item/tool/requestUserInput` is the
+  `request_user_input` prompt. One the app-server stops waiting for (`serverRequest/resolved`, which the adapter passes on
+  only for requests the board hasn't answered) expires. With no input (a `/compact`), the adapter declines them.
+- **The board's tools are Codex dynamic tools**: one `namespace` named for the board's server (`board_tools`, every tool
+  of the board's MCP server but `permission_prompt`), given to a new thread, whose `item/tool/call`s go through the
+  board's dispatch (mcp/tools/dispatch.ts) as Claude's in-process server's calls do, and are named
+  `mcp__huntaway__<tool>`, as that server's are. Codex keeps a session's dynamic tools as it started with them, and
+  `thread/resume` can't add any, so `runs.board_tools` (migration 99) records the run that gave a session them: its later
+  runs have no board MCP server either (the board's HTTP server refuses them), and a session from before (or one whose
+  first run is gone) keeps the board's MCP server over HTTP. Codex's reviewer doesn't review a dynamic tool's calls, so
+  in *Auto* mode a newer session's `wait` command is the board's to ask about (`Spec::review_waits` is for the MCP server's).
+- **The phone app** reloads a thread drawn from its items on its `thread_event`s too (the driver's writes send no
+  `message` event).
+
+### Every difference from what the messages path made
+
+`threads/codex_fixtures.test.ts` replays each of agent-threads' recorded Codex sessions both ways, and
+`agent/codex/driver.test.ts` the messages path's own cases (each kind of item, approvals, subagents from all three
+sources, collab calls, hosted activity, failures, plans, long results): every difference is named in those tests, and
+is one of these.
+
+| Difference | |
+| --- | --- |
+| A call its turn's interruption cut short (Codex never completes it) is `cancelled` at the turn's end; it stayed `running` | Closed |
+| A shell command's result has its `exit_code` | Closed |
+| A call Codex declined with no prompt of the board's (its own reviewer did) is `denied`; it was `failed` | Closed |
+| A turn's plan (`turn/plan/updated`) is one TodoWrite call a turn and thread, `plan-<thread>-<turn>`, updated as it goes; each update was a call | Closed |
+| The agent's messages, reasoning and compactions have Codex's ids, not `legacy:<message>:<block>` | Explained: no message is written for them. Their origin is the write's message id, and the view orders items with no `legacy:` id by time, as it did tool calls |
+| A turn's result, the user's messages, Codex's warnings, retries and MCP servers that didn't start, prompts and questions are the board's messages, through the translator | Explained: they're the board's, as for Claude |
+
+And from agent-threads' expected items (the conformance check, `ours` and `theirs` in the fixture test), all explained:
+tool calls have the board's names and inputs (with agent-threads' kinds and normalized fields), a file change's result
+is "Applied." and a denied call's says so; a subagent is the board's Agent call, and Codex's other collab calls (wait,
+sendInput...) are calls of their own; Codex makes no item for `request_user_input`, which is the question's card; the
+notices for a new session or a rewind are the board's own; `/compact` is a compaction's run, not the user's message; a
+turn's result has no usage or session; in Codex's plan mode the plan is the agent's message, answered with messages
+(each a turn of its own) rather than a plan request; another app's dynamic tool is `other`, not `app`; and commands are
+unwrapped from their shell where agent-threads leaves some wrapped.
+
+What was checked: the 20 fixtures (`threads/fixtures/codex`, from `main` at `5ad670a`) both ways; the driver's cases,
+a restart and a notification read again, a subagent's prompt, the wait tool; requests (approvals, questions, the
+board's tools through the dispatch, a wait Codex leaves to the user, one Codex stops waiting for, one taken up after a
+restart); the adapter against a fake app-server (dynamic tools on a new thread only, requests out and answers in,
+`serverRequest/resolved`, declined with no input); the launch (a new session's tools, a resumed one's, one from
+before). On a test server with a Codex config (`gpt-5.6-luna`, low effort, the default permission mode): a shell
+command and a file change, each approved on the card; the server restarted with the approval open (asked again, then
+answered) and again mid-command (its result came after); the board's `request_user_input`, `create_task`, `wait` and
+`get_task` as dynamic tools; a Codex subagent with its own command and approval; Codex's own question in plan mode,
+answered; a review by a Codex reviewer (`submit_review` as a dynamic tool), passed; a rewind to before a turn, after
+which the agent didn't remember it and its file was gone. The thread view drew each as before.
 
 ## Status
 
@@ -537,8 +616,8 @@ board's HTTP server (mcp/http.ts), until step 11. Nothing here changes what's st
 | 8. Permission prompts and questions over stdio | HA-219 | Done: `agent/runner/requests.ts`, run format 3. See "Claude's control protocol". |
 | 9. The board's tools in process | HA-221 | Done: the board's MCP server in process for Claude runs, run format 4. See "Claude's control protocol". |
 | B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`server-ts/src/db/file.ts`), on since step 10 |
-| 10. Items are the source | HA-222 | This change: `threads/source.ts`, `tasks.thread_source` (migration 98, API 122), no messages rows for tasks on items, the move when quiet, `huntaway threads-rebuild --back`, `huntaway-2.db` on by default. See "Items are the source". |
-| 11. Codex writes items directly | HA-223 | Not started |
+| 10. Items are the source | HA-222 | Done: `threads/source.ts`, `tasks.thread_source` (migration 98, API 122), no messages rows for tasks on items, the move when quiet, `huntaway threads-rebuild --back`, `huntaway-2.db` on by default. See "Items are the source". |
+| 11. Codex writes items directly | HA-223 | This change: `agent/codex/driver.ts`, `threads/native.ts`, `agent/codex/requests.ts`, the board's tools as Codex dynamic tools, run format 5, migration 99. See "Codex writes items directly". |
 | 12–14. Soak, remove the legacy code, delete old message rows | HA-224 to HA-226 | Not started |
 
 Left for later steps:

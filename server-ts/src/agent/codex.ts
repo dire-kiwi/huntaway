@@ -3,8 +3,9 @@
  * Codex agents. A thread whose config is for Codex (see db::AGENTS) runs `huntaway
  * codex-run` under ia-shim instead of `claude -p`. That adapter starts `codex app-server`,
  * speaks its JSON-RPC protocol (JSONL over stdio), and runs one turn: it starts or resumes the
- * thread, sends the prompt, answers approval requests by asking the board (the same
- * `permission_prompt` call the MCP helper makes for Claude), and exits once the turn ends.
+ * thread (a new one with the board's tools as dynamic tools), sends the prompt, passes the
+ * app-server's requests (approvals, questions, the board's tools' calls) to the board on its
+ * output and their answers back from its input (see codex/requests.ts), and exits once the turn ends.
  *
  * With `Spec::input`, its stdin takes the same stream-json input as Claude Code's (see
  * runner::steer): the prompt is the first user message, a message that arrives during the
@@ -14,9 +15,11 @@
  * ends with no turn going.
  *
  * It writes the app-server's notifications to stdout as they are (`out.jsonl`), and the server
- * turns them into thread messages shaped like Claude Code's stream-json (`handle_line`), so the
- * thread view shows both agents the same way. Like the rest of a run directory these lines are
- * a stable format: they're Codex's own protocol, which a newer server must keep reading.
+ * writes them into the task's thread (`handle_line`): straight into its items for a task whose
+ * items are its source (codex/driver.ts), or as messages shaped like Claude Code's stream-json for
+ * one still on messages, so the thread view shows both agents the same way. Like the rest of a run
+ * directory these lines are a stable format: they're Codex's own protocol, which a newer server
+ * must keep reading.
  *
  * `codex.json` in the run directory holds what the runner decided for the run (see `Spec`);
  * the MCP servers come from the same `mcp.json` Claude gets, converted to Codex's config.

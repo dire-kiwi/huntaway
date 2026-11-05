@@ -37,9 +37,16 @@ export interface CodexRequest {
   permissions?: any;
 }
 
-/** The board's tools as one Codex dynamic tool, a namespace named for the board's MCP server (see `tool_name`). */
+/**
+ * The board's tools as one Codex dynamic tool, a namespace named for the board's MCP server, whose calls are named as
+ * that server's are (agent/codex/output.ts's tool_use). Not `permission_prompt`, the helper's way of asking: Codex's
+ * approvals come as requests of their own.
+ */
 export function board_tools(review: boolean): any {
-  const tools = mcp.tools(review).map((t) => ({ type: "function", name: t.name, description: t.description ?? "", inputSchema: t.inputSchema ?? { type: "object" } }));
+  const tools = mcp
+    .tools(review)
+    .filter((t) => t.name !== "permission_prompt")
+    .map((t) => ({ type: "function", name: t.name, description: t.description ?? "", inputSchema: t.inputSchema ?? { type: "object" } }));
   return { type: "namespace", name: MCP_SERVER_NAME, description: mcp.INSTRUCTIONS, tools };
 }
 
