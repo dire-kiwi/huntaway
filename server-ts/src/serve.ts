@@ -2,6 +2,7 @@
 import * as backup from "./backup.ts";
 import * as crash from "./crash.ts";
 import * as lag from "./lag.ts";
+import * as memory from "./memory.ts";
 import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
@@ -14,7 +15,6 @@ import * as api from "./api.ts";
 import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
 import { expand_tilde, new_id, new_token, now, err_str, home_dir } from "./util.ts";
-import * as demo from "./demo.ts";
 import * as admin from "./update/admin.ts";
 import * as release from "./update/release.ts";
 import * as staging from "./update/staging.ts";
@@ -329,6 +329,7 @@ export async function serve(args: ServeArgs) {
   // starting isn't unhandled: main.ts logs it and exits.
   crash.install();
   lag.start();
+  memory.start();
   // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
   admin.take_supervisor();
   admin.reap_inherited();
@@ -393,7 +394,7 @@ export async function serve(args: ServeArgs) {
   const state = new AppState(conn, data_dir, identity, meta, default_exe());
   if (args.demo) {
     try {
-      await demo.seed(state);
+      await (await import("./demo.ts")).seed(state);
     } catch (e) {
       throw new Error("seeding the demo project", { cause: e });
     }
