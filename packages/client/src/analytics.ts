@@ -1,4 +1,4 @@
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 import type { Status } from "./tasks";
 
 /** The user's activity on a profile's threads in a time range (API 16). Review threads count as the task they review. */
@@ -137,7 +137,7 @@ export interface DiskUsageReport {
   elapsed_ms: number;
 }
 
-export const analyticsApi = {
+export const analyticsApi = ({ on }: Http) => ({
   /** The profile's prompts and agent runs in [from, to) (API 16). */
   analytics: (h: string, profileId: string, from: string, to: string) =>
     on(h).get<AnalyticsReport>(`/profiles/${enc(profileId)}/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
@@ -152,4 +152,4 @@ export const analyticsApi = {
 
   /** How much space the profile's projects and their worktrees take up (API 35). */
   diskUsage: (h: string, profileId: string) => on(h).get<DiskUsageReport>(`/profiles/${enc(profileId)}/disk-usage`),
-};
+});
