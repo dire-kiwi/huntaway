@@ -168,14 +168,14 @@ jobs:
           out="$RUNNER_TEMP/signatures.txt"
           {
             echo "macOS $(sw_vers -productVersion); $(spctl --status 2>&1)"
+            echo "== spctl --assess (Gatekeeper's verdict on a downloaded copy)"
+            spctl --assess --type execute -vv "$app" 2>&1 | sed "s|$PWD/||" || true
+            echo "== codesign --verify --deep --strict"
+            codesign --verify --deep --strict "$app" 2>&1 | sed "s|$PWD/||" | tail -3 && echo "valid"
             for f in "$app" "$app/Contents/Resources/node/bin/node" "$app/Contents/Resources/ia-shim" release-server/node/bin/node release-server/ia-shim; do
               echo "== ${f#"$PWD/"}"
-              codesign -dv --verbose=2 "$f" 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|Signature|Authority|TeamIdentifier|Runtime)' || true
+              codesign -dv --verbose=2 "$f" 2>&1 | grep -E '^(Identifier|CodeDirectory|Authority|Runtime)' || true
             done
-            echo "== codesign --verify --deep --strict"
-            codesign --verify --deep --strict --verbose=2 "$app" 2>&1 || true
-            echo "== spctl --assess (Gatekeeper's verdict on a downloaded copy)"
-            spctl --assess --type execute -vv "$app" 2>&1 || true
           } > "$out"
           cat "$out"
           node -e 'const t = require("node:fs").readFileSync(process.argv[1], "utf8").trim();
