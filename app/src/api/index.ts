@@ -1,55 +1,35 @@
-// The board's API: a file per resource, as the server's api/ has. `api` has every call; the types and helpers are
-// exported alongside.
-import { hostsApi } from "./hosts";
-import { pushApi } from "./push";
-import { profilesApi } from "./profiles";
-import { claudeConfigsApi } from "./claudeConfigs";
-import { githubApi } from "./github";
-import { projectsApi } from "./projects";
-import { agentToolsApi } from "./agentTools";
-import { analyticsApi } from "./analytics";
-import { tasksApi } from "./tasks";
-import { threadApi } from "./thread";
-import { gitApi } from "./git";
-import { terminalApi } from "./terminal";
-import { approvalsApi } from "./approvals";
-import { automationsApi } from "./automations";
-import { serverApi } from "./server";
-import { workflowsApi } from "./workflows";
+// The board's API for this page: the shared client (packages/client) for the board that served it, with its token in
+// localStorage. The types and helpers are the package's.
+import { createClient, type KeyValueStorage } from "@huntaway/client";
 
-export { ApiError, captureTokenFromUrl, fetchOpenToken, getToken, isOpenBoard, setToken, setUnauthorizedHandler, shouldFetchOpenToken, wsUrl } from "./http";
-export * from "./hosts";
-export * from "./push";
-export * from "./profiles";
-export * from "./claudeConfigs";
-export * from "./github";
-export * from "./projects";
-export * from "./agentTools";
-export * from "./analytics";
-export * from "./tasks";
-export * from "./thread";
-export * from "./git";
-export * from "./terminal";
-export * from "./approvals";
-export * from "./automations";
-export * from "./server";
-export * from "./workflows";
+export * from "@huntaway/client";
 
-export const api = {
-  ...hostsApi,
-  ...pushApi,
-  ...profilesApi,
-  ...claudeConfigsApi,
-  ...githubApi,
-  ...projectsApi,
-  ...agentToolsApi,
-  ...analyticsApi,
-  ...tasksApi,
-  ...threadApi,
-  ...gitApi,
-  ...terminalApi,
-  ...approvalsApi,
-  ...automationsApi,
-  ...serverApi,
-  ...workflowsApi,
+// localStorage, read when used (the unit tests run without one); the client catches its errors.
+const storage: KeyValueStorage = {
+  getItem: (k) => localStorage.getItem(k),
+  setItem: (k, v) => localStorage.setItem(k, v),
 };
+
+const TOKEN_KEY = "ia.token";
+
+/** Every call to this page's board. */
+export const api = createClient({
+  baseUrl: "",
+  getToken: () => storage.getItem(TOKEN_KEY) ?? "",
+  setToken: (t) => storage.setItem(TOKEN_KEY, t),
+  storage,
+  wsBase: () => `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`,
+});
+
+export const { getToken, setToken, isOpenBoard, shouldFetchOpenToken, fetchOpenToken, setUnauthorizedHandler, wsUrl, movedHere, terminalWsUrl } = api;
+
+/** Pick up `?token=` from the URL (Electron and shared links pass it this way). */
+export function captureTokenFromUrl() {
+  const url = new URL(window.location.href);
+  const t = url.searchParams.get("token");
+  if (t) {
+    setToken(t);
+    url.searchParams.delete("token");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
+}

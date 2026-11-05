@@ -1,4 +1,4 @@
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 import type { Reviewer } from "./projects";
 import type { ExternalLink } from "./tasks";
 
@@ -59,7 +59,7 @@ export interface AsanaTask {
 
 export const asanaLink = (t: AsanaTask): ExternalLink => ({ provider: "asana", id: t.gid, url: t.url, title: t.name });
 
-export const profilesApi = {
+export const profilesApi = ({ on }: Http) => ({
   profiles: (h: string) => on(h).get<Profile[]>("/profiles"),
   /** `claude_config_dir` instead of `claude_config_ids` uses (or creates) the config with that directory. */
   createProfile: (
@@ -88,4 +88,4 @@ export const profilesApi = {
   /** The Asana tasks the profile's token finds for `q` (words, or a task's URL), open ones first (API 57). */
   asanaTasks: (h: string, profileId: string, q: string) => on(h).get<AsanaTask[]>(`/profiles/${enc(profileId)}/asana/tasks?q=${encodeURIComponent(q)}`),
   deleteProfile: (h: string, id: string) => on(h).del(`/profiles/${enc(id)}`),
-};
+});

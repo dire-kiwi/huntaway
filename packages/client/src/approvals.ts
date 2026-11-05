@@ -1,5 +1,5 @@
 import type { AutomationAction, AutomationTrigger } from "./automations";
-import { on } from "./http";
+import { type Http } from "./http";
 import type { Status } from "./tasks";
 import type { WorkflowGraph } from "./workflows";
 
@@ -152,8 +152,9 @@ export const isWorkflowApproval = (a: { kind: string; input: unknown }): a is Wo
 /** What only the user decides for an agent, whatever its thread's permission mode. */
 export type Approval = ProjectApproval | ProjectCreationApproval | DeletionApproval | AutomationApproval | WorkflowApproval;
 
-export const approvalsApi = {
+export const approvalsApi = ({ on }: Http) => ({
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
   /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
+  /** Workflows' approvals (API 107) only with `workflows`, so a UI from before them isn't shown them. */
   projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true&workflows=true"),
-};
+});

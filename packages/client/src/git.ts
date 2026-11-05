@@ -1,4 +1,4 @@
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 
 export interface DiffResult {
   available: boolean;
@@ -78,7 +78,7 @@ export interface GitCommitShown {
   patch: string;
 }
 
-export const gitApi = {
+export const gitApi = ({ on }: Http) => ({
   diff: (h: string, id: string) => on(h).get<DiffResult>(`/tasks/${enc(id)}/diff`),
   /**
    * The Changes tab's git (API 62): the status, a file's unstaged or staged diff, and a commit's or stash's. A diff that
@@ -100,4 +100,4 @@ export const gitApi = {
   gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
     on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
   gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
-};
+});

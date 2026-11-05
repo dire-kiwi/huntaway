@@ -1,4 +1,4 @@
-import { enc, on } from "./http";
+import { enc, type Http } from "./http";
 import type { Status } from "./tasks";
 
 /** What starts a workflow's run on a task: the task entering a column, or only a run by hand (API 107). */
@@ -102,7 +102,7 @@ export function workflowPorts(n: WorkflowNodeKind): string[] {
   }
 }
 
-export const workflowsApi = {
+export const workflowsApi = ({ on }: Http) => ({
   workflows: (h: string, projectId: string) => on(h).get<{ workflows: Workflow[] }>(`/projects/${enc(projectId)}/workflows`),
   createWorkflow: (h: string, projectId: string, b: { name: string; graph: WorkflowGraph; enabled?: boolean }) =>
     on(h).post<Workflow>(`/projects/${enc(projectId)}/workflows`, b),
@@ -114,4 +114,4 @@ export const workflowsApi = {
   taskWorkflowRuns: (h: string, taskId: string) =>
     on(h).get<{ runs: WorkflowRun[]; workflows: { id: string; name: string; enabled: boolean }[] }>(`/tasks/${enc(taskId)}/workflow-runs`),
   stopWorkflowRun: (h: string, runId: string) => on(h).post<{ stopped: boolean }>(`/workflow-runs/${enc(runId)}/stop`, {}),
-};
+});

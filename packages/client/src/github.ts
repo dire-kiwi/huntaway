@@ -1,4 +1,4 @@
-import { on } from "./http";
+import { type Http } from "./http";
 
 /** A GitHub repository gh can reach on a host, which a new project can be cloned from (API 55). */
 export interface GithubRepo {
@@ -31,7 +31,7 @@ export interface GithubAccount {
   ok: boolean;
 }
 
-export const githubApi = {
+export const githubApi = ({ on }: Http) => ({
   /** The GitHub accounts gh is signed in to on the host (API 50); `error` says why there are none. */
   githubAccounts: (h: string) => on(h).get<{ accounts: GithubAccount[]; error: string | null }>("/github-accounts"),
   /**
@@ -45,4 +45,4 @@ export const githubApi = {
     const query = params.toString();
     return on(h).get<GithubRepoList>(`/github-repos${query ? `?${query}` : ""}`);
   },
-};
+});

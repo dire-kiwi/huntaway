@@ -1,7 +1,7 @@
 import type { DocumentType } from "./labels";
 import type { Effort } from "./claudeConfigs";
 import { type Host, hostSupports } from "./hosts";
-import { enc, on } from "./http";
+import { enc, type Http, type KeyValueStorage } from "./http";
 import type { ContextSummary, PendingRewind } from "./thread";
 
 export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
@@ -418,30 +418,25 @@ const MOVES_KEY = "ia.movedHere";
 const MOVE_MS = 15_000;
 
 /** The columns tasks were moved to from this browser lately, and when, by `host:id`; kept for every tab. */
-function readMoves(): Record<string, { status: Status; at: number }> {
+function readMoves(storage: KeyValueStorage): Record<string, { status: Status; at: number }> {
   try {
-    return JSON.parse(localStorage.getItem(MOVES_KEY) ?? "{}") ?? {};
+    return JSON.parse(storage.getItem(MOVES_KEY) ?? "{}") ?? {};
   } catch {
     return {};
   }
 }
 
-function noteMove(h: string, id: string, status: Status) {
+function noteMove(storage: KeyValueStorage, h: string, id: string, status: Status) {
   const now = Date.now();
-  const moves = Object.fromEntries(Object.entries(readMoves()).filter(([, m]) => now - m.at < MOVE_MS));
+  const moves = Object.fromEntries(Object.entries(readMoves(storage)).filter(([, m]) => now - m.at < MOVE_MS));
   moves[`${h}:${id}`] = { status, at: now };
   try {
-    localStorage.setItem(MOVES_KEY, JSON.stringify(moves));
+    storage.setItem(MOVES_KEY, JSON.stringify(moves));
   } catch {
     /* then it may notify of the move */
   }
 }
 
-/** Whether a tab of this browser moved task `id` on host h to `status` in the last few seconds: nobody needs telling of their own moves. */
-export function movedHere(h: string, id: string, status: Status) {
-  const m = readMoves()[`${h}:${id}`];
-  return !!m && m.status === status && Date.now() - m.at < MOVE_MS;
-}
 
 /** A file saved on a host for prompts to refer to (see attachments.ts). */
 export interface Attachment {
@@ -455,7 +450,12 @@ export interface Attachment {
 
 export type TaskDetail = { task: Task; last_message: string | null; pending_permissions: number };
 
-export const tasksApi = {
+export const tasksApi = ({ on, storage }: Http) => ({
+  /** Whether a tab of this browser moved task `id` on host h to `status` in the last few seconds: nobody needs telling of their own moves. */
+  movedHere: (h: string, id: string, status: Status) => {
+    const m = readMoves(storage)[`${h}:${id}`];
+    return !!m && m.status === status && Date.now() - m.at < MOVE_MS;
+  },
   /** A scratch task, in no project (API 47). */
   createScratchTask: (
     h: string,
@@ -527,7 +527,7 @@ export const tasksApi = {
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
   updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { now?: boolean; start_from?: StartFrom | string | null }) => {
     // Noted before the request: the task event it causes reaches every tab before the response does.
-    if (b.status) noteMove(h, id, b.status);
+    if (b.status) noteMove(storage, h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);
   },
   deleteTask: (h: string, id: string, deleteBranch = false) => on(h).del(`/tasks/${enc(id)}?delete_branch=${deleteBranch}`),
@@ -559,4 +559,4 @@ export const tasksApi = {
    *  latest version, or `version`. */
   document: (h: string, id: string, label: DocumentType, version?: number) =>
     on(h).get<TaskDocument>(`/tasks/${enc(id)}/document?label=${label}${version ? `&version=${version}` : ""}`),
-};
+});
