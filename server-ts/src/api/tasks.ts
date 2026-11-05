@@ -33,7 +33,7 @@ export async function list_project_tasks(s: AppState, r: Req) {
   return db.list_tasks_for_project(c, r.params.id, kind);
 }
 
-/** A profile's tasks; with `include_assistant` (API 108) its assistant too, which is left out otherwise, being off the board. */
+/** A profile's tasks; with `include_assistant` (API 109) its assistant too, which is left out otherwise, being off the board. */
 export async function list_profile_tasks(s: AppState, r: Req) {
   return db.list_tasks_for_profile(s.db(), r.params.id, query_bool(r, "include_assistant"));
 }
@@ -42,7 +42,7 @@ export async function list_profile_scratch(s: AppState, r: Req) {
   return db.list_profile_scratch(s.db(), r.params.id);
 }
 
-/** The profile's tasks in no project: its group and scratch tasks, and with `include_assistant` (API 108) its assistant. */
+/** The profile's tasks in no project: its group and scratch tasks, and with `include_assistant` (API 109) its assistant. */
 export async function list_group_tasks(s: AppState, r: Req) {
   return db.list_group_tasks(s.db(), r.params.id, query_bool(r, "include_assistant"));
 }

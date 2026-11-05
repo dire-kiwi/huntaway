@@ -49,13 +49,13 @@ export async function send_message(s: AppState, r: Req) {
   return t;
 }
 
-/** `GET /profiles/{id}/assistant` (API 108): the profile's assistant (see agent/assistant.ts), made the first time it's asked for. */
+/** `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's asked for. */
 export async function get_assistant(s: AppState, r: Req) {
   return assistant.get_or_create(s, r.params.id);
 }
 
 /**
- * `POST /profiles/{id}/assistant` (API 108): send the user's message to the profile's assistant, as `POST
+ * `POST /profiles/{id}/assistant` (API 109): send the user's message to the profile's assistant, as `POST
  * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
  */
 export async function send_to_assistant(s: AppState, r: Req) {

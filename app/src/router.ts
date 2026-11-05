@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 export type Route =
   | { name: "home" }
   | { name: "profile"; profile: string }
-  /** The profile's assistant (API 108), full width. */
+  /** The profile's assistant (API 109), full width. */
   | { name: "assistant"; profile: string }
   | { name: "board"; projectId: string }
   | { name: "group"; hostId: string; group: string }

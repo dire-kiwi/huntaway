@@ -224,7 +224,7 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
-Each profile has an **assistant** (API 108): one long-lived conversation outside every project,
+Each profile has an **assistant** (API 109): one long-lived conversation outside every project,
 opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
 It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
 `{"text": …}` sends it a message), keyed `A-<n>` (no project can use the key `A`; one that had it
@@ -266,6 +266,8 @@ servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server
 | `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
+| `IA_NEW_DB_FILE` | off | `1` keeps the board in `huntaway-2.db`, copied from `huntaway.db` on the first start (see *The database file*). For tests until the release that needs it turns it on |
+| `--recopy-db` / `IA_RECOPY_DB` | off | With `IA_NEW_DB_FILE`: copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see *The database file*). Only for the start it's given to: a restart, Update or Roll back from the board leaves it out |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
 
 ### Agents survive restarts
@@ -296,6 +298,39 @@ up new code.
 One caveat under `systemd`: by default a service restart kills its whole process group,
 shims (and the tmux server behind terminals) included. Use `KillMode=process` (or run the shims in their own scope) to keep agents
 alive across service restarts.
+
+### The database file
+
+The board's database is `<data dir>/huntaway.db` (or `issue-agent.db`, from before the rename to
+Huntaway). A release whose database an older build can't read correctly once it has migrated it (the
+one that moves task threads onto items, HA-222) will keep the board in a file of its own,
+`huntaway-2.db`, so that going back to an older build is safe. Until then that's off, and only
+`IA_NEW_DB_FILE=1` turns it on, for tests (`IA_NEW_DB_FILE=1 scripts/test-server.sh`, whose restarts
+keep it). With it on:
+
+- The first time the server starts on a data dir, it copies the older file into `huntaway-2.db` (with
+  what's still in its write-ahead log, as `VACUUM INTO` to `huntaway-2.db.partial`, then a rename),
+  migrates the copy, and uses that from then on. That's before it serves anything, so the first start
+  takes longer on a big board (a few seconds for a gigabyte). It only reads the older file, which stays as
+  it was: a start that stops part-way leaves it in use and copies it again next time. A fresh data dir
+  gets only `huntaway-2.db`.
+- **Going back** to an older build (Roll back, an older package or a checkout from before) opens the
+  older file as it was at the switch. What was done in between is only in `huntaway-2.db`. Agents that
+  were running at the switch carry on, as over any restart.
+- **Coming forward again** after an older build has run for a while: `huntaway-2.db` hasn't got what
+  the older build did. The server notices that the older file has changed since it was copied (its size
+  or modification time, or its log's), logs a warning and shows it in Settings → Server (and a linked
+  host's page). **Copy again** there (or starting it with `--recopy-db`) copies the older file again,
+  discarding what's been done in `huntaway-2.db` since; that's kept in `huntaway-2.db.replaced` until
+  the next copy. Nothing is copied again without asking. A copy that fails (the older file isn't a
+  database, or the disk is full) is logged, and the server carries on with `huntaway-2.db` as it was.
+- **Backups** around updates (see *Release builds*) are of `huntaway-2.db` once it's there. The first
+  start needs none, since the older file isn't written: it is the backup.
+- Each machine copies its own: linked hosts and a hub each have their own data dir.
+- The copy takes as much disk space again as the older file, which isn't removed: delete `huntaway.db`
+  (with its `-wal` and `-shm`) once you won't go back to an older build.
+- `scripts/copy-live-board.sh` copies the file the live server has open (after a Roll back, both files
+  are there and the older one is in use).
 
 ### Restarting after a merge
 
@@ -500,7 +535,9 @@ marked bad). The error says why (a full disk, or no permission to write to `back
 `IA_SKIP_DB_BACKUP=1` goes ahead without a backup; in the desktop app, the error page's **Start without
 a backup** does that once, and `"skipDbBackup": true` in `desktop.json` always. To go back to a
 backup: stop the server, move `huntaway.db` (with any `huntaway.db-wal` and `huntaway.db-shm`) aside,
-and `gunzip -c` the backup to `huntaway.db` (or copy it there, if it isn't gzipped yet).
+and `gunzip -c` the backup to `huntaway.db` (or copy it there, if it isn't gzipped yet). A server that
+keeps the board in `huntaway-2.db` (see *The database file*) backs that up instead, so its backups go
+back to `huntaway-2.db`.
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started

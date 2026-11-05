@@ -7,6 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import * as db from "../../db.ts";
+import * as db_file from "../../db/file.ts";
 import { dispatch, makeReq, router } from "../../api.ts";
 import type { AppState } from "../../state.ts";
 import * as testing from "../../testing.ts";
@@ -1087,6 +1088,53 @@ test("a_checkout_host_needs_the_hubs_commit", async () => {
   [code, v] = await api(state, "POST", "/api/admin/update", { version: "0.2.0" });
   assert.equal(code, 400);
   assert.ok(v.error.includes("runs a release rather than a checkout"), JSON.stringify(v));
+});
+
+/**
+ * HA-153 review: a server started with --recopy-db passed it on to the version Roll back started, which, from before the
+ * flag, exited on it. It's for the start it was given to, so no restart passes it on.
+ */
+test("rollback_leaves_out_flags_for_one_start", async () => {
+  const state = host_at(config("http://unused"), "0.2.0", ["0.1.5"]);
+  state.meta.args = ["serve", "--port", "7878", "--recopy-db", "--demo"];
+  staging.write(staging.app_dir(state), { ...staging.Installed_default(), current: "0.2.0", previous: "0.1.5" });
+  const events = subscribe(state);
+  assert.equal((await api(state, "POST", "/api/admin/release/rollback"))[0], 200);
+  assert.deepEqual((await job_fails(events))[0], ["restarting", "failed"]);
+  assert.deepEqual(admin.exec_args(), ["serve", "--port", "7878", "--demo"]);
+});
+
+/**
+ * HA-153: with the new database file, the server says which file the database is in, and copies the older builds' one
+ * again only when an older build has changed it since (db/file.test.ts has the copying itself). Without it, it says
+ * nothing and copies nothing.
+ */
+test("the_database_is_copied_again_only_when_the_older_file_has_changed", async () => {
+  let [code, v] = await api(testing.state(), "GET", "/api/admin/server");
+  assert.equal(code, 200);
+  assert.equal(v.database, undefined);
+  [code, v] = await api(testing.state(), "POST", "/api/admin/database/recopy");
+  assert.equal(code, 400);
+  assert.match(v.error, /doesn't use huntaway-2.db/);
+
+  const dir = realpathSync(testing.temp_dir());
+  const s = testing.state_on(db_file.open(dir, false).conn, dir);
+  [code, v] = await api(s, "GET", "/api/admin/server");
+  assert.deepEqual(v.database, { file: "huntaway-2.db", copied_from: null, older_changed: null });
+  assert.equal((await api(s, "POST", "/api/admin/database/recopy"))[0], 400);
+  assert.ok(!existsSync(join(dir, "recopy-db")));
+
+  // An older build has made its own file since.
+  writeFileSync(join(dir, "huntaway.db"), "");
+  assert.equal((await api(s, "GET", "/api/admin/server"))[1].database.older_changed, "huntaway.db");
+  const events = subscribe(s);
+  [code, v] = await api(s, "POST", "/api/admin/database/recopy");
+  assert.equal(code, 200, JSON.stringify(v));
+  // A restart, without a rebuild, which asks the next start to copy it.
+  const [phases, error] = await job_fails(events);
+  assert.deepEqual(phases, ["restarting", "failed"]);
+  assert.ok(error.endsWith(NOT_EXEC), error);
+  assert.ok(existsSync(join(dir, "recopy-db")));
 });
 
 test("rollback_goes_back_to_the_previous_version", async () => {

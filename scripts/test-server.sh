@@ -14,6 +14,9 @@
 #                  Codex runs fail
 #   --no-agents    no agent runs at all (claude and codex are /bin/false)
 #
+# IA_NEW_DB_FILE=1 in its environment starts the server on huntaway-2.db (see server-ts/src/db/file.ts), as do its
+# restarts; `restart` leaves out IA_RECOPY_DB, which is for one start (pass --recopy-db to `huntaway serve` for that).
+#
 # `start` prints shell assignments (IA_TEST_URL, IA_TEST_TOKEN, IA_TEST_PID, IA_TEST_DATA_DIR,
 # IA_TEST_ENV, and with --seed IA_TEST_PROFILE, IA_TEST_PROJECT, IA_TEST_REPO), so
 # `eval "$(scripts/test-server.sh)"` works. They're also in <data-dir>/env (IA_TEST_ENV), for
@@ -74,7 +77,7 @@ launch() {
   mkdir -p "$dir/tmp"
   TMPDIR="$dir/tmp" env -u IA_HUB -u IA_HUB_TOKEN -u IA_TOKEN -u IA_OPEN_TOKEN -u IA_DEMO -u IA_UI_DIR \
     -u IA_CLOUDFLARED_BIN -u IA_BROKER -u IA_BROKER_TOKEN -u IA_BROKER_NAME -u IA_PROFILES -u IA_SOURCE_DIR -u IA_UPDATE_FROM -u IA_RELEASE_UPDATES \
-    -u IA_NAME -u IA_HOST -u IA_PORT -u IA_DATA_DIR \
+    -u IA_NAME -u IA_HOST -u IA_PORT -u IA_DATA_DIR -u IA_RECOPY_DB \
     setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!
@@ -187,6 +190,8 @@ start() {
     for v in IA_CLAUDE_BIN IA_CODEX_BIN $(compgen -e IA_FAKE_CLAUDE_ || true); do
       [[ -n ${!v+x} ]] && printf 'export %s=%q\n' "$v" "${!v}"
     done
+    # The new database file (huntaway-2.db, see server-ts/src/db/file.ts) stays as the start had it, on or off.
+    printf 'export IA_NEW_DB_FILE=%q\n' "${IA_NEW_DB_FILE:-}"
   } > "$dir/launch"
 
   local pid port
