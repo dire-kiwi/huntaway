@@ -15,7 +15,7 @@ import { API_COMPAT, API_VERSION, BUILD_ID, VERSION } from "../proto.ts";
 import * as relay from "../relay.ts";
 import * as broker from "../broker.ts";
 import * as ssh from "../ssh.ts";
-import { changed, http_call, spawn_outbound } from "../hub.ts";
+import { changed, http_call, misplaced, spawn_outbound } from "../hub.ts";
 
 /** A JSON answer, whatever the JSON value (a string too, which a `Reply` would send as text). */
 function json_reply(status: number, body: any): Reply {
@@ -60,6 +60,10 @@ export async function proxy(s: AppState, r: Req): Promise<Reply> {
         } catch {}
         return json_reply(503, { error: `host ${name} is offline` });
       }
+      // Not one that came another way than an assistant host is linked (register refuses those, so this is one that's
+      // become an assistant host, or whose link changed, since): the user's requests aren't for it.
+      const why = misplaced(s, link);
+      if (why !== null) return json_reply(503, { error: why });
       let body: any = null;
       if (bytes.length) {
         try {
@@ -112,6 +116,8 @@ export async function proxy_ws(
   const path = host_path(rest, query);
   const link = s.links.get(host_id);
   if (!link) return refuse(socket, 503, "Service Unavailable", { error: "host is offline" });
+  const why = misplaced(s, link);
+  if (why !== null) return refuse(socket, 503, "Service Unavailable", { error: why });
   let pipe: relay.Pipe;
   try {
     pipe = await link.open_ws(path);

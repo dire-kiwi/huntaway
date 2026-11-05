@@ -4,6 +4,7 @@ import * as db from "../../db.ts";
 import { ApiError, Reply, type Req } from "../../http.ts";
 import * as api from "../../api.ts";
 import * as runner from "../../agent/runner.ts";
+import * as assistant from "../../agent/assistant.ts";
 import { status_line as google_status_line } from "../../agent/assistant/google.ts";
 import type { Shared } from "../../state.ts";
 import { background, err_str, now as util_now, same_secret } from "../../util.ts";
@@ -104,11 +105,17 @@ const is_outcome = (e: any): e is Outcome => e !== null && typeof e === "object"
 const money = (n: number) => `$${n.toFixed(2)}`;
 
 /**
- * What a run checks before it does anything: its active hours, its budget, that its last run in a thread of its own is
- * over (a run from the board is only checked against those), and its precheck, whose output it returns. Each throws the
- * Outcome that says why it skipped the run.
+ * What a run checks before it does anything: that a routine's assistant is on this host (or it fails), its active hours,
+ * its budget, that its last run in a thread of its own is over (a run from the board is only checked against those), and
+ * its precheck, whose output it returns. Each throws the Outcome that says why it skipped (or failed) the run.
  */
 async function guards(s: Shared, a: Automation, source: string, now: number): Promise<string | null> {
+  // A routine whose profile's assistant has moved to another host: not one that wakes the assistant left here (HA-241).
+  if (a.project_id === null) {
+    const p = db.get_profile(s.db(), a.profile_id);
+    const why = p ? assistant.routines_elsewhere(s, p) : null;
+    if (why !== null) throw { err: [null, why] } satisfies Outcome;
+  }
   const by_hand = source === "manual";
   const hours = a.active_hours;
   if (!by_hand && a.trigger.kind !== "at" && hours && !ActiveHours_contains(hours, now, Local)) {
@@ -413,6 +420,19 @@ function claim_due(s: Shared, now: number, tz: Tz): Array<[Automation, Run, InFl
     } catch {}
   }
   const out: Array<[Automation, Run, InFlight]> = [];
+  try {
+    claim_each(s, now, tz, due, out);
+  } catch (e) {
+    // Rust gave up the claims taken so far when `out` was dropped, so an error doesn't hold those automations back.
+    for (const [, , f] of out) f.drop();
+    throw e;
+  }
+  return out;
+}
+
+/** `claim_due`'s loop: claims each of `due` that's due, adding those to run to `out` (which keeps their claims). */
+function claim_each(s: Shared, now: number, tz: Tz, due: Array<[Automation, boolean]>, out: Array<[Automation, Run, InFlight]>) {
+  const c = s.db();
   for (const [a, archived] of due) {
     const due_at = parse_time(a.next_run_at);
     if (due_at === null || due_at > now) continue;
@@ -472,7 +492,6 @@ function claim_due(s: Shared, now: number, tz: Tz): Array<[Automation, Run, InFl
     }
     out.push([a, claimed, in_flight]);
   }
-  return out;
 }
 
 /**

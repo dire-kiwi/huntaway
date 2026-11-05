@@ -617,7 +617,7 @@ token still works later, and the notification keeps its buttons.
 
 ### The mobile app
 
-`mobile/` is an Expo app for Android and iOS (API 117) that follows and drives your tasks on several
+`mobile/` is an Expo app for Android and iOS (API 118) that follows and drives your tasks on several
 boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
 paired board together, each item labelled with its board (tasks that need attention, permission
 prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
@@ -639,7 +639,7 @@ the network changes.
   aren't set up, so there are no iPhone builds for now. Until then, use the board on the iPhone
   as a web app.
 
-The app works with a board of the same API or newer: a board older than the app's minimum (API 117,
+The app works with a board of the same API or newer: a board older than the app's minimum (API 118,
 `MIN_API` in `mobile/src/pairing.ts`) says so in the app, both when pairing and on a paired board
 that's later found older (after a rollback, say), rather than failing somewhere later. Update that
 board's Huntaway to use it again.
@@ -1018,8 +1018,10 @@ is that host (see *An assistant host*): the host names the caller's profile, and
 could name any. It runs with that profile's access (its board, and those that let that profile in),
 looking on its other linked hosts too, but never back on the calling host or further up, and at most
 once per call id, and only if it came the way the hub links that host: a host that dials in under the
-id of one the hub dials (by URL or over SSH) isn't taken for it, for calls or for the assistant's
-requests. A host that dials in is known only by the id it gives with the hub token, which every such
+id of an assistant host the hub dials (by URL or over SSH) is refused, so it gets none of that host's
+calls, the assistant's requests or the board's requests through `/api/h/<host_id>`. (Another host the
+hub dials may dial in too, and stands in for itself while the hub's link to it is down.) A call that names the
+calling host with `host` isn't sent back down to it either. A host that dials in is known only by the id it gives with the hub token, which every such
 host shares, so any host given that token could claim to be it: link an assistant host over SSH or by
 URL. If the link drops after a call went up, the agent is told it may have taken effect.
 Changes that need the user's approval (`update_project`, `delete_task`, automations) are refused there,
@@ -1103,12 +1105,51 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
    the assistant on that host, and says so while the host is offline. `GET /api/profiles/<id>/assistant`
    on the hub goes there too (to `/api/profiles/<id there>/assistant?local=1`), and returns the task with
    that host's `host_id`, which clients reach through `/api/h/<host_id>/…`. Removing the host puts the
-   assistant back on the board's own host.
+   assistant back on the board's own host. Its routines are that host's: make them in its Routines
+   tab there. Routines made on the board's own host before the move stay there and don't run (each
+   run fails, saying where the assistant is, and new ones can't be made there); the Routines tab on
+   the assistant host lists them, to delete.
 5. **Let it use your board**, if it should hand work to your projects or read what needs your
    attention: Settings → Hosts → **Let this host's agents use this board** for that host. Agents
    there in the profiles whose assistant runs on it then act on your boards with that profile's access
    (see *Hosts* above); other profiles on that host stay out. The assistant's Details panel
    shows the host it runs on and whether it can use this board.
+6. **Google and Telegram** are set up on the assistant host only (see *Google for the assistant*
+   above, and [Telegram](#telegram) below).
+
+### Telegram
+
+You can talk to a profile's assistant from Telegram (API 117), and it can reach you there. Its bot
+runs on the host the assistant runs on, which long-polls Telegram for messages, so it needs no open
+port and keeps working while that host's link to the hub is down.
+
+1. **Make a bot**: message [@BotFather](https://t.me/BotFather) with `/newbot`, and copy the token it
+   gives you (`123456789:AAH…`).
+2. **Give it to the assistant**: open the assistant, and in its Details panel under **Telegram**,
+   paste the token and **Save token**. The host checks it with Telegram and keeps it in its settings;
+   the board never shows it again. One bot serves one profile's assistant, and one host reads it at
+   a time.
+3. **Link your chat**: **Link a chat…** shows a one-time code that lasts ten minutes. Send
+   `/start <code>` to the bot from a private chat with it (or tap **Open in Telegram**). That chat is
+   then the only one the bot listens to and writes to. A code sent from a group stops working (everyone
+   there has seen it): make a new one. Messages and button presses from anyone else are dropped,
+   logged and counted in the panel.
+
+What you send the bot (text, and photos, voice notes and files up to 10 MB, saved as attachments) goes
+to the assistant as your message, and its reply comes back, formatted for Telegram and split if it's
+long; replies to what you send there aren't pushed. Besides those, its prompts (with **Allow** and
+**Deny** buttons) and questions (answered by replying), word that it needs attention, its routines'
+reports and its replies to what you send from the board go by push (to the devices that chose them in
+Settings → Notifications) and, as you choose for each, Telegram too. A prompt answered from Telegram
+is answered as the board's buttons answer it (the approval rules and a routine's expiry hold the same,
+and the action log says *on Telegram*), and its message is edited to say how it ended, however it
+did. What can't be sent while Telegram is unreachable is kept and tried again, across restarts.
+Moving the assistant to another host removes its bot from the host it left (if that host is online):
+set it up again on the new one. Deleting the profile removes its bot.
+
+Tests and test servers talk to a fake Bot API instead: `IA_TELEGRAM_API=http://127.0.0.1:<port>` in the
+server's environment (`scripts/test-server.sh` keeps it over a `restart`, and `copy-live-board.sh`
+drops the live board's bots from its copy).
 
 ### Reaching a host from anywhere
 

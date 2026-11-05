@@ -427,7 +427,7 @@ export function terminal_ws(s: AppState, r: Req, ws: WebSocket) {
 // ---------- permissions ----------
 
 /**
- * Pending permission prompts (`?task_id=` for one task's, `?profile_id=` for a profile's, API 117: the mobile app's
+ * Pending permission prompts (`?task_id=` for one task's, `?profile_id=` for a profile's, API 118: the mobile app's
  * inbox), so scripts and the mobile app can answer them.
  */
 export async function list_permissions(s: AppState, r: Req) {

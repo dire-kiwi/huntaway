@@ -4,8 +4,8 @@
 import { ApiError, createClient, parsePairingLink, type Fetch } from "@huntaway/client";
 import type { Board } from "./boards";
 
-/** The oldest board API the app works with: device tokens and pairing came in API 117. */
-export const MIN_API = 117;
+/** The oldest board API the app works with: device tokens and pairing came in API 118. */
+export const MIN_API = 118;
 
 export type PairingProblem = "link" | "insecure" | "unreachable" | "too_old" | "code" | "other";
 
@@ -25,7 +25,7 @@ export const isPlainHttp = (url: string) => /^http:\/\//i.test(url) && !/^http:\
 export const tooOld = (apiVersion: number | undefined) => !apiVersion || apiVersion < MIN_API;
 
 export const tooOldMessage = (name: string, apiVersion: number | undefined) =>
-  `${name} runs an older Huntaway (API ${apiVersion || "before 117"}) than this app needs (API ${MIN_API} or later). Update the board, then pair again.`;
+  `${name} runs an older Huntaway (API ${apiVersion || "before 118"}) than this app needs (API ${MIN_API} or later). Update the board, then pair again.`;
 
 /**
  * Pairs with the board in `link` as `deviceName`. `allowHttp` lets a development build reach a board on plain HTTP

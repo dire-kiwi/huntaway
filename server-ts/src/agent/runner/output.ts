@@ -19,7 +19,6 @@ import * as worktree from "../../git/worktree.ts";
 import * as review from "../../review.ts";
 import * as workflows from "../../integrations/workflows.ts";
 import * as automations from "../../integrations/automations.ts";
-import * as push from "../../integrations/push.ts";
 import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
 import * as threads from "../../threads/write.ts";
@@ -351,7 +350,7 @@ function record_turn_end(state: Shared, run: Run, error: string | null, result: 
   }
   db.run(state.db(), "UPDATE runs SET saw_result=1, between_turns=1, result_error=?1 WHERE id=?2", error, run.id);
   const status = stopping === 1 ? "stopped" : error != null ? "failed" : "done";
-  // A compaction's end isn't a reply (see `announce_reply`), though it's recorded as a turn's.
+  // A compaction's end isn't a reply (see telegram.ts's `on_turn_end`), though it's recorded as a turn's.
   if (run.kind === "compact") result.compact = true;
   checkpoints.after_turn(state, run.id, status);
   // A turn that ended isn't waiting any more, even if the agent gave up on the call.
@@ -359,22 +358,7 @@ function record_turn_end(state: Shared, run: Run, error: string | null, result: 
   documents.turn_ended(state, run.task_id);
   memory.turn_ended(state, run.task_id);
   context.record_turn(state, run, typeof result.total_cost_usd === "number" ? result.total_cost_usd : null);
-  const m = state.add_message(run.task_id, "claude", result);
-  if (run.kind !== "compact") announce_reply(state, run.task_id, m.id);
-}
-
-/**
- * Tells the board (its push, push.REPLY_EVENT) that the assistant replied. On the HA-117 branch Telegram's `on_turn_end`
- * says so, with whether the reply answers a message sent on Telegram (which goes back there instead): until Telegram is
- * ported, every reply is the board's.
- */
-function announce_reply(state: Shared, task_id: string, message_id: number) {
-  let task: Task | null = null;
-  try {
-    task = db.get_task(state.db(), task_id);
-  } catch {}
-  if (!task || !db.is_assistant(task)) return;
-  state.emit({ type: push.REPLY_EVENT, task_id: task.id, profile_id: task.profile_id, message_id, telegram: false });
+  state.add_message(run.task_id, "claude", result);
 }
 
 /** Forget a run whose row is gone (its task was deleted while it ran). */
@@ -554,16 +538,35 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   }
   if (updated && is_task && plan_check) {
     // Its column waits for its checkpoints (see plan.ts), and so does what follows from the task entering it.
-    plan
-      .settle(state, updated, run, (t) => {
-        if (t.status === "in_review") review.on_in_review(state, t);
-        workflows.on_status(state, t);
-      })
-      .catch((e) => console.error(`task ${task_id}: settling its column: ${err_str(e)}`));
+    settle_plan(state, updated, run);
   } else {
     if (updated && is_task && updated.status === "in_review" && status === "in_review") review.on_in_review(state, updated);
     // The task's workflows that start when it enters the column its run ended in.
     if (updated && is_task && status === updated.status && updated.status !== task.status) workflows.on_status(state, updated);
+  }
+}
+
+/** Settle the column of `task` at the end of its run `run` (see plan.ts), and start what entering it starts. */
+function settle_plan(state: Shared, task: Task, run: Run) {
+  plan
+    .settle(state, task, run, (t) => {
+      if (t.status === "in_review") review.on_in_review(state, t);
+      workflows.on_status(state, t);
+    })
+    .catch((e) => console.error(`task ${task.id}: settling its column: ${err_str(e)}`));
+}
+
+/** Startup: settle the columns of the tasks a restart left in "In progress" before they were (see plan::unsettled). */
+export function settle_plans(state: Shared) {
+  let left: Array<[Task, Run]> = [];
+  try {
+    left = plan.unsettled(state);
+  } catch (e) {
+    console.error(`finding plan tasks left in progress: ${err_str(e)}`);
+  }
+  for (const [task, run] of left) {
+    console.log(`task ${task.id}: settling the column its run ${run.id} ended in before the server stopped`);
+    settle_plan(state, task, run);
   }
 }
 
