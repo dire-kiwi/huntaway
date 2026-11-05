@@ -172,6 +172,7 @@ function host_routes(r: Router) {
   r.route("/admin/release/check", { POST: host.check_releases });
   r.route("/admin/release/update", { POST: host.update_to_release });
   r.route("/admin/release/rollback", { POST: host.roll_back_release });
+  r.route("/admin/database/recopy", { POST: host.recopy_database });
   r.ws("/host/ws", ws);
 }
 

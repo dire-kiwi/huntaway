@@ -17,6 +17,7 @@ import { default_exe, type AppState } from "../state.ts";
 import { err_str, home_dir, new_id, now, path_str, reached, sleep, truncate } from "../util.ts";
 import * as worktree from "../git/worktree.ts";
 import * as release from "./release.ts";
+import * as db_file from "../db/file.ts";
 import type { Config } from "./release.ts";
 
 const log = {
@@ -124,6 +125,10 @@ export async function status(state: AppState): Promise<any> {
     running_agents: state.runs.size,
     restart: state.restart,
   };
+  // API 107: with the new database file (see db/file.ts), which file the database is in, and whether an older build has
+  // changed the one it was copied from.
+  const database = db_file.current(state.data_dir, state.db());
+  if (database !== null) v.database = db_file.status_json(database);
   // API 88: with --release-updates, the release this server could update to.
   const rel = release.status(state);
   if (rel !== null) v.release = rel;
@@ -221,6 +226,22 @@ async function has_commit(dir: string, commit: string): Promise<boolean> {
 export function start(state: AppState, rebuild: boolean) {
   if (rebuild && state.meta.source_dir === null) throw ApiError.bad("source checkout not found; start the server with --source-dir");
   begin(state, (st) => run(st, rebuild));
+}
+
+/**
+ * Copy the older builds' database into this build's again and restart onto it (see db/file.ts), as a restart job. Only
+ * when an older build has changed it since it was copied: that discards what's been done since in this one.
+ */
+export function recopy_database(state: AppState) {
+  const st = db_file.current(state.data_dir, state.db());
+  if (st === null) throw ApiError.bad(`this server doesn't use ${db_file.FILE}, so there's nothing to copy again`);
+  const older = st.older_changed;
+  if (older === null) throw ApiError.bad("the older builds' database hasn't changed since it was copied");
+  begin(state, async (s) => {
+    log_line(s, `copying ${older} into ${st.file} again as the server restarts`);
+    db_file.request_recopy(s.data_dir);
+    await run(s, false);
+  });
 }
 
 /**
@@ -362,7 +383,19 @@ export async function restart_into(state: AppState, exe: string, env: Array<[str
   // Give the websocket a moment to deliver the final events.
   await sleep(300);
   log.info(`re-executing ${exe}`);
-  return exec(exe, state.meta.args, env);
+  return exec(exe, restart_args(state.meta.args), env);
+}
+
+/**
+ * The serve flags that ask the start they're given to for something once (copying the database again, see db/file.ts).
+ * A restart leaves them out: an older build that Roll back starts wouldn't know the flag and would exit, and a newer one
+ * would do it again. Their environment variable, `IA_RECOPY_DB`, is only given to the first server `bin/huntaway` starts.
+ */
+const ONE_SHOT_ARGS = ["--recopy-db"];
+
+/** This server's arguments, for a restart: without `ONE_SHOT_ARGS`. */
+export function restart_args(args: string[]): string[] {
+  return args.filter((a) => !ONE_SHOT_ARGS.includes(a));
 }
 
 /** The exit code with which this server asks `bin/huntaway` to exec what it wrote to its restart file. */
@@ -432,6 +465,7 @@ const sh_quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
  */
 export function exec(exe: string, args: string[], env: Array<[string, string]>): Error {
   EXEC_ENV = env.map(([k, v]) => [k, v]);
+  EXEC_ARGS = [...args];
   reached("exec");
   if (supervisor === null) return new Error(`failed to exec ${exe}: not started by bin/huntaway, which execs for this server`);
   try {
@@ -455,6 +489,12 @@ export function exec(exe: string, args: string[], env: Array<[string, string]>):
 }
 
 let EXEC_ENV: Array<[string, string]> | null = null;
+let EXEC_ARGS: string[] | null = null;
+
+/** Tests: the arguments of the last exec (see `exec`). */
+export function exec_args(): string[] | null {
+  return EXEC_ARGS;
+}
 
 /** Tests: the environment the last exec would have added (see `exec`). */
 export function exec_env(): Array<[string, string]> | null {

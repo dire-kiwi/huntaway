@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { temp_dir } from "./testing.ts";
-import { db_path, loopback_host, parse_serve_args, stamped } from "./serve.ts";
+import { db_path, loopback_host, older_db_path, parse_serve_args, stamped } from "./serve.ts";
 
 test("loopback_host_only_accepts_local_names", () => {
   const host = (h: string) => loopback_host({ host: h });
@@ -15,11 +15,30 @@ test("loopback_host_only_accepts_local_names", () => {
 
 test("db_path_keeps_the_database_from_before_the_rename", () => {
   const dir = temp_dir();
-  assert.equal(db_path(dir), join(dir, "huntaway.db"));
+  assert.equal(older_db_path(dir), join(dir, "huntaway.db"));
   writeFileSync(join(dir, "issue-agent.db"), "");
-  assert.equal(db_path(dir), join(dir, "issue-agent.db"));
+  assert.equal(older_db_path(dir), join(dir, "issue-agent.db"));
   writeFileSync(join(dir, "huntaway.db"), "");
-  assert.equal(db_path(dir), join(dir, "huntaway.db"));
+  assert.equal(older_db_path(dir), join(dir, "huntaway.db"));
+});
+
+test("db_path_is_huntaway_2_db_only_with_ia_new_db_file", () => {
+  const dir = temp_dir();
+  const was = process.env.IA_NEW_DB_FILE;
+  try {
+    delete process.env.IA_NEW_DB_FILE;
+    assert.equal(db_path(dir), join(dir, "huntaway.db"));
+    process.env.IA_NEW_DB_FILE = "1";
+    assert.equal(db_path(dir), join(dir, "huntaway-2.db"));
+  } finally {
+    if (was === undefined) delete process.env.IA_NEW_DB_FILE;
+    else process.env.IA_NEW_DB_FILE = was;
+  }
+});
+
+test("recopy_db_is_a_flag_and_a_variable", () => {
+  assert.equal(parse_serve_args([]).recopy_db, false);
+  assert.equal(parse_serve_args(["--recopy-db"]).recopy_db, true);
 });
 
 test("profile_flags_take_name_dir_pairs", () => {

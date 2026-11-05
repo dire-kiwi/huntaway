@@ -21,7 +21,9 @@
 // from the Rust server), which is the one to go back with if the rest of that release line is no good.
 //
 // To go back to one: stop the server, move `huntaway.db` (and any `huntaway.db-wal` and `huntaway.db-shm` beside it)
-// aside, and `gunzip -c` the backup to `huntaway.db` (or copy it there, if it isn't gzipped yet).
+// aside, and `gunzip -c` the backup to `huntaway.db` (or copy it there, if it isn't gzipped yet). A server on the new
+// database file (db/file.ts) backs up `huntaway-2.db`, so its backups go back there. On its first start there's none to
+// back up: making it only reads the older file, which stays as it was.
 import { DatabaseSync } from "node:sqlite";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, utimesSync, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
@@ -152,7 +154,7 @@ function size_of(db_path: string): number {
 }
 
 /** Throws NoRoom when `dir`'s disk can't take a copy of `needed` bytes and keep HEADROOM free. */
-function check_room(dir: string, needed: number) {
+export function check_room(dir: string, needed: number) {
   let free: number;
   try {
     free = disk.free(dir);
