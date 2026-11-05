@@ -384,7 +384,32 @@ setting is on by default (API 120). It's still additive: messages are the source
 What was checked: unit tests (`threads/batch.test.ts`) of what the batch covers, running it twice, stopping and going
 on (and after a restart), a task writing its messages, streamed text included, while the batch runs (before its own
 rebuild and after), a done task opened each way and read, the setting off, an older converter's thread, a failed
-rebuild, and the command line's batch beside a server's connection.
+rebuild, and the command line's batch beside a server's connection. On a scrubbed copy of the live board (2026-11-06,
+schema 96, 1,902 tasks, 1,282 of them not done, none flagged), from Settings → Server's API:
+
+- **Time:** the batch rebuilt the 1,282 tasks (131,789 messages) in 4.9 s, none failed. The longest transaction, and
+  so the longest the event loop waits, is the biggest thread's: 82 ms for the batch's (2,082 messages); a done task's
+  rebuild on open took 212 ms for the board's biggest (4,586 messages), 61–123 ms for the next five.
+- **Size:** the database file went from 972 MB to 1,428 MB (+456 MB: `thread_items` 425 MB with its index, origins 23
+  MB, requests 0.1 MB, no events, since a rebuild logs none), for `messages`' 900 MB. The done tasks left out have
+  the other 58% of the messages (183,369).
+- **Drawn the same:** eight tasks (from 1 to 1,639 messages, with prompts, questions and subagents) shot drawn from
+  messages before the batch and from items after it: the three whose whole thread fits were the same pixel for pixel;
+  the five longer ones differed only in text anti-aliasing a fraction of a pixel apart (the view on messages loads the
+  last 100 messages, the view on items 300 items, so what's above differs in height), and every row both views have
+  was the same in the DOM.
+- **Twice:** run again, nothing was pending and nothing changed (every thread's `writes` and `seq` as they were),
+  `threads-rebuild --batch` found none, and `--all --check` found all 1,282 the same as a rebuild (8 s).
+- **Stopped and gone on with:** stopped after 202 tasks from Settings → Server, *Go on* rebuilt the other 1,080.
+- **A done task opened** in the browser (376 messages, unflagged) got its items (158) and was drawn from them.
+- **While a task streams:** on a test server with `--fake-claude`, 300 tasks with the copy's threads (89,662 messages)
+  and one streaming a reply between them: it was rebuilt mid-stream (opened by `ia-api wait-idle`, then skipped by the
+  batch), its clients got the task flagged and a `thread_resync`, the rest of its text as thread deltas, and its saved
+  items as events 2, 3 and 4 after the rebuild's seq. Its thread had every message's item, was the same as a rebuild,
+  and was drawn the same from items as from messages; so were the other 300.
+
+What doesn't carry over: a task rebuilt while it's streaming starts a new preview, so the view on items shows only
+the text streamed after the rebuild until the message is saved (then it has all of it).
 
 ## Status
 
