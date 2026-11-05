@@ -1,11 +1,12 @@
 // Port of server/src/util.rs's tests.
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { Worker } from "node:worker_threads";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { temp_dir } from "./testing.ts";
-import { has_commits, is_git_root, make_private, path_str } from "./util.ts";
+import { has_commits, is_git_root, make_private, path_str, remove_dir_all } from "./util.ts";
 import * as db from "./db.ts";
 
 function git(dir: string, args: string[]) {
@@ -67,4 +68,43 @@ test("makes_an_existing_data_dir_private", { skip: process.platform === "win32" 
   make_private(dir);
   assert.equal(mode(dir), 0o700);
   c.close();
+});
+
+test("a_folder_is_removed_when_a_file_in_it_goes_meanwhile", async () => {
+  // As a detached `git maintenance` does with `objects/maintenance.lock` (HA-252): another thread makes the lock before
+  // the folder's other files (so it's listed last) and removes it a moment after the removal starts, once a round.
+  const dir = join(temp_dir(), "objects");
+  // [the round asked for, the round whose lock is made, the round being removed]; -1 in the first stops it.
+  const s = new Int32Array(new SharedArrayBuffer(12));
+  const worker = new Worker(
+    `const { workerData: [lock, s] } = require("node:worker_threads");
+    const fs = require("node:fs");
+    for (let i = 1; ; i++) {
+      Atomics.wait(s, 0, i - 1);
+      if (Atomics.load(s, 0) < 0) break;
+      fs.writeFileSync(lock, "");
+      Atomics.store(s, 1, i);
+      while (Atomics.load(s, 2) < i && Atomics.load(s, 0) >= 0);
+      const until = performance.now() + Math.random() * 0.02;
+      while (performance.now() < until);
+      try { fs.unlinkSync(lock); } catch {}
+    }`,
+    { eval: true, workerData: [join(dir, "maintenance.lock"), s] },
+  );
+  try {
+    for (let i = 1; i <= 300; i++) {
+      mkdirSync(dir);
+      Atomics.store(s, 0, i);
+      Atomics.notify(s, 0);
+      while (Atomics.load(s, 1) < i);
+      for (let j = 0; j < 20; j++) writeFileSync(join(dir, `f${j}`), "x");
+      Atomics.store(s, 2, i);
+      remove_dir_all(dir);
+      assert.ok(!existsSync(dir), `round ${i}: the folder is still there`);
+    }
+  } finally {
+    Atomics.store(s, 0, -1);
+    Atomics.notify(s, 0);
+    await worker.terminate();
+  }
 });
