@@ -23,7 +23,7 @@ const BASE = Date.parse("2026-11-01T00:00:00.000Z");
 const at = (i: number) => new Date(BASE + i * 1000).toISOString();
 
 function board(): { s: AppState; c: db.Conn; profile: string; task: (rows: Row[], o?: { translate?: boolean; kind?: string; parent?: string }) => string } {
-  const s = testing.state();
+  const s = testing.on_items(testing.state(), false);
   const c = s.db();
   const profile = db.insert_profile(c, "p", [], null).id;
   /** A task with the history `rows` (its messages, made a second apart), translated into items unless `translate` is false. */

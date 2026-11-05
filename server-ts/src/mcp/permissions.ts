@@ -642,17 +642,13 @@ export function set_message_status(s: Shared, message_id: number, status: string
 
 /** Change message `message_id`'s data with `f`, and tell the UI. */
 function update_message(s: Shared, message_id: number, f: (v: any) => void): void {
-  const data = db.value<string>(s.db(), "SELECT data FROM messages WHERE id=?1", message_id);
-  if (data === undefined) return;
-  let v: any;
-  try {
-    v = JSON.parse(data);
-  } catch {
-    v = {};
-  }
+  // Its row, or for a task whose items are its thread's source, its request's record of it (see db.get_message).
+  const was = db.get_message(s.db(), message_id);
+  if (!was) return;
+  let v: any = was.data;
   if (!v || typeof v !== "object" || Array.isArray(v)) v = {};
   f(v);
-  const m = db.update_message_data(s.db(), message_id, v);
+  const m = db.update_message_data(s.db(), message_id, v, was.task_id);
   if (m) s.emit_message_updated(m);
 }
 

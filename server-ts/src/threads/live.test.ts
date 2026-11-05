@@ -54,7 +54,7 @@ async function idle(s: AppState, id: string) {
 
 /** A state with a task in one profile, and another profile with a task of its own. */
 function setup() {
-  const s = testing.state();
+  const s = testing.on_items(testing.state(), false);
   // Threads made here from the spec's example, not from messages: the setting (on by default) would write the messages'
   // items too, and give a task without items its thread when it's opened.
   db.set_setting(s.db(), "thread_items", "false");

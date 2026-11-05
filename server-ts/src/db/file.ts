@@ -11,8 +11,9 @@
 // Server, which `request_recopy`s), since that discards what was done in `FILE` since the first copy (it's kept in
 // `FILE.replaced` until the next one).
 //
-// Dormant for now (HA-213): a server uses `FILE` only with `IA_NEW_DB_FILE=1` (see `enabled`), for tests. The release
-// where an older build can no longer read what this one writes (the move of threads onto items, HA-222) turns it on.
+// On since the release where an older build can no longer read what this one writes (HA-222: threads move onto items,
+// and their messages stop being written, see threads/source.ts). `IA_NEW_DB_FILE=0` keeps a server on the older file,
+// where its threads stay on their messages.
 import { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, fsyncSync, openSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -37,8 +38,8 @@ export const RECOPY = "recopy-db";
 
 /** The environment variable that turns `FILE` on (`1`) or off (`0`), over `ON_BY_DEFAULT`. */
 export const ENV = "IA_NEW_DB_FILE";
-/** Whether a server uses `FILE` when `ENV` doesn't say. Off until the release that needs it (HA-222). */
-export const ON_BY_DEFAULT = false;
+/** Whether a server uses `FILE` when `ENV` doesn't say: since HA-222, which moves threads onto items. */
+export const ON_BY_DEFAULT = true;
 
 /** Whether this server keeps the board in `FILE` (see `ENV`). */
 export function enabled(env: NodeJS.ProcessEnv = process.env): boolean {

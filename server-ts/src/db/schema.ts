@@ -756,6 +756,22 @@ export function open(path: string): Conn {
     }
     batch("PRAGMA user_version=97; COMMIT;");
   }
+  if (version < 98) {
+    // Items become the source (step 10 of docs/threads.md, threads/source.ts): where each task's thread is written,
+    // `messages` (as before) or `items` (no messages rows), and when a task moved onto items and at which of its
+    // thread's `writes` (flipping it back is safe until it's written again). Each only if it isn't there, in case
+    // another migration takes this version first.
+    batch("BEGIN;");
+    const columns: Array<[string, string, string]> = [
+      ["tasks", "thread_source", "TEXT NOT NULL DEFAULT 'messages'"],
+      ["threads", "flipped_at", "TEXT"],
+      ["threads", "flipped_writes", "INTEGER"],
+    ];
+    for (const [table, column, kind] of columns) {
+      if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
+    }
+    batch("PRAGMA user_version=98; COMMIT;");
+  }
   return conn;
 }
 
@@ -801,7 +817,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 97;
+export const VERSION = 98;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

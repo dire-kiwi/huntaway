@@ -320,8 +320,8 @@ const input_closed = (state: Shared, run: Run) => existsSync(join(runs.run_dir(s
 const reload = (state: Shared, id: string) => db.get_task(state.db(), id)!;
 
 const user_messages = (state: Shared, id: string) =>
-  db
-    .list_messages(state.db(), id)
+  testing
+    .messages(state.db(), id)
     .filter((m) => m.kind === "user")
     .map((m) => m.data);
 
@@ -532,8 +532,8 @@ test("a_message_that_misses_the_turn_starts_the_next", () => {
   assert.ok(input_closed(state, run));
   assert.equal(user_messages(state, task.id).length, 1);
   // Each turn's result shows that turn's cost; the task adds them up.
-  const costs = db
-    .list_messages(state.db(), task.id)
+  const costs = testing
+    .messages(state.db(), task.id)
     .filter((m) => m.data.type === "result")
     .map((m) => m.data.total_cost_usd);
   assert.equal(costs.length, 2);
@@ -564,8 +564,8 @@ test("a_run_that_resumes_a_session_is_charged_only_what_it_adds", () => {
   const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
   const charged = (run: Run): [number, number] => [reload(state, task.id).cost_usd, db.get_run(state.db(), run.id)!.cost_usd];
   const last_result = () =>
-    db
-      .list_messages(state.db(), task.id)
+    testing
+      .messages(state.db(), task.id)
       .reverse()
       .find((m) => m.data.type === "result")!.data;
 
@@ -691,7 +691,7 @@ test("stop_interrupts_the_turn", () => {
   assert.ok(input_closed(state, run));
   const r = db.get_run(state.db(), run.id)!;
   assert.ok(r.stop_requested);
-  const last = db.list_messages(state.db(), task.id).pop()!;
+  const last = testing.messages(state.db(), task.id).pop()!;
   assert.equal(last.data.interrupted, true);
 });
 
@@ -1765,7 +1765,7 @@ test("a_queued_message_another_run_sent_isnt_sent_again", () => {
   const count = db.value(s.db(), "SELECT COUNT(*) FROM runs WHERE task_id=?1", task.id);
   assert.deepEqual([t.running, t.status, t.queued_message, count], [false, "in_review", null, 2]);
   assert.ok(!s.is_running(task.id));
-  const events = db.value(s.db(), "SELECT COUNT(*) FROM messages WHERE task_id=?1 AND data LIKE '%queued message%'", task.id);
+  const events = testing.messages(s.db(), task.id).filter((m) => JSON.stringify(m.data).includes("queued message")).length;
   assert.equal(events, 0);
 });
 
@@ -2017,8 +2017,8 @@ test("a_run_out_of_usage_waits_for_the_reset_and_carries_on", () => {
   t = get();
   assert.ok(state.is_running(task.id));
   assert.deepEqual([t.waiting, t.limit_reset_at, t.status], [false, null, "in_progress"]);
-  const last = db
-    .list_messages(state.db(), task.id)
+  const last = testing
+    .messages(state.db(), task.id)
     .filter((m) => m.kind === "user")
     .at(-1)!;
   assert.ok(last.data.text.includes("has reset"), JSON.stringify(last.data));
@@ -2513,7 +2513,7 @@ test("a_run_an_automation_starts_is_a_routine_run_and_one_the_user_starts_isnt",
   const make = (title: string) => new_task(state.db(), { profile_id: p.id, title, status: "todo" });
   const turn = (task: Task): any => {
     const id = db.value<number>(state.db(), "SELECT turn_message_id FROM runs WHERE task_id=?1", task.id);
-    return JSON.parse(db.value<string>(state.db(), "SELECT data FROM messages WHERE id=?1", id)!);
+    return testing.message(state.db(), id)!.data;
   };
   const [routine, started, mine] = [make("Routine"), make("Started"), make("Mine")];
   send_from_routine(state, routine.id, "Check the mail", null);
@@ -2596,7 +2596,7 @@ test("a_session_the_model_never_answered_is_not_resumed", () => {
   ended(first);
   // The next run starts the conversation again, from the task's description.
   assert.equal(reload(state, task.id).session_id, null);
-  assert.ok(db.list_messages(state.db(), task.id).some((m) => m.data.type === "result"));
+  assert.ok(testing.messages(state.db(), task.id).some((m) => m.data.type === "result"));
 
   // One the model answered is kept, even if a later run's turn fails the same way: its conversation is there.
   const second = next();

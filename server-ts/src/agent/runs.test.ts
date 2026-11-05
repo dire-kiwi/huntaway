@@ -44,7 +44,7 @@ function said(text: string): string {
 }
 
 function thread(state: Shared, task_id: string): any[] {
-  return db.list_messages(state.db(), task_id).filter((m) => m.kind === "claude").map((m) => m.data);
+  return testing.messages(state.db(), task_id).filter((m) => m.kind === "claude").map((m) => m.data);
 }
 
 function image_result(m: any): boolean {

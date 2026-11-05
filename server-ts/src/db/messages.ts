@@ -3,6 +3,7 @@ import { all, one, run, tx, value, type Conn } from "../db.ts";
 import { byte_len, now } from "../util.ts";
 import { get_task, type Task } from "./tasks.ts";
 import * as threads from "../threads/write.ts";
+import * as source from "../threads/source.ts";
 
 export interface Message {
   id: number;
@@ -152,15 +153,33 @@ export function clear_queued(c: Conn, task_id: string): Task | null {
 // ---------- messages ----------
 
 // Every write of a message goes through these three (plan decision D3 of docs/threads.md), so that a task whose thread
-// is kept as items (`tasks.thread_items`) gets them written in the same transaction (threads/write.ts). What they
-// return carries the thread's events, for AppState.emit_message (or emit_message_updated) to send once committed.
+// is kept as items (`tasks.thread_items`) gets them written in the same transaction (threads/write.ts), and a task
+// whose items are its thread's source (`tasks.thread_source`, threads/source.ts) gets only them, with no messages row.
+// What they return carries the thread's events, for AppState.emit_message (or emit_message_updated) to send once
+// committed.
 
 export function insert_message(c: Conn, task_id: string, kind: string, data: any): Message {
   return tx(c, () => {
     const ts = now();
     const json = JSON.stringify(data ?? null);
+    const t = one<{ thread_items: number; thread_source: string }>(
+      c,
+      "UPDATE tasks SET last_activity_at=?1 WHERE id=?2 RETURNING thread_items, thread_source",
+      ts,
+      task_id,
+    );
+    // A quiet task still on messages moves onto items first (a new one with its first message).
+    const how = t ? (t.thread_source === "items" ? "items" : source.flip(c, task_id)) : null;
+    if (how !== null) {
+      const m: Message = { id: source.next_id(c), task_id, kind, data: JSON.parse(json), created_at: ts };
+      source.note_moved(m, how);
+      source.journal(c, m);
+      if (threads.wrote_items(c, m, true)) return m;
+      // Its items couldn't be written (logged): it's kept as a row with the id it was given, so it isn't lost.
+      run(c, "INSERT INTO messages (id,task_id,kind,data,created_at) VALUES (?1,?2,?3,?4,?5)", m.id, task_id, kind, json, ts);
+      return m;
+    }
     const id = run(c, "INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,?2,?3,?4)", task_id, kind, json, ts).lastInsertRowid;
-    const t = one<{ thread_items: number }>(c, "UPDATE tasks SET last_activity_at=?1 WHERE id=?2 RETURNING thread_items", ts, task_id);
     // A copy of `data` as it's stored (Rust's `data.clone()`), so changing one doesn't change the other.
     const m: Message = { id, task_id, kind, data: JSON.parse(json), created_at: ts };
     threads.written(c, m, !!t?.thread_items, true);
@@ -168,9 +187,37 @@ export function insert_message(c: Conn, task_id: string, kind: string, data: any
   });
 }
 
-export function update_message_data(c: Conn, id: number, data: any): Message | null {
+/**
+ * The task message `id` is in: its row's, or for a message of an items task (which has none), its prompt's
+ * (`permission_requests.message_id`). Undefined if neither knows it.
+ */
+function task_of(c: Conn, id: number): string | undefined {
+  return (
+    value<string>(c, "SELECT task_id FROM messages WHERE id=?1", id) ??
+    value<string>(c, "SELECT task_id FROM permission_requests WHERE message_id=?1 LIMIT 1", id)
+  );
+}
+
+/**
+ * Message `id` (of task `task_id`, if given) as it is now: its row, or for a task whose items are its source, what its
+ * request or item keeps of it (threads/source.ts's `kept`: a prompt's, a question's or a routine's report, the messages
+ * changed in place). An items task's rows from before it moved onto items aren't read: its items have them. Null if
+ * there's no such message.
+ */
+export function get_message(c: Conn, id: number, task_id?: string): Message | null {
+  const task = task_id ?? task_of(c, id);
+  if (task === undefined) return null;
+  if (source.of(c, task) === "items") return source.kept(c, task, id);
+  const r = one(c, "SELECT * FROM messages WHERE id=?1 AND task_id=?2", id, task);
+  return r ? Message_from_row(r) : null;
+}
+
+/** Changes message `id`'s data (of task `task_id`, if given): its row, or for an items task, its items (see get_message). */
+export function update_message_data(c: Conn, id: number, data: any, task_id?: string): Message | null {
   return tx(c, () => {
-    run(c, "UPDATE messages SET data=?1 WHERE id=?2", JSON.stringify(data ?? null), id);
+    const task = task_id ?? task_of(c, id);
+    if (task !== undefined && source.of(c, task) === "items") return source.update(c, task, id, data, false);
+    if (!run(c, "UPDATE messages SET data=?1 WHERE id=?2", JSON.stringify(data ?? null), id).changes) return null;
     return updated(c, id);
   });
 }
@@ -179,8 +226,10 @@ export function update_message_data(c: Conn, id: number, data: any): Message | n
  * update_message_data, if the message's status is still `pending`: in one statement, so of two answers at once only one
  * is taken. Null if it isn't (or there's no such message).
  */
-export function update_pending_message(c: Conn, id: number, data: any): Message | null {
+export function update_pending_message(c: Conn, id: number, data: any, task_id?: string): Message | null {
   return tx(c, () => {
+    const task = task_id ?? task_of(c, id);
+    if (task !== undefined && source.of(c, task) === "items") return source.update(c, task, id, data, true);
     const sql = "UPDATE messages SET data=?1 WHERE id=?2 AND json_extract(data, '$.status')='pending'";
     if (!run(c, sql, JSON.stringify(data ?? null), id).changes) return null;
     return updated(c, id);

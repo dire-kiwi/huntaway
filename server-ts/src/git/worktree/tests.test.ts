@@ -398,8 +398,8 @@ test("a_task_with_commits_its_base_lacks_is_unmerged", async () => {
 });
 
 function log_texts(s: AppState, task_id: string): string[] {
-  return db
-    .list_messages(s.db(), task_id)
+  return testing
+    .messages(s.db(), task_id)
     .filter((m) => m.kind === "event")
     .map((m) => (typeof m.data?.text === "string" ? m.data.text : ""));
 }
@@ -1163,7 +1163,7 @@ test("worktree_fetches_use_the_project_account_before_the_profile_account", asyn
     ]) {
       let t = api.create_task_inner(s, pid, ct(title));
       t = await setup(s, t.id);
-      const log = db.list_messages(s.db(), t.id);
+      const log = testing.messages(s.db(), t.id);
       const warning = log.find((m) => m.kind === "event" && m.data?.level === "warn")!;
       const detail: string = warning.data.detail;
       assert.ok(detail.includes(`--user=${expected}`), detail);

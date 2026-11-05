@@ -14,6 +14,7 @@ import * as documents from "./documents.ts";
 import * as memory from "./assistant/memory.ts";
 import * as permissions from "../mcp/permissions.ts";
 import * as automations from "../integrations/automations.ts";
+import * as thread_source from "../threads/source.ts";
 import { launch } from "./runner/launch.ts";
 import { requeue_ahead, check_not_archived, start_unblocked } from "./runner/send.ts";
 import {
@@ -135,7 +136,10 @@ export function start_run(
   // Checked with the runs map as it is, as archiving is (see api::archive).
   check_not_archived(state, task);
   const c = state.db();
-  const { run, text, taken, recorded } = db.tx(c, () => {
+  const { run, text, taken, recorded, moved } = db.tx(c, () => {
+    // A quiet task still on messages moves onto items before its run is (see threads/source.ts): its prompt and
+    // everything after are written as items.
+    const moved = thread_source.flip(c, task_id);
     const taken = take === "No" ? null : db.take_queued(c, task_id);
     if (take === "Only" && !taken) throw ApiError.conflict("nothing is queued to send");
     const msg = taken ? db.queued_then(taken, message) : { ...message, routine_runs: [...(message.routine_runs ?? [])] };
@@ -146,7 +150,7 @@ export function start_run(
     // The routines whose messages it starts with are this run's, for its cost.
     automations.routines.taken_in(c, run.id, msg.routine_runs);
     const recorded = record(c, task, msg);
-    return { run, text: msg.text, taken, recorded };
+    return { run, text: msg.text, taken, recorded, moved };
   });
   // The launch's end (Rust's `select!` between the launch and its cancelling): the first of the two settles it.
   let pending = true;
@@ -170,6 +174,7 @@ export function start_run(
     return true;
   };
   state.runs.set(task_id, { run_id: run.id, cancel });
+  thread_source.announce(state, task_id, moved);
   for (const m of recorded) state.emit_message(m);
   // The message its first turn starts with (see git/checkpoints.rs).
   const first = recorded.find((m) => m.kind === "user");

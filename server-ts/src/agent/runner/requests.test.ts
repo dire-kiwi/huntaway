@@ -91,7 +91,7 @@ const request_of = (state: Shared, run: Run, request_id: string) =>
     control_call_id(run.id, request_id),
   );
 
-const message_of = (state: Shared, id: number) => JSON.parse(db.value<string>(state.db(), "SELECT data FROM messages WHERE id=?1", id)!);
+const message_of = (state: Shared, id: number) => testing.message(state.db(), id)!.data;
 
 const reload = (state: Shared, id: string) => db.get_task(state.db(), id)!;
 
@@ -463,10 +463,10 @@ test("a_board_call_claude_cancels_ends_unanswered", async () => {
 test("claude_codes_answer_to_the_initialize_isnt_taken_for_another", async () => {
   const [state, task, run] = running();
   output(state, run, [{ type: "control_response", response: { subtype: "success", request_id: `huntaway-init-${run.id}`, response: { commands: [] } } }]);
-  assert.equal(db.value<number>(state.db(), "SELECT COUNT(*) FROM messages WHERE task_id=?1", task.id), 0);
+  assert.equal(testing.messages(state.db(), task.id).length, 0);
   // Refused, the run goes on without the board's tools, and the thread says so.
   output(state, run, [{ type: "control_response", response: { subtype: "error", request_id: `huntaway-init-${run.id}`, error: "unknown subtype" } }]);
-  const said = db.all<{ data: string }>(state.db(), "SELECT data FROM messages WHERE task_id=?1 AND kind='event'", task.id).map((m) => JSON.parse(m.data).text);
+  const said = testing.messages(state.db(), task.id).filter((m) => m.kind === "event").map((m) => m.data.text);
   assert.equal(said.length, 1);
   assert.match(said[0], /didn't take the board's tools \(unknown subtype\)/);
 });

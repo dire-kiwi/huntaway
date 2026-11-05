@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after } from "node:test";
 import * as db from "./db.ts";
+import * as source from "./threads/source.ts";
 import { AppState, type Identity } from "./state.ts";
 import type { ServerMeta } from "./update/admin.ts";
 
@@ -45,7 +46,37 @@ export function state_on(conn: db.Conn, data_dir: string): AppState {
 }
 
 function state_of(id: Identity, m: ServerMeta): AppState {
-  return new AppState(db.open(":memory:"), temp_dir(), id, m);
+  return on_items(new AppState(db.open(":memory:"), temp_dir(), id, m));
+}
+
+/**
+ * Whether tasks on `s`'s board move onto items (threads/source.ts), as they do on a server's: on by default, as there
+ * (`IA_TEST_ITEMS_SOURCE=0` turns it off for every state(), to run the tests with threads on messages), and off for a
+ * test of a task on messages (`items` false). The messages its items tasks are written as are kept for `messages`.
+ */
+export function on_items<S extends { db(): db.Conn }>(s: S, items = process.env.IA_TEST_ITEMS_SOURCE !== "0"): S {
+  source.set_flips(s.db(), items);
+  source.keep_journal(s.db());
+  return s;
+}
+
+/**
+ * The messages written to task `task_id`'s thread, as db.list_messages gives them, whichever its source: its rows, and
+ * for a task on items (which has none since it moved), the messages it was written as (source.ts's journal), as they
+ * are now. What the board wrote, for tests to check; the board's own readers read items (threads/history.ts).
+ */
+/** Message `id` as `messages` has it (its data as it is now), or undefined. */
+export function message(c: db.Conn, id: number): db.Message | undefined {
+  const m = source.keep_journal(c).get(id);
+  if (m) return structuredClone(m);
+  const r = db.one(c, "SELECT * FROM messages WHERE id=?1", id);
+  return r ? db.Message_from_row(r) : undefined;
+}
+
+export function messages(c: db.Conn, task_id: string): db.Message[] {
+  const out = new Map(db.list_messages(c, task_id).map((m) => [Number(m.id), m]));
+  for (const m of source.keep_journal(c).values()) if (m.task_id === task_id) out.set(Number(m.id), structuredClone(m));
+  return [...out.values()].sort((a, b) => Number(a.id) - Number(b.id));
 }
 
 let root: string | null = null;

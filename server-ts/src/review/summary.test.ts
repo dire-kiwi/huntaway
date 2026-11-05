@@ -81,7 +81,7 @@ function reply(s: AppState, thread: Task, said: string | null) {
   runner.on_exit(s, h.run_id, 0, null, null, "");
 }
 
-const user_text = (s: AppState, th: Task): string => db.list_messages(s.db(), th.id).find((m: any) => m.kind === "user")!.data.text;
+const user_text = (s: AppState, th: Task): string => testing.messages(s.db(), th.id).find((m: any) => m.kind === "user")!.data.text;
 
 /** Runs `f` as a host that can run agents (agents::runs::TEST_CAN_RUN). */
 async function can_run(f: () => Promise<void> | void) {
@@ -273,7 +273,7 @@ test("a_summarizer_added_later_is_written_without_redoing_the_others", () =>
     const t = get(s, task);
     assert.deepEqual([t.summaries.length, t.summaries[0].state, t.summaries[0].text, t.summaries[1].state], [2, "done", "First.", "running"]);
     // The first's thread wasn't asked again.
-    assert.equal(db.list_messages(s.db(), first.id).filter((m: any) => m.kind === "user").length, 1);
+    assert.equal(testing.messages(s.db(), first.id).filter((m: any) => m.kind === "user").length, 1);
     // Without it, its summary goes.
     const second = both(s, task)[1];
     reply(s, second, "Second.");

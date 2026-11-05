@@ -15,6 +15,7 @@ import * as status_script from "./integrations/status_script.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
 import * as threads from "./threads/write.ts";
 import * as threads_live from "./threads/live.ts";
+import * as source from "./threads/source.ts";
 
 export { ApiError } from "./http.ts";
 
@@ -186,6 +187,9 @@ export class AppState {
 
   /** A message was added (once it's committed), with its thread's events if its task keeps its thread as items. */
   emit_message(m: Message) {
+    // Writing it moved its task onto items (threads/source.ts): clients get the task first, and a fresh window if the
+    // move rebuilt its items.
+    source.announce(this, m.task_id, source.moved(m));
     this.emit({ type: "message", task_id: m.task_id, message: m });
     this.emit_thread_events(m);
   }

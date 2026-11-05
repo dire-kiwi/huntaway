@@ -63,8 +63,7 @@ export function card(args: any): any {
  * by a restart).
  */
 export function ask(s: Shared, task: Task, call_id: string, card: any): void {
-  const asked = db.value(s.db(), "SELECT id FROM messages WHERE task_id=?1 AND kind='question' AND json_extract(data, '$.call_id')=?2", task.id, call_id);
-  if (asked === undefined) {
+  if (!history.asked(s.db(), task.id, call_id)) {
     card = { ...card, call_id, status: "pending" };
     s.add_message(task.id, "question", card);
   }
@@ -84,9 +83,11 @@ export interface Answer {
  * Returns the task, as sending a message does.
  */
 export function answer(s: Shared, task_id: string, message_id: number, answer: Answer): Task {
-  const data = db.value<string>(s.db(), "SELECT data FROM messages WHERE id=?1 AND task_id=?2 AND kind='question'", message_id, task_id);
-  if (data === undefined) throw ApiError.not_found("question");
-  const asked = JSON.parse(data);
+  // Its row, or for a task whose items are its thread's source, its request's record of it (see db.get_message).
+  const question = db.get_message(s.db(), message_id, task_id);
+  if (question?.kind !== "question") throw ApiError.not_found("question");
+  const data = JSON.stringify(question.data);
+  const asked = question.data ?? {};
   if (asked.status !== "pending") throw ApiError.conflict("this question has been answered already");
   if (permissions.moved_on(s, task_id, message_id)) {
     throw ApiError.conflict("the conversation has moved on since this was asked: reply in the thread instead");
@@ -108,7 +109,7 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
   if (picked > 1 && asked.multi_select !== true) throw ApiError.bad("this question takes one answer");
   const answered = { ...asked, status: "answered", answer: { choices, text } };
   // In one statement, so of two answers at once only one is sent.
-  const taken = db.update_pending_message(s.db(), message_id, answered);
+  const taken = db.update_pending_message(s.db(), message_id, answered, task_id);
   if (!taken) throw ApiError.conflict("this question has been answered already");
   // Its thread events go out now, in the order they were written: what answering it writes next (the reply, the merge
   // decision's event) comes after them.
@@ -123,7 +124,7 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
   } catch (e) {
     // Answerable again (and its request in the thread kept as items, open again).
     try {
-      const back = db.update_message_data(s.db(), message_id, JSON.parse(data));
+      const back = db.update_message_data(s.db(), message_id, JSON.parse(data), task_id);
       if (back) s.emit_message_updated(back);
     } catch {}
     throw e;
@@ -131,7 +132,7 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
   // The user's answer is a prompt to the agent: it puts the task in "now" like a message does (not the board's own
   // merge decision).
   if (!merge_approval) task = focus.put_in_now(s, task_id) ?? task;
-  emit(s, message_id);
+  emit(s, message_id, undefined, task_id);
   // Any other question it was waiting on is settled by this reply.
   replied(s, task_id);
   return task;
@@ -173,9 +174,9 @@ export function replied(s: Shared, task_id: string): void {
     // Unless it's been answered since.
     let m: db.Message | null = null;
     try {
-      m = db.update_pending_message(s.db(), id, v);
+      m = db.update_pending_message(s.db(), id, v, task_id);
     } catch {}
-    if (m) emit(s, id, m);
+    if (m) emit(s, id, m, task_id);
   }
 }
 
@@ -183,12 +184,11 @@ export function replied(s: Shared, task_id: string): void {
  * Tells clients message `message_id` changed: the thread events written when it was changed to `written` (the update's
  * Message, see db.update_message_data), if they haven't been sent yet, and `message_updated` with it as it is now.
  */
-export function emit(s: Shared, message_id: number, written?: db.Message): void {
+export function emit(s: Shared, message_id: number, written?: db.Message, task_id = written?.task_id): void {
   if (written) s.emit_thread_events(written);
-  let m: db.Message | undefined;
+  let m: db.Message | null;
   try {
-    const row = db.one(s.db(), "SELECT * FROM messages WHERE id=?1", message_id);
-    m = row ? db.Message_from_row(row) : undefined;
+    m = db.get_message(s.db(), message_id, task_id);
   } catch {
     return;
   }

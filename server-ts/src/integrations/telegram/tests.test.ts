@@ -218,8 +218,8 @@ async function linked_board(t: TestContext): Promise<[Shared, Fake, string]> {
 }
 
 function user_messages(s: Shared, task_id: string): string[] {
-  return db
-    .list_messages(s.db(), task_id)
+  return testing
+    .messages(s.db(), task_id)
     .filter((m) => m.kind === "user")
     .map((m) => (typeof m.data?.text === "string" ? m.data.text : ""));
 }
@@ -627,7 +627,7 @@ test("replies_and_reports_go_back_to_the_chat", async (t) => {
   // A turn nobody asked for from Telegram stays on the board. Seen before the message from Telegram comes (the board's
   // events are taken a tick later, and the bot's update can come first), or it would be the reply that message waits for.
   turn(s, a, "Board only");
-  const ended = db.value<number>(s.db(), "SELECT MAX(id) FROM messages WHERE task_id=?1", a)!;
+  const ended = Number(testing.messages(s.db(), a).pop()!.id);
   await until("the turn to be seen", () => progress(s.db(), p).replied >= ended);
   // One that a Telegram message started comes back, formatted. (Here its run fails to launch, so nothing waits for a
   // reply once it has stopped: the turn is recorded as a run that's going.)
@@ -1023,8 +1023,8 @@ test("a_compactions_end_is_no_reply", async (t) => {
   const run = db.insert_run(s.db(), a, "compact");
   const result = { type: "result", subtype: "success", is_error: false, result: "Compacted", num_turns: 0 };
   runner.record_result(s, run, null, result);
-  const last = db
-    .list_messages(s.db(), a)
+  const last = testing
+    .messages(s.db(), a)
     .reverse()
     .find((m) => m.kind === "claude")!;
   assert.equal(last.data.compact, true, "the compaction's result isn't marked");

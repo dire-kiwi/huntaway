@@ -25,6 +25,7 @@ import * as threads from "../../threads/write.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
 import * as plan from "./plan.ts";
+import * as thread_source from "../../threads/source.ts";
 import { is_initialized, on_control_cancel, on_control_request } from "./requests.ts";
 import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended, turn_started } from "./queue.ts";
 
@@ -428,6 +429,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     db.run(state.db(), "UPDATE runs SET status='exited', ended_at=?1 WHERE id=?2", now(), run_id);
   } catch {}
   reached("finish:exited");
+  // Quiet now (unless a prompt is waiting, or another run has started), it moves onto items (threads/source.ts).
+  thread_source.settled(state, task_id);
   tokens.on_run_ended(state, task_id);
   // What a stopped or failed run had written of its document.
   documents.turn_ended(state, task_id);

@@ -116,7 +116,7 @@ async function end(s: AppState, run_id: string, node: string, outcome: Outcome) 
 }
 
 function last_user_text(s: AppState, task_id: string): string {
-  const msgs = db.list_messages(s.db(), task_id);
+  const msgs = testing.messages(s.db(), task_id);
   const m = [...msgs].reverse().find((m: any) => m.kind === "user");
   return (m?.data?.text as string) ?? "";
 }

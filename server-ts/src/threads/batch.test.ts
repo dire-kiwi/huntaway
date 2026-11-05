@@ -51,7 +51,7 @@ function dump(s: AppState, id: string): string {
  * result, a question), then on, as it is by default since step 7. `statuses` are the tasks'.
  */
 function board(statuses: string[]): { s: AppState; events: any[]; tasks: Task[] } {
-  const s = testing.state();
+  const s = testing.on_items(testing.state(), false);
   db.set_setting(s.db(), write.SETTING, "false");
   const p = db.insert_profile(s.db(), "p", [], null);
   const tasks = statuses.map((status, i) => {
@@ -78,7 +78,7 @@ async function finished(s: AppState): Promise<batch.Progress> {
 }
 
 test("the setting is on by default, and new tasks are flagged", () => {
-  const s = testing.state();
+  const s = testing.on_items(testing.state(), false);
   assert.equal(write.setting_on(s.db()), true);
   const p = db.insert_profile(s.db(), "p", [], null);
   const t = db.insert_task(s.db(), { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });

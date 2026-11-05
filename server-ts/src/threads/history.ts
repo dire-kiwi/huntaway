@@ -4,10 +4,11 @@
 // SQL the board has always used (db/messages.ts), otherwise. `huntaway threads-readers` (threads/readers.ts) runs
 // each reader both ways on a copy of a board and reports where they differ.
 //
-// A task's readers read items (`source`) when it's flagged `thread_items`, its live writes haven't stopped on an error,
-// and this build's translator wrote them (`threads.converter`): an older one's items may lack what the readers need
-// (converter 3 added the metas they read), and the messages are still the source, so until `huntaway threads-rebuild`
-// brings the thread up to date they read those. Step 10, which stops writing messages, drops that fallback.
+// A task's readers read items (`source`) when its items are its thread's source (`thread_source`, step 10, see
+// threads/source.ts: it has no messages since it moved onto them), or when it's flagged `thread_items`, its live writes
+// haven't stopped on an error, and this build's translator wrote them (`threads.converter`): an older one's items may
+// lack what the readers need (converter 3 added the metas they read), and the messages are still the source of a task
+// on messages, so until `huntaway threads-rebuild` brings the thread up to date they read those.
 //
 // What the items readers go on is what the translator (threads/translate.ts) keeps: who sent a user message is in its
 // meta (`auto`, `from_agent`, `user_text`, `start`, `routine`, `review_round`), a turn's result text is its
@@ -36,7 +37,7 @@ export type Mode = "auto" | Source;
 
 /** The SQL condition (on tasks aliased `t`) that a task's thread is read from its items: what `source` says. */
 export function on_items(): string {
-  return `(t.thread_items=1 AND EXISTS(SELECT 1 FROM threads h WHERE h.task_id=t.id AND h.error IS NULL AND h.converter=${CONVERTER_VERSION}))`;
+  return `(t.thread_source='items' OR (t.thread_items=1 AND EXISTS(SELECT 1 FROM threads h WHERE h.task_id=t.id AND h.error IS NULL AND h.converter=${CONVERTER_VERSION})))`;
 }
 
 /**
@@ -55,7 +56,11 @@ export function reads_items(c: Conn, task_id: string): boolean {
   return !!db.one(c, `SELECT 1 FROM tasks t WHERE t.id=?1 AND ${on_items()}`, task_id);
 }
 
-/** The SQL condition, on tasks aliased `t`, for the tasks `mode` reads from `from`. */
+/**
+ * The SQL condition, on tasks aliased `t`, for the tasks `mode` reads from `from`. Only `auto` knows tasks whose items
+ * are their source (`thread_source`), whose messages stop where they moved onto them: `messages` is for migration 79's
+ * backfill, which runs before there were items, and for comparing a board none of whose tasks are on items yet.
+ */
 export function reads(mode: Mode, from: Source): string {
   if (mode !== "auto") return mode === from ? "1" : "0";
   return from === "items" ? on_items() : `NOT ${on_items()}`;
@@ -615,9 +620,10 @@ export function submissions(c: Conn, mode: Mode = "auto"): Submitted[] {
 
 /**
  * The questions (request_user_input's and the merge gate's cards, `question` messages) still waiting for an answer in
- * `task_id`'s thread, oldest first, with their messages' data, which the caller updates: the messages are the source
- * the items are made from (step 10 of docs/threads.md changes that). From items, they're the open question requests
- * a `question` message made (`legacy:<message id>`; a question prompt's request has the board's request id).
+ * `task_id`'s thread, oldest first, with their messages' data, which the caller updates (db.update_pending_message).
+ * From items, they're the open question requests a `question` message made (`legacy:<message id>`; a question
+ * prompt's request has the board's request id), and the data is their message's (db.get_message: its row, or for a
+ * task whose items are its source, what the request keeps of it).
  */
 export function open_questions(c: Conn, task_id: string, from = source(c, task_id)): Array<{ id: number; data: string }> {
   if (from === "messages") {
@@ -627,8 +633,41 @@ export function open_questions(c: Conn, task_id: string, from = source(c, task_i
   for (const r of db.all<{ id: string }>(c, "SELECT id FROM thread_requests WHERE task_id=?1 AND type='question' AND open=1 ORDER BY pos", task_id)) {
     const id = /^legacy:(\d+)$/.exec(r.id);
     if (!id) continue;
-    const m = db.one<{ id: number; data: string }>(c, "SELECT id, data FROM messages WHERE id=?1 AND task_id=?2 AND kind='question'", Number(id[1]), task_id);
-    if (m) out.push(m);
+    const m = db.get_message(c, Number(id[1]), task_id);
+    if (m?.kind === "question") out.push({ id: m.id, data: JSON.stringify(m.data) });
   }
   return out;
+}
+
+/**
+ * Whether MCP call `call_id` has asked its question in `task_id`'s thread already (it's run again if a restart cuts it
+ * short): a `question` message with its id, or for a task whose items are its source, a question request.
+ */
+export function asked(c: Conn, task_id: string, call_id: string): boolean {
+  if (db.one(c, "SELECT 1 FROM tasks WHERE id=?1 AND thread_source='items'", task_id)) {
+    return !!db.one(c, "SELECT 1 FROM thread_requests WHERE task_id=?1 AND type='question' AND json_extract(data, '$.metadata.call_id')=?2", task_id, call_id);
+  }
+  return !!db.one(c, "SELECT 1 FROM messages WHERE task_id=?1 AND kind='question' AND json_extract(data, '$.call_id')=?2", task_id, call_id);
+}
+
+/**
+ * The routines' reports in the assistant's thread `task_id` it hasn't read yet (`read` isn't set), oldest first, as
+ * their messages: `report` messages, or for a thread whose items are its source, `routine_report` notices, whose
+ * metadata is the report (see db.get_message).
+ */
+export function unread_reports(c: Conn, task_id: string): db.Message[] {
+  if (db.one(c, "SELECT 1 FROM tasks WHERE id=?1 AND thread_source='items'", task_id)) {
+    const rows = db.all<{ id: string }>(
+      c,
+      `SELECT id FROM thread_items WHERE task_id=?1 AND type='notice' AND json_extract(data, '$.code')='routine_report'
+       AND json_extract(data, '$.metadata.read') IS NOT 1 ORDER BY pos`,
+      task_id,
+    );
+    return rows.flatMap((r) => {
+      const id = message_of(r.id);
+      const m = id === undefined ? null : db.get_message(c, id, task_id);
+      return m ? [m] : [];
+    });
+  }
+  return db.all(c, "SELECT * FROM messages WHERE task_id=?1 AND kind='report' AND json_extract(data,'$.read') IS NOT 1 ORDER BY id", task_id).map(db.Message_from_row);
 }

@@ -291,7 +291,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     };
     console.log(`task ${task_id} run ${run.id}: starting codex (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);
     await started(state, run, l, check);
-    automations.routines.mark_read(state, reports);
+    automations.routines.mark_read(state, task_id, reports);
     rewound(state, task_id, rewind);
     return;
   }
@@ -378,7 +378,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   };
   console.log(`task ${task_id} run ${run.id}: starting claude (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);
   await started(state, run, l, check);
-  automations.routines.mark_read(state, reports);
+  automations.routines.mark_read(state, task_id, reports);
   rewound(state, task_id, rewind);
 }
 

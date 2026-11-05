@@ -84,8 +84,8 @@ async function new_task(s: AppState, f: Fixture, title: string): Promise<[Task, 
 }
 
 function events(s: AppState, task_id: string): any[] {
-  return db
-    .list_messages(s.db(), task_id)
+  return testing
+    .messages(s.db(), task_id)
     .filter((m) => m.kind === "event")
     .map((m) => m.data);
 }
