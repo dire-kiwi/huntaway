@@ -366,6 +366,20 @@ export function take_supervisor() {
   supervisor = file && pid > 1 && process.ppid === pid ? { file, pid } : null;
 }
 
+/**
+ * Tell `bin/huntaway` that the server is up (it's listening, and has told the desktop app so), by writing `started`
+ * beside its restart file. From then on, the wrapper starts the server again if it crashes; one that exits before then
+ * (a port in use, say) isn't started again, so whatever started it sees the failure at once.
+ */
+export function supervisor_started() {
+  if (supervisor === null) return;
+  try {
+    writeFileSync(join(dirname(supervisor.file), "started"), `${process.pid}\n`);
+  } catch (e) {
+    log.warn(`telling bin/huntaway the server is up: ${err_str(e)}`);
+  }
+}
+
 /** Whether this server can exec (`bin/huntaway` started it). */
 export function can_exec(): boolean {
   return supervisor !== null;

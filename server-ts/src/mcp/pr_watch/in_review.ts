@@ -6,7 +6,7 @@ import type { Shared } from "../../state.ts";
 import * as runner from "../../agent/runner.ts";
 import * as runs from "../../agent/runs.ts";
 import * as automations from "../../integrations/automations.ts";
-import { err_str, new_id, now as now_str } from "../../util.ts";
+import { background, err_str, new_id, now as now_str } from "../../util.ts";
 import { Account } from "../gh_mcp.ts";
 import { GIVE_UP, Target } from "../pr_watch.ts";
 
@@ -83,10 +83,11 @@ export function watch_in_review(s: Shared) {
     } catch (e) {
       console.error(`ERROR watching pull requests in review: ${err_str(e)}`);
     }
-    setTimeout(tick, REVIEW_TICK).unref();
+    setTimeout(next, REVIEW_TICK).unref();
   };
+  const next = () => background("watching pull requests in review", tick());
   // As tokio's interval, the first tick is now.
-  setTimeout(tick, 0).unref();
+  setTimeout(next, 0).unref();
 }
 
 /** One look at the tasks in review (`now` being now, in ms): read the pull requests that are due, and wake the agents they have news for. */

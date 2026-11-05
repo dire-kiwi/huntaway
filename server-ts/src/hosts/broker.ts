@@ -13,7 +13,7 @@ import type { Writable } from "node:stream";
 import WebSocket from "ws";
 import type { AppState } from "../state.ts";
 import { no_route_error } from "../http.ts";
-import { context, err_str } from "../util.ts";
+import { background, context, err_str } from "../util.ts";
 import { VERSION } from "./proto.ts";
 import * as relay from "./relay.ts";
 import * as proto from "./broker/proto.ts";
@@ -241,7 +241,7 @@ export function dial_with_origin(s: AppState, url: string, token: string, name: 
   connect_tunnel(connector.subscribe(), connector_bin).catch((e) => log.warn(`tunnel connector: ${err_str(e)}`));
   let stopped = false;
   let abort: (() => void) | null = null;
-  (async () => {
+  background("keeping the broker connected", (async () => {
     let backoff = 1;
     while (!stopped) {
       const started = Date.now();
@@ -265,7 +265,7 @@ export function dial_with_origin(s: AppState, url: string, token: string, name: 
       backoff = Math.min(backoff * 2, 30);
     }
     connector.close();
-  })();
+  })());
   return () => {
     stopped = true;
     abort?.();
@@ -559,7 +559,7 @@ function start_stream(s: AppState, streams: Streams, tx: (m: string | Buffer) =>
   const out = new Out(req.id, tx, window);
   const ac = new AbortController();
   entry.abort = () => ac.abort();
-  (async () => {
+  background("a stream from the broker", (async () => {
     try {
       if (req.ws) await websocket(s, req.path, req.headers, in_q, out, ac.signal);
       else await request(s, req.method, req.path, req.headers, req.body ? in_q : null, out, ac.signal);
@@ -567,7 +567,7 @@ function start_stream(s: AppState, streams: Streams, tx: (m: string | Buffer) =>
       if (!ac.signal.aborted) log.warn(`stream ${req.id}: ${err_str(e)}`);
     }
     if (streams.get(req.id) === entry) streams.delete(req.id);
-  })();
+  })());
 }
 
 function incoming(streams: Streams, id: number, msg: Incoming, last: boolean) {
@@ -757,7 +757,7 @@ async function request(s: AppState, method: string, path: string, headers: Array
           } else if (m?.type === "end") return void req.end();
           else return void req.destroy(new Error("the client went away"));
         }
-      })();
+      })().catch((e) => req.destroy(e));
     } else req.end();
     let res: http.IncomingMessage;
     try {
@@ -883,15 +883,21 @@ async function relay_websocket(s: AppState, path: string, headers: Array<[string
           pumping = false;
           if (!done && ws.readyState === WebSocket.OPEN) ws.resume();
         };
+        // A message that couldn't go to the broker ends this way of the stream, as a closed one does.
+        const kick = () =>
+          pump().catch((e) => {
+            if (!signal.aborted) log.warn(`websocket stream ${out.id}: ${err_str(e)}`);
+            resolve();
+          });
         ws.on("message", (data, binary) => {
           const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as any);
           pending.push({ kind: binary ? proto.DATA : proto.TEXT, bytes: buf });
           ws.pause();
-          pump();
+          kick();
         });
         ws.on("close", (code, reason) => {
           pending.push({ close: relay.close_frame(code, reason) });
-          pump();
+          kick();
         });
         signal.addEventListener("abort", () => resolve(), { once: true });
       });
