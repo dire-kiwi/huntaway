@@ -13,7 +13,7 @@
 import * as db from "../../db.ts";
 import type { Run } from "../../db.ts";
 import type { Shared } from "../../state.ts";
-import { err_str } from "../../util.ts";
+import { background, err_str } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as tools from "../../mcp/tools.ts";
 import * as permissions from "../../mcp/permissions.ts";
@@ -104,10 +104,8 @@ function ask(state: Shared, run_id: string, call_id: string, asked: Asked): void
     const response = "ok" in r ? r.ok : { behavior: "deny", message: r.err };
     write(state, run_id, { subtype: "success", request_id: asked.request_id, response });
   };
-  tools
-    .handle_control(state, { run_id, call_id, tool: "permission_prompt", args: asked }, respond)
-    .catch((e) => console.error(`run ${run_id}: permission prompt ${asked.request_id}: ${err_str(e)}`))
-    .finally(() => cancelled.delete(call_id));
+  const call = tools.handle_control(state, { run_id, call_id, tool: "permission_prompt", args: asked }, respond);
+  background(`run ${run_id}: permission prompt ${asked.request_id}`, call.finally(() => cancelled.delete(call_id)));
 }
 
 function write(state: Shared, run_id: string, response: any): void {
