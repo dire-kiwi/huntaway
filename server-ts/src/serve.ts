@@ -494,10 +494,6 @@ export async function serve(args: ServeArgs) {
   } catch (e) {
     log.warn(`settling the release: ${err_str(e)}`);
   }
-  // Machine-readable line for the Electron shell.
-  console.log(`IA_READY ${JSON.stringify({ port, token: token_from_env ? null : token })}`);
-  admin.supervisor_started();
-
   const shutdown = () => {
     log.info("shutting down");
     server.close();
@@ -506,7 +502,12 @@ export async function serve(args: ServeArgs) {
     server.closeAllConnections?.();
     setImmediate(() => process.exit(0));
   };
+  // Before saying it's ready: until then, TERM ends node at once (exiting with 143, which bin/huntaway passes on), and
+  // whoever read IA_READY may stop it straight away.
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
   admin.watch_supervisor(shutdown);
+  // Machine-readable line for the Electron shell.
+  console.log(`IA_READY ${JSON.stringify({ port, token: token_from_env ? null : token })}`);
+  admin.supervisor_started();
 }
