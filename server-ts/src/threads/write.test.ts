@@ -77,6 +77,8 @@ test("with the setting off, nothing new is written", () => {
   s.add_message(u.id, "user", { text: "hi" });
   assert.equal(flagged(s, u.id), true);
   assert.equal(store.has_thread(s.db(), u.id), true);
+  // Its task says so (API 117), as the one with messages doesn't, so the thread view draws it from its items.
+  assert.deepEqual([db.get_task(s.db(), u.id)!.thread_items, db.get_task(s.db(), t.id)!.thread_items], [true, false]);
   // The thread API serves it.
   const w = live.window(s, live.open(s, u.id));
   assert.deepEqual([w.items.map((i: any) => i.text), w.seq], [["hi"], store.last_seq(s.db(), u.id)]);

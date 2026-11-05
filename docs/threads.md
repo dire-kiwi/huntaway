@@ -18,14 +18,16 @@ passes both packages' typechecks. There's no code generation and no JSON Schema.
 - **Thread**: a task has one thread, and its id is the task's. Its own state (`status`, `model`, `session_id`,
   `usage`...) is the task's, so it isn't stored with the items.
 - **Items**, in the order they happened, each with an `id` and a `type`, and `parent_id` (the subagent call it belongs
-  to), `turn_id` and `created_at` where they apply:
+  to), `turn_id`, `created_at` and `metadata` (the board's own facts about it, see "The thread view on items") where
+  they apply:
   - `user_message`, `assistant_message`, `reasoning`;
   - `tool_call`, with a `kind` (`shell`, `read`, `edit`, `search`, `web`, `mcp`, `app`, `subagent`, `todo`, `other`),
     a `status`, its `result` once it has one, and normalized fields (`command`, `path`, `changes`, `todos`...). A
     subagent is a `tool_call` of kind `subagent`, and what it does has its id as `parent_id`;
   - `compaction`, `notice` (`level`, `text`, `code`) and `turn_result` (how a turn ended, the last item of each turn).
 - **Requests**: what the agent waits on the user for, open until resolved, and kept with their `resolution` after:
-  `permission`, `question`, and `plan` (ExitPlanMode, which Huntaway asks about as a permission prompt).
+  `permission`, `question`, and `plan` (ExitPlanMode, which Huntaway asks about as a permission prompt). Each has the
+  board's record of it as its `metadata`: the prompt or question as the board stores it, and its message's id.
 - **Events**, each with the thread's id and a `seq`: `thread.updated`, `turn.started`, `turn.completed`, `item.added`
   (or replaced in place, for an id the thread has), `item.updated` (a patch), `items.removed` (a rewind),
   `request.opened`, `request.resolved`, and `delta` (streamed text). Every event but `delta` is saved, and a thread's
@@ -105,7 +107,7 @@ made a fold, so the live path (step 3) and batch rebuilds (step 7) can share it:
   again after its answer couldn't be sent) is opened again, with no resolution.
 - `finish()` ends a history nothing will add to (an import): calls with no result are cancelled, subagents that never
   ended are stopped, open requests are cancelled, and what waited for a call that never came is warned about.
-- `CONVERTER_VERSION` (2) changes when what it makes of the same messages does: a fix means rebuilding the tasks
+- `CONVERTER_VERSION` (3) changes when what it makes of the same messages does: a fix means rebuilding the tasks
   (`huntaway threads-rebuild`, below), and `threads.converter` says which version wrote each.
 
 Where agent-threads' recorded sessions showed it, it follows agent-threads rather than HA-128: `mcp__app__*` calls are
@@ -226,15 +228,66 @@ has nothing written. Six flagged tasks streaming at once kept the event loop's p
 With haiku on Claude (a `request_user_input` question, a prompt allowed and one denied) and on a Codex config (an
 approval), the threads were a rebuild's too.
 
+## The thread view on items
+
+Step 5 (HA-218): the app draws a task's thread from its items when the task's thread is kept as items (the task's
+`thread_items`, API 117), its host serves the view (API 117) and the host's setting is on. Every other task, and
+every task on an older host, is drawn from its messages as before (`app/src/threadModel.ts`), and so is a flagged task
+once the setting is turned off (its messages are still written). A host that answers 404 for a flagged task's thread
+(its live writes stopped on an error) has it drawn from its messages too, until a `thread_resync` says it was rebuilt.
+`app/src/threadView.ts` decides which.
+
+- **Following it** (`app/src/itemThreads.ts`): a window of the thread's last 300 items, then its `thread_event`s,
+  folded with protocol.ts's `apply_event`. Events that come while the window or a catch-up loads are held and applied
+  after it. A gap (`is_gap`) fetches `/thread/events` after the thread's seq; a `resync` answer there, or a
+  `thread_resync`, takes a fresh window; a reconnect (or the hub's `resync`) catches every shown thread up from its seq.
+  Scrolled up, the 200 items before the window's start come in with `with_page`, keeping what events have changed in
+  the window since. Streamed text comes from the thread's `delta` events (the board's own `delta` and `delta_reset`
+  events aren't drawn for it), into the same preview as before, until an item is added to the main conversation.
+- **Drawing it** (`app/src/itemModel.ts`): an adapter maps the items and requests onto the `ThreadModel` that
+  threadModel.ts builds from messages, which `components/task/Thread.tsx` and `thread/*` draw unchanged: rows (a run of
+  tool calls is one group), each subagent's own rows, the subagents, the calls' results. Requests go in among the items
+  in the order their messages were stored. Keys are the message path's (`legacy:12:3` is `12.3`), so rewinding to a
+  message and a prompt's "moved on" work as they did. A window's context items (the calls its items belong to, from
+  before it) aren't drawn until their page loads, as a subagent from before the loaded messages isn't. What a new
+  snapshot leaves as it was stays the same objects, so rows that didn't change don't redraw.
+- **What it sends**: the composer's messages, its stop and its mode go as thread commands (`send`, `interrupt`,
+  `set_options`), and the prompt cards answer with `respond` (a permission, a plan with the mode to carry on in, Claude's
+  questions by their ids, the board's own questions). Going back to the inherited mode, unqueuing and rewinding use the
+  board's routes, as do the board's lists of prompts outside the thread.
+- **What the items needed** (converter 3): what the board draws that the protocol doesn't say is the items' and
+  requests' `metadata`: a user message the board sent itself (`auto`), a turn's `subtype`, `num_turns` and
+  `total_cost_usd`, a compaction's `post_tokens`, a result's text no message said (`from_result`, which isn't drawn),
+  a subagent's description and prompt as its `task_started` says them, and a request's stored prompt or question (its
+  status, note, rule, expiry, kind, a plan's mode and feedback, answers...) with its `message_id`. A request whose
+  stored message changes is replaced in place (`request.opened`, keeping its resolution) before any `request.resolved`.
+  Subagents have their `ended_at`, and a routine's report is a notice (`code: "routine_report"`, the report as its
+  metadata), no longer kept only in messages. Threads written by converter 2 draw without these (no auto style, no
+  cost on a turn's end): `huntaway threads-rebuild` brings them up to date.
+
+What it doesn't do the same: a foreground subagent's notification summary isn't kept (its report is its call's
+result, which the message path shows too once it has come); a thread whose live writes failed is drawn from its
+messages. What was checked: `app/tests/itemModel.test.mjs` translates a thread with a bit of everything (and every
+prefix of it) through the server's translator and compares what's drawn with the message path's; `app/tests/
+itemThreads.test.mjs` covers holding, gaps, resyncs, pages, streamed text and a 404; `app/tests/ui/itemThread.test.mjs`
+shoots the same task drawn both ways (the setting off, then on) and compares the pictures, rows opened too, and pages a
+long thread back. On a test server with haiku: a question, a prompt allowed and one denied, a plan approved into a mode,
+the board's own question, a subagent, steering, stopping and the mode, all from the browser, each thread pixel for
+pixel the same drawn from messages; followed live through a run it's the same as loaded fresh; the narrow layout.
+`scripts/ui-profile.mjs` (which sends a flagged task's thread events too) on a copy of the live board's 1,639-message
+thread (655 items), messages then items, two runs each, script ms: opening the task 31–32 → 42 (a 300-item window
+against a 100-message page), 300 streamed tokens 55–74 → 32–40, a 1,000-token reply 101–133 → 69–84, 50 new messages
+56–58 → 49–56, the rest the same.
+
 ## Status
 
 | Step | Task | State |
 | --- | --- | --- |
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
-| 3. Items written live, behind a setting | HA-239 (was HA-216) | This change: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
+| 3. Items written live, behind a setting | HA-239 (was HA-216) | Done: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
 | 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
-| 5. The UI on items | HA-218 | Not started |
+| 5. The UI on items | HA-218 | This change: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 3, tasks' `thread_items` and API 117. The setting can be turned on for new tasks. |
 | 6. Readers on items | HA-217 | Not started |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
 | 8. Permission prompts and questions over stdio | HA-219 | Not started |
@@ -248,8 +301,7 @@ Left for later steps:
 
 - Live snapshots that include streamed text: step 3's deltas name a preview item the thread doesn't have yet (see
   "Writing items live"), and `live.send_delta` only takes items the thread has, so a window taken mid-message doesn't
-  have the preview's text so far (step 5, with the UI that shows it).
-- Routines' `report` messages are kept only in messages (the translator retains them as `unknown_kind`): the UI on
-  items needs an item for them (step 5).
-- Saving `thread.updated` when the task's state changes: until then, a thread's state is read from its task (step 5).
+  have the preview's text so far. The view shows the rest as it streams, as it did from messages.
+- Saving `thread.updated` when the task's state changes: the view reads a thread's state from its task, whose `task`
+  events it has anyway, so nothing needs it yet.
 - Rebuilding every task, and a rebuild from Settings, which would also send `thread_resync` (step 7).
