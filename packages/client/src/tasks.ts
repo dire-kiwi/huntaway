@@ -204,6 +204,8 @@ export const summariesOf = (t: Pick<Task, "summary" | "summaries">): ChangeSumma
 
 /** A review thread that summarises its task's changes rather than reviewing them (API 84): its type is "summary". */
 export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "summary";
+/** A workflow's agent step's thread (API 107), which is a review thread of the task. */
+export const isWorkflowThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "workflow";
 
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 

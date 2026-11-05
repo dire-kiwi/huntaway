@@ -128,6 +128,8 @@ export async function approve(s: Shared, task: Task, call_id: string, kind: stri
   const data = { kind, tool_name: tool, input };
   let question: string;
   if (kind === "delete_task") question = "Delete a task?";
+  else if (kind === "automation" && input?.workflow != null && input?.op === "delete") question = "Delete a workflow?";
+  else if (kind === "automation" && input?.workflow != null) question = "Approve a workflow?";
   else if (kind === "automation" && input?.op === "delete") question = "Delete an automation?";
   else if (kind === "automation") question = "Approve an automation?";
   else if (kind === "project" && tool === "create_project") question = "Add a project?";
@@ -490,13 +492,17 @@ function late_answers(input: any, answers: string[][]): string {
  * `deletions` the tasks they're waiting to delete too, and with `automations` the automations they're waiting to create,
  * change or delete (older UIs only know project changes, or those and deletions).
  */
-export function pending_approvals(s: Shared, deletions: boolean, automations: boolean): any[] {
+export function pending_approvals(s: Shared, deletions: boolean, automations: boolean, workflows = false): any[] {
+  // Workflows' approvals are asked as automations' are, with `workflow` in place of `automation`: a UI from before them
+  // (API 107) isn't shown them.
   const rows = db.all<{ task_id: string; created_at: string; data: string }>(
     s.db(),
     `SELECT p.task_id, p.created_at, m.data FROM permission_requests p JOIN messages m ON m.id=p.message_id
-     WHERE (p.kind='project' OR (?1 AND p.kind='delete_task') OR (?2 AND p.kind='automation')) AND p.status='pending' ORDER BY p.created_at`,
+     WHERE (p.kind='project' OR (?1 AND p.kind='delete_task')
+            OR (?2 AND p.kind='automation' AND (?3 OR json_extract(p.input, '$.workflow') IS NULL))) AND p.status='pending' ORDER BY p.created_at`,
     deletions,
     automations,
+    workflows,
   );
   return rows.map((r) => {
     let v: any;
@@ -574,6 +580,15 @@ export function expire_for_automation(s: Shared, automation_id: string): void {
     s,
     "SELECT id, message_id FROM permission_requests WHERE kind='automation' AND status='pending' AND json_extract(input, '$.automation.id')=?1",
     automation_id,
+  );
+}
+
+/** Expire the unanswered requests to change or delete a workflow that's been deleted, asked from any thread. */
+export function expire_for_workflow(s: Shared, workflow_id: string): void {
+  expire(
+    s,
+    "SELECT id, message_id FROM permission_requests WHERE kind='automation' AND status='pending' AND json_extract(input, '$.workflow.id')=?1",
+    workflow_id,
   );
 }
 

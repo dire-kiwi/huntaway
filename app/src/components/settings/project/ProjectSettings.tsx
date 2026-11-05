@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bot, GitBranch, Loader2, MessageSquareText, Puzzle, ScanSearch, SlidersHorizontal, SquareTerminal, Zap } from "lucide-react";
+import { Bot, GitBranch, Loader2, MessageSquareText, Puzzle, ScanSearch, SlidersHorizontal, SquareTerminal, Workflow, Zap } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { api, hostStatuses, hostSupports, type Project } from "../../../api";
 import { groupNames } from "../../../projectGroups";
@@ -8,6 +8,7 @@ import { useHost, useStore } from "../../../store";
 import { ProjectAgentTools } from "../AgentTools";
 import { ArchiveProjectModal } from "../ArchivedProjects";
 import { ProjectAutomations } from "../Automations";
+import { ProjectWorkflows } from "../Workflows";
 import { Button, ConfirmModal, MenuButton } from "../../ui";
 import { AgentsTab } from "./AgentsTab";
 import { GeneralTab } from "./GeneralTab";
@@ -16,7 +17,7 @@ import { ReviewTab } from "./ReviewTab";
 import { ProjectStatusScripts } from "./StatusScriptsTab";
 import { WorktreesTab } from "./WorktreesTab";
 
-type ProjectTab = "general" | "agents" | "worktrees" | "review" | "prompts" | "scripts" | "tools" | "automations";
+type ProjectTab = "general" | "agents" | "worktrees" | "review" | "prompts" | "scripts" | "tools" | "automations" | "workflows";
 
 /** The project settings' sections, in their order down the side. `fields` are the ones saved with Save
  *  changes, so a section with unsaved changes is marked; the others save as they're changed. */
@@ -87,6 +88,13 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     description: "Create a task, or send a message to one, on a schedule or when a webhook is delivered (a new GitHub issue, say). Saved as you change them.",
     fields: [],
   },
+  {
+    id: "workflows",
+    label: "Workflows",
+    icon: <Workflow size={14} />,
+    description: "Steps that run on the project's tasks when they enter a column: checks, agents that review or report on the work in tabs of the task, messages to the task's agent, and moves. Saved as you change them.",
+    fields: [],
+  },
 ];
 
 /** Whether an edit to a field changes it: a blank text is no value, as saving makes it. */
@@ -120,6 +128,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
     scripts: hostSupports(host, 37),
     tools: hostSupports(host, 21),
     automations: hostSupports(host, 63),
+    workflows: hostSupports(host, 107),
   };
   const tabs = PROJECT_TABS.filter((t) => shown[t.id]);
   const current = tabs.find((t) => t.id === tab) ?? tabs[0];
@@ -236,6 +245,8 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
             {current.id === "tools" && <ProjectAgentTools project={project} />}
 
             {current.id === "automations" && <ProjectAutomations project={project} />}
+
+            {current.id === "workflows" && <ProjectWorkflows project={project} />}
           </div>
         </div>
       </div>
