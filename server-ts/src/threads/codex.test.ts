@@ -8,9 +8,13 @@ import type { Shared } from "../state.ts";
 import * as testing from "../testing.ts";
 import { handle_line } from "../agent/codex/output.ts";
 import { convert, type Conversion } from "./translate.ts";
+import * as store from "./store.ts";
+import * as write from "./write.ts";
 
 function running(): [Shared, Run] {
   const state = testing.state();
+  // Its thread is kept as items too: `converted` checks they're a rebuild's.
+  db.set_setting(state.db(), write.SETTING, "true");
   const profile = db.insert_profile(state.db(), "p", [], null);
   const task = db.insert_task(state.db(), {
     profile_id: profile.id,
@@ -36,9 +40,14 @@ function item(state: Shared, run: Run, thread: string, it: any) {
   event(state, run, "item/completed", thread, { item: it });
 }
 
-/** The task's messages, translated as a history that has ended. */
+/** The task's messages, translated as a history that has ended (after checking its items written live are a rebuild's). */
 function converted(state: Shared, run: Run): Conversion {
-  return convert(db.list_messages(state.db(), run.task_id));
+  const c = state.db();
+  const messages = db.list_messages(c, run.task_id);
+  const live = convert(messages, { finished: false });
+  assert.deepEqual(write.compare(c, run.task_id), []);
+  assert.deepEqual({ items: store.items(c, run.task_id), requests: store.requests(c, run.task_id) }, { items: live.items, requests: live.requests });
+  return convert(messages);
 }
 
 const by_id = (c: Conversion): Record<string, any> => Object.fromEntries(c.items.map((i) => [i.id, i]));

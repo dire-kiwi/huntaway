@@ -75,6 +75,8 @@ export function written(c: Conn, m: Message, flagged: boolean, inserted: boolean
       const writes = row?.writes ?? 0;
       const l = translator(c, m.task_id, writes);
       const step = l.t.message({ id: m.id, kind: m.kind, data: m.data, created_at: m.created_at });
+      // A translator or store bug, for the tests.
+      reached("threads:translated");
       const saved = store.append(c, m.task_id, step.events, { message_id: m.id });
       for (const [id, meta] of step.meta) store.set_item_meta(c, m.task_id, id, meta);
       run(c, "UPDATE threads SET writes=?2 WHERE task_id=?1", m.task_id, writes + 1);
