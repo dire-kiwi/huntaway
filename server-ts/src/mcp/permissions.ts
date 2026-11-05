@@ -155,7 +155,9 @@ function allowed(s: Shared, id: string, task_id: string, tool_name: string, inpu
  * first asked for this call, if it's retried), or `{err: reason}` if they deny it or the run ends first.
  */
 export async function approve(s: Shared, task: Task, call_id: string, kind: string, tool: string, input: any): Promise<{ ok: any } | { err: string }> {
-  const data = { kind, tool_name: tool, input };
+  // A workflow's is asked as an automation's, but its thread message says `workflow`: a UI from before them (API 107)
+  // would draw it as an automation's, which it has no `automation` for, and draws a tool's prompt instead.
+  const data = { kind: workflow_kind(kind, input), tool_name: tool, input };
   let question: string;
   if (kind === "delete_task") question = "Delete a task?";
   else if (kind === "automation" && input?.workflow != null && input?.op === "delete") question = "Delete a workflow?";
@@ -177,6 +179,14 @@ export async function approve(s: Shared, task: Task, call_id: string, kind: stri
   if (d !== null) return { err: d };
   const approved = db.value<string>(s.db(), "SELECT input FROM permission_requests WHERE id=?1", id);
   return approved === undefined ? { err: EXPIRED } : { ok: JSON.parse(approved) };
+}
+
+/**
+ * The kind a request's thread message has: `workflow` for a workflow's approval (`automation` in `permission_requests`,
+ * with `workflow` in place of `automation`), and the request's own otherwise.
+ */
+export function workflow_kind(kind: string, input: any): string {
+  return kind === "automation" && input?.workflow != null ? "workflow" : kind;
 }
 
 /** What MCP call `call_id` asked the user to approve (a project change, a deletion or an automation), if it asked. */
@@ -621,6 +631,8 @@ export function pending_approvals(s: Shared, deletions: boolean, automations: bo
       }
       if (!v || typeof v !== "object" || Array.isArray(v)) v = {};
     }
+    // As the request has it: a workflow's thread message says `workflow` (see `approve`), its approval `automation`.
+    v.kind = r.kind;
     v.task_id = r.task_id;
     v.created_at = r.created_at;
     return [v];
