@@ -107,7 +107,7 @@ made a fold, so the live path (step 3) and batch rebuilds (step 7) can share it:
   again after its answer couldn't be sent) is opened again, with no resolution.
 - `finish()` ends a history nothing will add to (an import): calls with no result are cancelled, subagents that never
   ended are stopped, open requests are cancelled, and what waited for a call that never came is warned about.
-- `CONVERTER_VERSION` (4) changes when what it makes of the same messages does: a fix means rebuilding the tasks
+- `CONVERTER_VERSION` (5) changes when what it makes of the same messages does: a fix means rebuilding the tasks
   (`huntaway threads-rebuild`, below), and `threads.converter` says which version wrote each.
 
 Where agent-threads' recorded sessions showed it, it follows agent-threads rather than HA-128: `mcp__app__*` calls are
@@ -289,8 +289,8 @@ titles, the wait tool, pr_watch, `last_message`, prompts and approvals, checkpoi
 reader each, which reads the task's items when its readers should (`history.source`), and the SQL it always ran on the
 messages otherwise. They read items when the task is flagged, its live writes haven't stopped on an error, and this
 build's translator wrote them (`threads.converter` is `CONVERTER_VERSION`): converter 3 added the user messages' metas
-the readers need (`start`, `routine`, `review_round`), and converter 4 the board's `metadata` (step 5), so a thread
-written by an older build reads messages until
+the readers need (`start`, `routine`, `review_round`), converter 4 the board's `metadata` (step 5), and converter 5 a
+compaction's turn_result's `compact` (Telegram's readers), so a thread written by an older build reads messages until
 `huntaway threads-rebuild` brings it up to date. Step 10 drops that fallback, once messages aren't written.
 
 | Reader | Callers | On items |
@@ -302,9 +302,10 @@ written by an older build reads messages until
 | `user_wrote_since`, `user_messaged_since` | pr_watch, the context meter's compactions | user_messages by `created_at` and meta |
 | `subagent_call`, `has_call` | the wait tool's `subagent_finished`, Codex's subagent calls | tool_calls by call id, `subagent_task` and name |
 | `tool_use` | approval rules' blocked-call log | the latest tool_call with the id |
-| `moved_on`, `open_questions` | answering a question or a late prompt; settling questions on a reply, and the merge gate's cards | user_messages from later messages (`thread_item_origins`); open question requests from `question` messages |
+| `moved_on`, `open_questions` | answering a question or a late prompt; settling questions on a reply, the merge gate's cards, and Telegram's needs attention (none waiting) | user_messages from later messages (`thread_item_origins`); open question requests from `question` messages |
 | `first_user_message`, `user_message` | checkpoints and rewinds; `routine_call` | user_message items and their metas |
 | `approval` | `pending_approvals` | the thread's permission request, and its `permission_requests` row |
+| `said_in_turn`, `last_turn_end` | Telegram's replies and turn ends (and push's `REPLY_EVENT`) | As `last_assistant_text`, back from the turn's turn_result to the latest user_message or turn_result before it; the latest turn_result, a failure unless `ok` and not interrupted, a compaction's by its meta's `compact` |
 | `user_messages_between` | prompt analytics | user_message items |
 | `submissions` | review stats' backfill (migration 79's, which reads messages: the thread tables come later) | submit_review tool calls, but those the board refused |
 
@@ -314,7 +315,8 @@ And `attachments.of_task` and `referenced` (the pruner's) scan `thread_items` an
 Where the two differ: the messages readers of what the agent said read the latest 50 of its messages, and `tool_use` the
 latest 5 that mention the call, and come back empty past those; the items readers read back as far as it takes. And a
 whitespace-only text block isn't an item. `has_call` from messages only looks at each message's first block (where the
-board writes a Codex subagent's call).
+board writes a Codex subagent's call). `said_in_turn` is asked about a result's message: from items, another message's
+id has no turn's end, so nothing was said in it.
 
 What still reads `messages` on purpose (`grep -rn -E "FROM messages|JOIN messages|UPDATE messages" server-ts/src`,
 without the tests):
@@ -331,8 +333,6 @@ without the tests):
   from items and reads the messages it updates. Step 10, which makes ids point at requests, moves these.
 - Routines' `report` messages (`unread_reports`). Since converter 4 they're notices too (`routine_report`), for the
   view, which the readers of what the agent said leave out, as the messages readers do.
-- Telegram's (integrations/telegram.ts, HA-207, which landed with this step): the agent's latest result and messages
-  before an id, and the count of pending questions. They're to move onto history.ts before step 10.
 
 ### `huntaway threads-readers`
 
@@ -358,7 +358,7 @@ On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none f
 | 3. Items written live, behind a setting | HA-239 (was HA-216) | Done: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
 | 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
 | 5. The UI on items | HA-218 | This change: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. The setting can be turned on for new tasks. |
-| 6. Readers on items | HA-217 | Done: `threads/history.ts`, `huntaway threads-readers` (`threads/readers.ts`), the attachment scan on items, converter 3. |
+| 6. Readers on items | HA-217 | Done: `threads/history.ts`, `huntaway threads-readers` (`threads/readers.ts`), the attachment scan on items, converter 3. Telegram's readers (HA-257): converter 5. |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
 | 8. Permission prompts and questions over stdio | HA-219 | Not started |
 | 9. The board's tools in process | HA-221 | Not started |

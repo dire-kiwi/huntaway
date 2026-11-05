@@ -149,6 +149,52 @@ test("what the agent said: its messages' text, results' and API errors", () => {
   );
 });
 
+test("Telegram's: what the agent said in a turn, and how the latest turn ended", () => {
+  const { c, task } = board();
+  const id = task([
+    user("go"),
+    assistant([text("Looking."), call("t1", "Bash", { command: "ls" }), text("Found it.")]),
+    results([result("t1", "a")]),
+    // A result with no text: the turn's last message is its reply.
+    done(),
+    // A turn that said nothing doesn't say the one before's again.
+    ["claude", { type: "system", subtype: "init", session_id: "s1" }],
+    done(""),
+    user("And?"),
+    assistant([text("Thinking.")]),
+    // A result that says what no message did.
+    done("All finished."),
+    user("Compact", { auto: true }),
+    done("", { compact: true }),
+    user("Again"),
+    assistant([text("Partly.")]),
+    ["claude", { type: "result", subtype: "error_during_execution", is_error: true, result: null, session_id: "s1" }],
+    user("Stop?"),
+    ["claude", { type: "result", subtype: "success", is_error: false, interrupted: true, session_id: "s1" }],
+    user("Late"),
+    assistant([text("After the turn.")]),
+  ]);
+  const ends = db.all<{ id: number; data: string }>(c, "SELECT id, data FROM messages WHERE task_id=?1 AND json_extract(data, '$.type')='result' ORDER BY id", id);
+  assert.deepEqual(
+    ends.map((e) => same((from) => history.said_in_turn(c, id, e.id, from))),
+    ["Looking.\nFound it.", null, "All finished.", null, "Partly.", null],
+  );
+  // No such turn's end.
+  assert.equal(history.said_in_turn(c, id, 99999, "items"), null);
+  assert.deepEqual(
+    ends.map((e) => history.turn_end(JSON.parse(e.data))),
+    ["reply", "reply", "reply", "compact", "failed", "failed"],
+  );
+  // The latest: an interrupted turn, then each before it as the latest.
+  assert.deepEqual(same((from) => history.last_turn_end(c, id, from)), { id: ends[5]!.id, end: "failed" });
+  for (const [n, end] of [[4, "failed"], [3, "compact"], [2, "reply"]] as const) {
+    const cut = task(db.all<{ kind: string; data: string }>(c, "SELECT kind, data FROM messages WHERE task_id=?1 AND id<=?2 ORDER BY id", id, ends[n]!.id).map((m) => [m.kind, JSON.parse(m.data)]));
+    const last = same((from) => history.last_turn_end(c, cut, from));
+    assert.equal(last?.end, end);
+  }
+  assert.equal(same((from) => history.last_turn_end(c, task([user("go")]), from)), null);
+});
+
 test("the user's replies: their own words, with what the agent said before each, and limits", () => {
   const { c, task } = board();
   const id = task([
@@ -451,7 +497,7 @@ test("threads-readers finds no differences on these histories, and writes nothin
   assert.deepEqual(r.failed, []);
   assert.equal(r.tasks, 2);
   assert.equal(r.translated, 1);
-  for (const reader of ["last_message", "user_replies", "tool_calls_since", "subagent_call", "moved_on", "analytics", "attachments.referenced"]) {
+  for (const reader of ["last_message", "user_replies", "said_in_turn", "last_turn_end", "tool_calls_since", "subagent_call", "moved_on", "analytics", "attachments.referenced"]) {
     assert.ok(r.readers[reader]?.checked, reader);
   }
   // The translation was rolled back.
