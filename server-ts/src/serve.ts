@@ -308,7 +308,15 @@ export async function serve(args: ServeArgs) {
     }
   }
   // Another version (or the Rust server) ran on this data dir last: keep a copy of the database before opening it.
-  backup.on_start(data_dir, db_path(data_dir), VERSION);
+  try {
+    backup.on_start(data_dir, db_path(data_dir), VERSION, db.VERSION);
+  } catch (e) {
+    // Machine-readable, for the Electron shell: its error page says why and offers to start without a backup.
+    if (e instanceof backup.BackupFailed) console.log(`IA_BACKUP_FAILED ${JSON.stringify({ reason: e.reason, why: e.why, dir: e.dir })}`);
+    throw e;
+  }
+  // "Start without a backup" was for this start: a restart onto another release makes one again.
+  delete process.env[backup.SKIP_ONCE_ENV];
   const conn = db.open(db_path(data_dir));
   backup.record_version(data_dir, VERSION);
 
@@ -516,4 +524,6 @@ export async function serve(args: ServeArgs) {
   // Machine-readable line for the Electron shell.
   console.log(`IA_READY ${JSON.stringify({ port, token: token_from_env ? null : token })}`);
   admin.supervisor_started();
+  // The backups this start or an earlier one made are gzipped (see backup.ts), now that the board is up.
+  void backup.compress_later(data_dir).catch((e) => log.warn(`compressing the database's backups: ${err_str(e)}`));
 }

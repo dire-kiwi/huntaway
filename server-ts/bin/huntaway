@@ -64,6 +64,10 @@ else
   fi
   unset IA_SERVE_SIGNALS
 fi
+# The desktop app's "Start without a backup" (see src/backup.ts) is for the node this shell starts first, not for one it
+# starts again after a crash, nor for what it execs on a restart or an Update, which back the database up as usual.
+skip_backup_once=${IA_SKIP_DB_BACKUP_ONCE:-}
+unset IA_SKIP_DB_BACKUP_ONCE
 dir=$(mktemp -d "${TMPDIR:-/tmp}/huntaway-serve.XXXXXX") || exit 1
 IA_RESTART_FILE=$dir/next
 IA_SUPERVISOR_PID=$$
@@ -91,7 +95,12 @@ crashes=0
 while :; do
   rm -f "$dir/started"
   began=$(date +%s)
-  "$node" --disable-warning=ExperimentalWarning "$src/main.ts" "$@" <&3 3<&- &
+  if [ -n "$skip_backup_once" ]; then
+    IA_SKIP_DB_BACKUP_ONCE=$skip_backup_once "$node" --disable-warning=ExperimentalWarning "$src/main.ts" "$@" <&3 3<&- &
+    skip_backup_once=
+  else
+    "$node" --disable-warning=ExperimentalWarning "$src/main.ts" "$@" <&3 3<&- &
+  fi
   child=$!
   while :; do
     stopping=

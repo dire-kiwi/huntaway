@@ -118,7 +118,8 @@ function chooseServer({ appDir, bundled, minVersion, exe = "huntaway", skip = []
  *   - no server is left to try (choose throws), or the bundled or an override server fails too: every server fails
  *     the same way, a wrong host say;
  *   - something answers on the port after a failure (`portTaken`): another launch's server took it;
- *   - the app is quitting (`stopping`).
+ *   - the app is quitting (`stopping`);
+ *   - the server couldn't back up the database (the rejection's `backup`, see server-ts/src/backup.ts).
  *
  * A timeout (a rejection without `early`) keeps `failed`, as that server is still starting and only slow, which isn't
  * held against it. If it exits, the caller adds it and starts again. If it comes up (the rejection's `ready` resolves,
@@ -148,12 +149,32 @@ async function startWithFallback({ choose, start, portTaken, failed, saveBad, st
         e.ready?.then(() => stopping() || save());
         throw e;
       }
-      if (!choice.version || stopping() || (await portTaken())) giveUp(e);
+      // A server that couldn't back up the database (a full disk, say: `backup`) isn't to blame, and the next would
+      // need the backup too, or not make one (a Rust release), which is worse.
+      if (!choice.version || e.backup || stopping() || (await portTaken())) giveUp(e);
       failed.add(choice.version);
       continue;
     }
     save();
     return { token, choice };
+  }
+}
+
+/** The first release that runs the TypeScript server, which records its version in `<data dir>/server_version`. */
+const FIRST_TS = "0.4.0";
+
+/**
+ * Before starting a Rust release (`version`, before 0.4.0), record it in `<data dir>/server_version`, as it doesn't: the
+ * TypeScript server that starts after it then backs up the database, though the version recorded before was its own
+ * (server-ts/src/backup.ts, HA-184). A later version, or none known, records itself.
+ */
+function noteRustServer(dataDir, version) {
+  if (!(compareVersions(version, FIRST_TS) < 0)) return false;
+  try {
+    fs.writeFileSync(path.join(dataDir, "server_version"), `${version}\n`);
+    return true;
+  } catch {
+    return false; // no data dir yet: nothing to back up either
   }
 }
 
@@ -195,4 +216,4 @@ function releaseEnv({ env = process.env, version, shell, install, bundled }) {
   };
 }
 
-module.exports = { parseVersion, compareVersions, readState, writeState, markBad, chooseServer, startWithFallback, installKind, releaseEnv };
+module.exports = { parseVersion, compareVersions, readState, writeState, markBad, chooseServer, startWithFallback, noteRustServer, installKind, releaseEnv };
