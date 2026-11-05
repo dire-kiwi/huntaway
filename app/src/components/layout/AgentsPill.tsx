@@ -1,21 +1,16 @@
 import clsx from "clsx";
 import { Bot, ChevronDown, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Message, Task } from "../../api";
-import { useStore, useThreadMessages } from "../../store";
+import type { Task } from "../../api";
 import { subagentTitle, useSubagentView } from "../../subagents";
-import { threadModel } from "../../threadModel";
+import { useThreadModel } from "../../threadView";
 import { SubagentStatusBadge } from "../task/thread/subagents";
-
-const NO_MESSAGES: Message[] = [];
 
 /** Running/finished counts of the thread's subagents; opens a list that shows each one's own thread. */
 export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal?: () => void; className?: string }) {
-  // The thread's own (built once for both), kept while the pill shows, but only loaded by the thread.
-  const messages = useThreadMessages(task.id, false);
-  // With those started before the loaded part of a long thread (the same as the thread's, for the same model).
-  const earlier = useStore((s) => s.threads[task.id]?.subagents);
-  const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
+  // The thread's own (built once for both), kept while the pill shows, but only loaded by the thread: from its messages
+  // with those started before the loaded part of a long thread, or from its items (threadView.ts).
+  const model = useThreadModel(task, false);
   const subagents = useMemo(() => [...model.subagents.values()], [model.subagents]);
   const viewing = useSubagentView((s) => s.open[task.id]);
   const show = useSubagentView((s) => s.show);

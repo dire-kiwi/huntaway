@@ -550,11 +550,16 @@ test("the_list_keeps_the_memory_files_and_latest_logs_first", () => {
   assert.deepEqual([files[5].chars, files[5].size], [null, 1]);
 });
 
-/** Plain git in `dir`, as the assistant would run it (or as HA-121 did), with none of the user's config. */
+/**
+ * Plain git in `dir`, as the assistant would run it (or as HA-121 did), with none of the user's config. A commit's
+ * `git maintenance --auto` is done before it returns, not left in the background, where it makes and removes
+ * `objects/maintenance.lock` while a test changes the repository (HA-252).
+ */
 function plain_git(dir: string, args: string[], name = "x", email = "x@y") {
   const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
   for (const k of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]) delete env[k];
-  execFileSync("git", ["-C", dir, "-c", `user.name=${name}`, "-c", `user.email=${email}`, "-c", "commit.gpgsign=false", ...args], { env, stdio: "pipe" });
+  const c = [`user.name=${name}`, `user.email=${email}`, "commit.gpgsign=false", "maintenance.autoDetach=false", "gc.autoDetach=false"];
+  execFileSync("git", ["-C", dir, ...c.flatMap((kv) => ["-c", kv]), ...args], { env, stdio: "pipe" });
 }
 
 /** A workspace as HA-121 made it, with its repository in `.git`, by plain git. */
@@ -772,6 +777,31 @@ test("a_broken_old_history_is_left_and_the_workspace_starts_again", async () => 
   assert.deepEqual(await log(dir), [["Assistant", "Start the assistant's memory"]]);
   // The old one is left for the user to look at.
   assert.ok(is_file(join(dir, ".git/HEAD")));
+});
+
+test("the_boards_git_leaves_no_maintenance_running_in_the_background", async () => {
+  // A detached `git maintenance --auto` works in the repository after the commit, with the workspace's lock released,
+  // and makes and removes files in its objects while they may be removed (HA-252).
+  const dir = ws();
+  old_workspace(dir);
+  write(dir, "notes.md", "notes");
+  const trace = join(testing.temp_dir(), "trace");
+  const was = process.env.GIT_TRACE;
+  process.env.GIT_TRACE = trace;
+  try {
+    await ensure(dir);
+    write(dir, MEMORY_FILE, "- a fact\n");
+    assert.notEqual(await commit_all(dir, "Assistant", null), null);
+  } finally {
+    if (was === undefined) delete process.env.GIT_TRACE;
+    else process.env.GIT_TRACE = was;
+  }
+  const runs = read(trace)
+    .split("\n")
+    .filter((l) => / run_command: git (maintenance run|gc) --auto/.test(l));
+  assert.ok(runs.length >= 2, read(trace));
+  // (Before git 2.47, which detaches by default, it ran with neither `--detach` nor `--no-detach`.)
+  for (const l of runs) assert.ok(!/ --detach\b/.test(l), l);
 });
 
 test("a_save_over_a_file_left_out_of_the_history_needs_what_was_opened", async () => {

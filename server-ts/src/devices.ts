@@ -126,7 +126,7 @@ const HUB: Array<[string, string]> = [
   ["GET", "devices"],
   // Only itself (see `revoke`).
   ["DELETE", "devices/*"],
-  // The app's push (API 119), only its own subscriptions (see integrations/push.ts).
+  // The app's push (API 120), only its own subscriptions (see integrations/push.ts).
   ["GET", "push"],
   ["POST", "push/subscriptions"],
   ["PATCH", "push/subscriptions/*"],
@@ -139,7 +139,7 @@ const HOST: Array<[string, string]> = [
   ["GET", "profiles"],
   ["GET", "profiles/*/projects"],
   ["GET", "profiles/*/tasks"],
-  // The profile's assistant (API 119), which the app's Assistant tab opens; its thread is a task's. Not its memory.
+  // The profile's assistant (API 120), which the app's Assistant tab opens; its thread is a task's. Not its memory.
   ["GET", "profiles/*/assistant"],
   ["POST", "profiles/*/assistant"],
   ["GET", "projects/*"],

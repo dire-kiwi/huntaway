@@ -619,7 +619,7 @@ token still works later, and the notification keeps its buttons.
 
 `mobile/` is an Expo app for Android and iOS (API 118) that follows and drives your tasks on several
 boards at once, a work hub and a personal board say. Its home tab is the **Assistant** (from API
-119): the selected board's assistant for its picked profile, on the host the profile's assistant is
+120): the selected board's assistant for its picked profile, on the host the profile's assistant is
 on (an assistant host of its own, perhaps, which the tab says is offline when it is), with the
 board and profile switchers above it; on an older board the tab is hidden and the Inbox is home.
 Then an **Inbox** of what's waiting for you on every
@@ -695,7 +695,7 @@ says it was unpaired. A device can't pair others or manage them (`POST /devices/
 and `DELETE /devices/{id}` are for the board's own token), but it can list them and unpair itself,
 which removing the board in the app does. A device can only use the routes the app does (`HUB`
 and `HOST` in `server-ts/src/devices.ts`): profiles, projects, tasks and their threads, each profile's
-assistant (API 119, but not its memory), attachments, permission prompts, the board's events and
+assistant (API 120, but not its memory), attachments, permission prompts, the board's events and
 hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
@@ -705,7 +705,7 @@ checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, 
 `.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
 host linking and terminals refuse a device's request themselves.
 
-**Push to the app** (API 119). The app subscribes on each paired board (a board's hub watches all
+**Push to the app** (API 120). The app subscribes on each paired board (a board's hub watches all
 its hosts' events, so once per board) with its Expo push token, and the board sends its pushes
 through [Expo's push service](https://docs.expo.dev/push-notifications/sending-notifications/):
 one HTTPS call, with no Apple or Google keys kept on the board. Boards → a board → **Notifications**

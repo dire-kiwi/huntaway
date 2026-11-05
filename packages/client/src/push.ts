@@ -21,10 +21,10 @@ export const ASSISTANT_PUSH_EVENTS: { id: "replies" | "reports"; label: string; 
   { id: "reports", label: "Routine reports", hint: "What its routines post: its first line" },
 ];
 
-/** The mobile app's push, through Expo's push service (API 119): its subscriptions are `kind` `expo`. */
-export const EXPO_PUSH_API = 119;
+/** The mobile app's push, through Expo's push service (API 120): its subscriptions are `kind` `expo`. */
+export const EXPO_PUSH_API = 120;
 
-/** How a device is pushed to: Web Push (a browser), or the mobile app through Expo (API 119; `web` before). */
+/** How a device is pushed to: Web Push (a browser), or the mobile app through Expo (API 120; `web` before). */
 export type PushKind = "web" | "expo";
 
 /** A device that gets the board's notifications by Web Push (API 74; see server-ts/src/integrations/push.ts), or the app. */
@@ -32,9 +32,9 @@ export interface PushDevice {
   id: string;
   /** Its push service's URL for it, which tells this browser's own from the others; for the app, its Expo push token. */
   endpoint: string;
-  /** API 119. */
+  /** API 120. */
   kind?: PushKind;
-  /** The paired device that subscribed (API 119), whose subscriptions go when it's revoked. */
+  /** The paired device that subscribed (API 120), whose subscriptions go when it's revoked. */
   device_id?: string | null;
   name: string;
   events: PushEvents;
@@ -50,7 +50,7 @@ export const pushApi = ({ del, get, patch, post }: Http) => ({
   /** Adds this browser's subscription (`PushSubscription.toJSON()`), or updates it; events are kept unless given. */
   pushSubscribe: (b: { endpoint: string; keys: { p256dh: string; auth: string }; name: string; events?: PushEvents }) =>
     post<PushDevice>("/push/subscriptions", b),
-  /** Adds the app's subscription, its Expo push token (API 119), or updates it; events are kept unless given. A paired device sees only its own. */
+  /** Adds the app's subscription, its Expo push token (API 120), or updates it; events are kept unless given. A paired device sees only its own. */
   pushSubscribeApp: (b: { token: string; name: string; events?: PushEvents }) =>
     post<PushDevice>("/push/subscriptions", { kind: "expo", endpoint: b.token, name: b.name, ...(b.events && { events: b.events }) }),
   updatePushDevice: (id: string, b: { name?: string; events?: PushEvents }) => patch<PushDevice>(`/push/subscriptions/${enc(id)}`, b),

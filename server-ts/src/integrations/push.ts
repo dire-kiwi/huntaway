@@ -14,7 +14,7 @@
 // A permission prompt is pushed too (the assistant's, or any task's, as each device chooses), with a one-time token
 // (push_answers.ts) for its Allow and Deny actions, which answer it from the notification without the board's token.
 //
-// The mobile app (mobile/, API 119) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and its
+// The mobile app (mobile/, API 120) subscribes too, with `kind` `expo`: its subscription is its Expo push token, and its
 // pushes go through Expo's push service (see `send_expo`), which needs no keys kept here. Expo, Apple and Google can read
 // those, so they say less (see `Message.summary`): a report's push doesn't say its first line there. A paired device sees
 // and changes only the subscriptions it made, and they go when it's revoked.
@@ -1195,7 +1195,7 @@ const missing = (field: string) => new ApiError(422, `Failed to deserialize the 
 export function subscribe(s: AppState, r: Req) {
   const b = r.body ?? {};
   if (typeof b.endpoint !== "string") throw missing("endpoint");
-  // `web` (the default) or `expo` (API 119).
+  // `web` (the default) or `expo` (API 120).
   const kind: Kind = b.kind === undefined || b.kind === null ? "web" : b.kind;
   if (kind !== "web" && kind !== "expo") {
     throw new ApiError(422, "Failed to deserialize the JSON body into the target type: kind: unknown variant, expected `web` or `expo`");

@@ -349,6 +349,8 @@ export interface Task {
   context?: ContextSummary | null;
   /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
   rewind?: PendingRewind | null;
+  /** Its thread is kept as items as well as messages (API 119), so the thread view can draw it from `api.thread` (see THREAD_VIEW_API). */
+  thread_items?: boolean;
   cost_usd: number;
   last_activity_at: string;
   created_at: string;

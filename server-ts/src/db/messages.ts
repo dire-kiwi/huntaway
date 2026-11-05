@@ -432,9 +432,9 @@ export function tool_calls_since(c: Conn, task_id: string, since: string | null)
   });
 }
 
-/** The most recent assistant text in a thread (used for summaries in MCP tools). */
-export function last_assistant_text(c: Conn, task_id: string): string | null {
-  return last_assistant_text_after(c, task_id, 0);
+/** The most recent assistant text in a thread (used for summaries in MCP tools), in its latest `window` agent messages. */
+export function last_assistant_text(c: Conn, task_id: string, window = 50): string | null {
+  return last_assistant_text_after(c, task_id, 0, window);
 }
 
 /** The text blocks of an assistant message's content, joined, or null if there are none. */
@@ -445,9 +445,13 @@ function text_of(v: any): string | null {
   return text.length ? text.join("\n") : null;
 }
 
-/** The most recent assistant text in a thread after message `after` (an id). */
-export function last_assistant_text_after(c: Conn, task_id: string, after: number): string | null {
-  const rows = all(c, "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND id > ?2 ORDER BY id DESC LIMIT 50", task_id, after);
+/**
+ * The most recent assistant text in a thread after message `after` (an id), in the latest `window` of the agent's
+ * messages after it (Infinity: all of them, as threads/history.ts's compare reads it).
+ */
+export function last_assistant_text_after(c: Conn, task_id: string, after: number, window = 50): string | null {
+  const limit = Number.isFinite(window) ? window : -1;
+  const rows = all(c, "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND id > ?2 ORDER BY id DESC LIMIT ?3", task_id, after, limit);
   for (const r of rows) {
     let v: any = null;
     try {

@@ -7,7 +7,10 @@
 // events as agents would send them (through page.routeWebSocket, so nothing is written on the server):
 // streamed tokens (and a long markdown reply), task changes and new messages, with the task open and closed, and opening
 // other tasks in turn, and events about a task on another board. For each it prints the
-// script, layout and total main-thread time (Chrome's Performance metrics) and the JS heap. With --cpu
+// script, layout and total main-thread time (Chrome's Performance metrics) and the JS heap. For a task whose thread is
+// kept as items (`thread_items`, with the host's setting on, so the thread view draws it from its items) it sends the
+// thread events a host sends with them as well (`thread_event` deltas and item.added), numbered after the thread's
+// seq; turn the setting off to measure the same task drawn from its messages. With --cpu
 // it also prints the functions that took the most time (build the UI with `npx vite build --minify false`
 // first for readable names).
 //
@@ -39,6 +42,12 @@ const res = await fetch(`${env.url}/api/tasks/${o.task}`, { headers: { Authoriza
 if (!res.ok) throw new Error(`GET /api/tasks/${o.task}: ${res.status}`);
 const task = (await res.json()).task;
 if (!task.project_id) throw new Error("pick a task in a project");
+const authed = (path) => fetch(`${env.url}/api${path}`, { headers: { Authorization: `Bearer ${env.token}` } }).then((r) => (r.ok ? r.json() : null));
+// Drawn from its items: its thread's events go out too, after its seq.
+const items = task.thread_items && (await authed("/settings"))?.thread_items ? await authed(`/tasks/${o.task}/thread?limit=1`) : null;
+let seq = items?.seq ?? 0;
+let streams = 0;
+console.log(`thread drawn from its ${items ? "items" : "messages"}`);
 
 const ui = await open({ url: env.url, token: env.token, timeout: 60000, log: () => {}, ...(o.chromium && { chromium: o.chromium }) });
 const page = ui.page;
@@ -96,8 +105,13 @@ const togglePanel = (id) =>
     dispatchEvent(new PopStateEvent("popstate"));
   }, id);
 const deltas = async (n, word = (i) => `word${i} `, ms = 20) => {
+  const item_id = `stream:ui-profile:${++streams}`;
+  let offset = 0;
   for (let i = 0; i < n; i++) {
-    send({ type: "delta", task_id: task.id, text: word(i) });
+    const text = word(i);
+    send({ type: "delta", task_id: task.id, text });
+    if (items) send({ type: "thread_event", task_id: task.id, event: { type: "delta", thread_id: task.id, seq, item_id, kind: "text", offset, text } });
+    offset += text.length;
     await sleep(ms);
   }
   send({ type: "delta_reset", task_id: task.id });
@@ -164,8 +178,13 @@ await measure("100 task events, task open", () => taskEvents(100));
 await measure("50 new messages, task open", async () => {
   for (let i = 0; i < 50; i++) {
     const text = `Message ${i}: some **markdown** with \`code\`.`;
-    send({ type: "message", task_id: task.id, message: { id: 2 ** 40 + i, task_id: task.id, kind: "claude", created_at: new Date().toISOString(),
+    const created_at = new Date().toISOString();
+    send({ type: "message", task_id: task.id, message: { id: 2 ** 40 + i, task_id: task.id, kind: "claude", created_at,
       data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } } } });
+    if (items) {
+      const item = { id: `legacy:${2 ** 40 + i}:0`, type: "assistant_message", text, created_at };
+      send({ type: "thread_event", task_id: task.id, event: { type: "item.added", thread_id: task.id, seq: ++seq, item } });
+    }
     await sleep(50);
   }
 });

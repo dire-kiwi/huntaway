@@ -13,6 +13,7 @@ import * as permissions from "./permissions.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as runner from "../agent/runner.ts";
 import * as focus from "../agent/focus.ts";
+import * as history from "../threads/history.ts";
 
 /** The most options a question can have: keys 1–9 pick them. */
 export const MAX_OPTIONS = 9;
@@ -156,7 +157,7 @@ function lines(s: string): string[] {
 export function replied(s: Shared, task_id: string): void {
   let pending: Array<{ id: number; data: string }>;
   try {
-    pending = db.all(s.db(), "SELECT id, data FROM messages WHERE task_id=?1 AND kind='question' AND json_extract(data, '$.status')='pending'", task_id);
+    pending = history.open_questions(s.db(), task_id);
   } catch {
     return;
   }

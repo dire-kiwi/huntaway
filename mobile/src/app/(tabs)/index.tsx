@@ -1,6 +1,6 @@
 // The Assistant, the app's home tab: the selected board's assistant for its picked profile, with the composer (and
 // whatever was shared into the app, filled in). It's on the host the profile's assistant is on (an assistant host of its
-// own, perhaps), and says so when that host is offline. A board older than API 119 has no tab: the Inbox is home then.
+// own, perhaps), and says so when that host is offline. A board older than API 120 has no tab: the Inbox is home then.
 import type { Client, Task } from "@huntaway/client";
 import { Redirect, Tabs, useRouter } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";

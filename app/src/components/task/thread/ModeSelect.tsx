@@ -1,8 +1,9 @@
 import clsx from "clsx";
 import { Ban, Check, ChevronDown, Map as MapIcon, Pencil, ShieldOff, ShieldQuestion, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api, PERMISSION_MODES, type PermissionMode, type Task } from "../../../api";
+import { PERMISSION_MODES, type PermissionMode, type Task } from "../../../api";
 import { useProject, useStore } from "../../../store";
+import { setMode as setThreadMode } from "../../../threadView";
 
 const MODE_STYLE: Record<PermissionMode, { icon: ReactNode; className: string }> = {
   default: { icon: <ShieldQuestion size={12} />, className: "text-muted" },
@@ -27,7 +28,7 @@ export function useModeControl(task: Task) {
   const setMode = async (m: PermissionMode | null) => {
     setErr(null);
     try {
-      useStore.getState().upsertTask({ ...(await api.updateTask(task.host_id, task.id, { permission_mode: m })), host_id: task.host_id });
+      useStore.getState().upsertTask({ ...(await setThreadMode(task, m)), host_id: task.host_id });
     } catch (e) {
       setErr((e as Error).message);
     }
