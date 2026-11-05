@@ -1,6 +1,6 @@
 // Port of server/src/mcp/gh_mcp/targets.rs: where a gh command goes, the hosts and repositories its arguments name,
 // read with the help of gh's own help.
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { ascii_lower, gh_program, url_host } from "./env.ts";
 
 /** A repository's host, given as `HOST/OWNER/REPO` or a URL (`OWNER/REPO` has none). */
@@ -167,21 +167,38 @@ const GH_COMMANDS = [
 
 const HELP_CACHE = new Map<string, CommandHelp | null>();
 
-/** The help of the gh command `args` run (`gh pr view --help`), kept for the next time. */
-export function command_help(args: string[]): CommandHelp | null {
+/** The gh command whose help `args` needs (`gh pr view --help`), and its key in `HELP_CACHE`. */
+function help_command(args: string[]): { key: string; argv: string[] } | null {
   const command = args[0];
   if (command === undefined || !GH_COMMANDS.includes(command)) return null;
   const sub = args[1] !== undefined && /^[a-z-]+$/.test(args[1]) ? args[1] : null;
-  const key = `${command} ${sub ?? ""}`;
-  if (HELP_CACHE.has(key)) return HELP_CACHE.get(key)!;
-  const out = spawnSync(gh_program(), [command, ...(sub !== null ? [sub] : []), "--help"], {
-    env: { ...process.env, GH_NO_UPDATE_NOTIFIER: "1", NO_COLOR: "1" },
-    stdio: ["ignore", "pipe", "ignore"],
-    maxBuffer: 16 << 20,
-  });
+  return { key: `${command} ${sub ?? ""}`, argv: [command, ...(sub !== null ? [sub] : []), "--help"] };
+}
+
+const HELP_ENV = () => ({ ...process.env, GH_NO_UPDATE_NOTIFIER: "1", NO_COLOR: "1" });
+
+/** The help of the gh command `args` run (`gh pr view --help`), kept for the next time. */
+export function command_help(args: string[]): CommandHelp | null {
+  const c = help_command(args);
+  if (c === null) return null;
+  if (HELP_CACHE.has(c.key)) return HELP_CACHE.get(c.key)!;
+  const out = spawnSync(gh_program(), c.argv, { env: HELP_ENV(), stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 });
   const help = !out.error && out.status === 0 ? CommandHelp.parse(out.stdout.toString()) : null;
-  HELP_CACHE.set(key, help);
+  HELP_CACHE.set(c.key, help);
   return help;
+}
+
+/**
+ * Read the help `command_help(args)` needs into its cache without blocking: the board serves the gh tools in its own
+ * process (see mcp/http.ts), where a synchronous gh would hold up everything else.
+ */
+export async function load_command_help(args: string[]): Promise<void> {
+  const c = help_command(args);
+  if (c === null || HELP_CACHE.has(c.key)) return;
+  const help = await new Promise<CommandHelp | null>((resolve) => {
+    execFile(gh_program(), c.argv, { env: HELP_ENV(), maxBuffer: 16 << 20 }, (e, stdout) => resolve(e ? null : CommandHelp.parse(String(stdout))));
+  });
+  HELP_CACHE.set(c.key, help);
 }
 
 /**

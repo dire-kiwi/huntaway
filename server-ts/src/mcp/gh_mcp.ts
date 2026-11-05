@@ -18,6 +18,7 @@ import { createInterface } from "node:readline";
 import { expand_tilde, err_str, context } from "../util.ts";
 import { VERSION } from "../hosts/proto.ts";
 import { Account } from "./gh_mcp/account.ts";
+import { load_command_help } from "./gh_mcp/targets.ts";
 import { TEST_BOARD, command_output, exit_status, extra_header_resets, gh_program, io_error, push_urls, type CmdOutput } from "./gh_mcp/env.ts";
 
 export * from "./gh_mcp/account.ts";
@@ -585,6 +586,7 @@ async function exec(c: Command, a: any, r: GhRun): Promise<[string, boolean]> {
         pre.push(...(await extra_header_resets(work_dir(a, r))), ...account.git_config());
         env.IA_GH_GIT_TOKEN = token;
       } else {
+        await load_command_help(c.args);
         account.check_targets(c.args, c.repo);
         const e = account.env(await account.token());
         e.apply(env);
