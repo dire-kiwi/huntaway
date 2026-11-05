@@ -1,4 +1,4 @@
-// The assistant's Brief tab (API 112): the morning brief its routine writes (brief.html, one version a day), and beside it the
+// The assistant's Brief tab (API 113): the morning brief its routine writes (brief.html, one version a day), and beside it the
 // day's items (from the run's brief.json, as the host checked them) with a thumbs up and down each, which go into MEMORY.md as
 // preferences (see server-ts/src/agent/assistant/brief.ts). Without a brief yet, it sets up the routine.
 //

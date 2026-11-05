@@ -34,7 +34,7 @@ Each module is a file named after its feature (`worktree.ts`, `hub.ts`, `review.
 | `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, tokens, prompts, documents, agent_tools |
 | `mcp/` | (`mcp.ts`, the stdio server) tools, gh_mcp, wait, pr_watch, permissions, questions |
 | `git/` | worktree, worktree_files, checkpoints, git_view, changes, relocate |
-| `hosts/` | hub, broker, proto, relay, ssh, terminal, pty |
+| `hosts/` | hub, broker, proto, relay, ssh, terminal, pty, uplink (board tools up a link) |
 | `update/` | admin, release, staging |
 | `integrations/` | github, asana, push, automations, status_script |
 | `review/` | (`review.ts`, automatic review) summary, merged, merge_gate, fanout, stats |

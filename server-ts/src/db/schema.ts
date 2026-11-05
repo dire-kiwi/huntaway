@@ -700,6 +700,15 @@ export function open(path: string): Conn {
              PRAGMA user_version=91; COMMIT; PRAGMA foreign_keys=ON;`,
     );
   }
+  if (version < 92) {
+    // The linked host a profile's assistant runs on (see agent/assistant.ts), and whether a linked host's agents may use
+    // this board's tools (see hosts/uplink.ts).
+    batch("BEGIN;");
+    for (const [table, column, kind] of [["profiles", "assistant_host", "TEXT"], ["links", "uplink", "INTEGER NOT NULL DEFAULT 0"]]) {
+      if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
+    }
+    batch("PRAGMA user_version=92; COMMIT;");
+  }
   return conn;
 }
 
@@ -710,7 +719,7 @@ function parent_dir(path: string): string {
 }
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 91;
+export const VERSION = 92;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

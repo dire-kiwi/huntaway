@@ -341,7 +341,7 @@ export async function get(s: AppState, r: Req): Promise<any> {
   const all: string[] = db.LABELS;
   const asked = r.query.label?.trim() ?? "";
   let label: string;
-  // The assistant's morning brief (API 112).
+  // The assistant's morning brief (API 113).
   if (asked === brief.LABEL && db.is_assistant(task)) label = brief.LABEL;
   else if (asked !== "") {
     const l = all.find((x) => x === asked);
@@ -360,7 +360,7 @@ export async function get(s: AppState, r: Req): Promise<any> {
   if (qversion !== null && content === null) throw ApiError.not_found("version");
   const file = path(s, task, label);
   const out: any = { label, file: file !== null ? path_str(file) : null, versions, version: content !== null ? version : null, content };
-  // The brief's items to rate (API 112): those the run wrote the same day, in the host's time zone, as checked.
+  // The brief's items to rate (API 113): those the run wrote the same day, in the host's time zone, as checked.
   if (label === brief.LABEL) {
     const shown_at = versions.find((v) => v.version === version)?.created_at;
     const shown = typeof shown_at === "string" ? local_day(shown_at) : null;

@@ -33,6 +33,11 @@ export interface Ctx {
   call_id: string | null;
   /** The original caller's helper advertises get_task_field (not just this host's build). */
   task_fields: boolean;
+  /**
+   * The linked host whose agent's call this is, passed up its link (see hosts/uplink.ts): it isn't passed back down to
+   * that host, nor further up. Unset (as null) for any other call.
+   */
+  from_host?: string | null;
 }
 
 export function is_own(ctx: Ctx, p: db.Profile): boolean {

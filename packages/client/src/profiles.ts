@@ -41,6 +41,8 @@ export interface Profile {
   merge_approval?: boolean;
   /** A task needs an approving review on its pull request on GitHub to go to Ready for merge (API 95). */
   require_pr_approval?: boolean;
+  /** The linked host its assistant runs on (API 112, a host id); null for this host. See assistantHome. */
+  assistant_host?: string | null;
   created_at: string;
 }
 
@@ -80,6 +82,7 @@ export const profilesApi = ({ on }: Http) => ({
       summarizers?: Reviewer[];
       merge_approval?: boolean;
       require_pr_approval?: boolean;
+      assistant_host?: string | null;
     },
   ) =>
     on(h).post<Profile>("/profiles", b),

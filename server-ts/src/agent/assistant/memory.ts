@@ -835,13 +835,16 @@ export function list(dir: string, today: NaiveDate): any[] {
 /**
  * A profile whose assistant runs on another host (its `assistant_host`) keeps its memory there: asked here, it's a 409
  * rather than a second assistant made on this host. (The board asks the assistant's host, by its task's host and profile.)
+ * One this host has already is its own, whatever its profile says: a hub that sends a profile's assistant here
+ * (`?local=1`) makes it here even when this host's profile names another assistant host, and its tabs are here too.
  */
 export function elsewhere(s: Shared, profile_id: string): void {
-  const p = db.get_profile(s.db(), profile_id);
+  const c = s.db();
+  const p = db.get_profile(c, profile_id);
   if (!p) throw ApiError.not_found("profile");
-  // (`assistant_host` is HA-204's, API 111: a profile from before it has none.)
-  const h: unknown = (p as any).assistant_host;
-  if (typeof h === "string" && h !== "" && h !== s.host_id) throw ApiError.conflict(`${p.name}'s assistant runs on another host (${h}): its memory is there`);
+  if (db.assistant_task(c, profile_id)) return;
+  const h = p.assistant_host;
+  if (h && h !== s.host_id) throw ApiError.conflict(`${p.name}'s assistant runs on another host (${h}): its memory is there`);
 }
 
 /** The profile's assistant and its workspace, made ready. */

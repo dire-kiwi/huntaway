@@ -1,5 +1,5 @@
 // Port of server/src/agent/assistant/google/tests.rs (HA-125, on the HA-117 branch).
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -64,11 +64,6 @@ function creds(refresh: string | null, scopes: string[]): string {
 }
 
 const set_config = (s: AppState, id: string, c: any) => db.run(s.db(), "UPDATE agent_mcp_servers SET config=?1 WHERE id=?2", JSON.stringify(c), id);
-
-/** Whether this build has profiles' `assistant_host` (HA-204's), which the tests of an assistant elsewhere need. */
-function has_assistant_host(s: AppState, profile_id: string): boolean {
-  return "assistant_host" in (db.get_profile(s.db(), profile_id) ?? {});
-}
 
 test("credentials_files_are_named_as_workspace_mcp_names_them", () => {
   assert.equal(credentials_file("sam@example.com"), "sam@example.com.json");
@@ -162,17 +157,21 @@ test("the_card_says_what_is_missing_until_google_is_connected", async () => {
   assert.ok(stt.problem!.includes("no-such-uvx-here isn't on this host's PATH"), JSON.stringify(stt));
 });
 
-test("a_profile_whose_assistant_is_elsewhere_has_its_google_there", async (t: TestContext) => {
+test("a_profile_whose_assistant_is_elsewhere_has_its_google_there", async () => {
   const s = state();
   const p = db.insert_profile(s.db(), "personal", [], null);
   assert.equal((await call(s, "GET", "/api/profiles/nope/assistant/google"))[0], 404);
-  if (!has_assistant_host(s, p.id)) return t.skip("profiles have no assistant_host before HA-204");
   db.run(s.db(), "UPDATE profiles SET assistant_host='elsewhere' WHERE id=?1", p.id);
   const url = `/api/profiles/${p.id}/assistant/google`;
   assert.equal((await call(s, "GET", url))[0], 409);
   assert.equal((await call(s, "POST", url))[0], 409);
   // Nothing was added here.
   assert.equal(agent_tools.global_mcp_server(s.db(), SERVER), null);
+  // HA-165: an assistant this host has already is its own, whatever its profile says (a hub sent it here).
+  db.run(s.db(), "UPDATE profiles SET assistant_host=NULL WHERE id=?1", p.id);
+  get_or_create(s, p.id);
+  db.run(s.db(), "UPDATE profiles SET assistant_host='elsewhere' WHERE id=?1", p.id);
+  assert.equal((await call(s, "GET", url))[0], 200);
 });
 
 test("only_the_assistant_gets_the_google_server_not_the_profiles_projects", () => {

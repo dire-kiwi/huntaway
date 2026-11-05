@@ -1,5 +1,5 @@
 // Port of server/src/agent/assistant/brief/tests.rs (HA-125, on the HA-117 branch).
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
@@ -38,11 +38,9 @@ async function call(s: AppState, method: string, path: string, body?: any): Prom
 }
 
 const j = (v: any) => JSON.stringify(v);
-/** Whether this build has profiles' `assistant_host` (HA-204's), which the tests of an assistant elsewhere need. */
-const has_assistant_host = (s: AppState, profile_id: string) => "assistant_host" in (db.get_profile(s.db(), profile_id) ?? {});
 const chars = (t: string) => Array.from(t).length;
 
-test("the_template_makes_a_valid_weekday_routine_in_a_fresh_thread", async (t: TestContext) => {
+test("the_template_makes_a_valid_weekday_routine_in_a_fresh_thread", async () => {
   const s = state();
   const p = db.insert_profile(s.db(), "personal", [], null);
   const url = `/api/profiles/${p.id}/assistant/brief`;
@@ -69,7 +67,6 @@ test("the_template_makes_a_valid_weekday_routine_in_a_fresh_thread", async (t: T
   assert.equal((await call(s, "POST", url, { time: "25:00" }))[0], 400);
   assert.equal((await call(s, "POST", url, { weekdays: ["someday"] }))[0], 400);
   // Not on a host the assistant isn't on.
-  if (!has_assistant_host(s, p.id)) return t.skip("profiles have no assistant_host before HA-204");
   db.run(s.db(), "UPDATE profiles SET assistant_host='elsewhere' WHERE id=?1", p.id);
   assert.equal((await call(s, "POST", url, {}))[0], 409);
 });

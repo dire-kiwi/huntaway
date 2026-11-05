@@ -1,6 +1,6 @@
 // Port of server/src/agent/assistant/google.rs (HA-125, on the HA-117 branch).
 /**
- * Google Workspace for the assistant (API 112): Gmail, Calendar and Drive through a Google Workspace MCP server on the
+ * Google Workspace for the assistant (API 113): Gmail, Calendar and Drive through a Google Workspace MCP server on the
  * assistant's host, with an OAuth client the user makes, rather than the claude.ai connectors, which come with the Claude
  * login and so would reach every agent on it, project tasks included.
  *
@@ -340,7 +340,7 @@ export function status_line(s: Shared, profile_id: string): string {
 }
 
 /**
- * `GET /profiles/{id}/assistant/google[?check=1]` (API 112): the Google card's status. With `check`, the account's refresh
+ * `GET /profiles/{id}/assistant/google[?check=1]` (API 113): the Google card's status. With `check`, the account's refresh
  * token is tried with Google too (`verified`, or `verify_error` saying why it failed).
  */
 export async function get(s: AppState, r: Req): Promise<any> {
@@ -365,7 +365,7 @@ export async function get(s: AppState, r: Req): Promise<any> {
 }
 
 /**
- * `POST /profiles/{id}/assistant/google` (API 112): add the Google server to this host (if it hasn't one called `google`)
+ * `POST /profiles/{id}/assistant/google` (API 113): add the Google server to this host (if it hasn't one called `google`)
  * and switch it on for the profile. A server that's there keeps its config. Returns the status.
  */
 export async function setup(s: AppState, r: Req): Promise<any> {
