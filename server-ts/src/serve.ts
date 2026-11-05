@@ -14,7 +14,7 @@ import * as db_file from "./db/file.ts";
 import * as api from "./api.ts";
 import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
-import { expand_tilde, new_id, new_token, now, err_str, home_dir } from "./util.ts";
+import { expand_tilde, new_id, new_token, now, err_str, home_dir, make_private } from "./util.ts";
 import * as admin from "./update/admin.ts";
 import * as release from "./update/release.ts";
 import * as staging from "./update/staging.ts";
@@ -367,6 +367,8 @@ export async function serve(args: ServeArgs) {
   delete process.env.IA_RECOPY_DB;
   // Before serving: on the first start with the new file, it copies the older builds' database, which takes a while for a big one.
   const conn = new_file ? db_file.open(data_dir, args.recopy_db).conn : db.open(db_path(data_dir));
+  // Once it's open, with its -wal and -shm files.
+  make_private(data_dir);
   backup.record_version(data_dir, VERSION);
 
   const server = createServer();
