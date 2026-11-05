@@ -41,6 +41,11 @@ export interface ThreadModel {
    * agent), or 0: a question or plan from before it has been moved past, and isn't answered any more.
    */
   lastSent: number;
+  /**
+   * For a thread drawn from its items (itemModel.ts): each subagent's own items, prompts included, by its call's id, in
+   * place of `children` (which is empty then).
+   */
+  childItems?: Map<string, Item[]>;
 }
 
 function resultText(content: Any): string {
@@ -320,7 +325,7 @@ class ItemBuilder {
 }
 
 /** `next`, with the items (and tool calls) that are the same as in `prev` swapped for those in `prev`. */
-function reuseItems(next: Item[], prev: Item[]): Item[] {
+export function reuseItems(next: Item[], prev: Item[]): Item[] {
   if (!prev.length) return next;
   const old = new Map(prev.map((it) => [it.key, it]));
   let same = next.length === prev.length;
@@ -342,7 +347,7 @@ function reuseItems(next: Item[], prev: Item[]): Item[] {
   return same ? prev : out;
 }
 
-function shallowEqual(a: object, b: object): boolean {
+export function shallowEqual(a: object, b: object): boolean {
   const ka = Object.keys(a);
   if (ka.length !== Object.keys(b).length) return false;
   return ka.every((k) => (a as Any)[k] === (b as Any)[k]);

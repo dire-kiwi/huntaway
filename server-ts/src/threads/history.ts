@@ -138,8 +138,9 @@ function* said(c: Conn, task_id: string): Generator<Said> {
         break;
       case "notice":
         // Claude Code's API errors (a usage limit, say), which it gives as the assistant's text, have a code; the
-        // board's own events have none, and an interrupt's is info.
-        if (item.level === "error" && item.code !== undefined && item.text !== "") yield { kind: "agent", text: item.text };
+        // board's own events have none, and an interrupt's is info. A routine's report (a failed run's is an error) is
+        // the board's, which the messages readers don't read either.
+        if (item.level === "error" && item.code !== undefined && item.code !== "routine_report" && item.text !== "") yield { kind: "agent", text: item.text };
         break;
     }
   }

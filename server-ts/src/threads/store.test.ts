@@ -358,6 +358,14 @@ describe("windows", () => {
     assert.deepEqual(store.window(c, thread, 2.5), snapshot_window(whole, 2.5));
     // sb is running: a window after it brings it, and sa (and tc, for the open p-sa).
     assert.deepEqual(store.window(c, thread, 1).context, [1, 3, 7]);
+    // Ended, and p-sa answered: both subagents' calls still come (HA-218: the app's Agents list shows every one).
+    store.append(c, task, [
+      { type: "item.updated", item_id: "sb", patch: { status: "completed" } },
+      { type: "request.resolved", request_id: "p-sa", resolution: { outcome: "allow" } },
+    ]);
+    const done = store.snapshot(c, thread);
+    assert.deepEqual(store.window(c, thread, 1), snapshot_window(done, 1));
+    assert.deepEqual(store.window(c, thread, 1).context, [1, 3]);
   });
 
   test("pages are the snapshot's, for every place and size", () => {

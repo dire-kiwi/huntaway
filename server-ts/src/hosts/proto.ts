@@ -37,8 +37,11 @@ export const PROTOCOL = 1;
  *
  * API 118: paired devices (devices.ts): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
  * `GET /permissions?profile_id=`.
+ *
+ * API 119: the thread view on items (HA-218): tasks' `thread_items` (whether a task's thread is kept as items), and the
+ * board's own `metadata` on thread items and requests, and subagents' `ended_at` (converter 4, see docs/threads.md).
  */
-export const API_VERSION = 118;
+export const API_VERSION = 119;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

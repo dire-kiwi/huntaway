@@ -8,6 +8,7 @@ import { Button } from "../../ui";
 import { AskCard, BoardQuestionCard, PlanCard } from "../Questions";
 import { useThread } from "./context";
 import { Markdown } from "./Markdown";
+import { usePromptAnswers } from "./promptAnswers";
 import { CodeBlock, toolMeta, ToolInput } from "./tools";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -96,11 +97,14 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const pending = data.status === "pending";
+  // In a thread drawn from its items, with the thread's respond command.
+  const commands = usePromptAnswers();
   const decide = async (d: "allow" | "allow_always" | "deny") => {
     setBusy(true);
     setErr(null);
     try {
-      await api.resolvePermission(hostId, data.request_id, d);
+      if (commands) await commands.respond(data.request_id, d === "deny" ? { outcome: "deny" } : d === "allow_always" ? { outcome: "allow", always: true } : { outcome: "allow" });
+      else await api.resolvePermission(hostId, data.request_id, d);
     } catch (e) {
       setErr((e as Error).message);
     } finally {

@@ -132,15 +132,18 @@ const toolUses = (s: Subagent) => s.toolUses != null && `${s.toolUses} tool use$
  */
 function SubagentItems({ sub, result, withPrompts }: { sub: Subagent; result?: ToolResult; withPrompts?: boolean }) {
   const msgs = useThread((t) => t.children.get(sub.id));
+  // A thread drawn from its items has each subagent's own rows already (itemModel.ts).
+  const own = useThread((t) => t.childItems?.get(sub.id));
+  const fromItems = useThread((t) => !!t.childItems);
   const results = useThread((t) => t.results);
   const running = useThread((t) => t.running);
   const hostId = useThread((t) => t.hostId);
   const cwd = useThread((t) => t.cwd);
   const prev = useRef<Item[]>(undefined);
-  const items = useMemo(
-    () => (prev.current = buildItems((msgs ?? []).filter((m) => withPrompts || m.kind !== "permission"), results, prev.current)),
-    [msgs, results, withPrompts],
-  );
+  const items = useMemo(() => {
+    if (fromItems) return withPrompts ? (own ?? NO_ITEMS) : (own ?? NO_ITEMS).filter((i) => i.type !== "permission");
+    return (prev.current = buildItems((msgs ?? []).filter((m) => withPrompts || m.kind !== "permission"), results, prev.current));
+  }, [fromItems, own, msgs, results, withPrompts]);
   const report = reportText(sub, result);
   const hasText = items.some((i) => i.type === "text");
   // A subagent's own messages leave the thread's items as they were, so the thread doesn't scroll for them: this
@@ -166,6 +169,8 @@ function SubagentItems({ sub, result, withPrompts }: { sub: Subagent; result?: T
     </>
   );
 }
+
+const NO_ITEMS: Item[] = [];
 
 /** A subagent's own thread, shown in place of the main conversation: its prompt, what it did and its report. */
 export function SubagentThread({ sub }: { sub: Subagent }) {

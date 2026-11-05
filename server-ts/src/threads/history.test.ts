@@ -141,6 +141,12 @@ test("what the agent said: its messages' text, results' and API errors", () => {
     same((from) => history.said_since_asked(c, failed, from)),
     "Trying.",
   );
+  // HA-218: a routine's report, a notice in items (an error one for a failed run), is the board's, not the agent's.
+  const reported = task([user("go"), assistant([text("Mine.")]), ["report", { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "failed", text: "It broke" }]]);
+  assert.equal(
+    same((from) => history.last_assistant_text(c, reported, from)),
+    "Mine.",
+  );
 });
 
 test("the user's replies: their own words, with what the agent said before each, and limits", () => {
