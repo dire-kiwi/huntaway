@@ -49,6 +49,12 @@ if [ "$1" = mcp ]; then
   shift
   exec "$node" $flags "$src/mcp.$ext" "$@"
 fi
+# So does the approval rules' hook, which Claude Code runs before each tool call a rule may match (see
+# src/agent/approval_rules/hook.ts).
+if [ "$1" = approval-hook ]; then
+  shift
+  exec "$node" $flags "$src/agent/approval_rules/hook.$ext" "$@"
+fi
 case "$1" in
   "" | serve) ;;
   *) exec "$node" $flags "$src/main.$ext" "$@" ;;

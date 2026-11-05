@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { isAssistant, ownWorkDir, type DocumentType, type Project, type Task } from "../../../api";
+import { ActionLog } from "../ActionLog";
 import { DocumentView } from "../Document";
 import { ChangeSummaryView, ReviewSummary } from "../Review";
 import { Thread } from "../Thread";
@@ -77,6 +78,8 @@ export function TabContent({
         <WorkflowTabView task={task} label={shown.slice(3)} />
       </div>
     </div>
+  ) : shown === "actions" ? (
+    <ActionLog task={task} />
   ) : shown === "routines" ? (
     <Suspense fallback={null}>
       <Routines assistant={task} />

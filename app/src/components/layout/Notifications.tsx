@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Bell, Smartphone, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { api, ASSISTANT_PUSH_EVENTS, type PushDevice, type PushEvents } from "../../api";
+import { api, ASSISTANT_PUSH_EVENTS, type PushDevice, type PushEvents, type PushPrompts } from "../../api";
 import {
   NOTIFY_EVENTS,
   NOTIFY_MODES,
@@ -184,7 +184,8 @@ function PushPanel() {
         </div>
         <p>
           The board pushes notifications of these events to the devices that turn this on, even while the board isn't open on them: a phone with
-          the board on its home screen, say. Tapping one opens the task. Each device picks its own events, whatever the setting above.
+          the board on its home screen, say. Tapping one opens the task. Each device picks its own events, whatever the setting above, and whose
+          permission prompts it gets, which you can allow or deny from the notification.
         </p>
       </div>
       {support !== "ok" ? (
@@ -246,12 +247,20 @@ function PushPanel() {
   );
 }
 
-/** The events a device gets by push: the board's, and the assistant's replies and reports. */
+const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
+  { id: "off", label: "None" },
+  { id: "assistant", label: "The assistant's" },
+  { id: "all", label: "Every task's" },
+];
+
+/** The events a device gets by push (the board's, and the assistant's replies and reports), and whose permission prompts. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   // The assistant's events the board has (each in its devices' events).
   const assistant = ASSISTANT_PUSH_EVENTS.filter((e) => typeof device.events[e.id] === "boolean");
+  // Whose prompts, on a board that pushes them (API 111).
+  const prompts = device.events.prompts;
   return (
-    <div className={clsx(compact ? "flex flex-wrap gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>
+    <div className={clsx(compact ? "flex flex-wrap items-center gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>
       {NOTIFY_EVENTS.map((e) => (
         <label key={e.id} className="flex items-start gap-2.5">
           <input
@@ -280,6 +289,24 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
           </span>
         </label>
       ))}
+      {prompts && (
+        <label className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span className="text-fg">Permission prompts</span>
+          <select
+            className="h-7 rounded-md border border-line bg-panel px-1.5 text-[12px] text-fg outline-none"
+            value={prompts}
+            aria-label={`Permission prompts pushed to ${device.name || "this device"}`}
+            onChange={(ev) => onChange({ ...device.events, prompts: ev.target.value as PushPrompts })}
+          >
+            {PUSH_PROMPTS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          {!compact && <span className="basis-full text-faint">With Allow and Deny on the notification. It names the tool, but not what it's run with.</span>}
+        </label>
+      )}
     </div>
   );
 }

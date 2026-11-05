@@ -11,8 +11,12 @@ export const PROTOCOL = 1;
  * API 110: routines (a profile's automations, which wake its assistant): `/profiles/{id}/automations`, the `cron` and `at`
  * triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, `report` messages, and push's
  * `replies` and `reports` events.
+ * API 111: the assistant's approval rules and action log (`/profiles/{id}/approval-rules` and `/approval-log`, see
+ * agent/approval_rules.ts, and their `approval_rules` and `approval_log` events), prompts' `expires_at` and `rule`, `via`
+ * on a prompt's answer, and answering prompts from a notification (push's `prompts` event setting, a prompt's push with
+ * `request_id` and `answer`, and `POST /permissions/{id}/push-answer`, see integrations/push_answers.ts).
  */
-export const API_VERSION = 110;
+export const API_VERSION = 111;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

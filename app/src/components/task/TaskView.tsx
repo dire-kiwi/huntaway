@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
+import { api, canRunAgents, dependencyQueued, documentsOnly, hasApprovalRules, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
 import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
@@ -195,6 +195,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
+  // The assistant's action log (API 111): what its approval rules asked about or blocked.
+  if (assistant && hasApprovalRules(host)) tabs.push("actions");
   // A tab for each the task's workflow steps show their output in (API 107).
   const wfTabs = task.kind === "task" ? workflowTabs(workflows).map(workflowTab) : [];
   tabs.push(...wfTabs);

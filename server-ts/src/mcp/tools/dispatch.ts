@@ -7,6 +7,7 @@ import * as api from "../../api.ts";
 import * as hub from "../../hosts/hub.ts";
 import * as runner from "../../agent/runner.ts";
 import * as review from "../../review.ts";
+import * as approval_rules from "../../agent/approval_rules.ts";
 import * as workflows from "../../integrations/workflows.ts";
 import * as mcp from "../../mcp.ts";
 import * as permissions from "../permissions.ts";
@@ -160,6 +161,11 @@ function sql_error(e: unknown): string {
  * the user hasn't approved what it asked (nothing is changed before then): it carries on waiting for them.
  */
 function rerunnable(s: Shared, c: Required<McpCall>): boolean {
+  // One that was waiting for an approval rule's prompt (see check_rules) hasn't done anything yet.
+  try {
+    const ruled = db.value<string>(s.db(), "SELECT status FROM permission_requests WHERE call_id=?1 AND kind='tool' AND rule IS NOT NULL", c.call_id);
+    if (ruled !== undefined && ruled !== "allowed") return true;
+  } catch {}
   if (RERUNNABLE.includes(c.tool)) return true;
   let kind: string;
   if (c.tool === "update_project" || c.tool === "create_project") kind = "project";
@@ -205,6 +211,9 @@ async function execute_mcp(s: Shared, c: Required<McpCall>): Promise<any> {
   // Any other call means the run is working again (see mcp/wait.rs). Not a permission prompt: subagents raise them too,
   // and the agent's own tool calls end the wait before theirs.
   if (c.tool !== "wait" && c.tool !== "permission_prompt") wait.resumed(s, task.id, run.id);
+  // The user's approval rules hold for every board tool but the plumbing of prompts and questions, `wait` included (its
+  // command runs as the agent's own would).
+  if (c.tool !== "permission_prompt" && c.tool !== "request_user_input") await check_rules(s, task, c.call_id, c.tool, args);
   switch (c.tool) {
     case "permission_prompt": {
       const tool_name = typeof args.tool_name === "string" ? args.tool_name : "";
@@ -256,8 +265,9 @@ async function wait_tool(s: Shared, c: Required<McpCall>, args: any, run: db.Run
   const reason = typeof args.reason === "string" ? args.reason : null;
   const command = typeof args.command === "string" && args.command.trim() ? args.command.trim() : null;
   // The command runs as the agent's own Bash calls would, so it's approved like them: in auto mode the agent's reviewer
-  // (Claude's or Codex's) has already reviewed this call, otherwise the user (or the mode) decides.
-  if (command !== null && !resuming && !runner.agent_reviews_waits(s, run.id)) {
+  // (Claude's or Codex's) has already reviewed this call, otherwise the user (or the mode) decides. An approval rule on
+  // Bash holds for it whoever reviewed the call: a wait's command is a command.
+  if (command !== null && !resuming && (!runner.agent_reviews_waits(s, run.id) || ruled_bash(s, task))) {
     const cwd = runner.work_dir(s, task);
     const description = `Run while waiting${reason !== null ? `: ${reason}` : ""}`;
     const input = { command, cwd, description };
@@ -293,6 +303,35 @@ async function wait_tool(s: Shared, c: Required<McpCall>, args: any, run: db.Run
     } else result.pull_request = pr_watch.last(s, task.id, p) ?? { url: p.url, number: p.number };
   }
   return result;
+}
+
+/** Whether the user's approval rules ask about or refuse Bash in `task`'s thread now (see agent/approval_rules.ts). */
+function ruled_bash(s: Shared, task: Task): boolean {
+  const rules = approval_rules.for_task(s.db(), task);
+  if (!rules) return false;
+  const project = task.project_id ? db.get_project(s.db(), task.project_id) : null;
+  const mode = db.effective_permission_mode(task, s.db(), project);
+  const r = approval_rules.decide(approval_rules.for_mode(rules, mode), "Bash");
+  return r !== null && r.decision !== "allow";
+}
+
+/**
+ * The user's approval rules for the board's own tools, which the board holds as it runs them for either runtime (see
+ * agent/approval_rules.ts): a call a never rule matches is refused, and one an ask rule matches waits for the user's
+ * answer, as a permission prompt.
+ */
+async function check_rules(s: Shared, task: Task, call_id: string, tool: string, args: any): Promise<void> {
+  const rules = approval_rules.for_task(s.db(), task);
+  if (!rules) return;
+  const found = approval_rules.board_rule(rules, tool);
+  if (!found) return;
+  const [name, rule] = found;
+  // The tools that ask the user themselves, whatever the mode, aren't asked about twice (their own request carries the
+  // rule, see permissions.approve); never still refuses them.
+  if (rule.decision === "allow" || (rule.decision === "ask" && approval_rules.ASKS_ITSELF.includes(tool))) return;
+  const answer = await permissions.prompt(s, task, call_id, name, args, null);
+  if (answer?.behavior === "allow") return;
+  throw fail(typeof answer?.message === "string" ? answer.message : "The user denied this action.");
 }
 
 /** Whether thread `task` is in plan mode now (its own mode, or the one it inherits). */

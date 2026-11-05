@@ -1429,3 +1429,29 @@ test("a_database_from_version_72_keeps_new_sessions_apart", () => {
   assert.ok(close(add_cost(c, "c", "new", 0.25, true), 0.25));
   c.close();
 });
+
+test("a_database_from_version_91_keeps_its_prompts_waiting_without_an_expiry", () => {
+  const path = db_path();
+  prepare_at(
+    path,
+    `PRAGMA foreign_keys=OFF; DROP INDEX permission_requests_expiry; ALTER TABLE permission_requests DROP COLUMN expires_at;
+     ALTER TABLE permission_requests DROP COLUMN rule; DROP TABLE push_answer_tokens; DROP TABLE approval_log;
+     INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('p','t',1,'Bash','{}','pending','1','c','tool');
+     PRAGMA user_version=91;`,
+  );
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  // A prompt from before has no expiry or rule, so it waits as it did.
+  assert.deepEqual({ ...(db.one(c, "SELECT status, expires_at, rule FROM permission_requests WHERE id='p'") as any) }, { status: "pending", expires_at: null, rule: null });
+  db.run(c, "INSERT INTO push_answer_tokens (token_hash,request_id,host_id,task_id,created_at,expires_at) VALUES ('h','p','x','t','1','2')");
+  assert.equal(db.value(c, "SELECT status FROM push_answer_tokens WHERE token_hash='h'"), "pending");
+  db.run(c, "INSERT INTO approval_log (id,profile_id,task_id,tool_name,summary,rule,decision,outcome,created_at) VALUES ('l','p','t','x','','x','ask','pending','1')");
+  c.close();
+  // A database that has some of it already (another migration took the number first) gets the rest.
+  const partial = db_path();
+  prepare_at(partial, "DROP TABLE approval_log; ALTER TABLE push_answer_tokens DROP COLUMN expires_at; PRAGMA user_version=91;");
+  const c2 = open(partial);
+  assert.ok(has_column(c2, "push_answer_tokens", "expires_at") && has_column(c2, "permission_requests", "rule"));
+  assert.equal(db.value(c2, "SELECT COUNT(*) FROM approval_log"), 0);
+  c2.close();
+});

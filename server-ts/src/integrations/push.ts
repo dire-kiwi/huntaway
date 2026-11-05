@@ -10,6 +10,9 @@
 // So are the assistant's routines' reports, as each is posted on its thread, and its replies, for the devices that choose
 // them, as the assistant's host says its turn ended (`REPLY_EVENT`). A reply says only "Replied"; a report its first
 // line.
+//
+// A permission prompt is pushed too (the assistant's, or any task's, as each device chooses), with a one-time token
+// (push_answers.ts) for its Allow and Deny actions, which answer it from the notification without the board's token.
 import { createCipheriv, createECDH, createHash, createPrivateKey, hkdfSync, randomBytes, sign, type ECDH, type KeyObject } from "node:crypto";
 import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
@@ -18,6 +21,8 @@ import type { AppState } from "../state.ts";
 import { background, err_str, new_id, now } from "../util.ts";
 import * as hub from "../hosts/hub.ts";
 import type { LinkConn } from "../hosts/hub.ts";
+import * as permissions from "../mcp/permissions.ts";
+import * as push_answers from "./push_answers.ts";
 
 /** Where the board's VAPID private key is kept (in the settings table), made the first time it's needed. */
 const KEY_SETTING = "vapid_private_key";
@@ -171,12 +176,17 @@ export function authorization(v: Vapid, endpoint: string, sub: string, now: numb
 
 // ---------- subscriptions ----------
 
-/** Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults, and the assistant's replies and its routines' reports. */
+/**
+ * Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults, permission prompts, and the
+ * assistant's replies and its routines' reports.
+ */
 export interface Events {
   attention: boolean;
   review: boolean;
   merge: boolean;
   done: boolean;
+  /** Whose permission prompts it gets, with Allow and Deny (API 111). */
+  prompts: Prompts;
   /** The assistant finished a reply. Off unless chosen, also for the subscriptions from before there was a choice. */
   replies: boolean;
   /**
@@ -186,12 +196,21 @@ export interface Events {
   reports: boolean;
 }
 
+/**
+ * Whose permission prompts a device gets pushed: `off`; `assistant`, the assistant's (its thread's, and its routines'),
+ * whose prompts are for actions outside the board, and which isn't on the board's columns to notify otherwise (the
+ * default); or `all`, every task's.
+ */
+export type Prompts = "off" | "assistant" | "all";
+
+const PROMPTS: Prompts[] = ["off", "assistant", "all"];
+
 export function Events_default(): Events {
-  return { attention: true, review: true, merge: false, done: false, replies: false, reports: true };
+  return { attention: true, review: true, merge: false, done: false, prompts: "assistant", replies: false, reports: true };
 }
 
 /** What serde takes for an event a stored or given value leaves out (not Events_default: see `reports`). */
-const MISSING: Events = { attention: true, review: true, merge: false, done: false, replies: false, reports: false };
+const MISSING: Events = { attention: true, review: true, merge: false, done: false, prompts: "assistant", replies: false, reports: false };
 
 /** Events from JSON, missing fields defaulted (as serde reads them); null for something that isn't events. */
 function events_from(v: any): Events | null {
@@ -199,7 +218,7 @@ function events_from(v: any): Events | null {
   const out: any = {};
   for (const k of Object.keys(MISSING) as Array<keyof Events>) {
     if (v[k] === undefined) out[k] = MISSING[k];
-    else if (typeof v[k] === "boolean") out[k] = v[k];
+    else if (k === "prompts" ? PROMPTS.includes(v[k]) : typeof v[k] === "boolean") out[k] = v[k];
     else return null;
   }
   return out;
@@ -212,14 +231,28 @@ function events_from(v: any): Events | null {
 function merged_events(old: Events, patch: any): Events {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw ApiError.bad("events must be an object");
   const e = events_from({ ...old, ...patch });
-  if (!e) throw ApiError.bad("events: invalid type, expected a boolean");
+  if (!e) throw ApiError.bad("events: invalid type, expected a boolean (or for prompts, off, assistant or all)");
   return e;
 }
 
 function wants(ev: Events, e: Event): boolean {
   if (e === "reply") return ev.replies;
   if (e === "report") return ev.reports;
+  // Depends on the task: see wants_prompt.
+  if (e === "prompt") return false;
   return ev[e];
+}
+
+/** Whether it wants task `t`'s permission prompts. */
+function wants_prompt(ev: Events, t: any): boolean {
+  if (ev.prompts === "assistant") return is_assistant(t);
+  if (ev.prompts === "all") return t?.kind === "task";
+  return false;
+}
+
+/** Whether task `t` is the assistant's (personal mode): its thread, or one of its routines' runs. */
+function is_assistant(t: any): boolean {
+  return t?.kind === "task" && (t?.task_type === "assistant" || t?.task_type === "routine");
 }
 
 /** A device's subscription, as the API shows it: its endpoint's push service, but not its keys. */
@@ -291,6 +324,16 @@ export interface Message {
   tag: string;
   task_id?: string;
   event?: Event;
+  /** For a permission prompt, the request. */
+  request_id?: string;
+  /** For a prompt that can be answered from the notification: where its Allow and Deny post, with the token that answers it (see push_answers.ts). */
+  answer?: Answer;
+}
+
+/** How a notification answers its prompt: `POST url` with `{"token", "decision"}`. */
+export interface Answer {
+  url: string;
+  token: string;
 }
 
 /**
@@ -367,14 +410,15 @@ async function deliver(s: AppState, sub: Subscription, msg: Message, urgent: boo
 // ---------- events ----------
 
 /**
- * HA-8's events (`NotifyEvent` in app/src/notifications.ts), and `reply` (the assistant finished a reply, see
- * `observe_reply`) and `report` (a routine posted a report in the assistant's thread, see `observe_report`).
+ * HA-8's events (`NotifyEvent` in app/src/notifications.ts), `prompt` (a permission prompt was raised, see
+ * `observe_prompt`), `reply` (the assistant finished a reply, see `observe_reply`) and `report` (a routine posted a report
+ * in the assistant's thread, see `observe_report`).
  */
-export type Event = "attention" | "review" | "merge" | "done" | "reply" | "report";
+export type Event = "attention" | "review" | "merge" | "done" | "prompt" | "reply" | "report";
 
 /** The column it's about, where a move the user made doesn't notify (see `PushState.moved`). Not a column for a reply or report. */
 function event_status(e: Event): string {
-  return { attention: "needs_attention", review: "in_review", merge: "ready_for_merge", done: "done", reply: "", report: "" }[e];
+  return { attention: "needs_attention", review: "in_review", merge: "ready_for_merge", done: "done", prompt: "needs_attention", reply: "", report: "" }[e];
 }
 
 /** What the server says when the user stopped the run: their own doing, so it doesn't notify. */
@@ -424,6 +468,8 @@ export function notification_text(e: Event, t: any, key: string): [string, strin
     body = "Replied";
   } else if (e === "report") {
     body = "Posted a report";
+  } else if (e === "prompt") {
+    body = "Waiting for your answer";
   } else {
     const r = typeof t?.resolution === "string" ? t.resolution : "done";
     body = r === "not_done" ? "Closed: not done" : r === "wont_fix" ? "Closed: won't fix" : "Done";
@@ -475,6 +521,8 @@ export class PushState {
   pending = new Set<string>();
   /** The columns tasks were moved to by the user lately (through this board's API), by `<host>:<id>`. */
   moves = new Map<string, [string, number]>();
+  /** The permission prompts raised while the board watched that are still waiting, by `<host>:<task id>`. */
+  prompts = new Map<string, Set<string>>();
 
   link_ready(link: LinkConn): boolean {
     return !this.watching || this.ready.get(link.id) === link;
@@ -496,6 +544,11 @@ export class PushState {
 /** Watches the task events of every host on the board and pushes the ones devices want. */
 export function start(s: AppState) {
   s.push.watching = true;
+  try {
+    push_answers.recover(s.db());
+  } catch (e) {
+    console.warn(`push: recovering prompts' answers: ${err_str(e)}`);
+  }
   // The events, handled one at a time in order, as Rust's receiver loop does.
   const queue: any[] = [];
   let busy = true;
@@ -525,7 +578,10 @@ export function start(s: AppState) {
         if (typeof ev.id === "string") s.push.tasks.delete(`${host}:${ev.id}`);
         return;
       case "message":
+        observe_prompt(s, host, ev.message);
         return observe_report(s, host, ev.message);
+      case "message_updated":
+        return prompt_settled(s, host, ev.message);
       case REPLY_EVENT:
         return observe_reply(s, host, ev);
       case "resync":
@@ -596,6 +652,8 @@ async function load_host(s: AppState, host: string) {
       } catch {}
     }
   }
+  // Prompts it raised that the board heard of may have been answered while it wasn't listening.
+  for (const k of [...s.push.prompts.keys()]) if (k.startsWith(`${host}:`)) s.push.prompts.delete(k);
   for (const t of tasks) if (typeof t?.id === "string") s.push.tasks.set(`${host}:${t.id}`, t);
 }
 
@@ -608,6 +666,8 @@ function observe(s: AppState, host: string, t: any) {
   const id = t?.id;
   if (typeof id !== "string") return;
   const key = `${host}:${id}`;
+  // Its prompts end with its run (if the board missed hearing so).
+  if (t?.running === false) s.push.prompts.delete(key);
   // As JSON, as Rust has it: a task row may be changed in place later.
   t = JSON.parse(JSON.stringify(t));
   const prev = s.push.tasks.get(key);
@@ -630,9 +690,12 @@ function observe(s: AppState, host: string, t: any) {
 
 /** Pushes event `e` of task `t` to the devices that want it. */
 async function notify(s: AppState, host: string, t: any, e: Event) {
+  const tid = typeof t?.id === "string" ? t.id : "";
+  // Waiting on a prompt the devices that want it were pushed already, with its Allow and Deny.
+  const prompted = e === "attention" && (s.push.prompts.get(`${host}:${tid}`)?.size ?? 0) > 0;
   let subs: Subscription[];
   try {
-    subs = list(s.db()).filter((x) => wants(x.events, e));
+    subs = list(s.db()).filter((x) => wants(x.events, e) && !(prompted && wants_prompt(x.events, t)));
   } catch (err) {
     return void console.error(`push: reading the subscriptions: ${err_str(err)}`);
   }
@@ -666,6 +729,96 @@ async function find_task(s: AppState, host: string, id: string): Promise<any> {
   } catch {
     return null;
   }
+}
+
+// ---------- permission prompts ----------
+
+/** A thread message as it is now: a permission prompt that has just been raised is pushed. */
+function observe_prompt(s: AppState, host: string, m: any) {
+  const data = m?.data;
+  if (m?.kind !== "permission" || data?.status !== "pending") return;
+  const task_id = m.task_id, request = data.request_id;
+  if (typeof task_id !== "string" || typeof request !== "string") return;
+  const key = `${host}:${task_id}`;
+  const set = s.push.prompts.get(key) ?? new Set<string>();
+  set.add(request);
+  s.push.prompts.set(key, set);
+  notify_prompt(s, host, task_id, JSON.parse(JSON.stringify(data))).catch((e) => console.error(`push: ${err_str(e)}`));
+}
+
+/** A thread message changed: a prompt answered or expired is no longer waiting, and the tokens that would answer it from a notification stop working. */
+function prompt_settled(s: AppState, host: string, m: any) {
+  const data = m?.data;
+  const task_id = m?.task_id, request = data?.request_id, status = data?.status;
+  if (typeof task_id !== "string" || typeof request !== "string" || typeof status !== "string") return;
+  if (m.kind !== "permission" || status === "pending") return;
+  const key = `${host}:${task_id}`;
+  const p = s.push.prompts.get(key);
+  if (p) {
+    p.delete(request);
+    if (p.size === 0) s.push.prompts.delete(key);
+  }
+  try {
+    push_answers.settle(s.db(), host, request, status);
+  } catch (e) {
+    console.warn(`push: settling prompt ${request}'s tokens: ${err_str(e)}`);
+  }
+}
+
+/** What a prompt's notification says it asks (not what the tool would do: pushes pass through push services, so they carry no tool inputs). */
+export function prompt_text(data: any): string {
+  const tool = typeof data?.tool_name === "string" ? data.tool_name : "a tool";
+  switch (data?.kind) {
+    case "project":
+      return "Approve a project change?";
+    case "delete_task":
+      return "Delete a task?";
+    case "automation":
+      return "Approve an automation?";
+  }
+  if (permissions.is_question(tool)) return "The agent has questions for you";
+  if (tool === permissions.EXIT_PLAN) return "Plan ready for approval";
+  return `Approve ${tool}?`;
+}
+
+/**
+ * Pushes prompt `data` (its thread message's) of task `task_id` to the devices that want it, with a token for its Allow
+ * and Deny if it can be answered from the notification.
+ */
+async function notify_prompt(s: AppState, host: string, task_id: string, data: any) {
+  const request = data?.request_id;
+  if (typeof request !== "string") return;
+  const t = await find_task(s, host, task_id);
+  if (!t) return;
+  let subs: Subscription[];
+  try {
+    subs = list(s.db()).filter((x) => wants_prompt(x.events, t));
+  } catch (e) {
+    return void console.warn(`push: reading the subscriptions: ${err_str(e)}`);
+  }
+  if (!subs.length) return;
+  let answer: Answer | undefined;
+  if (push_answers.answerable(data)) {
+    try {
+      const expires_at = typeof data.expires_at === "string" ? data.expires_at : null;
+      answer = { url: `/api/permissions/${request}/push-answer`, token: push_answers.mint(s.db(), host, request, task_id, expires_at) };
+    } catch (e) {
+      console.warn(`push: minting a token for prompt ${request}: ${err_str(e)}`);
+    }
+  }
+  const key = await task_key(s, host, t);
+  const msg: Message = {
+    title: `${key} ${typeof t.title === "string" ? t.title : ""}`,
+    body: prompt_text(data),
+    url: `/t/${task_id}`,
+    // Each prompt its own, so that two at once can each be answered.
+    tag: `${host}:${task_id}:${request}`,
+    task_id,
+    event: "prompt",
+    request_id: request,
+  };
+  if (answer) msg.answer = answer;
+  await send_all(s, subs, msg, true);
 }
 
 // ---------- routines' reports ----------

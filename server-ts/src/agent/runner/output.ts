@@ -9,6 +9,7 @@ import * as agent_tools from "../agent_tools.ts";
 import * as context from "../context.ts";
 import * as usage from "../usage.ts";
 import * as documents from "../documents.ts";
+import * as approval_rules from "../approval_rules.ts";
 import * as tokens from "../tokens.ts";
 import * as wait from "../../mcp/wait.ts";
 import * as permissions from "../../mcp/permissions.ts";
@@ -226,6 +227,15 @@ export function handle_line(state: Shared, run: Run, line: string) {
     // The conversation's latest message, where a rewind can resume it (see checkpoints::Rewind).
     if (typeof s.uuid === "string" && s.parent_tool_use_id == null) {
       db.run(state.db(), "UPDATE runs SET agent_at=?1 WHERE id=?2", s.uuid, run.id);
+    }
+    // Calls the approval rules' hook blocked go in the action log.
+    if (tool_result) {
+      const task = db.get_task(state.db(), task_id);
+      let applies = false;
+      try {
+        applies = !!task && approval_rules.applies_to(state.db(), task);
+      } catch {}
+      if (task && applies) approval_rules.on_tool_results(state, task, s);
     }
     state.add_message(task_id, "claude", s);
     // A tool call may have changed the task's document: the task shows it as it's written.
