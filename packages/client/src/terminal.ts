@@ -1,4 +1,4 @@
-import { enc, on, wsUrl } from "./http";
+import { enc, type Http } from "./http";
 
 /** A program run in its own tmux session in a task's directory, e.g. `lazygit` (API 13). */
 export interface TerminalTool {
@@ -21,14 +21,13 @@ export interface TerminalStatus {
 
 const toolQuery = (tool?: string) => (tool ? `?tool=${encodeURIComponent(tool)}` : "");
 
-/** Websocket attached to a task's terminal (or one of its tools); the session is created if needed. */
-export const terminalWsUrl = (h: string, id: string, cols: number, rows: number, tool?: string) =>
-  wsUrl(`/h/${enc(h)}/tasks/${enc(id)}/terminal/ws?cols=${cols}&rows=${rows}${tool ? `&tool=${encodeURIComponent(tool)}` : ""}`);
-
-export const terminalApi = {
+export const terminalApi = ({ on, wsUrl }: Http) => ({
+  /** Websocket attached to a task's terminal (or one of its tools); the session is created if needed. */
+  terminalWsUrl: (h: string, id: string, cols: number, rows: number, tool?: string) =>
+    wsUrl(`/h/${enc(h)}/tasks/${enc(id)}/terminal/ws?cols=${cols}&rows=${rows}${tool ? `&tool=${encodeURIComponent(tool)}` : ""}`),
   /** The task's shell, or with `tool` one of the host's terminal tools (API 13). */
   terminal: (h: string, id: string, tool?: string) => on(h).get<TerminalStatus>(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),
   killTerminal: (h: string, id: string, tool?: string) => on(h).del(`/tasks/${enc(id)}/terminal${toolQuery(tool)}`),
   /** Tool sessions end once no board renews them (and nobody is attached). */
   keepTerminal: (h: string, id: string, tool: string) => on(h).post(`/tasks/${enc(id)}/terminal/keepalive${toolQuery(tool)}`),
-};
+});

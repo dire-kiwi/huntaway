@@ -1,6 +1,6 @@
 import type { Task } from "../../api";
-// With its extension, for the unit tests (which run it in node).
-import { documentsOnly, taskLabels } from "../../api/labels.ts";
+// By the package's own path, for the unit tests (which run it in node, with no resolver for paths without extensions).
+import { documentsOnly, taskLabels } from "@huntaway/client/labels";
 
 /**
  * A task's documents are ready for the user once there is one and its agent isn't working on them (running or queued)
