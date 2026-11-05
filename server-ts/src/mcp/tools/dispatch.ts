@@ -14,7 +14,9 @@ import * as permissions from "../permissions.ts";
 import * as questions from "../questions.ts";
 import * as wait from "../wait.ts";
 import * as pr_watch from "../pr_watch.ts";
-import { err_str, now, reached } from "../../util.ts";
+import { err_str, new_id, now, reached } from "../../util.ts";
+import * as uplink from "../../hosts/uplink.ts";
+import type { ToolCall } from "../../hosts/proto.ts";
 import { te, msg, type Ctx } from "../tools.ts";
 import { local } from "./local.ts";
 import { project_key, resolve_task } from "./resolve.ts";
@@ -59,10 +61,33 @@ export async function handle_mcp(s: Shared, c: McpCall): Promise<any> {
 
 async function handle_mcp_result(s: Shared, c: McpCall): Promise<CallResult> {
   const call: Required<McpCall> = { run_id: c.run_id, call_id: c.call_id, tool: c.tool, args: c.args ?? null, task_fields: c.task_fields === true };
+  let task_id = "";
+  try {
+    task_id = db.get_run(s.db(), call.run_id)?.task_id ?? "";
+  } catch {}
+  const record: Record = { id: call.call_id, run_id: call.run_id, task_id, tool: call.tool, args: call.args };
+  return at_most_once(s, record, () => rerunnable(s, call), () => execute_mcp(s, call));
+}
+
+/** How a call is recorded in `mcp_calls`. */
+interface Record {
+  id: string;
+  run_id: string;
+  task_id: string;
+  tool: string;
+  args: any;
+}
+
+/**
+ * Run `exec` once for call `r.id`, however often it's delivered: a duplicate delivery while it runs waits for its result,
+ * and one after it ran gets the result recorded. A call that was executing when the server stopped runs again only if
+ * `rerun` says it can.
+ */
+async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: () => Promise<any>): Promise<CallResult> {
   // A duplicate delivery while the first is still executing waits for its result.
-  const waiters = s.calls_inflight.get(call.call_id);
+  const waiters = s.calls_inflight.get(r.id);
   if (waiters) return new Promise<CallResult>((resolve) => waiters.push(resolve));
-  s.calls_inflight.set(call.call_id, []);
+  s.calls_inflight.set(r.id, []);
   // The waiters on this call, once it's done (or cut short, which lets them go: a retry then finds it recorded as
   // executing but not done).
   let result: CallResult | null = null;
@@ -71,37 +96,33 @@ async function handle_mcp_result(s: Shared, c: McpCall): Promise<CallResult> {
     let before: { status: string; result: string | null; error: string | null } | undefined;
     let before_err: unknown = null;
     try {
-      before = db.one(s.db(), "SELECT status, result, error FROM mcp_calls WHERE id=?1", call.call_id);
+      before = db.one(s.db(), "SELECT status, result, error FROM mcp_calls WHERE id=?1", r.id);
     } catch (e) {
       before_err = e;
     }
-    const record = (status: string, r: CallResult | null) => {
-      const [res, err] = r === null ? [null, null] : "ok" in r ? [JSON.stringify(r.ok ?? null), null] : [null, r.err];
-      let task_id = "";
-      try {
-        task_id = db.get_run(s.db(), call.run_id)?.task_id ?? "";
-      } catch {}
+    const record = (status: string, res: CallResult | null) => {
+      const [out, err] = res === null ? [null, null] : "ok" in res ? [JSON.stringify(res.ok ?? null), null] : [null, res.err];
       db.run(
         s.db(),
         `INSERT INTO mcp_calls (id,run_id,task_id,tool,args,status,result,error,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
          ON CONFLICT(id) DO UPDATE SET status=?6, result=?7, error=?8`,
-        call.call_id,
-        call.run_id,
-        task_id,
-        call.tool,
-        JSON.stringify(call.args),
+        r.id,
+        r.run_id,
+        r.task_id,
+        r.tool,
+        JSON.stringify(r.args ?? null),
         status,
-        res,
+        out,
         err,
         now(),
       );
     };
-    const unrecorded = (e: unknown) => `The board couldn't record this ${call.tool} call, so it wasn't run (call it again): ${sql_error(e)}`;
-    const done = (r: CallResult) => {
+    const unrecorded = (e: unknown) => `The board couldn't record this ${r.tool} call, so it wasn't run (call it again): ${sql_error(e)}`;
+    const done = (res: CallResult) => {
       try {
-        record("done", r);
+        record("done", res);
       } catch (e) {
-        console.error(`recording an MCP call's result (call ${call.call_id}, tool ${call.tool}): ${err_str(e)}`);
+        console.error(`recording an MCP call's result (call ${r.id}, tool ${r.tool}): ${err_str(e)}`);
       }
     };
     if (before_err !== null) result = { err: unrecorded(before_err) };
@@ -114,11 +135,11 @@ async function handle_mcp_result(s: Shared, c: McpCall): Promise<CallResult> {
         } catch {}
         result = { ok: v };
       }
-    } else if (before && !rerunnable(s, call)) {
+    } else if (before && !rerun()) {
       // Executing when the server stopped.
       result = {
         err:
-          `This ${call.tool} call was interrupted (the board's server restarted while it ran), so it isn't run again: it may or may not have ` +
+          `This ${r.tool} call was interrupted (the board's server restarted while it ran), so it isn't run again: it may or may not have ` +
           "taken effect. Check (with get_task or list_tasks, say) before you call it again.",
       };
       done(result);
@@ -131,21 +152,21 @@ async function handle_mcp_result(s: Shared, c: McpCall): Promise<CallResult> {
         result = { err: unrecorded(e) };
       }
       if (recorded) {
-        let r: CallResult;
+        let res: CallResult;
         try {
-          r = { ok: await execute_mcp(s, call) };
+          res = { ok: await exec() };
         } catch (e) {
-          r = { err: err_str(e) };
+          res = { err: err_str(e) };
         }
         reached("mcp:executed");
-        done(r);
-        result = r;
+        done(res);
+        result = res;
       }
     }
     return result!;
   } finally {
-    const list = s.calls_inflight.get(call.call_id) ?? [];
-    s.calls_inflight.delete(call.call_id);
+    const list = s.calls_inflight.get(r.id) ?? [];
+    s.calls_inflight.delete(r.id);
     // Cut short (it threw), the duplicates are let go: a retry then finds the call recorded as executing.
     for (const w of list) w(result ?? { err: "call abandoned" });
   }
@@ -237,7 +258,7 @@ async function execute_mcp(s: Shared, c: Required<McpCall>): Promise<any> {
     case "wait":
       return wait_tool(s, c, args, run, task, profile);
     default: {
-      const ctx: Ctx = { profile_id: profile.id, profile_name: profile.name, task, call_id: c.call_id, task_fields: c.task_fields };
+      const ctx: Ctx = { profile_id: profile.id, profile_name: profile.name, task, call_id: c.call_id, task_fields: c.task_fields, from_host: null };
       return dispatch(s, ctx, c.tool, args);
     }
   }
@@ -245,7 +266,7 @@ async function execute_mcp(s: Shared, c: Required<McpCall>): Promise<any> {
 
 /** The `wait` tool. */
 async function wait_tool(s: Shared, c: Required<McpCall>, args: any, run: db.Run, task: Task, profile: db.Profile): Promise<any> {
-  const ctx: Ctx = { profile_id: profile.id, profile_name: profile.name, task, call_id: null, task_fields: c.task_fields };
+  const ctx: Ctx = { profile_id: profile.id, profile_name: profile.name, task, call_id: null, task_fields: c.task_fields, from_host: null };
   const watched: db.WaitTask[] = [];
   const resuming = wait.resuming(task, c.call_id);
   // A call retried after a restart watches what it started with, even tasks since deleted.
@@ -350,13 +371,67 @@ export async function handle_remote(s: Shared, tool: string, profile_name: strin
   if (!own && !profiles.some((p) => db.grants(p, profile_name))) {
     throw fail(`host ${s.host_name} has no profile named ${profile_name}, and no profile there lets its agents in`);
   }
-  const ctx: Ctx = { profile_id: own?.id ?? null, profile_name, task: null, call_id: null, task_fields };
+  const ctx: Ctx = { profile_id: own?.id ?? null, profile_name, task: null, call_id: null, task_fields, from_host: null };
   try {
     return await local(s, ctx, tool, args ?? null);
   } catch (e) {
     const err = te(e);
     throw fail(err.kind === "NotFound" ? `not found: ${err.message}` : err.message);
   }
+}
+
+/** The tools that act for the calling agent's own thread, which only its own host can run. */
+const THREAD_TOOLS = ["permission_prompt", "request_user_input", "submit_review", "wait"];
+
+/**
+ * A board tool call from an agent on linked host `host_id` that it passed up its link (see hosts/uplink.ts), once
+ * `hub::run_up_call` has let it in (the switch, and a profile whose assistant runs there): run here with the access of
+ * this host's profile of the caller's name, as `handle_remote` does, and on this host's other links, but never up again,
+ * nor back down to that host. At most once per call id. Throws an Error with the message for the caller.
+ */
+export async function handle_up_call(s: Shared, host_id: string, c: ToolCall): Promise<any> {
+  const [id, run_id] = [`up:${host_id}:${c.call_id}`, `up:${host_id}`];
+  const record: Record = { id, run_id, task_id: "", tool: c.tool, args: c.args ?? null };
+  const r = await at_most_once(s, record, () => RERUNNABLE.includes(c.tool), async () => {
+    if (THREAD_TOOLS.includes(c.tool)) throw fail(`${c.tool} only works on the host the agent runs on`);
+    const bad = mcp.check_args(c.tool, c.args ?? null);
+    if (bad !== null) throw fail(bad);
+    const profiles = db.list_profiles(s.db());
+    const own = profiles.find((p) => p.name === c.profile);
+    if (!own && !profiles.some((p) => db.grants(p, c.profile))) {
+      throw fail(`not found: ${s.host_name} has no profile named ${c.profile}, and no profile there lets its agents in`);
+    }
+    const ctx: Ctx = { profile_id: own?.id ?? null, profile_name: c.profile, task: null, call_id: id, task_fields: c.task_fields, from_host: host_id };
+    return dispatch(s, ctx, c.tool, c.args ?? null);
+  });
+  if ("err" in r) throw fail(r.err);
+  return r.ok;
+}
+
+/** The hubs `ctx`'s call may go up to: none for a call that came up a link itself. */
+function uplinks(s: Shared, ctx: Ctx): uplink.Uplink[] {
+  return ctx.from_host ? [] : uplink.hubs(s);
+}
+
+/** The links `ctx`'s call may go down to: not back to the host it came up from. */
+function links_for(s: Shared, ctx: Ctx): hub.LinkHandle[] {
+  return hub.connected_links(s).filter((l) => !ctx.from_host || l.id !== ctx.from_host);
+}
+
+/** The id a call goes up a link with, by which the hub runs it at most once. */
+function up_call_id(ctx: Ctx): string {
+  return ctx.call_id ?? new_id();
+}
+
+/** Why hubs that said no, by name with their reasons, might have had it. */
+function off_note(s: Shared, off: Array<[string, string | null]>): string {
+  const why = off.map(
+    ([hub_name, why]) =>
+      why ??
+      `${hub_name} doesn't let this host's agents use its board; the user can switch on "Let this host's agents use this board" for ${s.host_name} ` +
+        "in Settings → Hosts there",
+  );
+  return why.length ? ` (${why.join("; ")})` : "";
 }
 
 /** Run a board tool here, falling back to (or fanning out over) linked hosts. Throws an Error with the message. */
@@ -366,10 +441,19 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
   if (h) {
     if (h !== s.host_name && h !== s.host_id) {
       const link = hub.find_link(s, h);
-      if (!link) throw fail(`no linked host named ${h}`);
-      const old = too_old(link.name, link.version.api_version, tool, args);
-      if (old !== null) throw fail(old);
-      return call_linked(s, link, tool, ctx.profile_name, args, ctx.task_fields);
+      if (link) {
+        const old = too_old(link.name, link.version.api_version, tool, args);
+        if (old !== null) throw fail(old);
+        return call_linked(s, link, tool, ctx.profile_name, args, ctx.task_fields);
+      }
+      // A hub this host is linked to, or one of its hosts: it goes there with `host` as it is.
+      const ups = uplinks(s, ctx);
+      const up = ups.find((u) => u.hub_id === h || u.hub_name.toLowerCase() === h.toLowerCase()) ?? ups[0];
+      if (!up) throw fail(`no linked host named ${h}`);
+      const o = await up.call(up_call_id(ctx), tool, ctx.profile_name, args, ctx.task_fields);
+      if (o.kind === "Ok") return o.value;
+      if (o.kind === "Err") throw fail(o.error);
+      throw fail(`no linked host named ${h}${off_note(s, [[up.hub_name, o.why]])}`);
     }
     try {
       return await local(s, ctx, tool, args);
@@ -390,7 +474,7 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
       if (err.kind !== "NotFound") throw fail(err.message);
       missing = err.message;
     }
-    for (const link of hub.connected_links(s)) {
+    for (const link of links_for(s, ctx)) {
       try {
         const v = await hub.call_tool(s, link, tool, ctx.profile_name, args, ctx.task_fields);
         if (Array.isArray(v)) {
@@ -400,6 +484,16 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
       } catch (e) {
         if (process.env.IA_DEBUG) console.error(`${tool} on ${link.name}: ${err_str(e)}`);
       }
+    }
+    // A hub's list covers its other hosts, which may be ours too: each item once.
+    const call_id = up_call_id(ctx);
+    for (const up of uplinks(s, ctx)) {
+      const o = await up.call(call_id, tool, ctx.profile_name, args, ctx.task_fields);
+      if (o.kind === "Ok" && Array.isArray(o.value)) {
+        const seen = new Set(all.map((i) => i?.id).filter((id) => typeof id === "string"));
+        all.push(...o.value.filter((i: any) => typeof i?.id !== "string" || !seen.has(i.id)));
+        missing = null;
+      } else if (o.kind === "Err" && process.env.IA_DEBUG) console.error(`${tool} on ${up.hub_name}: ${o.error}`);
     }
     if (missing !== null && !all.length) throw fail(`not found: ${missing}`);
     return all;
@@ -412,7 +506,7 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
     // Why a host that has it couldn't do it (e.g. a change that needs approval), rather than "not found".
     let refused: string | null = null;
     const skipped: string[] = [];
-    for (const link of hub.connected_links(s)) {
+    for (const link of links_for(s, ctx)) {
       if (too_old(link.name, link.version.api_version, tool, args) !== null) {
         skipped.push(link.name);
         continue;
@@ -424,9 +518,18 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
         if (!m.startsWith("not found")) refused ??= m;
       }
     }
+    // Then the hubs that take our calls, which look on their own boards and their other hosts.
+    const off: Array<[string, string | null]> = [];
+    for (const up of uplinks(s, ctx)) {
+      const o = await up.call(up_call_id(ctx), tool, ctx.profile_name, args, ctx.task_fields);
+      if (o.kind === "Ok") return o.value;
+      if (o.kind === "Off") off.push([up.hub_name, o.why]);
+      else if (!o.error.startsWith("not found")) refused ??= o.error;
+    }
+    const note = off_note(s, off);
     if (refused !== null) throw fail(refused);
-    if (!skipped.length) throw fail(`not found: ${err.message}`);
-    throw fail(`not found: ${err.message} (${skipped.join(", ")} run an older build that can't do this, so they weren't asked)`);
+    if (!skipped.length) throw fail(`not found: ${err.message}${note}`);
+    throw fail(`not found: ${err.message} (${skipped.join(", ")} run an older build that can't do this, so they weren't asked)${note}`);
   }
 }
 

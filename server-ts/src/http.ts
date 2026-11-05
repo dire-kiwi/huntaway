@@ -249,29 +249,38 @@ export function parseBody(raw: Buffer): any {
 }
 
 /**
- * A request's body, up to `limit` bytes. A longer one is a 413, as axum's limit is: the rest of it is read and dropped
- * rather than the connection reset, which the client would see as the server going away before it could read the answer
- * (a hub updating a host heard "unreachable: read ECONNRESET", HA-185). The server closes the connection after the
- * answer (see serve.ts), so a client can't go on sending.
+ * A request's body, up to `limit` bytes. A longer one is a 413, as axum's limit is, and the connection is closed after
+ * the answer (see serve.ts). The rest of the body is read and dropped before the 413 rather than the connection reset,
+ * which the client would see as the server going away before it could read the answer (a hub updating a host heard
+ * "unreachable: read ECONNRESET", HA-185). Nor is the answer sent as soon as the limit is passed: closing the
+ * connection while the client was still writing reset it all the same, so a client that writes its whole body before
+ * reading (Node's `fetch` and `http.request` both may) got EPIPE rather than the 413 (HA-233). A client that is still
+ * sending `drain_ms` after the limit was passed gets the 413 then, and may still miss it.
  */
-export function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+export function readBody(req: IncomingMessage, limit: number, drain_ms = 60_000): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
-    let over = false;
+    let over: NodeJS.Timeout | null = null;
+    const too_long = () => {
+      clearTimeout(over!);
+      reject(new ApiError(413, "length limit exceeded"));
+    };
     req.on("data", (c: Buffer) => {
       if (over) return;
       size += c.length;
       if (size > limit) {
-        over = true;
         chunks.length = 0;
-        reject(new ApiError(413, "length limit exceeded"));
+        over = setTimeout(too_long, drain_ms).unref();
         return;
       }
       chunks.push(c);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
+    req.on("end", () => (over ? too_long() : resolve(Buffer.concat(chunks))));
+    req.on("error", (e) => {
+      if (over) clearTimeout(over);
+      reject(e);
+    });
   });
 }
 

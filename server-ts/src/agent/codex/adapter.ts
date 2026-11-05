@@ -13,6 +13,7 @@ import * as permissions from "../../mcp/permissions.ts";
 import * as mcp from "../../mcp.ts";
 import * as agent_tools from "../agent_tools.ts";
 import * as approval_rules from "../approval_rules.ts";
+import * as google from "../assistant/google.ts";
 import { context, err_str, expand_tilde } from "../../util.ts";
 
 export { Responder } from "./rpc.ts";
@@ -65,6 +66,9 @@ export function mcp_server_config(name: string, c: any, approved: boolean, disab
   } else if (name === gh_mcp.SERVER_NAME) {
     // As can gh.
     out.tool_timeout_sec = 600;
+  } else if (google.is_google(name)) {
+    // uvx fetches workspace-mcp the first time, which takes longer than Codex's 10s default for a start.
+    out.startup_timeout_sec = 120;
   }
   if (approved || name === runner.MCP_SERVER_NAME) out.default_tools_approval_mode = "approve";
   if (name === runner.MCP_SERVER_NAME && review_waits) {

@@ -4,6 +4,7 @@ import * as db from "../../db.ts";
 import { ApiError, Reply, type Req } from "../../http.ts";
 import * as api from "../../api.ts";
 import * as runner from "../../agent/runner.ts";
+import { status_line as google_status_line } from "../../agent/assistant/google.ts";
 import type { Shared } from "../../state.ts";
 import { background, err_str, now as util_now, same_secret } from "../../util.ts";
 import {
@@ -69,7 +70,10 @@ export async function run_action(s: Shared, a: Automation, run_id: string, sourc
   let result: RunResult;
   try {
     const precheck = await guards(s, a, source, now);
-    const vars: Vars = { automation: a, source, delivery, count, now, precheck };
+    // Where Google stands for a routine that asks (see assistant/google.ts), as it starts.
+    const google =
+      a.action.kind === "message_assistant" && is_routine(a) && a.action.message.includes("{{google}}") ? google_status_line(s, a.profile_id) : null;
+    const vars: Vars = { automation: a, source, delivery, count, now, precheck, google };
     result = act(s, a, run_id, vars, ev);
   } catch (e) {
     result = is_outcome(e) ? e : { err: [null, message(e)] };

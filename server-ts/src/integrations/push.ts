@@ -185,7 +185,7 @@ export interface Events {
   review: boolean;
   merge: boolean;
   done: boolean;
-  /** Whose permission prompts it gets, with Allow and Deny (API 112). */
+  /** Whose permission prompts it gets, with Allow and Deny (API 115). */
   prompts: Prompts;
   /** The assistant finished a reply. Off unless chosen, also for the subscriptions from before there was a choice. */
   replies: boolean;

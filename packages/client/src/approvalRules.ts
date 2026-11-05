@@ -1,10 +1,10 @@
 import { enc, type Http } from "./http";
 import { type Host, hostSupports } from "./hosts";
 
-/** Approval rules (API 112): what a profile's assistant may do (allow), asks first (ask) or never does, per tool or MCP
+/** Approval rules (API 115): what a profile's assistant may do (allow), asks first (ask) or never does, per tool or MCP
  *  server, whatever its thread's mode; prompts from routine runs expire; and an action log of the calls the rules asked
  *  about or turned away (see server-ts/src/agent/approval_rules.ts). */
-export const APPROVAL_RULES_API = 112;
+export const APPROVAL_RULES_API = 115;
 
 export const hasApprovalRules = (h: Host | undefined) => hostSupports(h, APPROVAL_RULES_API);
 

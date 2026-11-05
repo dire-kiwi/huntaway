@@ -40,6 +40,9 @@ async function main() {
       return process.exit(await (await import("./mcp/gh_mcp.ts")).gh_run(rest));
     case "codex-run":
       return (await import("./agent/codex.ts")).run_adapter(rest[0]);
+    case "google-auth":
+      // Sign in to Google for the assistant's Google server, on a headless host (see agent/assistant/google/consent.ts).
+      return (await import("./agent/assistant/google/consent.ts")).run(rest);
     case "token": {
       const { default_data_dir, load_or_create_token } = await import("./serve.ts");
       let dir = process.env.IA_DATA_DIR || null;
@@ -56,6 +59,11 @@ async function main() {
     }
     case "title-check":
       return (await import("./agent/title.ts")).check_cli(rest);
+    case "threads-import": {
+      const report = await import("./threads/report.ts");
+      report.run(report.parse_args(rest));
+      return;
+    }
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
     case "--version":
@@ -65,7 +73,7 @@ async function main() {
     case "--help":
     case "-h":
     case "help":
-      console.log("Usage: huntaway [serve|mcp|gh-mcp|token] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see server-ts/PORTING.md).");
+      console.log("Usage: huntaway [serve|mcp|gh-mcp|token|google-auth] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see server-ts/PORTING.md).");
       return;
     default:
       console.error(`error: unrecognized subcommand '${cmd}'`);

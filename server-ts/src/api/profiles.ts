@@ -12,6 +12,7 @@ import * as github from "../integrations/github.ts";
 import * as asana from "../integrations/asana.ts";
 import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as review from "../review.ts";
+import * as assistant from "../agent/assistant.ts";
 import { char_count, def_bool, def_value, json_map, opt_str, opt_strings, opt_value, req_str } from "./extract.ts";
 import { ascii_lower } from "./new_task.ts";
 
@@ -47,6 +48,8 @@ export async function create_profile(s: AppState, r: Req) {
     merge_approval: def_bool(body, "merge_approval"),
     /** See `db::Profile::require_pr_approval` (API 95). */
     require_pr_approval: def_bool(body, "require_pr_approval"),
+    /** See `db::Profile::assistant_host` (API 112). */
+    assistant_host: def_value(body, "assistant_host"),
   };
   const c = s.db();
   const name = check_profile_name(c, null, b.name);
@@ -60,11 +63,13 @@ export async function create_profile(s: AppState, r: Req) {
   const reviewers = reviewers_value(c, b.reviewers, true, []);
   const given = b.summarizers === null ? legacy_summarizer([], b.summarizer) : b.summarizers;
   const summarizers = summarizers_value(c, given, true, []);
+  const assistant_host = assistant.check_host(s, b.assistant_host);
   let p = db.insert_profile(c, name, ids, b.default_model);
   const fields: Array<[string, any]> = [["github_account", github_account], ["clone_dir", clone_dir], ["asana_enabled", b.asana_enabled]];
   fields.push(["limit_wait", b.limit_wait], ["limit_switch", b.limit_switch], ["reviewers", reviewers], ["summarizer", summarizer_mirror(summarizers)], ["summarizers", summarizers]);
   fields.push(["merge_approval", b.merge_approval]);
   fields.push(["require_pr_approval", b.require_pr_approval]);
+  fields.push(["assistant_host", assistant_host]);
   if (access !== null) fields.push(["agent_access", access]);
   const updated = db.update_profile(c, p.id, fields);
   if (!updated) throw ApiError.not_found("profile");
@@ -82,10 +87,12 @@ export async function update_profile(s: AppState, r: Req) {
   if (!db.get_profile(s.db(), id)) throw ApiError.not_found("profile");
   // Checked with Asana before the database is locked.
   const asana_fields = Object.hasOwn(b, "asana_token") ? await check_asana_token(b.asana_token) : null;
+  const assistant_host = Object.hasOwn(b, "assistant_host") ? assistant.check_host(s, b.assistant_host) : undefined;
   const c = s.db();
   const current = db.get_profile(c, id);
   if (!current) throw ApiError.not_found("profile");
   const fields = pick(b, ["default_model"]);
+  if (assistant_host !== undefined) fields.push(["assistant_host", assistant_host]);
   if (Object.hasOwn(b, "name")) {
     // Its name unchanged passes even if another profile has it in another case (allowed before HA-37), since the
     // profile form sends it with every save.

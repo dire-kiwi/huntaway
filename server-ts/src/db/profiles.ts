@@ -1,8 +1,10 @@
 // Port of server/src/db/profiles.rs: profiles (one per Claude login) and Claude configs (the config folders profiles
 // and tasks run with).
+import { existsSync } from "node:fs";
 import { all, hidden, json_list, one, run, update_generic, value, type Conn } from "../db.ts";
-import { new_id, now } from "../util.ts";
+import { expand_tilde, new_id, now } from "../util.ts";
 import { get_project, type Project } from "./projects.ts";
+import { session_config_dir } from "./runs.ts";
 import { Reviewer_default, Reviewer_from_json, json_opt, json_vec, type Reviewer } from "./task_data.ts";
 import type { Task } from "./tasks.ts";
 
@@ -156,6 +158,8 @@ export interface Profile {
    * projects can say otherwise.
    */
   require_pr_approval: boolean;
+  /** The linked host its assistant runs on (API 112, a link id; see agent/assistant.ts). Null for this host. */
+  assistant_host: string | null;
   created_at: string;
 }
 
@@ -185,6 +189,7 @@ export function Profile_from_row(r: any): Profile {
     summarizer: json_opt(r.summarizer, Reviewer_from_json),
     merge_approval: !!r.merge_approval,
     require_pr_approval: !!r.require_pr_approval,
+    assistant_host: r.assistant_host ?? null,
     created_at: r.created_at,
   });
   return p;
@@ -342,10 +347,20 @@ export function task_claude_config(c: Conn, task: Task): ClaudeConfig | null {
   return available_configs(c, task.profile_id, project)[0] ?? null;
 }
 
-/** The CLAUDE_CONFIG_DIR (or, for Codex, CODEX_HOME) for a thread, if it isn't the agent's default. */
+/**
+ * The CLAUDE_CONFIG_DIR (or, for Codex, CODEX_HOME) for a thread, if it isn't the agent's default. A thread that has a
+ * conversation goes on in the folder it started in, as its config's folder may have changed since: the conversation is
+ * kept there, and in another folder the agent can't find it ("No conversation found"). Unless that folder is gone (moved
+ * to the config's new one, say), or isn't known (a conversation from before runs kept their folder).
+ */
 export function task_config_dir(c: Conn, task: Task): string | null {
   const d = task_claude_config(c, task)?.config_dir;
-  return d != null && d.trim() !== "" ? d : null;
+  const current = d != null && d.trim() !== "" ? d : null;
+  if (task.session_id == null) return current;
+  const was = session_config_dir(c, task.id, task.session_id)?.trim();
+  if (was === undefined || was === (current ?? "")) return current;
+  if (was === "") return null;
+  return existsSync(expand_tilde(was)) ? was : current;
 }
 
 /** Whether a thread runs on Codex rather than Claude Code (see agent/codex.rs). */
@@ -357,6 +372,7 @@ export function task_is_codex(c: Conn, task: Task): boolean {
 const PROFILE_COLUMNS = [
   "name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled",
   "limit_wait", "limit_switch", "reviewers", "summarizer", "summarizers", "merge_approval", "require_pr_approval",
+  "assistant_host",
 ];
 
 export function update_profile(c: Conn, id: string, fields: Array<[string, any]>): Profile | null {

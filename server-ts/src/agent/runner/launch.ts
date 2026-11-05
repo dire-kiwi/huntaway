@@ -390,6 +390,8 @@ async function started(state: Shared, run: Run, l: runs.Launch, check: () => voi
   const task_id = run.task_id;
   // Not if it was stopped meanwhile: an agent started now would work unseen.
   check();
+  // Where its conversation is kept, if it starts one (see db.task_config_dir).
+  db.set_run_config_dir(state.db(), run.id, l.config_dir);
   await runs.start(state, l);
   // Stopped while ia-shim started: the launch's end reaps it (see runner::launch_ended).
   check();
