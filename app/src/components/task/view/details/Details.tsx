@@ -1,7 +1,8 @@
 import clsx from "clsx";
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, CHECKS_API, documentsOnly, hostSupports, isAssistant, isScratch, LABELS_API, START_FROM_API, taskLabels, type Task } from "../../../../api";
+import { api, CHECKS_API, documentsOnly, hasBrief, hostSupports, isAssistant, isScratch, LABELS_API, START_FROM_API, taskLabels, type Task } from "../../../../api";
+import { GoogleCard } from "../../GoogleCard";
 import { isGroupTask, useProject, useStore } from "../../../../store";
 import { Dependencies } from "../../../board/Dependencies";
 import { useConfirmDone } from "../../../board/ConfirmDone";
@@ -105,6 +106,12 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
               </Row>
             )}
           </div>
+        </Section>
+      )}
+
+      {assistant && hasBrief(host) && (
+        <Section title="Google">
+          <GoogleCard assistant={task} />
         </Section>
       )}
 

@@ -14,7 +14,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readF
 import { STATUS_CODES } from "node:http";
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
-import { context } from "../../../util.ts";
+import { background, context } from "../../../util.ts";
 import { CONSENT_PORT, SCOPES, credentials_file, default_client_secret, default_credentials_dir } from "../google.ts";
 
 const AUTH_URI = "https://accounts.google.com/o/oauth2/auth";
@@ -252,7 +252,8 @@ function wait_for_code(listener: Server, state: string): Promise<string> {
     let settled = false;
     listener.on("connection", (sock) => {
       sock.on("error", () => {});
-      void first_bytes(sock).then((text) => {
+      const answer = async () => {
+        const text = await first_bytes(sock);
         const line = text.split(/\r?\n/)[0] ?? "";
         const cb = read_callback(line, state);
         let status: string, body: string;
@@ -266,7 +267,8 @@ function wait_for_code(listener: Server, state: string): Promise<string> {
         settled = true;
         if (cb.kind === "code") resolve(cb.code);
         else reject(new Error(`Google said: ${cb.error}`));
-      });
+      };
+      background("google-auth: answering the browser", answer());
     });
   });
 }

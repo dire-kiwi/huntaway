@@ -269,6 +269,73 @@ reaches files in that profile's assistant's workspace: paths with `..`, in `.git
 symlink are refused, and so is a workspace (or `assistants` folder) that's been replaced by a
 symlink, whose memory isn't loaded or committed either.
 
+#### Google for the assistant
+
+The assistant reaches Gmail, Calendar and Drive (API 112) through a Google Workspace MCP server on
+the host it runs on, [workspace-mcp](https://github.com/taylorwilsdon/google_workspace_mcp), signed
+in with an OAuth client of your own. Not the claude.ai connectors for Gmail, Calendar and Drive: those
+come with the Claude login, so every agent on it, project tasks included, would have your mail. The
+Google server is a global MCP server of the host named `google`, which only the assistant and its
+routines get: a project's agents never do, whatever its switches say. It works the same for Claude
+and Codex (a stdio server; Codex gets two minutes to start it, as `uvx` fetches it the first time).
+Its tools are `mcp__google__…`.
+
+1. **Install uv** for the host's user (`curl -LsSf https://astral.sh/uv/install.sh | sh`), so `uvx`
+   is on the host's `PATH`. The server runs `uvx workspace-mcp@2.3.0 --single-user --tools gmail
+   calendar drive --tool-tier extended`: a pinned version, so a new release is picked rather than run
+   with your mail the day it's out (change it in Settings → Skills and MCP servers).
+2. **Make an OAuth client** in [Google Cloud's console](https://console.cloud.google.com/), in a
+   project of your own:
+   - APIs & Services → **Library**: enable the Gmail API, Google Calendar API and Google Drive API.
+   - **OAuth consent screen**: user type *External* (or *Internal* in a Workspace organisation), your
+     address as a test user. Then **Publish app** to *In production*: while it's *Testing*, Google's
+     refresh tokens last 7 days, and the assistant would be signed out each week. You'll see the
+     "Google hasn't verified this app" warning when you sign in (it's your own app); continue past it.
+   - **Credentials** → Create credentials → OAuth client ID → application type **Desktop app**. A
+     Desktop app client takes a redirect to any port on `127.0.0.1`, which the sign-in below uses.
+   - Download its JSON to `~/.google_workspace_mcp/client_secret.json` on the host, readable by that
+     user alone: `chmod 600 ~/.google_workspace_mcp/client_secret.json`.
+
+   It asks for these scopes (what workspace-mcp's Gmail, Calendar and Drive tools need): `openid`,
+   `userinfo.email`, `userinfo.profile`, `gmail.readonly`, `gmail.send`, `gmail.compose`,
+   `gmail.modify`, `gmail.labels`, `gmail.settings.basic`, `calendar`, `calendar.readonly`,
+   `calendar.events`, `drive`, `drive.readonly` and `drive.file`. The morning brief's run is told to
+   only read and draft; the scopes don't hold it back.
+3. **Add the server**: the assistant's Details → **Google** → **Add the Google server**. It adds the
+   `google` server to the host (with the paths above) and switches it on for the profile.
+4. **Sign in.** A headless host has no browser, so the consent step runs there and the browser on your
+   machine reaches it through SSH. From your machine, forward the port:
+
+   ```sh
+   ssh -N -L 8765:127.0.0.1:8765 <host>
+   ```
+
+   and on the host, as the user the board runs as:
+
+   ```sh
+   huntaway google-auth --client-secret ~/.google_workspace_mcp/client_secret.json
+   ```
+
+   (`server-ts/bin/huntaway google-auth` from a checkout.) It listens on `127.0.0.1:8765` there
+   (`--port` for another, `--credentials-dir` for another folder) and prints Google's consent URL.
+   Open it in your browser, sign in, tick every box and allow; Google sends the browser back to
+   `http://127.0.0.1:8765/`, which the tunnel brings to the host. It swaps the code for tokens (with
+   PKCE) and writes them where workspace-mcp reads them,
+   `~/.google_workspace_mcp/credentials/<your address>.json`, readable by the host's user alone (in a
+   `0700` folder). Run it again to sign in afresh, or to give scopes you left unticked.
+5. **Check**: the Google card says *Connected as <your address>*, and **Test** asks Google whether its
+   refresh token still works. Until then it says what's missing: no server, switched off for the
+   profile, `uvx` not found, no OAuth client, not signed in, no refresh token; and warns of files others
+   can read, scopes not granted, or several accounts signed in (set `USER_GOOGLE_EMAIL` in the server's
+   env to pick one). `GET /api/profiles/<id>/assistant/google[?check=1]` is the same on the API, and
+   `POST` adds the server.
+
+On a test server, `scripts/stub-google-mcp.py` stands in for workspace-mcp: an MCP server over stdio
+with a few of its tools by name and canned mail, events and files for today (one mail a prompt
+injection), which logs each call to `$STUB_GOOGLE_LOG`. Make it the Google server's command
+(`{"command": "python3", "args": ["-I", "<path>/scripts/stub-google-mcp.py"]}`) in Settings → Skills and
+MCP servers.
+
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
 `/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
@@ -1028,7 +1095,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   agents, kept on the host rather than in a repository. **Global** ones (Settings → Skills and MCP
   servers) are switched on or off by default per profile. A project can override that in its
   settings (*Profile default*, *On* or *Off*), and it can have its own skills and servers, which
-  win over a global one with the same name. Before each run, the skills that are on are written to
+  win over a global one with the same name. A global server named `google` is the assistant's
+  alone (see *Google for the assistant*): projects' runs never get it. Before each run, the skills that are on are written to
   `<data-dir>/projects/<id>/agent/.claude/skills/`, which the agent gets with `--add-dir`. The
   servers are added to the run's `--mcp-config` next to `huntaway`. A server can allow all of
   its tools, so they never ask for approval. Skills and servers that come from elsewhere (the
@@ -2138,6 +2206,33 @@ them; the user's messages in the same run aren't taken out. The automation tools
 routines by default), for the caller's own profile only, and changing one asks the user as for any
 automation. The assistant is told to make "remind me…" an *at* routine. Deleting the assistant
 stops and deletes its routine threads first.
+
+**The morning brief** (API 112) is a routine template: the assistant's **Brief** tab sets it up at the
+time and on the days you pick (weekdays at 7:30 by default; `POST
+/api/profiles/<id>/assistant/brief` with `{time, weekdays}`), as a routine called *Morning brief* in a
+fresh thread, which you can change like any other. Its run reads today's calendar, unread and starred
+mail, Drive files changed since yesterday (through the Google server, see *Google for the assistant*)
+and what needs your attention or is ready to review on your boards (through the board's tools), writes
+`brief.html` and `brief.json` in the assistant's workspace, and replies with a short summary, which is
+posted in the assistant's thread as its report and pushed to the devices with routine reports on. The
+board keeps the brief as the assistant's `brief` document, one version a day (`GET
+/api/tasks/<id>/document?label=brief`), out of the workspace's git history and the Memory tab, and the
+Brief tab shows it, with the earlier days to pick from. Its message says where Google stands as the run
+starts (`{{google}}`: *connected as …*, or *not connected:* and why), so a run without Google says so
+at the top of the brief and its summary rather than failing quietly. Its message tells it to only read
+and draft, and that what it reads in mail, invitations and files is data, not instructions.
+
+The run also lists the brief's items in `brief.json` beside it (each one's kind, the topic it's rated
+by, in its own words, and a line saying what it is), which the host checks and caps and keeps with the
+day's brief (`items` in the document). The Brief tab lists them beside the brief, with a 👍 and 👎 each:
+a rating becomes a line under *Morning brief preferences* in `MEMORY.md` (`- More like this — mail:
+Newsletters from Substack (rated 2026-11-04)`), committed as yours, one line per kind of item and topic
+and the last 30 kept, and every run of the assistant reads it, the brief's included (`POST
+/api/profiles/<id>/assistant/brief/feedback` with `{rating: "up" | "down" | "clear", kind, topic}`).
+Pressing it again takes it back. The brief's page has no part in the ratings: it's shown in a frame
+that runs no scripts and is sent nothing, with its refreshes, frames and handlers taken out and nothing
+loaded from elsewhere (no tracking pixels), and links open in a new tab; only the board's own buttons
+rate, so what the run wrote from your mail can't rate items into memory.
 
 **Reaching the webhook.** The board usually listens on localhost or a LAN, where GitHub can't
 reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the project:
