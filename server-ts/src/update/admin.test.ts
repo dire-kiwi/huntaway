@@ -478,8 +478,10 @@ test("bin_huntaway_gives_up_after_five_crashes_in_a_row", async () => {
 });
 
 test("bin_huntaway_starts_a_server_that_aborted_again_but_not_one_killed_or_stopped", async () => {
-  // SIGABRT is how node ends when it runs out of memory.
-  const aborted = await crashing_node('kill -ABRT $$');
+  // SIGABRT is how node ends when it runs out of memory. The shell's `wait` gives 134 (128 + 6) for that as it does
+  // for `exit 134`, which the stand-in uses rather than aborting: a real SIGABRT dumped a core of sh for each of the
+  // six runs, which systemd-coredump keeps and lists as a crash of bash (HA-231), even with `ulimit -c 0`.
+  const aborted = await crashing_node("exit 134");
   assert.equal(aborted.runs, 6, aborted.log);
   for (const sig of ["KILL", "TERM"]) {
     const r = await crashing_node(`kill -${sig} $$`);
