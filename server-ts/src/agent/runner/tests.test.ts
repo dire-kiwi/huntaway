@@ -22,6 +22,7 @@ import * as analytics from "../../analytics.ts";
 import * as api from "../../api.ts";
 import * as review from "../../review.ts";
 import * as summary from "../../review/summary.ts";
+import * as automations from "../../integrations/automations.ts";
 import { ApiError } from "../../http.ts";
 import type { Req } from "../../http.ts";
 import type { Github } from "../../git/worktree.ts";
@@ -33,6 +34,7 @@ import {
   load_active,
   start_run,
   stop,
+  work_dir,
   // access
   approves_own_waits,
   board_tools_allowed,
@@ -57,6 +59,7 @@ import {
   // prompt
   preview,
   profiles_note,
+  key_prefix,
   start_prompt,
   system_prompt,
   // queue
@@ -68,6 +71,7 @@ import {
   writes_documents,
   // send
   compact,
+  send_fixes,
   send_from_agent,
   send_message,
   start_unblocked,
@@ -624,7 +628,7 @@ test("messages_the_agent_never_took_in_go_to_the_next_run", () => {
   assert.deepEqual(t.steering, []);
   assert.equal(t.queued_message, "first\n\nsecond\n\nthird");
   // Not all of it came from other agents, so it counts as the user's.
-  assert.deepEqual(db.take_queued(state.db(), task.id), { text: "first\n\nsecond\n\nthird", from_agent: false, user_text: "first\n\nthird" });
+  assert.deepEqual(db.take_queued(state.db(), task.id), { text: "first\n\nsecond\n\nthird", from_agent: false, user_text: "first\n\nthird", routine: false, routine_runs: [] });
 });
 
 test("the_users_messages_retitle_the_task", async () => {
@@ -1202,6 +1206,27 @@ test("the_assistant_is_told_what_it_is", () => {
   // Its first prompt is the user's message, not a task to start on.
   assert.equal(start_prompt(task, null, " What's on today?\n"), "What's on today?");
   assert.ok(!start_prompt(task, null, "Hi").includes(prompts.DEFAULT_START));
+});
+
+test("a_routine_thread_is_told_what_it_is_and_works_in_the_assistants_workspace", () => {
+  const s = testing.state();
+  const p = db.insert_profile(s.db(), "p", [], null);
+  const a = assistant.get_or_create(s, p.id);
+  const task = db.insert_routine_task(s.db(), a, "Inbox");
+  const text = system_prompt(task, null, null, [], [], null, true);
+  assert.ok(text.includes(`thread A-2 (id ${task.id})`) && text.includes(`(id ${a.id})`), text);
+  assert.ok(text.includes(`(assistants/${a.id} in the board's data dir)`), text);
+  assert.ok(text.includes("NO_REPLY") && text.includes("posted to your"), text);
+  assert_paragraphs(text);
+  // The assistant is told about routines, and to make a reminder an `at` one.
+  const told = system_prompt(a, null, null, [], [], null, true);
+  assert.ok(told.includes("`at` routine") && told.includes("message_assistant"), told);
+  assert_paragraphs(told);
+  // Its first prompt is the routine's as it's given.
+  assert.equal(start_prompt(task, null, "Check the inbox.\n"), "Check the inbox.");
+  // Claude and Codex runs both work where the assistant does.
+  assert.equal(work_dir(s, task), work_dir(s, a));
+  assert.equal(key_prefix(task, null), "A");
 });
 
 test("previews_what_a_new_thread_in_a_project_is_told", async () => {
@@ -2211,4 +2236,266 @@ test("a_run_keeps_the_effort_its_agent_was_given", () => {
   record_effort(state, a.id, claude_effort("minimal"));
   record_effort(state, b.id, null);
   assert.deepEqual([effort(a.id), effort(b.id)], ["low", ""]);
+});
+
+/**
+ * A profile's assistant whose agent is running `run`, which takes messages as it works, and a thread-mode routine of the
+ * profile with a budget of $1 a day.
+ */
+function assistant_running_with_a_routine(): [Shared, Task, Run, automations.Automation] {
+  const state = testing.state();
+  const p = db.insert_profile(state.db(), "p", [], null);
+  const a = assistant.get_or_create(state, p.id);
+  const run = db.insert_run(state.db(), a.id, "prompt");
+  db.run(state.db(), "UPDATE runs SET status='running' WHERE id=?1", run.id);
+  const dir = runs.run_dir(state, run.id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "out.jsonl"), "");
+  writeFileSync(join(dir, "input.jsonl"), "");
+  state.runs.set(a.id, { run_id: run.id, cancel: null });
+  const t = state.update_task(a.id, [["running", true]])!;
+  const b = {
+    name: "Ping",
+    trigger: { kind: "interval", every_minutes: 60 },
+    budget_usd: 1.0,
+    action: { kind: "message_assistant", mode: "thread", message: "ping" },
+  };
+  const routine = automations.create_routine(state, p.id, b);
+  return [state, t, db.get_run(state.db(), run.id)!, routine];
+}
+
+/** The automation run's agent run (whose cost it's charged), and its cost once that's ended. */
+function charged_to(state: Shared, automation_run: string): [string | null, number | null] {
+  const r = db.one(state.db(), "SELECT agent_run_id, cost_usd FROM automation_runs WHERE id=?1", automation_run)!;
+  return [r.agent_run_id ?? null, r.cost_usd ?? null];
+}
+
+/** The automation's scheduled run, now: over its budget, it's skipped. */
+async function next_scheduled_is_over_budget(state: Shared, a: automations.Automation) {
+  const now = Date.now();
+  db.run(state.db(), "UPDATE automations SET next_run_at=?2 WHERE id=?1", a.id, new Date(now - 1000).toISOString());
+  await automations.tick(state, now);
+  const r = automations.runs(state.db(), a.id, 1)[0];
+  assert.deepEqual([r.source, r.status], ["schedule", "skipped"], String(r.detail));
+  assert.ok(r.detail?.startsWith("Skipped: over budget"), String(r.detail));
+}
+
+/** Waits (up to two seconds) for `f`. */
+async function eventually(f: () => boolean) {
+  for (let i = 0; i < 200 && !f(); i++) await sleep(10);
+}
+
+// HA-122 review: a thread-mode routine's message steered into the assistant's run is charged to the run that takes it in.
+test("a_routines_message_steered_into_the_assistants_run_is_charged_its_cost", async () => {
+  const [state, a, run, routine] = assistant_running_with_a_routine();
+  const r = await automations.run_now(state, routine, {});
+  const steer = reload(state, a.id).steering[0];
+  assert.deepEqual(steer.routine_runs, [r.id]);
+  // Not until the agent takes it in.
+  assert.deepEqual(charged_to(state, r.id), [null, null]);
+  output(state, run, [replay(steer.id, steer.text)]);
+  assert.equal(charged_to(state, r.id)[0], run.id);
+  db.run(state.db(), "UPDATE runs SET cost_usd=1.5 WHERE id=?1", run.id);
+  finish(state, run.id, "Ok");
+  assert.deepEqual(charged_to(state, r.id), [run.id, 1.5]);
+  await next_scheduled_is_over_budget(state, routine);
+});
+
+// HA-122 review: one the run exited without taking in goes with its routine's run to the run that takes it from the
+// queue, which is charged, not the one it was steered to.
+test("a_routines_message_the_assistant_didnt_take_in_is_charged_to_the_run_that_does", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  const [state, a, first, routine] = assistant_running_with_a_routine();
+  const r = await automations.run_now(state, routine, {});
+  assert.deepEqual(reload(state, a.id).steering[0].routine_runs, [r.id]);
+  // The agent exits without taking it in: it's queued again, and the next run starts with it.
+  db.run(state.db(), "UPDATE runs SET cost_usd=0.1 WHERE id=?1", first.id);
+  runs.close_input(state, first.id);
+  finish(state, first.id, "Ok");
+  const next = state.runs.get(a.id)?.run_id;
+  assert.ok(next, "the next run");
+  assert.notEqual(next, first.id);
+  assert.equal(charged_to(state, r.id)[0], next);
+  // That run costs $2 (its launch fails here, ending it).
+  db.run(state.db(), "UPDATE runs SET cost_usd=2 WHERE id=?1", next);
+  await eventually(() => !state.is_running(a.id));
+  assert.ok(!state.is_running(a.id));
+  assert.deepEqual(charged_to(state, r.id), [next, 2]);
+  await next_scheduled_is_over_budget(state, routine);
+  runs.TEST_CAN_RUN.set(false);
+});
+
+/**
+ * A project's task whose agent is running `run`, which takes messages as it works, and an automation of the project that
+ * does `action`, with a budget of $1 a day.
+ */
+function project_task_running_with_an_automation(action: any): [Shared, Task, Run, automations.Automation] {
+  const state = testing.state();
+  const p = db.insert_profile(state.db(), "p", [], null);
+  new_project(state.db(), { id: "web", profile_id: p.id, name: "Web", key: "WEB", repo_path: "/src/web" });
+  const task = new_task(state.db(), { profile_id: p.id, project_id: "web", title: "Inbox", status: "in_progress" });
+  const run = db.insert_run(state.db(), task.id, "prompt");
+  db.run(state.db(), "UPDATE runs SET status='running' WHERE id=?1", run.id);
+  const dir = runs.run_dir(state, run.id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "out.jsonl"), "");
+  writeFileSync(join(dir, "input.jsonl"), "");
+  state.runs.set(task.id, { run_id: run.id, cancel: null });
+  const t = state.update_task(task.id, [["running", true]])!;
+  const act = action.kind === "send_to_task" ? { kind: "send_to_task", task_id: task.id, message: "ping" } : action;
+  const b = { name: "Ping", trigger: { kind: "interval", every_minutes: 60 }, budget_usd: 1.0, action: act };
+  const a = automations.create(state, "web", b);
+  return [state, t, db.get_run(state.db(), run.id)!, a];
+}
+
+// HA-161: a project automation's budget never filled up, as what the tasks it made or messaged cost wasn't counted: the
+// agent run that takes its message in is charged to it now, as a routine's is.
+test("a_project_automations_message_is_charged_the_run_that_takes_it_in", async () => {
+  const [state, task, run, a] = project_task_running_with_an_automation({ kind: "send_to_task" });
+  const r = await automations.run_now(state, a, {});
+  assert.deepEqual([r.status, r.task_id], ["ok", task.id], String(r.detail));
+  const steer = reload(state, task.id).steering[0];
+  assert.deepEqual(steer.routine_runs, [r.id]);
+  assert.ok(steer.from_agent);
+  output(state, run, [replay(steer.id, steer.text)]);
+  assert.equal(charged_to(state, r.id)[0], run.id);
+  // While it works, its run shows what it's cost so far.
+  db.run(state.db(), "UPDATE runs SET cost_usd=1.5 WHERE id=?1", run.id);
+  assert.equal(automations.run_json(state.db(), r).cost_usd, 1.5);
+  finish(state, run.id, "Ok");
+  assert.deepEqual(charged_to(state, r.id), [run.id, 1.5]);
+  await next_scheduled_is_over_budget(state, a);
+});
+
+// HA-161: the task a project automation makes and starts has its first run charged to it (not the task's later work,
+// which the user asks for).
+test("a_project_automations_new_tasks_first_run_is_charged_to_it", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  const [state, , , a] = project_task_running_with_an_automation({ kind: "create_task", title: "Look", start: true });
+  const r = await automations.run_now(state, a, {});
+  assert.equal(r.status, "ok", String(r.detail));
+  const made = r.task_id!;
+  const first = state.runs.get(made)?.run_id;
+  assert.ok(first, "its first run");
+  assert.equal(charged_to(state, r.id)[0], first);
+  // It started as a task does, with the start prompt, not as another agent's message.
+  const started = user_messages(state, made);
+  assert.equal(started.length, 1);
+  assert.equal(started[0].start, true, JSON.stringify(started));
+  // That run costs $2 (its launch fails here, ending it).
+  db.run(state.db(), "UPDATE runs SET cost_usd=2 WHERE id=?1", first);
+  await eventually(() => !state.is_running(made));
+  assert.ok(!state.is_running(made));
+  assert.deepEqual(charged_to(state, r.id), [first, 2]);
+  await next_scheduled_is_over_budget(state, a);
+  runs.TEST_CAN_RUN.set(false);
+});
+
+// HA-161 review: the start of a task a project automation made, held back for its config's usage limit, dropped the
+// automation run with its empty message, so the run it got once the limit reset wasn't charged to it.
+test("a_project_automations_new_task_that_waits_for_a_usage_reset_is_charged_its_first_run", async () => {
+  const state = testing.state();
+  const [task, configs] = out_of_usage_setup(state, "claude", true, false, false);
+  new_project(state.db(), { id: "web", profile_id: task.profile_id, name: "Web", key: "WEB", repo_path: "/src/web" });
+  const b = {
+    name: "Make",
+    trigger: { kind: "interval", every_minutes: 60 },
+    budget_usd: 1.0,
+    action: { kind: "create_task", title: "Look", start: true, claude_config_id: configs[0].id },
+  };
+  const a = automations.create(state, "web", b);
+  const [resets] = reset_in(1);
+  usage.on_rate_limit_event(state, configs[0].id, { type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: resets } });
+  runs.TEST_CAN_RUN.set(true);
+  const r = await automations.run_now(state, a, {});
+  assert.equal(r.status, "ok", String(r.detail));
+  const made = r.task_id!;
+  const get = () => db.get_task(state.db(), made)!;
+  assert.ok(get().waiting && !state.is_running(made));
+  assert.deepEqual(charged_to(state, r.id), [null, null]);
+
+  // Once the limit resets, it starts as a task does, and that first run is the automation run's.
+  const past = rfc3339_secs(resets - 3 * 3600);
+  state.update_task(made, [["limit_reset_at", past]]);
+  state.usage.get(configs[0].id).out_until = past;
+  start_unblocked(state, null);
+  const first = state.runs.get(made)?.run_id;
+  assert.ok(first, "its first run");
+  assert.equal(charged_to(state, r.id)[0], first);
+  assert.equal(user_messages(state, made)[0].start, true);
+  db.run(state.db(), "UPDATE runs SET cost_usd=2 WHERE id=?1", first);
+  await eventually(() => !state.is_running(made));
+  assert.ok(!state.is_running(made));
+  runs.TEST_CAN_RUN.set(false);
+  assert.deepEqual(charged_to(state, r.id), [first, 2]);
+  await next_scheduled_is_over_budget(state, a);
+});
+
+// HA-161 review: with no queued text, the automation runs left on a thread stay for the run that starts it, and a
+// message queued later takes them along.
+test("automation_runs_left_with_no_text_go_to_the_next_run", () => {
+  const state = testing.state();
+  const p = db.insert_profile(state.db(), "p", [], null);
+  const task = new_task(state.db(), { profile_id: p.id });
+  const c = state.db();
+  db.queue(c, task.id, { ...db.Queued_new("", false), routine_runs: ["a"] });
+  assert.equal(db.get_task(c, task.id)!.queued_message, null);
+  assert.equal(db.take_queued(c, task.id), null);
+  db.queue(c, task.id, db.Queued_new("Hello", false));
+  // While a message is queued, they're its, not for a run that starts without it.
+  assert.deepEqual(db.take_parked_runs(c, task.id), []);
+  assert.deepEqual(db.take_queued(c, task.id)!.routine_runs, ["a"]);
+  assert.deepEqual(db.take_parked_runs(c, task.id), []);
+  db.queue(c, task.id, { ...db.Queued_new(" ", true), routine_runs: ["b"] });
+  assert.deepEqual(db.take_parked_runs(c, task.id), ["b"]);
+  assert.deepEqual(db.take_parked_runs(c, task.id), []);
+});
+
+// HA-161 review: an automatic prompt (a review's fixes, say) that started while an automation's message was queued took
+// that message's automation run with it, leaving the message, so the wrong run was charged, and the one that took the
+// message in later wasn't.
+test("an_automatic_prompt_leaves_a_queued_automation_message_its_run", async () => {
+  const [state, task, run, a] = project_task_running_with_an_automation({ kind: "send_to_task" });
+  // The task's agent isn't running: the automation's message waits in its queue (as it would for its dependencies).
+  finish(state, run.id, "Ok");
+  const r = automations.Run_new(a.id, "schedule", "ok", Date.now());
+  automations.insert_run(state.db(), r);
+  db.queue(state.db(), task.id, { ...db.Queued_new("From the automation", true), routine_runs: [r.id] });
+  runs.TEST_CAN_RUN.set(true);
+  send_fixes(state, task.id, "Fix these", 1);
+  const fixes = state.runs.get(task.id)?.run_id;
+  assert.ok(fixes, "the fixes run");
+  assert.deepEqual(charged_to(state, r.id), [null, null]);
+  assert.equal(reload(state, task.id).queued_message, "From the automation");
+  // The run that takes the message in, once the fixes run ends, is charged.
+  await eventually(() => charged_to(state, r.id)[0] !== null);
+  runs.TEST_CAN_RUN.set(false);
+  const charged = charged_to(state, r.id)[0];
+  assert.ok(charged, "charged to the run that took its message in");
+  assert.notEqual(charged, fixes);
+  assert.equal(reload(state, task.id).queued_message, null);
+});
+
+// HA-161 merge: a steered message that went back to the queue was taken for a routine's (one with nobody there) if it
+// carried automation runs, which a project automation's does too.
+test("a_requeued_steer_is_a_routines_only_if_it_was_sent_as_one", async () => {
+  const queued_routine = (state: Shared, id: string) => !!db.value(state.db(), "SELECT queued_routine FROM tasks WHERE id=?1", id);
+  {
+    const [state, task, run, a] = project_task_running_with_an_automation({ kind: "send_to_task" });
+    await automations.run_now(state, a, {});
+    assert.ok(!reload(state, task.id).steering[0].routine);
+    runs.close_input(state, run.id);
+    finish(state, run.id, "Ok");
+    assert.ok(reload(state, task.id).queued_message != null);
+    assert.ok(!queued_routine(state, task.id));
+  }
+  {
+    const [state, a, run, routine] = assistant_running_with_a_routine();
+    await automations.run_now(state, routine, {});
+    assert.ok(reload(state, a.id).steering[0].routine);
+    runs.close_input(state, run.id);
+    finish(state, run.id, "Ok");
+    assert.ok(reload(state, a.id).queued_message != null);
+    assert.ok(queued_routine(state, a.id));
+  }
 });

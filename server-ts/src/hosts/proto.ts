@@ -5,8 +5,15 @@ import { readFileSync } from "node:fs";
 /** Bump on incompatible changes to the tunnel messages. */
 export const PROTOCOL = 1;
 
-/** Version of the host API (endpoints, fields and events the UI relies on). It went on from the Rust server's. */
-export const API_VERSION = 109;
+/**
+ * Version of the host API (endpoints, fields and events the UI relies on). It went on from the Rust server's.
+ *
+ * API 110: routines (a profile's automations, which wake its assistant): `/profiles/{id}/automations`, the `cron` and `at`
+ * triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, `report` messages, and push's
+ * `replies` and `reports` events.
+ * API 111: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
+ */
+export const API_VERSION = 111;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

@@ -21,6 +21,9 @@ import {
   change_automation,
   has_secret,
   resolve_automation,
+  own_routines,
+  wants_routines,
+  Guards_of,
 } from "./automations.ts";
 import { change_workflow, resolve_workflow, run_workflow, workflow_creation, workflow_deletion, workflow_json, workflow_update } from "./workflows.ts";
 import * as wf from "../../integrations/workflows.ts";
@@ -244,6 +247,11 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       return create_project(s, ctx, input);
     }
     case "list_automations": {
+      if (wants_routines(ctx, args)) {
+        const owner = own_routines(s, ctx, profile);
+        const list = au.list_routines(s.db(), au.owner_profile_id(owner)).map((a) => automation_json(s, a));
+        return { profile: ctx.profile_name, routines: list, time_zone: au.time_zone() };
+      }
       const p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project);
       const list = au.list(s.db(), p.id).map((a) => automation_json(s, a));
       return { project: { id: p.id, key: p.key, name: p.name }, automations: list, time_zone: au.time_zone() };
@@ -256,8 +264,10 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       if (saved !== null) return change_automation(s, ctx, saved);
       let input: any;
       if (tool === "create_automation") {
-        const p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project);
-        input = automation_creation(s, ctx, p, args, profile);
+        const owner: au.Owner = wants_routines(ctx, args)
+          ? own_routines(s, ctx, profile)
+          : { project: project_or_own(s, ctx, str_arg("project_id"), profile, own_project) };
+        input = automation_creation(s, ctx, owner, args, profile);
       } else if (tool === "update_automation") {
         const [a, p] = resolve_automation(s, ctx, args, profile, own_project);
         const u = automation_update(s, ctx, a, p, args, profile);
@@ -266,7 +276,8 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
         input = u.ask;
       } else {
         const [a, p] = resolve_automation(s, ctx, args, profile, own_project);
-        input = automation_input(s, ctx, "delete", p, automation_view(s, a.id, a.name, a.enabled, a.trigger, a.action, has_secret(a)));
+        const view = automation_view(s, a.id, a.name, a.enabled, a.trigger, a.action, has_secret(a), Guards_of(a));
+        input = automation_input(s, ctx, "delete", p, view);
         input.reason = str_arg("reason");
       }
       return change_automation(s, ctx, input);

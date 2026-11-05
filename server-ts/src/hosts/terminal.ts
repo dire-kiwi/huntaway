@@ -25,6 +25,7 @@ import type { AppState } from "../state.ts";
 import { run_cmd, type Output } from "../proc.ts";
 import { background, err_str, expand_tilde, new_id, path_str } from "../util.ts";
 import * as documents from "../agent/documents.ts";
+import * as memory from "../agent/assistant/memory.ts";
 import * as task_tmp from "../agent/task_tmp.ts";
 import { Pty } from "./pty.ts";
 import { close } from "./relay.ts";
@@ -174,6 +175,8 @@ const is_dir = (p: string) => {
 
 /** Where a task's terminal starts: its worktree once there is one, otherwise where its agent would run. */
 export function working_dir(s: AppState, task: Task): string {
+  // The assistant's workspace, if it's its own (not a symlink to another's, see assistant/memory.checked).
+  if (db.is_assistant(task)) return path_str(memory.checked(s, task));
   // A scratch task's shell (or one that makes only documents) opens in its folder, where its agent works.
   const d = documents.work_dir(s, task);
   if (d) return path_str(d);

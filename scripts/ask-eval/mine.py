@@ -77,7 +77,11 @@ def main():
                 if run:
                     try:
                         args = json.load(open(os.path.join(a.data_dir, "runs", run["id"], "spec.json")))["args"]
-                        system = args[args.index("--append-system-prompt") + 1]
+                        if "--append-system-prompt-file" in args:
+                            # Runs since HA-160 (HA-203 in the TS server) have it in a file, in the run's folder.
+                            system = open(args[args.index("--append-system-prompt-file") + 1]).read()
+                        else:
+                            system = args[args.index("--append-system-prompt") + 1]
                     except (OSError, ValueError, KeyError, IndexError):
                         pass
                 pending = {
