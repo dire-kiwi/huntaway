@@ -850,7 +850,7 @@ export const IMPORT_PROMPT =
   "leave out passwords and other secrets.";
 
 /**
- * `GET /profiles/{id}/assistant/memory` (API 110): the assistant's workspace and its files, how much of each memory file
+ * `GET /profiles/{id}/assistant/memory` (API 111): the assistant's workspace and its files, how much of each memory file
  * a run is told (`cap` characters, or `cap_bytes` bytes), whether there's history, and the prompt for an import.
  */
 export async function overview(s: Shared, r: Req) {

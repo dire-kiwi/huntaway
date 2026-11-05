@@ -17,6 +17,8 @@ import * as checkpoints from "../../git/checkpoints.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as review from "../../review.ts";
 import * as workflows from "../../integrations/workflows.ts";
+import * as automations from "../../integrations/automations.ts";
+import * as push from "../../integrations/push.ts";
 import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
 import type { Outcome } from "../runner.ts";
@@ -312,13 +314,30 @@ function record_turn_end(state: Shared, run: Run, error: string | null, result: 
   }
   db.run(state.db(), "UPDATE runs SET saw_result=1, between_turns=1, result_error=?1 WHERE id=?2", error, run.id);
   const status = stopping === 1 ? "stopped" : error != null ? "failed" : "done";
+  // A compaction's end isn't a reply (see `announce_reply`), though it's recorded as a turn's.
+  if (run.kind === "compact") result.compact = true;
   checkpoints.after_turn(state, run.id, status);
   // A turn that ended isn't waiting any more, even if the agent gave up on the call.
   wait.ended(state, run.task_id, run.id);
   documents.turn_ended(state, run.task_id);
   memory.turn_ended(state, run.task_id);
   context.record_turn(state, run, typeof result.total_cost_usd === "number" ? result.total_cost_usd : null);
-  state.add_message(run.task_id, "claude", result);
+  const m = state.add_message(run.task_id, "claude", result);
+  if (run.kind !== "compact") announce_reply(state, run.task_id, m.id);
+}
+
+/**
+ * Tells the board (its push, push.REPLY_EVENT) that the assistant replied. On the HA-117 branch Telegram's `on_turn_end`
+ * says so, with whether the reply answers a message sent on Telegram (which goes back there instead): until Telegram is
+ * ported, every reply is the board's.
+ */
+function announce_reply(state: Shared, task_id: string, message_id: number) {
+  let task: Task | null = null;
+  try {
+    task = db.get_task(state.db(), task_id);
+  } catch {}
+  if (!task || !db.is_assistant(task)) return;
+  state.emit({ type: push.REPLY_EVENT, task_id: task.id, profile_id: task.profile_id, message_id, telegram: false });
 }
 
 /** Forget a run whose row is gone (its task was deleted while it ran). */
@@ -400,6 +419,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     start_next_merge(state, task.project_id);
     return;
   }
+  // What the automation runs whose messages it took cost (before a queued message carries on the thread).
+  automations.routines.agent_run_ended(state, run_id);
   const is_task = task.kind === "task";
   // It stopped because its config is out of usage, which resets then (see usage::ran_out).
   const limit = failed != null && task.limit_reset_at != null && !usage.reset_due(task.limit_reset_at) ? task.limit_reset_at : null;
@@ -410,6 +431,7 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
       wait_reset = !!db.get_profile(state.db(), task.profile_id)?.limit_wait;
     } catch {}
   }
+  const attention = run.attention;
   let status: string | null;
   let reason: string | null;
   if (outcome === "Cancelled") {
@@ -446,6 +468,9 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   } else if (db.is_assistant(task)) {
     // The assistant never goes to review: it waits for the user's next message.
     [status, reason] = ["todo", null];
+  } else if (db.is_routine(task)) {
+    // A routine's run is done once it's reported (see automations/routines.ts).
+    [status, reason] = ["done", null];
   } else {
     [status, reason] = ["in_review", null];
   }
@@ -477,6 +502,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   } catch (e) {
     console.error(`failed to finalize run: ${err_str(e)}`);
   }
+  // Its report goes to the assistant, unless the run was quiet.
+  if (is_task && db.is_routine(task)) automations.routines.finished(state, updated ?? task, outcome, attention);
   if (is_task && reason === APPROVAL) {
     try {
       merge_gate.ask(state, task_id);

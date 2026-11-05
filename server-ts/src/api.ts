@@ -105,6 +105,7 @@ function host_routes(r: Router) {
   r.route("/projects/{id}/system-prompt", { GET: thread.system_prompt_preview });
   r.route("/projects/{id}/branches", { GET: projects.project_branches });
   r.route("/projects/{id}/automations", { GET: automations.list_handler, POST: automations.create_handler });
+  r.route("/profiles/{id}/automations", { GET: automations.list_routines_handler, POST: automations.create_routine_handler });
   r.route("/automations/{id}", { GET: automations.get_handler, PATCH: automations.update_handler, DELETE: automations.delete_handler });
   r.route("/automations/{id}/run", { POST: automations.run_handler });
   r.route("/automations/{id}/runs", { GET: automations.runs_handler });

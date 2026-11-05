@@ -129,7 +129,7 @@ test("a profile's assistant isn't a documents-only task", async () => {
   assert.equal(documentsOnly({ kind: "task", task_type: null, labels: ["plan"], work_dir: "documents/t1" }), true);
   assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API - 1 }), false);
   assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API }), true);
-  // Its Memory tab, from API 110.
+  // Its Memory tab, from API 111.
   assert.equal(hasMemory({ local: false, api_version: ASSISTANT_API }), false);
   assert.equal(hasMemory({ local: false, api_version: MEMORY_API }), true);
 });

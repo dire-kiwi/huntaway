@@ -6,9 +6,9 @@ import type { Task } from "./tasks";
  *  own and never goes to review or merge (see server-ts/src/agent/assistant.ts). The sidebar opens it; it's off the board. */
 export const ASSISTANT_API = 109;
 
-/** Its memory (API 110): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
+/** Its memory (API 111): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
  *  commits after each turn that changed them (see server-ts/src/agent/assistant/memory.ts). The Memory tab edits them. */
-export const MEMORY_API = 110;
+export const MEMORY_API = 111;
 
 /** Whether the host has assistants. An older one shows no Assistant entry. */
 export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_API);
@@ -17,6 +17,12 @@ export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_A
 export const hasMemory = (h: Host | undefined) => hostSupports(h, MEMORY_API);
 
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "assistant";
+
+/** A routine's run of the assistant (API 110): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
+export const isRoutine = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "routine";
+
+/** The assistant or one of its routine threads: off the board. */
+export const isAssistants = (t: Pick<Task, "kind" | "task_type">) => isAssistant(t) || isRoutine(t);
 
 /** A file in the assistant's workspace. `kind`: USER.md, MEMORY.md, a daily log (`memory/YYYY-MM-DD.md`) or anything else. */
 export interface MemoryFile {
@@ -75,7 +81,7 @@ export const assistantApi = ({ on }: Http) => {
     assistant: (h: string, profileId: string) => on(h).get<Task>(`/profiles/${enc(profileId)}/assistant`),
     /** Send the user's message to the profile's assistant (made first if it has none), as a message in its thread does. */
     sendToAssistant: (h: string, profileId: string, text: string) => on(h).post<Task>(`/profiles/${enc(profileId)}/assistant`, { text }),
-    /** The rest are the assistant's memory (API 110), on the host it's on (its task's `host_id` and `profile_id`). */
+    /** The rest are the assistant's memory (API 111), on the host it's on (its task's `host_id` and `profile_id`). */
     /** Its workspace's files and how much of each a run is told. */
     memory: (h: string, profileId: string) => on(h).get<MemoryOverview>(memory(profileId)),
     /** A file, now or as it was in commit `rev`. */

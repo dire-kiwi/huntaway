@@ -239,7 +239,7 @@ merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and th
 lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
 whatever access their profile has.
 
-The assistant **remembers** you (API 110) in files in its workspace: `USER.md` (who you are, your
+The assistant **remembers** you (API 111) in files in its workspace: `USER.md` (who you are, your
 preferences), `MEMORY.md` (lasting facts) and a log for each day, `memory/YYYY-MM-DD.md` (in the
 host's time zone). The board, not the CLI, puts them into the instructions of every run, so it's the
 same on Claude Code and Codex and always what the files say now: `USER.md` and `MEMORY.md` up to
@@ -458,7 +458,10 @@ tailscale serve --bg 7878     # https://<machine>.<tailnet>.ts.net → 127.0.0.1
 Then, in the installed app, Settings → Notifications → *Push to this device* → **Turn on push for
 this device** (it asks for permission) and *Send a test*. Each device picks its own events (the
 same ones as the browser's notifications: needs attention, ready to review, ready for merge,
-done); the list there shows the other devices, with their last error, and removes them. Nothing is
+done; and, API 110, the assistant's replies, which say only that it replied, and its routines'
+reports, which say their first line); the list there shows the other devices, with their last error,
+and removes them. A new device gets reports but not replies; one that subscribed before there was a
+choice gets neither until it chooses, and a page that sends only some events keeps the others. Nothing is
 pushed for a move made from this board, and a device shows nothing while the board is open in
 front on it (the page has the task, and its own notifications if they're on). The
 section says why push isn't available where it isn't: a plain-HTTP page, an iPhone's browser
@@ -2017,8 +2020,24 @@ new GitHub issue to triage. Each one has a trigger and an action, can be switche
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; or a **webhook**: a POST to
+  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 110:
+  five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
+  the host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
+  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 110: it runs once, late if
+  the server was down then, and turns itself off); or a **webhook**: a POST to
   `/api/hooks/<id>/<token>` on the host.
+- **Before each run** (API 110): **active hours** (a scheduled run outside them waits for them to
+  start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
+  command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
+  exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
+  the run as having nothing to do; any other exit fails it), and a **budget** a day in dollars
+  (from the cost of its runs' agents today, in the host's time zone: once it's spent, runs are
+  skipped and say so; Run now isn't held to it). A run's cost is its agent's: a routine's thread,
+  or the assistant's run that took its message in; for a project's automation, the first run of the
+  task it made and started, or the run that took its message in (not the task's later work, which
+  is yours). The runs from the last two days that made or messaged a task are kept past the history
+  limit, so a busy automation's skipped deliveries can't push today's costs out. A routine's
+  precheck runs only in the assistant's own workspace, not one that's become a symlink.
 - **Actions.** Create a task in the project from a template: title, description, type (code or
   scratch), labels (plan, artifact, diagram), agent config, model, effort, To do or Backlog, and whether to
   start its agent. Or send a message to one of the project's tasks (to its agent as it works, if
@@ -2071,9 +2090,11 @@ a task in the automation's own project. *Make a new URL* replaces the token.
   different issues apart.
 - **Limits:** bodies of up to 1 MiB (413 above that), JSON or GitHub's form-encoded `payload`;
   60 deliveries a minute per automation (429 above that); 20 coalesced runs waiting at once.
-- **Answers:** 202 when it ran (or is waiting to coalesce, or was filtered out), 200 for a
-  duplicate, 401 for a bad signature, 409 while it's off, and 500 if the action failed (the
-  project is archived, say).
+- **Answers:** 202 as soon as its run is recorded (`running`; its action, precheck included, goes
+  on by itself, so a slow one doesn't outlast the sender's timeout, GitHub's 10 seconds), and also
+  when it's waiting to coalesce or was filtered out; 200 for a duplicate, 401 for a bad signature
+  and 409 while it's off. How the run went (the project is archived, say) is in its deliveries on
+  the board, not the answer.
 
 A webhook that creates a task and starts its agent lets whoever can send it start an agent on
 the host, with the project's permission mode. Keep that mode asking for approval (or leave the
@@ -2087,7 +2108,36 @@ minutes late is skipped and recorded as missed. A run under way when the server 
 marked as interrupted (it may or may not have made its task) and isn't run again. Coalesced
 deliveries wait in the database and run after a restart. A time of day that the clocks skip
 (daylight saving starts) runs when they've gone forward; one they repeat runs once. An archived
-project's schedules don't run until it's unarchived.
+project's schedules don't run until it's unarchived. Each automation's run goes on by itself, so
+one's slow precheck doesn't hold up the others; one that comes due again before its last run is
+over waits for it.
+
+**Routines** (API 110) are a profile's automations, on the assistant's **Routines** tab
+(`/api/profiles/<id>/automations`): they have no project, and their one action is
+`message_assistant`, which wakes the profile's assistant. By default (`mode: fresh`) each run works
+in a thread of its own under the assistant (`task_type` `routine`, `parent_id` the assistant, keyed
+`A-<n>` after it), in the assistant's workspace with its config, model, permission mode, skills and
+MCP servers, on Claude Code or Codex. When its agent stops, its last message is posted in the
+assistant's thread as a report (a `report` message), unless it's `NO_REPLY` (on its own or as its
+last line) or empty: a quiet run says nothing. A run that failed, or asks the user something, is
+posted too. The assistant reads the reports it hasn't seen with your next message, so a routine's
+work stays out of its context. A routine's run is recorded with how its agent ended (`outcome`:
+quiet, reported, asked, stopped or failed) and what it cost; the tab shows each routine's next run,
+last result, cost today and in all, and Run now, pause, edit and delete. While a run's thread is
+still working (or waiting for its usage limit to reset), the next scheduled one is skipped. Routine
+threads are off the boards and the task lists, open from their report or run by their link, and are
+deleted 14 days after their last activity, whatever their status (done, failed, stopped or left
+asking; their runs and reports stay). With `mode: thread` the message goes to the assistant's own
+thread instead, as `send_to_task` does, and the run is charged what the assistant's run that takes
+the message in costs, toward its budget. The message carries its routine run with it, whether it
+starts a run, is steered into the one going or waits in the queue (also when a run ends without
+taking in a steered message, which is queued again for the next), so the run that actually takes it
+in is the one charged. A run that takes in several routines' messages splits its cost evenly between
+them; the user's messages in the same run aren't taken out. The automation tools take routines too
+(`routines: true`, or an action of kind `message_assistant`; the assistant's own calls are about its
+routines by default), for the caller's own profile only, and changing one asks the user as for any
+automation. The assistant is told to make "remind me…" an *at* routine. Deleting the assistant
+stops and deletes its routine threads first.
 
 **Reaching the webhook.** The board usually listens on localhost or a LAN, where GitHub can't
 reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the project:

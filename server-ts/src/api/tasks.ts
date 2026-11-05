@@ -83,7 +83,7 @@ export async function update_task_inner(s: AppState, id: string, b: Record<strin
   // A task with no changes to merge (and so no pull request) skips the merge and is done.
   const to_merge = b.status === "ready_for_merge" && current.status !== "ready_for_merge" && current.kind === "task";
   // A scratch task, or one that makes only documents (which the board keeps), has nothing to merge.
-  const own_folder = db.is_scratch(current) || db.is_assistant(current) || documents.documents_only(current);
+  const own_folder = db.is_scratch(current) || db.is_assistants(current) || documents.documents_only(current);
   const nothing_to_merge = to_merge && (own_folder || !(await worktree.has_work_to_merge(s, current)));
   let fields: Fields = pick(b, UPDATABLE);
   check_reminder(current, fields);
@@ -427,12 +427,15 @@ export async function delete_task(s: AppState, r: Req) {
   return { ok: true };
 }
 
-/** Delete task `t`, and if it's a subproject, its tasks. */
+/**
+ * Delete task `t`, and if it's a subproject, its tasks (or if it's a profile's assistant, its routines' threads), each
+ * stopped and torn down rather than left to the database's cascade.
+ */
 export async function delete_task_inner(s: AppState, t: Task, delete_branch: boolean) {
   const deleting = new Deleting(s, t.id);
   try {
-    // A subproject's tasks go with it.
-    if (t.subproject) {
+    // A subproject's tasks go with it, as do the assistant's routine threads.
+    if (t.subproject || db.is_assistant(t)) {
       for (const child of db.subproject_tasks(s.db(), t.id)) await delete_one(s, child, delete_branch);
     }
     await delete_last(s, t, delete_branch);

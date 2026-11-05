@@ -19,6 +19,17 @@ import * as runner from "./runner.ts";
 import * as memory from "./assistant/memory.ts";
 import * as questions from "../mcp/questions.ts";
 
+/**
+ * The assistant whose workspace a run of `task` has: the assistant's own, and a routine thread's its parent's
+ * (`parent`), whose workspace it has to be in. None for any other thread.
+ */
+export function whose_workspace(task: Task, parent: Task | null): Task | null {
+  if (db.is_assistant(task)) return task;
+  if (!db.is_routine(task)) return null;
+  if (parent && db.is_assistant(parent) && parent.work_dir === task.work_dir) return parent;
+  throw new Error("this routine thread's assistant, or its workspace, is gone");
+}
+
 /** Where an assistant works, relative to the data dir (see documents.work_dir), so it moves with it. */
 export function work_dir(task_id: string): string {
   return `assistants/${task_id}`;

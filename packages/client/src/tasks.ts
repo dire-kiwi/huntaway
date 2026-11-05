@@ -248,10 +248,11 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task is, if not a code task: a scratch task (API 47), or the profile's assistant (API 109, see `isAssistant`).
+  /** What the task is, if not a code task: a scratch task (API 47), the profile's assistant (API 109, see `isAssistant`) or
+   *  a routine's run of it (API 110, see `isRoutine`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
-  task_type?: TaskType | "assistant" | DocumentType | null;
+  task_type?: TaskType | "assistant" | "routine" | DocumentType | null;
   /** The documents its agent writes besides its other work, each shown in a tab of the task (API 71). */
   labels?: DocumentType[];
   /** When one of its documents last changed (API 42). */

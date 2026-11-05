@@ -151,12 +151,14 @@ export function summarize(s: Shared, t: Task): any {
   }
   if (db.is_scratch(t)) v.type = db.SCRATCH;
   if (db.is_assistant(t)) v.type = db.ASSISTANT;
+  if (db.is_routine(t)) v.type = db.ROUTINE;
   if (t.parent_id && t.kind === "task") {
     let sp: Task | null = null;
     try {
       sp = db.get_task(s.db(), t.parent_id);
     } catch {}
-    if (sp) v.subproject = `${project_key(s, sp)}-${sp.number}`;
+    // (A routine thread's parent is the assistant.)
+    if (sp && sp.subproject) v.subproject = `${project_key(s, sp)}-${sp.number}`;
   }
   return v;
 }
