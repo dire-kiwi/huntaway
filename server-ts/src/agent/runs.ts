@@ -172,6 +172,25 @@ function stdio_servers(state: Shared, l: Launch): Record<string, any> {
   return servers;
 }
 
+/**
+ * The settings `huntaway serve` takes from its environment (see serve.ts's `parse_serve_args`, and update/release.ts),
+ * which a service manager or the desktop app may have given this server. Agents' runs don't get them (HA-185): a
+ * server an agent starts itself (`huntaway serve` in a checkout, say) would otherwise use this one's data dir, port,
+ * hubs, broker, tokens and release updates, and could Roll back to the desktop app's own server.
+ */
+export const SERVE_ENV = [
+  "IA_HOST", "IA_PORT", "IA_DATA_DIR", "IA_UI_DIR", "IA_SOURCE_DIR", "IA_UPDATE_FROM", "IA_RELEASE_UPDATES", "IA_RELEASE_API", "IA_NAME",
+  "IA_HUB", "IA_HUB_TOKEN", "IA_BROKER", "IA_BROKER_TOKEN", "IA_BROKER_NAME", "IA_TOKEN", "IA_DEMO", "IA_OPEN_TOKEN", "IA_PROFILES",
+  "IA_DESKTOP_VERSION", "IA_DESKTOP_SHELL", "IA_DESKTOP_INSTALL", "IA_BUNDLED_SERVER",
+];
+
+/** The environment an agent's run starts with: this server's, without `SERVE_ENV`. */
+export function agent_env(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of SERVE_ENV) delete env[k];
+  return env;
+}
+
 /** Start the agent (claude, or the Codex adapter) under ia-shim. Returns once its process exists. */
 export async function start(state: Shared, l: Launch): Promise<void> {
   const dir = run_dir(state, l.run_id);
@@ -212,7 +231,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
 
   const cwd = expand_tilde(l.cwd);
   if (!is_dir(cwd)) throw new Error(`working directory ${cwd} does not exist`);
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env = agent_env();
   for (const [k, v] of l.env ?? []) env[k] = v;
   const cd = l.config_dir;
   if (cd != null && cd.trim() !== "") env[l.codex ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"] = expand_tilde(cd);
