@@ -185,6 +185,14 @@ prebuilt_shim() {
   rm -rf "$tmp"
 }
 
+# Whether $DIR has a server the app can start (as findServerBinary in app/electron/main.cjs looks): the TypeScript
+# server once its dependencies are installed, or the Rust build of a checkout that a Rust server has rebuilt since,
+# which never installs them. The macOS app runs --shortcut-only after an update changed Electron, then exits: if that
+# stopped here, the app wouldn't open again.
+has_build() {
+  [ -f "$DIR/server-ts/node_modules/ws/package.json" ] || [ -x "$DIR/server/target/release/huntaway" ]
+}
+
 # ---------- launcher ----------
 
 # $1 single-quoted for sh.
@@ -352,7 +360,7 @@ main() {
     fetch_source
     build
   else
-    [ -f "$DIR/server-ts/node_modules/ws/package.json" ] || die "no build in $DIR; run this without --shortcut-only first"
+    has_build || die "no build in $DIR; run this without --shortcut-only first"
   fi
   ensure_electron
 
