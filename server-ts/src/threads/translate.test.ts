@@ -195,8 +195,11 @@ test("prompts_become_requests", () => {
   assert.deepEqual(r.r1.resolution, { outcome: "deny", message: "No" });
   assert.equal(by_id(c).rm.status, "denied");
   assert.deepEqual([r.r2.type, r.r2.plan, r.r2.resolution.outcome], ["plan", "# Plan", "allow"]);
-  assert.deepEqual(r.r3.questions, [{ id: "0", question: "Which?", header: "Pick", options: [{ label: "A" }, { label: "B", description: "b" }], multi_select: true }]);
-  assert.deepEqual(r.r3.resolution, { outcome: "answer", answers: { "0": ["A, B"] } });
+  // Claude's questions go by their text, and always offer an answer of one's own (as agent-threads has them).
+  assert.deepEqual(r.r3.questions, [
+    { id: "Which?", question: "Which?", header: "Pick", options: [{ label: "A" }, { label: "B", description: "b" }], multi_select: true, allow_other: true },
+  ]);
+  assert.deepEqual(r.r3.resolution, { outcome: "answer", answers: { "Which?": ["A, B"] } });
   assert.deepEqual([r.r4.kind, r.r4.resolution.outcome], ["edit", "cancel"]);
   // Not answered: cancelled once the history has ended, not made an approval.
   assert.deepEqual([r.r5.kind, r.r5.resolution.outcome], ["app", "cancel"]);
@@ -258,8 +261,10 @@ test("compaction_and_its_summary", () => {
     summary: "Summary so far",
     created_at: "2026-11-01T00:00:01.000Z",
   });
-  assert.equal(disposition(c, 3), "redundant");
-  assert.deepEqual([items["legacy:4"].ok, items["legacy:4"].interrupted, items["legacy:4"].error], [false, true, "error_during_execution"]);
+  // A `/compact` run's turn ends with a turn_result too (HA-128 left it out; agent-threads has it).
+  assert.deepEqual([disposition(c, 3), items["legacy:3"].type], ["converted", "turn_result"]);
+  // An interrupted turn's result says nothing more than that.
+  assert.deepEqual([items["legacy:4"].ok, items["legacy:4"].interrupted, items["legacy:4"].error], [false, true, undefined]);
 });
 
 test("what_the_history_doesnt_say", () => {
@@ -527,7 +532,7 @@ test("answers_to_claudes_questions_as_the_board_keeps_them", async () => {
     ],
   };
   const c = convert_all(await answered(false, ASK_USER, input, [["Summer"], ["Cats", "a lizard"], []]));
-  assert.deepEqual(c.requests[0]!.resolution, { outcome: "answer", answers: { "0": ["Summer"], "1": ["Cats", "a lizard"] } });
+  assert.deepEqual(c.requests[0]!.resolution, { outcome: "answer", answers: { "Which season?": ["Summer"], "Which pets?": ["Cats", "a lizard"] } });
   assert.deepEqual(c.warnings, []);
 });
 

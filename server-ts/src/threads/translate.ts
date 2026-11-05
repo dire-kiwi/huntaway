@@ -24,11 +24,14 @@
 // warns about them as if they never came (see `from`). `finish` says what a history that has ended leaves undone.
 
 import type {
-  Item, NewEvent, PermissionRequest, Question, QuestionRequest, Resolution, Snapshot, SubagentState, SubagentStatus, ThreadRequest, ToolCall, ToolKind, ToolStatus,
+  Item, NewEvent, PermissionMode, PermissionRequest, Question, QuestionRequest, Resolution, Snapshot, SubagentState, SubagentStatus, ThreadRequest, ToolCall, ToolKind, ToolStatus,
 } from "./protocol.ts";
 
 /** Changes when what the translator makes of the same messages does: threads built by it record it. */
 export const CONVERTER_VERSION = 1;
+
+/** How Claude Code's result for a call that was stopped starts. */
+const REJECTED = "The user doesn't want to proceed with this tool use.";
 
 /** Tool results longer than this were cut short when they were stored (agent/runner/output.ts's slim). */
 const STORED_RESULT_MAX = 30_000;
@@ -37,6 +40,8 @@ const STORED_RESULT_MAX = 30_000;
 export const EXIT_PLAN = "ExitPlanMode";
 export const ASK_USER = "AskUserQuestion";
 export const CODEX_QUESTIONS = "request_user_input";
+/** The MCP server whose tools are the app's own (`app` calls, not `mcp` ones), as agent-threads names it. */
+const APP_SERVER = "app";
 
 /** A stored message, as db/messages.ts reads it. */
 export interface Message {
@@ -109,6 +114,7 @@ interface Call {
   call_id: string;
   kind: ToolKind;
   status: ToolStatus;
+  title?: string;
   has_result: boolean;
   subagent?: SubagentState;
   /** The model its input asks for (a subagent's). */
@@ -216,6 +222,7 @@ export class Translator {
         call_id,
         kind: item.kind,
         status: item.status,
+        title: item.title,
         has_result: item.result !== undefined,
         subagent: item.subagent,
         model: str(input, "model"),
@@ -397,9 +404,9 @@ export class Translator {
     return (this.by_call.get(call_id) ?? []).map((id) => this.calls.get(id)!);
   }
 
-  /** Whether the call's prompt was denied, so its error result is a denial. */
+  /** Whether the call's prompt was denied (or its plan sent back), so its error result is a denial. */
   private denied(item: string): boolean {
-    for (const r of this.requests.values()) if (r.tool_call_id === item && r.type === "permission" && r.resolution?.outcome === "deny") return true;
+    for (const r of this.requests.values()) if (r.tool_call_id === item && r.type !== "question" && r.resolution?.outcome === "deny") return true;
     return false;
   }
 
@@ -551,8 +558,19 @@ export class Translator {
     let request: ThreadRequest;
     if (tool === EXIT_PLAN) {
       request = { ...base, type: "plan", plan: typeof input?.plan === "string" ? input.plan : "" };
+      // The mode the user approved it to carry on in.
+      const mode = typeof d.mode === "string" ? permission_mode(d.mode) : undefined;
+      if (resolution?.outcome === "allow" && mode) resolution = { ...resolution, permission_mode: mode };
     } else if (tool === ASK_USER || tool === CODEX_QUESTIONS) {
-      const questions = (Array.isArray(input?.questions) ? input.questions : []).map((q: any, i: number) => question(q, str(q, "id") ?? String(i)));
+      const asked: any[] = Array.isArray(input?.questions) ? input.questions : [];
+      // Claude's questions are told apart by their text (unless two have the same), and always offer an answer of one's own.
+      const texts = asked.map((q) => (typeof q?.question === "string" ? q.question : ""));
+      const by_text = tool === ASK_USER && texts.every((t, i) => t && texts.indexOf(t) === i);
+      const questions = asked.map((q: any, i: number) => {
+        const out = question(q, str(q, "id") ?? (by_text ? texts[i]! : String(i)));
+        if (tool === ASK_USER) out.allow_other = true;
+        return out;
+      });
       if (!questions.length) return this.retain(m.id, "empty_question", "a question prompt with no questions");
       if (resolution?.outcome === "allow") {
         const answers = answers_of(d.answers, questions);
@@ -682,7 +700,7 @@ export class Translator {
     const session = str(m.data, "session_id");
     this.set_meta(id, { call_id: id !== call_id ? call_id : undefined, session });
     const parent_raw = str(m.data, "parent_tool_use_id") ?? null;
-    const c: Call = { item: id, call_id, kind: fields.kind, status: "running", has_result: false, model: str(block.input, "model"), parent_raw, session, input: fields.input };
+    const c: Call = { item: id, call_id, kind: fields.kind, status: "running", title: fields.title, has_result: false, model: str(block.input, "model"), parent_raw, session, input: fields.input };
     this.add_call(c);
     // What was stored before it: its subagent's messages named it already, and its prompt or result may have come.
     this.missing_parents.delete(call_id);
@@ -790,7 +808,9 @@ export class Translator {
   private tool_result(message_id: number, c: Call, block: any, meta: any): void {
     const text = result_text(block.content);
     const is_error = block.is_error === true;
-    const status: ToolStatus = is_error ? (this.denied(c.item) ? "denied" : "failed") : "completed";
+    // Claude Code's result for a call a stop cut short (a denied call's is the denial's message).
+    const interrupted = text.startsWith("[Request interrupted") || text.startsWith(REJECTED);
+    const status: ToolStatus = !is_error ? "completed" : this.denied(c.item) ? "denied" : interrupted ? "cancelled" : "failed";
     const result: { content: string; truncated?: boolean } = { content: text };
     // Cut short when it was stored (agent/runner/output.ts's slim and util.ts's truncate).
     if (text.length > STORED_RESULT_MAX && text.includes("\n… [truncated ")) result.truncated = true;
@@ -799,7 +819,7 @@ export class Translator {
     c.status = status;
     c.has_result = true;
     if (c.kind === "subagent") {
-      const s = subagent_result(c.subagent, is_error, text.startsWith("[Request interrupted"), is_obj(meta) ? meta : {}, text);
+      const s = subagent_result(c.subagent, is_error, interrupted, is_obj(meta) ? meta : {}, text);
       if (s) patch.subagent = c.subagent = s;
     }
     this.update(c.item, patch);
@@ -836,7 +856,11 @@ export class Translator {
       c.subagent = s;
       const patch: Record<string, unknown> = { subagent: s };
       // A Skill forked into an agent has no Agent call: its call becomes the subagent's.
-      if (c.kind !== "subagent") patch.kind = c.kind = "subagent";
+      if (c.kind !== "subagent") {
+        patch.kind = c.kind = "subagent";
+        const title = str(d, "description");
+        if (title !== undefined && !c.title) patch.title = c.title = title;
+      }
       // A background subagent's call is done once it has started it. Claude Code says so with a result too, later; the
       // board's Codex children have none.
       if (s.background && c.status === "running" && !c.has_result) patch.status = c.status = "completed";
@@ -863,8 +887,6 @@ export class Translator {
   private result(m: Message): Disposition {
     const d = m.data;
     const ok = d.subtype === "success" && d.is_error !== true;
-    // A `/compact` run's turn is just its compaction.
-    if (ok && d.num_turns === 0 && this.compaction.has("")) return "redundant";
     // What the turn ended by saying, if no message of its said it (Claude Code gives the result of a turn that a
     // background subagent's report started that way, say). The readers have it from the turn's end.
     const said = this.last_text;
@@ -878,7 +900,8 @@ export class Translator {
     const id = `legacy:${m.id}`;
     const item: Item = { id, type: "turn_result", ok, created_at: m.created_at };
     if (d.interrupted === true) item.interrupted = true;
-    if (!ok) item.error = text ?? str(d, "subtype") ?? "error";
+    // An interrupted turn's result says nothing more than that.
+    if (!ok && (text !== undefined || d.interrupted !== true)) item.error = text ?? str(d, "subtype") ?? "error";
     const ms = uint(d.duration_ms);
     if (ms !== undefined) item.duration_ms = ms;
     this.add(item);
@@ -981,6 +1004,12 @@ export function fold(events: Iterable<NewEvent>, from: Pick<Snapshot, "items" | 
   return { items: [...items.values()], requests: [...requests.values()] };
 }
 
+/** The board's permission mode (db.PERMISSION_MODES) in the protocol's terms. */
+export function permission_mode(mode: string): PermissionMode | undefined {
+  const modes: Record<string, PermissionMode> = { default: "default", acceptEdits: "accept_edits", auto: "auto", plan: "plan", dontAsk: "dont_ask", bypassPermissions: "bypass" };
+  return modes[mode];
+}
+
 // ---------- what tools are ----------
 
 /** What a tool does, by its name, as agent-threads' Claude driver says it. */
@@ -1031,6 +1060,11 @@ export function tool_fields(name: string, input_: unknown): ToolFields {
     server = (at < 0 ? rest : rest.slice(0, at)) || undefined;
     tool = at < 0 ? "" : rest.slice(at + 2);
     kind = "mcp";
+    // The app's own tools, on its in-process server (agent-threads' `app`).
+    if (server === APP_SERVER) {
+      kind = "app";
+      server = undefined;
+    }
   }
   const t: ToolFields = { name: tool, kind } as ToolFields;
   if (server !== undefined) t.server = server;
