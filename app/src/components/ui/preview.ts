@@ -18,13 +18,36 @@ const pollers = new Map<string, Poller>();
 /** Last result per URL, so a card that remounts (e.g. moved to another column) doesn't flicker. */
 const last = new Map<string, boolean>();
 
+/**
+ * How many checks may be waiting on the server at once. A check of a preview that doesn't answer holds its request for
+ * the server's timeout (5s), and a browser opens only 6 connections to a host over HTTP/1.1: a board with more such
+ * previews than that kept every connection busy, so loading a thread waited seconds behind them (HA-188).
+ */
+export const MAX_CHECKS = 2;
+let checking = 0;
+const waiting: Array<() => void> = [];
+
+async function limited<T>(f: () => Promise<T>): Promise<T> {
+  if (checking >= MAX_CHECKS) await new Promise<void>((r) => waiting.push(r));
+  else checking++;
+  try {
+    return await f();
+  } finally {
+    // The slot goes to the next waiting check, if there is one.
+    const next = waiting.shift();
+    if (next) next();
+    else checking--;
+  }
+}
+
 async function check(url: string, p: Poller) {
   p.timer = null;
   if (document.hidden) return; // resumed by the visibilitychange handler
   p.inflight = true;
   let up = false;
   try {
-    up = (await api.previewStatus(url)).up;
+    // Nobody may be watching any more by the time a slot is free.
+    up = (await limited(() => (pollers.get(url) === p ? api.previewStatus(url) : Promise.resolve(null))))?.up ?? false;
   } catch {
     /* counts as not up */
   }
