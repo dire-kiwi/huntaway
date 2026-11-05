@@ -229,7 +229,9 @@ test("an_at_runs_once_however_late_then_turns_itself_off", async () => {
   // In the past, it can't be set.
   const past = { name: "Late", trigger: { kind: "at", at: "2020-01-01 09:00" }, action: { kind: "message_assistant", message: "x" } };
   assert.throws(() => routine(s, p.id, past), (e: any) => e.message.includes("passed"));
-  const at = local_minute(Date.now() + HOUR);
+  // Two hours on, not one: when daylight saving ends, an hour on can be a local time that's also now (an hour that
+  // repeats is read as its first time), which has passed.
+  const at = local_minute(Date.now() + 2 * HOUR);
   let a = routine(s, p.id, {
     name: "Remind me",
     trigger: { kind: "at", at },
@@ -472,12 +474,15 @@ test("deliveries_outside_active_hours_are_skipped_and_a_still_running_thread_hol
   s.local_router = api.router(s);
   const p = profile(s);
   const the_assistant = assistant.get_or_create(s, p.id);
-  // Hours that are never now: from an hour from now to two hours from now.
-  const h = (d: number) => local_minute(Date.now() + d * HOUR).slice(11);
+  // Hours that are never now: from 3 to 5 o'clock-hours on from now's local hour. Counted on the wall clock rather than
+  // as hours from now, which on the day daylight saving ends can give the same time twice, or one before now. (The guard
+  // reads the real clock: at most a few seconds later, or an hour on the wall clock if it went forward meanwhile.)
+  const now_hour = local_parts(to_local(Local, Date.now())).h;
+  const h = (d: number) => `${String((now_hour + d) % 24).padStart(2, "0")}:00`;
   const a = routine(s, p.id, {
     name: "Hook",
     trigger: { kind: "webhook" },
-    active_hours: { start: h(1), end: h(2) },
+    active_hours: { start: h(3), end: h(5) },
     action: { kind: "message_assistant", message: "{{body.x}}" },
   });
   let [, v] = await deliver(s, hook_path(a), `{"x": 1}`);
