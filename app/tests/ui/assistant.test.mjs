@@ -77,6 +77,34 @@ test("the Memory tab edits the assistant's files and shows their history", async
   });
 });
 
+// HA-240: Ctrl+S saves a draft as soon as its file is opened again, before the editor's effects have run.
+test("a draft saves as soon as its file is opened again", async () => {
+  const [profile] = await server.api("GET", "/profiles");
+  const base = `/profiles/${profile.id}/assistant/memory`;
+  await server.api("POST", `${base}/file`, { path: "MEMORY.md", content: "# Memory\n", force: true });
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run(["goto /assistant/Default", "wait Message your assistant", "click memory", "click MEMORY.md"]);
+    await page.waitForFunction(() => document.querySelector("textarea[aria-label='Edit MEMORY.md']")?.value === "# Memory\n");
+    await page.getByRole("textbox", { name: "Edit MEMORY.md" }).click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("- kept");
+    await ui.run(["click USER.md", "wait About the user"]);
+    // Ctrl+S the moment the new editor is in the page, in the same task as its first render.
+    await page.evaluate(() => {
+      const list = [...document.querySelectorAll("aside button")].find((b) => b.textContent.includes("MEMORY.md"));
+      new MutationObserver((_, observer) => {
+        if (!document.querySelector("textarea[aria-label='Edit MEMORY.md']")) return;
+        observer.disconnect();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
+      }).observe(document.body, { childList: true, subtree: true });
+      list.click();
+    });
+    await page.waitForFunction(() => !document.querySelector("[title='Not saved']"));
+    assert.equal((await server.api("GET", `${base}/file?path=MEMORY.md`)).content, "# Memory\n- kept");
+  });
+});
+
 // HA-121 review: what's typed while a save is on its way isn't lost when it's saved, even in the editor of the file opened
 // again meanwhile, and Ctrl+S on a file you haven't changed (a daily log not written yet, say) saves nothing.
 test("an edit made while the Memory tab saves stays", async () => {
@@ -111,7 +139,26 @@ test("an edit made while the Memory tab saves stays", async () => {
     await page.getByRole("textbox", { name: "Edit MEMORY.md" }).click();
     await page.keyboard.press("Control+End");
     await page.keyboard.type(" and second");
+    // (Wait for the save's answer and the list's refresh after it, not for "You" in the history, which the API's write
+    // above put there already.)
+    const listed = new Promise((resolve) => {
+      let answered = false;
+      const done = (result) => {
+        page.off("response", seen);
+        resolve(result);
+      };
+      const seen = (r) => {
+        const method = r.request().method();
+        const { pathname } = new URL(r.url());
+        if (method === "POST" && pathname.endsWith("/assistant/memory/file")) {
+          if (r.ok()) answered = true;
+          else done(`the save was answered ${r.status()}`);
+        } else if (answered && method === "GET" && pathname.endsWith("/assistant/memory")) done("listed");
+      };
+      page.on("response", seen);
+    });
     release();
+    assert.equal(await listed, "listed");
     await ui.run(["click History", "wait You"]);
     assert.equal((await server.api("GET", `${base}/file?path=MEMORY.md`)).content, "# Memory\n- first");
     // The list was refreshed after the save, and the editor still has what came after it, unsaved.
