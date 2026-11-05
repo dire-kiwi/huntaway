@@ -1,12 +1,13 @@
 // Port of server/src/git/worktree/tests.rs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as api from "../../api.ts";
 import * as db from "../../db.ts";
 import type { Project, Task } from "../../db.ts";
+import * as leftovers from "../../agent/leftovers.ts";
 import * as runner from "../../agent/runner.ts";
 import * as runs from "../../agent/runs.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
@@ -197,6 +198,28 @@ test("the_diff_has_every_untracked_file_whatever_its_name", async () => {
   const untracked = [...d.untracked].sort();
   assert.deepEqual(untracked, ["-n.txt", "café.txt", "plain.txt"]);
   for (const name of ["café.txt", "-n.txt", "plain.txt"]) assert.ok(d.patch.includes(`+in ${name}\n`), `${name}: ${d.patch}`);
+});
+
+// HA-186: test servers started from a worktree's build ran on after the worktree went.
+test("removing_a_worktree_stops_the_test_servers_started_from_it", async () => {
+  const s = testing.state();
+  const [, t, wt] = await task_with_work(s);
+  // A build of the worktree's (ignored, so the worktree is clean), serving data kept elsewhere.
+  const bin = join(wt, "target", "debug", "huntaway");
+  mkdirSync(join(wt, "target", "debug"), { recursive: true });
+  writeFileSync(bin, "setInterval(() => {}, 1e9);\n");
+  const tag = `wt-server-${new_id()}`;
+  const child = spawn(process.execPath, [bin, "serve", "--data-dir", testing.temp_dir(), "--name", tag], { stdio: "ignore", detached: true });
+  const up = async () => ((await leftovers.list()) ?? []).some((p) => p.pid === child.pid && p.cmd.includes(tag));
+  try {
+    for (let i = 0; i < 200 && !(await up()); i++) await sleep(25);
+    assert.ok(await up(), "the server started");
+    await teardown(s, t.id, false, false);
+    assert.ok(!existsSync(wt));
+    assert.ok(!(await up()), "the server is stopped");
+  } finally {
+    child.kill("SIGKILL");
+  }
 });
 
 // HA-51: a task whose worktree was removed showed the project folder's changes as its own.

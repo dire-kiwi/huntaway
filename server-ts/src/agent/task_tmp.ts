@@ -30,6 +30,7 @@ import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import type { AppState, Shared } from "../state.ts";
 import * as worktree from "../git/worktree.ts";
+import * as leftovers from "./leftovers.ts";
 import { err_str, new_id, path_str, reached } from "../util.ts";
 
 /** How often the folders of done and deleted tasks are looked for. */
@@ -152,8 +153,16 @@ function removable(state: Shared, name: string): boolean {
 
 /** Remove folder `name` (see `folder`) if it can go (see `removable`). Returns whether it went. */
 export async function remove(state: Shared, name: string): Promise<boolean> {
-  const away = take(state, name);
-  if (!away) return false;
+  const taken = take(state, name);
+  if (!taken) return false;
+  const { away, from } = taken;
+  // The test servers its agents left running (and their agents), which would run on with their data gone.
+  try {
+    const worktrees = tasks_of(state, name).flatMap((t) => (t.worktree_path ? [t.worktree_path] : []));
+    await leftovers.stop_task({ tmp: from, worktrees, data_dir: state.data_dir, tmp_root: root(state) }, `folder ${name}`);
+  } catch (e) {
+    console.warn(`folder ${name}: stopping what the task left running: ${err_str(e)}`);
+  }
   try {
     await remove_all_async(away);
     console.log(`folder ${name}: removed a task's temp folder`);
@@ -165,9 +174,9 @@ export async function remove(state: Shared, name: string): Promise<boolean> {
 
 /**
  * Rename folder `id` away, if it can go, in one synchronous step: a run that starts later sets up a new one. Returns
- * where it went.
+ * where it went, and where it was (by the root's path and its real path, as processes started in it name it).
  */
-function take(state: Shared, id: string): string | null {
+function take(state: Shared, id: string): { away: string; from: string[] } | null {
   const r = root(state);
   try {
     check_root(r);
@@ -184,12 +193,13 @@ function take(state: Shared, id: string): string | null {
   if (!isDir || !removable(state, id)) return null;
   reached("task_tmp:removable");
   const away = join(r, `${REMOVING}${id}-${new_id()}`);
+  const was = leftovers.variants(from);
   try {
     renameSync(from, away);
   } catch {
     return null;
   }
-  return away;
+  return { away, from: was };
 }
 
 /**
@@ -252,7 +262,36 @@ export async function sweep(state: Shared): Promise<number> {
       n++;
     }
   }
+  try {
+    await stop_orphans(state);
+  } catch (e) {
+    console.warn(`stopping what done tasks left running: ${err_str(e)}`);
+  }
   return n;
+}
+
+/**
+ * Stop the test servers (and their agents) whose data dirs are in folders of done or deleted tasks that have gone
+ * already: removed by a server from before it stopped them first, or by hand. Those whose folder is still there are
+ * stopped as it's removed.
+ */
+async function stop_orphans(state: Shared) {
+  const r = root(state);
+  const roots = leftovers.variants(r);
+  const procs = await leftovers.list();
+  if (!procs) return;
+  for (const name of leftovers.folders_in(procs, roots)) {
+    if (existsSync(join(r, name))) continue;
+    let tasks: Task[];
+    try {
+      tasks = tasks_of(state, name);
+    } catch {
+      continue;
+    }
+    if (!tasks.every((t) => t.status === "done" && !t.running)) continue;
+    const scope = { tmp: roots.map((x) => join(x, name)), worktrees: [], data_dir: state.data_dir, tmp_root: r };
+    await leftovers.stop_task(scope, `folder ${name} (gone)`, procs);
+  }
 }
 
 /** Sweeps the folders when the server starts, then every `SWEEP`. */

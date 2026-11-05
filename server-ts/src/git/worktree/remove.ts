@@ -6,6 +6,8 @@ import { basename } from "node:path";
 import * as db from "../../db.ts";
 import type { Project, Task } from "../../db.ts";
 import * as runner from "../../agent/runner.ts";
+import * as leftovers from "../../agent/leftovers.ts";
+import * as task_tmp from "../../agent/task_tmp.ts";
 import * as checkpoints from "../checkpoints.ts";
 import * as terminal from "../../hosts/terminal.ts";
 import type { AppState } from "../../state.ts";
@@ -159,6 +161,13 @@ export async function teardown(state: AppState, task_id: string, force: boolean,
     state.update_task(task_id, [["worktree_state", "tearing_down"]]);
     // Its terminal would be left in a deleted directory.
     await terminal.kill_all(state, task_id);
+    // And the test servers its agents started from it, which would run on with their build gone.
+    try {
+      const scope = { tmp: [task_tmp.dir(state, task)], worktrees: [wt], data_dir: state.data_dir, tmp_root: task_tmp.root(state) };
+      await leftovers.stop_task(scope, `task ${task_id}`);
+    } catch (e) {
+      state.add_event(task_id, "warn", "Couldn't stop what the task left running", err_str(e));
+    }
     if (project.teardown_script.trim()) {
       try {
         const log = await run_script(project.teardown_script, wt, script_env(project, task, wt, branch), SCRIPT_LIMIT);
