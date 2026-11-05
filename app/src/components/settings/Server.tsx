@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { CircleAlert, Copy, Download, ExternalLink, GitCommitHorizontal, Loader2, RefreshCw, RotateCw, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, type ReleaseDownload, type ReleaseStatus, type ServerStatus } from "../../api";
+import { api, type ReleaseDownload, type ReleaseStatus, type ServerStatus, type ThreadsStatus } from "../../api";
 import type { ShellUpdateKind, ShellUpdateProgress } from "../../notifier";
 import { useStore } from "../../store";
 import { useNewUiBuild } from "./uiVersion";
@@ -188,6 +188,7 @@ export function ServerPanel() {
               </div>
             )}
             <DatabaseLine status={status} onRecopy={() => setOpen("recopy")} />
+            {host && <ThreadsLine hostId={host} />}
           </>
         ) : (
           <div>Loading…</div>
@@ -205,6 +206,88 @@ export function ServerPanel() {
         />
       )}
     </section>
+  );
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : ms < 10_000 ? `${(ms / 1000).toFixed(1)} s` : ms < 120_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`);
+
+/**
+ * The batch rebuild of threads as items (API 121, docs/threads.md's step 7): how many tasks that aren't done have no
+ * items yet, with a button that rebuilds them, and its progress while it runs (it's polled every second then). Nothing
+ * on a server without it.
+ */
+export function ThreadsLine({ hostId }: { hostId: string }) {
+  const [st, setSt] = useState<ThreadsStatus | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const refresh = useCallback(() => api.threadsStatus(hostId).then(setSt, () => {}), [hostId]);
+  const running = !!st?.batch?.running;
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, running ? 1000 : 15_000);
+    return () => clearInterval(id);
+  }, [refresh, running]);
+  if (!st) return null;
+  const b = st.batch;
+  const act = (stop: boolean) => {
+    setBusy(true);
+    setErr(null);
+    api
+      .threadsBatch(hostId, stop)
+      .then(setSt, (e) => setErr(String(e?.message ?? e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="pt-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {b?.running ? (
+          <>
+            <Loader2 size={13} className="animate-spin text-accent" />
+            <span>
+              {b.stopping ? "Stopping" : "Rebuilding"} threads as items: {b.done.toLocaleString()} of {plural(b.total, "task")}
+              {b.failed.length > 0 && <span className="text-red-300">, {b.failed.length} failed</span>}
+            </span>
+            {!b.stopping && (
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => act(true)}>
+                Stop
+              </Button>
+            )}
+          </>
+        ) : (
+          <>
+            <span>
+              {st.pending
+                ? `${plural(st.pending, "task")} that ${st.pending === 1 ? "isn't" : "aren't"} done ${st.pending === 1 ? "doesn't keep its" : "don't keep their"} thread as items yet`
+                : "Every task that isn't done keeps its thread as items"}
+              {b?.finished_at && (
+                <span className="text-faint">
+                  {" "}
+                  (the last rebuild {b.stopping ? "stopped after" : "rebuilt"} {plural(b.rebuilt, "task")} in {seconds(b.ms)}
+                  {b.failed.length > 0 && `, ${b.failed.length} failed`})
+                </span>
+              )}
+            </span>
+            {st.pending > 0 && (
+              <Button size="sm" disabled={busy} onClick={() => act(false)} title="Rebuilds their threads as items from their messages, one task at a time. Done tasks get theirs when they're opened.">
+                <RefreshCw size={13} /> {b && !b.running && b.stopping ? "Go on" : "Rebuild them"}
+              </Button>
+            )}
+          </>
+        )}
+      </div>
+      {b?.failed.length ? (
+        <details className="mt-1 text-[11.5px]">
+          <summary className="cursor-pointer text-faint">Failed tasks</summary>
+          {b.failed.map((f) => (
+            <div key={f.task_id} className="font-mono break-all text-red-300">
+              {f.task_id}: {f.error}
+            </div>
+          ))}
+        </details>
+      ) : null}
+      {err && <div className="mt-1 text-red-300">{err}</div>}
+    </div>
   );
 }
 

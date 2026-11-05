@@ -23,6 +23,7 @@ import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
 import type { Item, ToolCall } from "./protocol.ts";
 import { CONVERTER_VERSION, type ItemMeta } from "./translate.ts";
+import * as write from "./write.ts";
 
 /** Where a task's thread is read from. */
 export type Source = "items" | "messages";
@@ -38,9 +39,20 @@ export function on_items(): string {
   return `(t.thread_items=1 AND EXISTS(SELECT 1 FROM threads h WHERE h.task_id=t.id AND h.error IS NULL AND h.converter=${CONVERTER_VERSION}))`;
 }
 
-/** Where task `task_id`'s readers read its thread from (see the top of the file). */
+/**
+ * Where task `task_id`'s readers read its thread from (see the top of the file). A done task without items gets them
+ * first (threads/write.ts's `ensure`, with the setting on): the batch (threads/batch.ts) leaves done tasks out, so they
+ * get theirs when they're opened or read.
+ */
 export function source(c: Conn, task_id: string): Source {
-  return db.one(c, `SELECT 1 FROM tasks t WHERE t.id=?1 AND ${on_items()}`, task_id) ? "items" : "messages";
+  if (reads_items(c, task_id)) return "items";
+  if (db.one(c, "SELECT 1 FROM tasks WHERE id=?1 AND status='done'", task_id) && write.ensure(c, task_id) && reads_items(c, task_id)) return "items";
+  return "messages";
+}
+
+/** Whether task `task_id`'s readers read its items as things are, building none (`source`, without `ensure`). */
+export function reads_items(c: Conn, task_id: string): boolean {
+  return !!db.one(c, `SELECT 1 FROM tasks t WHERE t.id=?1 AND ${on_items()}`, task_id);
 }
 
 /** The SQL condition, on tasks aliased `t`, for the tasks `mode` reads from `from`. */

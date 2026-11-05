@@ -624,8 +624,11 @@ const events = (replies: boolean, reports: boolean, prompts = true, attention = 
 test("replies_and_reports_go_back_to_the_chat", async (t) => {
   const [s, f, p] = await linked_board(t);
   const a = assistant_id(s, p);
-  // A turn nobody asked for from Telegram stays on the board.
+  // A turn nobody asked for from Telegram stays on the board. Seen before the message from Telegram comes (the board's
+  // events are taken a tick later, and the bot's update can come first), or it would be the reply that message waits for.
   turn(s, a, "Board only");
+  const ended = db.value<number>(s.db(), "SELECT MAX(id) FROM messages WHERE task_id=?1", a)!;
+  await until("the turn to be seen", () => progress(s.db(), p).replied >= ended);
   // One that a Telegram message started comes back, formatted. (Here its run fails to launch, so nothing waits for a
   // reply once it has stopped: the turn is recorded as a run that's going.)
   f.push(text_update(7, 7, "Hi"));

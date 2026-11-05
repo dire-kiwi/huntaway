@@ -8,6 +8,9 @@ let server, project;
 before(async () => {
   server = startServer();
   project = await demoProject(server);
+  // The view on messages and its pages: with Keep threads as items on (the default), a task opened with messages written
+  // behind the board's back gets its items (docs/threads.md, step 7), whose window has all of this thread.
+  await server.api("PATCH", "/settings", { thread_items: false });
 });
 after(() => server?.stop());
 

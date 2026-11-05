@@ -35,6 +35,7 @@ import * as attachments from "./attachments.ts";
 import * as automations from "./integrations/automations.ts";
 import * as telegram from "./integrations/telegram.ts";
 import * as workflows from "./integrations/workflows.ts";
+import * as thread_batch from "./threads/batch.ts";
 import * as push from "./integrations/push.ts";
 import * as merged from "./review/merged.ts";
 import * as relocate from "./git/relocate.ts";
@@ -563,6 +564,7 @@ export async function serve(args: ServeArgs) {
   automations.start(state);
   telegram.start(state);
   workflows.resume(state);
+  thread_batch.resume(state);
   merged.start(state);
   relocate.start_recording(state);
   admin.start_update_check(state);

@@ -44,8 +44,12 @@ export const PROTOCOL = 1;
  * API 120: native push through Expo (`kind` `expo` on `/push/subscriptions`, which paired devices may use for their own),
  * paired devices reach a profile's assistant (`GET`/`POST /profiles/{id}/assistant`, `?local=1` too) for the app's
  * Assistant tab, and attachments know audio types (voice notes).
+ *
+ * API 121: every task gets items (HA-220, step 7 of docs/threads.md): the host setting `thread_items` is on by default
+ * (null is on), the batch rebuild (`GET /admin/threads`, `POST /admin/threads/batch`), and a task opened without items
+ * gets them.
  */
-export const API_VERSION = 120;
+export const API_VERSION = 121;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

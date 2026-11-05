@@ -21,6 +21,7 @@ import * as workflows from "../integrations/workflows.ts";
 import * as summary from "../review/summary.ts";
 import { def_str, json_map, opt_str, query_bool, query_int, query_opt_bool, req_str, body_rejection, def_bool } from "./extract.ts";
 import { create_task_inner } from "./new_task.ts";
+import * as batch from "../threads/batch.ts";
 import * as live from "../threads/live.ts";
 
 /**
@@ -34,6 +35,8 @@ export async function list_messages(s: AppState, r: Req) {
   const after = query_int(r, "after");
   const limit = query_int(r, "limit", 0);
   const c = s.db();
+  // Opening the thread: a task without items gets them (see threads/batch.ts), and the client switches to them.
+  if (before === null && after === null) batch.opened(s, id);
   if (before === null && after === null && limit === null) return db.list_messages(c, id);
   const [messages, more] = db.message_page(c, id, after, before, limit);
   const subagents = messages.length && more && before === null && after === null ? db.subagent_messages(c, id, messages[0].id) : [];
@@ -45,9 +48,10 @@ export async function list_messages(s: AppState, r: Req) {
 /**
  * `GET /tasks/{id}/thread[?limit=N]`: the task's thread kept as items, as a Snapshot `{thread, items, requests, seq}`
  * with the text streamed so far, or with `limit` a window of its last N items (with `start` and `context`). A 404 for
- * a task without items.
+ * a task without items (a task opened without them gets them first, with the setting on: see threads/batch.ts).
  */
 export async function get_thread(s: AppState, r: Req) {
+  batch.opened(s, r.params.id);
   const task = live.open(s, r.params.id);
   const limit = query_int(r, "limit", 0);
   return live.window(s, task, limit ?? undefined);
