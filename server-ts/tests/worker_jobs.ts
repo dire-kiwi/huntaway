@@ -1,4 +1,4 @@
-// Functions lag.test.ts runs in worker threads (see worker.ts).
+// Functions src/lag.test.ts runs in worker threads (see src/worker.ts). Here, as releases carry src/ without its tests.
 export function add(a: number, b: number) {
   return { sum: a + b };
 }

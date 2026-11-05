@@ -49,7 +49,7 @@ test("a_route_that_holds_the_thread_is_counted_and_its_stall_logged_with_it", as
 });
 
 test("a_worker_answers_with_what_its_function_returns_or_throws", async () => {
-  const url = new URL("./worker.test_module.ts", import.meta.url);
+  const url = new URL("../tests/worker_jobs.ts", import.meta.url);
   assert.deepEqual(await in_worker(url, "add", [2, 3]), { sum: 5 });
   // Async functions are awaited.
   assert.equal(await in_worker(url, "later", ["x"]), "x");
