@@ -1,4 +1,4 @@
-// Port of server/src/agent/assistant/tests.rs (HA-119, on the HA-117 branch).
+// Port of server/src/agent/assistant/tests.rs (HA-119 and HA-120, on the HA-117 branch).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, rmSync, statSync } from "node:fs";
@@ -13,7 +13,12 @@ import { delete_task_inner, update_task_inner } from "../../api/tasks.ts";
 import * as runner from "../runner.ts";
 import * as runs from "../runs.ts";
 import * as documents from "../documents.ts";
-import { get_or_create, work_dir } from "../assistant.ts";
+import { ASSISTANT_HOST_API, get_or_create, work_dir } from "../assistant.ts";
+import { createServer } from "node:http";
+import { readBody } from "../../http.ts";
+import { API_VERSION } from "../../hosts/proto.ts";
+import { link_http } from "../../hosts/hub.ts";
+import * as up from "../../hosts/uplink/testing.ts";
 
 const state = testing.state;
 
@@ -189,4 +194,130 @@ test("a_database_at_version_89_frees_the_key_a", () => {
   assert.equal(db.get_project(c, "apps")!.key, "AP");
   assert.equal(Number(db.value(c, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='tasks_one_assistant'")), 1);
   c.close();
+});
+
+// HA-204: a database from before assistant hosts keeps its profiles and links, which get no assistant host and don't
+// let their hosts' agents in.
+test("a_database_at_version_91_gets_assistant_hosts_and_up_links_off", () => {
+  const path = join(testing.temp_dir(), "huntaway.db");
+  let id: string;
+  {
+    const c = db.open(path);
+    id = db.insert_profile(c, "personal", [], null).id;
+    db.upsert_link(c, "home", "homeserver", "ssh", null, null);
+    c.exec("ALTER TABLE profiles DROP COLUMN assistant_host; ALTER TABLE links DROP COLUMN uplink; PRAGMA user_version=91;");
+    c.close();
+  }
+  const c = db.open(path);
+  assert.equal(Number(db.value(c, "PRAGMA user_version")), db.VERSION);
+  assert.equal(db.get_profile(c, id)?.assistant_host, null);
+  assert.deepEqual([db.get_link(c, "home")?.name, db.get_link(c, "home")?.uplink], ["homeserver", false]);
+  c.close();
+  // Opened again (as by a build that had added them as another version), nothing changes.
+  const again = db.open(path);
+  again.exec("PRAGMA user_version=91;");
+  again.close();
+  assert.equal(db.get_link(db.open(path), "home")?.uplink, false);
+});
+
+test("an_assistant_host_must_be_a_linked_host_with_assistants", async () => {
+  const [hub_s, host] = [up.node("hub", "desktop"), up.node("host", "homeserver")];
+  const p = db.insert_profile(hub_s.db(), "personal", [], null);
+  await up.link_by_url(hub_s, host);
+  // A host with assistants but from before assistant hosts, which is connected, so it can tell.
+  link_http(hub_s, "old", "http://127.0.0.1:9", ASSISTANT_HOST_API - 1);
+  db.upsert_link(hub_s.db(), "old", "old", "outbound", "http://x", null);
+  const path = `/api/profiles/${p.id}`;
+  const set = (v: any) => up.call_api(hub_s, "PATCH", path, { assistant_host: v });
+  for (const [bad, why] of [["nope", "must be a linked host"], [5, "must be a linked host's id or null"], ["old", "older build that can't be an assistant host"]] as const) {
+    const [status, v] = await set(bad);
+    assert.equal(status, 400, String(bad));
+    assert.ok(v.error.includes(why), `${bad}: ${JSON.stringify(v)}`);
+  }
+  assert.equal((await set("host"))[1].assistant_host, "host");
+  // Unchanged by a save that doesn't send it, as from an older UI.
+  assert.equal((await up.call_api(hub_s, "PATCH", path, { default_model: "haiku" }))[1].assistant_host, "host");
+  // This host is the same as none.
+  for (const none of ["hub", "", null]) {
+    assert.equal((await set("host"))[0], 200);
+    assert.equal((await set(none))[1].assistant_host, null, String(none));
+  }
+  // An offline host can't say, so it's taken.
+  hub_s.links.delete("old");
+  assert.equal((await set("old"))[1].assistant_host, "old");
+  // Or given when the profile's made.
+  const [status, made] = await up.call_api(hub_s, "POST", "/api/profiles", { name: "other", assistant_host: "host" });
+  assert.deepEqual([status, made.assistant_host], [200, "host"]);
+  assert.equal((await up.call_api(hub_s, "POST", "/api/profiles", { name: "third", assistant_host: "nope" }))[0], 400);
+  assert.ok(db.list_profiles(hub_s.db()).every((x) => x.name !== "third"));
+  // Removing the host takes it off the profiles that named it.
+  assert.equal((await up.call_api(hub_s, "DELETE", "/api/hosts/host"))[0], 200);
+  assert.ok(db.list_profiles(hub_s.db()).every((x) => x.assistant_host !== "host"));
+  assert.equal(db.get_profile(hub_s.db(), p.id)?.assistant_host, "old");
+});
+
+test("the_hub_sends_a_profiles_assistant_to_its_host", async () => {
+  const [hub_s, host] = [up.node("hub", "desktop"), up.node("host", "homeserver")];
+  const p = db.insert_profile(hub_s.db(), "personal", [], null);
+  await up.link_by_url(hub_s, host);
+  db.update_profile(hub_s.db(), p.id, [["assistant_host", "host"]]);
+  const path = `/api/profiles/${p.id}/assistant`;
+  // The host has no personal profile yet.
+  let [status, v] = await up.call_api(hub_s, "GET", path);
+  assert.equal(status, 409);
+  assert.ok(v.error.includes("homeserver has no profile named personal"), JSON.stringify(v));
+  const there = db.insert_profile(host.db(), "personal", [], null);
+  // Its own profile's, on that host, which says so; none is made on the hub.
+  const [st, a] = await up.call_api(hub_s, "GET", path);
+  assert.deepEqual([st, a.host_id, a.task_type], [200, "host", "assistant"]);
+  assert.equal(db.assistant_task(host.db(), there.id)?.id, a.id);
+  assert.equal(count(hub_s, p.id), 0);
+  // Through the hub's proxy, as a client that's told the host goes on to the task there.
+  const [st2, t] = await up.call_api(hub_s, "GET", `/api/h/host/tasks/${a.id}`);
+  assert.deepEqual([st2, t.task.id], [200, a.id]);
+  // Without the setting, it's the hub's own.
+  db.update_profile(hub_s.db(), p.id, [["assistant_host", null]]);
+  const own = (await up.call_api(hub_s, "GET", path))[1];
+  assert.deepEqual([own.host_id, count(hub_s, p.id)], ["hub", 1]);
+  // A host's profile that names the hub as its assistant's host doesn't send a routed request back.
+  db.upsert_link(host.db(), "hub", "desktop", "outbound", "http://x", null);
+  db.update_profile(host.db(), there.id, [["assistant_host", "hub"]]);
+  db.update_profile(hub_s.db(), p.id, [["assistant_host", "host"]]);
+  const [st3, a2] = await up.call_api(hub_s, "GET", path);
+  assert.deepEqual([st3, a2.id], [200, a.id]);
+  // Offline: says so, rather than making one here.
+  hub_s.links.delete("host");
+  [status, v] = await up.call_api(hub_s, "GET", path);
+  assert.equal(status, 503);
+  assert.equal(v.error, "personal's assistant runs on homeserver, which is offline");
+  assert.equal((await up.call_api(hub_s, "POST", path, { text: "hello" }))[0], 503);
+  assert.equal(count(hub_s, p.id), 1);
+});
+
+test("a_message_to_the_assistant_goes_to_its_host", async () => {
+  const hub_s = up.node("hub", "desktop");
+  const p = db.insert_profile(hub_s.db(), "personal", [], null);
+  // A host that records what it's sent rather than starting an agent.
+  const sent: Array<[string, any]> = [];
+  const srv = createServer(async (req, res) => {
+    const body = await readBody(req, 1 << 20);
+    const json = (v: any) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(v));
+    if (req.method === "GET" && req.url === "/api/profiles") return json([{ id: "pp", name: "personal" }]);
+    if (req.method === "POST" && req.url?.startsWith("/api/profiles/pp/assistant")) {
+      sent.push([req.url, JSON.parse(body.toString())]);
+      return json({ id: "a1", task_type: "assistant" });
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  up.on_end(() => {
+    srv.closeAllConnections();
+    srv.close();
+  });
+  link_http(hub_s, "host", `http://127.0.0.1:${(srv.address() as any).port}`, API_VERSION);
+  db.upsert_link(hub_s.db(), "host", "homeserver", "outbound", "http://x", null);
+  db.update_profile(hub_s.db(), p.id, [["assistant_host", "host"]]);
+  const [status, t] = await up.call_api(hub_s, "POST", `/api/profiles/${p.id}/assistant`, { text: "Remind me at 5" });
+  assert.deepEqual([status, t.id, t.host_id], [200, "a1", "host"]);
+  assert.deepEqual(sent, [["/api/profiles/pp/assistant?local=1", { text: "Remind me at 5" }]]);
 });

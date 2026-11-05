@@ -1,5 +1,5 @@
-// Port of the constants in server/src/hosts/proto.rs. (The tunnel messages are for linked hosts, which this port
-// doesn't dial; see hosts/hub.ts.)
+// Port of the constants in server/src/hosts/proto.rs. (The tunnel messages, `Up` and `Down`, are in hosts/hub.ts, but
+// for the board tool calls a host passes up its link, which are here.)
 import { readFileSync } from "node:fs";
 
 /** Bump on incompatible changes to the tunnel messages. */
@@ -11,8 +11,13 @@ export const PROTOCOL = 1;
  * API 110: routines (a profile's automations, which wake its assistant): `/profiles/{id}/automations`, the `cron` and `at`
  * triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, `report` messages, and push's
  * `replies` and `reports` events.
+ * API 111: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
+ *
+ * API 112: a profile's assistant host (`assistant_host`), and board tool calls up a link (`Down::Hello`, `Up::ToolCall`,
+ * and `hub_hello`/`hub_call` on `/api/host/ws`, see hosts/uplink.ts). A host passes calls only to a hub that said hello,
+ * which older hubs don't, and older hosts ignore the hello.
  */
-export const API_VERSION = 110;
+export const API_VERSION = 112;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;
@@ -34,3 +39,39 @@ export const VERSION: string = read_json("package.json").version ?? "0.1.0";
 
 /** The commit a release was built from (Rust's IA_BUILD_COMMIT), from build.json; null in a checkout. */
 export const BUILD_COMMIT: string | null = read_json("build.json").commit ?? null;
+
+/** A board tool call a host passes up its link to a hub (see hosts/uplink.ts). */
+export interface ToolCall {
+  /** This call on this link, which the answer carries. */
+  id: number;
+  /** The agent's call id on the host, by which the hub runs it at most once. */
+  call_id: string;
+  tool: string;
+  /** The calling agent's profile, by name: the hub acts with that profile's access to its boards. */
+  profile: string;
+  args: any;
+  task_fields: boolean;
+}
+
+/** The hub's answer to a `ToolCall`. */
+export interface ToolAnswer {
+  id: number;
+  result: any;
+  error: string | null;
+  /** The hub doesn't let this host's agents use its board (Settings → Hosts there). */
+  off: boolean;
+}
+
+/** A `ToolCall` as serde reads one (its optional fields defaulted), or null if it isn't one. */
+export function ToolCall_from(v: any): ToolCall | null {
+  if (!v || typeof v !== "object" || typeof v.id !== "number" || typeof v.call_id !== "string" || typeof v.tool !== "string" || typeof v.profile !== "string") {
+    return null;
+  }
+  return { id: v.id, call_id: v.call_id, tool: v.tool, profile: v.profile, args: v.args ?? null, task_fields: v.task_fields === true };
+}
+
+/** A `ToolAnswer` as serde reads one, or null if it isn't one. */
+export function ToolAnswer_from(v: any): ToolAnswer | null {
+  if (!v || typeof v !== "object" || typeof v.id !== "number") return null;
+  return { id: v.id, result: v.result ?? null, error: typeof v.error === "string" ? v.error : null, off: v.off === true };
+}
