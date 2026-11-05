@@ -5,6 +5,7 @@ import type { Shared } from "../../state.ts";
 import * as api from "../../api.ts";
 import * as runner from "../../agent/runner.ts";
 import * as focus from "../../agent/focus.ts";
+import * as assistant from "../../agent/assistant.ts";
 import * as au from "../../integrations/automations.ts";
 import * as permissions from "../permissions.ts";
 import { ToolError, is_own, te, type Ctx } from "../tools.ts";
@@ -267,6 +268,10 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
         const owner: au.Owner = wants_routines(ctx, args)
           ? own_routines(s, ctx, profile)
           : { project: project_or_own(s, ctx, str_arg("project_id"), profile, own_project) };
+        // Not one that couldn't run, before the user's asked about it (see running.guards).
+        const rp = "profile" in owner ? db.get_profile(s.db(), owner.profile) : null;
+        const elsewhere = rp ? assistant.routines_elsewhere(s, rp) : null;
+        if (elsewhere !== null) throw ToolError.other(elsewhere);
         input = automation_creation(s, ctx, owner, args, profile);
       } else if (tool === "update_automation") {
         const [a, p] = resolve_automation(s, ctx, args, profile, own_project);

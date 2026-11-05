@@ -8,7 +8,7 @@ import { background, err_str, same_secret } from "../../util.ts";
 import { API_VERSION, PROTOCOL, ToolCall_from } from "../proto.ts";
 import * as relay from "../relay.ts";
 import { Chan, type Frame } from "../relay.ts";
-import { LinkConn, Version_from_info, changed, forward_event, register, run_up_call, unregister, type Down, type Up, type Version } from "../hub.ts";
+import { LinkConn, Version_from_info, changed, forward_event, misplaced, register, run_up_call, unregister, type Down, type Up, type Version } from "../hub.ts";
 
 /** The close code a hub refuses a host's tunnel with (a policy violation). */
 export const REFUSED = 1008;
@@ -106,7 +106,7 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
   const streams = new Map<number, Chan<Frame>>();
   const conn = new LinkConn(host_id, name, "inbound", version, { type: "tunnel", tx, pending, streams, next: 1 });
   if (!register(s, conn)) {
-    const reason = `host ${host_id} is already connected to this hub`;
+    const reason = misplaced(s, conn) ?? `host ${host_id} is already connected to this hub`;
     ws.resume();
     await relay.close(ws, [REFUSED, reason]);
     throw new Error(`${name}: ${reason}`);
