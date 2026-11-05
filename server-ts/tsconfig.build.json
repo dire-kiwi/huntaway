@@ -1,0 +1,7 @@
+{
+  // The server as release packages carry it (scripts/package-server.sh): src/ compiled to .js, without tests and their helpers.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": false, "rewriteRelativeImportExtensions": true, "removeComments": true, "rootDir": "src" },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/testing.ts", "src/**/tests.ts", "src/hosts/broker/test_broker.ts"]
+}

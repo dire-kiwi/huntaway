@@ -57,7 +57,7 @@ export class KillGroup {
  * Run a script in a process group of its own, which is killed if the script runs over `limit`, so nothing it started
  * keeps running.
  */
-function run_limited(script: string, cwd: string, env: NodeJS.ProcessEnv, limit: number): Promise<RawOutput & { signal: string | null }> {
+export function run_limited(script: string, cwd: string, env: NodeJS.ProcessEnv, limit: number): Promise<RawOutput & { signal: string | null }> {
   return new Promise((resolve, reject) => {
     let child;
     try {

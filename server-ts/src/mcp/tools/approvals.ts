@@ -25,6 +25,11 @@ export async function resume_approval(s: Shared, ctx: Ctx, saved: any): Promise<
 }
 
 /** What an approval asks for, for the agent, e.g. "changing setup_script" or "deleting KIW-2". */
+/** Whether an automation approval's input is about a profile's routine (it names the profile, not a project). */
+function is_routine_input(input: any): boolean {
+  return input?.profile !== null && typeof input?.profile === "object" && !Array.isArray(input.profile);
+}
+
 function approval_what(tool: string, input: any): string {
   if (tool === "create_project") return `adding ${typeof input?.repo_path === "string" ? input.repo_path : "the folder"} as a project`;
   if (tool === "delete_task") return `deleting ${typeof input?.delete?.key === "string" ? input.delete.key : "the task"}`;
@@ -36,7 +41,8 @@ function approval_what(tool: string, input: any): string {
   if (tool.endsWith("_automation")) {
     const op = tool.slice(0, -"_automation".length);
     const verb = op === "create" ? "creating" : op === "update" ? "changing" : "deleting";
-    return `${verb} the automation "${typeof input?.automation?.name === "string" ? input.automation.name : ""}"`;
+    const what = is_routine_input(input) ? "routine" : "automation";
+    return `${verb} the ${what} "${typeof input?.automation?.name === "string" ? input.automation.name : ""}"`;
   }
   const changes: any[] = Array.isArray(input?.changes) ? input.changes : [];
   const fields = changes.filter((c) => c?.needs_approval === true && typeof c.field === "string").map((c) => c.field);
@@ -50,7 +56,11 @@ function approval_what(tool: string, input: any): string {
 export async function ask_user(s: Shared, ctx: Ctx, tool: string, input: any): Promise<any> {
   const what = approval_what(tool, input);
   let [kind, of, instead, nothing] = ["project", "project", "ask the user to do it in the project's settings", "changed"];
+  const routine = is_routine_input(input);
   if (tool === "delete_task") [kind, of, instead, nothing] = ["delete_task", "task", "ask the user to delete it on the board", "deleted"];
+  else if (tool === "create_automation" && routine) [kind, of, instead, nothing] = ["automation", "profile", "ask the user to add it on the assistant's Routines page", "created"];
+  else if ((tool === "update_automation" || tool === "delete_automation") && routine)
+    [kind, of, instead, nothing] = ["automation", "profile", "ask the user to do it on the assistant's Routines page", "changed"];
   else if (tool === "create_automation") [kind, of, instead, nothing] = ["automation", "project", "ask the user to add it in the project's settings (Automations)", "created"];
   else if (tool === "update_automation" || tool === "delete_automation")
     [kind, of, instead, nothing] = ["automation", "project", "ask the user to do it in the project's settings (Automations)", "changed"];

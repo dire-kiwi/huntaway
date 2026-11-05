@@ -160,8 +160,9 @@ export function resolve_task(s: Shared, ctx: Ctx, r: string, profile: string | n
   const [prefix, id] = split_ref(s, r);
   const bs = pick_boards(s, ctx, prefix ?? profile);
   // Not a review thread, as by its key: an agent's tools only reach tasks.
-  // A profile's assistant is its own: other profiles' agents can't reach it (see agent/assistant.ts).
-  const reaches = (t: Task) => t.kind === "task" && bs.some((b) => b.id === t.profile_id && (!db.is_assistant(t) || is_own(ctx, b)));
+  // A profile's assistant is its own: other profiles' agents can't reach it (see agent/assistant.ts). So are its routine
+  // threads.
+  const reaches = (t: Task) => t.kind === "task" && bs.some((b) => b.id === t.profile_id && (!db.is_assistants(t) || is_own(ctx, b)));
   const byId = db.get_task(s.db(), id);
   if (byId && reaches(byId)) return byId;
   const found: Array<[db.Profile, Task]> = [];
