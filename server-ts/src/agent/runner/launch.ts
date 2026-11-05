@@ -38,7 +38,7 @@ import {
 import { as_told } from "./merge.ts";
 import { instructions, start_prompt, system_prompt, type Told } from "./prompt.ts";
 import { set_writes_documents, user_input, write_steers } from "./queue.ts";
-import { PROMPT_TOOL } from "./requests.ts";
+import { PROMPT_TOOL, initialize_line } from "./requests.ts";
 
 /** The nearest effort Claude has to one only Codex models offer. */
 export function claude_effort(e: string): string {
@@ -299,6 +299,11 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
   // Echoed back, the messages show where in the turn the agent took them in.
   if (input) args.push("--input-format", "stream-json", "--replay-user-messages");
+  // The board's tools are an in-process MCP server, called on the run's output and answered on its input (see
+  // requests.ts), which the `initialize` its input starts with registers. A compaction, which takes no input, calls them
+  // over HTTP (mcp/http.ts), as Codex runs and runs with the old helpers (`IA_MCP_STDIO`) do.
+  const tools_on_output = input && process.env.IA_MCP_STDIO !== "1";
+  if (tools_on_output) prompt = `${initialize_line(run.id, task.kind === "review")}\n${prompt}`;
   // The project's own skills and MCP servers, and the ones it turns off.
   const gh_tools = uses_gh_server(tools);
   const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
@@ -369,6 +374,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     github_account: account,
     codex: null,
     asks_on_output: !!asks && input,
+    tools_on_output,
   };
   console.log(`task ${task_id} run ${run.id}: starting claude (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);
   await started(state, run, l, check);

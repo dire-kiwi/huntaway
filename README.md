@@ -437,12 +437,14 @@ the run ends (`runs::KEEP_DAYS`), or as soon as its task is deleted. It checks e
 also removes the recorded MCP calls of runs that ended over an hour ago.
 
 The pieces that cross a restart are durable too:
-- The board serves each run's MCP servers over HTTP (see *Agent tools (MCP)*) and answers each
-  tool call on an event stream. When a restart breaks it, the agent (Claude Code or Codex)
-  reconnects for the call's answer, and the call carries on where it was. The server records
-  each call's result, so a call is never executed twice. Runs started before that (with
-  `huntaway mcp` helpers) keep theirs, which retry each call under the same id until the server
-  answers.
+- A Claude run calls the board's tools on its own output and gets their answers on its input
+  (see *Agent tools (MCP)*): a call still going when the server restarts (a `wait`, an approval)
+  is found again in the recorded calls and answered when it's done. Codex runs and compactions
+  reach the board's tools over HTTP, and the gh server's over HTTP too, answered on an event
+  stream: when a restart breaks it, the agent (Claude Code or Codex) reconnects for the call's
+  answer, and the call carries on where it was. The server records each call's result, so a call
+  is never executed twice. Runs started before that (with `huntaway mcp` helpers) keep theirs,
+  which retry each call under the same id until the server answers.
 - Permission prompts are stored with the call that raised them. A prompt pending across a
   restart reappears, and the decision reaches the agent once it's made.
 
@@ -1475,7 +1477,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   win over a global one with the same name. A global server named `google` is the assistant's
   alone (see *Google for the assistant*): projects' runs never get it. Before each run, the skills that are on are written to
   `<data-dir>/projects/<id>/agent/.claude/skills/`, which the agent gets with `--add-dir`. The
-  servers are added to the run's `--mcp-config` next to `huntaway`. A server can allow all of
+  servers are added to the run's `--mcp-config` next to `gh` (and `huntaway`, for Codex runs and compactions). A server can allow all of
   its tools, so they never ask for approval. Skills and servers that come from elsewhere (the
   Claude config, its plugins, claude.ai connectors, the repository) can be turned off per project.
   They're denied with `--disallowedTools` (`Skill(<name>)`, `mcp__<server>`). The settings list
@@ -1634,7 +1636,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   reason instead of *working*. The waiting state lasts exactly as long as the call, however it returns
   (failing that, until the turn or run ends), and is kept as the task's `agent_wait`, apart from `waiting`
   (queued for dependencies). A server restart doesn't start a wait over: the agent reconnects for
-  the call (or its MCP helper retries it), which carries on until the same deadline, watching the same tasks (one
+  the call (Claude's runs' calls are taken up again from their output, and an MCP helper retries it), which carries on until the same deadline, watching the same tasks (one
   deleted meanwhile ends it). Planning agents (subprojects and
   group tasks) are told to wait for the tasks they started this way rather than end their turn.
   - `command` lets the agent wait for what the board can't see (CI, a deploy, a file): the server
@@ -2153,8 +2155,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (`--permission-prompt-tool stdio`: a `can_use_tool` control request in the run's `out.jsonl`)
   and gets the answer on its input (`input.jsonl`); a prompt still open when the server restarts
   is asked again, and can be answered as before. A `/compact` run, which takes no input, asks
-  through the MCP helper's `permission_prompt`, as Codex's approvals do. Codex's approvals get the
-  same card, which names the agent asking. Runs that ask on their output are run format 3: an
+  through the board's MCP server's `permission_prompt`, over HTTP, as Codex's approvals do. Codex's
+  approvals get the same card, which names the agent asking. Runs that ask on their output are
+  run format 3 (4 when they call the board's tools there too, see *Agent tools (MCP)*): an
   older build that's rolled back to stops them (it couldn't answer them) rather than follow them.
 - **Questions and plans** (API 64) are cards in the thread rather than approvals, and the task's
   card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
@@ -2233,8 +2236,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
 
 ### Agent tools (MCP)
 
-Each run gets the `huntaway` MCP server, which the board serves itself over HTTP (see *How runs reach
-the board's MCP servers* below):
+Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs
+and over HTTP for Codex runs and compactions (see *How runs reach the board's MCP servers* below):
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
@@ -2322,10 +2325,33 @@ own lookups. `GET /github-accounts` lists the accounts gh is signed in to on a h
 (API 50), and profiles and projects take `github_account` (a login, or `HOST/LOGIN` for a GitHub
 Enterprise host; null for the default). Agents can't change it with `update_project`.
 
-**How runs reach the board's MCP servers.** The board serves both servers itself, over MCP's
-streamable HTTP transport, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on the host's
-internal address (`127.0.0.1:<port>`, the host that runs the agent), so a run has no MCP helper
-process of its own. Each run's `mcp.json` has them as `http` servers with a bearer token of the
+**How runs reach the board's MCP servers.** The board serves both servers itself, so a run has no
+MCP helper process of its own.
+
+A Claude run that takes input (every run but a `/compact`) has the board's tools as an in-process
+("SDK") MCP server of Claude Code's, over its control protocol, as its permission prompts are (HA-221,
+`server-ts/src/agent/runner/requests.ts`). The run's input starts with an `initialize` control
+request that registers the `huntaway` server (`sdkMcpServers`), with no time limit on its calls and
+none moved to the background, and gives Claude Code its handshake's results (`sdkMcpServerManifests`:
+its `initialize` and `tools/list`, the reviewers' tools for a review thread), so it needn't ask for
+them before the first turn. Claude Code sends each MCP message as an `mcp_message` control request
+on the run's output (`out.jsonl`), and gets the server's JSON-RPC answer in a `control_response` on
+its input (`input.jsonl`). A tool call is a board call like any other (the same dispatch, the same
+policy: reviewers' and planning threads' limits, approvals, approval rules, linked hosts), recorded
+in `mcp_calls` as `stdio:<run id>:<request id>` with what answering it takes, and its task is its
+run's: the run's `mcp.json` has no board server, and the board's HTTP server refuses the run (it has
+only `gh` there). After a restart the run's output is followed from its saved offset, past the calls
+already read, so those still going (a `wait`, an approval that `delete_task` or `update_project`
+asked for) are taken up again from `mcp_calls` and answered when they're done: a `wait` keeps its
+deadline and what it watches. A call that may have taken effect before the restart cut it short
+(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code cancels (its turn
+was interrupted) isn't answered: a `wait` ends, and an approval expires. Such runs are run format 4,
+which an older build that's rolled back to stops rather than follow, as it couldn't answer their
+calls. With `IA_MCP_STDIO=1` (below), Claude runs get the helpers instead.
+
+Codex runs and compactions reach the board's tools over MCP's streamable HTTP transport, and every
+run reaches the `gh` server that way, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on
+the host's internal address (`127.0.0.1:<port>`, the host that runs the agent). Each run's `mcp.json` has them as `http` servers with a bearer token of the
 run's own (an HMAC of the run's id with the host's token), which only acts as that run: the server
 says which run a call is for, not the agent, and the agent never holds the host's token. What the
 `gh` server needs of the run (its working directory and GitHub account) is in the run's folder
