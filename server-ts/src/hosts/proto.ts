@@ -37,8 +37,12 @@ export const PROTOCOL = 1;
  *
  * API 118: paired devices (devices.ts): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
  * `GET /permissions?profile_id=`.
+ *
+ * API 119: native push through Expo (`kind` `expo` on `/push/subscriptions`, which paired devices may use for their own),
+ * paired devices reach a profile's assistant (`GET`/`POST /profiles/{id}/assistant`, `?local=1` too) for the app's
+ * Assistant tab, and attachments know audio types (voice notes).
  */
-export const API_VERSION = 118;
+export const API_VERSION = 119;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

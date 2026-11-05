@@ -1,14 +1,14 @@
 import { Boards, tokenKey, type Board } from "../src/boards";
 import { memoryStore } from "./helpers";
 
-const b = (id: string, extra: Partial<Board> = {}): Board => ({ id, url: `https://${id}.ts.net`, name: id, deviceId: `dev-${id}`, apiVersion: 100, profile: null, pairedAt: "", ...extra });
+const b = (id: string, extra: Partial<Board> = {}): Board => ({ id, url: `https://${id}.ts.net`, name: id, deviceId: `dev-${id}`, apiVersion: 110, profile: null, pairedAt: "", ...extra });
 
 describe("the board switcher", () => {
   test("adds boards with their own tokens, and selects the newest", async () => {
     const store = memoryStore();
     const boards = new Boards(store);
     await boards.load();
-    expect(boards.get()).toEqual({ boards: [], selected: null, loaded: true });
+    expect(boards.get()).toEqual({ boards: [], selected: null, lastShared: null, loaded: true });
     await boards.add(b("work"), "work-token");
     await boards.add(b("home"), "home-token");
     expect(boards.get().boards.map((x) => x.id)).toEqual(["work", "home"]);
@@ -83,6 +83,23 @@ describe("the board switcher", () => {
     const broken = new Boards(store);
     await broken.load();
     expect(broken.get().boards).toEqual([]);
+  });
+
+  test("remembers the board the last share went to, until it's unpaired", async () => {
+    const store = memoryStore();
+    const boards = new Boards(store);
+    await boards.add(b("work"), "w");
+    await boards.add(b("home"), "h");
+    await boards.shared("work");
+    await boards.shared("nope");
+    const again = new Boards(store);
+    await again.load();
+    expect(again.get().lastShared).toBe("work");
+    await again.remove("work");
+    expect(again.get().lastShared).toBeNull();
+    const after = new Boards(store);
+    await after.load();
+    expect(after.get().lastShared).toBeNull();
   });
 
   test("keychain keys are safe whatever the id", () => {

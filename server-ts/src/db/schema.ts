@@ -744,6 +744,17 @@ export function open(path: string): Conn {
     // EXISTS`), in case another migration takes this version first.
     batch(`BEGIN; ${devices.TABLE} PRAGMA user_version=96; COMMIT;`);
   }
+  if (version < 97) {
+    // Native push (integrations/push.ts): a subscription's `kind`, `web` (Web Push, as all of them were before) or `expo`
+    // (the mobile app, through Expo's push service: `endpoint` is its Expo push token, and `p256dh` and `auth` are
+    // unused), and the paired device that made it, whose subscriptions go when it's revoked. Each only if it isn't there,
+    // in case another migration takes this version first.
+    batch("BEGIN;");
+    for (const [column, kind] of [["kind", "TEXT NOT NULL DEFAULT 'web'"], ["device_id", "TEXT"]]) {
+      if (!has_column(conn, "push_subscriptions", column)) batch(`ALTER TABLE push_subscriptions ADD COLUMN ${column} ${kind};`);
+    }
+    batch("PRAGMA user_version=97; COMMIT;");
+  }
   return conn;
 }
 
@@ -789,7 +800,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 96;
+export const VERSION = 97;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what
