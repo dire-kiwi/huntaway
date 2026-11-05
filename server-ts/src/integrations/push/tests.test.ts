@@ -655,6 +655,18 @@ test("a_token_stops_working_once_its_prompt_is_answered_on_the_board_or_expires"
     await settled_as(s, request, "expired");
     [status, v] = await answer_from_push(s, request, token, "allow");
     assert.deepEqual([status, v.result], [409, "expired"], JSON.stringify(v));
+    assert.ok(v.message.includes("run ended"), JSON.stringify(v));
+
+    // Timed out (a routine run's, see permissions.expire_due): said so, not that its run ended (HA-245).
+    [request, told] = await raise(s, task, "c3", "Edit", {});
+    token = (await next_push(service, ua)).answer.token;
+    db.run(s.db(), "UPDATE permission_requests SET expires_at=?2 WHERE id=?1", request, new Date(Date.now() - 1000).toISOString());
+    assert.equal(permissions.expire_due(s, new Date()), 1);
+    assert.equal((await told).behavior, "deny");
+    await settled_as(s, request, "timed_out");
+    [status, v] = await answer_from_push(s, request, token, "allow");
+    assert.deepEqual([status, v.result], [409, "expired"], JSON.stringify(v));
+    assert.ok(v.message.includes("nobody answered it in time"), JSON.stringify(v));
   } finally {
     service.close();
   }

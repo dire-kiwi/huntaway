@@ -868,8 +868,10 @@ is that host (see *An assistant host*): the host names the caller's profile, and
 could name any. It runs with that profile's access (its board, and those that let that profile in),
 looking on its other linked hosts too, but never back on the calling host or further up, and at most
 once per call id, and only if it came the way the hub links that host: a host that dials in under the
-id of one the hub dials (by URL or over SSH) isn't taken for it, for calls or for the assistant's
-requests. A host that dials in is known only by the id it gives with the hub token, which every such
+id of an assistant host the hub dials (by URL or over SSH) is refused, so it gets none of that host's
+calls, the assistant's requests or the board's requests through `/api/h/<host_id>`. (Another host the
+hub dials may dial in too, and stands in for itself while the hub's link to it is down.) A call that names the
+calling host with `host` isn't sent back down to it either. A host that dials in is known only by the id it gives with the hub token, which every such
 host shares, so any host given that token could claim to be it: link an assistant host over SSH or by
 URL. If the link drops after a call went up, the agent is told it may have taken effect.
 Changes that need the user's approval (`update_project`, `delete_task`, automations) are refused there,
@@ -953,7 +955,10 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
    the assistant on that host, and says so while the host is offline. `GET /api/profiles/<id>/assistant`
    on the hub goes there too (to `/api/profiles/<id there>/assistant?local=1`), and returns the task with
    that host's `host_id`, which clients reach through `/api/h/<host_id>/…`. Removing the host puts the
-   assistant back on the board's own host.
+   assistant back on the board's own host. Its routines are that host's: make them in its Routines
+   tab there. Routines made on the board's own host before the move stay there and don't run (each
+   run fails, saying where the assistant is, and new ones can't be made there); the Routines tab on
+   the assistant host lists them, to delete.
 5. **Let it use your board**, if it should hand work to your projects or read what needs your
    attention: Settings → Hosts → **Let this host's agents use this board** for that host. Agents
    there in the profiles whose assistant runs on it then act on your boards with that profile's access

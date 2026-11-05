@@ -42,7 +42,7 @@ trap 'rm -rf "$build"' EXIT
 cp -R "$root/server-ts/src" "$root/server-ts/package.json" "$root/server-ts/package-lock.json" "$root/server-ts/tsconfig.json" \
   "$root/server-ts/tsconfig.build.json" "$build/"
 (cd "$build" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error && node_modules/.bin/tsrs -p tsconfig.build.json --outDir "$out/server-ts/src")
-[[ -f $out/server-ts/src/main.js && -f $out/server-ts/src/mcp.js ]] || { echo "tsrs didn't write server-ts/src/main.js" >&2; exit 1; }
+[[ -f $out/server-ts/src/main.js && -f $out/server-ts/src/mcp_main.js && -f $out/server-ts/src/agent/approval_rules/hook_main.js ]] || { echo "tsrs didn't write the entry files (server-ts/src/main.js, mcp_main.js, agent/approval_rules/hook_main.js)" >&2; exit 1; }
 cp "$root/server-ts/package.json" "$root/server-ts/package-lock.json" "$out/server-ts/"
 if [[ -n ${VERSION:-} ]]; then
   node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
