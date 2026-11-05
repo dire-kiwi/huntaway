@@ -43,7 +43,7 @@ const STRING_SETTINGS = ["default_model", "default_effort", "default_permission_
  * are shown with. And whether release checks include prereleases (`release_prereleases`, API 88), which checks again
  * when it changes. And how many hours a task can go without activity in the board's Now view before it goes back to
  * Later (`now_expiry_hours`, API 97; 0 for never, null for the default of a day). And whether tasks started from now
- * on keep their threads as items as well as messages (`thread_items`, API 116; on by default since API 120, so null
+ * on keep their threads as items as well as messages (`thread_items`, API 116; on by default since API 121, so null
  * is on; see threads/write.ts).
  */
 export async function update_settings(s: AppState, r: Req) {
@@ -79,7 +79,7 @@ export async function update_settings(s: AppState, r: Req) {
     if (!(v === null || typeof v === "boolean")) throw ApiError.bad("release_prereleases must be true, false or null");
     prereleases = v === true;
   }
-  // Null is the default, which is on (since API 120).
+  // Null is the default, which is on (since API 121).
   let thread_items: boolean | null | undefined;
   if (Object.hasOwn(b, threads.SETTING)) {
     const v = b[threads.SETTING];
@@ -183,7 +183,7 @@ export async function roll_back_release(s: AppState) {
 }
 
 /**
- * `GET /admin/threads` (API 120): `{pending, batch}`, how many tasks the batch rebuild of threads as items would rebuild
+ * `GET /admin/threads` (API 121): `{pending, batch}`, how many tasks the batch rebuild of threads as items would rebuild
  * now (those that aren't done whose threads aren't kept as items by this build), and the batch's progress (null if it
  * hasn't run since the server started). See threads/batch.ts.
  */
@@ -191,7 +191,7 @@ export async function threads_status(s: AppState) {
   return thread_batch.status(s);
 }
 
-/** `POST /admin/threads/batch` (API 120): starts the batch rebuild (or goes on with it); `{"stop": true}` stops it after the task it's on. */
+/** `POST /admin/threads/batch` (API 121): starts the batch rebuild (or goes on with it); `{"stop": true}` stops it after the task it's on. */
 export async function threads_batch(s: AppState, r: Req) {
   if (def_bool(json_map(r), "stop", false)) thread_batch.stop(s);
   else thread_batch.start(s);

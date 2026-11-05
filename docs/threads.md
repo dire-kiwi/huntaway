@@ -354,7 +354,7 @@ On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none f
 
 `server-ts/src/threads/batch.ts`, step 7 (the plan's `backfill` question, answered with its recommendation): the
 tasks from before the setting get their items from a rebuild of their messages (`write.ts`'s `rebuild`), and the
-setting is on by default (API 120). It's still additive: messages are the source, and dropping the `thread_*` rows
+setting is on by default (API 121). It's still additive: messages are the source, and dropping the `thread_*` rows
 (and `tasks.thread_items`) undoes it.
 
 - **The batch** covers every task that isn't done whose readers don't read items yet (`batch.pending`: not flagged,
@@ -422,7 +422,7 @@ the text streamed after the rebuild until the message is saved (then it has all 
 | 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
 | 5. The UI on items | HA-218 | Done: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. |
 | 6. Readers on items | HA-217 | Done: `threads/history.ts`, `huntaway threads-readers` (`threads/readers.ts`), the attachment scan on items, converter 3. |
-| 7. Every task gets items, the setting on by default | HA-220 | This change: `threads/batch.ts`, `huntaway threads-rebuild --batch`, Settings → Server's rebuild, a done task's items on open, the setting on by default, API 120. Messages are still the source. |
+| 7. Every task gets items, the setting on by default | HA-220 | This change: `threads/batch.ts`, `huntaway threads-rebuild --batch`, Settings → Server's rebuild, a done task's items on open, the setting on by default, API 121. Messages are still the source. |
 | 8. Permission prompts and questions over stdio | HA-219 | Not started |
 | 9. The board's tools in process | HA-221 | Not started |
 | B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`server-ts/src/db/file.ts`) |

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Huntaway's mobile app: your boards, prompts and threads on Android and iOS",
   "license": "MIT",
-  "main": "expo-router/entry",
+  "main": "index.ts",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -17,6 +17,9 @@
     "preset": "jest-expo",
     "testMatch": [
       "<rootDir>/tests/**/*.test.ts?(x)"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup.ts"
     ],
     "transformIgnorePatterns": [
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@huntaway/.*|mdast-.*|micromark.*|decode-named-character-reference|character-entities|unist-.*|ccount|escape-string-regexp|markdown-table|longest-streak|zwitch|devlop)"
@@ -34,14 +37,19 @@
     "expo-constants": "~58.0.14",
     "expo-dev-client": "~58.0.18",
     "expo-device": "~58.0.5",
+    "expo-file-system": "~58.0.13",
     "expo-image-picker": "~58.0.10",
     "expo-linking": "~58.0.15",
     "expo-network": "~58.0.4",
+    "expo-notifications": "~58.1.8",
     "expo-router": "~58.0.29",
     "expo-secure-store": "~58.0.2",
+    "expo-share-intent": "^9.0.0",
+    "expo-speech-recognition": "^58.0.1",
     "expo-splash-screen": "~58.0.13",
     "expo-status-bar": "~58.0.4",
     "expo-system-ui": "~58.0.7",
+    "expo-task-manager": "~58.0.13",
     "mdast-util-from-markdown": "^2.1.0",
     "mdast-util-gfm": "^3.1.0",
     "micromark-extension-gfm": "^3.0.0",

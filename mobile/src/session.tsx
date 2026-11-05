@@ -74,6 +74,9 @@ export function clearStatus(id: string) {
 
 export const statusOf = (all: Record<string, BoardStatus>, id: string) => all[id] ?? NO_STATUS;
 
+/** A board's status now, outside a component (what a tapped notification opens depends on it). */
+export const boardStatus = (id: string) => statusOf(statuses, id);
+
 /** Whether a board can be used: paired and new enough. */
 export const usable = (s: BoardStatus) => !s.unauthorized && !s.tooOld;
 
@@ -81,6 +84,11 @@ export const usable = (s: BoardStatus) => !s.unauthorized && !s.tooOld;
 
 type Listener = (boardId: string, ev: BoardEvent) => void;
 const eventListeners = new Set<Listener>();
+
+/** Hands an event from board `boardId` to every listener (LiveUpdates does, for each board's websocket). */
+export function emitBoardEvent(boardId: string, ev: BoardEvent) {
+  for (const l of eventListeners) l(boardId, ev);
+}
 
 /** Calls `fn` with each event from every paired board (the latest `fn`, without resubscribing). */
 export function useBoardEvents(fn: Listener) {
@@ -153,7 +161,7 @@ export function LiveUpdates() {
       const socket = new BoardSocket(
         () => client.wsUrl(),
         (ev) => {
-          for (const l of eventListeners) l(b.id, ev);
+          emitBoardEvent(b.id, ev);
         },
         undefined,
         (connected) => {

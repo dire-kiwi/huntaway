@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as db from "./db.ts";
 import * as testing from "./testing.ts";
-import { clean_name, ids_in, of_task, referenced } from "./attachments.ts";
+import { clean_name, ids_in, mime, of_task, referenced } from "./attachments.ts";
 
 test("ids_are_found_in_messages", () => {
   const a = "0123456789abcdef0123456789abcdef";
@@ -24,6 +24,13 @@ test("messages_the_agent_hasnt_read_yet_are_referred_to", () => {
   db.update_task(state.db(), task.id, [["steering", steer]]);
   assert.ok(of_task(state.db(), task.id).has(a));
   assert.ok(referenced(state.db()).has(a));
+});
+
+// HA-138 (ported by HA-209).
+test("voice_notes_are_audio", () => {
+  assert.equal(mime("voice-note-1.wav"), "audio/wav");
+  assert.equal(mime("memo.M4A"), "audio/mp4");
+  assert.equal(mime("x.caf"), "audio/x-caf");
 });
 
 test("names_are_cleaned", () => {
