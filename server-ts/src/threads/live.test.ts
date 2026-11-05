@@ -55,6 +55,9 @@ async function idle(s: AppState, id: string) {
 /** A state with a task in one profile, and another profile with a task of its own. */
 function setup() {
   const s = testing.state();
+  // Threads made here from the spec's example, not from messages: the setting (on by default) would write the messages'
+  // items too, and give a task without items its thread when it's opened.
+  db.set_setting(s.db(), "thread_items", "false");
   const p = db.insert_profile(s.db(), "personal", [], null);
   const other = db.insert_profile(s.db(), "work", [], null);
   return { s, task: new_task(s, p.id), others: new_task(s, other.id, "theirs") };

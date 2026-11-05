@@ -19,6 +19,10 @@ thread is read from the board's own tables, and commands go onto the board's own
 - From **API 119**, tasks have `thread_items` (whether a task's thread is kept as items), which the app's thread view
   draws from these routes, with the host's setting on (see "The thread view on items" in threads.md). Items and
   requests carry the board's own `metadata` (converter 4), and subagents their `ended_at`.
+- From **API 120**, the setting is on by default, and with it on, a task without items gets them when it's opened:
+  `GET /tasks/{id}/thread` rebuilds them first (as do the task's own `GET /tasks/{id}` and its messages' latest page),
+  so it answers 404 only with the setting off or for a thread whose live writes stopped on an error. Such a rebuild
+  sends the task (with `thread_items`) and a `thread_resync`. The batch rebuild (`/admin/threads`) is in threads.md.
 - A task's thread has the task's id, and it's reached only through its task: a command can't name another thread,
   and a request or item id is looked up in the task's own thread only. As for the message routes, the board's token
   reaches every profile's tasks on the host; another task's requests (another profile's included) aren't reached

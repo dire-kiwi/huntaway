@@ -40,8 +40,12 @@ export const PROTOCOL = 1;
  *
  * API 119: the thread view on items (HA-218): tasks' `thread_items` (whether a task's thread is kept as items), and the
  * board's own `metadata` on thread items and requests, and subagents' `ended_at` (converter 4, see docs/threads.md).
+ *
+ * API 120: every task gets items (HA-220, step 7 of docs/threads.md): the host setting `thread_items` is on by default
+ * (null is on), the batch rebuild (`GET /admin/threads`, `POST /admin/threads/batch`), and a task opened without items
+ * gets them.
  */
-export const API_VERSION = 119;
+export const API_VERSION = 120;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

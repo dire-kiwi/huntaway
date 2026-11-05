@@ -64,11 +64,15 @@ export function value<T = any>(c: Conn, sql: string, ...ps: any[]): T | undefine
   return row?.[0] as T | undefined;
 }
 
-/** Run `f` in a transaction, committed if it returns and rolled back if it throws. Nested calls use savepoints. */
+/**
+ * Run `f` in a transaction, committed if it returns and rolled back if it throws. Nested calls use savepoints.
+ * `immediate` takes the database's write lock at the start (BEGIN IMMEDIATE), for a process writing beside a running
+ * server: a deferred transaction that reads first can't take it later once the server has written meanwhile.
+ */
 let depth = 0;
-export function tx<T>(c: Conn, f: () => T): T {
+export function tx<T>(c: Conn, f: () => T, immediate = false): T {
   const sp = `sp${depth}`;
-  c.exec(depth === 0 ? "BEGIN" : `SAVEPOINT ${sp}`);
+  c.exec(depth === 0 ? (immediate ? "BEGIN IMMEDIATE" : "BEGIN") : `SAVEPOINT ${sp}`);
   depth++;
   try {
     const out = f();

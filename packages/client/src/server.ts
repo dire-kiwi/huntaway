@@ -138,13 +138,39 @@ export interface HostSettings {
   now_expiry_hours?: number | null;
   /**
    * Keep threads as items (API 116): tasks whose first message comes while it's on keep their threads as items as well
-   * as messages (docs/threads.md), and stay so. Off by default.
+   * as messages (docs/threads.md), and stay so. Off by default before API 120, on since (null sets it back to that).
    */
-  thread_items?: boolean;
+  thread_items?: boolean | null;
 }
 
 /** The host API that has the thread_items setting. */
 export const THREAD_ITEMS_API = 116;
+
+/** The host API with the batch rebuild of threads as items (`/admin/threads`), and the thread_items setting on by default. */
+export const THREADS_BATCH_API = 120;
+
+/** The batch rebuild of threads as items (API 120): how far it's got. */
+export interface ThreadsBatch {
+  started_at: string;
+  /** The tasks pending when it started (or went on). */
+  total: number;
+  /** How many of them it's been through. */
+  done: number;
+  rebuilt: number;
+  messages: number;
+  failed: Array<{ task_id: string; error: string }>;
+  current: string | null;
+  running: boolean;
+  stopping: boolean;
+  finished_at: string | null;
+  ms: number;
+}
+
+/** `GET /admin/threads`: how many tasks the batch would rebuild now (those that aren't done without items), and its progress. */
+export interface ThreadsStatus {
+  pending: number;
+  batch: ThreadsBatch | null;
+}
 
 export const serverApi = ({ on }: Http) => ({
   settings: (h: string) => on(h).get<HostSettings>("/settings"),
@@ -160,6 +186,10 @@ export const serverApi = ({ on }: Http) => ({
   /** API 108: copy `database.older_changed` into `database.file` again as the server restarts, as a restart job. It
    * discards what's been done in `database.file` since it was copied (kept in `<file>.replaced` until the next copy). */
   recopyDatabase: (h: string) => on(h).post<{ ok: boolean }>("/admin/database/recopy"),
+  /** API 120: the batch rebuild of threads as items. */
+  threadsStatus: (h: string) => on(h).get<ThreadsStatus>("/admin/threads"),
+  /** API 120: starts the batch rebuild (or goes on with it), or with `stop`, stops it after the task it's on. */
+  threadsBatch: (h: string, stop = false) => on(h).post<ThreadsStatus>("/admin/threads/batch", { stop }),
   /** Fetch `commit` from the host's origin, fast-forward its checkout to it, then rebuild and restart. */
   updateServer: (h: string, commit: string) => on(h).post<{ ok: boolean; up_to_date?: boolean }>(`/admin/update`, { commit }),
 });

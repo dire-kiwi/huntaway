@@ -17,6 +17,8 @@ test("tells_summaries_that_mention_minor_issues", () => {
 
 test("reviews_are_read_from_their_threads_in_rounds", () => {
   const s = testing.state();
+  // From messages: the test dates them after they're written, which their items (with the setting, on by default) don't see.
+  db.set_setting(s.db(), "thread_items", "false");
   const p = db.insert_profile(s.db(), "p", [], null);
   const fresh = (kind: string) => ({
     profile_id: p.id,

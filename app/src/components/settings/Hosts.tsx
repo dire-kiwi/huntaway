@@ -18,6 +18,7 @@ import {
   MULTI_SUMMARIZER_API,
   PROFILE_REVIEWERS_API,
   THREAD_ITEMS_API,
+  THREADS_BATCH_API,
   type ClaudeConfig,
   type Compat,
   type GithubAccount,
@@ -1154,8 +1155,9 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
         <div className="mt-3">
           <Toggle checked={!!settings.thread_items} onChange={(on) => save({ thread_items: on })} label="Keep threads as items" />
           <p className="mt-1 text-[12px] text-faint">
-            Tasks started from now on also keep their threads in the new thread model, written as their messages are. It changes nothing you see yet,
-            and turning it off leaves those tasks as they are.
+            {hostSupports(host, THREADS_BATCH_API)
+              ? "Tasks keep their threads in the new thread model as well as their messages, written as their messages are: those started while it's on, and older ones once they're opened or rebuilt (Settings → Server). Turning it off draws threads from their messages again."
+              : "Tasks started from now on also keep their threads in the new thread model, written as their messages are. Turning it off leaves those tasks as they are."}
           </p>
         </div>
       )}

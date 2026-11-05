@@ -6,9 +6,11 @@
 // message and its items are written together or not at all. The events are kept with the message object
 // (`events_of`), for whoever emits the message once it's committed (AppState.emit_message) to send them on too.
 //
-// The switch (plan decision D4) is the host setting `thread_items` (Settings, "Keep threads as items"), off by default:
-// a task whose first message is written while it's on is flagged (`tasks.thread_items`), and keeps its items written
-// from then on, so a flagged task's items have no gaps. Turning it off flags no more tasks; flagged ones carry on.
+// The switch (plan decision D4) is the host setting `thread_items` (Settings, "Keep threads as items"), on by default
+// since step 7: a task whose first message is written while it's on is flagged (`tasks.thread_items`), and keeps its
+// items written from then on, so a flagged task's items have no gaps. Turning it off flags no more tasks; flagged ones
+// carry on. Tasks from before it get theirs from a rebuild: the batch (threads/batch.ts) for those that aren't done, and
+// `ensure` for any other once it's opened or read.
 //
 // Messages stay the source: `rebuild` derives a thread's items from its messages again (after a translator fix, say),
 // and `compare` says how the items differ from a rebuild. Each server keeps a Translator per thread in memory (its open
@@ -23,11 +25,11 @@ import type { Item, SavedEvent, ThreadEvent, ThreadRequest } from "./protocol.ts
 import * as store from "./store.ts";
 import { CONVERTER_VERSION, Translator, type ItemMeta, type Warning } from "./translate.ts";
 
-/** The host setting: "true" flags new tasks to keep their threads as items. */
+/** The host setting: on (the default, unset) flags new tasks to keep their threads as items; "false" turns it off. */
 export const SETTING = "thread_items";
 
 export function setting_on(c: Conn): boolean {
-  return get_setting(c, SETTING) === "true";
+  return get_setting(c, SETTING) !== "false";
 }
 
 /** How many threads' translators a server keeps in memory; the least recently written go first. */
@@ -128,13 +130,46 @@ export interface Rebuilt {
  * take a fresh window (a server sends `thread_resync` for a rebuild of its own, see api). A thread whose live writes
  * stopped on an error starts again.
  */
-export function rebuild(c: Conn, task_id: string): Rebuilt {
-  return tx(c, () => rebuild_rows(c, task_id));
+export function rebuild(c: Conn, task_id: string, immediate = false): Rebuilt {
+  return tx(c, () => rebuild_rows(c, task_id), immediate);
+}
+
+/** Tasks whose rebuild by `ensure` failed, so it isn't tried again on each read (until the server restarts). */
+const failed = new WeakMap<Conn, Set<string>>();
+
+/**
+ * Gives task `task_id` its thread kept as items if the setting is on and it doesn't have one this build wrote: one
+ * from before the setting (or before step 7, when it defaulted on), or one an older converter wrote. A thread whose
+ * live writes stopped on an error is left to `huntaway threads-rebuild` and the batch. True if it rebuilt it, so the
+ * caller can tell clients (the task, with `thread_items`, and a `thread_resync`); a failed rebuild is logged, and
+ * changes nothing. It's how a done task, which the batch (threads/batch.ts) leaves out, gets its items: when it's
+ * opened, or when a reader reads it (threads/history.ts's `source`).
+ */
+export function ensure(c: Conn, task_id: string): boolean {
+  const r = one<{ thread_items: number; converter: number | null; error: string | null; has: number }>(
+    c,
+    "SELECT t.thread_items, h.converter, h.error, h.task_id IS NOT NULL AS has FROM tasks t LEFT JOIN threads h ON h.task_id = t.id WHERE t.id=?1",
+    task_id,
+  );
+  if (!r || r.error || (r.thread_items && r.has && r.converter === CONVERTER_VERSION)) return false;
+  if (failed.get(c)?.has(task_id) || !setting_on(c)) return false;
+  try {
+    rebuild(c, task_id);
+    return true;
+  } catch (e) {
+    let mine = failed.get(c);
+    if (!mine) failed.set(c, (mine = new Set()));
+    mine.add(task_id);
+    console.error(`${now()} ERROR huntaway: task ${task_id}'s thread couldn't be rebuilt as items: ${err_str(e)}`);
+    return false;
+  }
 }
 
 function rebuild_rows(c: Conn, task_id: string, keep = true): Rebuilt {
   if (!one(c, "SELECT 1 FROM tasks WHERE id=?1", task_id)) throw new Error(`no task ${task_id}`);
   store.clear(c, task_id);
+  // A translator or store bug in a rebuild, for the tests.
+  reached("threads:rebuild");
   const t = new Translator();
   const warnings: Warning[] = [];
   let messages = 0;

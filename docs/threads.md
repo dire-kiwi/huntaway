@@ -175,7 +175,8 @@ say (a rebuild).
 `server-ts/src/threads/write.ts`, step 3 (plan decisions D3 and D4).
 
 - **The switch:** the host setting *Keep threads as items* (`thread_items` in `/api/settings`, API 116; Settings, a
-  host's Agent defaults), off by default. A task whose first message is written while it's on is flagged
+  host's Agent defaults), off by default until step 7 turned it on (stored as `"false"` when it's off, so unset is
+  on, and an older build's `"true"` stays on). A task whose first message is written while it's on is flagged
   (`tasks.thread_items`), in the same transaction, and keeps its items written from then on, so a flagged task's
   items have no gaps. Turning it off flags no more tasks, and those already flagged carry on. With it off, and for
   unflagged tasks, nothing new is written (the only extra work is reading the flag, from the `UPDATE tasks` that
@@ -209,9 +210,9 @@ say (a rebuild).
 
 ### `huntaway threads-rebuild`
 
-`huntaway threads-rebuild [--db <file or data dir>] (<task id or key>... | --all) [--check] [--json]` derives threads
-from their messages again, one transaction a task, so a translator fix only needs a rebuild. `--all` is every flagged
-task; a task named is flagged too, and gets its whole history. A rebuild logs no events: the thread's seq moves on
+`huntaway threads-rebuild [--db <file or data dir>] (<task id or key>... | --all | --batch) [--check] [--json]` derives
+threads from their messages again, one transaction a task, so a translator fix only needs a rebuild. `--all` is every
+flagged task; a task named is flagged too, and gets its whole history; `--batch` is step 7's batch (below). A rebuild logs no events: the thread's seq moves on
 by one, so clients take a fresh window. `--check` writes nothing and prints how each thread differs from a rebuild
 (it rebuilds in a savepoint and rolls it back). It runs on the board's database while the server runs (the data
 dir's by default, at this build's version), and the server's translators notice through `threads.writes`.
@@ -349,6 +350,42 @@ difference.
 
 On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none flagged yet): **no differences** in 145,000 checks: every task was translated for it, and each reader agrees (`user_replies` 7,432 checks, `tool_use` 55,566, `subagent_call` 22,369, `user_wrote_since` 11,358, `tool_calls_since` 3,716, `last_message`, `said_since_asked` and `open_questions` 1,858 each...), and `attachments.referenced` is the same set from messages as from items. The messages readers' windows changed 12 answers (the items readers found what the windows cut off: `tool_use`'s 5 messages, mostly). It took 194 s, most of it translating. The copy has no pending prompts (copy-live-board.sh scrubs them), so pending approvals were compared on unit tests only.
 
+## Every task gets items
+
+`server-ts/src/threads/batch.ts`, step 7 (the plan's `backfill` question, answered with its recommendation): the
+tasks from before the setting get their items from a rebuild of their messages (`write.ts`'s `rebuild`), and the
+setting is on by default (API 120). It's still additive: messages are the source, and dropping the `thread_*` rows
+(and `tasks.thread_items`) undoes it.
+
+- **The batch** covers every task that isn't done whose readers don't read items yet (`batch.pending`: not flagged,
+  written by an older converter, or stopped on an error), oldest first. It's started from Settings → Server ("N tasks
+  that aren't done don't keep their thread as items yet", *Rebuild them*, with its progress and a *Stop*), which is
+  `POST /admin/threads/batch` (`{"stop": true}` stops it) and `GET /admin/threads` (`{pending, batch}`), or from the
+  command line: `huntaway threads-rebuild --batch`, which prints `[n/N] <task>: …` as it goes.
+- **One task per transaction, under the task's write lock:** in the server, a rebuild is one synchronous transaction
+  on the board's connection, so none of the task's messages can be written in the middle of it, and the task's next
+  message is written onto the rebuilt thread (the rebuild leaves its translator in memory, with its `writes`). A task
+  that's running, streaming even, carries on; its clients get the task (now with `thread_items`) and a `thread_resync`,
+  and take a fresh window. The server yields to the event loop between tasks. From the command line, each
+  transaction takes the database's write lock as it starts (`BEGIN IMMEDIATE`), and the server's translators notice
+  through `threads.writes`; its clients switch over at the task's next event rather than at once.
+- **Resumable:** each task's rebuild is committed, and a rebuilt task isn't pending any more, so a batch stopped (or a
+  command line interrupted) goes on with the rest when it's started again. A server that stops mid-batch goes on with
+  it when it starts (the `thread_batch` setting is set while it runs); a stopped one waits to be started again. Running
+  it again with nothing pending changes nothing.
+- **Done tasks** aren't in the batch, which keeps the database from growing by the size of the whole board: a done
+  task gets its items when it's first opened (`batch.opened`, from `GET /tasks/{id}`, the messages' latest page and
+  `GET /tasks/{id}/thread`, which tell clients as the batch does) or when a reader reads it (`history.source`, through
+  `write.ensure`). That's with the setting on; with it off, they're read and drawn from their messages as before.
+  `ensure` also brings a thread written by an older converter up to date, but leaves one whose live writes stopped on
+  an error to the batch and `threads-rebuild`. A rebuild that fails is logged, changes nothing, and isn't tried again on
+  every read (until the server restarts).
+
+What was checked: unit tests (`threads/batch.test.ts`) of what the batch covers, running it twice, stopping and going
+on (and after a restart), a task writing its messages, streamed text included, while the batch runs (before its own
+rebuild and after), a done task opened each way and read, the setting off, an older converter's thread, a failed
+rebuild, and the command line's batch beside a server's connection.
+
 ## Status
 
 | Step | Task | State |
@@ -357,9 +394,9 @@ On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none f
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
 | 3. Items written live, behind a setting | HA-239 (was HA-216) | Done: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
 | 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
-| 5. The UI on items | HA-218 | This change: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. The setting can be turned on for new tasks. |
+| 5. The UI on items | HA-218 | Done: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. |
 | 6. Readers on items | HA-217 | Done: `threads/history.ts`, `huntaway threads-readers` (`threads/readers.ts`), the attachment scan on items, converter 3. |
-| 7. Every task gets items, the setting on by default | HA-220 | Not started |
+| 7. Every task gets items, the setting on by default | HA-220 | This change: `threads/batch.ts`, `huntaway threads-rebuild --batch`, Settings → Server's rebuild, a done task's items on open, the setting on by default, API 120. Messages are still the source. |
 | 8. Permission prompts and questions over stdio | HA-219 | Not started |
 | 9. The board's tools in process | HA-221 | Not started |
 | B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`server-ts/src/db/file.ts`) |
@@ -374,4 +411,5 @@ Left for later steps:
   have the preview's text so far. The view shows the rest as it streams, as it did from messages.
 - Saving `thread.updated` when the task's state changes: the view reads a thread's state from its task, whose `task`
   events it has anyway, so nothing needs it yet.
-- Rebuilding every task, and a rebuild from Settings, which would also send `thread_resync` (step 7).
+- Done tasks that are never opened have no items: step 10, which stops writing messages, needs every task that can
+  still be read to have them first (a batch with done tasks in it, or the readers' fallback to messages kept for them).

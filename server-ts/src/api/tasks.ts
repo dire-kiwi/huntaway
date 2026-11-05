@@ -26,6 +26,7 @@ import { char_count, debug_list, json_map, query_bool, query_rejection, rfc3339_
 import { check_external_links, check_start_from, pick_config } from "./new_task.ts";
 import { check_base_branch } from "./profiles.ts";
 import * as history from "../threads/history.ts";
+import * as thread_batch from "../threads/batch.ts";
 
 export async function list_project_tasks(s: AppState, r: Req) {
   const kind = r.query.kind ?? "task";
@@ -51,8 +52,10 @@ export async function list_group_tasks(s: AppState, r: Req) {
 export async function get_task(s: AppState, r: Req) {
   const id = r.params.id;
   const c = s.db();
-  const t = db.get_task(c, id);
-  if (!t) throw ApiError.not_found("task");
+  if (!db.get_task(c, id)) throw ApiError.not_found("task");
+  // A task opened without items gets them (see threads/batch.ts).
+  thread_batch.opened(s, id);
+  const t = db.get_task(c, id)!;
   const last = history.last_assistant_text(c, id);
   const pending = db.value<number>(c, "SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending'", id) ?? 0;
   return { task: t, last_message: last, pending_permissions: pending };

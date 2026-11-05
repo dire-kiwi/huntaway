@@ -15,6 +15,7 @@ import * as merge_gate from "../review/merge_gate.ts";
 import * as admin from "../update/admin.ts";
 import * as release from "../update/release.ts";
 import * as threads from "../threads/write.ts";
+import * as thread_batch from "../threads/batch.ts";
 import { debug_list, def_bool, def_str, def_value, json_map, opt_str, req_str } from "./extract.ts";
 
 export async function get_settings(s: AppState) {
@@ -42,7 +43,8 @@ const STRING_SETTINGS = ["default_model", "default_effort", "default_permission_
  * are shown with. And whether release checks include prereleases (`release_prereleases`, API 88), which checks again
  * when it changes. And how many hours a task can go without activity in the board's Now view before it goes back to
  * Later (`now_expiry_hours`, API 97; 0 for never, null for the default of a day). And whether tasks started from now
- * on keep their threads as items as well as messages (`thread_items`, API 116, off by default; see threads/write.ts).
+ * on keep their threads as items as well as messages (`thread_items`, API 116; on by default since API 120, so null
+ * is on; see threads/write.ts).
  */
 export async function update_settings(s: AppState, r: Req) {
   const b = { ...json_map(r) };
@@ -77,11 +79,12 @@ export async function update_settings(s: AppState, r: Req) {
     if (!(v === null || typeof v === "boolean")) throw ApiError.bad("release_prereleases must be true, false or null");
     prereleases = v === true;
   }
-  let thread_items: boolean | null = null;
+  // Null is the default, which is on (since API 120).
+  let thread_items: boolean | null | undefined;
   if (Object.hasOwn(b, threads.SETTING)) {
     const v = b[threads.SETTING];
     if (!(v === null || typeof v === "boolean")) throw ApiError.bad("thread_items must be true, false or null");
-    thread_items = v === true;
+    thread_items = v;
   }
   let terminal_tools: any[] | null = null;
   if (b.terminal_tools != null) {
@@ -95,7 +98,7 @@ export async function update_settings(s: AppState, r: Req) {
     if (Object.hasOwn(b, key)) db.set_setting(s.db(), key, typeof b[key] === "string" ? b[key] : null);
   }
   if (now_expiry !== undefined) db.set_setting(s.db(), focus.EXPIRY_SETTING, now_expiry === null ? null : String(now_expiry));
-  if (thread_items !== null) db.set_setting(s.db(), threads.SETTING, thread_items ? "true" : null);
+  if (thread_items !== undefined) db.set_setting(s.db(), threads.SETTING, thread_items === false ? "false" : null);
   if (terminal_tools !== null) db.set_setting(s.db(), "terminal_tools", terminal_tools.length ? JSON.stringify(terminal_tools) : null);
   if (prereleases !== null && release.prereleases(s) !== prereleases) {
     db.set_setting(s.db(), release.PRERELEASES, prereleases ? "true" : null);
@@ -177,6 +180,22 @@ export async function update_to_release(s: AppState, r: Req) {
 export async function roll_back_release(s: AppState) {
   release.rollback(s);
   return { ok: true };
+}
+
+/**
+ * `GET /admin/threads` (API 120): `{pending, batch}`, how many tasks the batch rebuild of threads as items would rebuild
+ * now (those that aren't done whose threads aren't kept as items by this build), and the batch's progress (null if it
+ * hasn't run since the server started). See threads/batch.ts.
+ */
+export async function threads_status(s: AppState) {
+  return thread_batch.status(s);
+}
+
+/** `POST /admin/threads/batch` (API 120): starts the batch rebuild (or goes on with it); `{"stop": true}` stops it after the task it's on. */
+export async function threads_batch(s: AppState, r: Req) {
+  if (def_bool(json_map(r), "stop", false)) thread_batch.stop(s);
+  else thread_batch.start(s);
+  return thread_batch.status(s);
 }
 
 /** Copy the older builds' database into this build's again, as a restart job (API 108; see db/file.ts). */

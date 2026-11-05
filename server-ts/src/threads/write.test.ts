@@ -29,7 +29,7 @@ process.env.IA_CODEX_BIN = "/nonexistent/codex";
 
 function setup(on = true): { s: AppState; events: any[]; task: (title?: string) => Task } {
   const s = testing.state();
-  if (on) db.set_setting(s.db(), write.SETTING, "true");
+  db.set_setting(s.db(), write.SETTING, on ? "true" : "false");
   const events: any[] = [];
   s.events.subscribe((e) => events.push(e));
   const profile = db.insert_profile(s.db(), "p", [], null);
@@ -84,7 +84,7 @@ test("with the setting off, nothing new is written", () => {
   const w = live.window(s, live.open(s, u.id));
   assert.deepEqual([w.items.map((i: any) => i.text), w.seq], [["hi"], store.last_seq(s.db(), u.id)]);
   // Turned off, flagged tasks carry on, and new ones aren't flagged.
-  db.set_setting(s.db(), write.SETTING, null);
+  db.set_setting(s.db(), write.SETTING, "false");
   s.add_message(u.id, "user", { text: "again" });
   assert.equal(store.items(s.db(), u.id).length, 2);
   const v = task();
@@ -408,7 +408,7 @@ test("a rebuild from another connection: the server's translator notices, and cl
     assert.equal(diff!.differences!.length, 1);
     assert.match(diff!.differences![0]!, /changed/);
     // Named, a task that isn't flagged is, and gets its whole history.
-    db.set_setting(a, write.SETTING, null);
+    db.set_setting(a, write.SETTING, "false");
     const u = db.insert_task(a, { profile_id: p.id, project_id: null, kind: "task", title: "u", description: "", status: "in_progress", use_worktree: false });
     db.insert_message(a, u.id, "user", { text: "old" });
     assert.equal(store.has_thread(a, u.id), false);

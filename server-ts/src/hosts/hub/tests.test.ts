@@ -383,6 +383,9 @@ test("the_join_command_dials_the_hub_where_the_browser_reached_it", () => {
 test("a_linked_hosts_thread_and_its_events_are_relayed", async () => {
   for (const kind of ["outbound", "inbound"]) {
     const [hub, host] = [node("hub", "hub"), node("host", "laptop")];
+    // The thread is the spec's example, not made from messages: with the setting (on by default), opening a task without
+    // items would rebuild it from its messages.
+    db.set_setting(host.db(), "thread_items", "false");
     if (kind === "outbound") {
       const url = `http://${await serve(host)}`;
       db.upsert_link(hub.db(), "host", "laptop", "outbound", url, "host-tok");

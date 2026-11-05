@@ -201,7 +201,7 @@ export function compare(c: Conn, only: string[] = []): Report {
       const ids = only.length ? only : db.all<{ id: string }>(c, "SELECT id FROM tasks ORDER BY created_at, id").map((r) => r.id);
       const ok: string[] = [];
       for (const id of ids) {
-        if (history.source(c, id) !== "items") {
+        if (!history.reads_items(c, id)) {
           try {
             rebuild(c, id);
             out.translated++;
