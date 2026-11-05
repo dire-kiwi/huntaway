@@ -29,7 +29,7 @@ import * as pr_watch from "../mcp/pr_watch.ts";
 import type { Target } from "../mcp/pr_watch.ts";
 import * as terminal from "../hosts/terminal.ts";
 import type { AppState } from "../state.ts";
-import { err_str, now } from "../util.ts";
+import { background, err_str, now } from "../util.ts";
 
 /** How often the pull requests are read (ms). */
 export const POLL = 180_000;
@@ -49,9 +49,10 @@ export function start(s: AppState) {
     } catch (e) {
       console.error(`reading tasks' pull requests: ${err_str(e)}`);
     }
-    setTimeout(tick, POLL).unref();
+    setTimeout(next, POLL).unref();
   };
-  setTimeout(tick, FIRST).unref();
+  const next = () => background("reading tasks' pull requests", tick());
+  setTimeout(next, FIRST).unref();
 }
 
 /**

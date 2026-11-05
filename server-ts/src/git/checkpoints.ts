@@ -182,12 +182,14 @@ const QUEUES = new Map<string, Promise<void>>();
 /** Run `job` after the task's jobs asked for before it. */
 export function enqueue(state: AppState, task_id: string, job: Job): void {
   const prev = QUEUES.get(task_id) ?? Promise.resolve();
-  const next: Promise<void> = prev.then(() => job(state)).catch((e) => console.error(`a checkpoint job of task ${task_id} failed:`, e));
+  const next: Promise<void> = prev
+    .then(() => job(state))
+    .catch((e) => console.error(`a checkpoint job of task ${task_id} failed:`, e))
+    // Nothing waiting: the queue goes, unless a job came in meanwhile.
+    .then(() => {
+      if (QUEUES.get(task_id) === next) QUEUES.delete(task_id);
+    });
   QUEUES.set(task_id, next);
-  // Nothing waiting: the queue goes, unless a job came in meanwhile.
-  next.then(() => {
-    if (QUEUES.get(task_id) === next) QUEUES.delete(task_id);
-  });
 }
 
 /** Run `f` in the task's queue and wait for it (what it throws is thrown here). */

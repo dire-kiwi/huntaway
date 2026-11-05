@@ -5,7 +5,7 @@ import { ApiError, Reply, type Req } from "../../http.ts";
 import * as api from "../../api.ts";
 import * as runner from "../../agent/runner.ts";
 import type { Shared } from "../../state.ts";
-import { err_str, now as util_now, same_secret } from "../../util.ts";
+import { background, err_str, now as util_now, same_secret } from "../../util.ts";
 import {
   DEDUPE_DAYS,
   LATE_GRACE,
@@ -432,7 +432,8 @@ export function start(s: Shared): void {
     } catch (e) {
       console.error(`automations' scheduler: ${err_str(e)}`);
     }
-    setTimeout(loop, TICK).unref();
+    setTimeout(next, TICK).unref();
   };
-  loop();
+  const next = () => background("automations' scheduler", loop());
+  next();
 }

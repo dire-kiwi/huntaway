@@ -17,7 +17,7 @@ import type { Link } from "../db.ts";
 import type { AppState } from "../state.ts";
 import { default_exe } from "../state.ts";
 import { run_cmd } from "../proc.ts";
-import { context, err_str, path_str, sleep } from "../util.ts";
+import { background, context, err_str, path_str, sleep } from "../util.ts";
 import * as hub from "./hub.ts";
 import { exit_status } from "./broker.ts";
 
@@ -215,7 +215,7 @@ function ssh_spawn(args: string[], stdout: "pipe" | "ignore"): { child: ChildPro
     child.once("error", (e) => resolve(`couldn't start: ${err_str(e)}`));
     child.once("exit", (code, signal) => resolve(exit_status(code, signal)));
   });
-  exited.then(() => alive.destroy());
+  background("an ssh connection", exited.then(() => alive.destroy()));
   const stop = () => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     alive.destroy();
@@ -258,7 +258,7 @@ export function run(s: AppState, link: Link): () => void {
   }
   let stopped = false;
   let abort: (() => void) | null = null;
-  (async () => {
+  background("keeping an ssh host connected", (async () => {
     let backoff = 1;
     while (!stopped) {
       try {
@@ -279,7 +279,7 @@ export function run(s: AppState, link: Link): () => void {
       abort = null;
       backoff = Math.min(backoff * 2, 30);
     }
-  })();
+  })());
   return () => {
     stopped = true;
     abort?.();
@@ -324,7 +324,7 @@ async function connect_once(s: AppState, link: Link, t: Target, on_abort: (abort
   const tunnel = ssh_spawn(ssh_args(s, t, ["-N", "-o", "ExitOnForwardFailure=yes", "-L", `127.0.0.1:${local}:127.0.0.1:${port}`]), "ignore");
   tunnel.child.stderr!.resume();
   const tunnel_state: { status: string | null } = { status: null };
-  tunnel.exited.then((st) => (tunnel_state.status = st));
+  background("an ssh tunnel", tunnel.exited.then((st) => (tunnel_state.status = st)));
   const outbound: { abort: (() => void) | null } = { abort: null };
   on_abort(() => {
     tunnel.stop();

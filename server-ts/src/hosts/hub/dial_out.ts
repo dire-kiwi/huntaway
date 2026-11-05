@@ -2,7 +2,7 @@
 // requests it tunnels.
 import type { AppState } from "../../state.ts";
 import * as api from "../../api.ts";
-import { err_str } from "../../util.ts";
+import { background, err_str } from "../../util.ts";
 import { API_COMPAT, API_VERSION, PROTOCOL, VERSION } from "../proto.ts";
 import * as relay from "../relay.ts";
 import { Chan, Close, type Frame } from "../relay.ts";
@@ -14,7 +14,7 @@ import { REFUSED } from "./inbound.ts";
 export function dial_out(s: AppState, hub: string, token: string): () => void {
   let stopped = false;
   let abort: (() => void) | null = null;
-  (async () => {
+  background("keeping the tunnel to a hub open", (async () => {
     let backoff = 1;
     while (!stopped) {
       try {
@@ -33,7 +33,7 @@ export function dial_out(s: AppState, hub: string, token: string): () => void {
       });
       backoff = Math.min(backoff * 2, 30);
     }
-  })();
+  })());
   return () => {
     stopped = true;
     abort?.();
@@ -114,7 +114,7 @@ function tunnel_message(s: AppState, text: string, tx: (m: Up) => boolean, strea
   switch (d?.t) {
     case "req": {
       const { id, method, path, body } = d;
-      (async () => {
+      background("answering a request from the hub", (async () => {
         let status: number, out: any;
         try {
           [status, out] = await api.local_request(s, method, path, body === null || body === undefined ? null : Buffer.from(JSON.stringify(body)));
@@ -122,7 +122,7 @@ function tunnel_message(s: AppState, text: string, tx: (m: Up) => boolean, strea
           [status, out] = [500, { error: err_str(e) }];
         }
         tx({ t: "res", id, status, body: out });
-      })();
+      })());
       return;
     }
     case "ws_open": {
@@ -130,9 +130,9 @@ function tunnel_message(s: AppState, text: string, tx: (m: Up) => boolean, strea
       const from_hub = new Chan<Frame>();
       streams.set(d.id, from_hub);
       const id = d.id;
-      relay_local(s, id, d.path, from_hub, tx).finally(() => {
+      background("relaying a websocket for the hub", relay_local(s, id, d.path, from_hub, tx).finally(() => {
         if (streams.get(id) === from_hub) streams.delete(id);
-      });
+      }));
       return;
     }
     case "ws_msg": {

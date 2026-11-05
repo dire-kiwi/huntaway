@@ -11,7 +11,7 @@ import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
 import { ApiError, type Req } from "../http.ts";
 import type { AppState } from "../state.ts";
-import { err_str, new_id, now } from "../util.ts";
+import { background, err_str, new_id, now } from "../util.ts";
 import * as hub from "../hosts/hub.ts";
 import type { LinkConn } from "../hosts/hub.ts";
 
@@ -474,7 +474,7 @@ export function start(s: AppState) {
   };
   s.hub_events.subscribe((ev) => {
     queue.push(ev);
-    if (!busy) drain();
+    if (!busy) background("push notifications", drain());
   });
   // What the tasks are now: what they change from. Linked hosts' as they connect.
   const known = new Set<string>();
