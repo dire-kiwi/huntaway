@@ -11,7 +11,9 @@ import { fileURLToPath } from "node:url";
 import { sleep } from "../util.ts";
 import * as testing from "../testing.ts";
 import type { AppState } from "../state.ts";
-import { builds_shim, check_deployed, pick_bundle_commit, status } from "./admin.ts";
+import { builds_shim, bundle, check_deployed, pick_bundle_commit, status } from "./admin.ts";
+import * as api from "../api.ts";
+import { randomBytes } from "node:crypto";
 
 const servers: Array<() => void> = [];
 after(() => servers.forEach((f) => f()));
@@ -57,6 +59,44 @@ function host_at(src: string, url: string): AppState {
  * HA-97: a deployed hub that updated itself to a release kept reporting its bundle's IA_COMMIT, so hosts that follow it,
  * and the checkouts it updates, went by the old commit.
  */
+/**
+ * HA-185: Update to <commit> on a linked checkout host sent a bundle of the hub's whole branch, which for this repository
+ * is several MB, and the host (Rust, or TS before it took more) refused any request body over 2 MB, so no update got
+ * through. The hub now sends only the commits after the one the host runs, which the host can fetch, and a host takes a
+ * bigger bundle from an older hub.
+ */
+test("a_hub_bundles_only_the_commits_a_host_lacks", async () => {
+  const [, src] = checkout();
+  writeFileSync(join(src, "big.bin"), randomBytes(3 << 20));
+  sh(src, ["add", "big.bin"]);
+  const host_runs = commit(src, "big");
+  // The host: a clone at that commit, on the same branch.
+  const host = join(testing.temp_dir(), "host");
+  sh(src, ["clone", "-q", src, host]);
+  commit(src, "second");
+  const head = commit(src, "third");
+  const state = host_at(src, "");
+  const size = (b: any) => Buffer.from(b.bundle, "base64").length;
+
+  const thin = await bundle(state, host_runs);
+  assert.deepEqual([thin.branch, thin.commit], ["master", head]);
+  assert.ok(size(thin) < 64 << 10, `a bundle of two empty commits is ${size(thin)} bytes`);
+  // The host has what it needs to fetch it, and fast-forwards to the hub's commit.
+  const file = join(host, "..", "in.bundle");
+  writeFileSync(file, Buffer.from(thin.bundle, "base64"));
+  sh(host, ["fetch", "-q", file, "refs/heads/master:refs/remotes/hub/master"]);
+  sh(host, ["merge", "-q", "--ff-only", head]);
+  assert.equal(sh(host, ["rev-parse", "HEAD"]), head);
+
+  // The whole branch without a commit to start from, or one the branch is at, or one it doesn't have or that isn't on it.
+  const beside = sh(src, ["commit-tree", "-m", "beside", `${host_runs}^{tree}`]);
+  for (const since of [null, head, "0123456789abcdef0123456789abcdef01234567", beside, "not a commit"]) {
+    assert.ok(size(await bundle(state, since)) > 3 << 20, `since ${since}`);
+  }
+  // A host takes a bundle that big.
+  assert.ok(api.router(state).find("/admin/update")!.route.limit >= 64 << 20);
+});
+
 test("a_release_reports_the_commit_it_was_built_from", () => {
   const deployed = () => "bundle";
   assert.equal(pick_bundle_commit("built", deployed(), false), "built");
@@ -186,6 +226,25 @@ test("a_restart_keeps_the_process_id_and_port", async () => {
   s.child.kill("SIGTERM");
   assert.equal(await s.exited, 0);
   assert.deepEqual(children(s.child.pid!), []);
+});
+
+/**
+ * HA-185: a body over a route's limit reset the connection, so a client heard "ECONNRESET" (a hub updating a host
+ * reported it unreachable) rather than the 413 the Rust server answered.
+ */
+test("a_body_over_the_limit_is_answered_413_rather_than_reset", async () => {
+  const port = await free_port();
+  const s = serve_bin(["--port", String(port)]);
+  await s.ready(1);
+  const token = readFileSync(join(s.data_dir, "auth_token"), "utf8").trim();
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const big = JSON.stringify({ text: "x".repeat(5 << 20) });
+  const r = await fetch(`http://127.0.0.1:${port}/api/profiles`, { method: "POST", headers, body: big });
+  assert.equal(r.status, 413);
+  assert.deepEqual(await r.json(), { error: "length limit exceeded" });
+  assert.equal(r.headers.get("connection"), "close");
+  // And the server answers the next one.
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
 });
 
 // ---------- a bug doesn't take the board down (HA-182) ----------
