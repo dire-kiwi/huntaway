@@ -47,10 +47,10 @@ test("a_fresh_data_dir_has_nothing_to_back_up", () => {
   assert.ok(!existsSync(backup.backup_dir(dir)));
 });
 
-test("a_switch_backs_up_what_the_running_server_has_open_including_its_wal", () => {
+test("a_switch_backs_up_what_the_running_server_has_open_including_its_wal", async () => {
   const dir = temp_dir();
   const [, c] = board(dir, 5);
-  const made = backup.before_switch(dir, c, "0.3.0", "0.2.1");
+  const made = await backup.before_switch(dir, c, "0.3.0", "0.2.1");
   assert.ok(made && made.includes("huntaway-0.3.0-to-0.2.1-"), String(made));
   assert.equal(count(made!), 5);
   c.close();
@@ -92,12 +92,12 @@ test("a_server_that_cant_back_up_the_database_doesnt_start_unless_told_to", () =
   }
 });
 
-test("a_switch_that_cant_back_up_the_database_throws", () => {
+test("a_switch_that_cant_back_up_the_database_throws", async () => {
   const dir = temp_dir();
   const [, c] = board(dir, 1);
   writeFileSync(backup.backup_dir(dir), "");
   try {
-    assert.throws(() => backup.before_switch(dir, c, "0.3.0", "0.2.1"), /before switching to 0.2.1, so it didn't go ahead/);
+    await assert.rejects(backup.before_switch(dir, c, "0.3.0", "0.2.1"), /before switching to 0.2.1, so it didn't go ahead/);
   } finally {
     c.close();
   }

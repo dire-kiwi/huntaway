@@ -1,6 +1,6 @@
 // Port of server/src/db.rs: the board's SQLite database. `open` (db/schema.ts) creates or migrates it, and the other
 // parts have the rows and queries of each table. Host-wide settings, and the values task fields can take, are here.
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { ApiError } from "./http.ts";
 
 export type Conn = DatabaseSync;
@@ -16,27 +16,51 @@ function param(v: any): SQLInputValue {
 
 const params = (ps: any[]) => ps.map(param);
 
+/**
+ * Each connection's prepared statements, by their SQL, so a query that runs again isn't parsed and planned again (HA-183:
+ * a token report ran 10,000 small queries, and spent half its time preparing them). The latest MAX_STATEMENTS are kept,
+ * as some SQL is made up per call (lists of values, the columns an update sets).
+ */
+const statements = new WeakMap<Conn, Map<string, StatementSync>>();
+const MAX_STATEMENTS = 500;
+
+/** `sql` prepared on `c`, from the cache when it has it (`arrays`: one that returns rows as arrays, for `value`). */
+export function prepared(c: Conn, sql: string, arrays = false): StatementSync {
+  let cache = statements.get(c);
+  if (!cache) statements.set(c, (cache = new Map()));
+  const key = arrays ? `[]${sql}` : sql;
+  let st = cache.get(key);
+  if (st) {
+    // Most recently used last, so the first is the one to drop.
+    cache.delete(key);
+  } else {
+    st = c.prepare(sql);
+    if (arrays) st.setReturnArrays(true);
+    if (cache.size >= MAX_STATEMENTS) cache.delete(cache.keys().next().value!);
+  }
+  cache.set(key, st);
+  return st;
+}
+
 /** The first row, or undefined (rusqlite's `query_row(…).optional()`). */
 export function one<T = any>(c: Conn, sql: string, ...ps: any[]): T | undefined {
-  return c.prepare(sql).get(...params(ps)) as T | undefined;
+  return prepared(c, sql).get(...params(ps)) as T | undefined;
 }
 
 /** Every row. */
 export function all<T = any>(c: Conn, sql: string, ...ps: any[]): T[] {
-  return c.prepare(sql).all(...params(ps)) as T[];
+  return prepared(c, sql).all(...params(ps)) as T[];
 }
 
 /** Run a statement: how many rows it changed, and the last inserted rowid. */
 export function run(c: Conn, sql: string, ...ps: any[]): { changes: number; lastInsertRowid: number } {
-  const r = c.prepare(sql).run(...params(ps));
+  const r = prepared(c, sql).run(...params(ps));
   return { changes: Number(r.changes), lastInsertRowid: Number(r.lastInsertRowid) };
 }
 
 /** The first column of the first row, or undefined. */
 export function value<T = any>(c: Conn, sql: string, ...ps: any[]): T | undefined {
-  const st = c.prepare(sql);
-  st.setReturnArrays(true);
-  const row = st.get(...params(ps)) as any[] | undefined;
+  const row = prepared(c, sql, true).get(...params(ps)) as any[] | undefined;
   return row?.[0] as T | undefined;
 }
 

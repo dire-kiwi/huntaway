@@ -397,8 +397,9 @@ export function token_report(c: Conn, profile_id: string, from: string, to: stri
   });
 
   // The tasks the rows are for, with the tasks their threads review and the subprojects they're in.
-  const ids: string[] = [...usage.flatMap((u) => (u.task_id !== null ? [u.task_id] : [])), ...reviews.flatMap((r) => [r.task_id, r.thread_id])];
-  const seen = new Set(ids);
+  const seen = new Set([...usage.flatMap((u) => (u.task_id !== null ? [u.task_id] : [])), ...reviews.flatMap((r) => [r.task_id, r.thread_id])]);
+  // Each once (a task has many runs).
+  const ids = [...seen];
   for (let i = 0; i < ids.length; i++) {
     const p = db.value<string>(c, "SELECT parent_id FROM tasks WHERE id=?1 AND parent_id IS NOT NULL", ids[i]);
     if (p != null && !seen.has(p)) {

@@ -228,7 +228,18 @@ export function subagent_messages(c: Conn, task_id: string, before: number): Mes
   const task_ids = new Set<string>();
   const progress = new Map<string, number>();
   const out: Array<Message | null> = [];
-  const has_call = (data: string) => [...calls].some((id) => data.includes(id));
+  // One pass over a message for all the calls, rather than one per call (HA-183: 70 ms down to 50 ms on a thread with 136
+  // subagents). The loop adds calls as it finds them (only ever adds), which makes the pattern again.
+  let any_call: RegExp | null = null;
+  let any_call_of = 0;
+  const has_call = (data: string) => {
+    if (!calls.size) return false;
+    if (any_call === null || any_call_of !== calls.size) {
+      any_call = new RegExp([...calls].map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"));
+      any_call_of = calls.size;
+    }
+    return any_call.test(data);
+  };
   for (const r of st.iterate(task_id, before) as Iterable<any>) {
     const data: string = r.data;
     const call = data.includes('"tool_use"') && (data.includes('"name":"Agent"') || data.includes('"name":"Task"') || has_call(data));
