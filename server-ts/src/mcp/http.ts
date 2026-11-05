@@ -30,7 +30,7 @@ import * as runs from "../agent/runs.ts";
 import { VIA_BROKER } from "../hosts/broker.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import type { Shared } from "../state.ts";
-import { err_str, new_id, same_secret } from "../util.ts";
+import { background, err_str, new_id, same_secret } from "../util.ts";
 import * as gh_mcp from "./gh_mcp.ts";
 import * as tools from "./tools.ts";
 
@@ -217,9 +217,12 @@ function reply(req: IncomingMessage, res: ServerResponse, event: string, rpc_id:
   const done = answer.catch((e) => rpc_error(rpc_id, -32603, err_str(e)));
   const accept = String(req.headers.accept ?? "");
   if (!accept.includes("text/event-stream")) {
-    done.then((v) => {
-      if (!res.destroyed) json(res, 200, v);
-    });
+    background(
+      "answering an MCP call",
+      done.then((v) => {
+        if (!res.destroyed) json(res, 200, v);
+      }),
+    );
     return;
   }
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
@@ -234,10 +237,13 @@ function reply(req: IncomingMessage, res: ServerResponse, event: string, rpc_id:
   const keepalive = setInterval(tick, KEEPALIVE_MS);
   keepalive.unref();
   res.on("close", () => clearInterval(keepalive));
-  done.then((v) => {
-    clearInterval(keepalive);
-    if (!res.destroyed && !res.writableEnded) res.end(`id: ${event}\nevent: message\ndata: ${JSON.stringify(v)}\n\n`);
-  });
+  background(
+    "answering an MCP call",
+    done.then((v) => {
+      clearInterval(keepalive);
+      if (!res.destroyed && !res.writableEnded) res.end(`id: ${event}\nevent: message\ndata: ${JSON.stringify(v)}\n\n`);
+    }),
+  );
 }
 
 /** A client reconnecting for a call's answer (its stream broke): the call's answer comes on this stream. */
