@@ -13,6 +13,7 @@ import type { Conn, Task } from "../db.ts";
 import * as runner from "../agent/runner.ts";
 import * as questions from "../mcp/questions.ts";
 import { ApiError, type AppState } from "../state.ts";
+import * as history from "../threads/history.ts";
 
 export const PENDING = "pending";
 export const APPROVED = "approved";
@@ -107,12 +108,13 @@ export function ask(s: AppState, task_id: string): void {
 export function settle(s: AppState, task_id: string, status: string): void {
   let pending: Array<{ id: number; data: string }>;
   try {
-    pending = db.all(
-      s.db(),
-      `SELECT id, data FROM messages WHERE task_id=?1 AND kind='question' AND json_extract(data, '$.merge_approval')=1
-         AND json_extract(data, '$.status')='pending'`,
-      task_id,
-    );
+    pending = history.open_questions(s.db(), task_id).filter((q) => {
+      try {
+        return JSON.parse(q.data)?.merge_approval === true;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return;
   }

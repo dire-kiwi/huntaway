@@ -11,6 +11,7 @@ import { ToolError, type Ctx } from "../tools.ts";
 import { TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./dispatch.ts";
 import { boards, project_key } from "./resolve.ts";
 import { task_workflows } from "./workflows.ts";
+import * as history from "../../threads/history.ts";
 
 /** Unicode characters (Rust's `chars()`). */
 const chars = (s: string) => Array.from(s);
@@ -28,7 +29,7 @@ export function task_details(s: Shared, ctx: Ctx, t: Task): any {
   const out = summarize(s, t);
   out.description = t.description;
   out.worktree_path = t.worktree_path ?? null;
-  out.last_message = db.last_assistant_text(s.db(), t.id) ?? null;
+  out.last_message = history.last_assistant_text(s.db(), t.id) ?? null;
   // A task can create tasks on boards the caller cannot use (or no longer can use).
   const readable = boards(s, ctx);
   const created = db.created_tasks(s.db(), t.id).filter((c) => readable.some((b) => b.id === c.profile_id));

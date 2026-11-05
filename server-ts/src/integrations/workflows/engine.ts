@@ -39,6 +39,7 @@ import {
 } from "../workflows.ts";
 import * as prompt from "./prompt.ts";
 import type { Work } from "./prompt.ts";
+import * as history from "../../threads/history.ts";
 
 /** Held while starting a run, so two can't start for one workflow on one task at once (made on first use: see PORTING.md). */
 let STARTING: AsyncMutex | null = null;
@@ -436,7 +437,7 @@ async function start_agent(s: Shared, run: Run, node: Node): Promise<void> {
     workflow = get(s.db(), run.workflow_id)?.name ?? "";
   } catch {}
   const [work, is_elsewhere] = await elsewhere(s, task);
-  if (is_elsewhere) work.last_message = db.last_assistant_text(s.db(), task.id);
+  if (is_elsewhere) work.last_message = history.last_assistant_text(s.db(), task.id);
   const task_config = db.task_claude_config(s.db(), task);
   // A step whose config was deleted works with the task's.
   const config = claude_config_id != null ? (db.get_claude_config(s.db(), claude_config_id) ?? task_config) : task_config;
@@ -450,7 +451,7 @@ async function start_agent(s: Shared, run: Run, node: Node): Promise<void> {
     const r = run.nodes[n.id];
     if (r?.state === "done" && r.text != null) earlier.push([n.name, r.text]);
   }
-  const replies = output === "verdict" ? db.user_replies(s.db(), task.id, review.REPLIES) : null;
+  const replies = output === "verdict" ? history.user_replies(s.db(), task.id, review.REPLIES) : null;
   const existing = thread_for(s, run, node.id, config_id, model, effort);
   // Issues it found last time, if the agent was sent them since.
   let recheck: string[] = [];
@@ -699,9 +700,7 @@ export function step_ended(s: Shared, thread: Task, run_id: string, outcome: Out
   const verdict = n?.kind === "agent" && n.output === "verdict";
   const written = (): string | null => {
     try {
-      const c = s.db();
-      const asked_at = db.value<number>(c, "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='user'", thread.id) ?? 0;
-      return db.last_assistant_text_after(c, thread.id, asked_at)?.trim() || null;
+      return history.said_since_asked(s.db(), thread.id)?.trim() || null;
     } catch {
       return null;
     }

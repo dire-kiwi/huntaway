@@ -17,6 +17,7 @@
 import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
 import { err_str, now } from "../util.ts";
+import * as history from "../threads/history.ts";
 
 /** Reviewer runs of a task started within this many seconds of the one before are one round's. */
 const ROUND_GAP = 120;
@@ -147,75 +148,39 @@ export function minor_list(args: any): string[] | null {
  * the board refused (a round that had ended), for the task each reviews. The run is the thread's latest to start before
  * the call, and the reviewer's label the one the task's latest review has for the thread, if it's in it.
  */
-export function backfill(c: Conn): void {
+export function backfill(c: Conn, mode: history.Mode = "auto"): void {
   const done = !!db.value<number>(c, "SELECT EXISTS(SELECT 1 FROM review_stats)");
   if (done) return;
-  const rows = db.all<{ task_id: string; parent_id: string; created_at: string; data: string }>(
-    c,
-    `SELECT m.task_id, t.parent_id, m.created_at, m.data FROM messages m JOIN tasks t ON t.id=m.task_id
-     WHERE t.kind='review' AND COALESCE(t.task_type, '') != 'summary' AND t.parent_id IS NOT NULL
-       AND m.kind='claude' AND m.data LIKE '%submit_review%'
-     ORDER BY m.id`,
-  );
-  // The calls the board refused: its answer says so.
-  const refused = new Set<string>();
-  const refusing = db.all<{ task_id: string; data: string }>(
-    c,
-    `SELECT m.task_id, m.data FROM messages m JOIN tasks t ON t.id=m.task_id
-     WHERE t.kind='review' AND m.kind='claude' AND m.data LIKE '%nothing to submit%'`,
-  );
-  for (const { task_id: thread_id, data } of refusing) {
-    let m: any;
-    try {
-      m = JSON.parse(data);
-    } catch {
-      continue;
-    }
-    for (const id of refusals(m)) refused.add(`${thread_id}\0${id}`);
-  }
   // Each task's reviewer runs' rounds, worked out once.
   const rounds = new Map<string, Map<string, string>>();
-  for (const { task_id: thread_id, parent_id, created_at: at, data } of rows) {
-    let v: any;
-    try {
-      v = JSON.parse(data);
-    } catch {
-      continue;
+  // Read from each thread's items, if it has them (threads/history.ts).
+  for (const { thread_id, parent_id, at, input } of history.submissions(c, mode)) {
+    const parent = db.one<{ review: string | null }>(c, "SELECT review FROM tasks WHERE id=?1", parent_id);
+    if (!parent) continue;
+    let label: string | null = null;
+    if (parent.review != null) {
+      try {
+        const r = db.Review_from_json(JSON.parse(parent.review));
+        label = r.reviewers.find((p) => p.thread_id === thread_id)?.label ?? null;
+      } catch {}
     }
-    const blocks = v?.message?.content;
-    if (!Array.isArray(blocks)) continue;
-    for (const b of blocks) {
-      if (!(b?.type === "tool_use" && typeof b.name === "string" && b.name.endsWith("submit_review"))) continue;
-      const id = typeof b.id === "string" ? b.id : "";
-      if (refused.has(`${thread_id}\0${id}`)) continue;
-      const parent = db.one<{ review: string | null }>(c, "SELECT review FROM tasks WHERE id=?1", parent_id);
-      if (!parent) continue;
-      let label: string | null = null;
-      if (parent.review != null) {
-        try {
-          const r = db.Review_from_json(JSON.parse(parent.review));
-          label = r.reviewers.find((p) => p.thread_id === thread_id)?.label ?? null;
-        } catch {}
-      }
-      const run_id = db.value<string>(c, "SELECT id FROM runs WHERE task_id=?1 AND created_at <= ?2 ORDER BY created_at DESC LIMIT 1", thread_id, at) ?? null;
-      if (!rounds.has(parent_id)) rounds.set(parent_id, run_rounds(c, parent_id));
-      const round = run_id != null ? (rounds.get(parent_id)!.get(run_id) ?? null) : null;
-      const input = b.input;
-      const serious = serious_count(input);
-      const minor = minor_list(input);
-      const s: Submission = {
-        task_id: parent_id,
-        thread_id,
-        round,
-        run_id,
-        verdict: serious > 0 ? "issues" : "pass",
-        serious,
-        minor: minor ? minor.length : null,
-        summary: typeof input?.summary === "string" ? input.summary : null,
-        label,
-      };
-      record(c, s, at);
-    }
+    const run_id = db.value<string>(c, "SELECT id FROM runs WHERE task_id=?1 AND created_at <= ?2 ORDER BY created_at DESC LIMIT 1", thread_id, at) ?? null;
+    if (!rounds.has(parent_id)) rounds.set(parent_id, run_rounds(c, parent_id));
+    const round = run_id != null ? (rounds.get(parent_id)!.get(run_id) ?? null) : null;
+    const serious = serious_count(input);
+    const minor = minor_list(input);
+    const s: Submission = {
+      task_id: parent_id,
+      thread_id,
+      round,
+      run_id,
+      verdict: serious > 0 ? "issues" : "pass",
+      serious,
+      minor: minor ? minor.length : null,
+      summary: typeof input?.summary === "string" ? input.summary : null,
+      label,
+    };
+    record(c, s, at);
   }
 }
 
@@ -279,12 +244,3 @@ export class Rounds {
   }
 }
 
-/** The tool calls thread message `m` has the board refusing. */
-function refusals(m: any): string[] {
-  const blocks = m?.message?.content;
-  if (!Array.isArray(blocks)) return [];
-  return blocks
-    .filter((b: any) => b?.type === "tool_result" && JSON.stringify(b).includes("nothing to submit"))
-    .map((b: any) => b.tool_use_id)
-    .filter((id: any): id is string => typeof id === "string");
-}

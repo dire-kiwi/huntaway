@@ -10,6 +10,7 @@ import { MAX_DIFF, latest, list, queued, ref_name, ref_prefix, type Checkpoint, 
 import { brought_in, names, numstat, without } from "./changed.ts";
 import { head, keep, run, run_ok, snapshot, text, worktree_top } from "./git.ts";
 import { restore, unstaged, type Restored } from "./restore.ts";
+import * as history from "../../threads/history.ts";
 
 /** The text a message starts with, for a turn's label. */
 function message_label(data: any): string {
@@ -26,18 +27,12 @@ function lines(s: string): string[] {
 
 /** The task's first user message's id. */
 function first_user_message(c: db.Conn, task_id: string): number | null {
-  return db.value<number>(c, "SELECT MIN(id) FROM messages WHERE task_id=?1 AND kind='user'", task_id) ?? null;
+  return history.first_user_message(c, task_id);
 }
 
-/** A message's data, parsed (null if it isn't JSON), if the task has it. */
+/** A turn's message's data (what threads/history.ts's user_message gives of it), if the task has it. */
 function message_data(c: db.Conn, id: number, task_id: string): any | undefined {
-  const d = db.value<string>(c, "SELECT data FROM messages WHERE id=?1 AND task_id=?2", id, task_id);
-  if (d === undefined) return undefined;
-  try {
-    return JSON.parse(d);
-  } catch {
-    return null;
-  }
+  return history.user_message(c, task_id, id);
 }
 
 /**

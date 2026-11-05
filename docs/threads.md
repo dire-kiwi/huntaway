@@ -105,7 +105,7 @@ made a fold, so the live path (step 3) and batch rebuilds (step 7) can share it:
   again after its answer couldn't be sent) is opened again, with no resolution.
 - `finish()` ends a history nothing will add to (an import): calls with no result are cancelled, subagents that never
   ended are stopped, open requests are cancelled, and what waited for a call that never came is warned about.
-- `CONVERTER_VERSION` (2) changes when what it makes of the same messages does: a fix means rebuilding the tasks
+- `CONVERTER_VERSION` (3) changes when what it makes of the same messages does: a fix means rebuilding the tasks
   (`huntaway threads-rebuild`, below), and `threads.converter` says which version wrote each.
 
 Where agent-threads' recorded sessions showed it, it follows agent-threads rather than HA-128: `mcp__app__*` calls are
@@ -226,16 +226,79 @@ has nothing written. Six flagged tasks streaming at once kept the event loop's p
 With haiku on Claude (a `request_user_input` question, a prompt allowed and one denied) and on a Codex config (an
 approval), the threads were a rebuild's too.
 
+## The readers
+
+`server-ts/src/threads/history.ts`, step 6 (plan decision D5). Everything the board reads of a thread (review, summaries,
+titles, the wait tool, pr_watch, `last_message`, prompts and approvals, checkpoints, analytics) goes through one
+reader each, which reads the task's items when its readers should (`history.source`), and the SQL it always ran on the
+messages otherwise. They read items when the task is flagged, its live writes haven't stopped on an error, and this
+build's translator wrote them (`threads.converter` is `CONVERTER_VERSION`): converter 3 added the user messages' metas
+the readers need (`start`, `routine`, `review_round`), so a thread written by an older build reads messages until
+`huntaway threads-rebuild` brings it up to date. Step 10 drops that fallback, once messages aren't written.
+
+| Reader | Callers | On items |
+| --- | --- | --- |
+| `last_assistant_text` | the API's and MCP tools' `last_message`, review and workflows (work done elsewhere), summaries | The latest of: an assistant message's text blocks (joined), a turn_result's `result_text`, an error notice with a `code` (Claude's API errors) |
+| `said_since_asked` | summaries, workflow steps, routines' reports | The same, after the latest user_message |
+| `user_replies` | review, workflows' verdicts, titles | user_messages that aren't `auto` or `from_agent` (`user_text` if it has one), with the agent's text before each |
+| `tool_calls_since` | review (`changes_code`) | tool_call items, as Claude's blocks: the name as the harness gave it (`mcp__<server>__<tool>`), the result an error unless the call completed |
+| `user_wrote_since`, `user_messaged_since` | pr_watch, the context meter's compactions | user_messages by `created_at` and meta |
+| `subagent_call`, `has_call` | the wait tool's `subagent_finished`, Codex's subagent calls | tool_calls by call id, `subagent_task` and name |
+| `tool_use` | approval rules' blocked-call log | the latest tool_call with the id |
+| `moved_on`, `open_questions` | answering a question or a late prompt; settling questions on a reply, and the merge gate's cards | user_messages from later messages (`thread_item_origins`); open question requests from `question` messages |
+| `first_user_message`, `user_message` | checkpoints and rewinds; `routine_call` | user_message items and their metas |
+| `approval` | `pending_approvals` | the thread's permission request, and its `permission_requests` row |
+| `user_messages_between` | prompt analytics | user_message items |
+| `submissions` | review stats' backfill (migration 79's, which reads messages: the thread tables come later) | submit_review tool calls, but those the board refused |
+
+And `attachments.of_task` and `referenced` (the pruner's) scan `thread_items` and `thread_requests` as well as
+`messages`, so a file only an items thread links isn't pruned once step 10 stops writing messages.
+
+Where the two differ: the messages readers of what the agent said read the latest 50 of its messages, and `tool_use` the
+latest 5 that mention the call, and come back empty past those; the items readers read back as far as it takes. And a
+whitespace-only text block isn't an item. `has_call` from messages only looks at each message's first block (where the
+board writes a Codex subagent's call).
+
+What still reads `messages` on purpose (`grep -rn -E "FROM messages|JOIN messages|UPDATE messages" server-ts/src`,
+without the tests):
+
+- The writer: db/messages.ts's inserts and updates, and threads/write.ts and report.ts, which translate messages.
+  The migrations in db/schema.ts.
+- The legacy readers themselves (db/messages.ts, db/tasks.ts's `user_wrote_since`, the messages side of history.ts).
+- The message routes the UI on messages reads (api/thread.ts: `list_messages`, `message_page`, `subagent_messages`),
+  until step 5's UI on items and step 13.
+- Read-modify-write of the message they update, the source the items are made from, which the D3 hook carries into
+  the items: mcp/questions.ts's `ask` (has the call asked already: a question request doesn't keep the MCP call's
+  id), `answer` and `emit`, mcp/permissions.ts's `update_message` (and `set_message_status`), routines' `mark_read`,
+  and threads/live.ts's question check (it answers through mcp/questions.ts). `open_questions` finds the questions
+  from items and reads the messages it updates. Step 10, which makes ids point at requests, moves these.
+- Routines' `report` messages (`unread_reports`), which the translator keeps only in messages (`unknown_kind`).
+
+### `huntaway threads-readers`
+
+`huntaway threads-readers --db <file or data dir> [--json] [--task <id or key>]... [--examples <n>]` runs each reader
+both ways on every task of a board's database: a task whose readers read items as it is, and any other on its
+translation (a rebuild, in a transaction that's rolled back, so nothing is written). It asks each what the board asks
+(per task: `last_message`, what was said since it was asked, the user's replies with several limits, the open questions,
+the tool calls and `changes_code` since the start and the middle, who wrote since each user message, `moved_on` for
+each question and prompt, the first user message and each checkpoint's and run's message, `subagent_call` for each
+`task_*` message, `tool_use` for the latest 50 calls and `has_call` for subagents'; then the board's pending
+approvals, each profile's prompt analytics, review stats' submissions and `attachments.referenced`), with the messages
+readers' windows lifted, and lists each difference (and counts the answers those windows change). It exits 1 on a
+difference.
+
+On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none flagged yet): **no differences** in 145,000 checks: every task was translated for it, and each reader agrees (`user_replies` 7,432 checks, `tool_use` 55,566, `subagent_call` 22,369, `user_wrote_since` 11,358, `tool_calls_since` 3,716, `last_message`, `said_since_asked` and `open_questions` 1,858 each...), and `attachments.referenced` is the same set from messages as from items. The messages readers' windows changed 12 answers (the items readers found what the windows cut off: `tool_use`'s 5 messages, mostly). It took 194 s, most of it translating. The copy has no pending prompts (copy-live-board.sh scrubs them), so pending approvals were compared on unit tests only.
+
 ## Status
 
 | Step | Task | State |
 | --- | --- | --- |
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
-| 3. Items written live, behind a setting | HA-239 (was HA-216) | This change: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
+| 3. Items written live, behind a setting | HA-239 (was HA-216) | Done: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
 | 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
 | 5. The UI on items | HA-218 | Not started |
-| 6. Readers on items | HA-217 | Not started |
+| 6. Readers on items | HA-217 | This change: `threads/history.ts`, `huntaway threads-readers` (`threads/readers.ts`), the attachment scan on items, converter 3. |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
 | 8. Permission prompts and questions over stdio | HA-219 | Not started |
 | 9. The board's tools in process | HA-221 | Not started |

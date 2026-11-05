@@ -66,6 +66,8 @@ async function main() {
     }
     case "threads-rebuild":
       return (await import("./threads/rebuild.ts")).main(rest);
+    case "threads-readers":
+      return (await import("./threads/readers.ts")).main(rest);
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
     case "--version":
