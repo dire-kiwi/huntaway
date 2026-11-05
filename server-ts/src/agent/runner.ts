@@ -12,6 +12,7 @@ import { err_str, expand_tilde, new_id, now, reached } from "../util.ts";
 import * as runs from "./runs.ts";
 import * as documents from "./documents.ts";
 import * as permissions from "../mcp/permissions.ts";
+import * as automations from "../integrations/automations.ts";
 import { launch } from "./runner/launch.ts";
 import { requeue_ahead, check_not_archived, start_unblocked } from "./runner/send.ts";
 import { requeue_steers, set_writes_documents, write_steers, close_unless_taken_in, has_queued, send_queued, turn_ended } from "./runner/queue.ts";
@@ -114,8 +115,13 @@ export function start_run(
   const { run, text, taken, recorded } = db.tx(c, () => {
     const taken = take === "No" ? null : db.take_queued(c, task_id);
     if (take === "Only" && !taken) throw ApiError.conflict("nothing is queued to send");
-    const msg = taken ? db.queued_then(taken, message) : message;
+    const msg = taken ? db.queued_then(taken, message) : { ...message, routine_runs: [...(message.routine_runs ?? [])] };
+    // An automation's start of a task it made, held back (for a usage limit, say), left its run for the task's first run
+    // (see db.queue).
+    if (!taken && kind === "prompt" && task.session_id == null) msg.routine_runs.push(...db.take_parked_runs(c, task_id));
     const run = db.insert_run(c, task_id, kind);
+    // The routines whose messages it starts with are this run's, for its cost.
+    automations.routines.taken_in(c, run.id, msg.routine_runs);
     const recorded = record(c, task, msg);
     return { run, text: msg.text, taken, recorded };
   });

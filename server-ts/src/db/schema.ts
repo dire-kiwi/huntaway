@@ -679,6 +679,27 @@ export function open(path: string): Conn {
     free_task_key(conn, ASSISTANT_TASK_KEY, "AP");
     batch("CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_assistant ON tasks(profile_id) WHERE task_type='assistant'; PRAGMA user_version=90; COMMIT;");
   }
+  if (version < 91) {
+    // Routines: automations that belong to a profile rather than a project (see integrations/automations.ts). SQLite
+    // can't drop NOT NULL, so the table is rebuilt, with foreign keys off so dropping the old one doesn't take the runs
+    // with it; ids, runs and every column are kept, and each automation's profile is its project's. Also how a
+    // routine's run ended and what it cost, and the routines' runs whose messages are in the one queued on a thread
+    // (see db.Queued). Each part only if it isn't there, in case another migration takes this version first.
+    const rebuild = has_column(conn, "automations", "profile_id") ? "" : SCHEMA_V91;
+    let add = "";
+    for (const col of ["outcome TEXT", "cost_usd REAL", "agent_run_id TEXT"]) {
+      if (!has_column(conn, "automation_runs", col.split(" ")[0])) add += `ALTER TABLE automation_runs ADD COLUMN ${col};`;
+    }
+    for (const col of ["queued_routine_runs TEXT", "queued_routine INTEGER NOT NULL DEFAULT 0"]) {
+      if (!has_column(conn, "tasks", col.split(" ")[0])) add += `ALTER TABLE tasks ADD COLUMN ${col};`;
+    }
+    batch(
+      `PRAGMA foreign_keys=OFF; BEGIN; ${rebuild} ${add}
+             CREATE INDEX IF NOT EXISTS automation_runs_task ON automation_runs(task_id);
+             CREATE INDEX IF NOT EXISTS automation_runs_agent_run ON automation_runs(agent_run_id);
+             PRAGMA user_version=91; COMMIT; PRAGMA foreign_keys=ON;`,
+    );
+  }
   return conn;
 }
 
@@ -689,7 +710,7 @@ function parent_dir(path: string): string {
 }
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 90;
+export const VERSION = 91;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what
@@ -1389,6 +1410,39 @@ CREATE TRIGGER agent_tool_switches_skill AFTER DELETE ON agent_skills BEGIN
   DELETE FROM agent_tool_switches WHERE item_id=OLD.id; END;
 CREATE TRIGGER agent_tool_switches_server AFTER DELETE ON agent_mcp_servers BEGIN
   DELETE FROM agent_tool_switches WHERE item_id=OLD.id; END;
+`;
+
+/**
+ * Automations get a profile, and a project only if they're a project's (none for a profile's routine), and the
+ * conditions a run is checked against first: the hours it may run in, a command to run first, and a budget a day.
+ */
+const SCHEMA_V91 = `
+CREATE TABLE automations_v91 (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  trigger TEXT NOT NULL,
+  action TEXT NOT NULL,
+  token TEXT NOT NULL,
+  secret TEXT,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  active_hours TEXT,
+  precheck TEXT,
+  budget_usd REAL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO automations_v91 (id, profile_id, project_id, name, enabled, trigger, action, token, secret, next_run_at, last_run_at, created_at, updated_at)
+  SELECT a.id, p.profile_id, a.project_id, a.name, a.enabled, a.trigger, a.action, a.token, a.secret, a.next_run_at, a.last_run_at, a.created_at, a.updated_at
+  FROM automations a JOIN projects p ON p.id = a.project_id;
+DROP TABLE automations;
+ALTER TABLE automations_v91 RENAME TO automations;
+CREATE INDEX IF NOT EXISTS automations_project ON automations(project_id);
+CREATE INDEX IF NOT EXISTS automations_profile ON automations(profile_id);
+DELETE FROM automation_runs WHERE automation_id NOT IN (SELECT id FROM automations);
 `;
 
 const SCHEMA_V85_COLUMNS = `ALTER TABLE agent_skills ADD COLUMN source_id TEXT REFERENCES skill_sources(id) ON DELETE CASCADE;

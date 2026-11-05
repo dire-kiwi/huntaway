@@ -1,7 +1,19 @@
 import { enc, type Http } from "./http";
 
-/** Which of the board's notifications a device gets by push (see notifications.ts). */
-export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean>;
+/** Which of the board's notifications a device gets by push (see notifications.ts), and the assistant's (API 110). */
+export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & {
+  /** The assistant's replies. Off unless chosen; a board from before it doesn't have it, and keeps what a change leaves out. */
+  replies?: boolean;
+  /** The reports the assistant's routines post: on for a new device, off for one subscribed before it could choose. */
+  reports?: boolean;
+};
+
+/** The assistant's events a device can be pushed, besides the board's (`NOTIFY_EVENTS` in the web app): those a board
+ *  has are in its devices' events (API 110). */
+export const ASSISTANT_PUSH_EVENTS: { id: "replies" | "reports"; label: string; hint: string }[] = [
+  { id: "replies", label: "Assistant's replies", hint: "It finished a reply" },
+  { id: "reports", label: "Routine reports", hint: "What its routines post: its first line" },
+];
 
 /** A device that gets the board's notifications by Web Push (API 74; see server-ts/src/integrations/push.ts). */
 export interface PushDevice {

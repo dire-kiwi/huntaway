@@ -1,6 +1,6 @@
 // Port of server/src/db/tasks.rs: tasks: the `Task` row, and queries over tasks, their dependencies and merges.
 import { ApiError } from "../http.ts";
-import { ASSISTANT, SCRATCH, all, get_setting, hidden, json_list, json_to_sql, one, run, tx, value, type Conn } from "../db.ts";
+import { ASSISTANT, ROUTINE, SCRATCH, all, get_setting, hidden, json_list, json_to_sql, one, run, tx, value, type Conn } from "../db.ts";
 import { err_str, new_id, now } from "../util.ts";
 import { available_configs } from "./profiles.ts";
 import { get_project, list_projects, type Project } from "./projects.ts";
@@ -250,6 +250,23 @@ export function is_assistant(t: Task): boolean {
   return t.kind === "task" && t.task_type === ASSISTANT;
 }
 
+/**
+ * A routine's run of a profile's assistant: a thread of its own under the assistant (`parent_id`), in the assistant's
+ * workspace with its tools, whose last message the board posts to the assistant as a report (see
+ * integrations/automations/routines.ts). Off the board.
+ */
+export function is_routine(t: Task): boolean {
+  return t.kind === "task" && t.task_type === ROUTINE;
+}
+
+/**
+ * The assistant or one of its routine threads: they work in the assistant's workspace, with its profile's tools, are
+ * keyed `A-<n>`, never go to review or merge, and only their own profile's agents reach them.
+ */
+export function is_assistants(t: Task): boolean {
+  return is_assistant(t) || is_routine(t);
+}
+
 /** The column a task sits in while its agent works. */
 export function working_status(t: Task): "ready_for_merge" | "in_progress" {
   return t.merging ? "ready_for_merge" : "in_progress";
@@ -384,7 +401,8 @@ export function project_threads(c: Conn, project_id: string): Task[] {
 export function list_group_tasks(c: Conn, profile_id: string, assistant: boolean): Task[] {
   return tasks(
     c,
-    "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY position",
+    `SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
+           ORDER BY position`,
     profile_id, assistant,
   );
 }
@@ -433,10 +451,50 @@ export function assistant_task(c: Conn, profile_id: string): Task | null {
   return task(c, "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND task_type=?2", profile_id, ASSISTANT);
 }
 
-/** A profile's assistant by number (its key is `A-<n>`). */
+/** A profile's assistant or one of its routine threads by number (their keys are `A-<n>`). */
 export function assistant_task_by_number(c: Conn, profile_id: string, number: number): Task | null {
-  const t = assistant_task(c, profile_id);
-  return t && t.number === number ? t : null;
+  return task(
+    c,
+    "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?3) AND number=?4",
+    profile_id, ASSISTANT, ROUTINE, number,
+  );
+}
+
+/**
+ * Adds a routine thread under `assistant` (see is_routine), working in its workspace with its config, model, effort and
+ * permission mode, and numbered after it and its other threads (`A-<n>`).
+ */
+export function insert_routine_task(c: Conn, assistant: Task, title: string): Task {
+  return tx(c, () => {
+    const created = insert_task(c, {
+      profile_id: assistant.profile_id,
+      project_id: null,
+      kind: "task",
+      title,
+      description: "",
+      status: "todo",
+      use_worktree: false,
+      model: assistant.model,
+      effort: assistant.effort,
+      claude_config_id: assistant.claude_config_id,
+    });
+    run(
+      c,
+      `UPDATE tasks SET task_type=?2, work_dir=?3, parent_id=?4, permission_mode=?5, title_pinned=1, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
+           WHERE profile_id=?6 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?7)) WHERE id=?1`,
+      created.id, ROUTINE, assistant.work_dir, assistant.id, assistant.permission_mode, created.profile_id, ASSISTANT,
+    );
+    return get_task(c, created.id)!;
+  });
+}
+
+/**
+ * Routine threads with nothing going on since before `before`, whatever their status (done, or failed, stopped or left
+ * asking): the old ones the board prunes (see routines.prune_threads). Not one whose agent is running, or waiting for its
+ * usage limit to reset.
+ */
+export function old_routine_tasks(c: Conn, before: string): Task[] {
+  return tasks(c, "SELECT * FROM tasks WHERE kind='task' AND task_type=?1 AND running=0 AND waiting=0 AND last_activity_at < ?2", ROUTINE, before);
 }
 
 /**
@@ -450,8 +508,8 @@ export function insert_assistant_task(c: Conn, t: NewTask, work_dir: (id: string
     run(
       c,
       `UPDATE tasks SET task_type=?2, work_dir=?4, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
-           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type=?2) WHERE id=?1`,
-      created.id, ASSISTANT, created.profile_id, work_dir(created.id),
+           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?5)) WHERE id=?1`,
+      created.id, ASSISTANT, created.profile_id, work_dir(created.id), ROUTINE,
     );
     return get_task(c, created.id)!;
   });
@@ -497,11 +555,15 @@ export function list_all_tasks(c: Conn): Task[] {
   return tasks(c, "SELECT * FROM tasks WHERE kind='task'");
 }
 
-/** A profile's tasks, and with `assistant` its assistant (see is_assistant), which is off the board. */
+/**
+ * A profile's tasks, and with `assistant` its assistant (see is_assistant), which is off the board. Never its routine
+ * threads (see is_routine).
+ */
 export function list_tasks_for_profile(c: Conn, profile_id: string, assistant: boolean): Task[] {
   return tasks(
     c,
-    "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') ORDER BY project_id, position",
+    `SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
+           ORDER BY project_id, position`,
     profile_id, assistant,
   );
 }
