@@ -6,9 +6,10 @@ import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
 import type { Duplex } from "node:stream";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import * as db from "./db.ts";
+import * as db_file from "./db/file.ts";
 import * as api from "./api.ts";
 import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
@@ -84,6 +85,8 @@ export interface ServeArgs {
   access_token: string | null;
   demo: boolean;
   open_token: boolean;
+  /** Copy the older builds' database into `huntaway-2.db` again (see db/file.ts), for this start only. */
+  recopy_db: boolean;
   profiles: Array<[string, string] | null>;
 }
 
@@ -119,6 +122,7 @@ export function parse_serve_args(argv: string[]): ServeArgs {
     access_token: env("IA_TOKEN") ?? null,
     demo: truthy(env("IA_DEMO")),
     open_token: truthy(env("IA_OPEN_TOKEN")),
+    recopy_db: truthy(env("IA_RECOPY_DB")),
     profiles: [],
   };
   let hubs: string[] | null = null;
@@ -153,6 +157,7 @@ export function parse_serve_args(argv: string[]): ServeArgs {
       case "--token": a.access_token = next(); break;
       case "--demo": a.demo = true; break;
       case "--open-token": a.open_token = true; break;
+      case "--recopy-db": a.recopy_db = true; break;
       case "--profile": (profiles ??= []).push(...next().split(",").map(parse_profile)); break;
       default: throw new Error(`unexpected argument '${argv[i]}'`);
     }
@@ -177,8 +182,16 @@ const isDir = (p: string) => {
   }
 };
 
-/** The database in a data dir: `huntaway.db`, or `issue-agent.db` from before the rename. */
+/**
+ * The database in a data dir: `huntaway-2.db` with the new database file on (see db/file.ts), else `huntaway.db`, or
+ * `issue-agent.db` from before the rename.
+ */
 export function db_path(data_dir: string): string {
+  return db_file.enabled() ? join(data_dir, db_file.FILE) : older_db_path(data_dir);
+}
+
+/** The database older builds use in a data dir: `huntaway.db`, or `issue-agent.db` from before the rename. */
+export function older_db_path(data_dir: string): string {
   const d = join(data_dir, "huntaway.db"), legacy = join(data_dir, "issue-agent.db");
   let legacyFile = false;
   try {
@@ -335,7 +348,11 @@ export async function serve(args: ServeArgs) {
       host_name = (process.env.HOSTNAME ?? "host").trim();
     }
   }
-  // Another version (or the Rust server) ran on this data dir last: keep a copy of the database before opening it.
+  // Another version (or the Rust server) ran on this data dir last: keep a copy of the database before opening it. With
+  // the new database file (see db/file.ts) that's huntaway-2.db; before it's made, nothing: making it only reads the
+  // older builds' file, which stays as it was.
+  const new_file = db_file.enabled();
+  if (args.recopy_db && !new_file) log.warn(`--recopy-db does nothing: this server uses ${basename(db_path(data_dir))}, not ${db_file.FILE} (${db_file.ENV} turns that on)`);
   try {
     backup.on_start(data_dir, db_path(data_dir), VERSION, db.VERSION);
   } catch (e) {
@@ -343,9 +360,12 @@ export async function serve(args: ServeArgs) {
     if (e instanceof backup.BackupFailed) console.log(`IA_BACKUP_FAILED ${JSON.stringify({ reason: e.reason, why: e.why, dir: e.dir })}`);
     throw e;
   }
-  // "Start without a backup" was for this start: a restart onto another release makes one again.
+  // "Start without a backup" was for this start: a restart onto another release makes one again. So is copying the
+  // database again, which nothing this server starts (agents, and test servers of theirs) should see either.
   delete process.env[backup.SKIP_ONCE_ENV];
-  const conn = db.open(db_path(data_dir));
+  delete process.env.IA_RECOPY_DB;
+  // Before serving: on the first start with the new file, it copies the older builds' database, which takes a while for a big one.
+  const conn = new_file ? db_file.open(data_dir, args.recopy_db).conn : db.open(db_path(data_dir));
   backup.record_version(data_dir, VERSION);
 
   const server = createServer();

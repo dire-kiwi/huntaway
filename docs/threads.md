@@ -80,7 +80,7 @@ Every table is keyed by `task_id`, and its rows are deleted with the task (`ON D
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
 | 8. Permission prompts and questions over stdio | HA-219 | Not started |
 | 9. The board's tools in process | HA-221 | Not started |
-| B. A new database file, dormant | HA-213 | In progress, alongside step 1 |
+| B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`server-ts/src/db/file.ts`) |
 | 10. Items are the source | HA-222 | Not started |
 | 11. Codex writes items directly | HA-223 | Not started |
 | 12–14. Soak, remove the legacy code, delete old message rows | HA-224 to HA-226 | Not started |

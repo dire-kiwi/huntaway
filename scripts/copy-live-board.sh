@@ -10,9 +10,53 @@
 # runs to pick up, no repositories or worktrees (their paths are moved under /nonexistent), no
 # setup or status scripts, no Claude configs, no Asana tokens, no pending prompts and no linked hosts. Then the test
 # server restarts on it. IA_LIVE_DATA_DIR overrides where the live data is (~/.local/share/issue-agent).
+#
+# The copy goes in under the name of the live board's file: `huntaway-2.db` from a server that's moved onto it (see
+# server-ts/src/db/file.ts), or `huntaway.db` (or `issue-agent.db`) from one before, which a test server started with
+# IA_NEW_DB_FILE=1 copies into its `huntaway-2.db` as it starts, as the live board's will. After a Roll back both are
+# there, and the older one is in use, so the source is the file a running process (the live server) has open; with
+# none open, the only file there, else IA_LIVE_DB (a file name in the live data dir) says which.
+# `copy-live-board.sh --source` only prints the file it would copy (scripts/copy-live-board-test.sh tests it).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+live=${IA_LIVE_DATA_DIR:-$HOME/.local/share/issue-agent}
+
+# The live board's database file: see above.
+live_db() {
+  local real files=() open=() f
+  real="$(cd "$live" && pwd -P)" || { echo "no data dir $live" >&2; return 1; }
+  if [[ -n ${IA_LIVE_DB:-} ]]; then
+    [[ -f $real/$IA_LIVE_DB ]] || { echo "no $IA_LIVE_DB in $live" >&2; return 1; }
+    echo "$real/$IA_LIVE_DB"
+    return
+  fi
+  for f in huntaway-2.db huntaway.db issue-agent.db; do
+    [[ -f $real/$f ]] && files+=("$f")
+  done
+  [[ ${#files[@]} -gt 0 ]] || { echo "no database in $live" >&2; return 1; }
+  # Each file that a process has open (fds link to the canonical path; the -wal and -shm files don't count). By what
+  # find prints: it fails on other users' processes, which it can't read.
+  for f in "${files[@]}"; do
+    if [[ -n $(find /proc/[0-9]*/fd -maxdepth 1 -type l -lname "$real/$f" -print -quit 2>/dev/null) ]]; then
+      open+=("$f")
+    fi
+  done
+  if [[ ${#open[@]} -eq 1 ]]; then
+    echo "$real/${open[0]}"
+  elif [[ ${#open[@]} -eq 0 && ${#files[@]} -eq 1 ]]; then
+    echo "$real/${files[0]}"
+  else
+    echo "$live has ${files[*]}, and ${#open[@]} of them are open (${open[*]:-none}), so it can't tell which the live" \
+      "board uses: say which with IA_LIVE_DB=<file>" >&2
+    return 1
+  fi
+}
+
+if [[ ${1:-} == --source ]]; then
+  live_db
+  exit
+fi
 where=${1:?usage: $0 <test-server env file or data dir>}
 if [[ -f $where ]]; then
   dir="$(sed -n 's/^export IA_TEST_DATA_DIR=//p' "$where")"
@@ -24,10 +68,13 @@ dir="${dir%/}"
 grep -qx 'export IA_CLAUDE_BIN=/bin/false' "$dir/launch" && grep -qx 'export IA_CODEX_BIN=/bin/false' "$dir/launch" ||
   { echo "start the test server with --no-agents: its agents would run on the live board's tasks" >&2; exit 1; }
 
-live=${IA_LIVE_DATA_DIR:-$HOME/.local/share/issue-agent}
-src=$live/huntaway.db
-[[ -f $src ]] || src=$live/issue-agent.db
-[[ -f $src ]] || { echo "no database in $live" >&2; exit 1; }
+src="$(live_db)"
+db=$dir/$(basename "$src")
+# A test server opens huntaway-2.db only with IA_NEW_DB_FILE on (off by default, as ON_BY_DEFAULT in db/file.ts).
+if [[ $(basename "$src") == huntaway-2.db ]] && ! grep -Eqix "export IA_NEW_DB_FILE=['\"]?(1|true|yes|on)['\"]?" "$dir/launch"; then
+  echo "the live board uses huntaway-2.db, which this test server doesn't open: start it with IA_NEW_DB_FILE=1" >&2
+  exit 1
+fi
 [[ "$(cd "$dir" && pwd -P)" != "$(cd "$live" && pwd -P)" ]] || { echo "that's the live data dir" >&2; exit 1; }
 
 pid="$(cat "$dir/server.pid" 2>/dev/null || true)"
@@ -36,9 +83,10 @@ if [[ -n $pid ]] && [[ -r /proc/$pid/cmdline ]] && tr '\0' ' ' < "/proc/$pid/cmd
   for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
   kill -0 "$pid" 2>/dev/null && kill -KILL "$pid"
 fi
-rm -f "$dir"/huntaway.db "$dir"/huntaway.db-wal "$dir"/huntaway.db-shm "$dir"/issue-agent.db*
-sqlite3 -readonly "$src" ".backup '$dir/huntaway.db'"
-sqlite3 "$dir/huntaway.db" <<'SQL'
+# Every database file the test server had (its own huntaway-2.db would be used over the copy), with their logs.
+rm -f "$dir"/huntaway.db "$dir"/huntaway.db-* "$dir"/huntaway-2.db "$dir"/huntaway-2.db-* "$dir"/huntaway-2.db.* "$dir"/issue-agent.db* "$dir"/recopy-db
+sqlite3 -readonly "$src" ".backup '$db'"
+sqlite3 "$db" <<'SQL'
 UPDATE runs SET status='exited', ended_at=coalesce(ended_at, created_at) WHERE status<>'exited';
 UPDATE tasks SET running=0, merging=0, waiting=0, agent_wait=NULL,
   worktree_path='/nonexistent' || worktree_path, work_dir='/nonexistent' || work_dir;
@@ -56,7 +104,7 @@ DELETE FROM pr_watches;
 DELETE FROM pr_states;
 SQL
 # Nor the profiles' Asana tokens (in databases from API 57 on).
-if [[ -n $(sqlite3 "$dir/huntaway.db" "SELECT 1 FROM pragma_table_info('profiles') WHERE name='asana_token'") ]]; then
-  sqlite3 "$dir/huntaway.db" "UPDATE profiles SET asana_token=NULL, asana_user=NULL;"
+if [[ -n $(sqlite3 "$db" "SELECT 1 FROM pragma_table_info('profiles') WHERE name='asana_token'") ]]; then
+  sqlite3 "$db" "UPDATE profiles SET asana_token=NULL, asana_user=NULL;"
 fi
 "$root/scripts/test-server.sh" restart "$dir"
