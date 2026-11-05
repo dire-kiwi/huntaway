@@ -1,4 +1,6 @@
-# Runs the server and UI tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request. It needs
+# Runs the server and UI tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request. The
+# server is the TypeScript one in server-ts/ (the `server-ts` job, and what the browser checks run against); the `server`
+# job tests the Rust server in server/, which no release runs any more, until it's removed. It needs
 # no secrets, so pull requests from forks run it too. Deployments live outside this repository.
 #
 # The owner's own jobs can run on self-hosted runners (labels self-hosted and huntaway), which keep their checkout, build
@@ -24,6 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The Rust server (server/), until it's removed: only ia-shim and the test broker in that workspace are still used.
   server:
     runs-on: &runs-on >-
       ${{ (vars.SELF_HOSTED_USER != '' && github.actor == vars.SELF_HOSTED_USER && github.triggering_actor == vars.SELF_HOSTED_USER
@@ -103,10 +106,14 @@ jobs:
         working-directory: app
         run: npm test
 
-  # The TypeScript port of the server (server-ts/, HA-174), kept for comparing memory use: its typecheck and unit tests.
+  # The server (server-ts/): its typecheck and unit tests. On a GitHub-hosted runner, which leaves the self-hosted ones to
+  # the Rust server and ui jobs.
   server-ts:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_DISABLE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -120,6 +127,12 @@ jobs:
         working-directory: server-ts
         run: npm ci --no-audit --no-fund
 
+      # npm ci doesn't mind a package-lock.json that's behind package.json, but npm install rewrites it, which leaves the
+      # checkout of a host that rebuilds from it with uncommitted changes (as the app job checks).
+      - name: package-lock.json is up to date
+        working-directory: server-ts
+        run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
+
       # The broker tests run the Rust broker (its test_broker example, see server-ts/src/hosts/broker/test_broker.ts).
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -131,8 +144,6 @@ jobs:
 
       - name: Build the test broker
         working-directory: server
-        env:
-          SCCACHE_DISABLE: "1"
         run: cargo build --locked -p huntaway-broker --example test_broker
 
       - name: Typecheck
@@ -143,7 +154,8 @@ jobs:
         working-directory: server-ts
         run: npm test
 
-  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
+  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against the server (server-ts/, as
+  # scripts/test-server.sh runs it, with a debug ia-shim), and
   # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time on a GitHub-hosted one
   # (it has 4 CPUs, and Chromium keeps them busy: more at once only made each check slower) and 2 on a self-hosted one
   # (2 CPUs).
@@ -187,10 +199,16 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: |
+            app/package-lock.json
+            server-ts/package-lock.json
 
       - name: npm ci
         working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      - name: npm ci (server)
+        working-directory: server-ts
         run: npm ci --no-audit --no-fund
 
       # The runners have no /usr/bin/chromium, so scripts/ui-check.mjs falls back to Playwright's own Chromium (not its
@@ -199,10 +217,10 @@ jobs:
         working-directory: app
         run: npx playwright-core install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} --no-shell chromium
 
-      # Only the binaries the checks run, with no test binary beside them (see the server job's note on memory).
-      - name: cargo build
+      # The server runs its agents under the Rust ia-shim.
+      - name: Build ia-shim
         working-directory: server
-        run: cargo build --locked
+        run: cargo build --locked -p ia-shim
 
       - name: Browser checks
         working-directory: app
