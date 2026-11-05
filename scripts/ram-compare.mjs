@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Compares the memory use of the Rust server (server/) and its TypeScript port (server-ts/, HA-174) on the same data:
+// Compares the memory use of the Rust server (removed in HA-179) and its TypeScript port (server-ts/, HA-174) on the same data:
 // starts a test server of each (scripts/test-server.sh --no-agents), gives them the same board, then reads each
 // process's memory (RSS, its peak, and PSS from /proc/<pid>/smaps_rollup) idle after start, after loading every task's
 // thread through the API with UI websockets open, after more rounds of that, and once things settle.
@@ -11,8 +11,9 @@
 //   --sockets N UI websockets to hold open while loading (default 3)
 //   --keep      leave the two servers running (prints their env files)
 //
-// The Rust server is the newer of server/target/{release,debug}/huntaway (RUST_BIN overrides); build release for a fair
-// comparison. The TS server runs on the node on PATH (NODE_OPTIONS such as --max-old-space-size pass through), under
+// The Rust server is RUST_BIN, else the newer of server/target/{release,debug}/huntaway, a build left from before its
+// removal: RUST_BIN can be a Rust release's huntaway (0.3.x, with its ia-shim beside it), or a release build of the
+// commit before HA-179 (`git worktree add <dir> HA-179^` and `cargo build --release` in <dir>/server). The TS server runs on the node on PATH (NODE_OPTIONS such as --max-old-space-size pass through), under
 // server-ts/bin/huntaway, a shell that keeps the server's process id across restarts: the node under it is measured.
 // That runs the .ts from this checkout; TS_BIN=<dir>/huntaway measures a release's package instead (what
 // scripts/package-server.sh <dir> puts together: the server precompiled to .js, with its own node).
@@ -34,7 +35,7 @@ const tmp = process.env.TMPDIR || tmpdir();
 
 const newer = (paths) => paths.filter((p) => { try { return statSync(p).isFile(); } catch { return false; } }).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 const rustBin = process.env.RUST_BIN || newer([join(root, "server/target/release/huntaway"), join(root, "server/target/debug/huntaway")]);
-if (!rustBin) throw new Error("no Rust build: cargo build --release in server/");
+if (!rustBin) throw new Error("no Rust server: set RUST_BIN to a Rust release's huntaway (see the top of this script)");
 const tsBin = process.env.TS_BIN || join(root, "server-ts/bin/huntaway");
 
 function start(name, bin) {

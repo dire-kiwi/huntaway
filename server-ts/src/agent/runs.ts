@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import * as db from "../db.ts";
 import * as runner from "./runner.ts";
 import * as gh_mcp from "../mcp/gh_mcp.ts";
+import * as mcp_http from "../mcp/http.ts";
 import * as tokens from "./tokens.ts";
 import type { Spec } from "./codex.ts";
 import * as codex from "./codex.ts";
@@ -144,24 +145,11 @@ function sort_keys(v: any): any {
   return v;
 }
 
-/** Start the agent (claude, or the Codex adapter) under ia-shim. Returns once its process exists. */
-export async function start(state: Shared, l: Launch): Promise<void> {
-  const dir = run_dir(state, l.run_id);
-  if (existsSync(join(dir, "pid")) || existsSync(join(dir, "exit"))) {
-    throw new Error(`run ${l.run_id} was already started`);
-  }
-  const shim = shim_path(state);
-  if (!existsSync(shim)) {
-    throw new Error(`ia-shim not found next to ${state.exe} (build the workspace with \`cargo build --release\`)`);
-  }
-  await mkdir(dir, { recursive: true });
-  // The boot tells whether its pids are still its own later (see `pid_reused`).
-  const run = { boot: boot_id(), format: RUN_FORMAT, version: VERSION };
-  await writeFile(join(dir, "run.json"), JSON.stringify(run));
-  await writeFile(join(dir, "prompt"), l.prompt);
-  if (l.input) await writeFile(join(dir, "input.jsonl"), "");
-
-  // The agent's MCP helper calls back into this server; IA_URL stays valid across restarts.
+/**
+ * The board's servers as stdio helper processes (`huntaway mcp` and `huntaway gh-mcp`), as runs had them before HA-180,
+ * for `IA_MCP_STDIO=1`. Each costs a process per run (about 90 MB under Node), which calls back into this server.
+ */
+function stdio_servers(state: Shared, l: Launch): Record<string, any> {
   const servers: Record<string, any> = {
     [runner.MCP_SERVER_NAME]: {
       type: "stdio",
@@ -169,8 +157,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
       args: ["mcp"],
       env: { IA_URL: state.internal_url, IA_TOKEN: state.token, IA_RUN_ID: l.run_id } as Record<string, string>,
     },
-    // GitHub through gh, outside the agent's sandbox. A server of the project's own by
-    // this name replaces it. It asks this server whether the run may merge (see review/merge_gate.rs).
+    // It asks this server whether the run may merge (see review/merge_gate.rs).
     [gh_mcp.SERVER_NAME]: {
       type: "stdio",
       command: state.exe,
@@ -180,6 +167,33 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   };
   if (l.review) servers[runner.MCP_SERVER_NAME].env.IA_REVIEW = "1";
   if (l.github_account != null) servers[gh_mcp.SERVER_NAME].env[gh_mcp.ACCOUNT_ENV] = l.github_account;
+  // Claude Code gives a stdio server's call 30 minutes without news (a permission prompt, say) unless told otherwise.
+  servers[runner.MCP_SERVER_NAME].timeout = mcp_http.BOARD_TIMEOUT_MS;
+  return servers;
+}
+
+/** Start the agent (claude, or the Codex adapter) under ia-shim. Returns once its process exists. */
+export async function start(state: Shared, l: Launch): Promise<void> {
+  const dir = run_dir(state, l.run_id);
+  if (existsSync(join(dir, "pid")) || existsSync(join(dir, "exit"))) {
+    throw new Error(`run ${l.run_id} was already started`);
+  }
+  const shim = shim_path(state);
+  if (!existsSync(shim)) {
+    throw new Error(`ia-shim not found next to ${state.exe} (build it with \`cargo build --release -p ia-shim\` in server/)`);
+  }
+  await mkdir(dir, { recursive: true });
+  // The boot tells whether its pids are still its own later (see `pid_reused`).
+  const run = { boot: boot_id(), format: RUN_FORMAT, version: VERSION };
+  await writeFile(join(dir, "run.json"), JSON.stringify(run));
+  await writeFile(join(dir, "prompt"), l.prompt);
+  if (l.input) await writeFile(join(dir, "input.jsonl"), "");
+
+  // The board's tools, and GitHub through gh (outside the agent's sandbox; a server of the project's own by this name
+  // replaces it). This server serves both over HTTP (see mcp/http.ts), with what they need of the run kept here; the URL
+  // stays valid across restarts.
+  await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review }));
+  const servers: Record<string, any> = process.env.IA_MCP_STDIO === "1" ? stdio_servers(state, l) : mcp_http.servers(state, l.run_id);
   for (const [name, server] of Object.entries(l.mcp_servers ?? {})) {
     if (name !== runner.MCP_SERVER_NAME) servers[name] = server;
   }

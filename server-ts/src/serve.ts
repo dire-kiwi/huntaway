@@ -1,6 +1,7 @@
 // Port of `serve` in server/src/main.rs (main.ts has the command line, and loads this only for `serve`).
 import * as backup from "./backup.ts";
 import * as crash from "./crash.ts";
+import * as lag from "./lag.ts";
 import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
@@ -22,6 +23,7 @@ import * as focus from "./agent/focus.ts";
 import * as runs from "./agent/runs.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
 import * as pr_watch from "./mcp/pr_watch.ts";
+import * as mcp_http from "./mcp/http.ts";
 import * as terminal from "./hosts/terminal.ts";
 import * as hub from "./hosts/hub.ts";
 import * as broker from "./hosts/broker.ts";
@@ -284,6 +286,7 @@ export async function serve(args: ServeArgs) {
   // A bug in a background job is logged rather than ending the server (see crash.ts). What serve itself throws while
   // starting isn't unhandled: main.ts logs it and exits.
   crash.install();
+  lag.start();
   // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
   admin.take_supervisor();
   admin.reap_inherited();
@@ -351,6 +354,7 @@ export async function serve(args: ServeArgs) {
   }
   api.router(state);
   crash.debug_route(state.local_router!);
+  lag.debug_route(state.local_router!);
   const ui = find_ui_dir(args.ui_dir, from_app, admin.current_exe());
   if (ui) log.info(`serving UI from ${ui}`);
   else log.warn("no UI build found; API only (build app/ or pass --ui-dir)");
@@ -366,6 +370,8 @@ export async function serve(args: ServeArgs) {
         return;
       }
       if (path === "/api/open-token" && args.open_token && req.method === "GET") return send(res, open_token(token, loopback_only)(req.headers));
+      // Runs' MCP servers, which answer on event streams (see mcp/http.ts).
+      if (path.startsWith(mcp_http.PREFIX)) return await mcp_http.serve(state, req, res);
       if (path === "/api" || path.startsWith("/api/")) {
         for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
         const found = state.local_router!.find(path.slice(4));

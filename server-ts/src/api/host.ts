@@ -9,6 +9,8 @@ import { err_str, expand_tilde, home_dir, path_str } from "../util.ts";
 import * as focus from "../agent/focus.ts";
 import * as terminal from "../hosts/terminal.ts";
 import * as tools from "../mcp/tools.ts";
+import * as mcp_http from "../mcp/http.ts";
+import { authorized } from "../api.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as admin from "../update/admin.ts";
 import * as release from "../update/release.ts";
@@ -95,8 +97,13 @@ export async function update_settings(s: AppState, r: Req) {
 
 // ---------- agent tools ----------
 
-/** From an agent's MCP helper; may block (permission prompts) until the user answers. */
+/**
+ * From an agent's MCP helper, or a Codex run's adapter; may block (permission prompts) until the user answers. It takes
+ * the host's token, or the run's own secret (see mcp/http.ts), which only acts as that run.
+ */
 export async function internal_mcp(s: AppState, r: Req) {
+  const run_id = typeof r.body?.run_id === "string" ? r.body.run_id : "";
+  if (!authorized(s, r.headers, r.query_string) && !(run_id && mcp_http.run_authorized(s, run_id, r.headers))) throw new ApiError(401, "unauthorized");
   const b = json_map(r);
   const call = { run_id: req_str(b, "run_id"), call_id: req_str(b, "call_id"), tool: req_str(b, "tool"), args: def_value(b, "args"), task_fields: def_bool(b, "task_fields") };
   try {

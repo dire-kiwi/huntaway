@@ -5,7 +5,9 @@
 #   scripts/install.sh [options]          # from a checkout; run --help for the options
 #
 # It checks for the build tools, clones the repository (or fast-forwards a clone it made before),
-# builds the UI and the server, and adds Huntaway to the app launcher (a .desktop entry on Linux,
+# builds the UI, installs the server's dependencies (the server, server-ts/, runs on Node 24+ from its sources) and
+# builds ia-shim, the Rust supervisor its agents run under (with cargo, or else it takes the latest release's prebuilt
+# one, on Linux x64 and Apple silicon), and adds Huntaway to the app launcher (a .desktop entry on Linux,
 # ~/Applications/Huntaway.app on macOS). With --update-from URL (or HUNTAWAY_UPDATE_FROM), the app's server follows
 # the board deployed there: once that runs a newer commit, the sidebar shows
 # "N new commits · Update", which fetches it, rebuilds and restarts like Rebuild & restart.
@@ -15,6 +17,8 @@ REPO="${HUNTAWAY_REPO:-https://github.com/dire-kiwi/huntaway.git}"
 BRANCH="${HUNTAWAY_BRANCH:-master}"
 DIR="${HUNTAWAY_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/huntaway-app}"
 UPDATE_FROM="${HUNTAWAY_UPDATE_FROM-}"
+# The GitHub repository whose latest release has the prebuilt ia-shim, without cargo.
+RELEASES="${HUNTAWAY_RELEASES:-dire-kiwi/huntaway}"
 BUILD=1
 SHORTCUT=1
 OPEN=0
@@ -45,43 +49,60 @@ die() {
 
 pkg_hint() {
   if [ "$OS" = Darwin ]; then
-    echo "  xcode-select --install          # compiler and git"
-    echo "  brew install node rust"
+    echo "  xcode-select --install          # git"
+    echo "  brew install node               # and, to build ia-shim yourself: brew install rust"
   elif command -v pacman >/dev/null 2>&1; then
-    echo "  sudo pacman -S --needed git base-devel nodejs npm rustup && rustup default stable"
+    echo "  sudo pacman -S --needed git nodejs npm      # and, to build ia-shim yourself: base-devel rustup"
   elif command -v apt-get >/dev/null 2>&1; then
-    echo "  sudo apt-get install git build-essential curl"
-    echo "  Node.js 22+: https://nodejs.org/en/download (Debian and Ubuntu's own is often older)"
-    echo "  Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    echo "  sudo apt-get install git curl"
+    echo "  Node.js 24+: https://nodejs.org/en/download (Debian and Ubuntu's own is older)"
+    echo "  To build ia-shim yourself: sudo apt-get install build-essential, and Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
   elif command -v dnf >/dev/null 2>&1; then
-    echo "  sudo dnf install git gcc nodejs npm"
-    echo "  Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    echo "  sudo dnf install git nodejs npm"
+    echo "  To build ia-shim yourself: sudo dnf install gcc, and Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
   else
-    echo "  git, a C compiler, Node.js 22+ with npm (https://nodejs.org) and Rust (https://rustup.rs)"
+    echo "  git and Node.js 24+ with npm (https://nodejs.org); to build ia-shim yourself, a C compiler and Rust (https://rustup.rs)"
   fi
+}
+
+# The release platform whose server tarball has a prebuilt ia-shim for this machine (see .github/workflows/release.yml).
+release_platform() {
+  case "$OS-$(uname -m)" in
+    Linux-x86_64) echo linux-x64 ;;
+    Darwin-arm64) echo mac-arm64 ;;
+    *) return 1 ;;
+  esac
 }
 
 check_deps() {
   local missing=() v
-  for c in git node npm cargo rustc; do
+  for c in git node npm; do
     command -v "$c" >/dev/null 2>&1 || missing+=("$c")
   done
-  if [ "$OS" = Darwin ]; then
-    xcode-select -p >/dev/null 2>&1 || missing+=("Xcode command line tools")
-  else
-    command -v cc >/dev/null 2>&1 || missing+=("a C compiler (cc)")
-  fi
   if command -v node >/dev/null 2>&1; then
     v="$(node -p 'process.versions.node')"
-    # Vite needs 22.12+ (or 20.19+), and the tests strip types, so 22.12 it is.
-    node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 12) ? 0 : 1)' ||
-      missing+=("Node.js 22.12 or newer (this is $v)")
+    # The server runs its .ts files with Node's type stripping and node:sqlite, as Node 24 has them.
+    node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)' || missing+=("Node.js 24 or newer (this is $v)")
   fi
-  if command -v rustc >/dev/null 2>&1; then
+  # ia-shim: built with cargo when there's a Rust toolchain, else a release's prebuilt one.
+  SHIM=prebuilt
+  if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then
+    SHIM=cargo
     v="$(rustc --version | awk '{print $2}')"
-    # The server is edition 2024 (Rust 1.85+), and its locked dependencies need 1.89 (Cargo.toml's rust-version).
+    # ia-shim is edition 2024 (Rust 1.85+), and the workspace's locked dependencies need 1.89 (the crates' rust-version).
     [ "$(printf '%s\n' "$v" | awk -F. '{print ($1 > 1 || $2 >= 89) ? "ok" : "old"}')" = ok ] ||
-      missing+=("Rust 1.89 or newer (this is $v; rustup update)")
+      missing+=("Rust 1.89 or newer to build ia-shim (this is $v; rustup update)")
+    if [ "$OS" = Darwin ]; then
+      xcode-select -p >/dev/null 2>&1 || missing+=("Xcode command line tools, to build ia-shim")
+    else
+      command -v cc >/dev/null 2>&1 || missing+=("a C compiler (cc), to build ia-shim")
+    fi
+  elif ! release_platform >/dev/null; then
+    missing+=("Rust (cargo and rustc), to build ia-shim: there's no prebuilt one for $OS $(uname -m)")
+  else
+    for c in curl tar; do
+      command -v "$c" >/dev/null 2>&1 || missing+=("$c, to download a prebuilt ia-shim (or Rust, to build it)")
+    done
   fi
   if [ ${#missing[@]} -gt 0 ]; then
     printf '\033[1;31merror:\033[0m missing build tools:\n' >&2
@@ -111,7 +132,7 @@ fetch_source() {
     mkdir -p "$(dirname "$DIR")"
     git clone --quiet --branch "$BRANCH" "$REPO" "$DIR"
   fi
-  [ -f "$DIR/server/Cargo.toml" ] && [ -f "$DIR/app/package.json" ] || die "$DIR doesn't look like a Huntaway checkout"
+  [ -f "$DIR/server-ts/package.json" ] && [ -f "$DIR/app/package.json" ] || die "$DIR doesn't look like a Huntaway checkout"
 }
 
 build() {
@@ -121,8 +142,55 @@ build() {
   local npm_install=ci
   [ -d "$DIR/app/node_modules" ] && npm_install="install --no-save"
   (cd "$DIR/app" && npm $npm_install --no-audit --no-fund && npm run build)
-  say "Building the server (the first build takes a few minutes)"
-  (cd "$DIR/server" && cargo build --release --locked)
+  say "Installing the server's dependencies"
+  # npm ci when its lockfile changed since the last install (as Rebuild & restart does, see lockfile_changed in
+  # server-ts/src/update/admin.ts), which leaves a running server's node_modules alone otherwise.
+  local installed="$DIR/server-ts/node_modules/.package-lock.json"
+  if [ ! -f "$installed" ] || [ "$DIR/server-ts/package-lock.json" -nt "$installed" ]; then
+    (cd "$DIR/server-ts" && npm ci --no-audit --no-fund)
+  fi
+  if [ "$SHIM" = cargo ]; then
+    say "Building ia-shim (the first build takes a minute)"
+    (cd "$DIR/server" && cargo build --release --locked -p ia-shim)
+  else
+    prebuilt_shim
+  fi
+}
+
+# The latest release's ia-shim, from its server tarball (checked against the sha256 GitHub lists for it), into
+# server-ts/bin/, where the server looks for it beside bin/huntaway. Rebuild & restart keeps it while there's no cargo.
+prebuilt_shim() {
+  local platform tmp asset name sum
+  platform="$(release_platform)"
+  say "Downloading a prebuilt ia-shim from $RELEASES's latest release ($platform)"
+  tmp="$(mktemp -d)"
+  curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$RELEASES/releases/latest" >"$tmp/release.json" ||
+    { rm -rf "$tmp"; die "couldn't read $RELEASES's latest release; install Rust to build ia-shim instead"; }
+  # name, url and sha256 of the server tarball, a line each.
+  asset="$(node -e '
+    const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const v = String(r.tag_name || "").replace(/^v/, "");
+    const a = (r.assets || []).find((a) => a.name === `huntaway-server-${v}-${process.argv[2]}.tar.gz` && /^sha256:/.test(a.digest || ""));
+    if (a) console.log([`huntaway-server-${v}-${process.argv[2]}`, a.browser_download_url, a.digest.slice(7)].join("\n"))' "$tmp/release.json" "$platform")"
+  [ -n "$asset" ] || { rm -rf "$tmp"; die "$RELEASES's latest release has no server tarball for $platform; install Rust to build ia-shim instead"; }
+  name="$(printf '%s\n' "$asset" | sed -n 1p)"
+  curl -fSL --progress-bar -o "$tmp/server.tar.gz" "$(printf '%s\n' "$asset" | sed -n 2p)" || { rm -rf "$tmp"; die "couldn't download $name.tar.gz"; }
+  if command -v sha256sum >/dev/null 2>&1; then sum="$(sha256sum "$tmp/server.tar.gz" | cut -d' ' -f1)"; else sum="$(shasum -a 256 "$tmp/server.tar.gz" | cut -d' ' -f1)"; fi
+  [ "$sum" = "$(printf '%s\n' "$asset" | sed -n 3p)" ] || { rm -rf "$tmp"; die "$name.tar.gz doesn't match its sha256"; }
+  tar -xzf "$tmp/server.tar.gz" -C "$tmp" "$name/ia-shim" || { rm -rf "$tmp"; die "$name.tar.gz has no ia-shim"; }
+  mkdir -p "$DIR/server-ts/bin"
+  # Moved into place, so that a shim that's running (an agent's) keeps its file.
+  cp "$tmp/$name/ia-shim" "$DIR/server-ts/bin/.ia-shim.new" && chmod 755 "$DIR/server-ts/bin/.ia-shim.new" &&
+    mv -f "$DIR/server-ts/bin/.ia-shim.new" "$DIR/server-ts/bin/ia-shim"
+  rm -rf "$tmp"
+}
+
+# Whether $DIR has a server the app can start (as findServerBinary in app/electron/main.cjs looks): the TypeScript
+# server once its dependencies are installed, or the Rust build of a checkout that a Rust server has rebuilt since,
+# which never installs them (the Rust server was removed in HA-179, so that's a build left from before). The macOS app
+# runs --shortcut-only after an update changed Electron, then exits: if that stopped here, the app wouldn't open again.
+has_build() {
+  [ -f "$DIR/server-ts/node_modules/ws/package.json" ] || [ -x "$DIR/server/target/release/huntaway" ]
 }
 
 # ---------- launcher ----------
@@ -292,7 +360,7 @@ main() {
     fetch_source
     build
   else
-    [ -x "$DIR/server/target/release/huntaway" ] || die "no build in $DIR; run this without --shortcut-only first"
+    has_build || die "no build in $DIR; run this without --shortcut-only first"
   fi
   ensure_electron
 

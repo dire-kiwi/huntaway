@@ -8,8 +8,8 @@
 //
 // A release found by a check is downloaded, verified and unpacked here in the background ("staged"), and Update
 // restarts onto it. A server running from `app/<v>/huntaway` settles on startup: it becomes `current`, and the
-// versions nothing needs any more are deleted. (A release is the Rust server: the TypeScript one never runs from `app/`
-// itself, but it stages releases and restarts onto them as the Rust one does.)
+// versions nothing needs any more are deleted. (A release is this server from 0.4.0 on, and the Rust server before that,
+// which stages releases and restarts onto them in the same way.)
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";

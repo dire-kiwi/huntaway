@@ -2,7 +2,9 @@
 # The TypeScript port of the huntaway server (see server-ts/PORTING.md): `huntaway serve …` and its other subcommands.
 # A server started from a `node --test` file (the browser tests) is not a test process itself.
 unset NODE_TEST_CONTEXT
-self=$(readlink -f "$0")
+# Its own path, through symbolic links to it (`readlink -f`, which macOS has since 12.3), else the path `$0` names.
+self=$(readlink -f "$0" 2>/dev/null)
+[ -n "$self" ] && [ -f "$self" ] || self=$(cd -P "$(dirname "$0")" && pwd)/$(basename "$0")
 here=$(dirname "$self")
 # A release's package (see .github/workflows/release.yml) has this script as its `huntaway`, with the server in
 # server-ts/ and Node in node/ beside it; a checkout has it in server-ts/bin/. A package's server is precompiled to .js

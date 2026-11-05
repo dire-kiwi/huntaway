@@ -661,7 +661,8 @@ export function tasks_to_watch(c: Conn): Array<[Task, string]> {
 export function user_wrote_since(c: Conn, task_id: string, since: string): boolean {
   return !!value(
     c,
-    `SELECT EXISTS (SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND created_at > ?2
+    // `+kind`: see db/messages.ts.
+    `SELECT EXISTS (SELECT 1 FROM messages WHERE task_id=?1 AND +kind='user' AND created_at > ?2
            AND json_extract(data, '$.auto') IS NULL AND json_extract(data, '$.from_agent') IS NULL)`,
     task_id, since,
   );

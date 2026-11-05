@@ -16,6 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Conn } from "./db.ts";
+import { in_worker } from "./worker.ts";
 
 /** How many backups are kept. */
 export const KEEP = 5;
@@ -63,6 +64,9 @@ export function backup(data_dir: string, db_path: string, label: string, conn?: 
   rmSync(partial, { force: true });
   const c = conn ?? new DatabaseSync(db_path);
   try {
+    // A connection of its own to a running server's database waits for a write that's being committed, rather than
+    // failing as busy.
+    if (!conn) c.exec("PRAGMA busy_timeout=10000");
     c.prepare("VACUUM INTO ?").run(partial);
   } catch (e) {
     rmSync(partial, { force: true });
@@ -132,10 +136,16 @@ export function on_start(data_dir: string, db_path: string, version: string): st
 /**
  * Before restarting onto another release (`to`): back up the database this server has open. Throws when it can't make
  * one (see the top of this file), before anything has changed.
+ *
+ * The copy is made in a worker thread, with a connection of its own (which sees what `conn` has committed, its WAL
+ * included), as it takes a while on a big board (HA-183: 0.7 s for 880 MB on a fast disk) and would hold up every other
+ * request, websocket and agent's output meanwhile. An in-memory database (tests') is copied through `conn`.
  */
-export function before_switch(data_dir: string, conn: Conn, from: string, to: string): string | null {
+export async function before_switch(data_dir: string, conn: Conn, from: string, to: string): Promise<string | null> {
   try {
-    const path = backup(data_dir, "the database", `${from}-to-${to}`, conn);
+    const label = `${from}-to-${to}`;
+    const file = conn.location();
+    const path = file ? await in_worker<string>(new URL(import.meta.url), "backup", [data_dir, file, label]) : backup(data_dir, "the database", label, conn);
     console.error(`backed up the database before switching to ${to}: ${path}`);
     return path;
   } catch (e) {

@@ -158,7 +158,8 @@ function host_routes(r: Router) {
   r.route("/permissions", { GET: thread.list_permissions });
   r.route("/permissions/{id}", { POST: thread.resolve_permission });
   r.route("/project-approvals", { GET: thread.project_approvals });
-  r.route("/internal/mcp", { POST: host.internal_mcp });
+  // Its handler checks the token: a run may use its own (see mcp/http.ts).
+  r.route("/internal/mcp", { POST: host.internal_mcp }, { auth: false });
   r.route("/internal/merge-gate/{run_id}", { GET: host.internal_merge_gate });
   r.route("/tools/{tool}", { POST: host.remote_tool });
   r.route("/usage", { GET: usage.list });
@@ -221,7 +222,7 @@ export async function dispatch(s: AppState, req: Req, trusted = false): Promise<
     return { status: 400, headers: { "content-type": "text/plain" }, body: Buffer.from("Failed to parse the request body as JSON") };
   }
   req.params = found.params;
-  return call(h, s, req);
+  return call(h, s, req, `${req.method} /${found.route.segs.join("/")}`);
 }
 
 /** Run a request against this node's own host API, as an authenticated caller: (status, JSON body or its text). */

@@ -14,8 +14,8 @@
 # --pacman    run the container check too (needs docker and the archlinux image; downloads the package's deps)
 # --keep      keep each run's data dirs (they're in DIR/runs)
 #
-# Builds (in DIR/src, a copy of this checkout with its uncommitted changes, sharing app/node_modules and a cargo target
-# dir in DIR/target):
+# Builds (in DIR/src, a copy of this checkout with its uncommitted changes, sharing app/node_modules, server-ts/node_modules
+# and a cargo target dir in DIR/target):
 #   0.9.0, 0.9.1  the app (AppImage, pacman), the server tarball and huntaway-<v>-release.json, as release.yml makes them
 #   0.9.3         the same, with a changed frame (a line added to electron/boot.cjs), so its manifest's stamp differs
 #   0.9.2         a server tarball whose huntaway passes --version but exits at once on serve (0.9.1's shim and UI)
@@ -56,17 +56,13 @@ copy_source() {
   (cd "$root" && git ls-files -z --cached --others --exclude-standard | tar --null -T - --ignore-failed-read -cf - 2> /dev/null) |
     tar -xf - -C "$work/src"
   ln -s "$root/app/node_modules" "$work/src/app/node_modules"
+  [[ ! -d $root/server-ts/node_modules ]] || ln -s "$root/server-ts/node_modules" "$work/src/server-ts/node_modules"
   ln -s "$work/target" "$work/src/server/target"
 }
 
-# Set the version as the workflow's Version step does.
+# Set the app's version as the workflow's Version step does (the server's is VERSION, for scripts/package-server.sh).
 set_version() {
-  local v=$1
-  (cd "$work/src/app" && npm version --no-git-tag-version --allow-same-version "$v" > /dev/null)
-  (cd "$work/src/server" &&
-    sed -i "0,/^version = \".*\"$/s//version = \"$v\"/" Cargo.toml &&
-    cargo metadata --format-version 1 > /dev/null &&
-    grep -A1 '^name = "huntaway"$' Cargo.lock | grep -qxF "version = \"$v\"")
+  (cd "$work/src/app" && npm version --no-git-tag-version --allow-same-version "$1" > /dev/null)
 }
 
 # Build release $1 as the workflow does, and put its files in $assets.
@@ -75,7 +71,10 @@ build_release() {
   echo "== building $v" >&2
   set_version "$v"
   (cd "$src/app" && npm run build > "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
-  (cd "$src/server" && cargo build --release --locked >> "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
+  (cd "$src/server" && cargo build --release --locked -p ia-shim >> "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
+  # The server the app and the tarball carry, as the workflow packages it (the copy isn't a git checkout: its commit is this one's).
+  (cd "$src" && VERSION=$v IA_BUILD_COMMIT=$(git -C "$root" rev-parse HEAD) scripts/package-server.sh release-server "$(command -v node)" \
+    >> "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
   rm -rf "$src/app/release"
   (cd "$src/app" && npx electron-builder --linux --x64 --publish never >> "$work/build-$v.log" 2>&1) ||
     { tail -20 "$work/build-$v.log" >&2; exit 1; }
@@ -84,10 +83,13 @@ build_release() {
     const electron = require("./node_modules/electron/package.json").version;
     const manifest = { version: process.env.VERSION, shell: frameStamp("electron", electron), electron };
     fs.writeFileSync(`release/huntaway-${process.env.VERSION}-release.json`, JSON.stringify(manifest, null, 2) + "\n")')
+  # The server tarball, as the workflow's Package the server step makes it: the package, and this release's desktop shell.
   name="huntaway-server-$v-linux-x64"
-  mkdir -p "$src/app/release/$name"
-  cp "$src/server/target/release/huntaway" "$src/server/target/release/ia-shim" "$src/app/release/$name/"
-  cp -R "$src/app/dist" "$src/app/release/$name/ui"
+  cp -R "$src/release-server" "$src/app/release/$name"
+  mkdir "$src/app/release/$name/electron"
+  cp "$src/app/electron/"*.cjs "$src/app/release/$name/electron/"
+  (cd "$src/app" && node -e 'const electron = require("./node_modules/electron/package.json").version;
+    require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ electron, boot: 1 }) + "\n")' "release/$name/electron/shell.json")
   tar -C "$src/app/release" -czf "$src/app/release/$name.tar.gz" "$name"
   cp "$src/app/release/"*.{AppImage,pacman,tar.gz,json} "$assets/"
 }
@@ -98,6 +100,8 @@ fake_release() {
   rm -rf "$dir"
   mkdir -p "$dir"
   tar -xzf "$assets/huntaway-server-0.9.1-linux-x64.tar.gz" -C "$dir" --strip-components 1
+  # Only the server changes: a desktop shell of its own would have the app relaunch onto it (the appimage check covers that).
+  rm -rf "$dir/electron"
   mv "$dir/huntaway" "$dir/huntaway-0.9.1"
   printf '#!/bin/sh\nREAL="$(dirname "$0")/huntaway-0.9.1"\n%s\n' "$script" > "$dir/huntaway"
   chmod +x "$dir/huntaway"

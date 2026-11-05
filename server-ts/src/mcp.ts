@@ -1,8 +1,10 @@
 // Port of server/src/mcp.rs.
 /**
- * `huntaway mcp`: the stdio MCP server that `claude -p` launches for each run. It lists the board tools and relays every
- * call to the server that started the run. Each call keeps one id across retries, so a server restart mid-call is
- * harmless.
+ * The board's MCP server: its tools' schemas and the JSON-RPC that lists and calls them (`handle`). The board serves it
+ * over HTTP to the runs it starts (mcp/http.ts), so they have no helper process of their own.
+ *
+ * `huntaway mcp` is the stdio server that runs started before that (HA-180) launched, one per run: it relays every call
+ * to the server that started the run. Each call keeps one id across retries, so a server restart mid-call is harmless.
  *
  * The `mcp` folder has the rest of the board's MCP side: the tools runs call (`tools`), the GitHub server (`gh_mcp`),
  * `wait` and its pull request watches, and permission prompts and questions.
@@ -43,8 +45,18 @@ export const MIN_INTERVAL_MINUTES = 5;
 export const TASK_FIELD_DEFAULT_LIMIT = 2000;
 export const TASK_FIELD_MAX_LIMIT = 4000;
 
+/**
+ * Where `handle` sends a run's tool calls: a helper's line to its server (`Ctx`), or the board itself, for a run it
+ * serves over HTTP (see mcp/http.ts).
+ */
+export interface Caller {
+  /** A review thread's run: it gets the reviewers' tools. */
+  review: boolean;
+  call(tool: string, args: any): Promise<any>;
+}
+
 /** A run's line to the server that started it: board tool calls and permission prompts. */
-export class Ctx {
+export class Ctx implements Caller {
   url: string;
   token: string;
   run_id: string;
@@ -95,6 +107,26 @@ export class Ctx {
       delay = Math.min(delay * 2, 5000);
     }
   }
+}
+
+/**
+ * A run's line to its server, from the run's `mcpServers` entry for the board (a Codex run's adapter makes its own calls
+ * with it): a stdio helper's environment, or the URL and secret of the board's HTTP server for the run (mcp/http.ts),
+ * whose secret `/api/internal/mcp` takes too.
+ */
+export function Ctx_from_server(entry: any): Ctx {
+  if (typeof entry?.url === "string") {
+    const m = /^(.*)\/api\/mcp\/([^/]+)\/[^/]+$/.exec(entry.url);
+    const auth = entry.headers?.Authorization ?? entry.headers?.authorization;
+    if (!m || typeof auth !== "string" || !auth.startsWith("Bearer ")) throw new Error("mcp.json's board server isn't this board's");
+    return new Ctx(m[1], auth.slice(7), decodeURIComponent(m[2]));
+  }
+  const env = entry?.env ?? {};
+  const get = (k: string): string => {
+    if (typeof env[k] !== "string") throw new Error(`${k} missing from mcp.json`);
+    return env[k];
+  };
+  return new Ctx(get("IA_URL"), get("IA_TOKEN"), get("IA_RUN_ID"));
 }
 
 /** Sent with `initialize`; Claude Code adds it to the agent's system prompt. */
@@ -792,7 +824,7 @@ export function check_args(tool: string, args: any): string | null {
 }
 
 /** An MCP request's response, or null for a notification. */
-export async function handle(ctx: Ctx, req: any): Promise<any | null> {
+export async function handle(ctx: Caller, req: any): Promise<any | null> {
   if (!req || typeof req !== "object" || !Object.hasOwn(req, "id")) return null; // notifications get no response
   const id = req.id;
   const method = typeof req.method === "string" ? req.method : "";

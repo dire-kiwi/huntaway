@@ -5,6 +5,7 @@
 #   scripts/package-server.sh <out dir> [<node binary>]
 #
 #   <out dir>/huntaway          server-ts/bin/huntaway, which runs the server with the Node beside it
+#   <out dir>/issue-agent       server-ts/bin/issue-agent, the name from before the rename, which runs huntaway
 #   <out dir>/server-ts/        the server's code (src/ without tests, compiled to .js), package.json, build.json and its
 #                               node_modules
 #   <out dir>/node/bin/node     <node binary> (default: the node on PATH), with Node's LICENSE
@@ -27,6 +28,7 @@ mkdir -p "$out/server-ts" "$out/node/bin"
 # Absolute: tsc runs in a scratch copy below.
 out=$(cd "$out" && pwd)
 cp "$root/server-ts/bin/huntaway" "$out/huntaway"
+cp "$root/server-ts/bin/issue-agent" "$out/issue-agent"
 cp "$root/server/target/release/ia-shim" "$out/ia-shim"
 cp -R "$root/app/dist" "$out/ui"
 
@@ -52,7 +54,7 @@ printf '{"commit": "%s"}\n' "$commit" > "$out/server-ts/build.json"
 rm -rf "$out/server-ts/node_modules/.bin"
 
 cp "$node_bin" "$out/node/bin/node"
-chmod 755 "$out/node/bin/node" "$out/huntaway"
+chmod 755 "$out/node/bin/node" "$out/huntaway" "$out/issue-agent"
 node_dir=$(dirname "$(dirname "$(readlink -f "$node_bin")")")
 [[ -f $node_dir/LICENSE ]] && cp "$node_dir/LICENSE" "$out/node/LICENSE"
 

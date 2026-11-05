@@ -6,12 +6,11 @@ usually in its own git worktree. Click a card to see the full thread, reply to t
 approve tool calls, and review, stage and commit its changes (lazygit-style).
 
 ```
-server/        Rust (axum + SQLite): API, events, agent runner, worktrees, MCP helper, hub
-server/src/    the huntaway binary's modules, grouped in agent/, mcp/, git/, hosts/, update/,
-               integrations/ and review/ (see docs/structure.md)
-server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
-server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
-server-ts/     a TypeScript port of the server, for comparing memory use (not used by the app; see server-ts/README.md)
+server-ts/     the server, in TypeScript on Node 24+ (node:sqlite): API, events, agent runner, worktrees, MCP helper,
+               hub. src/ is grouped in agent/, mcp/, git/, hosts/, update/, integrations/ and review/
+               (see docs/structure.md); bin/huntaway runs it (see server-ts/README.md)
+server/shim/   ia-shim (Rust): tiny per-run supervisor that keeps agents alive across restarts
+server/broker/ huntaway-broker (Rust): public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -20,7 +19,8 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
-               ram-compare.mjs: memory use of the Rust server and its TypeScript port on the same data
+               ram-compare.mjs: memory use of a Rust release's server and the TypeScript one on the same data
+               event-loop-probe.mjs: how long the TS server's heavy reads hold up its one thread
                install.sh: install the desktop app from source (Linux, macOS)
 docs/          notes; structure.md: where code goes and how big modules are split
 ```
@@ -30,30 +30,37 @@ Agents survive server restarts, and one board can span several machines. Each ma
 
 Huntaway used to be called Issue Agent. A machine that ran it under that name keeps its data
 where it was (`~/.local/share/issue-agent`, `issue-agent.db`, `~/.config/issue-agent/desktop.json`),
-and the build still makes an `issue-agent` binary that starts `huntaway`, so hosts updating from an
-older build, SSH host commands and desktop configs that name it keep working. Board tools from
+and there's still an `issue-agent` command that starts `huntaway` beside it (`server-ts/bin/issue-agent`, in
+release packages too, and the `issue-agent` binary of Rust releases), so hosts updating from an older build, SSH host
+commands and desktop configs that name it keep working. Board tools from
 before the rename (`mcp__issue_agent__…`) still show as board tools in old threads.
 
 ## Running
 
 ```sh
-# 1. Build the UI (the server serves it) and the server + ia-shim
+# 1. Build the UI (the server serves it), install the server's dependencies, and build ia-shim (Rust), which runs agents
 cd app && npm install && npm run build && cd ..
-cd server && cargo build --release && cd ..   # builds huntaway and ia-shim side by side
+cd server-ts && npm ci && cd ..
+cd server && cargo build --release -p ia-shim && cd ..
 
 # 2a. Desktop app: spawns the server if it isn't already running
 cd app && npm run electron
 
 # 2b. …or run the server directly and open the printed URL in any browser
-./server/target/release/huntaway serve            # 0.0.0.0:7878
-./server/target/release/huntaway token            # print the access token
+./server-ts/bin/huntaway serve            # 0.0.0.0:7878
+./server-ts/bin/huntaway token            # print the access token
 ```
+
+The server runs on Node 24+ straight from its `.ts` files, so there's nothing to build for it but its dependencies
+(`npm ci` in `server-ts/` again when its `package-lock.json` changes). It finds `ia-shim` in `server/target/release/`
+or `server/target/debug/` (the newer one), beside `bin/huntaway`, or at `$IA_SHIM_BIN`. Its tests are `npm test` and
+`npm run typecheck` in `server-ts/`.
 
 UI development with hot reload: run the server, then `npm run dev` in `app/` (Vite proxies
 `/api` to `127.0.0.1:7878`, override with `IA_SERVER`). Use `npm run electron:dev` to load the
 dev server in Electron.
 
-Faster Rust builds: install [sccache](https://github.com/mozilla/sccache) (`cargo install sccache
+Faster Rust builds (`ia-shim` and the broker): install [sccache](https://github.com/mozilla/sccache) (`cargo install sccache
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
 them again. Without sccache, or where it can't start its server (a sandbox with no network), cargo
@@ -216,7 +223,8 @@ those became done scratch tasks (in no project, whichever project they were in) 
 working in their old folder, so their conversations carry on.
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so build `server/` first and have Chromium at `/usr/bin/chromium`) with `npm run test:ui` (Node.js 22.12+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
+servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
+`/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
 ### Server options
 
@@ -256,8 +264,12 @@ the run ends (`runs::KEEP_DAYS`), or as soon as its task is deleted. It checks e
 also removes the recorded MCP calls of runs that ended over an hour ago.
 
 The pieces that cross a restart are durable too:
-- The agent's MCP helper retries each tool call under the same id until the server answers.
-  The server records each call's result, so a call is never executed twice.
+- The board serves each run's MCP servers over HTTP (see *Agent tools (MCP)*) and answers each
+  tool call on an event stream. When a restart breaks it, the agent (Claude Code or Codex)
+  reconnects for the call's answer, and the call carries on where it was. The server records
+  each call's result, so a call is never executed twice. Runs started before that (with
+  `huntaway mcp` helpers) keep theirs, which retry each call under the same id until the server
+  answers.
 - Permission prompts are stored with the call that raised them. A prompt pending across a
   restart reappears, and the decision reaches the agent once it's made.
 
@@ -272,9 +284,10 @@ alive across service restarts.
 
 When the source checkout has commits the running server doesn't (for example, a task branch
 merged to `master`), the sidebar shows **N new commits · Restart**. The same action is under
-Settings → Server. It runs `npm install --no-save`, `npm run build` and `cargo build --release` in the
-checkout, streaming the log, then re-execs the new binary with the same arguments, so the PID
-stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
+Settings → Server. It runs `npm install --no-save` and `npm run build` in `app/`, `npm ci` in `server-ts/`
+when its lockfile changed, and `cargo build --release -p ia-shim` in `server/` (skipped when there's no cargo and a
+prebuilt `server-ts/bin/ia-shim`, as `scripts/install.sh` leaves without Rust), streaming the log, then re-execs
+`server-ts/bin/huntaway` with the same arguments, so the PID stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
 
 With `--update-from <url>`, the server also follows that deployment of the board. Every five
@@ -400,9 +413,11 @@ An `http:` one counts as a secure page in the app, so it can show notifications.
 curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway/master/scripts/install.sh | bash
 ```
 
-It checks for git, Node.js 22.12+, npm, Rust 1.89+ and a C compiler (and warns if `claude`/`codex`
-or `tmux` are missing), then clones the repository to `~/.local/share/huntaway-app` (`--dir`) and
-builds the UI and the server there. Last, it adds **Huntaway** to the app launcher: on Linux a
+It checks for git, Node.js 24+ and npm (and warns if `claude`/`codex` or `tmux` are missing), then clones the
+repository to `~/.local/share/huntaway-app` (`--dir`), builds the UI and installs the server's dependencies there. Its
+agents run under `ia-shim`, which it builds when there's Rust 1.89+ and a C compiler; without them, on Linux x64 and
+Apple silicon, it downloads the latest release's server tarball (checked against its sha256) and puts its prebuilt
+`ia-shim` in `server-ts/bin/` (`HUNTAWAY_RELEASES` names another repository's releases). Last, it adds **Huntaway** to the app launcher: on Linux a
 `huntaway-app.desktop` entry that runs `~/.local/bin/huntaway-desktop`, and on macOS
 `~/Applications/Huntaway.app` (a renamed copy of the checkout's Electron whose app runs the
 checkout's). Run it again to update an install by hand or to change its options (`--help`).
@@ -433,16 +448,17 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
-| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`) and `ia-shim`, with the UI in `ui/` |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`, and `issue-agent`, which runs it under its old name) and `ia-shim`, with the UI in `ui/` |
 | `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
 
-Releases carry the TypeScript server (`server-ts/`, see its README), not the Rust one in `server/`:
+Releases carry the TypeScript server (`server-ts/`, see its README) since 0.4.0, rather than the Rust
+server that 0.3.x and earlier carried (removed from the repository in HA-179):
 `scripts/package-server.sh` puts it together with the Node that runs it (the release job's own, so
 hosts don't need Node installed), `ia-shim` and the UI, and both the tarball and the desktop app
 carry that. A host on an earlier, Rust, release updates onto it like onto any release, and Roll back
-returns to the Rust release before it. Checkouts still build and run the Rust server.
+can return to a Rust release, which the backup below makes safe. Checkouts run the TypeScript server too.
 
 Whichever server starts on a data dir that another version last ran on (`<data dir>/server_version`;
 the Rust server doesn't write it) first copies the database to
@@ -867,7 +883,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   restarts until the setting is turned on again. Codex's windows are told apart by their length
   (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
   then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
-  has no session limit. See `server/src/agent/window.rs`.
+  has no session limit. See `server-ts/src/agent/window.ts`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
@@ -1070,8 +1086,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   so it's not *Needs attention*), and the card, list and thread show *waiting* with the agent's
   reason instead of *working*. The waiting state lasts exactly as long as the call, however it returns
   (failing that, until the turn or run ends), and is kept as the task's `agent_wait`, apart from `waiting`
-  (queued for dependencies). A server restart doesn't start a wait over: the agent's MCP helper
-  retries the call, which carries on until the same deadline, watching the same tasks (one
+  (queued for dependencies). A server restart doesn't start a wait over: the agent reconnects for
+  the call (or its MCP helper retries it), which carries on until the same deadline, watching the same tasks (one
   deleted meanwhile ends it). Planning agents (subprojects and
   group tasks) are told to wait for the tasks they started this way rather than end their turn.
   - `command` lets the agent wait for what the board can't see (CI, a deploy, a file): the server
@@ -1637,7 +1653,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   its task and a subproject's tasks' towards the subproject (expand it to see each). It can measure
   all tokens (uncached input, cache reads and writes, and output), output tokens, or cost (Claude
   Code's; Codex doesn't report one). Each run's tokens are counted per model, subagents' included,
-  from its output once it ends (see `server/src/agent/tokens.rs`): runs from before this was kept
+  from its output once it ends (see `server-ts/src/agent/tokens.ts`): runs from before this was kept
   are counted at startup from the output the board still keeps (14 days of it), and older ones
   show only what they cost, as estimates. Its *Reviews* part counts each reviewer's submission:
   how many found serious issues, how many tasks passed their first round, and how many rounds of
@@ -1656,7 +1672,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
 
 ### Agent tools (MCP)
 
-Each run gets the `huntaway` MCP server (`huntaway mcp`, configured per run):
+Each run gets the `huntaway` MCP server, which the board serves itself over HTTP (see *How runs reach
+the board's MCP servers* below):
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
@@ -1684,7 +1701,7 @@ serving host does not hide content from callers that cannot use `get_task_field`
 helpers reading linked hosts before API 59, the calling host summarizes or slices the legacy
 `get_task` response before returning it to the agent.
 
-Each run also gets the `gh` MCP server (`huntaway gh-mcp`), which runs the GitHub CLI for the
+Each run also gets the `gh` MCP server, also served by the board, which runs the GitHub CLI for the
 agent. MCP servers run outside Claude Code's Bash sandbox, where `gh` and `git push` often can't
 reach GitHub or the user's login, so these work either way. They run in the agent's working
 directory (or `dir`, or against `repo`): `pr_create`, `pr_view`, `pr_list`, `pr_checks`,
@@ -1710,8 +1727,8 @@ server off, or has its own `gh`, gets neither.
 **GitHub accounts.** gh can be signed in to several accounts on a host (`gh auth login` once for
 each), and each profile can pick which one its agents act as there (*GitHub account* in Settings →
 Profiles → Edit, per host); a project can pick its own in its settings, overriding the profile's.
-The default is gh's active account. The run passes the account to the `gh` server
-(`IA_GH_ACCOUNT`), which runs each call with that account's token (`gh auth token --user`) and no
+The default is gh's active account. The run's launch records the account for the `gh` server
+(or passes it as `IA_GH_ACCOUNT` to a `huntaway gh-mcp` helper), which runs each call with that account's token (`gh auth token --user`) and no
 other credentials, so switching gh's active account doesn't matter. gh gets a config folder of its
 own for the call (`GH_CONFIG_DIR`, private to the user and removed afterwards) with a login for the
 account's host only, so it has no token for any other host, whatever the call names; no tokens in
@@ -1743,6 +1760,37 @@ before it), and so does `alias`'s and `config`'s subcommand. An account that isn
 own lookups. `GET /github-accounts` lists the accounts gh is signed in to on a host
 (API 50), and profiles and projects take `github_account` (a login, or `HOST/LOGIN` for a GitHub
 Enterprise host; null for the default). Agents can't change it with `update_project`.
+
+**How runs reach the board's MCP servers.** The board serves both servers itself, over MCP's
+streamable HTTP transport, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on the host's
+internal address (`127.0.0.1:<port>`, the host that runs the agent), so a run has no MCP helper
+process of its own. Each run's `mcp.json` has them as `http` servers with a bearer token of the
+run's own (an HMAC of the run's id with the host's token), which only acts as that run: the server
+says which run a call is for, not the agent, and the agent never holds the host's token. What the
+`gh` server needs of the run (its working directory and GitHub account) is in the run's folder
+(`mcp-run.json`), not in the request. A Codex run's adapter makes its own board calls (approvals)
+with the run's token too. Not through the broker. Claude Code gives an HTTP server's call 5 minutes
+without news before it aborts it, so the entries set `timeout` (a day for the board's, as
+`MCP_TOOL_TIMEOUT`, and 15 minutes for gh's).
+
+Each tool call is answered as a server-sent event stream that starts with an event id (and a
+`retry` time of 5 seconds). When the stream breaks, as a server restart does, Claude Code and
+Codex reconnect with that id (`Last-Event-ID`) and get the call's answer on the new stream: the
+board's call picks up where it was (a permission prompt or `wait` carries on, a finished call
+answers what it recorded, and a call the restart cut short says so, as for a retried helper's
+call). A `gh` call's output is lost if the server restarted while it ran, and the agent is told
+it may or may not have taken effect. Claude Code tries twice, 5 seconds apart, before it gives
+the call up (the agent then sees that it failed); a restart takes a second or two. Codex keeps
+trying, with backoff. Claude Code also drops a call 90 seconds after its connection broke unless
+the call has made progress since, so the streams send progress notifications every 20 seconds
+(and as soon as a client reconnects).
+
+Runs started before the board served these (they have `huntaway mcp` and `huntaway gh-mcp` stdio
+helpers in their `mcp.json`) keep them: the helpers call `/api/internal/mcp` with the host's
+token, which still works. `IA_MCP_STDIO=1` in the server's environment starts new runs with the
+helpers too. Each helper is a Node process of about 90 MB (RSS) under the TypeScript server; with
+five agents running on a test server, each agent's processes came to 424 MB RSS (242 MB PSS)
+with the helpers and 239 MB (159 MB PSS) without (HA-180).
 
 ### Pull requests
 
