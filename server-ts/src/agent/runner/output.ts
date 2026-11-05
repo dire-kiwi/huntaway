@@ -291,8 +291,8 @@ function claude_result(state: Shared, run: Run, v: any) {
 }
 
 /**
- * Whether Claude Code's result `v` ends a conversation that this run started and the model never answered: it failed
- * before reaching the API (not logged in, say), with nothing spent in it. Kept, such a session would be resumed by
+ * Whether Claude Code's result `v` ends a task's conversation that this run started and the model never answered: it
+ * failed before reaching the API (not logged in, say), with nothing spent in it, and wasn't stopped. Kept, such a session would be resumed by
  * the next run, which is started again from the task's description instead; and in another config folder (one that has
  * the login, if this one had none) the agent couldn't find it ("No conversation found with session ID").
  */
@@ -300,6 +300,11 @@ function never_answered(state: Shared, run: Run, v: any): boolean {
   if (v.is_error !== true || typeof v.session_id !== "string") return false;
   if (v.duration_api_ms !== 0 || (v.total_cost_usd ?? 0) !== 0) return false;
   const c = state.db();
+  // Only a task's: its next run starts again from its description (see runner::launch), while a review's or the
+  // assistant's would start with no more than the next message, without the prompt or message the session has.
+  if (db.get_task(c, run.task_id)?.kind !== "task") return false;
+  // A first turn the user stopped before the model answered: the stop keeps its session to resume (see runner::stop).
+  if (db.value<number>(c, "SELECT stop_requested FROM runs WHERE id=?1", run.id) !== 0) return false;
   const first = db.value<string>(c, "SELECT id FROM runs WHERE task_id=?1 AND session_id=?2 ORDER BY rowid LIMIT 1", run.task_id, v.session_id);
   if (first !== run.id) return false;
   // Nor in an earlier turn of this run.

@@ -2542,4 +2542,30 @@ test("a_session_the_model_never_answered_is_not_resumed", () => {
   paid.session_id = "s3";
   output(state, third, [init("s3"), paid, { ...not_logged_in("s3"), total_cost_usd: 0.25 }]);
   assert.equal(reload(state, task.id).session_id, "s3");
+  ended(third);
+
+  // A first turn the user stopped before the model answered ends the same way, and its session is kept to resume.
+  const stopped = next();
+  output(state, stopped, [init("s4")]);
+  db.run(state.db(), "UPDATE runs SET stop_requested=1 WHERE id=?1", stopped.id);
+  const interrupted = {
+    type: "result", subtype: "error_during_execution", is_error: true, session_id: "s4", duration_api_ms: 0, total_cost_usd: 0, num_turns: 0,
+    errors: ["[Request interrupted by user]"],
+  };
+  output(state, stopped, [interrupted]);
+  ended(stopped);
+  assert.equal(reload(state, task.id).session_id, "s4");
+});
+
+// A review's (or the assistant's) next run would start with only the next message, without the prompt its session has,
+// so its session is kept even if the model never answered it.
+test("a_review_threads_unanswered_session_is_kept", () => {
+  const [state, task, run] = running(true);
+  db.run(state.db(), "UPDATE tasks SET kind='review' WHERE id=?1", task.id);
+  const r = {
+    type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: "r1", duration_api_ms: 0,
+    total_cost_usd: 0, num_turns: 1,
+  };
+  output(state, run, [{ type: "system", subtype: "init", session_id: "r1" }, r]);
+  assert.equal(reload(state, task.id).session_id, "r1");
 });
