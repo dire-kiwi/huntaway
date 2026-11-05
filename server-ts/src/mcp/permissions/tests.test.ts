@@ -9,15 +9,20 @@ import * as testing from "../../testing.ts";
 import * as runner from "../../agent/runner.ts";
 import * as runs from "../../agent/runs.ts";
 import { new_id, now, sleep } from "../../util.ts";
+import * as approval_rules from "../../agent/approval_rules.ts";
+import type { Decision } from "../../agent/approval_rules.ts";
 import {
   ASK_USER,
   CODEX_QUESTIONS,
   DONT_ASK_DENIAL,
   EXIT_PLAN,
   EXPIRED,
+  EXPIRED_UNANSWERED,
   answer,
+  answer_by,
   apply_mode_to_pending,
   decide,
+  expire_due,
   expire_for_task,
   pending,
   prompt,
@@ -413,4 +418,178 @@ test("lists_pending_prompts", () => {
   assert.equal(only_a[0].input.command, "ls");
   assert.equal(only_a[0].task_id, a);
   assert.equal(pending(s, b)[0].input, "not json");
+});
+
+// ---------- approval rules and expiry (HA-123, ported by HA-206) ----------
+
+/** `running_task`, made its profile's assistant (where the rules hold), with `rules`. */
+function assistant(s: Shared, rules: Array<[string, Decision]>, mode: string): [Task, db.Run] {
+  const [task0, run] = running_task(s, null);
+  db.run(s.db(), "UPDATE tasks SET task_type='assistant' WHERE id=?1", task0.id);
+  approval_rules.set(s.db(), task0.profile_id, { rules: rules.map(([tool, decision]) => ({ tool, decision })), expiry_minutes: 30 });
+  const task = s.update_task(task0.id, [["permission_mode", mode]])!;
+  assert.ok(db.is_assistant(task));
+  return [task, run];
+}
+
+function log(s: Shared, task: Task): Array<[string, string, string, string | null]> {
+  return approval_rules
+    .list(s.db(), task.profile_id, 100)
+    .map((a) => [a.tool_name, a.decision, a.outcome, a.answered_by] as [string, string, string, string | null])
+    .reverse();
+}
+
+/** Marks MCP call `call_id` as `run`'s, whose turn an automation started (with `routine`) or the user did. */
+function call_in_turn(s: Shared, task: Task, run: db.Run, call_id: string, routine: boolean) {
+  const data: any = { text: "check the mail" };
+  if (routine) data.routine = true;
+  const m = s.add_message(task.id, "user", data);
+  db.run(s.db(), "UPDATE runs SET turn_message_id=?1 WHERE id=?2", m.id, run.id);
+  db.run(s.db(), "INSERT INTO mcp_calls (id,run_id,task_id,tool,args,created_at) VALUES (?1,?2,?3,'permission_prompt','{}',?4)", call_id, run.id, task.id, now());
+}
+
+const deny = (message: string) => ({ behavior: "deny", message });
+const expires_at = (s: Shared, id: string) => db.value<string | null>(s.db(), "SELECT expires_at FROM permission_requests WHERE id=?1", id) ?? null;
+
+test("an_ask_rule_asks_the_user_even_in_bypass_and_each_time", async () => {
+  const s = testing.state();
+  const [task] = assistant(s, [["mcp__g__send*", "ask"], ["mcp__g__get*", "allow"]], "bypassPermissions");
+  // Bypass allows what no rule asks about, and what a rule allows.
+  assert.equal((await prompt(s, task, "a", "Bash", {}, null)).behavior, "allow");
+  assert.equal((await prompt(s, task, "b", "mcp__g__get_mail", {}, null)).behavior, "allow");
+  const input = { to: "bob@example.com", subject: "Hi" };
+  const [id, told] = await asked(s, task, "c", "mcp__g__send_mail", input);
+  const shown = prompt_message(s, id);
+  assert.deepEqual(shown.rule, { tool: "mcp__g__send*", decision: "ask" });
+  assert.equal(shown.expires_at, undefined, "the user started this run");
+  // Switching to Bypass (again) doesn't answer it for the user.
+  apply_mode_to_pending(s, task);
+  assert.equal(status(s, id), "pending");
+  assert.deepEqual(log(s, task), [["mcp__g__send_mail", "ask", "pending", null]]);
+  // "Always allow" allows it this once: the rule asks next time too.
+  answer(s, id, true, true, null, {});
+  assert.deepEqual(await told, { behavior: "allow", updatedInput: input });
+  const t = db.get_task(s.db(), task.id)!;
+  assert.deepEqual(t.auto_allow, []);
+  assert.deepEqual(log(s, task), [["mcp__g__send_mail", "ask", "allowed", "user"]]);
+  const [id2, told2] = await asked(s, t, "d", "mcp__g__send_mail", { to: "eve@example.com" });
+  answer_by(s, id2, false, false, null, {}, "push");
+  assert.equal((await told2).behavior, "deny");
+  const l = approval_rules.list(s.db(), task.profile_id, 10);
+  assert.deepEqual([l[0].outcome, l[0].answered_by, l[0].summary], ["denied", "push", "to: eve@example.com"]);
+  assert.equal(l[0].request_id, id2);
+});
+
+test("never_rules_block_and_dont_ask_denies_what_a_rule_asks", async () => {
+  const s = testing.state();
+  const [task0] = assistant(s, [["mcp__g__send*", "ask"], ["mcp__g__*delete*", "never"]], "default");
+  const told = await prompt(s, task0, "a", "mcp__g__delete_mail", { id: "m1" }, null);
+  assert.equal(told.behavior, "deny");
+  assert.ok(told.message.startsWith(approval_rules.BLOCKED));
+  const task = s.update_task(task0.id, [["permission_mode", "dontAsk"]])!;
+  assert.deepEqual(await prompt(s, task, "b", "mcp__g__send_mail", {}, null), deny(DONT_ASK_DENIAL));
+  // Neither was asked.
+  assert.equal(db.value(s.db(), "SELECT COUNT(*) FROM permission_requests"), 0);
+  assert.deepEqual(log(s, task), [["mcp__g__delete_mail", "never", "blocked", "rule"], ["mcp__g__send_mail", "ask", "denied", "mode"]]);
+  // Another thread of the profile isn't the assistant's: its mode decides.
+  const [other0] = running_task(s, null);
+  db.run(s.db(), "UPDATE tasks SET profile_id=?1 WHERE id=?2", task.profile_id, other0.id);
+  const other = s.update_task(other0.id, [["permission_mode", "bypassPermissions"]])!;
+  assert.equal((await prompt(s, other, "c", "mcp__g__delete_mail", {}, null)).behavior, "allow");
+});
+
+test("prompts_from_routine_runs_are_denied_once_they_expire", async () => {
+  const s = testing.state();
+  const [task, run] = assistant(s, [["mcp__g__send*", "ask"]], "default");
+  call_in_turn(s, task, run, "r1", true);
+  const before = Date.now();
+  const [id, told] = await asked(s, task, "r1", "mcp__g__send_mail", { to: "bob@example.com" });
+  const at_str = expires_at(s, id)!;
+  const at = Date.parse(at_str);
+  // Thirty minutes from when it was asked (to the millisecond it is kept to).
+  assert.ok(at >= before + 30 * 60_000 - 1 && at <= Date.now() + 30 * 60_000);
+  assert.equal(prompt_message(s, id).expires_at, new Date(at).toISOString());
+  // A tool no rule asks about expires too: background work never hangs on a card.
+  call_in_turn(s, task, run, "r2", true);
+  const [bash, told_bash] = await asked(s, task, "r2", "Bash", { command: "make" });
+  assert.equal(db.get_task(s.db(), task.id)!.status, "needs_attention");
+
+  // Not before its time (as the sweeper's clock has it).
+  assert.equal(expire_due(s, new Date(at - 1000)), 0);
+  assert.equal(expire_due(s, new Date(at + 1000)), 2);
+  assert.deepEqual(await told, deny(EXPIRED_UNANSWERED));
+  assert.deepEqual(await told_bash, deny(EXPIRED_UNANSWERED));
+  for (const i of [id, bash]) {
+    const shown = prompt_message(s, i);
+    assert.deepEqual([shown.status, shown.note], ["expired", EXPIRED_UNANSWERED]);
+  }
+  // Back to work, and the log says nobody answered.
+  assert.equal(db.get_task(s.db(), task.id)!.status, "in_progress");
+  assert.deepEqual(log(s, task), [["mcp__g__send_mail", "ask", "expired", "expiry"]]);
+  // An answer after that is too late.
+  assert.throws(() => answer(s, id, true, false, null, {}));
+  assert.equal(expire_due(s, new Date(at + 3_600_000)), 0);
+});
+
+test("only_routine_runs_prompts_expire_and_only_if_the_profile_says_so", async () => {
+  const s = testing.state();
+  const [task, run] = assistant(s, [], "default");
+  // The user's own turn: it waits for them.
+  call_in_turn(s, task, run, "u", false);
+  const [mine] = await asked(s, task, "u", "Bash", {});
+  // No expiry set.
+  approval_rules.set(s.db(), task.profile_id, { ...approval_rules.get(s.db(), task.profile_id), expiry_minutes: 0 });
+  call_in_turn(s, task, run, "r", true);
+  const [routine] = await asked(s, task, "r", "Bash", {});
+  // A prompt from before prompts expired has no expiry either.
+  const [old] = await asked(s, task, "o", "Bash", {});
+  for (const id of [mine, routine, old]) assert.equal(expires_at(s, id), null);
+  assert.equal(expire_due(s, new Date(Date.now() + 365 * 86_400_000)), 0);
+  assert.equal(pending(s, task.id).length, 3);
+});
+
+test("a_prompt_that_expired_while_the_board_was_down_is_denied_when_its_call_comes_again", async () => {
+  const s = testing.state();
+  const [task, run] = assistant(s, [["mcp__g__send*", "ask"]], "default");
+  call_in_turn(s, task, run, "r", true);
+  const [id] = await asked(s, task, "r", "mcp__g__send_mail", {});
+  // The board stops: nobody waits on the prompt any more.
+  s.perm_waiters.clear();
+  // It starts again after the prompt's time: the sweeper's first pass denies it, and the agent's call, delivered again,
+  // gets the denial.
+  const later = new Date(Date.parse(expires_at(s, id)!) + 5 * 60_000);
+  assert.equal(expire_due(s, later), 1);
+  assert.deepEqual(await prompt(s, task, "r", "mcp__g__send_mail", {}, null), deny(EXPIRED_UNANSWERED));
+  assert.deepEqual(log(s, task), [["mcp__g__send_mail", "ask", "expired", "expiry"]]);
+});
+
+test("a_prompt_a_rule_asked_whose_run_ends_is_logged_as_expired", async () => {
+  const s = testing.state();
+  const [task] = assistant(s, [["mcp__g__send*", "ask"]], "default");
+  const [, told] = await asked(s, task, "c", "mcp__g__send_mail", {});
+  expire_for_task(s, task.id);
+  assert.equal((await told).behavior, "deny");
+  assert.deepEqual(log(s, task), [["mcp__g__send_mail", "ask", "expired", "ended"]]);
+});
+
+test("a_project_tasks_prompts_dont_expire_even_when_an_automation_started_its_run", async () => {
+  const s = testing.state();
+  // A project automation's task (the rules, and expiry, are the assistant's).
+  const [task, run] = running_task(s, null);
+  call_in_turn(s, task, run, "r", true);
+  const [id] = await asked(s, task, "r", "Bash", { command: "make" });
+  assert.equal(expires_at(s, id), null);
+  assert.equal(expire_due(s, new Date(Date.now() + 86_400_000)), 0);
+});
+
+test("a_sweeper_started_late_denies_what_expired_meanwhile_at_once", async () => {
+  // start_sweeper's first pass runs as it starts, not a sweep later.
+  const s = testing.state();
+  const [task, run] = assistant(s, [["mcp__g__send*", "ask"]], "default");
+  call_in_turn(s, task, run, "r", true);
+  const [id, told] = await asked(s, task, "r", "mcp__g__send_mail", {});
+  db.run(s.db(), "UPDATE permission_requests SET expires_at=?1 WHERE id=?2", new Date(Date.now() - 1000).toISOString(), id);
+  const { start_sweeper } = await import("../permissions.ts");
+  start_sweeper(s);
+  assert.deepEqual(await told, deny(EXPIRED_UNANSWERED));
 });

@@ -17,6 +17,8 @@ import * as title from "../title.ts";
 import * as usage from "../usage.ts";
 import * as agent_tools from "../agent_tools.ts";
 import * as assistant from "../assistant.ts";
+import * as approval_rules from "../approval_rules.ts";
+import * as permissions from "../../mcp/permissions.ts";
 import * as prompts from "../prompts.ts";
 import * as analytics from "../../analytics.ts";
 import * as api from "../../api.ts";
@@ -73,7 +75,9 @@ import {
   compact,
   send_fixes,
   send_from_agent,
+  send_from_routine,
   send_message,
+  send_queued,
   start_unblocked,
   start_waiting,
 } from "../runner.ts";
@@ -2498,4 +2502,144 @@ test("a_requeued_steer_is_a_routines_only_if_it_was_sent_as_one", async () => {
     assert.ok(reload(state, a.id).queued_message != null);
     assert.ok(queued_routine(state, a.id));
   }
+});
+
+// ---------- routine runs and approval rules (HA-123, ported by HA-206) ----------
+
+test("a_run_an_automation_starts_is_a_routine_run_and_one_the_user_starts_isnt", () => {
+  runs.TEST_CAN_RUN.set(true);
+  const state = testing.state();
+  const p = db.insert_profile(state.db(), "me", [], null);
+  const make = (title: string) => new_task(state.db(), { profile_id: p.id, title, status: "todo" });
+  const turn = (task: Task): any => {
+    const id = db.value<number>(state.db(), "SELECT turn_message_id FROM runs WHERE task_id=?1", task.id);
+    return JSON.parse(db.value<string>(state.db(), "SELECT data FROM messages WHERE id=?1", id)!);
+  };
+  const [routine, started, mine] = [make("Routine"), make("Started"), make("Mine")];
+  send_from_routine(state, routine.id, "Check the mail", null);
+  assert.deepEqual([turn(routine).text, turn(routine).routine], ["Check the mail", true]);
+  // An automation starting a task it made: its first prompt is the board's.
+  send_from_routine(state, started.id, "", null);
+  assert.deepEqual([turn(started).start, turn(started).routine], [true, true]);
+  send(state, mine.id, "Check the mail");
+  assert.ok(!("routine" in turn(mine)));
+  // A message the user had queued goes with it: someone's there.
+  const queued = make("Queued");
+  db.queue(state.db(), queued.id, db.Queued_new("and my note", false));
+  send_from_routine(state, queued.id, "Check the mail", null);
+  assert.ok(!("routine" in turn(queued)), JSON.stringify(turn(queued)));
+});
+
+test("a_codex_assistant_with_a_never_rule_on_its_own_tools_doesnt_run", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  const state = testing.state();
+  const cx = db.insert_claude_config(state.db(), "Codex", "", "codex");
+  const p = db.insert_profile(state.db(), "me", [cx.id], null);
+  const a = assistant.get_or_create(state, p.id);
+  db.update_task(state.db(), a.id, [["permission_mode", "bypassPermissions"]]);
+  approval_rules.set(state.db(), p.id, { rules: [{ tool: "Bash", decision: "never" }], expiry_minutes: 30 });
+  send(state, a.id, "list the files");
+  while (state.is_running(a.id)) await sleep(10);
+  // Refused before anything is started, saying why.
+  const why = reload(state, a.id).attention_reason ?? "";
+  assert.ok(why.includes('"Bash: never"') && why.includes("Claude config"), why);
+});
+
+test("an_automations_message_that_waits_in_the_queue_still_starts_a_routine_run", () => {
+  runs.TEST_CAN_RUN.set(true);
+  const state = testing.state();
+  const p = db.insert_profile(state.db(), "me", [], null);
+  const make = (title: string) => new_task(state.db(), { profile_id: p.id, title, status: "todo" });
+  const routine = (text: string): db.Queued => ({ ...db.Queued_new(text, true), routine: true });
+  // Queued while a run couldn't take it (compacting, waiting for dependencies or a usage limit), from two automations:
+  // it's kept, in the database, as all automations'.
+  const queued = make("Queued");
+  db.queue(state.db(), queued.id, routine("New mail"));
+  db.queue(state.db(), queued.id, routine("And more"));
+  // Released: its run is a routine run, so a prompt it raises expires.
+  assert.ok(send_queued(state, queued.id));
+  const run = db.value<string>(state.db(), "SELECT id FROM runs WHERE task_id=?1", queued.id);
+  db.run(state.db(), "INSERT INTO mcp_calls (id,run_id,task_id,tool,args,created_at) VALUES ('c',?1,?2,'permission_prompt','{}','1')", run, queued.id);
+  assert.ok(permissions.routine_call(state.db(), "c"));
+
+  // With the user's message queued alongside, someone's there: it isn't.
+  const mixed = make("Mixed");
+  db.queue(state.db(), mixed.id, routine("New mail"));
+  db.queue(state.db(), mixed.id, db.Queued_new("and reply to Bob", false));
+  assert.ok(!db.take_queued(state.db(), mixed.id)!.routine);
+  // Nor once the queue is cleared, for what's queued next.
+  db.queue(state.db(), mixed.id, routine("New mail"));
+  db.clear_queued(state.db(), mixed.id);
+  db.queue(state.db(), mixed.id, db.Queued_new("mine", false));
+  assert.ok(!db.take_queued(state.db(), mixed.id)!.routine);
+});
+
+// HA-238: a task's first run in a config folder with no login got a session that Claude Code never answered in ("Not
+// logged in"). Kept, every later run resumed it, and in the folder that had the login none could find it.
+test("a_session_the_model_never_answered_is_not_resumed", () => {
+  const [state, task, first] = running(true);
+  const not_logged_in = (session: string) => ({
+    type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: session,
+    duration_api_ms: 0, total_cost_usd: 0, num_turns: 1,
+  });
+  const init = (session: string) => ({ type: "system", subtype: "init", session_id: session });
+  const next = () => {
+    const run = db.insert_run(state.db(), task.id, "prompt");
+    db.run(state.db(), "UPDATE runs SET status='running' WHERE id=?1", run.id);
+    const dir = runs.run_dir(state, run.id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "out.jsonl"), "");
+    return run;
+  };
+  const ended = (run: Run) => db.run(state.db(), "UPDATE runs SET status='exited' WHERE id=?1", run.id);
+  output(state, first, [init("s1"), not_logged_in("s1")]);
+  ended(first);
+  // The next run starts the conversation again, from the task's description.
+  assert.equal(reload(state, task.id).session_id, null);
+  assert.ok(db.list_messages(state.db(), task.id).some((m) => m.data.type === "result"));
+
+  // One the model answered is kept, even if a later run's turn fails the same way: its conversation is there.
+  const second = next();
+  const answered = result("success", 0.5);
+  answered.session_id = "s2";
+  output(state, second, [init("s2"), answered]);
+  ended(second);
+  assert.equal(reload(state, task.id).session_id, "s2");
+  const resumed = next();
+  output(state, resumed, [init("s2"), not_logged_in("s2")]);
+  ended(resumed);
+  assert.equal(reload(state, task.id).session_id, "s2");
+
+  // As is one whose first turn was answered in the same run.
+  const third = next();
+  const paid = result("success", 0.25);
+  paid.session_id = "s3";
+  output(state, third, [init("s3"), paid, { ...not_logged_in("s3"), total_cost_usd: 0.25 }]);
+  assert.equal(reload(state, task.id).session_id, "s3");
+  ended(third);
+
+  // A first turn the user stopped before the model answered ends the same way, and its session is kept to resume.
+  const stopped = next();
+  output(state, stopped, [init("s4")]);
+  db.run(state.db(), "UPDATE runs SET stop_requested=1 WHERE id=?1", stopped.id);
+  const interrupted = {
+    type: "result", subtype: "error_during_execution", is_error: true, session_id: "s4", duration_api_ms: 0, total_cost_usd: 0, num_turns: 0,
+    errors: ["[Request interrupted by user]"],
+  };
+  output(state, stopped, [interrupted]);
+  ended(stopped);
+  assert.equal(reload(state, task.id).session_id, "s4");
+});
+
+// A review's (or the assistant's) next run would start with only the next message, without the prompt its session has,
+// so its session is kept even if the model never answered it.
+test("a_review_threads_unanswered_session_is_kept", () => {
+  const [state, task, run] = running(true);
+  db.run(state.db(), "UPDATE tasks SET kind='review' WHERE id=?1", task.id);
+  const r = {
+    type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: "r1", duration_api_ms: 0,
+    total_cost_usd: 0, num_turns: 1,
+  };
+  output(state, run, [{ type: "system", subtype: "init", session_id: "r1" }, r]);
+  assert.equal(reload(state, task.id).session_id, "r1");
 });

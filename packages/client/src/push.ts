@@ -1,7 +1,13 @@
 import { enc, type Http } from "./http";
 
-/** Which of the board's notifications a device gets by push (see notifications.ts), and the assistant's (API 110). */
+/** Whose permission prompts a device gets by push, with Allow and Deny on them (API 115): the assistant's by default. */
+export type PushPrompts = "off" | "assistant" | "all";
+
+/** Which of the board's notifications a device gets by push (see notifications.ts), the assistant's (API 110), and whose
+ *  permission prompts (API 115). */
 export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & {
+  /** Left as they are, or the default, without; a board from before it doesn't have it. */
+  prompts?: PushPrompts;
   /** The assistant's replies. Off unless chosen; a board from before it doesn't have it, and keeps what a change leaves out. */
   replies?: boolean;
   /** The reports the assistant's routines post: on for a new device, off for one subscribed before it could choose. */

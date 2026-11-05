@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createDecipheriv, createECDH, createPublicKey, verify, type ECDH } from "node:crypto";
 import { createServer, type IncomingHttpHeaders } from "node:http";
+import { readBody } from "../../http.ts";
 import * as testing from "../../testing.ts";
 import * as db from "../../db.ts";
 import * as api from "../../api.ts";
@@ -11,6 +12,10 @@ import { API_VERSION } from "../../hosts/proto.ts";
 import type { AppState } from "../../state.ts";
 import { sleep } from "../../util.ts";
 import * as assistant from "../../agent/assistant.ts";
+import * as approval_rules from "../../agent/approval_rules.ts";
+import * as permissions from "../../mcp/permissions.ts";
+import * as push_answers from "../push_answers.ts";
+import { new_id, now } from "../../util.ts";
 import {
   RECORD_SIZE,
   STOPPED,
@@ -203,7 +208,7 @@ test("devices_subscribe_change_their_events_and_unsubscribe", async () => {
   const endpoint = "https://push.example.com/send/abc";
   const [st, sub] = await call(s, "POST", "/api/push/subscriptions", { endpoint, keys, name: "Pixel" });
   assert.equal(st, 200, JSON.stringify(sub));
-  assert.deepEqual(sub.events, { attention: true, review: true, merge: false, done: false, replies: false, reports: true });
+  assert.deepEqual(sub.events, { attention: true, review: true, merge: false, done: false, prompts: "assistant", replies: false, reports: true });
   assert.equal(sub.name, "Pixel");
   assert.ok(!("auth" in sub) && !("p256dh" in sub));
   const id = sub.id;
@@ -463,7 +468,7 @@ test("the_assistants_replies_are_pushed_to_the_devices_that_want_them", async ()
   const s = testing.state();
   const service = await push_service({ code: 201 });
   try {
-    const ua = await subscribe_device(s, service.url, { attention: false, review: false, merge: false, done: false, replies: true, reports: false });
+    const ua = await subscribe_device(s, service.url, { attention: false, review: false, merge: false, done: false, prompts: "assistant", replies: true, reports: false });
     // A device that never chose replies isn't sent them.
     await subscribe_device(s, `${service.url}-quiet`, { attention: false, review: false, merge: false, done: false, reports: false });
     const profile = db.insert_profile(s.db(), "personal", [], null);
@@ -496,11 +501,11 @@ test("events_left_out_keep_what_they_were", async () => {
   const s = testing.state();
   const [, keys] = device();
   const [, sub] = await call(s, "POST", "/api/push/subscriptions", { endpoint: "https://push.example.com/a", keys, events: { merge: true } });
-  assert.deepEqual(sub.events, { attention: true, review: true, merge: true, done: false, replies: false, reports: true });
+  assert.deepEqual(sub.events, { attention: true, review: true, merge: true, done: false, prompts: "assistant", replies: false, reports: true });
   const [, on] = await call(s, "PATCH", `/api/push/subscriptions/${sub.id}`, { events: { replies: true, reports: false } });
   assert.deepEqual([on.events.replies, on.events.reports, on.events.merge], [true, false, true]);
   const [, kept] = await call(s, "PATCH", `/api/push/subscriptions/${sub.id}`, { events: { attention: false, review: true, merge: false, done: false } });
-  assert.deepEqual(kept.events, { attention: false, review: true, merge: false, done: false, replies: true, reports: false });
+  assert.deepEqual(kept.events, { attention: false, review: true, merge: false, done: false, prompts: "assistant", replies: true, reports: false });
   // Subscribed again (the same endpoint) without events, it keeps them.
   const [, again] = await call(s, "POST", "/api/push/subscriptions", { endpoint: "https://push.example.com/a", keys });
   assert.deepEqual(again.events, kept.events);
@@ -509,5 +514,325 @@ test("events_left_out_keep_what_they_were", async () => {
   // One stored before (with HA-8's events only) gets neither replies nor reports.
   db.run(s.db(), "UPDATE push_subscriptions SET events=?1 WHERE id=?2", JSON.stringify({ attention: true, review: true, merge: false, done: false }), sub.id);
   const [, info] = await call(s, "GET", "/api/push");
-  assert.deepEqual(info.subscriptions[0].events, { attention: true, review: true, merge: false, done: false, replies: false, reports: false });
+  assert.deepEqual(info.subscriptions[0].events, { attention: true, review: true, merge: false, done: false, prompts: "assistant", replies: false, reports: false });
+});
+
+// ---------- permission prompts (HA-126 and HA-123, ported by HA-206) ----------
+
+/** A task with a run going (so it can raise prompts), of `task_type` if given. */
+function running_task(s: AppState, task_type: string | null): db.Task {
+  const profile = db.insert_profile(s.db(), `p${new_id()}`, [], null);
+  const task = db.insert_task(s.db(), {
+    profile_id: profile.id, project_id: null, kind: "task", title: "Send the invoice", description: "", status: "in_progress", use_worktree: false,
+    model: null, effort: null, claude_config_id: null,
+  });
+  if (task_type !== null) db.run(s.db(), "UPDATE tasks SET task_type=?1 WHERE id=?2", task_type, task.id);
+  const run = db.insert_run(s.db(), task.id, "prompt");
+  db.run(s.db(), "UPDATE runs SET status='running' WHERE id=?1", run.id);
+  s.runs.set(task.id, { run_id: run.id, cancel: null });
+  return s.update_task(task.id, [["running", true]])!;
+}
+
+/** Raises a prompt for `tool` from `task` and waits until it's asked: its request id, and what the agent is told. */
+async function raise(s: AppState, task: db.Task, call: string, tool: string, input: any): Promise<[string, Promise<any>]> {
+  const told = permissions.prompt(s, task, call, tool, input, null);
+  told.catch(() => {});
+  for (;;) {
+    const id = db.value<string>(s.db(), "SELECT id FROM permission_requests WHERE call_id=?1", call);
+    if (id !== undefined) return [id, told];
+    await sleep(5);
+  }
+}
+
+async function answer_from_push(s: AppState, request: string, token: string, decision: string): Promise<[number, any]> {
+  if (!s.local_router) api.router(s);
+  const raw = Buffer.from(JSON.stringify({ token, decision }));
+  // Without the board's token.
+  const a = await api.dispatch(s, api.makeReq("POST", `/api/permissions/${request}/push-answer`, { "content-type": "application/json" }, raw));
+  let v: any = null;
+  try {
+    v = JSON.parse(a.body.toString());
+  } catch {}
+  return [a.status, v];
+}
+
+/** Waits until the board has noted prompt `request`'s tokens as `status`. */
+async function settled_as(s: AppState, request: string, status: string) {
+  for (let i = 0; i < 500; i++) {
+    if (push_answers.status_of(s.db(), request) === status) return;
+    await sleep(10);
+  }
+  assert.fail(`prompt ${request}'s tokens never became ${status}`);
+}
+
+/** Serves `remote`'s API over HTTP as a linked host would (with its own token), and links `hub` to it as `remote`. */
+async function link_remote(hub_state: AppState, remote: AppState): Promise<() => void> {
+  if (!remote.local_router) api.router(remote);
+  const srv = createServer(async (req, res) => {
+    const raw = await readBody(req, 1 << 20);
+    const headers = { ...req.headers, authorization: `Bearer ${remote.token}` };
+    const a = await api.dispatch(remote, api.makeReq(req.method ?? "GET", req.url ?? "/", headers, raw));
+    res.writeHead(a.status, { "content-type": "application/json", ...(a.headers ?? {}) }).end(a.body);
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  const conn = hub.link_http(hub_state, "remote", `http://127.0.0.1:${(srv.address() as any).port}`, API_VERSION);
+  return () => {
+    if (conn.kind.type === "http") conn.kind.agent.destroy();
+    srv.closeAllConnections();
+    srv.close();
+  };
+}
+
+function remote_state(): AppState {
+  return testing.state_as({ host_id: "remote", host_name: "assistant box", token: "remote-token", hub_token: "", internal_url: "" });
+}
+
+test("a_prompt_is_pushed_with_a_token_that_answers_it_once", async () => {
+  const s = testing.state();
+  const service = await push_service({ code: 201 });
+  const other_service = await push_service({ code: 201 });
+  try {
+    const ua = await subscribe_device(s, service.url, { attention: true, review: true, prompts: "all" });
+    // Another device wants needs-attention, but no prompts: it's told of the task as before.
+    const other = await subscribe_device(s, other_service.url, { attention: true, prompts: "off" });
+    hub.start(s);
+    start(s);
+    const task = running_task(s, null);
+    const [request, told] = await raise(s, task, "c1", "Bash", { command: "rm -rf /tmp/secret-stuff" });
+
+    const msg = await next_push(service, ua);
+    const token = msg.answer.token;
+    assert.deepEqual(msg, {
+      title: `T-${task.number} Send the invoice`, body: "Approve Bash?", url: `/t/${task.id}`, tag: `${s.host_id}:${task.id}:${request}`,
+      task_id: task.id, event: "prompt", request_id: request, answer: { url: `/api/permissions/${request}/push-answer`, token },
+    });
+    // The other device gets the task's needs-attention; this one isn't told twice.
+    assert.equal((await next_push(other_service, other)).event, "attention");
+    await sleep(300);
+    assert.equal(service.try_recv(), null, "the device that got the prompt was told it needs attention too");
+
+    // Only its own token answers it, and only it.
+    let [status, v] = await answer_from_push(s, request, "not-the-token", "allow");
+    assert.deepEqual([status, v.result], [403, "invalid"], JSON.stringify(v));
+    assert.equal((await answer_from_push(s, "another-request", token, "allow"))[0], 403);
+    assert.equal((await answer_from_push(s, request, token, "maybe"))[0], 400);
+    // The board's token isn't needed (nor taken instead of the prompt's).
+    [status, v] = await answer_from_push(s, request, token, "deny");
+    assert.deepEqual([status, v.result], [200, "denied"], JSON.stringify(v));
+    assert.equal((await told).behavior, "deny");
+    // Once.
+    [status, v] = await answer_from_push(s, request, token, "allow");
+    assert.deepEqual([status, v.result, v.message], [409, "answered", "It was already denied."]);
+  } finally {
+    service.close();
+    other_service.close();
+  }
+});
+
+test("a_token_stops_working_once_its_prompt_is_answered_on_the_board_or_expires", async () => {
+  const s = testing.state();
+  const service = await push_service({ code: 201 });
+  try {
+    const ua = await subscribe_device(s, service.url, { prompts: "all" });
+    hub.start(s);
+    start(s);
+    const task = running_task(s, null);
+
+    // Answered on the board.
+    let [request, told] = await raise(s, task, "c1", "Bash", {});
+    let token = (await next_push(service, ua)).answer.token;
+    assert.equal((await call(s, "POST", `/api/permissions/${request}`, { decision: "allow" }))[0], 200);
+    assert.equal((await told).behavior, "allow");
+    await settled_as(s, request, "allowed");
+    let [status, v] = await answer_from_push(s, request, token, "deny");
+    assert.deepEqual([status, v.result, v.message], [409, "answered", "It was already allowed."]);
+
+    // Expired with its run.
+    [request, told] = await raise(s, task, "c2", "Write", {});
+    token = (await next_push(service, ua)).answer.token;
+    permissions.expire_for_task(s, task.id);
+    assert.equal((await told).behavior, "deny");
+    await settled_as(s, request, "expired");
+    [status, v] = await answer_from_push(s, request, token, "allow");
+    assert.deepEqual([status, v.result], [409, "expired"], JSON.stringify(v));
+  } finally {
+    service.close();
+  }
+});
+
+test("an_answer_the_board_missed_is_found_out_from_the_host", async () => {
+  // Not watching: the board misses the prompt's answer (as over a link that was down).
+  const s = testing.state();
+  const task = running_task(s, null);
+  const [request, told] = await raise(s, task, "c1", "Bash", {});
+  const token = push_answers.mint(s.db(), s.host_id, request, task.id, null);
+  assert.equal((await call(s, "POST", `/api/permissions/${request}`, { decision: "deny" }))[0], 200);
+  await told;
+  const [status, v] = await answer_from_push(s, request, token, "allow");
+  assert.deepEqual([status, v.result], [409, "closed"], JSON.stringify(v));
+  assert.equal((await answer_from_push(s, request, token, "allow"))[0], 409);
+});
+
+test("questions_and_plans_are_pushed_without_allow_and_deny_and_only_the_assistants_by_default", async () => {
+  const s = testing.state();
+  const service = await push_service({ code: 201 });
+  try {
+    // Its events as a browser that subscribed before prompts sends them.
+    const ua = await subscribe_device(s, service.url, { attention: false, review: false, merge: false, done: false });
+    assert.equal((await call(s, "GET", "/api/push"))[1].subscriptions[0].events.prompts, "assistant");
+    hub.start(s);
+    start(s);
+    const project_task = running_task(s, null);
+    await raise(s, project_task, "c0", "Bash", {});
+    const mine = running_task(s, "assistant");
+    await raise(s, mine, "c1", permissions.ASK_USER, { questions: [{ question: "Which account?" }] });
+    let msg = await next_push(service, ua);
+    assert.deepEqual([msg.task_id, msg.body], [mine.id, "The agent has questions for you"]);
+    assert.ok(!("answer" in msg), JSON.stringify(msg));
+    await raise(s, mine, "c2", permissions.EXIT_PLAN, { plan: "# Plan: send it" });
+    msg = await next_push(service, ua);
+    assert.equal(msg.body, "Plan ready for approval");
+    assert.ok(!("answer" in msg));
+    await raise(s, mine, "c3", "mcp__gmail__send", { to: "someone@example.com" });
+    msg = await next_push(service, ua);
+    assert.equal(msg.body, "Approve mcp__gmail__send?");
+    assert.equal(typeof msg.answer.token, "string");
+    assert.ok(!JSON.stringify(msg).includes("example.com"), `a tool's input was pushed: ${JSON.stringify(msg)}`);
+    // Nothing of the project task's.
+    await sleep(200);
+    assert.equal(service.try_recv(), null);
+  } finally {
+    service.close();
+  }
+});
+
+test("a_prompt_on_a_linked_host_is_answered_through_the_link", async () => {
+  const hub_state = testing.state();
+  const remote = remote_state();
+  const service = await push_service({ code: 201 });
+  const unlink = await link_remote(hub_state, remote);
+  try {
+    const ua = await subscribe_device(hub_state, service.url, { prompts: "all" });
+    // The remote's events reach the hub over the link.
+    remote.events.subscribe((ev: any) => hub_state.hub_events.send({ ...ev, host_id: "remote" }));
+    start(hub_state);
+    const task = running_task(remote, "assistant");
+    const [request, told] = await raise(remote, task, "c1", "Bash", {});
+    const msg = await next_push(service, ua);
+    assert.equal(msg.tag, `remote:${task.id}:${request}`);
+    const token = msg.answer.token;
+    // The hub keeps the token; the remote never sees it.
+    assert.equal(push_answers.status_of(remote.db(), request), null);
+
+    // While the link is down it says so, and the token still works after.
+    const link = hub_state.links.get("remote");
+    hub_state.links.delete("remote");
+    let [status, v] = await answer_from_push(hub_state, request, token, "allow");
+    assert.deepEqual([status, v.result], [503, "offline"], JSON.stringify(v));
+    hub_state.links.set("remote", link);
+    [status, v] = await answer_from_push(hub_state, request, token, "allow");
+    assert.deepEqual([status, v.result], [200, "allowed"], JSON.stringify(v));
+    assert.equal((await told).behavior, "allow");
+    // Answering the remote's prompt with the remote's own push-answer route (which has no token for it) fails.
+    assert.equal((await answer_from_push(remote, request, token, "allow"))[0], 403);
+  } finally {
+    unlink();
+    service.close();
+  }
+});
+
+test("a_prompt_the_board_missed_the_end_of_doesnt_keep_its_task_from_notifying", async () => {
+  const s = testing.state();
+  const service = await push_service({ code: 201 });
+  try {
+    const ua = await subscribe_device(s, service.url, { attention: true, prompts: "all" });
+    start(s);
+    emit(s, withf(task("in_progress"), { running: true }));
+    while (!s.push.tasks.has(`${s.host_id}:t1`)) await sleep(5);
+    // A prompt it heard of, but not its answer (over a link that was down).
+    s.push.prompts.set(`${s.host_id}:t1`, new Set(["r1"]));
+    // The run ends, and the task needs attention for another reason.
+    emit(s, withf(task("needs_attention"), { running: false, attention_reason: "The run failed" }));
+    const msg = await next_push(service, ua);
+    assert.deepEqual([msg.event, msg.body], ["attention", "Needs attention: The run failed"]);
+  } finally {
+    service.close();
+  }
+});
+
+test("an_answer_cut_off_part_way_doesnt_hold_its_prompt_after_a_restart_or_its_lease", async () => {
+  const hub_state = testing.state();
+  const remote = remote_state();
+  const unlink = await link_remote(hub_state, remote);
+  try {
+    const task = running_task(remote, "assistant");
+    let [request, told] = await raise(remote, task, "c1", "Bash", {});
+    let token = push_answers.mint(hub_state.db(), "remote", request, task.id, null);
+    // The hub claimed it to answer, and stopped before it could (the claim is in its database).
+    const claim = (request: string, at: string) =>
+      db.run(hub_state.db(), "UPDATE push_answer_tokens SET status='answering', claimed_at=?1 WHERE request_id=?2", at, request).changes;
+    assert.equal(claim(request, now()), 1);
+    let [status, v] = await answer_from_push(hub_state, request, token, "allow");
+    assert.deepEqual([status, v.result], [409, "answered"], `a claim under way holds: ${JSON.stringify(v)}`);
+    // Started again: no answer is under way.
+    start(hub_state);
+    [status, v] = await answer_from_push(hub_state, request, token, "deny");
+    assert.deepEqual([status, v.result], [200, "denied"], JSON.stringify(v));
+    assert.equal((await told).behavior, "deny");
+
+    // A claim older than any answer takes runs out without a restart.
+    [request, told] = await raise(remote, task, "c2", "Bash", {});
+    token = push_answers.mint(hub_state.db(), "remote", request, task.id, null);
+    assert.equal(claim(request, new Date(Date.now() - 10 * 60_000).toISOString()), 1);
+    [status, v] = await answer_from_push(hub_state, request, token, "allow");
+    assert.deepEqual([status, v.result], [200, "allowed"], JSON.stringify(v));
+    assert.equal((await told).behavior, "allow");
+  } finally {
+    unlink();
+  }
+});
+
+test("a_notification_cant_answer_a_prompt_past_its_expiry_and_one_it_answers_is_logged_as_from_it", async () => {
+  const s = testing.state();
+  const task = running_task(s, "assistant");
+  approval_rules.set(s.db(), task.profile_id, { rules: [{ tool: "mcp__google__send*", decision: "ask" }], expiry_minutes: 30 });
+  const [request, told] = await raise(s, task, "c1", "mcp__google__send_gmail_message", {});
+  // Its time is up, though the host hasn't said so (its sweeper hasn't run, or the link is down).
+  const past = new Date(Date.now() - 1000).toISOString();
+  const late = push_answers.mint(s.db(), s.host_id, request, task.id, past);
+  let [status, v] = await answer_from_push(s, request, late, "allow");
+  assert.deepEqual([status, v.result], [409, "expired"], JSON.stringify(v));
+  assert.ok(v.message.includes("nobody answered it in time"), JSON.stringify(v));
+  // Still waiting on the host: the late answer didn't go through.
+  assert.equal(permissions.pending(s, task.id).length, 1);
+  // One in time does, and the action log says it came from a notification.
+  const future = new Date(Date.now() + 30 * 60_000).toISOString();
+  const token = push_answers.mint(s.db(), s.host_id, request, task.id, future);
+  [status, v] = await answer_from_push(s, request, token, "allow");
+  assert.deepEqual([status, v.result], [200, "allowed"], JSON.stringify(v));
+  assert.equal((await told).behavior, "allow");
+  const log = approval_rules.list(s.db(), task.profile_id, 10);
+  assert.deepEqual([log[0].outcome, log[0].answered_by], ["allowed", "push"]);
+});
+
+test("a_token_answers_only_its_own_prompt_and_only_on_its_own_host", async () => {
+  // Two profiles' prompts on one board: a token from one's notification doesn't answer the other's, whatever request id
+  // it's sent with; and one minted for another host doesn't answer this host's prompt of the same id.
+  const s = testing.state();
+  const [a, b] = [running_task(s, "assistant"), running_task(s, "assistant")];
+  assert.notEqual(a.profile_id, b.profile_id);
+  const [ra, told_a] = await raise(s, a, "ca", "Bash", {});
+  const [rb, told_b] = await raise(s, b, "cb", "Bash", {});
+  const ta = push_answers.mint(s.db(), s.host_id, ra, a.id, null);
+  assert.equal((await answer_from_push(s, rb, ta, "allow"))[0], 403);
+  const elsewhere = push_answers.mint(s.db(), "another-host", rb, b.id, null);
+  assert.equal((await answer_from_push(s, rb, elsewhere, "allow"))[0], 503, "answered on the wrong host");
+  assert.equal(permissions.pending(s, null).length, 2);
+  assert.equal((await answer_from_push(s, ra, ta, "allow"))[0], 200);
+  assert.equal((await told_a).behavior, "allow");
+  assert.deepEqual(permissions.pending(s, null).map((p: any) => p.id), [rb]);
+  // Tokens are kept hashed, not as they are.
+  assert.equal(db.value(s.db(), "SELECT COUNT(*) FROM push_answer_tokens WHERE token_hash=?1", ta), 0);
+  permissions.expire_for_task(s, b.id);
+  await told_b;
 });

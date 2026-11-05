@@ -219,6 +219,8 @@ export function handle_line(state: Shared, run: Run, v: any): void {
         subagent_started(state, task_id, session, id, sender, { prompt: g(thread.preview), description: g(thread.agentNickname), subagent_type: role });
       } else if (subagent === undefined && session !== id) {
         state.update_task(task_id, [["session_id", id]]);
+        // The run that started the thread, which says where it's kept (see db.task_config_dir).
+        db.set_run_session(state.db(), run.id, id);
       }
     }
   } else if (method === "turn/started" && !own) {

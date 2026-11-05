@@ -140,8 +140,21 @@ export function gh_note(account: string | null): string {
  * which may not reach GitHub from the sandbox or would act as gh's active account rather than the run's.
  */
 export function gh_hook_settings(exe: string): string {
-  const command = `'${path_str(exe).replaceAll("'", "'\\''")}' gh-hook`;
-  return JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command, timeout: 10 }] }] } });
+  return hook_settings(exe, null);
+}
+
+/**
+ * `--settings` with a Claude run's PreToolUse hooks: the gh one (`gh_hook_settings`), with this binary, and the approval
+ * rules' (see approval_rules.claude_hook).
+ */
+export function hook_settings(gh: string | null, rules: any | null): string {
+  const hooks: any[] = [];
+  if (gh !== null) {
+    const command = `'${path_str(gh).replaceAll("'", "'\\''")}' gh-hook`;
+    hooks.push({ matcher: "Bash", hooks: [{ type: "command", command, timeout: 10 }] });
+  }
+  if (rules != null) hooks.push(rules);
+  return JSON.stringify({ hooks: { PreToolUse: hooks } });
 }
 
 /** The git directory a worktree shares with its repository, where commits are written. */

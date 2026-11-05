@@ -13,7 +13,7 @@ thread is read from the board's own tables, and commands go onto the board's own
   older host, keep using the message API (`/tasks/{id}/messages`, and the `message`, `message_updated`, `delta` and
   `delta_reset` events), which every host keeps serving.
 - A task has a thread kept as items once its first message has been written with the host's *Keep threads as items*
-  setting on (API 115, which flags it `thread_items`), or it has been rebuilt (`huntaway threads-rebuild`), and while
+  setting on (API 116, which flags it `thread_items`), or it has been rebuilt (`huntaway threads-rebuild`), and while
   its live writes haven't stopped on an error. Otherwise the routes answer **404** `{"error": "task <id> has no thread kept as items"}`, and its
   thread is its messages.
 - A task's thread has the task's id, and it's reached only through its task: a command can't name another thread,

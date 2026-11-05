@@ -9,6 +9,7 @@ import * as agent_tools from "../agent_tools.ts";
 import * as context from "../context.ts";
 import * as usage from "../usage.ts";
 import * as documents from "../documents.ts";
+import * as approval_rules from "../approval_rules.ts";
 import * as memory from "../assistant/memory.ts";
 import * as tokens from "../tokens.ts";
 import * as wait from "../../mcp/wait.ts";
@@ -231,6 +232,15 @@ export function handle_line(state: Shared, run: Run, line: string) {
     if (typeof s.uuid === "string" && s.parent_tool_use_id == null) {
       db.run(state.db(), "UPDATE runs SET agent_at=?1 WHERE id=?2", s.uuid, run.id);
     }
+    // Calls the approval rules' hook blocked go in the action log.
+    if (tool_result) {
+      const task = db.get_task(state.db(), task_id);
+      let applies = false;
+      try {
+        applies = !!task && approval_rules.applies_to(state.db(), task);
+      } catch {}
+      if (task && applies) approval_rules.on_tool_results(state, task, s);
+    }
     state.add_message(task_id, "claude", s);
     // A tool call may have changed the task's document: the task shows it as it's written.
     if (tool_result) documents.follow(state, task_id);
@@ -260,6 +270,7 @@ function claude_result(state: Shared, run: Run, v: any) {
   context.on_result(state, task_id, v);
   // Before the turn's end closes its input (see `turn_ended`).
   context.request(state, run);
+  const dud = never_answered(state, run, v);
   // A running total for the session, which goes on over its turns and the runs that resume it.
   let cost = 0.0;
   if (typeof v.total_cost_usd === "number") {
@@ -269,8 +280,10 @@ function claude_result(state: Shared, run: Run, v: any) {
   const t = db.get_task(state.db(), task_id);
   if (t) {
     const fields: Array<[string, any]> = [["cost_usd", t.cost_usd + cost]];
-    if (typeof v.session_id === "string") fields.push(["session_id", v.session_id]);
+    if (dud) fields.push(["session_id", null]);
+    else if (typeof v.session_id === "string") fields.push(["session_id", v.session_id]);
     state.update_task(task_id, fields);
+    if (dud) console.log(`task ${task_id} run ${run.id}: session ${v.session_id} was never answered, so the next run starts a new one`);
   }
   let result_error: string | null = null;
   if (v.is_error === true || (typeof v.subtype === "string" && v.subtype !== "success")) {
@@ -288,6 +301,27 @@ function claude_result(state: Shared, run: Run, v: any) {
     total_cost_usd: cost,
   };
   record_turn_end(state, run, result_error, slimmed);
+}
+
+/**
+ * Whether Claude Code's result `v` ends a task's conversation that this run started and the model never answered: it
+ * failed before reaching the API (not logged in, say), with nothing spent in it, and wasn't stopped. Kept, such a session would be resumed by
+ * the next run, which is started again from the task's description instead; and in another config folder (one that has
+ * the login, if this one had none) the agent couldn't find it ("No conversation found with session ID").
+ */
+function never_answered(state: Shared, run: Run, v: any): boolean {
+  if (v.is_error !== true || typeof v.session_id !== "string") return false;
+  if (v.duration_api_ms !== 0 || (v.total_cost_usd ?? 0) !== 0) return false;
+  const c = state.db();
+  // Only a task's: its next run starts again from its description (see runner::launch), while a review's or the
+  // assistant's would start with no more than the next message, without the prompt or message the session has.
+  if (db.get_task(c, run.task_id)?.kind !== "task") return false;
+  // A first turn the user stopped before the model answered: the stop keeps its session to resume (see runner::stop).
+  if (db.value<number>(c, "SELECT stop_requested FROM runs WHERE id=?1", run.id) !== 0) return false;
+  const first = db.value<string>(c, "SELECT id FROM runs WHERE task_id=?1 AND session_id=?2 ORDER BY rowid LIMIT 1", run.task_id, v.session_id);
+  if (first !== run.id) return false;
+  // Nor in an earlier turn of this run.
+  return (db.value<number>(c, "SELECT cost_usd FROM runs WHERE id=?1", run.id) ?? 0) === 0;
 }
 
 /**

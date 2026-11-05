@@ -16,6 +16,7 @@ import * as runner from "../agent/runner.ts";
 import * as documents from "../agent/documents.ts";
 import * as worktree from "../git/worktree.ts";
 import * as questions from "../mcp/questions.ts";
+import * as approval_rules from "../agent/approval_rules.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as review from "../review.ts";
 import * as asana_tests from "../integrations/asana/tests.ts";
@@ -1470,4 +1471,62 @@ test("a_denied_merge_goes_back_to_review", async () => {
     assert.ok(last_prompt(s, u.id).startsWith('The user moved this task to "Ready for merge". Merge branch'), last_prompt(s, u.id));
     await idle(s, u.id);
   });
+});
+
+test("approval_rules_with_a_pattern_twice_arent_saved_and_saved_ones_decide_as_they_were_shown", async () => {
+  const s = testing.state();
+  const profile = db.insert_profile(s.db(), "p", [], null);
+  const path = `/api/profiles/${profile.id}/approval-rules`;
+  // Bash: never under Bash: allow (the dialog's Try a tool says never) isn't saved as allow: it isn't saved.
+  let [status, v] = await call(s, "POST", path, { rules: [{ tool: "Bash", decision: "allow" }, { tool: "bash", decision: "never" }] });
+  assert.equal(status, 400, JSON.stringify(v));
+  assert.ok(v.error.includes("more than one rule"), JSON.stringify(v));
+  assert.equal((await call(s, "GET", path))[1].is_default, true);
+  // Saved with one, it reads back, and decides, as it was sent.
+  [status] = await call(s, "POST", path, { rules: [{ tool: "Bash", decision: "never" }, { tool: "mcp__g", decision: "allow" }] });
+  assert.equal(status, 200);
+  [, v] = await call(s, "GET", path);
+  assert.deepEqual(v.rules, [{ tool: "Bash", decision: "never" }, { tool: "mcp__g", decision: "allow" }]);
+  assert.equal(approval_rules.decide(approval_rules.get(s.db(), profile.id), "Bash")?.decision, "never");
+});
+
+test("approval_rules_and_the_action_log_take_only_what_they_should", async () => {
+  const s = testing.state();
+  const profile = db.insert_profile(s.db(), "p", [], null);
+  const path = `/api/profiles/${profile.id}/approval-rules`;
+  // The view: the defaults until the profile saves its own, and what the UI needs to name the board's tools.
+  let [status, v] = await call(s, "GET", path);
+  assert.equal(status, 200);
+  assert.deepEqual([v.is_default, v.expiry_minutes, v.board_server, v.google_server, v.create_task_tools], [true, 30, "huntaway", "google", ["create_task"]]);
+  assert.deepEqual(v.rules, v.defaults.rules);
+  // Only the expiry: the rules stay the defaults' (saved now), and a week at most.
+  [status, v] = await call(s, "POST", path, { expiry_minutes: 0 });
+  assert.deepEqual([status, v.is_default, v.expiry_minutes, v.rules.length], [200, false, 0, v.defaults.rules.length]);
+  assert.equal((await call(s, "POST", path, { expiry_minutes: 7 * 24 * 60 + 1 }))[0], 400);
+  // Rules of the wrong shape aren't taken.
+  for (const body of [{ rules: [{ tool: "x", decision: "maybe" }] }, { rules: "Bash" }, { expiry_minutes: -1 }, { expiry_minutes: 1.5 }]) {
+    assert.ok([400, 422].includes((await call(s, "POST", path, body))[0]), JSON.stringify(body));
+  }
+  // Reset: the defaults again.
+  [, v] = await call(s, "POST", path, { reset: true });
+  assert.equal(v.is_default, true);
+  // A profile that isn't there.
+  assert.equal((await call(s, "GET", "/api/profiles/nope/approval-rules"))[0], 404);
+  assert.equal((await call(s, "POST", "/api/profiles/nope/approval-rules", { reset: true }))[0], 404);
+  assert.equal((await call(s, "GET", "/api/profiles/nope/approval-log"))[0], 404);
+  // The action log is the profile's own.
+  const other = db.insert_profile(s.db(), "q", [], null);
+  const mine = db.insert_task(s.db(), {
+    profile_id: profile.id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null,
+    claude_config_id: null,
+  });
+  approval_rules.log_blocked(s, mine, "mcp__g__delete", { id: 1 }, "mcp__g__*delete*");
+  assert.equal((await call(s, "GET", `/api/profiles/${profile.id}/approval-log`))[1].length, 1);
+  assert.deepEqual((await call(s, "GET", `/api/profiles/${other.id}/approval-log?limit=5`))[1], []);
+  // Answering a prompt from a notification needs no board token, but the rest of the API does.
+  if (!s.local_router) router(s);
+  const bare = (method: string, url: string, body: any) =>
+    dispatch(s, makeReq(method, url, { "content-type": "application/json" }, Buffer.from(JSON.stringify(body))));
+  assert.equal((await bare("POST", "/api/permissions/x/push-answer", { token: "t", decision: "allow" })).status, 403);
+  assert.equal((await bare("GET", path, null)).status, 401);
 });

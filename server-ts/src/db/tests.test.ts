@@ -1,7 +1,7 @@
 // Port of server/src/db/tests.rs.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as db from "../db.ts";
@@ -11,7 +11,7 @@ import {
   PAGE_BYTES, PrChecks_default, Queued_new, Reviewer_default, SCRATCH, VERSION, add_cost, api_env, available_configs, check_dependencies, check_resolution,
   clear_queued, clone_dir_or_default, default_clone_dir, delete_claude_config, drop_dependency, ensure_profile, get_claude_config, get_profile, get_project,
   get_task, idle_sessions, insert_claude_config, insert_message, insert_profile, insert_project, insert_run, insert_scratch_task, insert_task, is_scratch,
-  list_claude_configs, list_messages, list_profiles, message_page, migrate_claude_configs, open, preview_for, proxy, queue, scratch_task_by_number, set_setting,
+  list_claude_configs, list_messages, list_profiles, message_page, migrate_claude_configs, open, preview_for, proxy, queue, scratch_task_by_number, set_run_config_dir, set_run_session, set_setting,
   subagent_messages, subproject_status, summarizers_for, take_queued, task_claude_config, task_config_dir, unmet_dependencies, update_claude_config,
   update_profile, update_project, update_task, user_replies,
   type Message, type NewProject, type NewTask, type Project, type Task, type UserReplies,
@@ -389,7 +389,7 @@ test("a_database_from_version_88_gets_the_thread_tables", () => {
   again.close();
 });
 
-test("a_database_from_version_92_gets_threads_kept_as_items", () => {
+test("a_database_from_version_94_gets_threads_kept_as_items", () => {
   const path = db_path();
   // A task from before, with a message: it isn't flagged.
   const c0 = open(path);
@@ -397,14 +397,14 @@ test("a_database_from_version_92_gets_threads_kept_as_items", () => {
   const t = db.insert_task(c0, { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false });
   db.insert_message(c0, t.id, "user", { text: "hi" });
   c0.close();
-  prepare_at(path, "DROP TABLE threads; ALTER TABLE tasks DROP COLUMN thread_items; PRAGMA user_version=92;");
+  prepare_at(path, "DROP TABLE threads; ALTER TABLE tasks DROP COLUMN thread_items; PRAGMA user_version=94;");
   const c = open(path);
   assert.equal(user_version(c), VERSION);
   assert.ok(Number(db.value(c, "SELECT COUNT(*) FROM pragma_table_info('threads')")) > 0);
   assert.equal(db.value(c, "SELECT thread_items FROM tasks WHERE id=?1", t.id), 0);
   c.close();
-  // Again from 92 with them there (another build took the version): it goes on.
-  prepare_at(path, "PRAGMA user_version=92;");
+  // Again from 94 with them there (another build took the version): it goes on.
+  prepare_at(path, "PRAGMA user_version=94;");
   const again = open(path);
   assert.equal(user_version(again), VERSION);
   again.close();
@@ -1133,6 +1133,55 @@ test("profile_config_dirs_become_claude_configs", () => {
   assert.equal(user_version(c), 18);
 });
 
+// HA-238: a config's folder changed while a thread had a conversation in it (and was changed back). The thread goes on
+// in the folder its conversation is in, as the config's settings say, rather than not finding it in the new one.
+test("a_thread_goes_on_in_the_folder_its_conversation_started_in", () => {
+  const c = open(":memory:");
+  const dir = temp_dir();
+  const old_dir = join(dir, "claude-a");
+  mkdirSync(old_dir);
+  const cfg = insert_claude_config(c, "me", old_dir, "claude");
+  const p = insert_profile(c, "p", [cfg.id], null);
+  insert_project(c, np(p.id));
+  const started = (session: string | null, at: string | null) => {
+    const t = insert_task(c, nt(p.id, { project_id: "pr", claude_config_id: cfg.id }));
+    const r = insert_run(c, t.id, "prompt");
+    set_run_config_dir(c, r.id, at);
+    if (session != null) {
+      set_run_session(c, r.id, session);
+      update_task(c, t.id, [["session_id", session]]);
+    }
+    return get_task(c, t.id)!;
+  };
+  const before = started("s1", old_dir);
+  const fresh = started(null, old_dir);
+  const on_default = started("s2", null);
+  // A conversation from before runs kept their folder.
+  const unknown = insert_task(c, nt(p.id, { project_id: "pr", claude_config_id: cfg.id }));
+  update_task(c, unknown.id, [["session_id", "s3"]]);
+  const new_dir = join(dir, "claude-b");
+  update_claude_config(c, cfg.id, [["config_dir", new_dir]]);
+  assert.equal(task_config_dir(c, before), old_dir);
+  assert.equal(task_config_dir(c, on_default), null);
+  // A thread that hasn't started a conversation, or whose folder isn't known, moves to the new folder.
+  assert.equal(task_config_dir(c, fresh), new_dir);
+  assert.equal(task_config_dir(c, get_task(c, unknown.id)!), new_dir);
+  // A later run that resumed it somewhere else doesn't move it.
+  const later = insert_run(c, before.id, "prompt");
+  set_run_config_dir(c, later.id, new_dir);
+  set_run_session(c, later.id, "s1");
+  assert.equal(task_config_dir(c, before), old_dir);
+  // A new conversation is kept where its run was started.
+  const again = insert_run(c, before.id, "prompt");
+  set_run_config_dir(c, again.id, new_dir);
+  set_run_session(c, again.id, "s4");
+  assert.equal(task_config_dir(c, update_task(c, before.id, [["session_id", "s4"]])!), new_dir);
+  update_task(c, before.id, [["session_id", "s1"]]);
+  // Its old folder gone (moved to the new one, say), it goes on in the config's.
+  rmSync(old_dir, { recursive: true });
+  assert.equal(task_config_dir(c, get_task(c, before.id)!), new_dir);
+});
+
 test("threads_pick_their_project_or_profile_config", () => {
   const c = open(":memory:");
   const work = insert_claude_config(c, "work", "~/.claude-work", "claude");
@@ -1449,4 +1498,30 @@ test("a_database_from_version_72_keeps_new_sessions_apart", () => {
   // The run of the new conversation that was going during the upgrade starts from nothing.
   assert.ok(close(add_cost(c, "c", "new", 0.25, true), 0.25));
   c.close();
+});
+
+test("a_database_from_version_93_keeps_its_prompts_waiting_without_an_expiry", () => {
+  const path = db_path();
+  prepare_at(
+    path,
+    `PRAGMA foreign_keys=OFF; DROP INDEX permission_requests_expiry; ALTER TABLE permission_requests DROP COLUMN expires_at;
+     ALTER TABLE permission_requests DROP COLUMN rule; DROP TABLE push_answer_tokens; DROP TABLE approval_log;
+     INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id,kind) VALUES ('p','t',1,'Bash','{}','pending','1','c','tool');
+     PRAGMA user_version=93;`,
+  );
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  // A prompt from before has no expiry or rule, so it waits as it did.
+  assert.deepEqual({ ...(db.one(c, "SELECT status, expires_at, rule FROM permission_requests WHERE id='p'") as any) }, { status: "pending", expires_at: null, rule: null });
+  db.run(c, "INSERT INTO push_answer_tokens (token_hash,request_id,host_id,task_id,created_at,expires_at) VALUES ('h','p','x','t','1','2')");
+  assert.equal(db.value(c, "SELECT status FROM push_answer_tokens WHERE token_hash='h'"), "pending");
+  db.run(c, "INSERT INTO approval_log (id,profile_id,task_id,tool_name,summary,rule,decision,outcome,created_at) VALUES ('l','p','t','x','','x','ask','pending','1')");
+  c.close();
+  // A database that has some of it already (another migration took the number first) gets the rest.
+  const partial = db_path();
+  prepare_at(partial, "DROP TABLE approval_log; ALTER TABLE push_answer_tokens DROP COLUMN expires_at; PRAGMA user_version=93;");
+  const c2 = open(partial);
+  assert.ok(has_column(c2, "push_answer_tokens", "expires_at") && has_column(c2, "permission_requests", "rule"));
+  assert.equal(db.value(c2, "SELECT COUNT(*) FROM approval_log"), 0);
+  c2.close();
 });

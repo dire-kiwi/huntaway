@@ -24,6 +24,7 @@ import * as window from "./agent/window.ts";
 import * as focus from "./agent/focus.ts";
 import * as runs from "./agent/runs.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
+import * as permissions from "./mcp/permissions.ts";
 import * as pr_watch from "./mcp/pr_watch.ts";
 import * as mcp_http from "./mcp/http.ts";
 import * as terminal from "./hosts/terminal.ts";
@@ -525,6 +526,7 @@ export async function serve(args: ServeArgs) {
   attachments.start_pruner(state);
   runs.start_pruner(state);
   task_tmp.start_sweeper(state);
+  permissions.start_sweeper(state);
   automations.start(state);
   workflows.resume(state);
   merged.start(state);

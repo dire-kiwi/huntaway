@@ -23,6 +23,9 @@ Set these in the server's environment (before test-server.sh, which keeps them f
   IA_FAKE_CLAUDE_COST    what each stream-json run costs (default 0): its result reports its session's total,
                          which goes on over the runs that resume the session (kept in a file beside the log),
                          as Claude Code's `total_cost_usd` does
+  IA_FAKE_CLAUDE_LOGIN   "out" answers every run as Claude Code does in a config folder with no login
+  IA_FAKE_CLAUDE_SESSIONS  "1" keeps the sessions each config folder (CLAUDE_CONFIG_DIR) has, in a file
+                         beside the log, and fails a --resume of one the folder hasn't, as Claude Code does
 
 Messages steered into a run (stream-json lines on stdin after the prompt, while it sleeps) are echoed back as
 Claude Code does (`isReplay`), and answered in its reply. A `/compact` prompt prints a compact_boundary. A prompt
@@ -88,6 +91,25 @@ if opt("--output-format") in ("text", "json"):
 
 session = opt("--resume") or str(uuid.uuid4())
 model = opt("--model") or "fake"
+if os.environ.get("IA_FAKE_CLAUDE_SESSIONS") == "1":
+    # Each config folder's sessions, as Claude Code keeps them in its projects folder.
+    known_file = os.path.join(os.path.dirname(log or os.path.abspath(".")), "fake-claude-sessions")
+    try:
+        with open(known_file) as f:
+            known = json.load(f)
+    except (OSError, ValueError):
+        known = {}
+    folder = os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")
+    if opt("--resume") and session not in known.get(folder, []):
+        emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "duration_ms": 0, "duration_api_ms": 0, "num_turns": 0,
+              "session_id": session, "total_cost_usd": 0, "errors": ["No conversation found with session ID: " + session]})
+        sys.stderr.write("No conversation found with session ID: " + session + "\n")
+        sys.exit(1)
+    known.setdefault(folder, [])
+    if session not in known[folder]:
+        known[folder].append(session)
+    with open(known_file, "w") as f:
+        json.dump(known, f)
 emit({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": os.getcwd(), "tools": []})
 time.sleep(float(os.environ.get("IA_FAKE_CLAUDE_SLEEP", "0")))
 if opt("--input-format") == "stream-json":
@@ -147,6 +169,14 @@ if usage == "extra":
     info = {"status": "rejected", "resetsAt": resets, "rateLimitType": "five_hour", "overageStatus": "allowed", "isUsingOverage": True,
             "unifiedWindows": {"five_hour": {"utilization": 1, "resetsAt": resets, "status": "rejected"}}}
     emit({"type": "rate_limit_event", "rate_limit_info": info, "session_id": session})
+if os.environ.get("IA_FAKE_CLAUDE_LOGIN") == "out":
+    # What Claude Code prints in a config folder with no login: the session is started, and never reaches the API.
+    text = "Not logged in · Please run /login"
+    emit({"type": "assistant", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None, "error": "authentication_failed",
+          "message": {"id": str(uuid.uuid4()), "role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": text}]}})
+    emit({"type": "result", "subtype": "success", "is_error": True, "result": text, "session_id": session, "duration_ms": 50, "duration_api_ms": 0,
+          "num_turns": 1, "total_cost_usd": 0, "terminal_reason": "api_error"})
+    sys.exit(1)
 if usage == "out":
     # What Claude Code prints when the plan's 5-hour limit refuses a turn.
     resets = int(time.time() + float(os.environ.get("IA_FAKE_CLAUDE_LIMIT", "7200")))
