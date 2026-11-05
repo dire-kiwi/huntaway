@@ -9,6 +9,8 @@ import {
   hostCompat,
   hostSupports,
   isScratch,
+  isAssistant,
+  hasAssistant,
   wsUrl,
   type ClaudeConfig,
   type Host,
@@ -349,6 +351,8 @@ export const useStore = create<State>((set, get) => ({
     const reviews = hostSupports(get().hosts.find((x) => x.id === h), 12);
     const groups = hostSupports(get().hosts.find((x) => x.id === h), 34);
     const archiving = hostSupports(get().hosts.find((x) => x.id === h), 46);
+    // The profile's assistant too, for the sidebar and its page: the boards leave it out.
+    const assistants = hasAssistant(get().hosts.find((x) => x.id === h));
     let projects: Project[] = [];
     let archived: Project[] = [];
     let tasks: Task[] = [];
@@ -362,7 +366,7 @@ export const useStore = create<State>((set, get) => ({
           // Group and scratch tasks are in no project.
           const [ps, projectless, gone] = await Promise.all([
             api.projects(h, profile.id),
-            groups ? api.groupTasks(h, profile.id) : [],
+            groups ? api.groupTasks(h, profile.id, assistants) : [],
             archiving ? api.projects(h, profile.id, true) : [],
           ]);
           // A project deleted since it was listed has no tasks (and its project_deleted event follows).
@@ -892,7 +896,8 @@ export function taskKey(t: Task, projects: Project[]) {
 }
 
 /** What goes before a task's number: its project's key, `G` for a group task, or `S` for a scratch task. */
-export const keyPrefix = (t: Task, project?: Project) => project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : "T");
+export const keyPrefix = (t: Task, project?: Project) =>
+  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistant(t) ? "A" : "T");
 
 /** A group task: in no project, it plans the work of its group's projects. */
 export const isGroupTask = (t: Task) => t.kind === "task" && !t.project_id && !!t.group_name;

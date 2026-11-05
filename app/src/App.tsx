@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { lazy, Suspense, useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
-import { fetchOpenToken, getToken, setUnauthorizedHandler } from "./api";
+import { fetchOpenToken, getToken, isAssistant, setUnauthorizedHandler } from "./api";
 import { Analytics } from "./components/settings/Analytics";
 import { ProjectApprovals } from "./components/task/Approvals";
 import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/board/Board";
@@ -12,6 +12,7 @@ import { ProjectSettings } from "./components/settings/project/ProjectSettings";
 import { TokenScreen } from "./components/settings/TokenScreen";
 import { Sidebar } from "./components/layout/Sidebar";
 import { TaskPanel, TaskView } from "./components/task/TaskView";
+import { AssistantPage } from "./components/task/AssistantPage";
 import { UnhandledErrors } from "./components/layout/UnhandledErrors";
 import { useDrawer, useNarrow } from "./narrow";
 import { startNotifications } from "./notifier";
@@ -64,12 +65,14 @@ export function App() {
 
   // Tasks open beside their board, so a task's own page moves there once its project is known.
   useEffect(() => {
+    // A profile's assistant has a page of its own.
+    if (routeTask && isAssistant(routeTask)) return void (routeProfile && navigate({ name: "assistant", profile: routeProfile }, true));
     if (routeTask && routeGroup) return navigate(groupTaskUrl(routeTask.host_id, routeGroup, routeTask.id), true);
     if (routeTask?.kind === "task" && !routeTask.project_id && routeProfile) return navigate(profileTaskUrl(routeProfile, routeTask.id), true);
     if (!routeTask?.project_id) return;
     if (routeSubproject) navigate(subprojectTaskUrl(routeSubproject.id, routeTask.id), true);
     else navigate(boardTaskUrl(routeTask.project_id, routeTask.id), true);
-  }, [routeTask?.project_id, routeTask?.id, routeTask?.host_id, routeTask?.kind, routeSubproject, routeGroup, routeProfile]);
+  }, [routeTask?.project_id, routeTask?.id, routeTask?.host_id, routeTask?.kind, routeTask?.task_type, routeSubproject, routeGroup, routeProfile]);
 
   // The narrow layout's drawer closes once it's taken you somewhere, and when the window gets wide enough for the sidebar.
   const page = JSON.stringify(route);
@@ -111,6 +114,7 @@ export function App() {
       <div className="relative min-w-0 flex-1">
         <div className="h-full min-w-0">
           {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
+          {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
           {route.name === "board" && <Board projectId={route.projectId} />}
           {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
           {route.name === "task" && <TaskView taskId={route.taskId} />}

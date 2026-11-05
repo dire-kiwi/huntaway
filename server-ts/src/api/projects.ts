@@ -600,13 +600,13 @@ function key_owner(projects: Project[], project_id: string | null, key: string):
   return projects.find((p) => p.id !== project_id && uses(p)) ?? null;
 }
 
-/** Group tasks' keys are `G-<n>` and scratch tasks' `S-<n>`, so no project can have the key G or S. */
+/** Group tasks' keys are `G-<n>`, scratch tasks' `S-<n>` and assistants' `A-<n>`, so no project can have the key G, S or A. */
 function reserved(key: string): boolean {
-  return key === runner.GROUP_TASK_KEY || key === db.SCRATCH_TASK_KEY;
+  return key === runner.GROUP_TASK_KEY || key === db.SCRATCH_TASK_KEY || key === db.ASSISTANT_TASK_KEY;
 }
 
 function reserved_key(key: string): ApiError {
-  const by = key === db.SCRATCH_TASK_KEY ? "scratch tasks" : "group tasks";
+  const by = key === db.SCRATCH_TASK_KEY ? "scratch tasks" : key === db.ASSISTANT_TASK_KEY ? "the assistant" : "group tasks";
   return ApiError.bad(`the key ${key} is used by ${by}; pick another`);
 }
 

@@ -8,6 +8,7 @@ import {
   hostStatuses,
   hostSupports,
   isArchived,
+  isAssistant,
   STATUSES,
   taskLabels,
   type Host,
@@ -215,7 +216,8 @@ export function TaskBoard({
       picked = [
         ...list.filter((t) => t.project_id && byId.has(`${t.host_id}:${t.project_id}`) && t.kind === "task" && (t.parent_id ?? null) === parentId),
         ...(group && hostId && !subproject ? groupTasks(list, hostId, group) : []),
-        ...(profiles ? list.filter((t) => !t.project_id && t.kind === "task" && profiles.has(`${t.host_id}:${t.profile_id}`)) : []),
+        // Not the profile's assistant, which the sidebar opens.
+        ...(profiles ? list.filter((t) => !t.project_id && t.kind === "task" && !isAssistant(t) && profiles.has(`${t.host_id}:${t.profile_id}`)) : []),
       ];
       return picked;
     };

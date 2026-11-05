@@ -73,7 +73,7 @@ export function dir(state: Shared, task_id: string): string {
  * before they were labels, which works in its own folder.
  */
 export function documents_only(task: Task): boolean {
-  return task.kind === "task" && !db.is_scratch(task) && task.work_dir != null;
+  return task.kind === "task" && !db.is_scratch(task) && !db.is_assistant(task) && task.work_dir != null;
 }
 
 /**
@@ -122,14 +122,20 @@ export function remove(state: Shared, task_id: string): void {
  * where it writes its documents (and a scratch task its notes).
  */
 export function writes_own_folder(state: Shared, task: Task, tool_name: string, input: any): boolean {
-  const own = task.kind === "task" && (labels(task).length > 0 || db.is_scratch(task) || documents_only(task));
+  const own = task.kind === "task" && (labels(task).length > 0 || db.is_scratch(task) || db.is_assistant(task) || documents_only(task));
   if (!own || !["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(tool_name)) return false;
   const file = typeof input?.file_path === "string" ? input.file_path : typeof input?.notebook_path === "string" ? input.notebook_path : null;
   if (file === null) return false;
   // A `..`, or a symlink in the folder, could lead back out of it.
   if (!isAbsolute(file) || file.split("/").includes("..")) return false;
-  const f = resolved(file), d = resolved(dir(state, task.id));
-  return f !== null && d !== null && (f === d || f.startsWith(d.endsWith("/") ? d : `${d}/`));
+  const f = resolved(file);
+  if (f === null) return false;
+  // The assistant's workspace is its own too (see agent/assistant.ts).
+  const workspace = db.is_assistant(task) ? work_dir(state, task) : null;
+  return [dir(state, task.id), workspace].some((x) => {
+    const d = x === null ? null : resolved(x);
+    return d !== null && (f === d || f.startsWith(d.endsWith("/") ? d : `${d}/`));
+  });
 }
 
 /**

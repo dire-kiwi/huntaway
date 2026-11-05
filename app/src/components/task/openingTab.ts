@@ -22,12 +22,15 @@ export const summaryReady = (task: Task) =>
 /**
  * The tab a task opens on. A task with labels opens on its first label's document when it's ready, and one whose
  * review passed on the summary of its changes (see summaryReady). Otherwise one that makes only documents opens on the
- * thread, and any other task not started yet (to do or backlog) on its details, the rest on the thread.
+ * thread, and any other task not started yet (to do or backlog) on its details, the rest on the thread. The profile's
+ * assistant (API 109), which is back in To do after each reply, is a conversation: it always opens on the thread.
  */
 export function openingTab(task: Task | undefined): string {
   const labels = task ? taskLabels(task) : [];
   if (labels.length && documentReady(task!)) return labels[0];
   if (task && summaryReady(task)) return "summary";
   if (task && documentsOnly(task)) return "thread";
+  // As `isAssistant`, which the unit tests can't import (its module's imports have no extensions).
+  if (task && task.kind === "task" && task.task_type === "assistant") return "thread";
   return task?.status === "todo" || task?.status === "backlog" ? "details" : "thread";
 }

@@ -733,17 +733,9 @@ export function effective(c: Conn, project: Project): [Skill[], McpServer[]] {
  * switched off can't.
  */
 export function effective_with(c: Conn, project: Project, extra: string[]): [Skill[], McpServer[]] {
-  const profile = switches(c, "profile", project.profile_id);
-  const own = switches(c, "project", project.id);
-  const on = (id: string) => (Object.hasOwn(own, id) ? own[id] : Object.hasOwn(profile, id) ? profile[id] : false) === true;
   const skills = list_skills(c, project.id).filter((s) => s.enabled);
   const servers = list_mcp_servers(c, project.id).filter((s) => s.enabled);
-  for (const g of list_skills(c, null)) {
-    if (g.enabled && on(g.id) && !skills.some((s) => s.name === g.name)) skills.push(g);
-  }
-  for (const g of list_mcp_servers(c, null)) {
-    if (g.enabled && on(g.id) && !servers.some((s) => s.name === g.name)) servers.push(g);
-  }
+  add_global(c, project.profile_id, project.id, skills, servers);
   if (extra.length) {
     const more = [...list_skills(c, project.id), ...list_skills(c, null)];
     for (const name of extra) {
@@ -760,26 +752,74 @@ export function effective_with(c: Conn, project: Project, extra: string[]): [Ski
 }
 
 /**
+ * What's on for a profile's runs in no project (its assistant, see agent/assistant.ts): the global skills and servers the
+ * profile switches on.
+ */
+export function effective_for_profile(c: Conn, profile_id: string): [Skill[], McpServer[]] {
+  const skills: Skill[] = [], servers: McpServer[] = [];
+  add_global(c, profile_id, null, skills, servers);
+  return [skills, servers];
+}
+
+/**
+ * Adds to `skills` and `servers` the global ones switched on for the project (its override, else the profile's default),
+ * or with no project for the profile, that don't share a name with them.
+ */
+function add_global(c: Conn, profile_id: string, project_id: string | null, skills: Skill[], servers: McpServer[]): void {
+  const profile = switches(c, "profile", profile_id);
+  const own = project_id !== null ? switches(c, "project", project_id) : {};
+  const on = (id: string) => (Object.hasOwn(own, id) ? own[id] : Object.hasOwn(profile, id) ? profile[id] : false) === true;
+  for (const g of list_skills(c, null)) {
+    if (g.enabled && on(g.id) && !skills.some((s) => s.name === g.name)) skills.push(g);
+  }
+  for (const g of list_mcp_servers(c, null)) {
+    if (g.enabled && on(g.id) && !servers.some((s) => s.name === g.name)) servers.push(g);
+  }
+}
+
+/**
  * Set up a project's skills and servers for a run of thread `thread_id` (a review or summary thread has the board skills
  * its reviewer asks for as well, see `db.thread_skills`).
  */
 export function for_run(state: Shared, project_id: string, thread_id: string | null): RunTools {
-  return run_tools(state, project_id, thread_id, true);
+  return run_tools(state, { project: project_id, thread_id }, true);
 }
 
 /** A project's skills and servers as a run would have them, without setting up its skills. */
 export function for_preview(state: Shared, project_id: string): RunTools {
-  return run_tools(state, project_id, null, false);
+  return run_tools(state, { project: project_id, thread_id: null }, false);
 }
 
-function run_tools(state: Shared, project_id: string, thread_id: string | null, sync: boolean): RunTools {
+/**
+ * Set up the skills and servers for a run of `task`: its project's, or for a profile's assistant (in no project) the
+ * global ones its profile switches on. Other tasks in no project get none.
+ */
+export function for_task_run(state: Shared, task: Task, project: Project | null): RunTools {
+  if (project) return for_run(state, project.id, task.kind === "review" ? task.id : null);
+  if (db.is_assistant(task)) return run_tools(state, { profile: task.profile_id }, true);
+  return RunTools_default();
+}
+
+/** Whose skills and servers a run gets: a project's (with a review or summary thread's own), or a profile's, for its runs in no project. */
+type Scope = { project: string; thread_id: string | null } | { profile: string };
+
+function run_tools(state: Shared, scope: Scope, sync: boolean): RunTools {
   const c = state.db();
-  const project = db.get_project(c, project_id);
-  if (!project) throw new Error("project not found");
-  const extra: string[] = thread_id !== null ? db.thread_skills(c, thread_id) : [];
-  const [skills, servers] = effective_with(c, project, extra);
-  const o = get_overrides(c, project_id);
-  const root = thread_id !== null && extra.length ? thread_skills_root(state, project_id, thread_id) : skills_root(state, project_id);
+  let skills: Skill[], servers: McpServer[], o: Overrides, root: string;
+  if ("project" in scope) {
+    const { project: project_id, thread_id } = scope;
+    const project = db.get_project(c, project_id);
+    if (!project) throw new Error("project not found");
+    const extra: string[] = thread_id !== null ? db.thread_skills(c, thread_id) : [];
+    [skills, servers] = effective_with(c, project, extra);
+    o = get_overrides(c, project_id);
+    root = thread_id !== null && extra.length ? thread_skills_root(state, project_id, thread_id) : skills_root(state, project_id);
+  } else {
+    [skills, servers] = effective_for_profile(c, scope.profile);
+    // A profile has no list of others' skills and servers to turn off.
+    o = Overrides_default();
+    root = join(state.data_dir, "profiles", scope.profile, "agent");
+  }
   if (sync) sync_skills(join(root, ".claude", "skills"), skills, sources_root(state));
   const t = RunTools_default();
   t.skills_dir = skills.length ? path_str(root) : null;
@@ -912,6 +952,10 @@ export async function for_task(s: AppState, r: Req): Promise<any> {
     board = effective_with(c, project, extra)[0];
     board_off = board_skills_off(c, project, board);
     o = get_overrides(c, project.id);
+  } else if (db.is_assistant(task)) {
+    // A profile's assistant has the global skills its profile switches on (see for_task_run).
+    board = effective_for_profile(c, task.profile_id)[0];
+    board_off = list_skills(c, null).map((s) => s.name).filter((n) => !board.some((s) => s.name === n));
   }
   const repo = project ? expand_tilde(project.repo_path) : null;
   const is_codex = config !== null && db.is_codex(config);
