@@ -14,6 +14,7 @@ import * as permissions from "../mcp/permissions.ts";
 import * as questions from "../mcp/questions.ts";
 import * as pr_watch from "../mcp/pr_watch.ts";
 import * as review from "../review.ts";
+import * as workflows from "../integrations/workflows.ts";
 import * as summary from "../review/summary.ts";
 import { def_str, json_map, opt_str, query_bool, query_int, query_opt_bool, req_str, body_rejection, def_bool } from "./extract.ts";
 import { create_task_inner } from "./new_task.ts";
@@ -71,7 +72,8 @@ export async function stop_task(s: AppState, r: Req) {
   const agent = runner.stop(s, id);
   const reviewing = review.stop(s, id);
   const summarising = summary.stop(s, id);
-  return { stopped: agent || reviewing || summarising };
+  const workflow_runs = workflows.stop(s, id);
+  return { stopped: agent || reviewing || summarising || workflow_runs };
 }
 
 /** Summarise the task's changes now (see review/summary.rs). */

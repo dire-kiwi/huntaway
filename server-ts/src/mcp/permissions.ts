@@ -128,6 +128,8 @@ export async function approve(s: Shared, task: Task, call_id: string, kind: stri
   const data = { kind, tool_name: tool, input };
   let question: string;
   if (kind === "delete_task") question = "Delete a task?";
+  else if (kind === "automation" && input?.workflow != null && input?.op === "delete") question = "Delete a workflow?";
+  else if (kind === "automation" && input?.workflow != null) question = "Approve a workflow?";
   else if (kind === "automation" && input?.op === "delete") question = "Delete an automation?";
   else if (kind === "automation") question = "Approve an automation?";
   else if (kind === "project" && tool === "create_project") question = "Add a project?";
@@ -574,6 +576,15 @@ export function expire_for_automation(s: Shared, automation_id: string): void {
     s,
     "SELECT id, message_id FROM permission_requests WHERE kind='automation' AND status='pending' AND json_extract(input, '$.automation.id')=?1",
     automation_id,
+  );
+}
+
+/** Expire the unanswered requests to change or delete a workflow that's been deleted, asked from any thread. */
+export function expire_for_workflow(s: Shared, workflow_id: string): void {
+  expire(
+    s,
+    "SELECT id, message_id FROM permission_requests WHERE kind='automation' AND status='pending' AND json_extract(input, '$.workflow.id')=?1",
+    workflow_id,
   );
 }
 

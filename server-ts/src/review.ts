@@ -168,7 +168,8 @@ async function start_locked(state: AppState, task_id: string, manual: boolean): 
   // Each reviewer reviews in its own thread, kept from one review to the next.
   const specs = db.reviewers_for(state.db(), project);
   const task_config = db.task_claude_config(state.db(), task);
-  const threads = db.review_threads(state.db(), task.id).filter((t) => !summary.is_summary(t));
+  // Summary and workflow threads aren't reviewers'.
+  const threads = db.review_threads(state.db(), task.id).filter((t) => t.task_type == null);
   const key = `${project.key}-${task.number}`;
   const parts: ReviewerRun[] = [];
   // What each reviewer looks for: its own instructions, else the project's.
@@ -348,7 +349,7 @@ export const REPLY_CHARS = 2000;
 export const REPLY_CONTEXT_CHARS = 1500;
 export const REPLIES_CHARS = 12000;
 /** How many of the user's latest messages are read for the prompt, at most (fewer fit when they're long). */
-const REPLIES = 100;
+export const REPLIES = 100;
 
 /**
  * `instructions` (the project's, or the default) say what to look for; the rest locates the work, says what the user

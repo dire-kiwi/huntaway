@@ -18,6 +18,7 @@ import * as worktree from "../git/worktree.ts";
 import * as permissions from "../mcp/permissions.ts";
 import * as terminal from "../hosts/terminal.ts";
 import * as review from "../review.ts";
+import * as workflows from "../integrations/workflows.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as attachments from "../attachments.ts";
 import { char_count, debug_list, json_map, query_bool, query_rejection, rfc3339_utc } from "./extract.ts";
@@ -340,6 +341,7 @@ export async function update_task_inner(s: AppState, id: string, b: Record<strin
     // This may have queued a merge or ended one.
     runner.start_next_merge(s, t.project_id ?? null);
     if (t.status === "in_review" && current.status !== "in_review" && t.kind === "task") review.on_in_review(s, t);
+    if (t.status !== current.status) workflows.on_status(s, t);
     // A finished task's terminal and tools aren't needed any more.
     if (t.status === "done" && current.status !== "done") {
       terminal.kill_all(s, t.id).catch((e: any) => console.error(`ending ${t.id}'s terminals:`, e));
