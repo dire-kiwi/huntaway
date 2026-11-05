@@ -181,7 +181,7 @@ test("ratings_from_the_brief_tab_land_in_memory_committed_as_the_users", async (
   [, r] = await call(s, "POST", url, { rating: "down", kind: "weather", text: "Rain at 3pm" });
   assert.equal(r.line, `- Less like this — other: Rain at 3pm (rated ${date})`);
   // Many at once all land.
-  const calls = [];
+  const calls: Array<Promise<[number, any]>> = [];
   for (let i = 0; i < 8; i++) calls.push(call(s, "POST", url, { rating: "up", kind: "board", topic: `Task ${i}` }));
   for (const [st, r] of await Promise.all(calls)) assert.equal(st, 200, j(r));
   text = readFileSync(join(dir, memory.MEMORY_FILE), "utf8");

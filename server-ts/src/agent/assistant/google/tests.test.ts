@@ -215,7 +215,7 @@ test("the_client_file_is_read_as_google_cloud_downloads_it", () => {
   const web = consent.read_client('{"web": {"client_id": "w", "client_secret": "s", "token_uri": "http://127.0.0.1:1/token"}}');
   assert.ok(web.web && web.token_uri === "http://127.0.0.1:1/token");
   for (const bad of ["nope", "{}", '{"installed": {"client_id": "x"}}', '{"installed": {"client_secret": "x"}}']) {
-    assert.throws(() => consent.read_client(bad), undefined, bad);
+    assert.throws(() => consent.read_client(bad), Error, bad);
   }
 });
 
