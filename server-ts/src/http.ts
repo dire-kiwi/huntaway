@@ -248,15 +248,24 @@ export function parseBody(raw: Buffer): any {
   }
 }
 
+/**
+ * A request's body, up to `limit` bytes. A longer one is a 413, as axum's limit is: the rest of it is read and dropped
+ * rather than the connection reset, which the client would see as the server going away before it could read the answer
+ * (a hub updating a host heard "unreachable: read ECONNRESET", HA-185). The server closes the connection after the
+ * answer (see serve.ts), so a client can't go on sending.
+ */
 export function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let over = false;
     req.on("data", (c: Buffer) => {
+      if (over) return;
       size += c.length;
       if (size > limit) {
+        over = true;
+        chunks.length = 0;
         reject(new ApiError(413, "length limit exceeded"));
-        req.destroy();
         return;
       }
       chunks.push(c);

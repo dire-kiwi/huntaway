@@ -167,7 +167,8 @@ function host_routes(r: Router) {
   r.route("/fs/dirs", { GET: host.fs_dirs });
   r.route("/admin/server", { GET: host.server_status });
   r.route("/admin/restart", { POST: host.restart_server });
-  r.route("/admin/update", { POST: host.update_from_hub });
+  // A hub's bundle of its branch: older hubs send all of it, several MB.
+  r.route("/admin/update", { POST: host.update_from_hub }, { limit: 256 << 20 });
   r.route("/admin/release/check", { POST: host.check_releases });
   r.route("/admin/release/update", { POST: host.update_to_release });
   r.route("/admin/release/rollback", { POST: host.roll_back_release });

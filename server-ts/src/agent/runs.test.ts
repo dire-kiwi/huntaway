@@ -8,7 +8,7 @@ import * as db from "../db.ts";
 import type { Shared } from "../state.ts";
 import * as testing from "../testing.ts";
 import { new_id, sleep } from "../util.ts";
-import { RUN_FORMAT, boot_id, follow_inner, pid_reused, prune, remove_finished, resume_reaping, run_dir, stop_orphan, timing } from "./runs.ts";
+import { RUN_FORMAT, SERVE_ENV, boot_id, follow_inner, pid_reused, prune, remove_finished, resume_reaping, run_dir, start, stop_orphan, timing } from "./runs.ts";
 
 // As Rust's are under cfg(test).
 timing.REAP_WAIT = 5_000;
@@ -308,4 +308,34 @@ test("takes_in_a_long_last_line_of_an_exited_run_whole", async () => {
   const run = db.get_run(state.db(), run_id)!;
   assert.deepEqual([run.out_offset, run.status], [Buffer.byteLength(out), "exited"]);
   rmSync(run_dir(state, run_id), { recursive: true, force: true });
+});
+
+test("an_agents_run_doesnt_get_the_servers_own_settings", async () => {
+  // A service's or the desktop app's settings for `huntaway serve` (HA-185): a server the agent starts mustn't get them.
+  const state = testing.state();
+  const task = new_task(state, "in_progress");
+  const run = db.insert_run(state.db(), task, "prompt");
+  const dir = testing.temp_dir();
+  // A stand-in ia-shim (`ia-shim <run dir> -- <program> <args>`) that writes down the environment it was started with.
+  const shim = join(dir, "shim");
+  writeFileSync(shim, `#!/bin/sh\nenv > "$1/env.txt"\necho $$ > "$1/pid"\n`, { mode: 0o755 });
+  const set = { IA_SHIM_BIN: shim, IA_CLAUDE_BIN: "/bin/true", HA185_KEPT: "yes", ...Object.fromEntries(SERVE_ENV.map((k) => [k, `from-the-server-${k}`])) };
+  const before = Object.fromEntries(Object.keys(set).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, set);
+  try {
+    const l = { run_id: run.id, cwd: dir, args: [], env: [["IA_FROM_LAUNCH", "1"]] as Array<[string, string]>, config_dir: null, prompt: "hi", input: false,
+      review: false, mcp_servers: {}, github_account: null, codex: null };
+    await start(state, l);
+  } finally {
+    for (const [k, v] of Object.entries(before)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+  const env = new Map(readFileSync(join(run_dir(state, run.id), "env.txt"), "utf8").split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  for (const k of SERVE_ENV) assert.equal(env.get(k), undefined, `${k} reached the agent`);
+  assert.equal(env.get("HA185_KEPT"), "yes");
+  assert.equal(env.get("IA_CLAUDE_BIN"), "/bin/true");
+  assert.equal(env.get("IA_FROM_LAUNCH"), "1");
+  assert.ok(env.get("PATH"));
 });
