@@ -33,7 +33,11 @@ for permission as Claude Code does, with a `can_use_tool` control request on std
 "fake-ask-permission" (a Bash call), "fake-ask-question" (AskUserQuestion) and "fake-ask-plan" (ExitPlanMode). It waits
 for each `control_response` on stdin (taking in messages sent meanwhile), and its reply says what each answer was
 ("permission Bash: allow", with a question's answers or a plan's new mode, or "deny: <message>"). An `interrupt`
-meanwhile cancels the request (`control_cancel_request`) and ends the turn as interrupted. A `/compact` prompt prints a compact_boundary. A prompt
+meanwhile cancels the request (`control_cancel_request`) and ends the turn as interrupted. A run whose input starts with an
+`initialize` control request that registers the in-process "huntaway" server (`sdkMcpServers`) calls the board's tools
+through it for each "fake-board-call <tool> <JSON arguments>" line in its prompt (an `mcp_message` `tools/call` control
+request), waiting for each answer as for a permission, and its reply says what each returned ("board wait: {...}").
+A `/compact` prompt prints a compact_boundary. A prompt
 containing "fake-subagent" runs a subagent (a Task call, with a Read inside it), and streams its reply's text
 (stream_event deltas) before the assistant message.
 """
@@ -51,6 +55,10 @@ def opt(name):
     return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
 
 
+# The in-process ("SDK") MCP servers the run's `initialize` control request registered.
+sdk_servers = []
+
+
 def read_prompt():
     # stream-json input is one JSON line per message; text input is all of stdin.
     if not select.select([sys.stdin], [], [], 10)[0]:
@@ -58,8 +66,19 @@ def read_prompt():
     if opt("--input-format") == "stream-json":
         line = sys.stdin.readline()
         try:
-            content = json.loads(line)["message"]["content"]
-        except (ValueError, KeyError, TypeError):
+            m = json.loads(line)
+            # An `initialize` ahead of the prompt, answered as Claude Code does.
+            while m.get("type") == "control_request":
+                req = m.get("request") or {}
+                if req.get("subtype") == "initialize":
+                    sdk_servers.extend(req.get("sdkMcpServers") or [])
+                    emit({"type": "control_response", "response": {"subtype": "success", "request_id": m.get("request_id"), "response": {"commands": []}}})
+                else:
+                    emit({"type": "control_response", "response": {"subtype": "error", "request_id": m.get("request_id"), "error": "unsupported"}})
+                line = sys.stdin.readline()
+                m = json.loads(line)
+            content = m["message"]["content"]
+        except (ValueError, KeyError, TypeError, AttributeError):
             return line.strip()
         if isinstance(content, list):
             return "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
@@ -131,6 +150,32 @@ if opt("--input-format") == "stream-json":
             emit({**m, "isReplay": True, "session_id": session})
             c = m.get("message", {}).get("content")
             steered.append(c if isinstance(c, str) else " ".join(b.get("text", "") for b in c or [] if isinstance(b, dict)))
+def await_response(ask):
+    """The control response to our request `ask`, taking in messages sent meanwhile; an interrupt cancels it and ends the turn."""
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            sys.exit(1)
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if m.get("type") == "control_response" and m.get("response", {}).get("request_id") == ask:
+            return m["response"]
+        elif m.get("type") == "control_request" and m.get("request", {}).get("subtype") == "interrupt":
+            emit({"type": "control_cancel_request", "request_id": ask})
+            emit({"type": "control_response", "response": {"subtype": "success", "request_id": m.get("request_id"), "response": {}}})
+            emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "interrupted", "session_id": session,
+                  "duration_ms": 1, "num_turns": 1, "total_cost_usd": 0})
+            while sys.stdin.readline():
+                pass
+            sys.exit(0)
+        elif m.get("type") == "user":
+            emit({**m, "isReplay": True, "session_id": session})
+            c = m.get("message", {}).get("content")
+            steered.append(c if isinstance(c, str) else " ".join(b.get("text", "") for b in c or [] if isinstance(b, dict)))
+
+
 asks = [m for m in ("fake-ask-permission", "fake-ask-question", "fake-ask-plan") if m in prompt] if opt("--permission-prompt-tool") == "stdio" else []
 answers = []
 for marker in asks:
@@ -146,29 +191,8 @@ for marker in asks:
           "message": {"id": "msg_" + uuid.uuid4().hex, "role": "assistant", "model": model, "content": [{"type": "tool_use", "id": tool, "name": name, "input": tool_input}]}})
     emit({"type": "control_request", "request_id": ask,
           "request": {"subtype": "can_use_tool", "tool_name": name, "input": tool_input, "tool_use_id": tool, "permission_suggestions": []}})
-    answer = None
-    while answer is None:
-        line = sys.stdin.readline()
-        if not line:
-            sys.exit(1)
-        try:
-            m = json.loads(line)
-        except ValueError:
-            continue
-        if m.get("type") == "control_response" and m.get("response", {}).get("request_id") == ask:
-            answer = m["response"].get("response") or {"behavior": "deny", "message": m["response"].get("error", "error")}
-        elif m.get("type") == "control_request" and m.get("request", {}).get("subtype") == "interrupt":
-            emit({"type": "control_cancel_request", "request_id": ask})
-            emit({"type": "control_response", "response": {"subtype": "success", "request_id": m.get("request_id"), "response": {}}})
-            emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "interrupted", "session_id": session,
-                  "duration_ms": 1, "num_turns": 1, "total_cost_usd": 0})
-            while sys.stdin.readline():
-                pass
-            sys.exit(0)
-        elif m.get("type") == "user":
-            emit({**m, "isReplay": True, "session_id": session})
-            c = m.get("message", {}).get("content")
-            steered.append(c if isinstance(c, str) else " ".join(b.get("text", "") for b in c or [] if isinstance(b, dict)))
+    r = await_response(ask)
+    answer = r.get("response") or {"behavior": "deny", "message": r.get("error", "error")}
     allowed = answer.get("behavior") == "allow"
     said = "permission " + name + ": " + ("allow" if allowed else "deny: " + str(answer.get("message")))
     if allowed and name == "AskUserQuestion":
@@ -179,6 +203,29 @@ for marker in asks:
     emit({"type": "user", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None,
           "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool, "content": "fake" if allowed else str(answer.get("message")),
                                                     "is_error": not allowed}]}})
+# Board tool calls, through the in-process server the run registered: "fake-board-call <tool> <JSON arguments>" lines.
+rpc = 0
+for l in prompt.splitlines():
+    if not l.strip().startswith("fake-board-call "):
+        continue
+    parts = l.strip().split(None, 2)
+    name, tool_args = parts[1], json.loads(parts[2]) if len(parts) > 2 else {}
+    if "huntaway" not in sdk_servers:
+        answers.append("board " + name + ": no in-process board server")
+        continue
+    tool, ask = "toolu_" + uuid.uuid4().hex[:12], str(uuid.uuid4())
+    rpc += 1
+    emit({"type": "assistant", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None,
+          "message": {"id": "msg_" + uuid.uuid4().hex, "role": "assistant", "model": model,
+                      "content": [{"type": "tool_use", "id": tool, "name": "mcp__huntaway__" + name, "input": tool_args}]}})
+    emit({"type": "control_request", "request_id": ask, "request": {"subtype": "mcp_message", "server_name": "huntaway", "message": {
+        "jsonrpc": "2.0", "id": rpc, "method": "tools/call", "params": {"name": name, "arguments": tool_args, "_meta": {"claudecode/toolUseId": tool, "progressToken": rpc}}}}})
+    r = (await_response(ask).get("response") or {}).get("mcp_response") or {}
+    res = r.get("result") or {}
+    text = " ".join(c.get("text", "") for c in res.get("content") or [] if isinstance(c, dict)) if r.get("id") == rpc else "wrong JSON-RPC id " + json.dumps(r.get("id"))
+    answers.append("board " + name + ": " + " ".join(text.split())[:300])
+    emit({"type": "user", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None,
+          "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool, "content": text, "is_error": res.get("isError") is True}]}})
 if prompt.strip() == "/compact":
     emit({"type": "system", "subtype": "compact_boundary", "session_id": session, "compact_metadata": {"trigger": "manual", "pre_tokens": 1234}})
 if "fake-subagent" in prompt:

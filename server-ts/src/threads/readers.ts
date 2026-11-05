@@ -6,7 +6,7 @@
 // (`scripts/copy-live-board.sh`), at this build's database version.
 //
 // Each reader is asked what the board asks it: last_message and what the agent said since it was asked, the user's
-// replies (all, and the latest few), the open questions, the tool calls (and whether they changed code) since the start and since the middle
+// replies (all, and the latest few), Telegram's reply for each turn and how the latest ended, the open questions, the tool calls (and whether they changed code) since the start and since the middle
 // of the thread, who wrote since each user message, whether a question's conversation moved on, the first user message
 // and each turn's message, a subagent's call for each task_* message, and each tool call's name and input. Then the
 // board's: pending approvals, prompt analytics for each profile, review stats' submissions, and the attachments threads
@@ -123,6 +123,17 @@ export function compare_task(cmp: Comparer, c: Conn, task_id: string): void {
   if (history.last_assistant_text(c, task_id, "messages") !== history.last_assistant_text(c, task_id, "messages", max)) cmp.windowed++;
   if (history.said_since_asked(c, task_id, "messages") !== history.said_since_asked(c, task_id, "messages", max)) cmp.windowed++;
   for (const limit of [null, 1, 3, 30]) cmp.check("user_replies", task_id, `limit ${limit}`, (from) => history.user_replies(c, task_id, limit, from));
+  // Telegram's: each turn's reply (the latest 50 turns), and how the latest turn ended.
+  const ends = db.all<{ id: number }>(
+    c,
+    "SELECT id FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result' ORDER BY id DESC LIMIT 50",
+    task_id,
+  );
+  for (const { id } of ends) {
+    cmp.check("said_in_turn", task_id, id, (from) => history.said_in_turn(c, task_id, id, from, max));
+    if (history.said_in_turn(c, task_id, id, "messages") !== history.said_in_turn(c, task_id, id, "messages", max)) cmp.windowed++;
+  }
+  cmp.check("last_turn_end", task_id, "", (from) => history.last_turn_end(c, task_id, from));
 
   const times = db.all<{ created_at: string }>(c, "SELECT created_at FROM messages WHERE task_id=?1 AND kind='user' ORDER BY id", task_id).map((r) => r.created_at);
   const all = db.all<{ created_at: string }>(c, "SELECT created_at FROM messages WHERE task_id=?1 ORDER BY id", task_id);

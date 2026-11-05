@@ -117,17 +117,20 @@ type Said =
   | { kind: "user"; text: string | null; pos: number }
   /** One of the agent's messages (a message's text blocks, joined by newlines), or an API error in its place. */
   | { kind: "agent"; text: string }
-  /** What a turn's result said. */
-  | { kind: "ended"; text: string };
+  /** What a turn's result said: null if it said nothing, which only `ends` gives. */
+  | { kind: "ended"; text: string | null; pos: number };
 
 /**
- * What was said in the task's thread, newest first. The text blocks of one of the agent's messages are items of their
- * own (`legacy:<message>:<block>`), which come together: they're joined into one, as the messages readers read them.
- * A result's text that no message said (the translator's `from_result` assistant_message) is left to its turn_result.
+ * What was said in the task's thread, newest first, from position `upto` back if given. The text blocks of one of the
+ * agent's messages are items of their own (`legacy:<message>:<block>`), which come together: they're joined into one,
+ * as the messages readers read them. A result's text that no message said (the translator's `from_result`
+ * assistant_message) is left to its turn_result. With `ends`, every turn's end is given, the ones whose result said
+ * nothing too.
  */
-function* said(c: Conn, task_id: string): Generator<Said> {
+function* said(c: Conn, task_id: string, { upto = null, ends = false }: { upto?: number | null; ends?: boolean } = {}): Generator<Said> {
   let agent: { message: number | undefined; texts: string[] } | null = null;
-  for (const e of newest(c, task_id, SAID)) {
+  const entries = upto === null ? newest(c, task_id, SAID) : newest(c, task_id, SAID, "AND pos<=?2", upto);
+  for (const e of entries) {
     const item = e.item;
     if (agent) {
       const m = message_of(item.id);
@@ -146,7 +149,7 @@ function* said(c: Conn, task_id: string): Generator<Said> {
         if (!e.meta.from_result) agent = { message: message_of(item.id), texts: [item.text] };
         break;
       case "turn_result":
-        if (e.meta.result_text) yield { kind: "ended", text: e.meta.result_text };
+        if (e.meta.result_text || ends) yield { kind: "ended", text: e.meta.result_text || null, pos: e.pos };
         break;
       case "notice":
         // Claude Code's API errors (a usage limit, say), which it gives as the assistant's text, have a code; the
@@ -187,6 +190,77 @@ export function said_since_asked(c: Conn, task_id: string, from = source(c, task
     return s.text;
   }
   return null;
+}
+
+/**
+ * What the agent said in the turn that ended with message `message_id` (its result): its result's text, or its latest
+ * message since the latest message it was sent and the turn before's end (so a turn that said nothing doesn't say the
+ * one before's again). Telegram's reply to the user. Not trimmed. The messages reader reads the latest `window` of the
+ * agent's messages in the turn, as last_assistant_text does; the items one is null if the thread has no such turn end.
+ */
+export function said_in_turn(c: Conn, task_id: string, message_id: number, from = source(c, task_id), window = 50): string | null {
+  if (from === "messages") {
+    const asked =
+      db.value<number>(
+        c,
+        `SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND id < ?2
+           AND (kind='user' OR (kind='claude' AND json_extract(data,'$.type')='result'))`,
+        task_id,
+        message_id,
+      ) ?? 0;
+    return db.last_assistant_text_after(c, task_id, asked, window, message_id);
+  }
+  const end = db.value<number>(c, "SELECT pos FROM thread_items WHERE task_id=?1 AND id=?2 AND type='turn_result'", task_id, `legacy:${message_id}`);
+  if (end === undefined) return null;
+  for (const s of said(c, task_id, { upto: end, ends: true })) {
+    if (s.kind === "user") return null;
+    if (s.kind === "agent") return s.text;
+    // The turn before's end.
+    if (s.pos !== end) return null;
+    if (s.text !== null) return s.text;
+  }
+  return null;
+}
+
+/**
+ * How a turn ended, for Telegram (integrations/telegram.ts): only a turn that went as it should is a reply. `compact`: a
+ * compaction's end (a `/compact` run's, the user's or the board's after the thread was idle a while), which answers
+ * nothing. `failed`: it failed (an error, or the usage limit) or was stopped part way: its needs attention says so.
+ */
+export type TurnEnd = "reply" | "compact" | "failed";
+
+/** How the turn that `result` (a `result` message's data) ended went. */
+export function turn_end(result: any): TurnEnd {
+  if (result?.compact === true) return "compact";
+  if (result?.is_error === true || result?.interrupted === true || (typeof result?.subtype === "string" && result.subtype.startsWith("error"))) return "failed";
+  return "reply";
+}
+
+/**
+ * The latest turn's end in `task_id`'s thread: its result's message id, and how it went (`turn_end`). From items, a
+ * turn_result that isn't `ok` failed (its result was an error, or its subtype wasn't `success`), and one that was
+ * interrupted too.
+ */
+export function last_turn_end(c: Conn, task_id: string, from = source(c, task_id)): { id: number; end: TurnEnd } | null {
+  if (from === "messages") {
+    const r = db.one<{ id: number; data: string }>(
+      c,
+      "SELECT id, data FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result' ORDER BY id DESC LIMIT 1",
+      task_id,
+    );
+    if (!r) return null;
+    let data: any = null;
+    try {
+      data = JSON.parse(r.data);
+    } catch {}
+    return { id: r.id, end: turn_end(data) };
+  }
+  const e = newest(c, task_id, "('turn_result')").next();
+  if (e.done || e.value.item.type !== "turn_result") return null;
+  const id = message_of(e.value.item.id);
+  if (id === undefined) return null;
+  const t = e.value.item;
+  return { id, end: e.value.meta.compact ? "compact" : !t.ok || t.interrupted ? "failed" : "reply" };
 }
 
 /**

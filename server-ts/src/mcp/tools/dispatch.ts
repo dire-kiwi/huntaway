@@ -70,40 +70,23 @@ async function handle_mcp_result(s: Shared, c: McpCall): Promise<CallResult> {
 }
 
 /**
- * A call that comes in on the run's own output rather than from its MCP helper (a `can_use_tool` control request, see
- * agent/runner/requests.ts), run at most once as handle_mcp runs a helper's. `respond` gets its result as soon as it has
- * one, before it's recorded as done: so a call recorded done has been answered, and one recorded executing (cut short by
- * a restart) is run again and answered then. A duplicate delivery (the line read again after a restart, while the call
- * it found again runs) isn't answered twice, nor is a call already answered.
+ * A call that comes in on the run's own output rather than from its MCP helper (a `can_use_tool` or `mcp_message`
+ * control request, see agent/runner/requests.ts), run at most once as handle_mcp runs a helper's. `respond` gets its
+ * result as soon as it has one, before it's recorded as done: so a call recorded done has been answered, and one recorded
+ * executing (cut short by a restart) is run again and answered then, or answered that it was cut short, if it can't be
+ * run again. A duplicate delivery (the line read again after a restart, while the call it found again runs) isn't
+ * answered twice, nor is a call already answered. `saved` is what's recorded as its arguments, if not `c.args`: what
+ * it takes to answer the request again after a restart (see requests.ts's resume_requests).
  */
-export async function handle_control(s: Shared, c: McpCall, respond: (r: CallResult) => void): Promise<void> {
+export async function handle_control(s: Shared, c: McpCall, respond: (r: CallResult) => void, saved?: any): Promise<void> {
   if (s.calls_inflight.has(c.call_id)) return;
   const call: Required<McpCall> = { run_id: c.run_id, call_id: c.call_id, tool: c.tool, args: c.args ?? null, task_fields: c.task_fields === true };
   let task_id = "";
   try {
     task_id = db.get_run(s.db(), call.run_id)?.task_id ?? "";
   } catch {}
-  const record: Record = { id: call.call_id, run_id: call.run_id, task_id, tool: call.tool, args: call.args };
-  let ran = false;
-  const r = await at_most_once(s, record, () => rerunnable(s, call), async () => {
-    ran = true;
-    let v: any;
-    try {
-      v = await execute_mcp(s, call);
-    } catch (e) {
-      respond({ err: err_str(e) });
-      throw e;
-    }
-    respond({ ok: v });
-    return v;
-  });
-  if (ran) return;
-  // Not run: it had been (and answered), or the board couldn't record it, which the agent is told.
-  let status: string | undefined;
-  try {
-    status = db.value<string>(s.db(), "SELECT status FROM mcp_calls WHERE id=?1", call.call_id);
-  } catch {}
-  if (status !== "done") respond(r);
+  const record: Record = { id: call.call_id, run_id: call.run_id, task_id, tool: call.tool, args: saved === undefined ? call.args : saved };
+  await at_most_once(s, record, () => rerunnable(s, call), () => execute_mcp(s, call), respond);
 }
 
 /** How a call is recorded in `mcp_calls`. */
@@ -118,9 +101,10 @@ interface Record {
 /**
  * Run `exec` once for call `r.id`, however often it's delivered: a duplicate delivery while it runs waits for its result,
  * and one after it ran gets the result recorded. A call that was executing when the server stopped runs again only if
- * `rerun` says it can.
+ * `rerun` says it can. `answer` gets the result of this delivery before it's recorded as done, unless it was done
+ * before (a duplicate delivery waiting on another isn't answered either).
  */
-async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: () => Promise<any>): Promise<CallResult> {
+async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: () => Promise<any>, answer?: (r: CallResult) => void): Promise<CallResult> {
   // A duplicate delivery while the first is still executing waits for its result.
   const waiters = s.calls_inflight.get(r.id);
   if (waiters) return new Promise<CallResult>((resolve) => waiters.push(resolve));
@@ -155,6 +139,13 @@ async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: ()
       );
     };
     const unrecorded = (e: unknown) => `The board couldn't record this ${r.tool} call, so it wasn't run (call it again): ${sql_error(e)}`;
+    const answered = (res: CallResult) => {
+      try {
+        answer?.(res);
+      } catch (e) {
+        console.error(`answering an MCP call (call ${r.id}, tool ${r.tool}): ${err_str(e)}`);
+      }
+    };
     const done = (res: CallResult) => {
       try {
         record("done", res);
@@ -162,8 +153,10 @@ async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: ()
         console.error(`recording an MCP call's result (call ${r.id}, tool ${r.tool}): ${err_str(e)}`);
       }
     };
-    if (before_err !== null) result = { err: unrecorded(before_err) };
-    else if (before && before.status === "done") {
+    if (before_err !== null) {
+      result = { err: unrecorded(before_err) };
+      answered(result);
+    } else if (before && before.status === "done") {
       if (before.error !== null && before.error !== undefined) result = { err: before.error };
       else {
         let v: any = null;
@@ -179,6 +172,7 @@ async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: ()
           `This ${r.tool} call was interrupted (the board's server restarted while it ran), so it isn't run again: it may or may not have ` +
           "taken effect. Check (with get_task or list_tasks, say) before you call it again.",
       };
+      answered(result);
       done(result);
     } else {
       let recorded = true;
@@ -187,6 +181,7 @@ async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: ()
       } catch (e) {
         recorded = false;
         result = { err: unrecorded(e) };
+        answered(result);
       }
       if (recorded) {
         let res: CallResult;
@@ -195,6 +190,7 @@ async function at_most_once(s: Shared, r: Record, rerun: () => boolean, exec: ()
         } catch (e) {
           res = { err: err_str(e) };
         }
+        answered(res);
         reached("mcp:executed");
         done(res);
         result = res;

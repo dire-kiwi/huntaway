@@ -133,6 +133,24 @@ test("a_runs_servers_take_only_its_own_secret", async () => {
   }
 });
 
+test("a_run_that_calls_the_board_on_its_output_has_only_the_gh_server_here", async () => {
+  // HA-221: a Claude run's board tools are an in-process server (agent/runner/requests.ts), not this one.
+  const s = testing.state();
+  const [, run] = running_task(s, { in_process: true });
+  const [, other] = running_task(s);
+  const { server } = await listen(s);
+  try {
+    const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } };
+    assert.equal((await post(entry(s, run, "huntaway"), init)).status, 404);
+    const call = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_projects", arguments: {} } };
+    assert.equal((await post(entry(s, run, "huntaway"), call)).status, 404);
+    assert.equal((await post(entry(s, run, "gh"), init)).status, 200);
+    assert.equal((await post(entry(s, other, "huntaway"), init)).status, 200);
+  } finally {
+    server.close();
+  }
+});
+
 test("lists_and_calls_the_board_tools_over_http", async () => {
   const s = testing.state();
   const [task, run] = running_task(s);

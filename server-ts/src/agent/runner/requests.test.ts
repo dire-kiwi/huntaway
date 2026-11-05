@@ -12,7 +12,7 @@ import { sleep } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as permissions from "../../mcp/permissions.ts";
 import { BACKGROUND_GRACE, FOLLOW_UP_GRACE, finish, load_active, on_output } from "../runner.ts";
-import { control_call_id } from "./requests.ts";
+import { MCP_PROTOCOL, control_call_id, initialize_line } from "./requests.ts";
 
 process.env.IA_SHIM_BIN = "/nonexistent/ia-shim";
 
@@ -276,11 +276,210 @@ test("a_prompt_whose_run_ended_expires_and_a_question_is_answered_by_message", a
 
 test("other_control_requests_get_an_error", async () => {
   const [state, , run] = running();
-  output(state, run, [{ type: "control_request", request_id: "m1", request: { subtype: "mcp_message", server_name: "x", message: {} } }]);
+  output(state, run, [{ type: "control_request", request_id: "m1", request: { subtype: "hook_callback", callback_id: "x", input: {} } }]);
   const [r] = await answered(state, run, 1);
   assert.equal(r.subtype, "error");
   assert.equal(r.request_id, "m1");
   assert.equal(db.value<number>(state.db(), "SELECT COUNT(*) FROM permission_requests"), 0);
+});
+
+// ---------- the board's tools as an in-process MCP server (HA-221) ----------
+
+const mcp_message = (request_id: string, message: any, server_name = "huntaway") => ({
+  type: "control_request",
+  request_id,
+  request: { subtype: "mcp_message", server_name, message },
+});
+const tool_call = (request_id: string, rpc_id: number, name: string, args: any) =>
+  mcp_message(request_id, {
+    jsonrpc: "2.0",
+    id: rpc_id,
+    method: "tools/call",
+    params: { name, arguments: args, _meta: { "claudecode/toolUseId": `toolu_${request_id}`, progressToken: rpc_id } },
+  });
+/** What a board call's answer says, and whether it's an error. */
+const said_by = (r: any): [string, boolean] => [r.response.mcp_response.result.content[0].text, r.response.mcp_response.result.isError === true];
+const call_status = (state: Shared, run: Run, request_id: string) =>
+  db.value<string>(state.db(), "SELECT status FROM mcp_calls WHERE id=?1", control_call_id(run.id, request_id));
+
+/** A run of a review thread, as `running` makes them. */
+function reviewing(): [Shared, Task, Run] {
+  const [state, task, run] = running();
+  db.run(state.db(), "UPDATE tasks SET kind='review' WHERE id=?1", task.id);
+  return [state, reload(state, task.id), run];
+}
+
+/** What a restarted server does with the run: its calls are forgotten, and it follows the run again. */
+function restart(state: Shared, task: Task) {
+  state.perm_waiters.clear();
+  state.calls_inflight.clear();
+  state.runs.delete(task.id);
+  load_active(state);
+}
+
+test("the_board_servers_handshake_is_answered_on_the_input", async () => {
+  const [state, , run] = running();
+  output(state, run, [
+    mcp_message("i1", { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {} } }),
+    mcp_message("i2", { jsonrpc: "2.0", method: "notifications/initialized" }),
+    mcp_message("i3", { jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    mcp_message("i4", { jsonrpc: "2.0", id: 2, method: "ping" }),
+    mcp_message("i5", { jsonrpc: "2.0", id: 3, method: "tools/list" }, "other"),
+  ]);
+  const by_id = new Map((await answered(state, run, 5)).map((r) => [r.request_id, r]));
+  const init = by_id.get("i1")!;
+  assert.equal(init.subtype, "success");
+  assert.deepEqual([init.response.mcp_response.id, init.response.mcp_response.result.serverInfo.name], [0, "huntaway"]);
+  assert.equal(init.response.mcp_response.result.protocolVersion, "2025-11-25");
+  assert.match(init.response.mcp_response.result.instructions, /Huntaway board/);
+  // A notification still gets its control response, which Claude Code waits for.
+  assert.deepEqual(by_id.get("i2")!.response, { mcp_response: { jsonrpc: "2.0", id: 0, result: {} } });
+  const listed = by_id.get("i3")!.response.mcp_response;
+  assert.equal(listed.id, 1);
+  const names = listed.result.tools.map((t: any) => t.name);
+  assert.ok(names.includes("create_task") && names.includes("wait") && !names.includes("submit_review"), names.join());
+  assert.deepEqual(by_id.get("i4")!.response.mcp_response, { jsonrpc: "2.0", id: 2, result: {} });
+  // Only the board's server is in process.
+  assert.equal(by_id.get("i5")!.response.mcp_response.error.code, -32601);
+  assert.equal(db.value<number>(state.db(), "SELECT COUNT(*) FROM mcp_calls"), 0);
+  await quiet(state, run, 5);
+});
+
+test("a_board_call_on_the_output_knows_its_task_from_its_run", async () => {
+  const [state, task, run] = running();
+  output(state, run, [tool_call("c1", 4, "get_task", { task_id: task.id })]);
+  const [r] = await answered(state, run, 1);
+  assert.deepEqual([r.subtype, r.request_id, r.response.mcp_response.jsonrpc, r.response.mcp_response.id], ["success", "c1", "2.0", 4]);
+  const [text, error] = said_by(r);
+  assert.equal(error, false, text);
+  assert.match(text, new RegExp(task.id));
+  // Recorded as the board's calls are, with what answering it again takes.
+  assert.equal(call_status(state, run, "c1"), "done");
+  const args = JSON.parse(db.value<string>(state.db(), "SELECT args FROM mcp_calls WHERE id=?1", control_call_id(run.id, "c1"))!);
+  assert.deepEqual(args, { request_id: "c1", rpc_id: 4, arguments: { task_id: task.id } });
+  assert.equal(db.value(state.db(), "SELECT task_id FROM mcp_calls WHERE id=?1", control_call_id(run.id, "c1")), task.id);
+
+  // An error is the tool's result, as the HTTP server has it.
+  output(state, run, [tool_call("c2", 5, "get_task", { task: task.id })]);
+  const [text2, error2] = said_by((await answered(state, run, 2))[1]);
+  assert.ok(error2 && text2.startsWith("Error: get_task has no argument \"task\""), text2);
+});
+
+test("a_reviewers_board_server_has_the_reviewers_tools_only", async () => {
+  const [state, task, run] = reviewing();
+  output(state, run, [mcp_message("l1", { jsonrpc: "2.0", id: 1, method: "tools/list" })]);
+  const names = (await answered(state, run, 1))[0].response.mcp_response.result.tools.map((t: any) => t.name);
+  assert.ok(names.includes("submit_review") && names.includes("get_task") && !names.includes("create_task") && !names.includes("update_task"), names.join());
+  // Whatever it calls.
+  output(state, run, [tool_call("c1", 2, "update_task", { task_id: task.id, title: "changed" })]);
+  const [text, error] = said_by((await answered(state, run, 2))[1]);
+  assert.ok(error && /isn't available to reviewers/.test(text), text);
+  assert.equal(reload(state, task.id).title, "t");
+});
+
+test("a_board_call_read_again_runs_and_is_answered_once", async () => {
+  const [state, task, run] = running();
+  const line = `${JSON.stringify(tool_call("c1", 7, "update_task", { task_id: task.id, title: "once" }))}\n`;
+  on_output(state, run.id, 0, line);
+  await answered(state, run, 1);
+  assert.equal(reload(state, task.id).title, "once");
+  // The server stopped before it saved how far it read: the line comes again, after the user renamed the task.
+  state.update_task(task.id, [["title", "renamed"]]);
+  db.run(state.db(), "UPDATE runs SET out_offset=0 WHERE id=?1", run.id);
+  on_output(state, run.id, 0, line);
+  await quiet(state, run, 1);
+  assert.equal(reload(state, task.id).title, "renamed");
+});
+
+test("after_a_restart_a_board_call_cut_short_is_answered", async () => {
+  const [state, task, run] = running();
+  // What a server that stopped mid-call left: calls recorded as executing, past the run's saved offset.
+  const left = (request_id: string, rpc_id: number, tool: string, args: any) =>
+    db.run(
+      state.db(),
+      "INSERT INTO mcp_calls (id,run_id,task_id,tool,args,status,created_at) VALUES (?1,?2,?3,?4,?5,'executing','2026-11-06T00:00:00Z')",
+      control_call_id(run.id, request_id),
+      run.id,
+      task.id,
+      tool,
+      JSON.stringify({ request_id, rpc_id, arguments: args }),
+    );
+  left("c1", 11, "get_task", { task_id: task.id });
+  left("c2", 12, "update_task", { task_id: task.id, title: "twice?" });
+  restart(state, task);
+  const by_id = new Map((await answered(state, run, 2)).map((r) => [r.request_id, r]));
+  // One that only reads runs again; one that may have taken effect says so, rather than run again or not answer.
+  assert.equal(by_id.get("c1")!.response.mcp_response.id, 11);
+  assert.match(said_by(by_id.get("c1")!)[0], new RegExp(task.id));
+  assert.equal(by_id.get("c2")!.response.mcp_response.id, 12);
+  const [text, error] = said_by(by_id.get("c2")!);
+  assert.ok(error && /was interrupted/.test(text), text);
+  assert.equal(reload(state, task.id).title, "t");
+  assert.deepEqual([call_status(state, run, "c1"), call_status(state, run, "c2")], ["done", "done"]);
+  // Another restart answers neither again.
+  restart(state, task);
+  await quiet(state, run, 2);
+});
+
+test("a_wait_carries_on_over_a_restart", async () => {
+  const [state, task, run] = running();
+  // A wait that was going when the server stopped, with its deadline.
+  const call_id = control_call_id(run.id, "w1");
+  db.run(
+    state.db(),
+    "INSERT INTO mcp_calls (id,run_id,task_id,tool,args,status,created_at) VALUES (?1,?2,?3,'wait',?4,'executing','2026-11-06T00:00:00Z')",
+    call_id,
+    run.id,
+    task.id,
+    JSON.stringify({ request_id: "w1", rpc_id: 21, arguments: { seconds: 20, reason: "CI" } }),
+  );
+  const until = new Date(Date.now() + 600).toISOString();
+  state.update_task(task.id, [["agent_wait", { reason: "CI", since: new Date().toISOString(), until, tasks: [], call_id, run_id: run.id }]]);
+  restart(state, task);
+  // It ends when it would have, not 20 seconds after the restart.
+  await quiet(state, run, 0);
+  assert.equal(reload(state, task.id).agent_wait?.call_id, call_id);
+  const [r] = await answered(state, run, 1);
+  assert.equal(r.response.mcp_response.id, 21);
+  const [text, error] = said_by(r);
+  assert.ok(!error && /timeout/i.test(text), text);
+  assert.equal(reload(state, task.id).agent_wait, null);
+  await quiet(state, run, 1);
+});
+
+test("a_board_call_claude_cancels_ends_unanswered", async () => {
+  const [state, task, run] = running();
+  output(state, run, [tool_call("w1", 3, "wait", { seconds: 20, reason: "CI" })]);
+  for (let i = 0; i < 100 && !reload(state, task.id).agent_wait; i++) await sleep(5);
+  assert.equal(reload(state, task.id).agent_wait?.call_id, control_call_id(run.id, "w1"));
+  output(state, run, [{ type: "control_cancel_request", request_id: "w1" }]);
+  assert.equal(reload(state, task.id).agent_wait, null);
+  await quiet(state, run, 0);
+  for (let i = 0; i < 200 && call_status(state, run, "w1") !== "done"; i++) await sleep(5);
+  assert.equal(call_status(state, run, "w1"), "done");
+  await quiet(state, run, 0);
+});
+
+test("claude_codes_answer_to_the_initialize_isnt_taken_for_another", async () => {
+  const [state, task, run] = running();
+  output(state, run, [{ type: "control_response", response: { subtype: "success", request_id: `huntaway-init-${run.id}`, response: { commands: [] } } }]);
+  assert.equal(db.value<number>(state.db(), "SELECT COUNT(*) FROM messages WHERE task_id=?1", task.id), 0);
+  // Refused, the run goes on without the board's tools, and the thread says so.
+  output(state, run, [{ type: "control_response", response: { subtype: "error", request_id: `huntaway-init-${run.id}`, error: "unknown subtype" } }]);
+  const said = db.all<{ data: string }>(state.db(), "SELECT data FROM messages WHERE task_id=?1 AND kind='event'", task.id).map((m) => JSON.parse(m.data).text);
+  assert.equal(said.length, 1);
+  assert.match(said[0], /didn't take the board's tools \(unknown subtype\)/);
+});
+
+test("the_initialize_registers_the_board_server_with_its_handshake", () => {
+  const line = JSON.parse(initialize_line("run1", false));
+  assert.deepEqual([line.type, line.request_id, line.request.subtype, line.request.sdkMcpServers], ["control_request", "huntaway-init-run1", "initialize", ["huntaway"]]);
+  assert.deepEqual(line.request.sdkMcpServerConfigs.huntaway, { timeout: 86_400_000, disableAutoBackground: true });
+  const manifest = line.request.sdkMcpServerManifests.huntaway;
+  assert.equal(manifest.initializeResult.protocolVersion, MCP_PROTOCOL);
+  const names = (review: boolean) => JSON.parse(initialize_line("r", review)).request.sdkMcpServerManifests.huntaway.toolsListResult.tools.map((t: any) => t.name);
+  assert.ok(names(false).includes("create_task") && !names(false).includes("submit_review"));
+  assert.ok(names(true).includes("submit_review") && !names(true).includes("create_task"));
 });
 
 const background = (n: number) => ({ type: "system", subtype: "background_tasks_changed", tasks: Array.from({ length: n }, (_, i) => ({ id: `b${i}` })) });

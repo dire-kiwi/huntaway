@@ -25,7 +25,7 @@ import * as threads from "../../threads/write.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
 import * as plan from "./plan.ts";
-import { on_control_cancel, on_control_request } from "./requests.ts";
+import { is_initialized, on_control_cancel, on_control_request } from "./requests.ts";
 import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended, turn_started } from "./queue.ts";
 
 const SUBAGENT_EVENTS = ["task_started", "task_progress", "task_updated", "task_notification"];
@@ -254,6 +254,15 @@ export function handle_line(state: Shared, run: Run, line: string) {
   } else if (type === "control_cancel_request") {
     on_control_cancel(state, run, v);
   } else if (type === "control_response") {
+    if (is_initialized(v)) {
+      // Claude Code refused the `initialize` that gives it the board's tools (see requests.ts): the agent goes on without.
+      if (v.response?.subtype !== "success") {
+        const why = typeof v.response?.error === "string" && v.response.error ? v.response.error : "no reason given";
+        console.warn(`task ${task_id} run ${run.id}: Claude Code refused the board's tools: ${why}`);
+        state.add_event(task_id, "warn", `Claude Code didn't take the board's tools (${why}), so this run goes on without them.`);
+      }
+      return;
+    }
     context.on_control_response(state, task_id, v);
   } else if (type === "result") {
     let failed: unknown = null;

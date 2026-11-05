@@ -44,6 +44,7 @@ import * as approval_rules from "../agent/approval_rules.ts";
 import * as attachments from "../attachments.ts";
 import * as hub from "../hosts/hub.ts";
 import * as permissions from "../mcp/permissions.ts";
+import * as history from "../threads/history.ts";
 import * as push from "./push.ts";
 import * as push_answers from "./push_answers.ts";
 import { MAX_CHARS, PIECE_CHARS, cut, escape, split, to_html } from "./telegram/format.ts";
@@ -1303,18 +1304,10 @@ function on_message(s: Shared, m: any) {
   }
 }
 
-/**
- * How the assistant's turn ended, from its `result`: only a turn that went as it should is a reply. `compact`: a
- * compaction's end (a `/compact` run's, the user's or the board's after the thread was idle a while), which answers
- * nothing. `failed`: it failed (an error, or the usage limit) or was stopped part way: its needs attention says so.
- */
-export type TurnEnd = "reply" | "compact" | "failed";
+/** How the assistant's turn ended, from its `result` (threads/history.ts's, which its last_turn_end reads). */
+export type TurnEnd = history.TurnEnd;
 
-export function TurnEnd_of(result: any): TurnEnd {
-  if (result?.compact === true) return "compact";
-  if (result?.is_error === true || result?.interrupted === true || (typeof result?.subtype === "string" && result.subtype.startsWith("error"))) return "failed";
-  return "reply";
-}
+export const TurnEnd_of = history.turn_end;
 
 /**
  * The assistant's turn ended (its `result`, message `message_id`): its reply goes back if a message from Telegram was
@@ -1357,21 +1350,9 @@ function on_turn_end(s: Shared, task: Task, message_id: number, end: TurnEnd) {
  * turn before ended (so a turn that said nothing doesn't say the last one's reply again). Null if it said nothing.
  */
 function reply_text(s: Shared, task: Task, message_id: number): string | null {
-  const c = s.db();
-  let asked = 0;
-  try {
-    asked =
-      db.value<number>(
-        c,
-        `SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND id < ?2
-           AND (kind='user' OR (kind='claude' AND json_extract(data,'$.type')='result'))`,
-        task.id,
-        message_id,
-      ) ?? 0;
-  } catch {}
   let text: string | null = null;
   try {
-    text = db.last_assistant_text_after(c, task.id, asked);
+    text = history.said_in_turn(s.db(), task.id, message_id);
   } catch {}
   return text !== null && text.trim() !== "" ? text : null;
 }
@@ -1391,24 +1372,15 @@ function announce_reply(s: Shared, task: Task, message_id: number, telegram: boo
  */
 function run_ended(s: Shared, task: Task) {
   if (!db.is_assistant(task) || !linked(s.db(), task.profile_id)) return;
-  let last: { id: number; data: string } | undefined;
+  let last: { id: number; end: TurnEnd } | null = null;
   try {
-    last = db.one(
-      s.db(),
-      "SELECT id, data FROM messages WHERE task_id=?1 AND kind='claude' AND json_extract(data,'$.type')='result' ORDER BY id DESC LIMIT 1",
-      task.id,
-    );
+    last = history.last_turn_end(s.db(), task.id);
   } catch {}
   const replied = progress(s.db(), task.profile_id).replied;
   if (last && last.id > replied) {
-    let data: any = null;
-    try {
-      data = JSON.parse(last.data);
-    } catch {}
-    const end = TurnEnd_of(data);
-    on_turn_end(s, task, last.id, end);
+    on_turn_end(s, task, last.id, last.end);
     // A compaction answered nothing: as a run that stopped without a turn's end.
-    if (end !== "compact") return;
+    if (last.end !== "compact") return;
   }
   const more = task.queued_message !== null || task.steering.length > 0;
   if (!more) quietly(task.profile_id, "noting no reply is awaited", () => update_progress(s, task.profile_id, (p) => void (p.awaiting = false)));
@@ -1442,13 +1414,8 @@ function on_attention(s: Shared, task: Task) {
   if (reason === push.STOPPED) return;
   let waiting = 0;
   try {
-    waiting =
-      db.value<number>(
-        s.db(),
-        `SELECT (SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending')
-              + (SELECT COUNT(*) FROM messages WHERE task_id=?1 AND kind='question' AND json_extract(data,'$.status')='pending')`,
-        task.id,
-      ) ?? 0;
+    const c = s.db();
+    waiting = (db.value<number>(c, "SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending'", task.id) ?? 0) + history.open_questions(c, task.id).length;
   } catch {}
   if (waiting > 0) return;
   const why = reason === "" ? "" : `: ${escape(cut(reason, 300))}`;

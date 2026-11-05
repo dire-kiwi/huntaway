@@ -2,7 +2,9 @@
  * The board's MCP servers, served over HTTP (MCP's streamable HTTP transport) to the runs this host starts (HA-180):
  * the board's tools (`huntaway`, mcp.ts) and GitHub through gh (`gh`, mcp/gh_mcp.ts). Runs used to start a stdio helper
  * process for each (`huntaway mcp` and `huntaway gh-mcp`), which under Node cost about 90 MB apiece; those stay for runs
- * that were started with them.
+ * that were started with them. Claude runs that take input (all but a compaction's) call the board's tools on their
+ * own output instead (HA-221, see agent/runner/requests.ts), so for them this serves only gh's; Codex runs and
+ * compactions still call the board's here.
  *
  * Each run has its servers at `/api/mcp/<run id>/<server>` on the host's internal URL, with a secret of its own as its
  * bearer token (`run_secret`): a run can only act as itself, and never holds the host's token. What the gh server needs
@@ -64,6 +66,11 @@ export interface RunSettings {
   github_account: string | null;
   /** A review thread's run: the board's server offers the reviewers' tools. */
   review: boolean;
+  /**
+   * The run calls the board's tools on its own output (an in-process MCP server, see agent/runner/requests.ts), so it
+   * has no board server here: only gh's.
+   */
+  in_process: boolean;
 }
 
 /** The secret run `run_id` gives as its bearer token. Derived from the host's token, so a restart needn't keep it. */
@@ -90,10 +97,16 @@ export function servers(s: Shared, run_id: string): Record<string, any> {
   };
 }
 
-function settings(s: Shared, run_id: string): RunSettings | null {
+/** What the launch kept for run `run_id`'s servers (see `settings_json`), or null for a run it kept nothing for. */
+export function settings(s: Shared, run_id: string): RunSettings | null {
   try {
     const v = JSON.parse(readFileSync(join(runs.run_dir(s, run_id), SETTINGS_FILE), "utf8"));
-    return { cwd: String(v.cwd ?? ""), github_account: typeof v.github_account === "string" ? v.github_account : null, review: v.review === true };
+    return {
+      cwd: String(v.cwd ?? ""),
+      github_account: typeof v.github_account === "string" ? v.github_account : null,
+      review: v.review === true,
+      in_process: v.in_process === true,
+    };
   } catch {
     return null;
   }
@@ -166,6 +179,8 @@ export async function serve(s: Shared, req: IncomingMessage, res: ServerResponse
   if (!run_authorized(s, run_id, req.headers)) return json(res, 401, { error: "unauthorized" });
   const set = settings(s, run_id);
   if (!set) return json(res, 404, { error: "unknown run" });
+  // Its board tools are answered on its own output.
+  if (set.in_process && server === runner.MCP_SERVER_NAME) return json(res, 404, { error: "not found" });
 
   if (req.method === "GET") {
     const last = req.headers["last-event-id"];
@@ -276,7 +291,7 @@ function resume(s: Shared, res: ServerResponse, run_id: string, server: string, 
 }
 
 /** What the launch keeps for the run's servers (see `settings`). */
-export function settings_json(l: { cwd: string; github_account: string | null; review: boolean }): string {
-  const v: RunSettings = { cwd: l.cwd, github_account: l.github_account, review: l.review };
+export function settings_json(l: { cwd: string; github_account: string | null; review: boolean; in_process?: boolean }): string {
+  const v: RunSettings = { cwd: l.cwd, github_account: l.github_account, review: l.review, in_process: l.in_process === true };
   return JSON.stringify(v, null, 2);
 }

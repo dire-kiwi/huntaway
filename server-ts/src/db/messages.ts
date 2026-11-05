@@ -446,12 +446,16 @@ function text_of(v: any): string | null {
 }
 
 /**
- * The most recent assistant text in a thread after message `after` (an id), in the latest `window` of the agent's
- * messages after it (Infinity: all of them, as threads/history.ts's compare reads it).
+ * The most recent assistant text in a thread after message `after` (an id), and up to message `upto` if given, in the
+ * latest `window` of the agent's messages there (Infinity: all of them, as threads/history.ts's compare reads it).
  */
-export function last_assistant_text_after(c: Conn, task_id: string, after: number, window = 50): string | null {
+export function last_assistant_text_after(c: Conn, task_id: string, after: number, window = 50, upto: number | null = null): string | null {
   const limit = Number.isFinite(window) ? window : -1;
-  const rows = all(c, "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND id > ?2 ORDER BY id DESC LIMIT ?3", task_id, after, limit);
+  const rows = all(
+    c,
+    "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND id > ?2 AND (?4 IS NULL OR id <= ?4) ORDER BY id DESC LIMIT ?3",
+    task_id, after, limit, upto,
+  );
   for (const r of rows) {
     let v: any = null;
     try {
