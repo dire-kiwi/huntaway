@@ -49,17 +49,32 @@ export async function send_message(s: AppState, r: Req) {
   return t;
 }
 
-/** `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's asked for. */
+/**
+ * `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's
+ * asked for. API 110: with its `host_id`, which is the profile's assistant host's when it has one, where the request goes
+ * (see assistant::on_its_host), unless `local` is set: a hub that routed the request here sets it, and it's this host's
+ * then, whatever its profile's `assistant_host`.
+ */
 export async function get_assistant(s: AppState, r: Req) {
-  return assistant.get_or_create(s, r.params.id);
+  if (r.query.local === undefined) {
+    const t = await assistant.on_its_host(s, r.params.id, "GET");
+    if (t !== null) return t;
+  }
+  return assistant.with_host(s, assistant.get_or_create(s, r.params.id));
 }
 
 /**
  * `POST /profiles/{id}/assistant` (API 109): send the user's message to the profile's assistant, as `POST
- * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
+ * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task, on its assistant host if it
+ * has one, as `GET` does (API 110).
  */
 export async function send_to_assistant(s: AppState, r: Req) {
-  return assistant.send(s, r.params.id, def_str(json_map(r), "text"));
+  const text = def_str(json_map(r), "text");
+  if (r.query.local === undefined) {
+    const t = await assistant.on_its_host(s, r.params.id, "POST", { text });
+    if (t !== null) return t;
+  }
+  return assistant.with_host(s, assistant.send(s, r.params.id, text));
 }
 
 /** Answer a question an agent asked with request_user_input, from its card (API 64): the answer is sent as the user's message. */

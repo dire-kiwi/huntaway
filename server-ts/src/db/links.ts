@@ -16,11 +16,13 @@ export interface Link {
   /** For `ssh` links: the target, as JSON. */
   ssh: string | null;
   last_seen: string | null;
+  /** Its agents may use this board's tools, up the link (API 110, see hosts/uplink.ts). Off by default. */
+  uplink: boolean;
   created_at: string;
 }
 
 export function Link_from_row(r: any): Link {
-  const l: any = { id: r.id, name: r.name, mode: r.mode, url: r.url, ssh: r.ssh, last_seen: r.last_seen, created_at: r.created_at };
+  const l: any = { id: r.id, name: r.name, mode: r.mode, url: r.url, ssh: r.ssh, last_seen: r.last_seen, uplink: !!r.uplink, created_at: r.created_at };
   hidden(l, "token", r.token);
   return l;
 }

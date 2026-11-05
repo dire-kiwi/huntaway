@@ -4,11 +4,11 @@ import type WebSocket from "ws";
 import * as db from "../../db.ts";
 import { ApiError, type Req } from "../../http.ts";
 import type { AppState } from "../../state.ts";
-import { err_str, same_secret } from "../../util.ts";
-import { PROTOCOL } from "../proto.ts";
+import { background, err_str, same_secret } from "../../util.ts";
+import { API_VERSION, PROTOCOL, ToolCall_from } from "../proto.ts";
 import * as relay from "../relay.ts";
 import { Chan, type Frame } from "../relay.ts";
-import { LinkConn, Version_from_info, changed, forward_event, register, unregister, type Down, type Up, type Version } from "../hub.ts";
+import { LinkConn, Version_from_info, changed, forward_event, register, run_up_call, unregister, type Down, type Up, type Version } from "../hub.ts";
 
 /** The close code a hub refuses a host's tunnel with (a policy violation). */
 export const REFUSED = 1008;
@@ -119,6 +119,8 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
     unregister(s, conn);
     throw e;
   }
+  // Who we are, so the host can pass its agents' board tool calls up (hosts before API 110 ignore it).
+  tx({ t: "hello", hub_id: s.host_id, name: s.host_name, api_version: API_VERSION });
   // A websocket ping for hosts from before `Down::Ping`, which answer it whatever their version; `ping` for the
   // others, which gets through a broker.
   const send_ping = () => {
@@ -210,6 +212,11 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
             streams.delete(m.id);
             w.send(relay.Close(typeof m.code === "number" ? [m.code, m.reason ?? ""] : null));
           }
+          break;
+        }
+        case "tool_call": {
+          const c = ToolCall_from(m);
+          if (c) background("answering a host's board tool call", run_up_call(s, host_id, c).then((a) => void tx({ t: "tool_answer", ...a })));
           break;
         }
         case "pong":

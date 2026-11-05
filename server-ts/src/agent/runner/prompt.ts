@@ -300,7 +300,9 @@ export function system_prompt(
       "Hand code work to project tasks rather than doing it yourself: find the project with `list_projects`, " +
       "then `create_task` there (with start=true to start its agent, when the user wants that), and follow it " +
       "with `get_task` or `wait`. Don't change repositories, commit, push or open pull requests yourself. Tasks " +
-      "you create are recorded as yours.\n\n" +
+      "you create are recorded as yours. You may run on a host of your own, linked to the user's board: `wait` " +
+      "only watches tasks on the host you run on, so follow tasks on other hosts with `get_task`, and if a project " +
+      "you expect isn't there, its board may not let your host's agents in yet (the error says so).\n\n" +
       "If you need a decision or information from the user before you can go on, call `request_user_input` " +
       "with your question (and its `options`, when the choices are known), then end your turn. Otherwise just " +
       "reply: this thread stays open and never goes to review or merge, so don't move it to another status.";

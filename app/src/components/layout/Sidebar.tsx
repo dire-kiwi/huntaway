@@ -1,10 +1,9 @@
 import clsx from "clsx";
 import { Bell, BellRing, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../activeProfile";
 import { api, hostCompat, hostSupports, isAssistant, readyToCheck, type Project, type Status, type Task } from "../../api";
-import { assistantHome } from "../../assistant";
+import { unavailableNote, useAssistantHome } from "../../assistant";
 import {
   groupKey,
   groupNames,
@@ -227,20 +226,24 @@ function MarkedTasks({ route }: { route: Route }) {
 
 /** The active profile's assistant (API 109), which opens full width. Not there for a profile with no host that has one. */
 function AssistantEntry({ route, profile }: { route: Route; profile: string }) {
-  const home = useStore(useShallow((s) => assistantHome(s.profiles, s.hosts, profile) ?? null));
+  const home = useAssistantHome(profile);
   const task = useStore((s) =>
-    home ? Object.values(s.tasks).find((t) => isAssistant(t) && t.host_id === home.hostId && t.profile_id === home.profileId) : undefined,
+    home?.profileId ? Object.values(s.tasks).find((t) => isAssistant(t) && t.host_id === home.hostId && t.profile_id === home.profileId) : undefined,
   );
+  const hostName = useStore((s) => s.hosts.find((h) => h.id === home?.hostId)?.name ?? "its host");
   if (!home) return null;
   return (
     <nav className="pb-3" aria-label="Assistant">
       <NavItem
         active={route.name === "assistant" && route.profile === profile}
         onClick={() => navigate({ name: "assistant", profile })}
-        title={`${profile}'s assistant: a lasting conversation, outside every project`}
+        title={
+          home.unavailable ? unavailableNote(profile, hostName, home.unavailable) : `${profile}'s assistant: a lasting conversation, outside every project`
+        }
         icon={<Bot size={15} />}
         right={
           <span className="flex items-center gap-1.5">
+            {home.unavailable && <span className="h-1.5 w-1.5 rounded-full bg-red-400" aria-label={home.unavailable === "offline" ? "Offline" : "Unavailable"} />}
             {task?.running ? <RunningDot /> : null}
             <Badge n={task?.status === "needs_attention" ? 1 : 0} title="Needs attention" />
           </span>
