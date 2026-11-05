@@ -5,15 +5,16 @@ largest files; HA-101 split the next five and HA-102 grouped the server's module
 HA-103 grouped the app's components into feature folders and split its largest files. The rest of
 the plan, under *Next*, is for follow-up tasks. Those splits were made in the Rust server (`server/src/`), and its
 TypeScript port in `server-ts/src/`, which is the server now (HA-174, HA-178), kept the same modules and file layout.
-`server/src/` is being removed: server changes go in `server-ts/src/`.
+The Rust server was removed in HA-179 (`server-ts/PORTING.md` says how to read it in git history); `server/` keeps
+the Rust that's left, `ia-shim` and the broker.
 
 ## Layout
 
 ```
 server-ts/src/       the server: one module per feature, grouped in folders by area (bin/huntaway runs it)
+server/              the Rust workspace (cargo build -p ia-shim, cargo test), with these two crates:
 server/shim/         ia-shim, the per-run supervisor (Rust)
 server/broker/       huntaway-broker (Rust)
-server/src/          the Rust server, which no release runs any more: being removed, don't change it
 app/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
 app/src/api/         the API's types and calls, a file per resource
 app/src/components/  React components in a folder per feature (see App modules)

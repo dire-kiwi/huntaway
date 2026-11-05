@@ -89,7 +89,7 @@ check_deps() {
   if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then
     SHIM=cargo
     v="$(rustc --version | awk '{print $2}')"
-    # The workspace is edition 2024 (Rust 1.85+), and its locked dependencies need 1.89 (Cargo.toml's rust-version).
+    # ia-shim is edition 2024 (Rust 1.85+), and the workspace's locked dependencies need 1.89 (the crates' rust-version).
     [ "$(printf '%s\n' "$v" | awk -F. '{print ($1 > 1 || $2 >= 89) ? "ok" : "old"}')" = ok ] ||
       missing+=("Rust 1.89 or newer to build ia-shim (this is $v; rustup update)")
     if [ "$OS" = Darwin ]; then
@@ -187,8 +187,8 @@ prebuilt_shim() {
 
 # Whether $DIR has a server the app can start (as findServerBinary in app/electron/main.cjs looks): the TypeScript
 # server once its dependencies are installed, or the Rust build of a checkout that a Rust server has rebuilt since,
-# which never installs them. The macOS app runs --shortcut-only after an update changed Electron, then exits: if that
-# stopped here, the app wouldn't open again.
+# which never installs them (the Rust server was removed in HA-179, so that's a build left from before). The macOS app
+# runs --shortcut-only after an update changed Electron, then exits: if that stopped here, the app wouldn't open again.
 has_build() {
   [ -f "$DIR/server-ts/node_modules/ws/package.json" ] || [ -x "$DIR/server/target/release/huntaway" ]
 }
