@@ -66,6 +66,11 @@ export const STEER_GRACE = IN_TEST ? 1000 : 30_000;
  * for that turn, which may ask for permission; if no turn starts, it's closed (see queue::background_changed).
  */
 export const BACKGROUND_GRACE = IN_TEST ? 1000 : 120_000;
+/**
+ * The same for background tasks that ended during a turn (ms): Claude Code starts the turn on their outcome as soon as
+ * that turn ends, if it hadn't taken their outcome in already.
+ */
+export const FOLLOW_UP_GRACE = IN_TEST ? 500 : 15_000;
 
 /**
  * A session idle this long is compacted while its prompt cache (1 hour) is still warm, so compacting is cheap and the
@@ -407,7 +412,9 @@ export function load_active(state: Shared) {
         if (waiting.length) close_unless_taken_in(state, run, waiting);
         // Its background tasks may have ended just before, and the turn on their outcome may yet ask for permission on
         // its input (see queue::background_changed).
-        else if (runs.asks_on_output(state, run.id) && !row.stop_requested && runs.background_tasks(state, run.id) === 0) close_unless_turn_starts(state, run);
+        else if (runs.asks_on_output(state, run.id) && !row.stop_requested && runs.background_tasks(state, run.id) === 0) {
+          close_unless_turn_starts(state, run, BACKGROUND_GRACE);
+        }
         else turn_ended(state, run);
       }
     } else {

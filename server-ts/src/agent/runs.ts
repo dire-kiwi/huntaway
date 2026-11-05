@@ -304,6 +304,24 @@ export function set_background_tasks(state: Shared, run_id: string, count: numbe
   }
 }
 
+/**
+ * Whether the run's background tasks last ended during a turn (see queue::background_changed), for an agent that asks on
+ * its output: the turn on their outcome follows that turn. Kept in the run's folder, `background-ended`.
+ */
+export function background_ended(state: Shared, run_id: string): boolean {
+  return existsSync(join(run_dir(state, run_id), "background-ended"));
+}
+
+export function set_background_ended(state: Shared, run_id: string, ended: boolean): void {
+  const path = join(run_dir(state, run_id), "background-ended");
+  try {
+    if (ended) writeFileSync(path, "");
+    else rmSync(path, { force: true });
+  } catch (e) {
+    log.error(`run=${run_id} recording that the agent's background tasks ended: ${err_str(e)}`);
+  }
+}
+
 /** End the agent's input: it exits once it has dealt with what it was sent. */
 export function close_input(state: Shared, run_id: string): void {
   const dir = run_dir(state, run_id);

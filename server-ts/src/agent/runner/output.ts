@@ -172,6 +172,8 @@ export function handle_line(state: Shared, run: Run, line: string) {
     }
     const c = state.db();
     const t = db.get_task(c, task_id);
+    // A turn starting, unless it's the one a message sent to the agent starts (see queue::steered).
+    if (!t?.steering.some((s) => s.run_id === run.id)) turn_started(state, run);
     if (t && t.project_id != null) {
       const config = db.task_claude_config(c, t);
       // The skills a review thread has on top of its project's aren't the project's to list or turn off.

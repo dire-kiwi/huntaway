@@ -11,7 +11,7 @@ import * as testing from "../../testing.ts";
 import { sleep } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as permissions from "../../mcp/permissions.ts";
-import { BACKGROUND_GRACE, finish, load_active, on_output } from "../runner.ts";
+import { BACKGROUND_GRACE, FOLLOW_UP_GRACE, finish, load_active, on_output } from "../runner.ts";
 import { control_call_id } from "./requests.ts";
 
 process.env.IA_SHIM_BIN = "/nonexistent/ia-shim";
@@ -337,5 +337,60 @@ test("a_run_that_asks_through_the_helper_closes_its_input_when_background_tasks_
   const [state, , run] = running();
   writeFileSync(join(runs.run_dir(state, run.id), "run.json"), JSON.stringify({ format: 2 }));
   output(state, run, [background(1), result(), background(0)]);
+  assert.ok(input_closed(state, run));
+});
+
+const init = () => ({ type: "system", subtype: "init", session_id: "s1", tools: [] });
+
+test("background_tasks_that_end_in_a_turn_leave_the_input_open_for_the_turn_on_their_outcome", async () => {
+  const [state, task, run] = running();
+  output(state, run, [background(1), said("Started it; writing my reply."), background(0), result()]);
+  assert.ok(!input_closed(state, run));
+  // Claude Code takes its turn on their outcome right after, and it asks.
+  output(state, run, [init(), said("The build finished; committing."), can_use_tool("r1", "Bash", { command: "git commit" })]);
+  assert.equal(reload(state, task.id).status, "needs_attention");
+  await sleep(FOLLOW_UP_GRACE * 2.5);
+  assert.ok(!input_closed(state, run));
+  permissions.decide(state, request_of(state, run, "r1")!.id, true, false, null);
+  await answered(state, run, 1);
+  output(state, run, [result()]);
+  assert.ok(input_closed(state, run));
+  assert.ok(!runs.background_ended(state, run.id));
+});
+
+test("background_tasks_that_end_in_a_turn_taken_in_by_it_close_the_input_after_a_while", async () => {
+  const [state, , run] = running();
+  output(state, run, [background(1), said("Started it."), background(0), said("It finished: all good."), result()]);
+  await sleep(FOLLOW_UP_GRACE / 2);
+  assert.ok(!input_closed(state, run));
+  await sleep(FOLLOW_UP_GRACE);
+  assert.ok(input_closed(state, run));
+});
+
+test("background_tasks_that_end_in_a_turn_are_remembered_over_a_restart", async () => {
+  const [state, task, run] = running();
+  output(state, run, [background(1), said("Started it."), background(0)]);
+  state.runs.delete(task.id);
+  load_active(state);
+  output(state, run, [result()]);
+  assert.ok(!input_closed(state, run));
+  output(state, run, [init(), said("On its outcome.")]);
+  await sleep(FOLLOW_UP_GRACE * 2.5);
+  assert.ok(!input_closed(state, run));
+  output(state, run, [result()]);
+  assert.ok(input_closed(state, run));
+});
+
+test("a_task_started_again_in_the_turn_forgets_that_the_others_ended", () => {
+  const [state, , run] = running();
+  output(state, run, [background(1), said("a"), background(0), background(1), result()]);
+  assert.ok(!runs.background_ended(state, run.id));
+  assert.ok(!input_closed(state, run));
+});
+
+test("a_run_that_asks_through_the_helper_closes_at_the_end_of_a_turn_its_background_tasks_ended_in", () => {
+  const [state, , run] = running();
+  writeFileSync(join(runs.run_dir(state, run.id), "run.json"), JSON.stringify({ format: 2 }));
+  output(state, run, [background(1), said("a"), background(0), result()]);
   assert.ok(input_closed(state, run));
 });
