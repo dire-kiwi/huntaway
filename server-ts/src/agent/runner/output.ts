@@ -25,7 +25,8 @@ import * as threads from "../../threads/write.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
 import * as plan from "./plan.ts";
-import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended } from "./queue.ts";
+import { on_control_cancel, on_control_request } from "./requests.ts";
+import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended, turn_started } from "./queue.ts";
 
 const SUBAGENT_EVENTS = ["task_started", "task_progress", "task_updated", "task_notification"];
 
@@ -170,6 +171,8 @@ export function handle_line(state: Shared, run: Run, line: string) {
     }
     const c = state.db();
     const t = db.get_task(c, task_id);
+    // A turn starting, unless it's the one a message sent to the agent starts (see queue::steered).
+    if (!t?.steering.some((s) => s.run_id === run.id)) turn_started(state, run);
     if (t && t.project_id != null) {
       const config = db.task_claude_config(c, t);
       // The skills a review thread has on top of its project's aren't the project's to list or turn off.
@@ -205,6 +208,7 @@ export function handle_line(state: Shared, run: Run, line: string) {
     // Only the top-level thread streams a preview.
     if (v.parent_tool_use_id != null) return;
     const ev = v.event;
+    if (ev?.type === "message_start") turn_started(state, run);
     if (ev?.type === "content_block_delta" && ev?.delta?.type === "text_delta") {
       if (typeof ev.delta.text === "string") state.emit_delta(task_id, ev.delta.text);
     } else if (ev?.type === "message_start" || ev?.type === "content_block_start") {
@@ -223,6 +227,7 @@ export function handle_line(state: Shared, run: Run, line: string) {
       return;
     }
     if (wait.is_activity(v)) wait.resumed(state, task_id, run.id);
+    if (type === "assistant" && v.parent_tool_use_id == null) turn_started(state, run);
     if (type === "assistant") context.on_assistant(state, run, v);
     const s = slim(v);
     if (Array.isArray(s?.message?.content) && s.message.content.length === 0) return;
@@ -243,6 +248,11 @@ export function handle_line(state: Shared, run: Run, line: string) {
     state.add_message(task_id, "claude", s);
     // A tool call may have changed the task's document: the task shows it as it's written.
     if (tool_result) documents.follow(state, task_id);
+  } else if (type === "control_request") {
+    // A permission prompt (see requests.ts).
+    on_control_request(state, run, v);
+  } else if (type === "control_cancel_request") {
+    on_control_cancel(state, run, v);
   } else if (type === "control_response") {
     context.on_control_response(state, task_id, v);
   } else if (type === "result") {

@@ -28,7 +28,12 @@ Set these in the server's environment (before test-server.sh, which keeps them f
                          beside the log, and fails a --resume of one the folder hasn't, as Claude Code does
 
 Messages steered into a run (stream-json lines on stdin after the prompt, while it sleeps) are echoed back as
-Claude Code does (`isReplay`), and answered in its reply. A `/compact` prompt prints a compact_boundary. A prompt
+Claude Code does (`isReplay`), and answered in its reply. A run started with `--permission-prompt-tool stdio` asks
+for permission as Claude Code does, with a `can_use_tool` control request on stdout, for each of these in its prompt:
+"fake-ask-permission" (a Bash call), "fake-ask-question" (AskUserQuestion) and "fake-ask-plan" (ExitPlanMode). It waits
+for each `control_response` on stdin (taking in messages sent meanwhile), and its reply says what each answer was
+("permission Bash: allow", with a question's answers or a plan's new mode, or "deny: <message>"). An `interrupt`
+meanwhile cancels the request (`control_cancel_request`) and ends the turn as interrupted. A `/compact` prompt prints a compact_boundary. A prompt
 containing "fake-subagent" runs a subagent (a Task call, with a Read inside it), and streams its reply's text
 (stream_event deltas) before the assistant message.
 """
@@ -126,6 +131,54 @@ if opt("--input-format") == "stream-json":
             emit({**m, "isReplay": True, "session_id": session})
             c = m.get("message", {}).get("content")
             steered.append(c if isinstance(c, str) else " ".join(b.get("text", "") for b in c or [] if isinstance(b, dict)))
+asks = [m for m in ("fake-ask-permission", "fake-ask-question", "fake-ask-plan") if m in prompt] if opt("--permission-prompt-tool") == "stdio" else []
+answers = []
+for marker in asks:
+    # Asked as Claude Code asks with --permission-prompt-tool stdio: the call, then a control request for it.
+    name, tool_input = "Bash", {"command": "echo fake", "description": "Say fake"}
+    if marker == "fake-ask-question":
+        name = "AskUserQuestion"
+        tool_input = {"questions": [{"question": "Which one?", "header": "Pick", "multiSelect": False, "options": [{"label": "a"}, {"label": "b"}]}]}
+    elif marker == "fake-ask-plan":
+        name, tool_input = "ExitPlanMode", {"plan": "# Plan: fake things\n\n1. Do a fake thing"}
+    tool, ask = "toolu_" + uuid.uuid4().hex[:12], str(uuid.uuid4())
+    emit({"type": "assistant", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None,
+          "message": {"id": "msg_" + uuid.uuid4().hex, "role": "assistant", "model": model, "content": [{"type": "tool_use", "id": tool, "name": name, "input": tool_input}]}})
+    emit({"type": "control_request", "request_id": ask,
+          "request": {"subtype": "can_use_tool", "tool_name": name, "input": tool_input, "tool_use_id": tool, "permission_suggestions": []}})
+    answer = None
+    while answer is None:
+        line = sys.stdin.readline()
+        if not line:
+            sys.exit(1)
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if m.get("type") == "control_response" and m.get("response", {}).get("request_id") == ask:
+            answer = m["response"].get("response") or {"behavior": "deny", "message": m["response"].get("error", "error")}
+        elif m.get("type") == "control_request" and m.get("request", {}).get("subtype") == "interrupt":
+            emit({"type": "control_cancel_request", "request_id": ask})
+            emit({"type": "control_response", "response": {"subtype": "success", "request_id": m.get("request_id"), "response": {}}})
+            emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "interrupted", "session_id": session,
+                  "duration_ms": 1, "num_turns": 1, "total_cost_usd": 0})
+            while sys.stdin.readline():
+                pass
+            sys.exit(0)
+        elif m.get("type") == "user":
+            emit({**m, "isReplay": True, "session_id": session})
+            c = m.get("message", {}).get("content")
+            steered.append(c if isinstance(c, str) else " ".join(b.get("text", "") for b in c or [] if isinstance(b, dict)))
+    allowed = answer.get("behavior") == "allow"
+    said = "permission " + name + ": " + ("allow" if allowed else "deny: " + str(answer.get("message")))
+    if allowed and name == "AskUserQuestion":
+        said += " " + json.dumps((answer.get("updatedInput") or {}).get("answers"))
+    if allowed and answer.get("updatedPermissions"):
+        said += " " + json.dumps(answer["updatedPermissions"])
+    answers.append(said)
+    emit({"type": "user", "session_id": session, "uuid": str(uuid.uuid4()), "parent_tool_use_id": None,
+          "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool, "content": "fake" if allowed else str(answer.get("message")),
+                                                    "is_error": not allowed}]}})
 if prompt.strip() == "/compact":
     emit({"type": "system", "subtype": "compact_boundary", "session_id": session, "compact_metadata": {"trigger": "manual", "pre_tokens": 1234}})
 if "fake-subagent" in prompt:
@@ -193,6 +246,8 @@ if usage == "out":
 text = os.environ.get("IA_FAKE_CLAUDE_TEXT") or "Fake reply to: " + prompt.strip()[:200]
 if steered:
     text += " (and to: " + "; ".join(steered)[:200] + ")"
+if answers:
+    text += " (" + "; ".join(answers) + ")"
 if "fake-subagent" in prompt:
     emit({"type": "stream_event", "session_id": session, "parent_tool_use_id": None, "event": {"type": "message_start", "message": {"id": "msg_s"}}})
     emit({"type": "stream_event", "session_id": session, "parent_tool_use_id": None, "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
