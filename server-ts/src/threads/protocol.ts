@@ -76,6 +76,12 @@ interface ItemBase {
   /** The turn the item was made in. */
   turn_id?: string;
   created_at?: string;
+  /**
+   * Huntaway's own facts about the item that the protocol doesn't model, which the board draws: that the board sent a
+   * user_message itself (`auto`), a turn_result's `subtype`, `num_turns` and `total_cost_usd`, a compaction's
+   * `post_tokens`, a routine report's notice's whole report. See docs/threads.md.
+   */
+  metadata?: { [k: string]: unknown };
 }
 
 /** A message to the agent. */
@@ -147,6 +153,8 @@ export interface SubagentState {
   tool_uses?: number;
   /** A background subagent's final report, once it has ended. */
   summary?: string;
+  /** When it ended (the first time, if it ran again). */
+  ended_at?: string;
 }
 
 /**
@@ -248,6 +256,12 @@ interface RequestBase {
   resolution?: Resolution;
   turn_id?: string;
   created_at?: string;
+  /**
+   * The board's own record of it, which its cards draw: the stored prompt or question as the board keeps it (its
+   * `status`, `note`, `rule`, `expires_at`, `kind`, a plan's `mode` and `feedback`, a question's `options`...), but for
+   * a permission's `input`, which is the request's own. Huntaway's addition, like Item's `metadata`.
+   */
+  metadata?: { [k: string]: unknown };
 }
 
 /** The agent wants to call a tool, and the permission policy said ask. */

@@ -79,7 +79,8 @@ test("converts_a_turn", () => {
   ]);
   assert.deepEqual(c.items.map((i) => i.id), ["legacy:1", "legacy:2:0", "legacy:2:1", "tu1", "legacy:5", "legacy:6", "legacy:7"]);
   const items = by_id(c);
-  assert.deepEqual(items["legacy:1"], { id: "legacy:1", type: "user_message", text: "Fix the test", created_at: "2026-11-01T00:00:01.000Z" });
+  assert.deepEqual(items["legacy:1"], { id: "legacy:1", type: "user_message", text: "Fix the test", created_at: "2026-11-01T00:00:01.000Z", metadata: { auto: true } });
+  assert.equal(items["legacy:5"].metadata, undefined);
   assert.equal(items["legacy:5"].steered, true);
   assert.equal(items["legacy:2:0"].type, "reasoning");
   assert.equal(items.tu1.status, "completed");
@@ -88,6 +89,8 @@ test("converts_a_turn", () => {
   assert.deepEqual(items.tu1.result, { content: "ok" });
   assert.equal(items["legacy:6"].ok, true);
   assert.equal(items["legacy:6"].duration_ms, 1200);
+  // What the board shows of a turn's end that the item doesn't say (converter 3).
+  assert.deepEqual(items["legacy:6"].metadata, { subtype: "success", num_turns: 3, total_cost_usd: 0.5 });
   assert.equal(items["legacy:7"].level, "warning");
   assert.equal(disposition(c, 4), "redundant");
   assert.equal(count(c, "retained"), 0);
@@ -127,7 +130,8 @@ test("subagents_and_their_messages", () => {
   const items = by_id(c);
   assert.equal(items.ag.kind, "subagent");
   assert.equal(items.ag.title, "Look around");
-  assert.deepEqual(items.ag.subagent, { status: "completed", agent_type: "Explore", model: "haiku", activity: "Reading /a", tool_uses: 1 });
+  // It ended with its task_notification (message 7), not its call's result after it.
+  assert.deepEqual(items.ag.subagent, { status: "completed", agent_type: "Explore", model: "haiku", activity: "Reading /a", tool_uses: 1, ended_at: "2026-11-01T00:00:07.000Z" });
   assert.equal(items.rd.parent_id, "ag");
   assert.equal(items.rd.path, "/a");
   assert.deepEqual([items["legacy:13"].code, items["legacy:13"].parent_id], ["interrupted", "ag"]);
@@ -151,7 +155,7 @@ test("a_background_subagent_and_one_that_never_ends", () => {
   ]);
   const items = by_id(c);
   assert.equal(items.bg.status, "completed");
-  assert.deepEqual(items.bg.subagent, { status: "completed", background: true, summary: "Done away" });
+  assert.deepEqual(items.bg.subagent, { status: "completed", background: true, summary: "Done away", ended_at: "2026-11-01T00:00:04.000Z" });
   assert.equal(items.bg.result.content, "Async agent launched successfully");
   assert.equal(items.bg2.subagent.status, "stopped");
   assert.deepEqual(codes(c), ["subagent_running"]);
@@ -226,7 +230,15 @@ test("a_prompt_answered_later_resolves_its_request", () => {
   const again = t.message(msg(2, "permission", pending));
   assert.deepEqual([again.disposition, again.events], ["redundant", []]);
   const allowed = t.message(msg(2, "permission", { ...pending, status: "allowed" }));
-  assert.deepEqual(allowed.events, [{ type: "request.resolved", request_id: "r", resolution: { outcome: "allow" } }]);
+  // The board's record of it (its status) is replaced in place, keeping the resolution it had, and then it's resolved.
+  const { input: _, ...stored } = pending;
+  assert.deepEqual(allowed.events, [
+    {
+      type: "request.opened",
+      request: { id: "r", created_at: "2026-11-01T00:00:02.000Z", tool_call_id: "c", metadata: { ...stored, status: "allowed" }, type: "permission", kind: "shell", name: "Bash", input: { command: "ls" }, title: "ls" },
+    },
+    { type: "request.resolved", request_id: "r", resolution: { outcome: "allow" } },
+  ]);
   assert.equal(t.message(msg(2, "permission", { ...pending, status: "allowed" })).disposition, "redundant");
 });
 
@@ -258,8 +270,8 @@ test("a_late_answer_after_its_run_ended_resolves_its_request_again", () => {
   ];
   const t = new Translator();
   const live = writes.map((m) => t.message(m));
-  // The expiries cancel, and the late answers resolve them again.
-  assert.deepEqual(live.slice(5).map((s) => s.events.map((e) => e.type)), Array(6).fill(["request.resolved"]));
+  // The expiries cancel, and the late answers resolve them again (each replacing the board's record of it first).
+  assert.deepEqual(live.slice(5).map((s) => s.events.map((e) => e.type)), Array(6).fill(["request.opened", "request.resolved"]));
   const final = new Map(writes.map((m) => [m.id, m]));
   const whole = convert([...final.values()], { finished: false });
   assert.deepEqual(fold(live.flatMap((s) => s.events)), { items: whole.items, requests: whole.requests });
@@ -267,6 +279,10 @@ test("a_late_answer_after_its_run_ended_resolves_its_request_again", () => {
   assert.deepEqual(r.rp.resolution, { outcome: "allow", permission_mode: "accept_edits" });
   assert.deepEqual(r.rq.resolution, { outcome: "answer", answers: { "Which?": ["B"] } });
   assert.deepEqual(r["legacy:5"].resolution, { outcome: "answer", answers: { q: ["Yes"] } });
+  // And the board's records are the final rows', a permission's without its input (the request's own).
+  assert.deepEqual(r.rp.metadata, { ...plan, status: "allowed", late: true, mode: "acceptEdits" });
+  assert.deepEqual(r.rq.metadata, { ...ask, status: "allowed", late: true, answers: [["B"]] });
+  assert.deepEqual(r["legacy:5"].metadata, { ...card, status: "answered", answer: { choices: ["Yes"] } });
   // The same status again changes nothing.
   assert.equal(t.message(writes.at(-1)!).disposition, "redundant");
 });
@@ -306,6 +322,59 @@ test("compaction_and_its_summary", () => {
   assert.deepEqual([disposition(c, 3), items["legacy:3"].type], ["converted", "turn_result"]);
   // An interrupted turn's result says nothing more than that.
   assert.deepEqual([items["legacy:4"].ok, items["legacy:4"].interrupted, items["legacy:4"].error], [false, true, undefined]);
+});
+
+test("what_the_board_draws_that_the_protocol_doesnt_say", () => {
+  // Converter 3 (HA-218): the thread view on items draws these as it did from messages.
+  const c = convert_all([
+    msg(1, "claude", { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 9000, post_tokens: 1200 } }),
+    msg(2, "claude", { type: "result", subtype: "success", is_error: false, num_turns: 0, duration_ms: 50, total_cost_usd: 0.01 }),
+    msg(3, "report", { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "reported", text: "All fine" }),
+    msg(4, "report", { automation: "Brief", task_id: "t3", key: "HA-3", outcome: "failed", text: "It broke" }),
+    msg(5, "claude", { type: "result", subtype: "error_max_turns", is_error: true }),
+  ]);
+  const items = by_id(c);
+  assert.deepEqual(items["legacy:1"].metadata, { post_tokens: 1200 });
+  // A `/compact` run's turn: the view folds it into the compaction by its num_turns, as it did the result.
+  assert.deepEqual(items["legacy:2"].metadata, { subtype: "success", num_turns: 0, total_cost_usd: 0.01 });
+  // A routine's report, kept only in messages before: a notice with the whole report.
+  assert.deepEqual(items["legacy:3"], {
+    id: "legacy:3",
+    type: "notice",
+    level: "info",
+    code: "routine_report",
+    text: "All fine",
+    created_at: "2026-11-01T00:00:03.000Z",
+    metadata: { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "reported", text: "All fine" },
+  });
+  assert.deepEqual([items["legacy:4"].level, items["legacy:4"].metadata.outcome], ["error", "failed"]);
+  assert.equal(disposition(c, 3), "converted");
+  assert.deepEqual(items["legacy:5"].metadata, { subtype: "error_max_turns" });
+  assert.deepEqual(c.warnings, []);
+});
+
+test("a_subagent_that_runs_again_keeps_when_it_first_ended_until_it_does", () => {
+  const c = convert_all([
+    assistant(1, null, [{ type: "tool_use", id: "bg", name: "Agent", input: { description: "Away", run_in_background: true } }]),
+    msg(2, "claude", { type: "system", subtype: "task_started", task_type: "local_agent", task_id: "k1", tool_use_id: "bg", is_backgrounded: true }),
+    results(3, null, [{ type: "tool_result", tool_use_id: "bg", content: "Async agent launched successfully" }]),
+    msg(4, "claude", { type: "system", subtype: "task_updated", task_id: "k1", patch: { status: "completed" } }),
+    msg(5, "claude", { type: "system", subtype: "task_notification", task_id: "k1", status: "completed", summary: "Done" }),
+    msg(6, "claude", { type: "system", subtype: "task_updated", task_id: "k1", patch: { status: "running" } }),
+  ]);
+  // Continued after it ended: running again, with no end (finish stops it, as one that never said it ended).
+  assert.deepEqual(by_id(c).bg.subagent, { status: "stopped", background: true });
+  // Before it ran again: ended at its first end (message 4), not the notification after it.
+  const open = convert(
+    [
+      assistant(1, null, [{ type: "tool_use", id: "bg", name: "Agent", input: { description: "Away", run_in_background: true } }]),
+      msg(2, "claude", { type: "system", subtype: "task_started", task_type: "local_agent", task_id: "k1", tool_use_id: "bg", is_backgrounded: true }),
+      msg(4, "claude", { type: "system", subtype: "task_updated", task_id: "k1", patch: { status: "completed" } }),
+      msg(5, "claude", { type: "system", subtype: "task_notification", task_id: "k1", status: "completed", summary: "Done" }),
+    ],
+    { finished: false },
+  );
+  assert.deepEqual(by_id(open).bg.subagent, { status: "completed", background: true, ended_at: "2026-11-01T00:00:04.000Z", summary: "Done" });
 });
 
 test("what_the_history_doesnt_say", () => {
@@ -662,7 +731,9 @@ test("codex_children_as_the_board_stores_them", () => {
   const c = convert_all(db.list_messages(s.db(), task.id));
   const agent = by_id(c)["codex-agent-child"];
   assert.equal(agent.status, "completed");
-  assert.deepEqual(agent.subagent, { status: "completed", background: true, model: "gpt-6.1-sol", summary: "Config is fine" });
+  const { ended_at, ...subagent } = agent.subagent;
+  assert.deepEqual(subagent, { status: "completed", background: true, model: "gpt-6.1-sol", summary: "Config is fine" });
+  assert.equal(typeof ended_at, "string");
   // The child's compaction stays in the child's conversation.
   assert.equal(c.items.find((i) => i.type === "compaction")!.parent_id, "codex-agent-child");
   assert.deepEqual(c.warnings, []);

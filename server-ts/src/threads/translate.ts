@@ -30,9 +30,12 @@ import type {
 /**
  * Changes when what the translator makes of the same messages does: threads built by it record it (`threads.converter`),
  * and `huntaway threads-rebuild` brings them up to date. 2: a merge-gate card settled as `replaced` is a cancel with a
- * message, without a warning; a prompt that's pending again reopens its request.
+ * message, without a warning; a prompt that's pending again reopens its request. 3 (HA-218, for the thread view on
+ * items): items and requests carry the board's `metadata` (an auto message, a turn's cost and turns, a compaction's
+ * tokens after, a request's stored prompt or question, replaced in place when it changes), subagents their `ended_at`,
+ * and a routine's report is a notice (`routine_report`).
  */
-export const CONVERTER_VERSION = 2;
+export const CONVERTER_VERSION = 3;
 
 /** How Claude Code's result for a call that was stopped starts. */
 const REJECTED = "The user doesn't want to proceed with this tool use.";
@@ -135,6 +138,7 @@ type Job = { agent: string } | "shown";
 /** A tool_result waiting for its call (stored before it). */
 interface EarlyResult {
   message_id: number;
+  created_at: string;
   block: any;
   meta: any;
   parent_raw: string | null;
@@ -277,6 +281,9 @@ export class Translator {
         break;
       case "claude":
         d = this.claude(msg);
+        break;
+      case "report":
+        d = this.report(msg);
         break;
       default:
         d = this.retain(m.id, "unknown_kind", `a message of kind ${m.kind}`);
@@ -453,6 +460,7 @@ export class Translator {
     const id = `legacy:${m.id}`;
     const item: Item = { id, type: "user_message", text: typeof d.text === "string" ? d.text : "", created_at: m.created_at };
     if (d.steered === true) item.steered = true;
+    if (d.auto === true) item.metadata = { auto: true };
     this.add(item);
     this.set_meta(id, { auto: d.auto === true, from_agent: d.from_agent === true, user_text: typeof d.user_text === "string" ? d.user_text : undefined });
     return "converted";
@@ -472,6 +480,14 @@ export class Translator {
     const detail = str(d, "detail");
     if (detail !== undefined) item.detail = detail;
     this.add(item);
+    return "converted";
+  }
+
+  /** A routine's report in the assistant's thread (API 110): a notice, with the whole report as its metadata. */
+  private report(m: Message): Disposition {
+    const d = m.data;
+    const level = d.outcome === "failed" ? "error" : "info";
+    this.add({ id: `legacy:${m.id}`, type: "notice", level, code: "routine_report", text: str(d, "text") ?? "", created_at: m.created_at, metadata: { ...d } });
     return "converted";
   }
 
@@ -507,13 +523,18 @@ export class Translator {
   private request(request: ThreadRequest, resolution: Resolution | undefined): Disposition {
     const was = this.requests.get(request.id);
     if (was) {
+      // What the board keeps of it changed (its status, a note, a plan's mode...): it's replaced in place, keeping its
+      // resolution, which a request.resolved then changes.
+      const changed = !same_json(was.metadata, request.metadata);
       if (!resolution) {
-        if (!was.resolution) return "redundant";
+        if (!was.resolution && !changed) return "redundant";
         this.open(request);
         return "converted";
       }
-      if (same_json(was.resolution, resolution)) return "redundant";
-      this.resolve(request.id, resolution);
+      const resolved = !same_json(was.resolution, resolution);
+      if (!resolved && !changed) return "redundant";
+      if (changed) this.open(was.resolution ? { ...request, resolution: was.resolution } : request);
+      if (resolved) this.resolve(request.id, resolution);
       return "converted";
     }
     this.open(request);
@@ -553,7 +574,7 @@ export class Translator {
     const tool = typeof d.tool_name === "string" ? d.tool_name : "";
     const input = d.input ?? {};
     const call = str(d, "tool_use_id");
-    const base: { id: string; created_at: string; tool_call_id?: string; parent_id?: string } = { id, created_at: m.created_at };
+    const base: { id: string; created_at: string; tool_call_id?: string; parent_id?: string; metadata?: { [k: string]: unknown } } = { id, created_at: m.created_at };
     // The call it's for, the first time the thread sees it.
     if (call !== undefined && !this.requests.has(id)) {
       const c = this.prompted(m.id, id, call, input);
@@ -570,6 +591,8 @@ export class Translator {
       if (was.parent_id) base.parent_id = was.parent_id;
     }
     let resolution = this.resolution(m, "a prompt");
+    // The prompt as the board keeps it, for its card: a plan's or question's input too, which the request only has in part.
+    base.metadata = { ...d };
     let request: ThreadRequest;
     if (tool === EXIT_PLAN) {
       request = { ...base, type: "plan", plan: typeof input?.plan === "string" ? input.plan : "" };
@@ -599,7 +622,8 @@ export class Translator {
       const fields = tool_fields(tool, input);
       // The board's own approvals (a project change, deleting a task, an automation) are for its tools.
       const kind: ToolKind = typeof d.kind === "string" && d.kind !== "tool" ? "app" : fields.kind;
-      const r: PermissionRequest = { ...base, type: "permission", kind, name: fields.name, input };
+      const { input: _, ...metadata } = d;
+      const r: PermissionRequest = { ...base, metadata, type: "permission", kind, name: fields.name, input };
       if (fields.server !== undefined && kind === "mcp") r.server = fields.server;
       r.title = title(fields);
       request = r;
@@ -622,7 +646,7 @@ export class Translator {
     } else {
       resolution = this.resolution(m, "a question");
     }
-    return this.request({ id: `legacy:${m.id}`, type: "question", questions: [q], created_at: m.created_at }, resolution);
+    return this.request({ id: `legacy:${m.id}`, type: "question", questions: [q], created_at: m.created_at, metadata: { ...d } }, resolution);
   }
 
   // ---------- Claude's messages (and Codex's, shaped like them) ----------
@@ -645,6 +669,8 @@ export class Translator {
       if (meta.trigger === "auto" || meta.trigger === "manual") item.trigger = meta.trigger;
       const tokens = uint(meta.pre_tokens);
       if (tokens !== undefined) item.tokens_before = tokens;
+      const after = uint(meta.post_tokens);
+      if (after !== undefined) item.metadata = { post_tokens: after };
       this.add(item);
       return "converted";
     }
@@ -739,7 +765,7 @@ export class Translator {
     if (early && e >= 0) {
       const [x] = early.splice(e, 1);
       if (!early.length) this.early.delete(call_id);
-      this.tool_result(x!.message_id, c, x!.block, x!.meta);
+      this.tool_result(x!.message_id, x!.created_at, c, x!.block, x!.meta);
     }
   }
 
@@ -801,7 +827,7 @@ export class Translator {
     const all = this.calls_with(id);
     const found = all.filter((c) => c.parent_raw === parent_raw && same_session(c.session, session) && !c.has_result);
     if (found.length === 1) {
-      this.tool_result(m.id, found[0]!, block, m.data.tool_use_result);
+      this.tool_result(m.id, m.created_at, found[0]!, block, m.data.tool_use_result);
       return true;
     }
     if (found.length > 1) {
@@ -810,7 +836,7 @@ export class Translator {
       this.warn(m.id, "unmatched_result", `a result for call ${id}, which no call with the id is waiting for`);
     } else {
       // Stored before its call: given to it when it comes.
-      const e = { message_id: m.id, block, meta: m.data.tool_use_result, parent_raw, session };
+      const e = { message_id: m.id, created_at: m.created_at, block, meta: m.data.tool_use_result, parent_raw, session };
       const list = this.early.get(id);
       if (list) list.push(e);
       else this.early.set(id, [e]);
@@ -819,8 +845,8 @@ export class Translator {
     return false;
   }
 
-  /** A tool_result block for call `c` (`meta`: its message's tool_use_result). */
-  private tool_result(message_id: number, c: Call, block: any, meta: any): void {
+  /** A tool_result block for call `c` (`meta`: its message's tool_use_result), stored `at`. */
+  private tool_result(message_id: number, at: string, c: Call, block: any, meta: any): void {
     const text = result_text(block.content);
     const is_error = block.is_error === true;
     // Claude Code's result for a call a stop cut short (a denied call's is the denial's message).
@@ -834,7 +860,7 @@ export class Translator {
     c.status = status;
     c.has_result = true;
     if (c.kind === "subagent") {
-      const s = subagent_result(c.subagent, is_error, interrupted, is_obj(meta) ? meta : {}, text);
+      const s = subagent_result(c.subagent, is_error, interrupted, is_obj(meta) ? meta : {}, text, at);
       if (s) patch.subagent = c.subagent = s;
     }
     this.update(c.item, patch);
@@ -892,7 +918,7 @@ export class Translator {
     if (job === "shown") return "redundant";
     const c = this.calls.get(job.agent);
     if (!c?.subagent) return "redundant";
-    const next = subagent_task(c.subagent, d);
+    const next = subagent_task(c.subagent, d, m.created_at);
     if (same_json(next, c.subagent)) return "redundant";
     c.subagent = next;
     this.update(c.item, { subagent: next });
@@ -919,6 +945,12 @@ export class Translator {
     if (!ok && (text !== undefined || d.interrupted !== true)) item.error = text ?? str(d, "subtype") ?? "error";
     const ms = uint(d.duration_ms);
     if (ms !== undefined) item.duration_ms = ms;
+    // What the board shows of it that the item doesn't say.
+    const metadata: { [k: string]: unknown } = {};
+    if (typeof d.subtype === "string") metadata.subtype = d.subtype;
+    if (typeof d.num_turns === "number") metadata.num_turns = d.num_turns;
+    if (typeof d.total_cost_usd === "number") metadata.total_cost_usd = d.total_cost_usd;
+    if (Object.keys(metadata).length) item.metadata = metadata;
     this.add(item);
     // What its result said, whichever way the turn went: the readers take it as what the agent said last there.
     this.set_meta(id, { result_text: text });
@@ -1243,8 +1275,14 @@ function subagent_started(s: SubagentState | undefined, m: any, model: string | 
   return next;
 }
 
-/** A subagent after a task_progress, task_updated or task_notification about it. */
-function subagent_task(s: SubagentState, m: any): SubagentState {
+/** A subagent's state with it ended, `status`, at `at` (the first time it ended, if it ran again since). */
+function ended(next: SubagentState, status: SubagentStatus, at: string): void {
+  next.status = status;
+  next.ended_at ??= at;
+}
+
+/** A subagent after a task_progress, task_updated or task_notification about it, stored `at`. */
+function subagent_task(s: SubagentState, m: any, at: string): SubagentState {
   const next: SubagentState = { ...s };
   const running = s.status === "running";
   const tool_uses = uint(m.usage?.tool_uses);
@@ -1260,15 +1298,16 @@ function subagent_task(s: SubagentState, m: any): SubagentState {
       if (m.patch?.status === "running") {
         next.status = "running";
         delete next.summary;
+        delete next.ended_at;
       } else {
         const end = subagent_end(m.patch?.status);
-        if (end && running) next.status = end;
+        if (end && running) ended(next, end, at);
       }
       break;
     }
     case "task_notification": {
       const end = subagent_end(m.status);
-      if (end && running) next.status = end;
+      if (end && running) ended(next, end, at);
       if (tool_uses !== undefined) next.tool_uses = tool_uses;
       // A foreground subagent's report is its call's result.
       const summary = str(m, "summary");
@@ -1283,7 +1322,7 @@ function subagent_task(s: SubagentState, m: any): SubagentState {
  * A subagent call's subagent, as its result says (`meta`: the result's tool_use_result, which the board keeps for Agent
  * calls); undefined for a call whose subagent never started.
  */
-function subagent_result(s: SubagentState | undefined, is_error: boolean, interrupted: boolean, meta: any, text: string): SubagentState | undefined {
+function subagent_result(s: SubagentState | undefined, is_error: boolean, interrupted: boolean, meta: any, text: string, at: string): SubagentState | undefined {
   if (!s && is_error) return undefined;
   const next: SubagentState = { ...(s ?? { status: "running" }) };
   const model = str(meta, "resolvedModel");
@@ -1296,7 +1335,7 @@ function subagent_result(s: SubagentState | undefined, is_error: boolean, interr
   if (meta.isAsync === true || meta.status === "async_launched" || text.trimStart().startsWith("Async agent launched")) {
     next.background = true;
   } else if (next.status === "running") {
-    next.status = is_error ? (interrupted ? "stopped" : "failed") : (subagent_end(meta.status) ?? "completed");
+    ended(next, is_error ? (interrupted ? "stopped" : "failed") : (subagent_end(meta.status) ?? "completed"), at);
   }
   return next;
 }

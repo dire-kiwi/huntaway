@@ -121,6 +121,12 @@ function normalize(item: any): any {
   if (out.type !== "tool_call") delete out.id;
   delete out.turn_id;
   delete out.created_at;
+  // Huntaway's own additions (converter 3).
+  delete out.metadata;
+  if (out.subagent?.ended_at) {
+    out.subagent = { ...out.subagent };
+    delete out.subagent.ended_at;
+  }
   if (out.type === "turn_result") {
     delete out.usage;
     delete out.session;
@@ -148,7 +154,7 @@ const our_items = (list: Item[]) => list.filter((i: any) => !(i.type === "notice
 
 /** A request as compared: without its id and time, which the board picks, and the user_messages our protocol leaves out. */
 function request(r: any): any {
-  const { id: _, created_at: _c, turn_id: _t, user_messages: _u, ...rest } = r;
+  const { id: _, created_at: _c, turn_id: _t, user_messages: _u, metadata: _m, ...rest } = r;
   return rest;
 }
 

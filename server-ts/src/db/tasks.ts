@@ -226,6 +226,11 @@ export interface Task {
   summaries: ChangeSummary[];
   /** How full its agent's context window is, as of its latest reply (see agent/context.rs). */
   context: Context | null;
+  /**
+   * Its thread is kept as items as well as messages (API 117: its first message was written with the host's Keep threads
+   * as items setting on, see threads/write.ts), so the thread view can draw it from `/tasks/{id}/thread`.
+   */
+  thread_items: boolean;
   /** The conversation rollback its next run makes, after a rewind (a checkpoints::Rewind); left out when there's none. */
   rewind?: any;
   cost_usd: number;
@@ -355,6 +360,7 @@ export function Task_from_row(r: any): Task {
     summary: summaries[0] ? structuredClone(summaries[0]) : null,
     summaries,
     context: json_opt(r.context, Context_from_json),
+    thread_items: !!r.thread_items,
   });
   const rewind = rewind_column(r.rewind);
   if (rewind) t.rewind = rewind;

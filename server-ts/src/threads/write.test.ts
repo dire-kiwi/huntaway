@@ -142,13 +142,13 @@ test("every kind of message, and every update in place, writes what a rebuild ma
   merge_gate.ask(s, id);
   s.add_message(id, "user", { text: "and then", steered: true });
   matches_rebuild(s, id);
-  // The replaced card is a cancel with a message, the new one open, and only the report warns (it's kept in messages).
+  // The replaced card is a cancel with a message, the new one open, and nothing warns (a routine's report is a notice, converter 3).
   const reqs = store.requests(s.db(), id);
   const replaced = reqs.filter((r) => r.resolution?.message?.startsWith("No longer asked"));
   assert.equal(replaced.length, 1);
   assert.equal(store.open_requests(s.db(), id).length, 1);
   const warnings = convert(db.list_messages(s.db(), id), { finished: false }).warnings;
-  assert.deepEqual(warnings.map((w) => w.code), ["unknown_kind"]);
+  assert.deepEqual(warnings.map((w) => w.code), []);
   // Each message's events went out after it, numbered with no gaps.
   const sent = thread_events(events, id);
   assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1));

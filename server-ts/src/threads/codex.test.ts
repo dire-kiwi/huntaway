@@ -51,6 +51,12 @@ function converted(state: Shared, run: Run): Conversion {
 }
 
 const by_id = (c: Conversion): Record<string, any> => Object.fromEntries(c.items.map((i) => [i.id, i]));
+/** A subagent's state without when it ended (the time its message was stored), which it must have. */
+function ended(s: any): any {
+  const { ended_at, ...rest } = s;
+  assert.equal(typeof ended_at, "string", "it has ended_at");
+  return rest;
+}
 const retained = (c: Conversion) => c.rows.filter((r) => r.disposition === "retained");
 
 test("a_codex_turn_with_each_kind_of_item", () => {
@@ -171,7 +177,7 @@ test("codex_subagents_keep_the_main_session_turn_and_stream_separate", () => {
   const items = by_id(c);
   const child = items["codex-agent-child"];
   assert.deepEqual([child.kind, child.title, child.status], ["subagent", "Inspect config", "completed"]);
-  assert.deepEqual(child.subagent, { status: "completed", background: true, agent_type: "explorer", model: "gpt-6.1-sol" });
+  assert.deepEqual(ended(child.subagent), { status: "completed", background: true, agent_type: "explorer", model: "gpt-6.1-sol" });
   assert.equal(items["codex-agent-nested"].parent_id, "codex-agent-child");
   assert.equal(items.bash.parent_id, "codex-agent-child");
   assert.equal(items.bash.result.content, "config.rs");
@@ -213,7 +219,7 @@ test("codex_collab_actions_update_existing_children", () => {
   assert.deepEqual(states, ["running", "completed", "running", "running", "failed", "running", "stopped"]);
   const c = converted(state, run);
   const items = by_id(c);
-  assert.deepEqual(items["codex-agent-child"].subagent, { status: "stopped", background: true, model: "gpt-6.1-sol", summary: "Child report" });
+  assert.deepEqual(ended(items["codex-agent-child"].subagent), { status: "stopped", background: true, model: "gpt-6.1-sol", summary: "Child report" });
   // The other collab calls are calls of their own.
   assert.deepEqual([items.call2.name, items.call2.kind, items.call2.status], ["wait", "other", "completed"]);
   assert.equal(c.items.filter((i: any) => i.kind === "subagent").length, 1);
@@ -230,7 +236,7 @@ test("codex_hosted_activity_and_late_metadata_share_one_row", () => {
   item(state, run, "hosted", { type: "subAgentActivity", id: "hosted4", kind: "interrupted", agentThreadId: "nested" });
   const c = converted(state, run);
   const items = by_id(c);
-  assert.deepEqual(items["codex-agent-hosted"].subagent, { status: "completed", background: true, model: "gpt-6.1-sol" });
+  assert.deepEqual(ended(items["codex-agent-hosted"].subagent), { status: "completed", background: true, model: "gpt-6.1-sol" });
   assert.deepEqual([items["codex-agent-nested"].parent_id, items["codex-agent-nested"].subagent.status], ["codex-agent-hosted", "stopped"]);
   assert.deepEqual(c.warnings, []);
   assert.deepEqual(retained(c), []);
