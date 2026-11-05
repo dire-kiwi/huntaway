@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -876,4 +877,32 @@ test("a_claude_run_is_given_its_memory_in_a_file", async () => {
   // The memory comes last, and the run made the workspace a repository.
   assert.ok(told.trimEnd().endsWith("There's no log for today yet."), told);
   assert.ok(is_repo(dir));
+});
+
+test("a_commit_that_fails_after_the_move_keeps_the_moved_history", async () => {
+  // HA-203 review: a failed commit of what changed after the history moved (a file git can't read, a full disk) was taken
+  // for a failed move, which removed the moved history, with the old `.git` already gone.
+  const dir = ws();
+  old_workspace(dir);
+  write(dir, "notes.md", "notes\n");
+  plain_git(dir, ["add", "-A"], "Assistant", "a@b");
+  plain_git(dir, ["commit", "-q", "-m", "Update notes.md"], "Assistant", "a@b");
+  write(dir, "locked.md", "secret\n");
+  chmodSync(join(dir, "locked.md"), 0o000);
+  try {
+    await assert.rejects(ensure(dir), /git add failed/);
+    // The history is in the board's repository, whole, and the old `.git` went once it was.
+    assert.ok(is_repo(dir) && !existsSync(join(dir, ".git")));
+    assert.deepEqual(await log(dir), [
+      ["Assistant", "Update notes.md"],
+      ["Assistant", "Start the assistant's memory"],
+    ]);
+    // Once the file can be read, the next commit takes it, on top of that history.
+    chmodSync(join(dir, "locked.md"), 0o644);
+    await ensure(dir);
+    assert.notEqual(await commit_all(dir, "Assistant", null), null);
+    assert.equal((await log(dir)).length, 3);
+  } finally {
+    chmodSync(join(dir, "locked.md"), 0o644);
+  }
 });

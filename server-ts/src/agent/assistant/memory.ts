@@ -295,15 +295,20 @@ export async function ensure(dir: string): Promise<void> {
     if (is_repo(dir)) return;
     const old = join(dir, ".git");
     if (is_real_dir(old)) {
+      let moved = false;
       try {
         await migrate(dir, old, gd);
-        // What changed meanwhile, with what's ignored now left out.
-        await commit_all_locked(dir, "Assistant", null);
-        return;
+        moved = true;
       } catch (e) {
         // Its history stays in its `.git`, for the user to look at, and it starts again.
         console.warn(`the assistant's history in ${old} couldn't be moved, so it starts again: ${err_str(e)}`);
         rmSync(gd, { recursive: true, force: true });
+      }
+      if (moved) {
+        // What changed meanwhile, with what's ignored now left out. An error here isn't the move's: the history is in
+        // `gd` now (the old `.git` is gone), so it stays, and the next commit takes what this one couldn't.
+        await commit_all_locked(dir, "Assistant", null);
+        return;
       }
     }
     await git_ok(dir, "Assistant", ["init", "-q"]);
