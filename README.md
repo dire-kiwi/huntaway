@@ -618,7 +618,11 @@ token still works later, and the notification keeps its buttons.
 ### The mobile app
 
 `mobile/` is an Expo app for Android and iOS (API 118) that follows and drives your tasks on several
-boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
+boards at once, a work hub and a personal board say. Its home tab is the **Assistant** (from API
+120): the selected board's assistant for its picked profile, on the host the profile's assistant is
+on (an assistant host of its own, perhaps, which the tab says is offline when it is), with the
+board and profile switchers above it; on an older board the tab is hidden and the Inbox is home.
+Then an **Inbox** of what's waiting for you on every
 paired board together, each item labelled with its board (tasks that need attention, permission
 prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
 project's tasks by status and a sheet to add one; and each task's **thread**, with the agent's
@@ -627,6 +631,17 @@ stop and move. A **Boards** tab lists the paired boards, picks the profile shown
 a board on the web for what the app leaves out (terminals, diffs and commits, settings,
 analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
 the network changes.
+
+What you **share** from another app (a link, text, photos or a file, from Android's share sheet or
+the iOS share extension, *Huntaway Share*) opens the Assistant with its composer filled in, after
+whatever was typed there, and the files uploading as attachments to the assistant's host. With
+several boards that can take it, the app asks which, with the last one picked first. A share only
+ever becomes a draft: it's never taken as an address or a token. Every composer (the assistant's and
+each task's) has a **mic** button: tap it to dictate into the field with the phone's own speech
+recognition (on the phone where it can be, else Apple's or Google's service), and hold it to
+record a **voice note** (iOS, and Android 13 or later), which is attached as a WAV file with what
+the phone heard of it in the message, since agents read text and not audio. Voice notes stop at
+four minutes, well under an attachment's 10 MB.
 
 **Installing it.** Nothing needs building:
 
@@ -674,16 +689,14 @@ lists them, with the profile shown on each, and removes one. A hub's linked host
 pair the hub rather than each host. Pairing the same board again unpairs the phone's old token
 there.
 
-**Push.** The app doesn't push notifications yet. Until it does, install the board on the phone
-as a web app as well and turn on push there (see *Push notifications on a phone*).
-
 **Revoking a device.** Settings → Network access lists the paired devices, with their last use,
 to rename or revoke; revoking one cuts it off at once, open websockets included, and the app then
 says it was unpaired. A device can't pair others or manage them (`POST /devices/pairing`, `PATCH`
 and `DELETE /devices/{id}` are for the board's own token), but it can list them and unpair itself,
 which removing the board in the app does. A device can only use the routes the app does (`HUB`
-and `HOST` in `server-ts/src/devices.ts`): profiles, projects, tasks and their threads, attachments,
-permission prompts, the board's events and hosts, and the devices list, on every profile, on the
+and `HOST` in `server-ts/src/devices.ts`): profiles, projects, tasks and their threads, each profile's
+assistant (API 120, but not its memory), attachments, permission prompts, the board's events and
+hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
 and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
@@ -691,6 +704,37 @@ host), linking hosts, terminals (a shell on the host), settings and admin. A dev
 checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, an empty segment,
 `.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
 host linking and terminals refuse a device's request themselves.
+
+**Push to the app** (API 120). The app subscribes on each paired board (a board's hub watches all
+its hosts' events, so once per board) with its Expo push token, and the board sends its pushes
+through [Expo's push service](https://docs.expo.dev/push-notifications/sending-notifications/):
+one HTTPS call, with no Apple or Google keys kept on the board. Boards → a board → **Notifications**
+turns it on or off for that board and picks the events, as the web's Settings does for a browser
+(needs attention, ready to review, ready for merge, done, the assistant's replies and its routines'
+reports, and whose permission prompts); tapping a notification opens the task on the board it came
+from, and tapping the assistant's reply opens the Assistant tab on that board, with the profile
+whose assistant it is (or its thread, on a board without the tab). A routine's report opens the
+routine's own thread. A prompt that can be answered from the
+notification has **Allow** and **Deny** (on iOS and Android, also on the lock screen; Allow asks to
+unlock the phone on iOS), which post the push's one-time token as the web's do, without opening the
+app or reading the keychain, and then show what came of it (allowed, denied, already answered,
+expired). Expo, Apple and Google can read these pushes (Web Push is encrypted for the browser;
+Expo's aren't), so they carry the task's key and title and the event, not the attention reason,
+what the agent wrote, a report's text or a tool's input; the app fetches the rest over its own
+connection. As for the web, nothing is pushed for a move made from the app.
+
+The app's subscriptions are `push_subscriptions` rows with `kind` `expo` (`POST /push/subscriptions`
+with `{"kind": "expo", "endpoint": "ExponentPushToken[…]", "name", "events"}`), whose
+`device_id` is the paired device that made them: a device sees and changes only its own, and they
+go when it's revoked. When Expo's token for the phone changes, its subscription takes the new one
+and keeps its events. The board batches pushes to Expo (100 a request), reads its tickets, and asks
+for the receipts about 15 minutes later: a phone Expo says isn't registered any more (the app was
+uninstalled) is dropped, and other failures show as the subscription's last error (see
+`server-ts/src/integrations/push.ts`). `IA_EXPO_PUSH_URL` sends them somewhere else (a fake, for
+tests), and `IA_EXPO_ACCESS_TOKEN` is the token for a project with Expo's enhanced push security
+on. The app needs a build with its EAS project id (`extra.eas.projectId` in `app.json`, from
+`eas init`) for its push token, and Android builds need Firebase Cloud Messaging set up for it (a
+`google-services.json`, and FCM's key given to Expo: see *Building the mobile app*).
 
 Revoking a phone stops the phone, not what was done with it before: whoever held it could have
 started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost
@@ -729,7 +773,7 @@ losing it means everyone uninstalling and pairing again. Until all four secrets 
 skips the `android` job (its `android-key` job says so in a notice) and has the other files without
 an APK.
 
-The app's push (to come) on Android goes through Firebase Cloud Messaging, which Expo's push
+The app's push on Android goes through Firebase Cloud Messaging, which Expo's push
 service hands it to, so the APK needs a Firebase app's config: in the
 [Firebase console](https://console.firebase.google.com), make a project and add an Android app with the package `nz.net.ivan.huntaway`, download its
 `google-services.json`, and keep it as the repository secret `GOOGLE_SERVICES_JSON` (`gh secret
@@ -759,8 +803,12 @@ npx eas-cli build --profile development --platform ios   # or android: a dev bui
 npm run typecheck && npm test # what CI's Tests / mobile runs
 ```
 
-It uses native modules that Expo Go lacks (the camera's scanner, secure storage), so it runs as a
-dev build (`expo-dev-client`). A dev build lets the app pair with a board on plain HTTP (an
+It uses native modules that Expo Go lacks (the camera's scanner, secure storage, notifications,
+share intents and speech recognition), so it runs as a dev build (`expo-dev-client`). The share
+extension is an iOS target of its own (`HuntawayShare`, bundle `nz.net.ivan.huntaway.share-extension`,
+in the app group `group.nz.net.ivan.huntaway`), which `expo-share-intent`'s config plugin adds at
+prebuild and `extra.eas` in `app.json` declares for EAS Build's credentials. A dev build lets the
+app pair with a board on plain HTTP (an
 emulator's `10.0.2.2`, say); release builds won't.
 
 ### Desktop config

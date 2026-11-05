@@ -13,16 +13,21 @@ export interface BoardProfiles {
   names: string[];
   /** For each name, the profile on each host that has it. */
   byName: Map<string, { hostId: string; profile: Profile }[]>;
-  /** Host names, by id. */
+  /** The names of the hosts shown, by id. */
   hostNames: Map<string, string>;
+  /** Every host the board lists, offline ones too (a profile's assistant host may be one). */
+  allHosts: Host[];
 }
 
 export async function loadProfiles(client: Pick<Client, "hosts" | "profiles">, boardId: string): Promise<BoardProfiles> {
-  const hosts = boardHosts(await client.hosts());
-  const lists = await Promise.all(hosts.map((h) => client.profiles(h.id).then((ps) => ps.map((profile) => ({ hostId: h.id, profile }))).catch(() => [])));
+  const allHosts = await client.hosts();
+  const hosts = boardHosts(allHosts);
+  const lists = await Promise.all(
+    hosts.map((h) => client.profiles(h.id).then((ps) => ps.map((profile) => ({ hostId: h.id, profile: { ...profile, host_id: h.id } }))).catch(() => [])),
+  );
   const byName = new Map<string, { hostId: string; profile: Profile }[]>();
   for (const e of lists.flat()) byName.set(e.profile.name, [...(byName.get(e.profile.name) ?? []), e]);
-  return { boardId, names: [...byName.keys()], byName, hostNames: new Map(hosts.map((h) => [h.id, h.name])) };
+  return { boardId, names: [...byName.keys()], byName, hostNames: new Map(hosts.map((h) => [h.id, h.name])), allHosts };
 }
 
 /** `profiles` if they're this board's (not the previous board's, still shown while this one's load). */

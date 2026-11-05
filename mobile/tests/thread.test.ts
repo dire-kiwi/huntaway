@@ -6,6 +6,18 @@ import { groupTasks } from "../src/tasks";
 const m = (id: number, kind: Message["kind"], data: unknown) => ({ id, task_id: "t", kind, data, created_at: "" }) as Message;
 
 describe("the thread", () => {
+  test("shows a routine's report with its name, outcome, text and its thread", () => {
+    // As routines.ts posts them in the assistant's thread ("t").
+    const brief = m(7, "report", { automation_id: "a1", automation: "Morning brief", task_id: "r9", key: "A-9", outcome: "reported", text: "3 mails need you." });
+    const failed = m(8, "report", { automation: "Inbox sweep", task_id: "r10", key: "A-10", outcome: "failed", text: "Out of usage" });
+    const old = m(9, "report", { outcome: "asked", text: "Which one?" });
+    expect(threadItems([brief, failed, old])).toEqual([
+      { type: "report", key: "7", automation: "Morning brief", outcome: "reported", text: "3 mails need you.", taskId: "r9", taskKey: "A-9" },
+      { type: "report", key: "8", automation: "Inbox sweep", outcome: "failed", text: "Out of usage", taskId: "r10", taskKey: "A-10" },
+      { type: "report", key: "9", automation: "A routine", outcome: "asked", text: "Which one?", taskId: undefined, taskKey: undefined },
+    ]);
+  });
+
   test("shows the user's messages, the agent's text and tool calls with their results, and prompts", () => {
     const msgs = [
       m(1, "user", { text: "Fix it" }),
