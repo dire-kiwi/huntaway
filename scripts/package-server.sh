@@ -24,6 +24,8 @@ node_bin=${2:-$(command -v node)}
 
 rm -rf "$out"
 mkdir -p "$out/server-ts" "$out/node/bin"
+# Absolute: tsc runs in a scratch copy below.
+out=$(cd "$out" && pwd)
 cp "$root/server-ts/bin/huntaway" "$out/huntaway"
 cp "$root/server/target/release/ia-shim" "$out/ia-shim"
 cp -R "$root/app/dist" "$out/ui"
