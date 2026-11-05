@@ -562,6 +562,18 @@ run reaches the board.
   runs have no board MCP server either (the board's HTTP server refuses them), and a session from before (or one whose
   first run is gone) keeps the board's MCP server over HTTP. Codex's reviewer doesn't review a dynamic tool's calls, so
   in *Auto* mode a newer session's `wait` command is the board's to ask about (`Spec::review_waits` is for the MCP server's).
+  A Codex that won't take dynamic tools (`thread/start` refuses them) gets the board's MCP server instead: a new
+  session's run keeps it in `mcp.json` for this (the adapter leaves it out of a thread that took the dynamic tools), and
+  the adapter says so with a warning and a `huntaway/boardTools` notification (`{"dynamic": false}`), on which the server
+  clears `runs.board_tools`, so the session's later runs have the MCP server too (HA-261).
+- **Codex's subagents don't have the board's tools.** Codex doesn't give the threads a thread spawns its dynamic tools
+  (checked with Codex 0.166: a subagent asked to call `get_task` said it had no such tool, and its parent called it),
+  and the board's MCP server, which they had through the config they inherit, isn't there for a newer session. A
+  subagent that needs the board asks its parent, which can. Giving every thread both would show the parent each board
+  tool twice, and the board's MCP server can't be given to the subagents alone.
+- **A write that fails** (the database, or a bug in `map`) writes nothing of the notification's items, and is logged; its
+  other effects still happen, so a turn's end still records the run's result and a subagent's end still ends the wait
+  for it (HA-261).
 - **The phone app** reloads a thread drawn from its items on its `thread_event`s too (the driver's writes send no
   `message` event).
 
