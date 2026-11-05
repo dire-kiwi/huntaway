@@ -96,12 +96,7 @@ export async function run_adapter(spec_path: string): Promise<void> {
     throw context("reading mcp.json", e);
   }
   const mcp_json = JSON.parse(mcp_raw);
-  const board_env = mcp_json?.mcpServers?.[runner.MCP_SERVER_NAME]?.env ?? {};
-  const env = (k: string): string => {
-    if (typeof board_env[k] !== "string") throw new Error(`${k} missing from mcp.json`);
-    return board_env[k];
-  };
-  const board = new mcp.Ctx(env("IA_URL"), env("IA_TOKEN"), env("IA_RUN_ID"));
+  const board = mcp.Ctx_from_server(mcp_json?.mcpServers?.[runner.MCP_SERVER_NAME]);
   let rpc: Rpc | null = null;
   let children: ChildThreads | null = null;
   try {
