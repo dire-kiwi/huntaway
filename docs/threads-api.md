@@ -9,7 +9,7 @@ thread is read from the board's own tables, and commands go onto the board's own
 
 ## Which hosts and tasks have one
 
-- A host serves these routes from **API 110** (`api_version` in `/api/info`, and in the hub's `/api/hosts`). For an
+- A host serves these routes from **API 112** (`api_version` in `/api/info`, and in the hub's `/api/hosts`). For an
   older host, keep using the message API (`/tasks/{id}/messages`, and the `message`, `message_updated`, `delta` and
   `delta_reset` events), which every host keeps serving.
 - A task has a thread kept as items once one of its events has been saved (step 3 writes them for tasks flagged

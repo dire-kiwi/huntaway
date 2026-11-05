@@ -38,7 +38,7 @@ export async function list_messages(s: AppState, r: Req) {
   return { messages, more, subagents };
 }
 
-// ---------- the thread kept as items (API 110, docs/threads-api.md) ----------
+// ---------- the thread kept as items (API 112, docs/threads-api.md) ----------
 
 /**
  * `GET /tasks/{id}/thread[?limit=N]`: the task's thread kept as items, as a Snapshot `{thread, items, requests, seq}`

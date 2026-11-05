@@ -14,6 +14,7 @@ import * as profiles from "./api/profiles.ts";
 import * as projects from "./api/projects.ts";
 import * as tasks from "./api/tasks.ts";
 import * as thread from "./api/thread.ts";
+import * as memory from "./agent/assistant/memory.ts";
 import * as agent_tools from "./agent/agent_tools.ts";
 import * as prompts from "./agent/prompts.ts";
 import * as usage from "./agent/usage.ts";
@@ -85,6 +86,12 @@ function host_routes(r: Router) {
   // Scratch chats, of which there are none since they became scratch tasks (for older boards).
   r.route("/profiles/{id}/scratch", { GET: tasks.list_profile_scratch });
   r.route("/profiles/{id}/assistant", { GET: thread.get_assistant, POST: thread.send_to_assistant });
+  r.route("/profiles/{id}/assistant/memory", { GET: memory.overview });
+  r.route("/profiles/{id}/assistant/memory/file", { GET: memory.read, POST: memory.write });
+  r.route("/profiles/{id}/assistant/memory/history", { GET: memory.history });
+  r.route("/profiles/{id}/assistant/memory/diff", { GET: memory.diff });
+  r.route("/profiles/{id}/assistant/memory/restore", { POST: memory.restore });
+  r.route("/profiles/{id}/assistant/memory/import", { POST: memory.import_ });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });
@@ -98,6 +105,7 @@ function host_routes(r: Router) {
   r.route("/projects/{id}/system-prompt", { GET: thread.system_prompt_preview });
   r.route("/projects/{id}/branches", { GET: projects.project_branches });
   r.route("/projects/{id}/automations", { GET: automations.list_handler, POST: automations.create_handler });
+  r.route("/profiles/{id}/automations", { GET: automations.list_routines_handler, POST: automations.create_routine_handler });
   r.route("/automations/{id}", { GET: automations.get_handler, PATCH: automations.update_handler, DELETE: automations.delete_handler });
   r.route("/automations/{id}/run", { POST: automations.run_handler });
   r.route("/automations/{id}/runs", { GET: automations.runs_handler });

@@ -796,7 +796,7 @@ export function for_preview(state: Shared, project_id: string): RunTools {
  */
 export function for_task_run(state: Shared, task: Task, project: Project | null): RunTools {
   if (project) return for_run(state, project.id, task.kind === "review" ? task.id : null);
-  if (db.is_assistant(task)) return run_tools(state, { profile: task.profile_id }, true);
+  if (db.is_assistants(task)) return run_tools(state, { profile: task.profile_id }, true);
   return RunTools_default();
 }
 
@@ -952,8 +952,8 @@ export async function for_task(s: AppState, r: Req): Promise<any> {
     board = effective_with(c, project, extra)[0];
     board_off = board_skills_off(c, project, board);
     o = get_overrides(c, project.id);
-  } else if (db.is_assistant(task)) {
-    // A profile's assistant has the global skills its profile switches on (see for_task_run).
+  } else if (db.is_assistants(task)) {
+    // A profile's assistant (and its routine threads) has the global skills its profile switches on (see for_task_run).
     board = effective_for_profile(c, task.profile_id)[0];
     board_off = list_skills(c, null).map((s) => s.name).filter((n) => !board.some((s) => s.name === n));
   }

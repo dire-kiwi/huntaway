@@ -25,6 +25,16 @@ spawn(process.execPath, ["-e", helper + " /* fake:" + tag + "-agent */"], { stdi
 setInterval(() => {}, 1e9);
 `;
 
+/** A fake server that, on TERM, starts another (`--late-exe`, with `--late-data` as its data dir) and exits half a second later. */
+const STARTS_ONE = `const { spawn } = require("node:child_process");
+const arg = (n) => process.argv[process.argv.indexOf(n) + 1];
+process.on("SIGTERM", () => {
+  spawn(process.execPath, [arg("--late-exe"), "serve", "--data-dir", arg("--late-data"), "--name", "late-b"], { stdio: "ignore", detached: true }).unref();
+  setTimeout(() => process.exit(0), 500);
+});
+setInterval(() => {}, 1e9);
+`;
+
 function write(path: string, text: string) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);
@@ -57,8 +67,12 @@ async function with_fakes(started: string[], body: () => Promise<void>) {
   try {
     await body();
   } finally {
-    const f = await fakes();
-    await stop([...f.entries()].filter(([t]) => started.some((s) => t === s || t.startsWith(`${s}-`))).map(([, p]) => p), 2000);
+    // Again while any are left: stopping one may start another (see STARTS_ONE).
+    for (let i = 0; i < 5; i++) {
+      const left = [...(await fakes()).entries()].filter(([t]) => started.some((s) => t === s || t.startsWith(`${s}-`))).map(([, p]) => p);
+      if (!left.length) break;
+      await stop(left, 2000);
+    }
   }
 }
 
@@ -131,7 +145,8 @@ test("a_tasks_servers_shims_and_agents_are_stopped_and_nothing_else", async () =
   });
 });
 
-test("a_done_tasks_test_server_is_stopped_with_its_folder_or_once_its_folder_has_gone", async () => {
+/** A state with a function that adds tasks (in progress, with no worktree) to it. */
+function board() {
   const s = testing.state();
   const c = s.db();
   const p = db.insert_profile(c, "p", [], null);
@@ -148,6 +163,11 @@ test("a_done_tasks_test_server_is_stopped_with_its_folder_or_once_its_folder_has
       effort: null,
       claude_config_id: null,
     });
+  return { s, c, mk };
+}
+
+test("a_done_tasks_test_server_is_stopped_with_its_folder_or_once_its_folder_has_gone", async () => {
+  const { s, c, mk } = board();
   const [a, b, open] = [mk(), mk(), mk()];
   const exe = join(testing.temp_dir(), "rel", "server-ts", "src", "main.js");
   write(exe, SERVER);
@@ -178,5 +198,72 @@ test("a_done_tasks_test_server_is_stopped_with_its_folder_or_once_its_folder_has
     assert.ok(!left.has("gone-b") && !left.has("gone-b-child"));
     assert.ok(left.has("open") && left.has("open-child"), "an open task's server is left alone");
     assert.ok(!existsSync(join(root(s), folder(a.id))));
+  });
+});
+
+// HA-227: the folder is renamed away before its processes are looked for, so a server started in it with a relative
+// `--data-dir` has its data dir (through its working directory) in the renamed folder.
+test("a_server_started_in_the_folder_with_a_relative_data_dir_is_stopped_with_it", async () => {
+  const { s, c, mk } = board();
+  const a = mk();
+  const exe = join(testing.temp_dir(), "rel", "server-ts", "src", "main.js");
+  write(exe, SERVER);
+  const dir = join(root(s), folder(a.id));
+  mkdirSync(join(dir, "ia-test-rel"), { recursive: true });
+  await with_fakes(["rel-a"], async () => {
+    start([exe, "serve", "--data-dir", "ia-test-rel", "--name", "rel-a"], dir);
+    await running(["rel-a", "rel-a-child"]);
+    db.update_task(c, a.id, [["status", "done"]]);
+    assert.ok(await remove(s, folder(a.id)));
+    const left = await fakes();
+    assert.ok(!left.has("rel-a") && !left.has("rel-a-child"));
+  });
+});
+
+// HA-227: with the whole root gone, the sweep still stops what ran in its folders.
+test("a_done_tasks_test_server_is_stopped_once_the_whole_root_has_gone", async () => {
+  const { s, c, mk } = board();
+  const a = mk();
+  const exe = join(testing.temp_dir(), "root", "server-ts", "src", "main.js");
+  write(exe, SERVER);
+  const data = join(root(s), folder(a.id), "ia-test-x");
+  mkdirSync(data, { recursive: true });
+  await with_fakes(["rootless"], async () => {
+    start([exe, "serve", "--data-dir", data, "--name", "rootless"]);
+    await running(["rootless", "rootless-child"]);
+    db.update_task(c, a.id, [["status", "done"]]);
+    rmSync(root(s), { recursive: true });
+    assert.equal(await sweep(s), 0);
+    const left = await fakes();
+    assert.ok(!left.has("rootless") && !left.has("rootless-child"));
+  });
+});
+
+// HA-227: each gone folder's processes are listed as it's come to, not once for all of them, as stopping one folder's
+// may take seconds. Here stopping A's server starts one in B's folder, which a listing from before then wouldn't have.
+test("each_gone_folders_processes_are_listed_afresh", async () => {
+  const { s, c, mk } = board();
+  const [a, b] = [mk(), mk()];
+  const base = testing.temp_dir();
+  const exe = join(base, "late", "server-ts", "src", "main.js");
+  const exe_a = join(base, "a", "server-ts", "src", "main.js");
+  write(exe, SERVER);
+  write(exe_a, STARTS_ONE);
+  const data = (t: typeof a) => join(root(s), folder(t.id), "ia-test-x");
+  for (const t of [a, b]) mkdirSync(data(t), { recursive: true });
+  const tags = ["first-a", "first-b", "late-b"];
+  await with_fakes(tags, async () => {
+    // A's first, so its folder is come to first (processes are listed by pid).
+    start([exe_a, "serve", "--data-dir", data(a), "--name", "first-a", "--late-exe", exe, "--late-data", data(b)]);
+    await running(["first-a"]);
+    start([exe, "serve", "--data-dir", data(b), "--name", "first-b"]);
+    await running(["first-b", "first-b-child"]);
+    for (const t of [a, b]) {
+      db.update_task(c, t.id, [["status", "done"]]);
+      rmSync(join(root(s), folder(t.id)), { recursive: true });
+    }
+    await sweep(s);
+    const left = await fakes();
+    assert.deepEqual([...left].filter(([t]) => tags.some((g) => t === g || t.startsWith(`${g}-`))).map(([t, p]) => `${t} ${p.pid} ${p.start}`), []);
   });
 });

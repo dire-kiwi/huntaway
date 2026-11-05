@@ -13,6 +13,7 @@ import { read_json, read_jsonl } from "./examples.ts";
 import { apply_event, apply_events, initial_state, type NewEvent, type SavedEvent, type Snapshot, type ThreadEvent } from "./protocol.ts";
 import * as store from "./store.ts";
 import * as live from "./live.ts";
+import { Translator } from "./translate.ts";
 
 // No agent runs here: a run's launch fails rather than starting a real `claude`.
 process.env.IA_SHIM_BIN = "/nonexistent/ia-shim";
@@ -408,5 +409,37 @@ test("send, compact, interrupt, set_options, rewind and new_session go onto the 
   // compact is the composer's `/compact`.
   const [c_code, compacted] = await call(s, "POST", cmd, { type: "compact" });
   assert.equal(c_code, 200, JSON.stringify(compacted));
+  await idle(s, task.id);
+});
+
+test("requests the translator makes from the board's prompts and questions are answered", async (t) => {
+  const { s, task } = setup();
+  runs.TEST_CAN_RUN.set(true);
+  t.after(() => runs.TEST_CAN_RUN.set(false));
+  // The board's rows, as mcp/permissions.ts and mcp/questions.ts write them, through the translator into the store.
+  pending_permission(s, task, "perm1");
+  s.add_message(task.id, "question", { question: "Merge now?", options: [{ label: "Yes" }, { label: "No" }], status: "pending", call_id: "c1" });
+  const tr = new Translator();
+  for (const m of db.list_messages(s.db(), task.id)) {
+    const step = tr.message(m);
+    store.append(s.db(), task.id, step.events, { message_id: m.id });
+  }
+  const reqs = store.open_requests(s.db(), task.id);
+  assert.deepEqual(reqs.map((r) => [r.type, r.id.startsWith("legacy:") ? "legacy" : r.id]), [["permission", "perm1"], ["question", "legacy"]]);
+  const cmd = `/api/tasks/${task.id}/thread/commands`;
+  const allowed = await call(s, "POST", cmd, { type: "respond", request_id: "perm1", resolution: { outcome: "allow" } });
+  assert.equal(allowed[0], 200, JSON.stringify(allowed));
+  assert.equal(db.value(s.db(), "SELECT status FROM permission_requests WHERE id='perm1'"), "allowed");
+  const q = reqs[1]!;
+  assert.equal(q.type, "question");
+  const qid = (q as any).questions[0].id;
+  const respond = (answers: string[]) => call(s, "POST", cmd, { type: "respond", request_id: q.id, resolution: { outcome: "answer", answers: { [qid]: answers } } });
+  // The route's own checks: a question that takes one answer.
+  assert.deepEqual(await respond(["No", "Not yet"]), [400, { error: "this question takes one answer" }]);
+  // Free text, which isn't one of its options.
+  const answered = await respond(["Not yet"]);
+  assert.equal(answered[0], 200, JSON.stringify(answered));
+  const card = db.list_messages(s.db(), task.id).find((m) => m.kind === "question")!;
+  assert.deepEqual(card.data.answer, { choices: [], text: "Not yet" });
   await idle(s, task.id);
 });

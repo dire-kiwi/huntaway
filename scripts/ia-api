@@ -27,7 +27,7 @@ merge that ended in needs_attention) and 124 on timeout (default 300s, --approve
 starts, it waits --grace seconds (default 5) for one to start first, since a run can take a
 moment to start (a task's title is generated before its run starts, for example).
 
-`thread` reads a task's thread kept as items (API 110, docs/threads-api.md): the whole snapshot,
+`thread` reads a task's thread kept as items (API 112, docs/threads-api.md): the whole snapshot,
 the window of its last --limit items, the page of items before index --before, or (--events) its
 saved events after --after, every page of them (exiting 3 if the log no longer goes back that far).
 --brief prints a line for each item (and request, or event) instead of the JSON.

@@ -120,6 +120,11 @@ export const TASK_TYPES = [SCRATCH];
  */
 export const ASSISTANT = "assistant";
 /**
+ * The task type of a routine's run of the assistant (see is_routine): a thread under the assistant (`parent_id`), made
+ * by a routine (see integrations/automations.ts), off the board.
+ */
+export const ROUTINE = "routine";
+/**
  * The labels a task can have, each a document its agent writes besides its other work (see Task.labels and
  * agent/documents.rs), in the order the task shows them. They were task types of their own before API 71, which still
  * accepts them as a new task's `task_type`.

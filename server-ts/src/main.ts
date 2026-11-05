@@ -7,6 +7,11 @@ async function main() {
   // What bin/huntaway was run as, kept from what this server starts (agents, a test server they run from a checkout).
   const exe = process.env.IA_TS_EXE ?? null;
   delete process.env.IA_TS_EXE;
+  // bin/huntaway's malloc setting is for node (see there), not for agents, git and the rest this server runs.
+  if (process.env.IA_MALLOC_MMAP) {
+    delete process.env.MALLOC_MMAP_THRESHOLD_;
+    delete process.env.IA_MALLOC_MMAP;
+  }
   // Kept where state.ts's default_exe reads it, without loading the server for every subcommand.
   (globalThis as any).huntaway_exe = exe;
   const [cmd, ...rest] = process.argv.slice(2);
@@ -45,6 +50,11 @@ async function main() {
     }
     case "title-check":
       return (await import("./agent/title.ts")).check_cli(rest);
+    case "threads-import": {
+      const report = await import("./threads/report.ts");
+      report.run(report.parse_args(rest));
+      return;
+    }
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
     case "--version":

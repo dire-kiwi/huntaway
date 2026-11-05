@@ -52,6 +52,28 @@ export function send_from_agent(state: Shared, task_id: string, text: string): T
   return send_run(state, task_id, text, false, true, "prompt");
 }
 
+/**
+ * Send a routine's message (see automations/routines.ts) as another agent's: one that starts a run makes it a routine
+ * run, with nobody there to answer its prompts (`routine` on its message), and a thread-mode routine's (for its
+ * automation run `automation_run`) is charged to that automation run by the run that takes it in, whether it starts with
+ * it, is steered it or takes it from the queue later (see routines.taken_in).
+ */
+export function send_from_routine(state: Shared, task_id: string, text: string, automation_run: string | null): Task {
+  const message: Queued = { ...db.Queued_new(text, true), routine: true, routine_runs: automation_run != null ? [automation_run] : [] };
+  return send_message(state, task_id, message, false, "prompt", null);
+}
+
+/**
+ * Send a project automation's message (for its run `automation_run`), as another agent's, or with no text, start a task
+ * it made: the agent run that takes it in, whether it starts with it, is steered it or takes it from the queue later, is
+ * charged to that automation run, for its budget (see routines.taken_in). Unlike a routine's, it isn't a routine run: a
+ * project's task has the user's approval rules, not the assistant's.
+ */
+export function send_from_automation(state: Shared, task_id: string, text: string, automation_run: string): Task {
+  const message: Queued = { ...db.Queued_new(text, text.trim() !== ""), routine_runs: [automation_run] };
+  return send_message(state, task_id, message, false, "prompt", null);
+}
+
 /** Start a review round on a review thread (see review.rs): a prompt whose outcome is the review's. */
 export function send_review(state: Shared, thread_id: string, text: string): Task {
   return send_run(state, thread_id, text, true, false, "review");
@@ -123,11 +145,14 @@ export function send_message(
       if (message.from_agent) msg.from_agent = true;
       // Sent with other agents' messages queued alongside (see db::user_replies).
       else if (message.user_text != null && message.user_text !== text) msg.user_text = message.user_text;
+      if (message.routine) msg.routine = true;
       return [db.insert_message(c, task_id, "user", msg)];
     } else if (first_run && task.kind === "task") {
       const project = task.project_id != null ? db.get_project(c, task.project_id) : null;
       const start = prompts.start_task(task, project);
-      return [db.insert_message(c, task_id, "user", { text: start, auto: true, start: true })];
+      const msg: any = { text: start, auto: true, start: true };
+      if (message.routine) msg.routine = true;
+      return [db.insert_message(c, task_id, "user", msg)];
     }
     return [];
   });
@@ -145,7 +170,8 @@ export function send_message(
  * keeping `text` as its queued message, and starts once they're merged (see `start_unblocked`).
  */
 export function wait_for_dependencies(state: Shared, task: Task, unmet: Task[], message: Queued | null): Task {
-  if (message && message.text.trim()) db.queue(state.db(), task.id, { ...message, text: message.text.trim() });
+  // One with no text keeps only its automation runs, for the run that starts it (see db.queue).
+  if (message) db.queue(state.db(), task.id, { ...message, text: message.text.trim() });
   // Without a message, for the one queued: unless it was sent or taken back meanwhile (checked as the task is changed,
   // so neither can slip in between).
   const only_queued = message == null;
@@ -181,7 +207,8 @@ export function wait_for_dependencies(state: Shared, task: Task, unmet: Task[], 
  * usage::resume_loop).
  */
 export function wait_for_limit(state: Shared, task: Task, config_name: string, until: string, message: Queued | null): Task {
-  if (message && message.text.trim()) db.queue(state.db(), task.id, { ...message, text: message.text.trim() });
+  // One with no text keeps only its automation runs, for the run that starts it (see db.queue).
+  if (message) db.queue(state.db(), task.id, { ...message, text: message.text.trim() });
   const fields: Array<[string, any]> = [
     ["waiting", true],
     ["limit_reset_at", until],

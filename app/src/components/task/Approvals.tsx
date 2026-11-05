@@ -20,7 +20,7 @@ import {
   type WorkflowChange,
   type WorkflowView,
 } from "../../api";
-import { filterText, triggerText } from "../settings/Automations";
+import { activeText, filterText, triggerText, usd } from "../settings/Automations";
 import { graphText, KIND_STYLE, nodeText, nodeTitle, PORT_LABELS } from "../settings/Workflows";
 import { navigate } from "../../router";
 import { useStore } from "../../store";
@@ -153,6 +153,8 @@ const taskName = (t: { key?: string; title: string }) => (t.key ? `${t.key} ${t.
 
 /** What an agent asks to do to an automation, e.g. "wants to add an automation to". */
 const AUTOMATION_ASKS = { create: "wants to add an automation to", update: "wants to change an automation in", delete: "wants to delete an automation in" };
+/** The same for a profile's routine (API 110). */
+const ROUTINE_ASKS = { create: "wants to add a routine for", update: "wants to change a routine of", delete: "wants to delete a routine of" };
 const WORKFLOW_ASKS = { create: "wants to add a workflow to", update: "wants to change a workflow in", delete: "wants to delete a workflow in" };
 
 /** The question an approval asks, e.g. "IA-12 wants to change Issue Agent" or "IA-12 wants to delete IA-3". */
@@ -163,7 +165,12 @@ function Asker({ approval }: { approval: Approval }) {
   return (
     <p className="mb-3 text-[13px] text-muted">
       <span className="text-fg">{who}</span>{" "}
-      {approval.kind === "automation" ? (
+      {approval.kind === "automation" && !isWorkflowApproval(approval) && approval.input.profile ? (
+        <>
+          {ROUTINE_ASKS[approval.input.op]} <span className="text-fg">{approval.input.profile.name}</span>
+          {approval.input.profile.host ? ` on ${approval.input.profile.host}` : ""}
+        </>
+      ) : approval.kind === "automation" ? (
         <>
           {(isWorkflowApproval(approval) ? WORKFLOW_ASKS : AUTOMATION_ASKS)[approval.input.op]} the project{" "}
           <span className="text-fg">
@@ -322,6 +329,13 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
             {act.start ? <span className="text-amber-200/90">Starts straight away, with the project's permission mode</span> : "Not started: the task waits on the board"}
           </Row>
         </>
+      ) : act.kind === "message_assistant" ? (
+        <>
+          <Row label="Wakes">{act.mode === "thread" ? "The assistant, in its own thread" : "The assistant, in a fresh thread whose report is posted to it"}</Row>
+          <Row label={act.mode === "thread" ? "Message" : "To do"}>
+            <Block text={act.message} tone={tone} />
+          </Row>
+        </>
       ) : (
         <>
           <Row label="Messages">{a.target ? taskName(a.target) : <Mono>{act.task_id}</Mono>}</Row>
@@ -330,6 +344,14 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
           </Row>
         </>
       )}
+      {a.active_hours && <Row label="Active hours">{activeText(a.active_hours)}</Row>}
+      {a.precheck && (
+        <Row label="Precheck">
+          <span className="text-amber-200/90">Runs </span>
+          <Mono>{a.precheck}</Mono>
+        </Row>
+      )}
+      {a.budget_usd != null && <Row label="Budget">{usd(a.budget_usd)} a day</Row>}
     </div>
   );
 }
@@ -343,6 +365,9 @@ const CHANGE_LABELS: Record<string, string> = {
   generate_secret: "A new signing secret (returned to the agent)",
   secret: "Removes the signing secret: deliveries aren't checked",
   rotate_token: "A new webhook URL (the old one stops working)",
+  active_hours: "Active hours",
+  precheck: "Precheck command",
+  budget_usd: "Budget",
 };
 
 /** What an agent asked to do to an automation: everything a new one would run, or a change from what it does now. */
@@ -643,7 +668,7 @@ export function AutomationChangeCard({ data, hostId }: { data: AutomationApprova
         )}
         <span className={clsx("min-w-0 truncate", pending ? "text-fg" : "text-muted")}>
           {AUTOMATION_CARD[op]} <span className="font-medium">{a.name}</span>
-          {op === "create" ? ` to ${data.input.project.name}` : ` in ${data.input.project.name}`}
+          {data.input.profile ? ` (a routine of ${data.input.profile.name})` : op === "create" ? ` to ${data.input.project?.name}` : ` in ${data.input.project?.name}`}
         </span>
         {!pending && <Answer status={data.status} deletion={deletion} />}
       </div>
