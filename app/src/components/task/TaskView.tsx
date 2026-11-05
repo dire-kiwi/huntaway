@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, hasMemory, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
+import { api, canRunAgents, dependencyQueued, documentsOnly, hasBrief, hasMemory, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
 import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
@@ -188,7 +188,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
   const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
-  // The assistant's memory files (API 111) and routines (API 110).
+  // The assistant's morning brief (API 113), its memory files (API 111) and routines (API 110).
+  if (assistant && hasBrief(host)) tabs.push("brief");
   if (assistant && hasMemory(host)) tabs.push("memory");
   if (assistant && hasRoutines(host)) tabs.push("routines");
   const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant && !routine;
@@ -203,7 +204,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   if (!wide) tabs.push("details");
   // Until the effect above drops it, a details tab while wide shows the thread beside the column.
   // A label taken off shows the thread instead.
-  const shown = (wide && tab === "details") || (tab === "memory" && !tabs.includes("memory")) || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isWorkflowTab(tab) && !wfTabs.includes(tab)) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
+  const shown = (wide && tab === "details") || (tab === "memory" && !tabs.includes("memory")) || (tab === "brief" && !tabs.includes("brief")) || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isWorkflowTab(tab) && !wfTabs.includes(tab)) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
   const docShown = labels.find((l) => l === shown);
   const key = `${keyPrefix(task, project)}-${task.number}`;
   // Stopping the task also stops its review (API 33), so it can be stopped while only that runs.
@@ -431,7 +432,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} onShowThread={() => setTab("thread")} />
         </main>
         {/* A document, and the changes' panels, get the room. */}
-        {wide && !isTerminalTab(tab) && !docShown && shown !== "changes" && shown !== "memory" && (
+        {wide && !isTerminalTab(tab) && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>

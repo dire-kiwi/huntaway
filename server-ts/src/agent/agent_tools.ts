@@ -26,6 +26,7 @@ import { expand_tilde, new_id, now, path_str } from "../util.ts";
 import * as runner from "./runner.ts";
 import * as codex from "./codex.ts";
 import * as documents from "./documents.ts";
+import * as google from "./assistant/google.ts";
 import { copy_skill, get_source, list_sources, sources_root } from "./agent_tools/sources.ts";
 
 export * from "./agent_tools/sources.ts";
@@ -677,6 +678,33 @@ export async function delete_global_mcp_server(s: AppState, r: Req): Promise<any
   return delete_in(s.db(), "agent_mcp_servers", null, r.params.server);
 }
 
+/** The host's global MCP server called `name`, if it has one. */
+export function global_mcp_server(c: Conn, name: string): McpServer | null {
+  return list_mcp_servers(c, null).find((m) => m.name === name) ?? null;
+}
+
+/** Adds a global MCP server (as Settings → Agent tools does), checked as that is. */
+export function add_global_mcp_server(c: Conn, name: string, config: any): McpServer {
+  return create_mcp_server_in(c, null, { name, config, enabled: true, auto_allow: false });
+}
+
+/** Whether profile `profile_id` switches global item `item_id` on (null: it doesn't say, which is off). */
+export function profile_switch(c: Conn, profile_id: string, item_id: string): boolean | null {
+  const sw = switches(c, "profile", profile_id);
+  return Object.hasOwn(sw, item_id) ? sw[item_id] : null;
+}
+
+/** Switches global item `item_id` on (or off) for profile `profile_id`'s runs. */
+export function set_profile_switch(c: Conn, profile_id: string, item_id: string, on: boolean): void {
+  db.run(
+    c,
+    "INSERT INTO agent_tool_switches (scope, scope_id, item_id, enabled) VALUES ('profile',?1,?2,?3) ON CONFLICT(scope, scope_id, item_id) DO UPDATE SET enabled=?3",
+    profile_id,
+    item_id,
+    on,
+  );
+}
+
 // ---------- runs ----------
 
 /** What a run in a project gets on top of the board's own setup. */
@@ -773,6 +801,8 @@ function add_global(c: Conn, profile_id: string, project_id: string | null, skil
     if (g.enabled && on(g.id) && !skills.some((s) => s.name === g.name)) skills.push(g);
   }
   for (const g of list_mcp_servers(c, null)) {
+    // The Google server is the assistant's alone (see assistant/google.ts): a project's agents never get it.
+    if (project_id !== null && google.is_google(g.name)) continue;
     if (g.enabled && on(g.id) && !servers.some((s) => s.name === g.name)) servers.push(g);
   }
 }

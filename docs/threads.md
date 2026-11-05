@@ -160,11 +160,19 @@ its events at all (a client catching up from before it takes a snapshot), and th
 to what a reconnecting client misses (a few hundred) or go by age only. With no log, items beside messages come to
 about 1.9 times today's `messages` (1.7 GB on this board).
 
+## The API
+
+[threads-api.md](threads-api.md) has the routes (a snapshot or window, pages of earlier items, the events after a
+seq, and commands), and the live events. What writes a thread's items sends its events to clients with
+`threads/live.ts`'s `send_events` once they're committed, streamed text with `send_delta` (which keeps the text so far
+in memory, so a window taken mid-message has it), and `send_resync` when it changes a thread in a way its log doesn't
+say (a rebuild).
+
 ## Writing items live
 
 `server-ts/src/threads/write.ts`, step 3 (plan decisions D3 and D4).
 
-- **The switch:** the host setting *Keep threads as items* (`thread_items` in `/api/settings`, API 113; Settings, a
+- **The switch:** the host setting *Keep threads as items* (`thread_items` in `/api/settings`, API 115; Settings, a
   host's Agent defaults), off by default. A task whose first message is written while it's on is flagged
   (`tasks.thread_items`), in the same transaction, and keeps its items written from then on, so a flagged task's
   items have no gaps. Turning it off flags no more tasks, and those already flagged carry on. With it off, and for
@@ -178,9 +186,10 @@ about 1.9 times today's `messages` (1.7 GB on this board).
   event (in start_run's own transaction), steered messages, and the permission, question and merge-gate updates.
   Messages stay the source.
 - **Events:** the events are kept with the returned message object (`write.events_of`), and AppState's
-  `emit_message` and `emit_message_updated` send them as `{type: "thread_event", task_id, event}` after the
-  message's own event, once committed (start_run sends its messages after its commit, as before). A write rolled
-  back sends nothing.
+  `emit_message` and `emit_message_updated` send them with step 4's `live.send_events` (`thread_event`, see
+  [threads-api.md](threads-api.md)) after the message's own event, once committed (start_run sends its messages after
+  its commit, as before). A write rolled back sends nothing. They go out in the order they were written: a question's
+  answer sends its events before the reply it starts is written (mcp/questions.ts).
 - **Deltas:** streamed text (the board's `delta` events, which still go out) is also sent as a `delta` thread event,
   for flagged tasks. Huntaway streams into a message before it's saved, so the delta names a preview item the thread
   doesn't have, `stream:<server>:<n>`: a new one for each text block (Claude's `content_block_start`, or a `delta_reset`),
@@ -222,9 +231,9 @@ approval), the threads were a rebuild's too.
 | Step | Task | State |
 | --- | --- | --- |
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
-| 2. The translator, and a dry run on a copy of the board | HA-214 | This change: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
-| 3. Items written live, behind a setting | HA-239 (was HA-216) | This change: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 93, `huntaway threads-rebuild`, API 113. |
-| 4. Thread API and live events | HA-215 | Not started |
+| 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
+| 3. Items written live, behind a setting | HA-239 (was HA-216) | This change: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 93, `huntaway threads-rebuild`, API 115. |
+| 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
 | 5. The UI on items | HA-218 | Not started |
 | 6. Readers on items | HA-217 | Not started |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
@@ -237,12 +246,10 @@ approval), the threads were a rebuild's too.
 
 Left for later steps:
 
-- Live snapshots that include streamed text: the store doesn't apply deltas, so a client that connects mid-message gets
-  the text so far only from the server's memory (step 4). Step 3's deltas name a preview item (above), which step 4's
-  windows would have to carry.
-- Sending the thread events through step 4's `live.send_events` (and `send_resync` after a rebuild by this server)
-  once it lands: until then AppState sends them itself, in the same shape.
+- Live snapshots that include streamed text: step 3's deltas name a preview item the thread doesn't have yet (see
+  "Writing items live"), and `live.send_delta` only takes items the thread has, so a window taken mid-message doesn't
+  have the preview's text so far (step 5, with the UI that shows it).
 - Routines' `report` messages are kept only in messages (the translator retains them as `unknown_kind`): the UI on
   items needs an item for them (step 5).
 - Saving `thread.updated` when the task's state changes: until then, a thread's state is read from its task (step 5).
-- Rebuilding every task, and a rebuild from Settings (step 7).
+- Rebuilding every task, and a rebuild from Settings, which would also send `thread_resync` (step 7).

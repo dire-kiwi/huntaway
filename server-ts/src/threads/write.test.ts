@@ -18,6 +18,7 @@ import * as merge_gate from "../review/merge_gate.ts";
 import * as store from "./store.ts";
 import * as write from "./write.ts";
 import * as rebuild_cli from "./rebuild.ts";
+import * as live from "./live.ts";
 import { convert } from "./translate.ts";
 
 // A run's launch fails rather than starting a real agent (with TEST_CAN_RUN, its messages are still written).
@@ -64,6 +65,8 @@ test("with the setting off, nothing new is written", () => {
   assert.equal(flagged(s, t.id), false);
   for (const table of THREAD_TABLES) assert.equal(count(s, table, t.id), 0, table);
   assert.deepEqual(thread_events(events, t.id), []);
+  // The thread API has none for it: its thread is its messages.
+  assert.throws(() => live.open(s, t.id), /has no thread kept as items/);
   // Nor does turning it on later flag a task that has messages: its items would have a gap.
   db.set_setting(s.db(), write.SETTING, "true");
   s.add_message(t.id, "user", { text: "more" });
@@ -74,6 +77,9 @@ test("with the setting off, nothing new is written", () => {
   s.add_message(u.id, "user", { text: "hi" });
   assert.equal(flagged(s, u.id), true);
   assert.equal(store.has_thread(s.db(), u.id), true);
+  // The thread API serves it.
+  const w = live.window(s, live.open(s, u.id));
+  assert.deepEqual([w.items.map((i: any) => i.text), w.seq], [["hi"], store.last_seq(s.db(), u.id)]);
   // Turned off, flagged tasks carry on, and new ones aren't flagged.
   db.set_setting(s.db(), write.SETTING, null);
   s.add_message(u.id, "user", { text: "again" });

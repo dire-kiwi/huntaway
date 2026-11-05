@@ -19,6 +19,7 @@ import * as workflows from "../integrations/workflows.ts";
 import * as summary from "../review/summary.ts";
 import { def_str, json_map, opt_str, query_bool, query_int, query_opt_bool, req_str, body_rejection, def_bool } from "./extract.ts";
 import { create_task_inner } from "./new_task.ts";
+import * as live from "../threads/live.ts";
 
 /**
  * A thread's messages: all of them as a list, or with any of `before`, `after` (message ids) and `limit`, one page of
@@ -35,6 +36,42 @@ export async function list_messages(s: AppState, r: Req) {
   const [messages, more] = db.message_page(c, id, after, before, limit);
   const subagents = messages.length && more && before === null && after === null ? db.subagent_messages(c, id, messages[0].id) : [];
   return { messages, more, subagents };
+}
+
+// ---------- the thread kept as items (API 114, docs/threads-api.md) ----------
+
+/**
+ * `GET /tasks/{id}/thread[?limit=N]`: the task's thread kept as items, as a Snapshot `{thread, items, requests, seq}`
+ * with the text streamed so far, or with `limit` a window of its last N items (with `start` and `context`). A 404 for
+ * a task without items.
+ */
+export async function get_thread(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  const limit = query_int(r, "limit", 0);
+  return live.window(s, task, limit ?? undefined);
+}
+
+/** `GET /tasks/{id}/thread/items?before=I[&limit=N]`: an ItemPage of the thread's items before index I (100 of them unless `limit` says). */
+export async function thread_items(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  const before = query_int(r, "before", 0);
+  if (before === null) throw ApiError.bad("before is required: the index of the window's start");
+  return live.page(s, task, before, query_int(r, "limit", 0) ?? live.PAGE_ITEMS);
+}
+
+/**
+ * `GET /tasks/{id}/thread/events?after=SEQ[&limit=N]`: `{events, more, seq}`, the thread's saved events after SEQ (0
+ * unless given), at most N and 1000; with `resync: true` instead when the log no longer goes back that far.
+ */
+export async function thread_events(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  return live.events(s, task, query_int(r, "after", 0) ?? 0, query_int(r, "limit", 1) ?? live.MAX_EVENTS);
+}
+
+/** `POST /tasks/{id}/thread/commands`: a protocol Command for the task's thread (see threads/live.ts's command). */
+export async function thread_command(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  return await live.command(s, task, r.body);
 }
 
 export async function send_message(s: AppState, r: Req) {

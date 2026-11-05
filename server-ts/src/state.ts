@@ -12,6 +12,7 @@ import * as worktree from "./git/worktree.ts";
 import * as status_script from "./integrations/status_script.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
 import * as threads from "./threads/write.ts";
+import * as threads_live from "./threads/live.ts";
 
 export { ApiError } from "./http.ts";
 
@@ -189,11 +190,12 @@ export class AppState {
   }
 
   /**
-   * The thread events written with message `m` (see threads/write.ts), as `{type: "thread_event", task_id, event}`.
-   * Only for tasks whose threads are kept as items.
+   * The thread events written with message `m` (see threads/write.ts), as `{type: "thread_event", task_id, event}`
+   * (threads/live.ts's send_events). Only for tasks whose threads are kept as items.
    */
   emit_thread_events(m: Message) {
-    for (const event of threads.events_of(m)) this.emit({ type: "thread_event", task_id: m.task_id, event });
+    const events = threads.events_of(m);
+    if (events.length) threads_live.send_events(this, m.task_id, events);
   }
 
   /** The agent streamed `text` into the message it's writing: `delta`, and for a thread kept as items its delta event. */

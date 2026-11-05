@@ -124,6 +124,8 @@ export interface Vars {
   now: number;
   /** What the automation's precheck printed, if it has one (see routines.precheck). */
   precheck?: string | null;
+  /** For a routine that names `{{google}}`: where the assistant's Google server stands (assistant/google.ts's status_line). */
+  google?: string | null;
 }
 
 /** A path a template or filter names: letters, digits, `_`, `-`, `.` and `*`. */
@@ -156,11 +158,13 @@ function walk(v: any, path: string[]): any[] {
  * request's or discussion's labels, and the label added or removed) and `delivery` (its id).
  * From the board: `automation` (its name), `source`, `count` (deliveries in the run), `date`
  * and `time` (the host's), and `now`. And `precheck`, what the automation's precheck printed,
- * which counts as from outside: it's often what the command fetched.
+ * which counts as from outside: it's often what the command fetched. For a routine, `google`:
+ * whether the assistant's Google server is connected, as whom, or why not (the board's own words).
  */
 function lookup(vars: Vars, path: string): [any[], boolean] {
   const parts = path.split(".");
   if (path === "precheck") return [vars.precheck != null ? [vars.precheck] : [], true];
+  if (path === "google") return [vars.google != null ? [vars.google] : [], false];
   const board = (v: any): [any[], boolean] => [[v], false];
   const d = vars.delivery;
   if (!d) {

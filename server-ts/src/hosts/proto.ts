@@ -16,10 +16,18 @@ export const PROTOCOL = 1;
  * API 112: a profile's assistant host (`assistant_host`), and board tool calls up a link (`Down::Hello`, `Up::ToolCall`,
  * and `hub_hello`/`hub_call` on `/api/host/ws`, see hosts/uplink.ts). A host passes calls only to a hub that said hello,
  * which older hubs don't, and older hosts ignore the hello.
- * API 113: the host setting `thread_items` (Keep threads as items: new tasks' threads are written as items too, see
- * docs/threads.md), and `thread_event` events on `/api/ws` for those tasks.
+ *
+ * API 113: Google and the morning brief: `/profiles/{id}/assistant/google` (the Google card, and adding the Google server),
+ * `/profiles/{id}/assistant/brief` (the routine template) and `/brief/feedback` (ratings into MEMORY.md), the assistant's
+ * `brief` document (with its `items`), and `{{google}}` in routines. (Push's `reports` event came with routines, API 110.)
+ *
+ * API 114: a task's thread kept as items (`/tasks/{id}/thread`, its items, events and commands, and the `thread_event`
+ * and `thread_resync` events: see docs/threads-api.md).
+ *
+ * API 115: the host setting `thread_items` (Keep threads as items: new tasks' threads are written as items too, live,
+ * see docs/threads.md), so tasks have threads for API 114's routes and events.
  */
-export const API_VERSION = 113;
+export const API_VERSION = 115;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;
