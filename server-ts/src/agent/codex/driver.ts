@@ -20,7 +20,7 @@
 import * as db from "../../db.ts";
 import type { Run } from "../../db.ts";
 import type { Shared } from "../../state.ts";
-import { now, truncate } from "../../util.ts";
+import { err_str, now, truncate } from "../../util.ts";
 import type { Item, NewEvent, SubagentState, SubagentStatus, ToolCall, ToolStatus } from "../../threads/protocol.ts";
 import { tool_fields, type ItemMeta } from "../../threads/translate.ts";
 import * as store from "../../threads/store.ts";
@@ -444,9 +444,16 @@ export function handle(state: Shared, run: Run, v: any): void {
       context.on_codex_usage(state, run, p);
       return;
   }
-  const mapped = map(stored(state, task_id), { session, compact: run.kind === "compact", at: now() }, v);
-  const saved = native.append(state.db(), task_id, mapped.events, mapped.meta);
-  if (saved.length) live.send_events(state, task_id, saved);
+  // Its items. A failure to make or write them (nothing of them is written) is logged, and the rest of its effects go
+  // on: a turn's end still records the run's result, and a subagent's still ends the wait for it.
+  let mapped: Mapped = { events: [], meta: new Map(), subagents: [] };
+  try {
+    mapped = map(stored(state, task_id), { session, compact: run.kind === "compact", at: now() }, v);
+    const saved = native.append(state.db(), task_id, mapped.events, mapped.meta);
+    if (saved.length) live.send_events(state, task_id, saved);
+  } catch (e) {
+    console.error(`${now()} ERROR huntaway: run ${run.id}: Codex's ${method || "notification"} couldn't be written to task ${task_id}'s items: ${err_str(e)}`);
+  }
   // What comes after them, which reads them.
   for (const s of mapped.subagents) {
     wait.subagent_finished(state, run, { subtype: "task_notification", tool_use_id: s.id, status: s.status, summary: s.summary });
