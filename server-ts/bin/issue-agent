@@ -3,4 +3,7 @@
 # arguments, as the Rust build's `issue-agent` binary does, so things that still start `…/issue-agent` keep working: SSH
 # hosts' `authorized_keys` commands and desktop configs that name it. A release's package has it too (a copy, as a
 # package has no symbolic links), beside its `huntaway`.
-exec "$(dirname "$(readlink -f "$0")")/huntaway" "$@"
+# Its folder, through a symbolic link to it: with `readlink -f` (macOS has it since 12.3), else the folder `$0` names.
+here=$(dirname "$(readlink -f "$0" 2>/dev/null)" 2>/dev/null)
+[ -x "$here/huntaway" ] || here=$(cd -P "$(dirname "$0")" && pwd) || exit 127
+exec "$here/huntaway" "$@"
