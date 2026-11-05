@@ -264,8 +264,10 @@ export function window(c: Conn, thread: Thread, limit?: number): Snapshot {
     if (r.parent_id) need.add(r.parent_id);
     if (r.tool_call_id) need.add(r.tool_call_id);
   }
-  // A subagent that's quiet now may go on: its items would come with no call to hang them from.
-  for (const r of all<{ id: string }>(c, "SELECT id FROM thread_items WHERE task_id=?1 AND live=1 AND pos<?2", task_id, from)) need.add(r.id);
+  // Every subagent's call (protocol.ts's snapshot_window): one that's quiet now may go on, and its items would come with
+  // no call to hang them from; and a client lists them all (the app's Agents list).
+  const subagents = "SELECT id FROM thread_items WHERE task_id=?1 AND type='tool_call' AND pos<?2 AND json_extract(data, '$.kind')='subagent'";
+  for (const r of all<{ id: string }>(c, subagents, task_id, from)) need.add(r.id);
   const context = context_of(c, task_id, need, from);
   const w: Snapshot = {
     thread,

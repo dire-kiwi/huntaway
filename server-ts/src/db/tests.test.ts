@@ -563,6 +563,35 @@ test("a_database_from_version_61_gets_push_subscriptions", () => {
   c.close();
 });
 
+// HA-137 (ported by HA-209): migration 97. (The push module's reading of such a row is in integrations/push/expo_tests.test.ts:
+// the db tests don't import the push module, which brings in the rest of the server.)
+test("push_subscriptions_from_before_version_97_are_web_push", () => {
+  const path = db_path();
+  // As a board at version 96 left it: no kind or device_id, and a browser's subscription.
+  prepare_at(
+    path,
+    `DROP TABLE push_subscriptions;
+     CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+       name TEXT NOT NULL DEFAULT '', events TEXT NOT NULL, created_at TEXT NOT NULL, last_sent_at TEXT, last_error TEXT);
+     INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES ('s','https://push.example.com/1','k','a','Chrome','{}','1');
+     PRAGMA user_version=96;`,
+  );
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  assert.deepEqual({ ...db.one<object>(c, "SELECT kind, device_id, name FROM push_subscriptions WHERE id='s'") }, { kind: "web", device_id: null, name: "Chrome" });
+  // New rows are web unless they say otherwise.
+  db.run(c, "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('t','https://push.example.com/2','k','a','{}','1')");
+  db.run(c, "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at,kind,device_id) VALUES ('u','ExponentPushToken[x]','','','{}','1','expo','d')");
+  assert.deepEqual(db.all<{ kind: string }>(c, "SELECT kind FROM push_subscriptions ORDER BY id").map((r) => r.kind), ["web", "web", "expo"]);
+  // Run again over the columns (as when another migration took the version first), it leaves them as they are.
+  c.exec("PRAGMA user_version=96;");
+  c.close();
+  const again = open(path);
+  assert.equal(user_version(again), VERSION);
+  assert.equal(db.value(again, "SELECT kind FROM push_subscriptions WHERE id='u'"), "expo");
+  again.close();
+});
+
 test("a_database_from_version_53_gets_pull_request_watches", () => {
   const path = db_path();
   prepare_at(

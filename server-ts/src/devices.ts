@@ -1,4 +1,5 @@
-// Port of server/src/devices.rs (HA-136, from the HA-117 branch at bb59d8a; ported by HA-208).
+// Port of server/src/devices.rs (HA-136, from the HA-117 branch at bb59d8a; ported by HA-208, and its push and Assistant
+// tab hunks from HA-137 and HA-138 by HA-209).
 //
 // Devices paired with this board, such as the mobile app on a phone (API 118). Each has a token of its own, kept only as
 // its SHA-256 in `device_tokens`, which the API takes as well as the board's own token (`auth_token`), and which can be
@@ -11,9 +12,10 @@
 // holds `auth_token`.
 //
 // Paired devices can only use the routes the mobile app needs (see `HUB`): profiles, projects, tasks and their threads,
-// attachments, permission prompts, the board's events and hosts, and the devices list, from which they may only unpair
-// themselves. Nothing that would outlast revoking them: not the routes that hand out the board's or hub's token or a
-// Claude login, linking hosts, terminals (a shell on the host), settings or admin.
+// each profile's assistant, attachments, permission prompts, the board's events and hosts, the devices list, from which
+// they may only unpair themselves, and their own push subscriptions. Nothing that would outlast revoking them: not the
+// routes that hand out the board's or hub's token or a Claude login, linking hosts, terminals (a shell on the host),
+// settings or admin.
 //
 // Revoking a device stops the device. It doesn't undo what was done with it before: whoever held it could have had an
 // agent read the board's files (its `auth_token` among them), as any agent run can. After a phone is lost and may have
@@ -124,11 +126,22 @@ const HUB: Array<[string, string]> = [
   ["GET", "devices"],
   // Only itself (see `revoke`).
   ["DELETE", "devices/*"],
+  // The app's push (API 120), only its own subscriptions (see integrations/push.ts).
+  ["GET", "push"],
+  ["POST", "push/subscriptions"],
+  ["PATCH", "push/subscriptions/*"],
+  ["DELETE", "push/subscriptions/*"],
+  ["POST", "push/subscriptions/*/test"],
+  // Needs no token at all (the push's own answers only its prompt), so it's here only for a device that sends one.
+  ["POST", "permissions/*/push-answer"],
 ];
 const HOST: Array<[string, string]> = [
   ["GET", "profiles"],
   ["GET", "profiles/*/projects"],
   ["GET", "profiles/*/tasks"],
+  // The profile's assistant (API 120), which the app's Assistant tab opens; its thread is a task's. Not its memory.
+  ["GET", "profiles/*/assistant"],
+  ["POST", "profiles/*/assistant"],
   ["GET", "projects/*"],
   ["GET", "projects/*/tasks"],
   ["POST", "projects/*/tasks"],
@@ -343,8 +356,11 @@ export function rename(s: Shared, r: Req) {
 export function revoke(s: Shared, r: Req) {
   const id = r.params.id;
   if (r.device && r.device.id !== id) not_from_device(r.device);
-  const n = db.run(s.db(), "DELETE FROM device_tokens WHERE id=?1", id).changes;
+  const c = s.db();
+  const n = db.run(c, "DELETE FROM device_tokens WHERE id=?1", id).changes;
   if (n === 0) throw ApiError.not_found("device");
+  // Its push subscriptions (the app's) go with it: a revoked phone gets no more pushes, nor their tokens for Allow and Deny.
+  db.run(c, "DELETE FROM push_subscriptions WHERE device_id=?1", id);
   s.devices.note_revoked();
   console.info(`revoked device ${id}`);
   return { ok: true };

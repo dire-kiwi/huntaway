@@ -1,6 +1,6 @@
 // Port of server/src/util.rs.
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -165,6 +165,31 @@ export function err_str(e: unknown): string {
 /** `anyhow::Context`: wrap an error with what was being done. */
 export function context(what: string, e: unknown): Error {
   return new Error(what, { cause: e });
+}
+
+/**
+ * Remove `path` and everything in it, as `rmSync(path, { recursive: true, force: true })`, but checking it's gone. When
+ * a file in the folder goes while rmSync removes it (`objects/maintenance.lock`, while a detached `git maintenance`
+ * runs), rmSync can return with no error and the folder still there, much of it not removed (it seems to take that
+ * file's ENOENT for the folder's), or fail with ENOTEMPTY when one is made meanwhile (HA-252). Either is tried again, a
+ * few times, and then it's an error.
+ */
+export function remove_dir_all(path: string): void {
+  for (let i = 1; ; i++) {
+    let error: unknown = null;
+    try {
+      rmSync(path, { recursive: true, force: true });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw e;
+      error = e;
+    }
+    try {
+      lstatSync(path);
+    } catch {
+      return;
+    }
+    if (i >= 10) throw error ?? new Error(`${path} is still there after removing it`);
+  }
 }
 
 const hooks: Array<[string, () => void]> = [];

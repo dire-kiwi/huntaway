@@ -12,6 +12,8 @@ import { useHost, useProject, useStore } from "../../store";
 import { askedAnswers, declinedWithAnswers, planTitle, questionsOf, withoutTitle, type AskedQuestion } from "../../questions";
 import { Button, Textarea } from "../ui";
 import { Markdown } from "./thread/Markdown";
+import { usePromptAnswers } from "./thread/promptAnswers";
+import { modeOf } from "../../threadView";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
@@ -208,7 +210,14 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
   const [text, setText] = useState("");
   const { busy, err, run } = useBusy();
   const ref = useRef<HTMLDivElement>(null);
-  const answer = (choices: string[], typed: string) => run(() => api.answerQuestion(hostId, taskId, id, { choices, text: typed.trim() || null }));
+  // In a thread drawn from its items, with the thread's respond command: its options picked, then the typed answer.
+  const commands = usePromptAnswers();
+  const answer = (choices: string[], typed: string) =>
+    run(() =>
+      commands
+        ? commands.respond(`legacy:${id}`, { outcome: "answer", answers: { q: [...choices, ...(typed.trim() ? [typed.trim()] : [])] } })
+        : api.answerQuestion(hostId, taskId, id, { choices, text: typed.trim() || null }),
+    );
   const pick = (label: string) => {
     if (busy) return;
     if (!multi) return void answer([label], "");
@@ -323,14 +332,19 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
   };
   const answers = questions.map((q, i) => answerOf(q, drafts[i] ?? { picked: [], other: "" }));
   const complete = answers.every((a) => a.length > 0);
+  const commands = usePromptAnswers();
   const submit = (list = answers) =>
     run(() =>
-      structured
-        ? api.resolvePermission(hostId, data.request_id, "allow", undefined, { answers: list })
-        : // A host that can't give the tool the answers: it's declined with them, so the agent still gets them.
-          api.resolvePermission(hostId, data.request_id, "deny", declinedWithAnswers(questions, list)),
+      commands
+        ? commands.respond(data.request_id, { outcome: "answer", answers: commands.answers(data.request_id, list) })
+        : structured
+          ? api.resolvePermission(hostId, data.request_id, "allow", undefined, { answers: list })
+          : // A host that can't give the tool the answers: it's declined with them, so the agent still gets them.
+            api.resolvePermission(hostId, data.request_id, "deny", declinedWithAnswers(questions, list)),
     );
-  const dismiss = () => run(() => api.resolvePermission(hostId, data.request_id, "deny", "The user dismissed these questions without answering them."));
+  const DISMISSED = "The user dismissed these questions without answering them.";
+  const dismiss = () =>
+    run(() => (commands ? commands.respond(data.request_id, { outcome: "cancel", message: DISMISSED }) : api.resolvePermission(hostId, data.request_id, "deny", DISMISSED)));
   const set = (i: number, d: Partial<Draft>) => setDrafts((all) => all.map((x, j) => (j === i ? { ...x, ...d } : x)));
   const pick = (i: number, label: string) => {
     const q = questions[i];
@@ -500,13 +514,21 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, mov
   useEffect(() => {
     if (asking) form.current?.scrollIntoView({ block: "nearest" });
   }, [asking]);
-  const approve = () => run(() => api.resolvePermission(hostId, data.request_id, "allow", undefined, structured ? { mode } : undefined));
+  const commands = usePromptAnswers();
+  const approve = () =>
+    run(() =>
+      commands
+        ? commands.respond(data.request_id, { outcome: "allow", permission_mode: modeOf(mode) })
+        : api.resolvePermission(hostId, data.request_id, "allow", undefined, structured ? { mode } : undefined),
+    );
   const keepPlanning = () => {
     const f = feedback?.trim() ?? "";
     return run(() =>
-      structured
-        ? api.resolvePermission(hostId, data.request_id, "deny", undefined, { feedback: f })
-        : api.resolvePermission(hostId, data.request_id, "deny", `${KEEP_PLANNING}${f ? ` Their feedback:\n\n${f}` : ""}`),
+      commands
+        ? commands.respond(data.request_id, { outcome: "deny", message: f })
+        : structured
+          ? api.resolvePermission(hostId, data.request_id, "deny", undefined, { feedback: f })
+          : api.resolvePermission(hostId, data.request_id, "deny", `${KEEP_PLANNING}${f ? ` Their feedback:\n\n${f}` : ""}`),
     );
   };
   const title = planTitle(plan);

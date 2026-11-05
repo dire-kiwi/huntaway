@@ -29,7 +29,6 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
   writeSync,
   type Stats,
@@ -39,7 +38,7 @@ import * as db from "../../db.ts";
 import type { Task } from "../../db.ts";
 import { ApiError, type Req } from "../../http.ts";
 import { AsyncMutex, type Shared } from "../../state.ts";
-import { background, context, err_str, path_str } from "../../util.ts";
+import { background, context, err_str, path_str, remove_dir_all } from "../../util.ts";
 import { run_cmd } from "../../proc.ts";
 import * as automations from "../../integrations/automations.ts";
 import { json_map, req_str, opt_str, def_bool, query_rejection } from "../../api/extract.ts";
@@ -258,6 +257,9 @@ async function git_in(dir: string, who: Who, args: string[], stdin: Buffer | nul
     GIT_COMMITTER_EMAIL: email,
   });
   const fixed = ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"];
+  // A commit's `git maintenance --auto` (or, before git 2.47, `gc --auto`) runs before git exits, not left running in the
+  // background, where it would work in the repository with the workspace's lock released, and while it's removed.
+  fixed.push("-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false");
   let o;
   try {
     o = await run_cmd("git", ["-C", dir, ...fixed, ...args], { env, input: stdin ?? undefined });
@@ -303,7 +305,7 @@ export async function ensure(dir: string): Promise<void> {
       } catch (e) {
         // Its history stays in its `.git`, for the user to look at, and it starts again.
         console.warn(`the assistant's history in ${old} couldn't be moved, so it starts again: ${err_str(e)}`);
-        rmSync(gd, { recursive: true, force: true });
+        remove_dir_all(gd);
       }
       if (moved) {
         // What changed meanwhile, with what's ignored now left out. An error here isn't the move's: the history is in
@@ -362,7 +364,7 @@ async function migrate(dir: string, old: string, gd: string): Promise<void> {
   console.log(`moved the assistant's history to ${gd}`);
   // From here the history is in `gd`, whatever happens to the old one.
   try {
-    rmSync(old, { recursive: true, force: true });
+    remove_dir_all(old);
   } catch (e) {
     console.warn(`removing ${old}: ${err_str(e)}`);
   }

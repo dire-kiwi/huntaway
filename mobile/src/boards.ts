@@ -1,6 +1,7 @@
 // The boards this phone is paired with: a work hub and a personal board, say. Each has its own device token (kept in
 // the keychain, see secrets.ts) and its own API client; the list itself (without tokens) is kept beside them. One is
-// selected for the Projects tab, and each remembers the profile picked on it.
+// selected for the Assistant and Projects tabs, each remembers the profile picked on it, and the last one something was
+// shared to comes first when the app asks where a share goes.
 
 /** A paired board. Its `id` is the board's host id, which stays the same across restarts and re-pairing. */
 export interface Board {
@@ -15,6 +16,8 @@ export interface Board {
   apiVersion: number;
   /** The profile (by name: boards merge profiles across their hosts by name) picked on it, if any. */
   profile: string | null;
+  /** Push to this phone from it (API 120): on unless turned off here. */
+  push?: boolean;
   pairedAt: string;
 }
 
@@ -27,18 +30,21 @@ export interface SecretStore {
 
 const LIST_KEY = "boards";
 const SELECTED_KEY = "boards.selected";
+const SHARED_KEY = "boards.shared";
 /** A board's token's key: host ids are UUIDs, but anything else is made safe for the keychain. */
 export const tokenKey = (id: string) => `token.${id.replace(/[^A-Za-z0-9._-]/g, "_")}`;
 
 export interface BoardsState {
   boards: Board[];
   selected: string | null;
+  /** The board the last share went to. */
+  lastShared: string | null;
   loaded: boolean;
 }
 
 /** The paired boards and their tokens, kept in `store`. Subscribe for changes (it suits useSyncExternalStore). */
 export class Boards {
-  private state: BoardsState = { boards: [], selected: null, loaded: false };
+  private state: BoardsState = { boards: [], selected: null, lastShared: null, loaded: false };
   private tokens = new Map<string, string>();
   private listeners = new Set<() => void>();
 
@@ -84,7 +90,13 @@ export class Boards {
       boards.push({ ...b, profile: b.profile ?? null, apiVersion: b.apiVersion ?? 0, deviceId: b.deviceId ?? "", name: b.name || b.url, pairedAt: b.pairedAt ?? "" });
     }
     const selected = await this.store.get(SELECTED_KEY).catch(() => null);
-    this.set({ boards, selected: boards.some((b) => b.id === selected) ? selected : (boards[0]?.id ?? null), loaded: true });
+    const shared = await this.store.get(SHARED_KEY).catch(() => null);
+    this.set({
+      boards,
+      selected: boards.some((b) => b.id === selected) ? selected : (boards[0]?.id ?? null),
+      lastShared: boards.some((b) => b.id === shared) ? shared : null,
+      loaded: true,
+    });
     if (boards.length !== list.length) await this.saveList();
   }
 
@@ -93,7 +105,8 @@ export class Boards {
     await this.store.set(tokenKey(board.id), token);
     this.tokens.set(board.id, token);
     const old = this.board(board.id);
-    const next = { ...board, profile: board.profile ?? old?.profile ?? null };
+    // Paired again: what was picked for it here stays (its profile, and push turned off).
+    const next = { ...board, profile: board.profile ?? old?.profile ?? null, push: board.push ?? old?.push };
     const boards = old ? this.state.boards.map((b) => (b.id === board.id ? next : b)) : [...this.state.boards, next];
     this.set({ ...this.state, boards, selected: board.id });
     await this.saveList();
@@ -103,8 +116,9 @@ export class Boards {
   async remove(id: string) {
     const boards = this.state.boards.filter((b) => b.id !== id);
     const selected = this.state.selected === id ? (boards[0]?.id ?? null) : this.state.selected;
+    const lastShared = this.state.lastShared === id ? null : this.state.lastShared;
     this.tokens.delete(id);
-    this.set({ ...this.state, boards, selected });
+    this.set({ ...this.state, boards, selected, lastShared });
     await this.store.delete(tokenKey(id)).catch(() => {});
     await this.saveList();
   }
@@ -113,6 +127,13 @@ export class Boards {
     if (!this.board(id)) return;
     this.set({ ...this.state, selected: id });
     await this.store.set(SELECTED_KEY, id).catch(() => {});
+  }
+
+  /** Notes the board a share went to, which comes first next time. */
+  async shared(id: string) {
+    if (!this.board(id)) return;
+    this.set({ ...this.state, lastShared: id });
+    await this.store.set(SHARED_KEY, id).catch(() => {});
   }
 
   /** Changes what's kept about a board (its profile, name, API version). */
@@ -126,6 +147,7 @@ export class Boards {
     await this.store.set(LIST_KEY, JSON.stringify(this.state.boards));
     if (this.state.selected) await this.store.set(SELECTED_KEY, this.state.selected).catch(() => {});
     else await this.store.delete(SELECTED_KEY).catch(() => {});
+    if (!this.state.lastShared) await this.store.delete(SHARED_KEY).catch(() => {});
   }
 
   private set(state: BoardsState) {

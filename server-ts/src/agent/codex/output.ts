@@ -12,6 +12,7 @@ import * as context from "../context.ts";
 import * as documents from "../documents.ts";
 import * as usage from "../usage.ts";
 import * as runner from "../runner.ts";
+import * as history from "../../threads/history.ts";
 
 const g = (v: any) => (v === undefined ? null : v);
 const str = (v: any): string | null => (typeof v === "string" ? v : null);
@@ -50,7 +51,7 @@ function thread_message(state: Shared, task_id: string, parent: string | null, m
 function subagent_started(state: Shared, task_id: string, session: string | null, thread: string, sender: string | null, meta: any) {
   if (thread === session) return;
   const id = subagent_id(thread);
-  const exists = db.has_assistant_block(state.db(), task_id, id);
+  const exists = history.has_call(state.db(), task_id, id);
   const parent = sender !== null && sender !== session ? subagent_id(sender) : null;
   const prompt = str(meta.prompt) ?? "";
   const description = truncate(prompt === "" ? (str(meta.description) ?? "") : prompt, 200);
