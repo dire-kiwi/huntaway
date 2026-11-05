@@ -156,7 +156,7 @@ export interface Profile {
    * projects can say otherwise.
    */
   require_pr_approval: boolean;
-  /** The linked host its assistant runs on (API 111, a link id; see agent/assistant.ts). Null for this host. */
+  /** The linked host its assistant runs on (API 112, a link id; see agent/assistant.ts). Null for this host. */
   assistant_host: string | null;
   created_at: string;
 }

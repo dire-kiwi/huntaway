@@ -239,6 +239,36 @@ merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and th
 lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
 whatever access their profile has.
 
+The assistant **remembers** you (API 111) in files in its workspace: `USER.md` (who you are, your
+preferences), `MEMORY.md` (lasting facts) and a log for each day, `memory/YYYY-MM-DD.md` (in the
+host's time zone). The board, not the CLI, puts them into the instructions of every run, so it's the
+same on Claude Code and Codex and always what the files say now: `USER.md` and `MEMORY.md` up to
+8,000 characters (and 16 KB) each (with a note to the assistant when one is cut), today's and
+yesterday's logs (their ends, if longer), and how to remember, forget and keep the log. Claude Code
+is given these instructions in a file (`--append-system-prompt-file`, in the run's folder) rather
+than as an argument, which can't be longer than 128 KiB. The workspace has a git history: after each
+of the assistant's turns that changed it, the board commits it as *Assistant*. Its git folder is
+`<data dir>/assistants/<task id>.git`, next to the workspace rather than in it, so the assistant
+can't set the config, hooks or filters the board's git runs with. A workspace from before gets a new
+one, into which its old `.git`'s objects and refs are copied and written again by git, and the old
+`.git` goes; one with a `commondir`, `gitdir` or alternates, or whose history isn't whole, is left
+as it is and the history starts again; the board's git also ignores your own git config. What the
+workspace's `.gitignore` lists (made with common downloads, build output and secrets) and files over
+1 MB aren't committed, nor is a repository in the workspace (a `git clone`, say): it's never a
+gitlink in the history, as git would look in it with its own config, which the assistant can write.
+The assistant's **Memory** tab lists the files (those loaded into every run highlighted, with their
+length against the cap), edits them (committed as *You*; a save over what the assistant wrote
+meanwhile asks whose to keep), shows each file's history with what each commit changed, and restores
+a version. A restore or a save over the assistant's edit first commits that edit, as the
+assistant's, if it isn't yet, so it's always in the history; a file the history leaves out is only
+written over (even when forced) if it's what the editor opened. Its **Import** gives a prompt to
+paste into another assistant (ChatGPT, Claude.ai…) for what it knows about you, and sends its answer
+to your assistant, as data, to fold into `USER.md` and `MEMORY.md`. The API is under
+`/api/profiles/<id>/assistant/memory` (`file`, `history`, `diff`, `restore`, `import`), and only
+reaches files in that profile's assistant's workspace: paths with `..`, in `.git` or through a
+symlink are refused, and so is a workspace (or `assistants` folder) that's been replaced by a
+symlink, whose memory isn't loaded or committed either.
+
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
 `/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
@@ -692,7 +722,7 @@ own profile's board and those that let them in (see *Agents across profiles*).
 
 A linked host's agents can use the hub's board too, once the hub lets them: switch on **Let this
 host's agents use this board** for it under Settings → Hosts (off by default; hub and host need API
-111). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
+112). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
 up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the tunnel for
 one that dials in). The hub takes it only from an agent in one of its profiles whose **Assistant host**
 is that host (see *An assistant host*): the host names the caller's profile, and whoever controls it
@@ -780,7 +810,7 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
    and settings to the new host (or log in there with `claude` as that user). Then add a profile of
    the same name there: Settings → Profiles shows **Not set up on: <host>** under the profile.
 4. **Move the assistant there**: Settings → Profiles → **Edit** the profile on the board's own host
-   and pick the host under **Assistant host** (API 111 on both). The sidebar's *Assistant* then opens
+   and pick the host under **Assistant host** (API 112 on both). The sidebar's *Assistant* then opens
    the assistant on that host, and says so while the host is offline. `GET /api/profiles/<id>/assistant`
    on the hub goes there too (to `/api/profiles/<id there>/assistant?local=1`), and returns the task with
    that host's `host_id`, which clients reach through `/api/h/<host_id>/…`. Removing the host puts the

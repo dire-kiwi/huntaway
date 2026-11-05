@@ -11,12 +11,13 @@ export const PROTOCOL = 1;
  * API 110: routines (a profile's automations, which wake its assistant): `/profiles/{id}/automations`, the `cron` and `at`
  * triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, `report` messages, and push's
  * `replies` and `reports` events.
+ * API 111: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
  *
- * API 111: a profile's assistant host (`assistant_host`), and board tool calls up a link (`Down::Hello`, `Up::ToolCall`,
+ * API 112: a profile's assistant host (`assistant_host`), and board tool calls up a link (`Down::Hello`, `Up::ToolCall`,
  * and `hub_hello`/`hub_call` on `/api/host/ws`, see hosts/uplink.ts). A host passes calls only to a hub that said hello,
  * which older hubs don't, and older hosts ignore the hello.
  */
-export const API_VERSION = 111;
+export const API_VERSION = 112;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

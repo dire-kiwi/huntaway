@@ -1,6 +1,6 @@
 // Port of server/src/hosts/uplink.rs (HA-120, on the HA-117 branch).
 /**
- * Board tools up the link: a host's agents using the board of a hub it's linked to (API 111).
+ * Board tools up the link: a host's agents using the board of a hub it's linked to (API 112).
  *
  * Links are made by the hub, which calls the host (over HTTP, or through the tunnel a host opens with `--hub`), so a host
  * had no way to ask the hub anything. Now the hub says who it is once it's connected (`{"type": "hub_hello"}` on
@@ -132,7 +132,7 @@ export function hubs(s: AppState): Uplink[] {
 
 // ---------- on `/api/host/ws` ----------
 
-/** What the hub says on `/api/host/ws` when it connects (hubs from API 111). */
+/** What the hub says on `/api/host/ws` when it connects (hubs from API 112). */
 export function hub_hello(s: AppState): any {
   return { type: "hub_hello", hub_id: s.host_id, name: s.host_name, api_version: API_VERSION };
 }

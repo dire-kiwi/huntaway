@@ -119,7 +119,7 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
     unregister(s, conn);
     throw e;
   }
-  // Who we are, so the host can pass its agents' board tool calls up (hosts before API 111 ignore it).
+  // Who we are, so the host can pass its agents' board tool calls up (hosts before API 112 ignore it).
   tx({ t: "hello", hub_id: s.host_id, name: s.host_name, api_version: API_VERSION });
   // A websocket ping for hosts from before `Down::Ping`, which answer it whatever their version; `ping` for the
   // others, which gets through a broker.

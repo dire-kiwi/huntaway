@@ -121,7 +121,7 @@ test("storage that throws (a browser that blocks it) is no token and nothing rem
 
 // HA-119: the assistant works in a folder of its own, but isn't a task that makes only documents.
 test("a profile's assistant isn't a documents-only task", async () => {
-  const { documentsOnly, isAssistant, ASSISTANT_API, hasAssistant } = await import("@huntaway/client");
+  const { documentsOnly, isAssistant, ASSISTANT_API, hasAssistant, MEMORY_API, hasMemory } = await import("@huntaway/client");
   const assistant = { kind: "task", task_type: "assistant", labels: [], work_dir: "assistants/a1" };
   assert.equal(isAssistant(assistant), true);
   assert.equal(documentsOnly(assistant), false);
@@ -129,6 +129,9 @@ test("a profile's assistant isn't a documents-only task", async () => {
   assert.equal(documentsOnly({ kind: "task", task_type: null, labels: ["plan"], work_dir: "documents/t1" }), true);
   assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API - 1 }), false);
   assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API }), true);
+  // Its Memory tab, from API 111.
+  assert.equal(hasMemory({ local: false, api_version: ASSISTANT_API }), false);
+  assert.equal(hasMemory({ local: false, api_version: MEMORY_API }), true);
 });
 
 test("the assistant's calls go to its profile on its host", async () => {
@@ -149,7 +152,7 @@ test("the assistant's calls go to its profile on its host", async () => {
 
 // HA-120: a profile's assistant can run on a linked host of its own, which the board goes to in whatever state it's in.
 test("a profile's assistant is on its assistant host, or else the board's own host", () => {
-  const host = (id, more = {}) => ({ id, name: id, local: id === "hub", connected: true, mode: id === "hub" ? "local" : "ssh", api_version: 111, ...more });
+  const host = (id, more = {}) => ({ id, name: id, local: id === "hub", connected: true, mode: id === "hub" ? "local" : "ssh", api_version: 112, ...more });
   const profile = (host_id, id, more = {}) => ({ host_id, id, name: "personal", ...more });
   const hosts = [host("hub"), host("home"), host("laptop")];
   // No setting: the board's own host's profile, else the first connected host with assistants that has one.
@@ -164,7 +167,7 @@ test("a profile's assistant is on its assistant host, or else the board's own ho
   assert.deepEqual(assistantHome(placed, [host("hub"), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
   assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 100 })], "personal"), { hostId: "home", unavailable: "old" });
   // One with assistants but from before assistant hosts can't be one.
-  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 110 })], "personal"), { hostId: "home", unavailable: "old" });
+  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 111 })], "personal"), { hostId: "home", unavailable: "old" });
   assert.deepEqual(assistantHome([placed[0]], hosts, "personal"), { hostId: "home", unavailable: "no_profile" });
   // Another host's setting doesn't count, nor does one naming the board's own host.
   assert.deepEqual(assistantHome([profile("hub", "ph"), profile("laptop", "pl", { assistant_host: "home" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });

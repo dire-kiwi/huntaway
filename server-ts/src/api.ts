@@ -15,6 +15,7 @@ import * as profiles from "./api/profiles.ts";
 import * as projects from "./api/projects.ts";
 import * as tasks from "./api/tasks.ts";
 import * as thread from "./api/thread.ts";
+import * as memory from "./agent/assistant/memory.ts";
 import * as agent_tools from "./agent/agent_tools.ts";
 import * as prompts from "./agent/prompts.ts";
 import * as usage from "./agent/usage.ts";
@@ -86,6 +87,12 @@ function host_routes(r: Router) {
   // Scratch chats, of which there are none since they became scratch tasks (for older boards).
   r.route("/profiles/{id}/scratch", { GET: tasks.list_profile_scratch });
   r.route("/profiles/{id}/assistant", { GET: thread.get_assistant, POST: thread.send_to_assistant });
+  r.route("/profiles/{id}/assistant/memory", { GET: memory.overview });
+  r.route("/profiles/{id}/assistant/memory/file", { GET: memory.read, POST: memory.write });
+  r.route("/profiles/{id}/assistant/memory/history", { GET: memory.history });
+  r.route("/profiles/{id}/assistant/memory/diff", { GET: memory.diff });
+  r.route("/profiles/{id}/assistant/memory/restore", { POST: memory.restore });
+  r.route("/profiles/{id}/assistant/memory/import", { POST: memory.import_ });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });

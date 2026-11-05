@@ -6,19 +6,19 @@
  * review or merge.
  *
  * `get_or_create` is the one place a profile's assistant is found on a host. A profile can have it run on a linked host of
- * its own (`assistant_host`, API 111): the hub then sends `/profiles/{id}/assistant` there (`on_its_host`), to that
+ * its own (`assistant_host`, API 112): the hub then sends `/profiles/{id}/assistant` there (`on_its_host`), to that
  * host's profile of the same name, so its credentials and its agents stay on that machine. The board's sidebar goes there
  * too (`assistantHome` in the client package).
+ *
+ * Its memory (USER.md, MEMORY.md and daily logs in its workspace, with their history) is `assistant/memory.ts`.
  */
-import { lstatSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import { ApiError } from "../http.ts";
 import type { Shared } from "../state.ts";
 import { err_str } from "../util.ts";
 import * as runner from "./runner.ts";
-import * as documents from "./documents.ts";
+import * as memory from "./assistant/memory.ts";
 import * as questions from "../mcp/questions.ts";
 import * as hub from "../hosts/hub.ts";
 
@@ -26,7 +26,7 @@ import * as hub from "../hosts/hub.ts";
  * The API version from which a host can be a profile's assistant host: it takes the routed requests (`?local=1`) and
  * passes its agents' board tool calls up its link (see hosts/uplink.ts).
  */
-export const ASSISTANT_HOST_API = 111;
+export const ASSISTANT_HOST_API = 112;
 
 /**
  * The assistant whose workspace a run of `task` has: the assistant's own, and a routine thread's its parent's
@@ -37,30 +37,6 @@ export function whose_workspace(task: Task, parent: Task | null): Task | null {
   if (!db.is_routine(task)) return null;
   if (parent && db.is_assistant(parent) && parent.work_dir === task.work_dir) return parent;
   throw new Error("this routine thread's assistant, or its workspace, is gone");
-}
-
-/**
- * The assistant's workspace, made if it isn't there, once it's checked to be its own: `assistants/<task id>` in the data
- * dir, as real folders. A symlink in their place (or a file) could lead to another assistant's workspace, or anywhere
- * else, so it's refused, and nothing is run there. The data dir itself may be a symlink. (Rust's
- * `assistant::memory::checked`, which the memory's port keeps with the rest of it.)
- */
-export function checked(state: Shared, task: Task): string {
-  if (!db.is_assistant(task)) throw new Error(`${task.id} isn't an assistant`);
-  if (task.work_dir !== work_dir(task.id)) throw new Error(`the assistant's folder isn't its own workspace (${JSON.stringify(task.work_dir)})`);
-  let dir = state.data_dir;
-  for (const part of ["assistants", task.id]) {
-    dir = join(dir, part);
-    try {
-      mkdirSync(dir);
-    } catch (e: any) {
-      if (e?.code !== "EEXIST") throw new Error(`making ${dir}: ${err_str(e)}`);
-    }
-    if (!lstatSync(dir).isDirectory()) {
-      throw new Error(`${dir} isn't a folder of its own (it's a symlink or a file), so the assistant's memory isn't used`);
-    }
-  }
-  return dir;
 }
 
 /** Where an assistant works, relative to the data dir (see documents.work_dir), so it moves with it. */
@@ -86,14 +62,17 @@ export function get_or_create(s: Shared, profile_id: string): Task {
     // Its title stays: it isn't renamed after the user's prompts (see title.refresh).
     task = db.update_task(c, t.id, [["title_pinned", true]]) ?? t;
   }
-  // Its workspace, which later steps keep memory files in. Made again if it went missing.
-  const dir = documents.work_dir(s, task);
-  if (dir !== null) {
+  // Its workspace, with its memory files (see assistant/memory.ts). Made again if it went missing. It's made a git
+  // repository before its first run, or when the Memory tab opens.
+  try {
+    const dir = memory.checked(s, task);
     try {
-      mkdirSync(dir, { recursive: true });
+      memory.seed(dir);
     } catch (e) {
-      console.warn(`task ${task.id}: making the assistant's folder ${dir}: ${err_str(e)}`);
+      console.warn(`task ${task.id}: making the assistant's memory files in ${dir}: ${err_str(e)}`);
     }
+  } catch (e) {
+    console.warn(`task ${task.id}: the assistant's folder: ${err_str(e)}`);
   }
   if (made) s.emit_task(task);
   return task;
@@ -117,7 +96,7 @@ export function with_host(s: Shared, t: Task): any {
 
 /**
  * What a profile's `assistant_host` may be set to, as it's stored: null for this host, else a linked host that can be an
- * assistant host (API 111).
+ * assistant host (API 112).
  */
 export function check_host(s: Shared, v: any): string | null {
   if (v === null || v === undefined) return null;

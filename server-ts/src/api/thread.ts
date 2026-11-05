@@ -51,7 +51,7 @@ export async function send_message(s: AppState, r: Req) {
 
 /**
  * `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's
- * asked for. API 111: with its `host_id`, which is the profile's assistant host's when it has one, where the request goes
+ * asked for. API 112: with its `host_id`, which is the profile's assistant host's when it has one, where the request goes
  * (see assistant::on_its_host), unless `local` is set: a hub that routed the request here sets it, and it's this host's
  * then, whatever its profile's `assistant_host`.
  */
@@ -66,7 +66,7 @@ export async function get_assistant(s: AppState, r: Req) {
 /**
  * `POST /profiles/{id}/assistant` (API 109): send the user's message to the profile's assistant, as `POST
  * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task, on its assistant host if it
- * has one, as `GET` does (API 111).
+ * has one, as `GET` does (API 112).
  */
 export async function send_to_assistant(s: AppState, r: Req) {
   const text = def_str(json_map(r), "text");

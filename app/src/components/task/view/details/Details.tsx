@@ -241,7 +241,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   );
 }
 
-/** Which host the assistant runs on, and whether its agents can use this board's tools from there (API 111). */
+/** Which host the assistant runs on, and whether its agents can use this board's tools from there (API 112). */
 function AssistantPlace({ host }: { host: Host | undefined }) {
   const board = useStore((s) => s.hosts.find((h) => h.local));
   if (!host) return null;
