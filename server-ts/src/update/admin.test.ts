@@ -4,16 +4,20 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { sleep } from "../util.ts";
 import * as testing from "../testing.ts";
+import * as db from "../db.ts";
+import * as backup from "../backup.ts";
 import type { AppState } from "../state.ts";
 import { builds_shim, bundle, check_deployed, pick_bundle_commit, status } from "./admin.ts";
 import * as api from "../api.ts";
 import { randomBytes } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 
 const servers: Array<() => void> = [];
 after(() => servers.forEach((f) => f()));
@@ -328,6 +332,96 @@ test("start_without_a_backup_is_only_for_the_first_server_bin_huntaway_starts", 
   const third = children(s.child.pid!);
   assert.notDeepEqual(third, second);
   assert.equal(environ(third[0]).IA_SKIP_DB_BACKUP_ONCE, undefined);
+  s.child.kill("SIGTERM");
+  assert.equal(await s.exited, 0);
+});
+
+/**
+ * HA-213: with IA_NEW_DB_FILE, a server on a data dir an older build used copies its database into huntaway-2.db and
+ * leaves the old file as it was; Copy again copies it again on a restart, and the restart doesn't pass --recopy-db or
+ * IA_RECOPY_DB on (an older build would exit on the flag). Without IA_NEW_DB_FILE, nothing changes.
+ */
+test("the_new_database_file_is_copied_once_and_again_on_request", async () => {
+  const dir = testing.temp_dir();
+  const old = join(dir, "huntaway.db");
+  const c = db.open(old);
+  db.set_setting(c, "default_model", "from the older build");
+  c.close();
+  const old_bytes = () => readFileSync(old).toString("base64");
+
+  // Off: the server uses huntaway.db, as it did.
+  let port = await free_port();
+  let s = serve_bin(["--port", String(port)], { IA_NEW_DB_FILE: "" }, dir);
+  await s.ready(1);
+  const token = readFileSync(join(dir, "auth_token"), "utf8").trim();
+  const req = (path: string, body?: unknown) =>
+    fetch(`http://127.0.0.1:${port}/api${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).then((r) => r.json() as any);
+  assert.equal((await req("/admin/server")).database, undefined);
+  assert.ok(!existsSync(join(dir, "huntaway-2.db")));
+  s.child.kill("SIGTERM");
+  assert.equal(await s.exited, 0);
+  const before = old_bytes();
+  // The Rust server ran here last, which every later start backs the database up from (see backup.ts).
+  const rust_ran = () => writeFileSync(join(dir, "server_version"), "0.3.0\n");
+  const backups = () => backup.list(backup.backup_dir(dir)).map((b) => b.from);
+  // The start above backed up huntaway.db, as no version had been recorded.
+  assert.deepEqual(backups(), ["before"]);
+  rust_ran();
+
+  // On, with the flag and variable that ask for a copy again (which there's nothing to copy again for yet).
+  port = await free_port();
+  s = serve_bin(["--port", String(port), "--recopy-db"], { IA_NEW_DB_FILE: "1", IA_RECOPY_DB: "1" }, dir);
+  await s.ready(1);
+  const first = children(s.child.pid!);
+  assert.equal(environ(first[0]).IA_RECOPY_DB, "1");
+  let st = await req("/admin/server");
+  assert.deepEqual([st.database.file, st.database.copied_from.source, st.database.older_changed], ["huntaway-2.db", "huntaway.db", null]);
+  assert.equal((await req("/settings")).default_model, "from the older build");
+  // The server has the copy open, and the older file is as it was, so there was nothing to back up.
+  assert.equal(old_bytes(), before);
+  assert.deepEqual(backups(), ["before"]);
+
+  // An older build runs on the data dir for a while (here, beside this one).
+  const o = new DatabaseSync(old);
+  o.prepare("UPDATE settings SET value='changed by the older build' WHERE key='default_model'").run();
+  o.close();
+  st = await req("/admin/server");
+  assert.equal(st.database.older_changed, "huntaway.db");
+  // And the Rust server ran on it again since: the next start backs up huntaway-2.db, before it's replaced.
+  rust_ran();
+  assert.deepEqual(await req("/admin/database/recopy", {}), { ok: true });
+  await s.ready(2);
+  const second = children(s.child.pid!);
+  assert.notDeepEqual(second, first);
+  // The restart has neither the flag nor its variable, and still the new file.
+  const env = environ(second[0]);
+  assert.deepEqual([env.IA_RECOPY_DB ?? "", env.IA_NEW_DB_FILE], ["", "1"]);
+  assert.ok(!readFileSync(`/proc/${second[0]}/cmdline`, "utf8").split("\0").includes("--recopy-db"));
+  st = await req("/admin/server");
+  assert.equal(st.database.older_changed, null);
+  assert.equal((await req("/settings")).default_model, "changed by the older build");
+  assert.ok(existsSync(join(dir, "huntaway-2.db.replaced")) && !existsSync(join(dir, "recopy-db")));
+  assert.deepEqual(backups(), ["0.3.0", "before"]);
+  // Of huntaway-2.db as it was before it was replaced.
+  const copy = join(testing.temp_dir(), "backup.db");
+  // The server gzips it once it's up, which replaces the file: read whichever is there.
+  await until("the backup", () => {
+    const [made] = backup.list(backup.backup_dir(dir));
+    try {
+      const data = readFileSync(join(backup.backup_dir(dir), made.f));
+      writeFileSync(copy, made.gz ? gunzipSync(data) : data);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const b = new DatabaseSync(copy, { readOnly: true });
+  assert.equal(db.get_setting(b, "default_model"), "from the older build");
+  b.close();
   s.child.kill("SIGTERM");
   assert.equal(await s.exited, 0);
 });

@@ -39,6 +39,11 @@ export function state_at(m: ServerMeta, data_dir: string, exe: string): AppState
   return AppState.with_exe(db.open(":memory:"), data_dir, identity(), m, exe);
 }
 
+/** An `AppState` on the database `conn`, with its data in `data_dir`. */
+export function state_on(conn: db.Conn, data_dir: string): AppState {
+  return new AppState(conn, data_dir, identity(), meta());
+}
+
 function state_of(id: Identity, m: ServerMeta): AppState {
   return new AppState(db.open(":memory:"), temp_dir(), id, m);
 }
