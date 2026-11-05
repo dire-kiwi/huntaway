@@ -6,9 +6,9 @@ See `README.md` for layout, build and run instructions.
 
 The server is the TypeScript one in `server-ts/` (Node 24+, run straight from its `.ts` files, see
 `server-ts/README.md`): every release since 0.4.0 runs it, and so do test servers, the install script and the
-desktop app from a checkout. **Make server changes in `server-ts/src/`. Don't change `server/src/`, it's being
-removed**: no release runs the Rust server any more, so a change there never ships. `server-ts/PORTING.md` has the
-conventions its code follows (one file per former Rust module, Rust's names). What stays in Rust, in the `server/`
+desktop app from a checkout. **Make server changes in `server-ts/src/`.** The Rust server it was ported from
+(`server/src/`) was removed in HA-179; `server-ts/PORTING.md` has the conventions the code follows (one file per former
+Rust module, Rust's names, which new code keeps too) and says how to read the Rust in git history. What stays in Rust, in the `server/`
 workspace, is `ia-shim` (`server/shim/`), the per-run supervisor the TS server runs agents under, and the broker
 (`server/broker/`): build the shim with `cargo build -p ia-shim` in `server/`.
 
@@ -213,9 +213,9 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   Prettier, ESLint or rustfmt config. Don't run `prettier`, `eslint` or `cargo fmt`, because each
   rewrites whole files. Match the surrounding style, and check `git diff --stat` before committing.
 - CI runs `npm run typecheck` and `npm test` in `server-ts/` and `app/` on every PR, `npm run test:ui` (against the
-  TS server) and `scripts/ia-api-test.py`, and `cargo test` in `server/` until the Rust server is removed
+  TS server) and `scripts/ia-api-test.py`, and `cargo test` in `server/` for ia-shim and the broker
   (`.github/workflows/test.yml`, the `Tests / server-ts`, `Tests / app`, `Tests / ui (1/3)` to `(3/3)` and
-  `Tests / server` checks, on self-hosted runners for the owner's own branches and GitHub-hosted ones
+  `Tests / rust` checks, on self-hosted runners for the owner's own branches and GitHub-hosted ones
   otherwise; see the workflow's header). Still run them
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.

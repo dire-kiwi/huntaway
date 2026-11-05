@@ -22,7 +22,7 @@ function updateKind(install) {
   return install === "pacman" ? "pacman" : null;
 }
 
-/** `<os>-<arch>` as the release's asset names have it (`linux-x64`), like `platform()` in server/src/update/release.rs. */
+/** `<os>-<arch>` as the release's asset names have it (`linux-x64`), like `platform()` in server-ts/src/update/release.ts. */
 function assetPlatform(platform = process.platform, arch = process.arch) {
   return `${platform === "darwin" ? "mac" : platform}-${arch}`;
 }

@@ -180,7 +180,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   }
   const shim = shim_path(state);
   if (!existsSync(shim)) {
-    throw new Error(`ia-shim not found next to ${state.exe} (build the workspace with \`cargo build --release\`)`);
+    throw new Error(`ia-shim not found next to ${state.exe} (build it with \`cargo build --release -p ia-shim\` in server/)`);
   }
   await mkdir(dir, { recursive: true });
   // The boot tells whether its pids are still its own later (see `pid_reused`).

@@ -372,8 +372,11 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
         </Field>
       </div>
       <div className="grid grid-cols-[1fr_90px] gap-3">
-        <Field label="huntaway on that machine" hint="Absolute path; ia-shim must sit next to it (cargo build --release).">
-          <Input value={bin} onChange={(e) => setBin(e.target.value)} placeholder="/home/you/huntaway/server/target/release/huntaway" className="font-mono text-[12px]" />
+        <Field
+          label="huntaway on that machine"
+          hint="Absolute path: a release's huntaway, or server-ts/bin/huntaway in a checkout (with cargo build --release -p ia-shim run in its server/)."
+        >
+          <Input value={bin} onChange={(e) => setBin(e.target.value)} placeholder="/home/you/huntaway/server-ts/bin/huntaway" className="font-mono text-[12px]" />
         </Field>
         <Field label="Host port">
           <Input value={port} onChange={(e) => setPort(e.target.value)} className="font-mono text-[12px]" />

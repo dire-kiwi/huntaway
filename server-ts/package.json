@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "The huntaway server, in TypeScript (a port of the Rust server in server/). Runs on Node 24+ with no build step.",
+  "description": "The huntaway server, in TypeScript (ported from the Rust server, removed in HA-179). Runs on Node 24+ with no build step.",
   "engines": { "node": ">=24" },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/main.ts serve",

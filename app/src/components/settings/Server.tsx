@@ -614,7 +614,7 @@ export function RestartModal({
                 </>
               ) : rebuild ? (
                 <>
-                  Rebuilds the UI (<code>npm run build</code>) and server (<code>cargo build --release</code>) from{" "}
+                  Rebuilds the UI (<code>npm run build</code>) and server (<code>npm ci</code> when its lockfile changed, and <code>ia-shim</code>) from{" "}
                   <span className="font-mono text-fg">{status.source_dir}</span>, then restarts in place. If either build fails, the current server keeps
                   running.
                 </>

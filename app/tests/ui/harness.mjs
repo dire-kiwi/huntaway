@@ -1,6 +1,6 @@
 // Shared setup for the browser checks in this folder: a scratch test server (scripts/test-server.sh --demo,
 // with agents switched off) and a browser on it (scripts/ui-check.mjs). They test the built UI, so run
-// `npm run build` (and `cargo build` in server/) first; `npm run test:ui` does the UI build.
+// `npm run build` (and `npm ci` in server-ts/ and `cargo build -p ia-shim` in server/) first; `npm run test:ui` does the UI build.
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";

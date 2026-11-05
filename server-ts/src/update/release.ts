@@ -4,8 +4,9 @@
 // in the background (see update/staging.ts), `POST /admin/release/update` restarts onto it, and
 // `POST /admin/release/rollback` goes back to the version before.
 //
-// A release is the Rust server: the TypeScript server restarts onto one through `bin/huntaway` (see admin.ts's `exec`),
-// which keeps its process id, as the Rust server's exec does.
+// A release is this server, packaged with its Node (scripts/package-server.sh), from 0.4.0 on, and the Rust server before
+// that (a Roll back can go to one). The server restarts onto either through `bin/huntaway` (see admin.ts's `exec`), which
+// keeps its process id, as the Rust server's exec did.
 import * as backup from "../backup.ts";
 import * as db from "../db.ts";
 import { ApiError } from "../http.ts";

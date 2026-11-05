@@ -1,40 +1,6 @@
-[package]
-name = "huntaway"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.89"
-license = "MIT"
-
+# The Rust that stays beside the TypeScript server (server-ts/): ia-shim, the per-run supervisor the server runs agents
+# under, and huntaway-broker, the connection broker for hosts. The Rust server that was here (server/src/) was removed in
+# HA-179; see server-ts/PORTING.md.
 [workspace]
-members = [".", "shim", "broker"]
-default-members = [".", "shim", "broker"]
-
-[dependencies]
-anyhow = "1.0.104"
-# HMAC-SHA256 for webhook signatures, and Web Push's encryption and signing (already built for rustls).
-aws-lc-rs = { version = "1.18.2", default-features = false }
-axum = { version = "0.8.9", features = ["ws", "macros"] }
-base64 = "0.23.1"
-chrono = "0.4.45"
-clap = { version = "4.6.7", features = ["derive", "env"] }
-dirs = "7.0.0"
-futures = "0.3.34"
-huntaway-broker = { path = "broker" }
-hyper = "1"
-libc = "0.2.191"
-reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "stream"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
-# Release versions, for release updates (see update/release.rs).
-semver = "1.0.28"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
-serde_urlencoded = "0.7"
-tokio = { version = "1.54.1", features = ["full"] }
-# tokio-tungstenite and tower-http stay on the versions axum and reqwest use, so there is one copy of each stack
-# (`cargo tree -d`): move them when those do.
-tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
-tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.6.11", features = ["fs", "cors"] }
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-uuid = { version = "1.28.0", features = ["v4"] }
+members = ["shim", "broker"]
+resolver = "3"

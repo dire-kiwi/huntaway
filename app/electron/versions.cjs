@@ -1,5 +1,5 @@
 // Which server a release build starts: one of the versions the server downloaded into `<data dir>/app/`, or the one in
-// its own resources. The server (server/src/update/release.rs) unpacks each release into `app/<v>/` ({huntaway, ia-shim,
+// its own resources. The server (server-ts/src/update/release.ts) unpacks each release into `app/<v>/` ({huntaway, ia-shim,
 // ui/index.html}) and keeps `app/state.json`:
 //
 //   current   the version that last came up (the server sets it once it's listening)

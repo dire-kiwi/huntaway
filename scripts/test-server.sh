@@ -23,9 +23,8 @@
 # and environment; agent runs carry on, as they do over a real restart.
 # `stop` kills the server and any agent runs it started, then removes the data dir.
 # Without a data dir, `restart` and `stop` use $IA_TEST_DATA_DIR, then .ia-test-env's.
-# Runs the TypeScript server, server-ts/bin/huntaway (needs `npm ci` in server-ts/, and an ia-shim: `cargo build
-# -p ia-shim` in server/, or $IA_SHIM_BIN). IA_TEST_BIN runs another build instead, such as the Rust server's
-# server/target/debug/huntaway, which is being removed.
+# Runs the server, server-ts/bin/huntaway (needs `npm ci` in server-ts/, and an ia-shim: `cargo build -p ia-shim` in
+# server/, or $IA_SHIM_BIN). IA_TEST_BIN runs another build instead, such as a release package's huntaway.
 # A restart from the board binds a new free port (use `restart` here instead).
 set -euo pipefail
 

@@ -1,7 +1,7 @@
 # Runs the server and UI tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request. The
-# server is the TypeScript one in server-ts/ (the `server-ts` job, and what the browser checks run against); the `server`
-# job tests the Rust server in server/, which no release runs any more, until it's removed. It needs
-# no secrets, so pull requests from forks run it too. Deployments live outside this repository.
+# server is the TypeScript one in server-ts/ (the `server-ts` job, and what the browser checks run against); the `rust`
+# job tests what stays in Rust in server/: ia-shim and the broker. It needs no secrets, so pull requests from forks run
+# it too. Deployments live outside this repository.
 #
 # The owner's own jobs can run on self-hosted runners (labels self-hosted and huntaway), which keep their checkout, build
 # output and toolchains between jobs: set the repository variable SELF_HOSTED_USER to the owner's login. Those are pushes
@@ -26,14 +26,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The Rust server (server/), until it's removed: only ia-shim and the test broker in that workspace are still used.
-  server:
+  # The Rust workspace (server/): ia-shim, which the server runs agents under, and the broker.
+  rust:
     runs-on: &runs-on >-
       ${{ (vars.SELF_HOSTED_USER != '' && github.actor == vars.SELF_HOSTED_USER && github.triggering_actor == vars.SELF_HOSTED_USER
       && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == vars.SELF_HOSTED_USER
       && github.event.pull_request.head.repo.full_name == github.repository)))
       && fromJSON('["self-hosted", "huntaway"]') || 'ubuntu-latest' }}
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       # Incremental state only helps rebuilds of the same code, and is about half the size of a debug build.
       CARGO_INCREMENTAL: "0"
@@ -64,18 +64,12 @@ jobs:
         with:
           workspaces: server
 
-      # The binaries first, so that cargo test doesn't compile them alongside the server's test binary
-      # (two rustcs at once peak at about 2.9G).
-      - name: cargo build
-        working-directory: server
-        run: cargo build --locked
-
       # Each test binary runs in a TMPDIR of its own and fails if it leaves anything in it (server/.cargo/test-runner).
       - name: cargo test
         working-directory: server
         run: cargo test --locked
 
-  # Always on a GitHub-hosted runner: it's quick, and leaves the self-hosted ones to the server and ui jobs.
+  # Always on a GitHub-hosted runner: it's quick, and leaves the self-hosted ones to the rust and ui jobs.
   app:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -107,7 +101,7 @@ jobs:
         run: npm test
 
   # The server (server-ts/): its typecheck and unit tests. On a GitHub-hosted runner, which leaves the self-hosted ones to
-  # the Rust server and ui jobs.
+  # the rust and ui jobs.
   server-ts:
     runs-on: ubuntu-latest
     timeout-minutes: 25
