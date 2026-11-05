@@ -28,15 +28,25 @@ export interface Queued {
   from_agent: boolean;
   /** The parts the user sent, if any. */
   user_text: string | null;
+  /**
+   * An automation sent it, with nobody there to answer the run it starts (a routine's, see automations/routines.ts). Kept
+   * while it's queued (`tasks.queued_routine`), as long as all that's queued is an automation's.
+   */
+  routine: boolean;
+  /**
+   * The automation runs (thread-mode routines, see automations/routines.ts, and project automations) whose messages are
+   * in it: the run that takes it in is theirs, for its cost.
+   */
+  routine_runs: string[];
 }
 
 export function Queued_new(text: string, from_agent: boolean): Queued {
-  return { text, from_agent, user_text: from_agent ? null : text };
+  return { text, from_agent, user_text: from_agent ? null : text, routine: false, routine_runs: [] };
 }
 
 /** Nothing: what's queued goes as it is (see runner::send_queued). */
 export function Queued_empty(): Queued {
-  return { text: "", from_agent: true, user_text: null };
+  return { text: "", from_agent: true, user_text: null, routine: false, routine_runs: [] };
 }
 
 /**
@@ -46,43 +56,95 @@ export function Queued_empty(): Queued {
 export function queued_then(q: Queued, next: Queued): Queued {
   const join = (a: string, b: string) => (a.trim() === "" ? b : b.trim() === "" ? a : `${a}\n\n${b}`);
   const user_text = q.user_text != null && next.user_text != null ? join(q.user_text, next.user_text) : (q.user_text ?? next.user_text);
-  return { text: join(q.text, next.text), from_agent: q.from_agent && next.from_agent, user_text };
+  // An empty part (nothing sent with what's queued) says nothing about who's there.
+  const [a_empty, b_empty] = [q.text.trim() === "", next.text.trim() === ""];
+  const routine = !a_empty && b_empty ? q.routine : a_empty && !b_empty ? next.routine : q.routine && next.routine;
+  const routine_runs = [...(q.routine_runs ?? []), ...(next.routine_runs ?? [])];
+  return { text: join(q.text, next.text), from_agent: q.from_agent && next.from_agent, user_text, routine, routine_runs };
 }
 
-/** Add a message to the one queued on a thread. */
+/**
+ * Add a message to the one queued on a thread. One with no text (an automation's start of a task it made, held back, see
+ * runner::send_from_automation) leaves only its automation runs, for the next run of the thread (see `take_parked_runs`).
+ */
 export function queue(c: Conn, task_id: string, message: Queued): Task | null {
   const t = get_task(c, task_id);
   if (!t) return null;
+  const message_runs = message.routine_runs ?? [];
+  if (message.text.trim() === "") {
+    if (message_runs.length) {
+      const runs = [...queued_routine_runs(c, task_id), ...message_runs];
+      run(c, "UPDATE tasks SET queued_routine_runs=?2 WHERE id=?1", task_id, JSON.stringify(runs));
+    }
+    return get_task(c, task_id);
+  }
   const text = t.queued_message;
-  const queued =
-    text != null && text.trim() !== "" ? queued_then({ text, from_agent: queued_from_agent(c, task_id), user_text: t.queued_user_text }, message) : message;
+  let queued: Queued;
+  if (text != null && text.trim() !== "") {
+    const [from_agent, routine] = queued_from(c, task_id);
+    queued = queued_then({ text, from_agent, user_text: t.queued_user_text, routine, routine_runs: queued_routine_runs(c, task_id) }, message);
+  } else {
+    // Runs left with no text go with it.
+    queued = { ...message, routine: !!message.routine, routine_runs: [...queued_routine_runs(c, task_id), ...message_runs] };
+  }
   run(
     c,
-    "UPDATE tasks SET queued_message=?2, queued_from_agent=?3, queued_user_text=?4, updated_at=?5 WHERE id=?1",
-    task_id, queued.text, queued.from_agent, queued.user_text, now(),
+    "UPDATE tasks SET queued_message=?2, queued_from_agent=?3, queued_user_text=?4, queued_routine=?5, queued_routine_runs=?6, updated_at=?7 WHERE id=?1",
+    task_id, queued.text, queued.from_agent, queued.user_text, queued.routine, JSON.stringify(queued.routine_runs), now(),
   );
   return get_task(c, task_id);
 }
 
-function queued_from_agent(c: Conn, task_id: string): boolean {
-  const v = value(c, "SELECT queued_from_agent FROM tasks WHERE id=?1", task_id);
-  if (v === undefined) throw new Error("Query returned no rows");
-  return !!v;
+/** Whether what's queued on a task is all other agents' (`from_agent`), and all automations' (`routine`). */
+function queued_from(c: Conn, task_id: string): [boolean, boolean] {
+  const r = one(c, "SELECT queued_from_agent, queued_routine FROM tasks WHERE id=?1", task_id);
+  if (!r) throw new Error("Query returned no rows");
+  return [!!r.queued_from_agent, !!r.queued_routine];
 }
 
-/** Take the message queued on a thread. */
+function queued_routine_runs(c: Conn, task_id: string): string[] {
+  const v = value<string | null>(c, "SELECT queued_routine_runs FROM tasks WHERE id=?1", task_id);
+  if (v === undefined) throw new Error("Query returned no rows");
+  try {
+    const l = v == null ? [] : JSON.parse(v);
+    return Array.isArray(l) ? l.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The automation runs left on a thread with no text (see `queue`), taken by the run that starts. None while a message
+ * is queued: the runs are its, for the run that takes it in (an automatic prompt, such as a review's fixes, starts
+ * without it).
+ */
+export function take_parked_runs(c: Conn, task_id: string): string[] {
+  const t = get_task(c, task_id);
+  if (!t) return [];
+  if (t.queued_message != null && t.queued_message.trim() !== "") return [];
+  const runs = queued_routine_runs(c, task_id);
+  if (runs.length) run(c, "UPDATE tasks SET queued_routine_runs=NULL WHERE id=?1", task_id);
+  return runs;
+}
+
+/** Take the message queued on a thread. With none, automation runs left with no text stay (see `take_parked_runs`). */
 export function take_queued(c: Conn, task_id: string): Queued | null {
   const t = get_task(c, task_id);
   let queued: Queued | null = null;
   if (t && t.queued_message != null && t.queued_message.trim() !== "") {
-    queued = { text: t.queued_message, from_agent: queued_from_agent(c, task_id), user_text: t.queued_user_text };
+    const [from_agent, routine] = queued_from(c, task_id);
+    queued = { text: t.queued_message, from_agent, user_text: t.queued_user_text, routine, routine_runs: queued_routine_runs(c, task_id) };
   }
-  clear_queued(c, task_id);
+  if (queued) clear_queued(c, task_id);
   return queued;
 }
 
 export function clear_queued(c: Conn, task_id: string): Task | null {
-  run(c, "UPDATE tasks SET queued_message=NULL, queued_from_agent=0, queued_user_text=NULL, updated_at=?2 WHERE id=?1", task_id, now());
+  run(
+    c,
+    "UPDATE tasks SET queued_message=NULL, queued_from_agent=0, queued_user_text=NULL, queued_routine=0, queued_routine_runs=NULL, updated_at=?2 WHERE id=?1",
+    task_id, now(),
+  );
   return get_task(c, task_id);
 }
 

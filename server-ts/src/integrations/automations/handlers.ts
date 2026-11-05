@@ -18,16 +18,33 @@ import {
   insert_run,
   is_webhook,
   list,
+  list_routines,
   runs,
   sorted_json,
   type Action,
+  type ActiveHours,
   type Automation,
   type Run,
   type Trigger,
 } from "../automations.ts";
-import { Local, check_action, check_trigger, next_after, time_zone } from "./check.ts";
+import * as runner from "../../agent/runner.ts";
+import {
+  Local,
+  check_action,
+  check_active_hours,
+  check_budget,
+  check_precheck,
+  check_trigger,
+  next_run,
+  owner,
+  owner_profile_id,
+  owner_project_id,
+  time_zone,
+  type Owner,
+} from "./check.ts";
 import { Delivery_default, Delivery_from_json, event, type Delivery } from "./delivery.ts";
-import { receive, run_action } from "./running.ts";
+import { receive, run_action_detached } from "./running.ts";
+import * as routines from "./routines.ts";
 
 /**
  * An automation as the API shows it: its webhook path, and whether it has a secret (never the
@@ -36,16 +53,28 @@ import { receive, run_action } from "./running.ts";
 export function to_json(c: Conn, a: Automation): any {
   const v: any = {
     id: a.id,
+    profile_id: a.profile_id,
     project_id: a.project_id,
     name: a.name,
     enabled: a.enabled,
     trigger: a.trigger,
     action: a.action,
+    active_hours: a.active_hours,
+    precheck: a.precheck,
+    budget_usd: a.budget_usd,
     next_run_at: a.next_run_at,
     last_run_at: a.last_run_at,
     created_at: a.created_at,
     updated_at: a.updated_at,
   };
+  // What its runs cost (those kept), and today in the host's time zone, against its budget.
+  let [cost, today] = [0, 0];
+  try {
+    cost = routines.spent(c, a.id);
+    today = routines.spent_today(c, a.id, Date.now(), Local);
+  } catch {}
+  v.cost_usd = cost;
+  v.cost_today_usd = today;
   if (is_webhook(a)) {
     v.hook_path = hook_path(a);
     v.has_secret = !!a.secret;
@@ -66,12 +95,28 @@ export function run_json(c: Conn, r: Run): any {
     t = r.task_id ? db.get_task(c, r.task_id) : null;
   } catch {}
   if (t) {
-    let key = "T";
+    let p: Project | null = null;
     try {
-      const p = t.project_id ? db.get_project(c, t.project_id) : null;
-      if (p) key = p.key;
+      p = t.project_id ? db.get_project(c, t.project_id) : null;
     } catch {}
-    v.task = { key: `${key}-${t.number}`, title: t.title, status: t.status };
+    const key = runner.key_prefix(t, p);
+    v.task = { key: `${key}-${t.number}`, title: t.title, status: t.status, running: t.running };
+    // A routine thread's cost so far, while it works.
+    if (r.cost_usd === null && db.is_routine(t)) v.cost_usd = t.cost_usd;
+  }
+  // The agent run that took its message in, while it works (see routines.agent_run_ended).
+  if (r.cost_usd === null && v.cost_usd == null) {
+    let so_far: number | null = null;
+    try {
+      so_far =
+        db.value<number | null>(
+          c,
+          `SELECT x.cost_usd / (SELECT COUNT(*) FROM automation_runs y WHERE y.agent_run_id = x.id) FROM automation_runs r JOIN runs x ON x.id = r.agent_run_id
+                 WHERE r.id = ?1`,
+          r.id,
+        ) ?? null;
+    } catch {}
+    if (so_far !== null) v.cost_usd = so_far;
   }
   return v;
 }
@@ -134,28 +179,62 @@ export async function list_handler(s: Shared, r: Req): Promise<any> {
   return { automations: list(c, r.params.id).map((a) => to_json(c, a)), time_zone: time_zone() };
 }
 
-/** `POST /projects/{id}/automations`: `{name, trigger, action, enabled?, secret?}`. */
+/** `GET /profiles/{id}/automations`: the profile's routines, and the host's time zone their times are in. */
+export async function list_routines_handler(s: Shared, r: Req): Promise<any> {
+  const c = s.db();
+  if (!db.get_profile(c, r.params.id)) throw ApiError.not_found("profile");
+  return { automations: list_routines(c, r.params.id).map((a) => to_json(c, a)), time_zone: time_zone() };
+}
+
+/** `POST /projects/{id}/automations`: `{name, trigger, action, enabled?, secret?, active_hours?, precheck?, budget_usd?}`. */
 export async function create_handler(s: Shared, r: Req): Promise<any> {
   const a = create(s, r.params.id, body_map(r));
   return to_json(s.db(), a);
 }
 
+/** `POST /profiles/{id}/automations`: a routine, as `create_handler` takes, whose action is `message_assistant`. */
+export async function create_routine_handler(s: Shared, r: Req): Promise<any> {
+  const a = create_routine(s, r.params.id, body_map(r));
+  return to_json(s.db(), a);
+}
+
 export function create(s: Shared, project_id: string, b: Record<string, any>): Automation {
+  const p = project(s.db(), project_id);
+  return create_in(s, { project: p }, b);
+}
+
+/** Adds a routine to a profile. */
+export function create_routine(s: Shared, profile_id: string, b: Record<string, any>): Automation {
+  if (!db.get_profile(s.db(), profile_id)) throw ApiError.not_found("profile");
+  return create_in(s, { profile: profile_id }, b);
+}
+
+/** When a schedule that's on and has just been set (or turned on) first runs: an `at` that's passed can't be. */
+function first_run(trigger: Trigger, active: ActiveHours | null, now: number): string | null {
+  const next = next_run(trigger, active, now, Local);
+  if (next === null && trigger.kind === "at") throw bad("its time (at) has passed: give it one to come");
+  return next === null ? null : fmt(next);
+}
+
+function create_in(s: Shared, o: Owner, b: Record<string, any>): Automation {
   const now = Date.now();
   const c = s.db();
-  const p = project(c, project_id);
   const name = check_name(b.name ?? null);
   const trigger: Trigger = check_trigger(parse("trigger", b.trigger ?? null));
-  const action: Action = check_action(c, p, parse("action", b.action ?? null));
+  const action: Action = check_action(c, o, parse("action", b.action ?? null));
   const enabled = typeof b.enabled === "boolean" ? b.enabled : true;
   const secret = check_secret(b.secret ?? null);
-  const next = enabled ? next_after(trigger, now, Local) : null;
+  const active = check_active_hours(b.active_hours ?? null);
+  const precheck = check_precheck(b.precheck ?? null);
+  const budget = check_budget(b.budget_usd ?? null);
+  const next = enabled ? first_run(trigger, active, now) : null;
   const id = new_id();
   db.run(
     c,
-    `INSERT INTO automations (id,project_id,name,enabled,trigger,action,token,secret,next_run_at,created_at,updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)`,
-    id, p.id, name, enabled, sorted_json(trigger), sorted_json(action), new_token(), secret, next === null ? null : fmt(next), fmt(now),
+    `INSERT INTO automations (id,profile_id,project_id,name,enabled,trigger,action,token,secret,next_run_at,active_hours,precheck,budget_usd,created_at,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?14)`,
+    id, owner_profile_id(o), owner_project_id(o), name, enabled, sorted_json(trigger), sorted_json(action), new_token(), secret, next,
+    active === null ? null : JSON.stringify(active), precheck, budget, fmt(now),
   );
   const a = automation(c, id);
   changed(s, a);
@@ -169,7 +248,8 @@ export async function get_handler(s: Shared, r: Req): Promise<any> {
 
 /**
  * `PATCH /automations/{id}`: any of `name`, `enabled`, `trigger`, `action`, `secret` (blank
- * clears it) and `rotate_token` (a new webhook URL; the old one stops working).
+ * clears it), `rotate_token` (a new webhook URL; the old one stops working), `active_hours`,
+ * `precheck` and `budget_usd` (null clears them).
  */
 export async function update_handler(s: Shared, r: Req): Promise<any> {
   const a = update(s, r.params.id, body_map(r));
@@ -180,11 +260,11 @@ export function update(s: Shared, id: string, b: Record<string, any>): Automatio
   const now = Date.now();
   const c = s.db();
   const a = automation(c, id);
-  const p = project(c, a.project_id);
+  const o = owner(c, a);
   const has = (k: string) => Object.hasOwn(b, k);
   const name = has("name") ? check_name(b.name) : a.name;
   const trigger: Trigger = has("trigger") ? check_trigger(parse("trigger", b.trigger)) : a.trigger;
-  const action: Action = has("action") ? check_action(c, p, parse("action", b.action)) : a.action;
+  const action: Action = has("action") ? check_action(c, o, parse("action", b.action)) : a.action;
   let enabled = a.enabled;
   if (has("enabled")) {
     if (typeof b.enabled !== "boolean") throw bad("enabled must be true or false");
@@ -192,17 +272,21 @@ export function update(s: Shared, id: string, b: Record<string, any>): Automatio
   }
   const secret = has("secret") ? check_secret(b.secret) : a.secret;
   const token = b.rotate_token === true ? new_token() : a.token;
+  const active = has("active_hours") ? check_active_hours(b.active_hours) : a.active_hours;
+  const precheck = has("precheck") ? check_precheck(b.precheck) : a.precheck;
+  const budget = has("budget_usd") ? check_budget(b.budget_usd) : a.budget_usd;
   // A schedule starts over from now when it's turned on or changed; it doesn't run while it's off.
   let next: string | null;
   if (!enabled) next = null;
-  else if (enabled !== a.enabled || sorted_json(trigger) !== sorted_json(a.trigger)) {
-    const n = next_after(trigger, now, Local);
-    next = n === null ? null : fmt(n);
+  else if (enabled !== a.enabled || sorted_json(trigger) !== sorted_json(a.trigger) || sorted_json(active) !== sorted_json(a.active_hours)) {
+    next = first_run(trigger, active, now);
   } else next = a.next_run_at;
   db.run(
     c,
-    "UPDATE automations SET name=?2, enabled=?3, trigger=?4, action=?5, secret=?6, token=?7, next_run_at=?8, updated_at=?9 WHERE id=?1",
-    a.id, name, enabled, sorted_json(trigger), sorted_json(action), secret, token, next, fmt(now),
+    `UPDATE automations SET name=?2, enabled=?3, trigger=?4, action=?5, secret=?6, token=?7, next_run_at=?8, active_hours=?9, precheck=?10, budget_usd=?11,
+               updated_at=?12 WHERE id=?1`,
+    a.id, name, enabled, sorted_json(trigger), sorted_json(action), secret, token, next, active === null ? null : JSON.stringify(active), precheck, budget,
+    fmt(now),
   );
   const updated = automation(c, id);
   changed(s, updated);
@@ -258,7 +342,7 @@ export async function run_now(s: Shared, a: Automation, b: RunNow): Promise<Run>
   }
   const r = Run_new(a.id, "manual", "running", Date.now());
   insert_run(s.db(), r);
-  return (await run_action(s, a, r.id, "manual", null, 1)) ?? r;
+  return (await run_action_detached(s, a, r.id, "manual", null, 1)) ?? r;
 }
 
 /** The latest delivery kept, for the next test delivery. */

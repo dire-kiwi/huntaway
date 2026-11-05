@@ -1,4 +1,4 @@
-import type { AutomationAction, AutomationTrigger } from "./automations";
+import type { ActiveHours, AutomationAction, AutomationTrigger } from "./automations";
 import { type Http } from "./http";
 import type { Status } from "./tasks";
 import type { WorkflowGraph } from "./workflows";
@@ -91,12 +91,19 @@ export interface AutomationView {
   signed: boolean;
   target?: { id: string; key: string; title: string; status: Status };
   config?: { id: string; name: string; agent: string };
+  /** API 110: what a run is checked against first. */
+  active_hours?: ActiveHours;
+  precheck?: string;
+  budget_usd?: number;
 }
 
 /** An automation an agent asked to create, change or delete, shown to the user to approve (API 67). */
 export interface AutomationChange {
   op: "create" | "update" | "delete";
-  project: { id: string; key: string; name: string; host?: string };
+  /** The project, for a project's automation. */
+  project?: { id: string; key: string; name: string; host?: string };
+  /** The profile, for a routine (API 110). */
+  profile?: { id: string; name: string; host?: string };
   /** The thread that asked. */
   task: { id: string; key?: string; title: string } | null;
   /** The automation as it would be (or, to delete, as it is). */

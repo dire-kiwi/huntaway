@@ -12,9 +12,15 @@ export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_A
 
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "assistant";
 
+/** A routine's run of the assistant (API 110): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
+export const isRoutine = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "routine";
+
+/** The assistant or one of its routine threads: off the board. */
+export const isAssistants = (t: Pick<Task, "kind" | "task_type">) => isAssistant(t) || isRoutine(t);
+
 /** A profile can have its assistant run on a linked host of its own (`Profile.assistant_host`), and a linked host's agents can
- *  use the board's tools up the link when Settings → Hosts lets them (`Host.uplink`), from API 110 on both. */
-export const ASSISTANT_HOST_API = 110;
+ *  use the board's tools up the link when Settings → Hosts lets them (`Host.uplink`), from API 111 on both. */
+export const ASSISTANT_HOST_API = 111;
 
 /** Where a profile's assistant is. `profileId` is its profile on that host, missing when it can't be opened there: the host
  *  is `offline`, `old` (from before assistant hosts), or has `no_profile` of that name. */
@@ -46,7 +52,7 @@ export function assistantHome(profiles: Profile[], hosts: Host[], name: string):
 }
 
 /** `here`: the assistant on host `h` itself, as assistantHome found it, rather than wherever that host's profile sends it
- *  (`?local=1`, API 110; older hosts ignore it). Without it a host whose profile names another assistant host sends it on. */
+ *  (`?local=1`, API 111; older hosts ignore it). Without it a host whose profile names another assistant host sends it on. */
 export interface AssistantOn {
   here?: boolean;
 }
@@ -54,7 +60,7 @@ export interface AssistantOn {
 const assistantPath = (profileId: string, opts?: AssistantOn) => `/profiles/${enc(profileId)}/assistant${opts?.here ? "?local=1" : ""}`;
 
 export const assistantApi = ({ on }: Http) => ({
-  /** The profile's assistant, which the host makes the first time it's asked for. From API 110 it has `host_id`: a hub sends this to
+  /** The profile's assistant, which the host makes the first time it's asked for. From API 111 it has `host_id`: a hub sends this to
    *  the profile's assistant host, if it has one, so the task is there (go on to it through `on(host_id)`). */
   assistant: (h: string, profileId: string, opts?: AssistantOn) => on(h).get<Task>(assistantPath(profileId, opts)),
   /** Send the user's message to the profile's assistant (made first if it has none), as a message in its thread does. */

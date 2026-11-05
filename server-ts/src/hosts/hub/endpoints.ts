@@ -187,7 +187,7 @@ export function change_host(s: AppState, r: Req) {
   const b = r.body && typeof r.body === "object" && !Array.isArray(r.body) ? r.body : {};
   const bad = (field: string, kind: string) => new ApiError(422, `Failed to deserialize the JSON body into the target type: ${field}: invalid type, expected ${kind}`);
   if (b.name != null && typeof b.name !== "string") throw bad("name", "a string");
-  /** Whether its agents may use this board's tools, up the link (API 110, see hosts/uplink.ts). */
+  /** Whether its agents may use this board's tools, up the link (API 111, see hosts/uplink.ts). */
   if (b.uplink != null && typeof b.uplink !== "boolean") throw bad("uplink", "a boolean");
   const id = r.params.id;
   const c = s.db();

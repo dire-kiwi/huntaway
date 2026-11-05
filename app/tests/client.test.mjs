@@ -149,7 +149,7 @@ test("the assistant's calls go to its profile on its host", async () => {
 
 // HA-120: a profile's assistant can run on a linked host of its own, which the board goes to in whatever state it's in.
 test("a profile's assistant is on its assistant host, or else the board's own host", () => {
-  const host = (id, more = {}) => ({ id, name: id, local: id === "hub", connected: true, mode: id === "hub" ? "local" : "ssh", api_version: 110, ...more });
+  const host = (id, more = {}) => ({ id, name: id, local: id === "hub", connected: true, mode: id === "hub" ? "local" : "ssh", api_version: 111, ...more });
   const profile = (host_id, id, more = {}) => ({ host_id, id, name: "personal", ...more });
   const hosts = [host("hub"), host("home"), host("laptop")];
   // No setting: the board's own host's profile, else the first connected host with assistants that has one.
@@ -164,7 +164,7 @@ test("a profile's assistant is on its assistant host, or else the board's own ho
   assert.deepEqual(assistantHome(placed, [host("hub"), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
   assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 100 })], "personal"), { hostId: "home", unavailable: "old" });
   // One with assistants but from before assistant hosts can't be one.
-  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 109 })], "personal"), { hostId: "home", unavailable: "old" });
+  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 110 })], "personal"), { hostId: "home", unavailable: "old" });
   assert.deepEqual(assistantHome([placed[0]], hosts, "personal"), { hostId: "home", unavailable: "no_profile" });
   // Another host's setting doesn't count, nor does one naming the board's own host.
   assert.deepEqual(assistantHome([profile("hub", "ph"), profile("laptop", "pl", { assistant_host: "home" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });

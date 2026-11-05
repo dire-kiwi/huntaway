@@ -198,14 +198,14 @@ test("a_database_at_version_89_frees_the_key_a", () => {
 
 // HA-204: a database from before assistant hosts keeps its profiles and links, which get no assistant host and don't
 // let their hosts' agents in.
-test("a_database_at_version_90_gets_assistant_hosts_and_up_links_off", () => {
+test("a_database_at_version_91_gets_assistant_hosts_and_up_links_off", () => {
   const path = join(testing.temp_dir(), "huntaway.db");
   let id: string;
   {
     const c = db.open(path);
     id = db.insert_profile(c, "personal", [], null).id;
     db.upsert_link(c, "home", "homeserver", "ssh", null, null);
-    c.exec("ALTER TABLE profiles DROP COLUMN assistant_host; ALTER TABLE links DROP COLUMN uplink; PRAGMA user_version=90;");
+    c.exec("ALTER TABLE profiles DROP COLUMN assistant_host; ALTER TABLE links DROP COLUMN uplink; PRAGMA user_version=91;");
     c.close();
   }
   const c = db.open(path);
@@ -215,7 +215,7 @@ test("a_database_at_version_90_gets_assistant_hosts_and_up_links_off", () => {
   c.close();
   // Opened again (as by a build that had added them as another version), nothing changes.
   const again = db.open(path);
-  again.exec("PRAGMA user_version=90;");
+  again.exec("PRAGMA user_version=91;");
   again.close();
   assert.equal(db.get_link(db.open(path), "home")?.uplink, false);
 });

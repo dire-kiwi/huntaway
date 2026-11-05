@@ -167,13 +167,13 @@ export const GROUP_TASK_KEY = "G";
 
 /**
  * What goes before a task's number in its key: its project's key, for a group task `G`, for a scratch task `S`, or for a
- * profile's assistant `A`.
+ * profile's assistant and its routine threads `A`.
  */
 export function key_prefix(task: Task, project: Project | null | undefined): string {
   if (project) return project.key;
   if (task.group_name != null) return GROUP_TASK_KEY;
   if (db.is_scratch(task)) return db.SCRATCH_TASK_KEY;
-  if (db.is_assistant(task)) return db.ASSISTANT_TASK_KEY;
+  if (db.is_assistants(task)) return db.ASSISTANT_TASK_KEY;
   return "T";
 }
 
@@ -185,8 +185,9 @@ export function key_prefix(task: Task, project: Project | null | undefined): str
 export function start_prompt(task: Task, project: Project | null | undefined, text: string): string {
   const key = key_prefix(task, project);
   text = text.trim();
-  // The assistant is a conversation, not a task to start on: its first prompt is the user's message.
-  if (db.is_assistant(task)) return text;
+  // The assistant is a conversation, not a task to start on: its first prompt is the user's message. A routine thread's
+  // is the routine's (see automations/routines.ts).
+  if (db.is_assistants(task)) return text;
   let p = "";
   if (is_slash_command(text)) p += `${text}\n\n`;
   p += `# ${key}-${task.number}: ${task.title}\n`;
@@ -303,9 +304,34 @@ export function system_prompt(
       "you create are recorded as yours. You may run on a host of your own, linked to the user's board: `wait` " +
       "only watches tasks on the host you run on, so follow tasks on other hosts with `get_task`, and if a project " +
       "you expect isn't there, its board may not let your host's agents in yet (the error says so).\n\n" +
+      "Routines wake you on a schedule or a webhook: they're this profile's automations (`list_automations` with " +
+      "routines=true, and `create_automation`, `update_automation`, `delete_automation` and `run_automation` with an " +
+      "action of kind `message_assistant`), and the user is asked to approve each change. By default a routine runs " +
+      "in a fresh thread of its own under this one, whose report is posted here (it stays quiet when there's " +
+      "nothing new); with mode `thread` its message comes straight to this thread. When the user asks you to " +
+      "remind them of something, make it an `at` routine (one that runs once, then turns itself off) in mode " +
+      "`thread`, whose message asks you to remind them. Routines' reports come with the user's next message.\n\n" +
       "If you need a decision or information from the user before you can go on, call `request_user_input` " +
       "with your question (and its `options`, when the choices are known), then end your turn. Otherwise just " +
       "reply: this thread stays open and never goes to review or merge, so don't move it to another status.";
+  } else if (task.kind === "task" && db.is_routine(task)) {
+    const dir = task.work_dir ?? "its workspace";
+    const parent_id = task.parent_id ?? "";
+    s =
+      "You are the personal assistant of this Huntaway profile, doing one run of one of its routines (a check or job " +
+      `the user set up to run on a schedule or when a webhook is delivered) in thread A-${task.number} (id ${task.id}), a thread of ` +
+      `its own under your main conversation with the user (id ${parent_id}). Huntaway is a kanban board where each ` +
+      "task is worked by its own Claude agent, grouped into projects. You aren't a coding agent and you aren't in " +
+      "a project or a repository.\n\n" +
+      `Your working directory is your workspace folder (${dir} in the board's data dir), shared with your main ` +
+      "thread: read the notes you keep there, and update them when the run finds something worth remembering.\n\n" +
+      "You can use the skills and MCP servers set up for this profile (beyond any project), and the board's tools.\n\n" +
+      `${tools}\n\n` +
+      "Do what the routine asks, then end with a short report for the user: your last message is posted to your " +
+      "main thread, where they read it. Say what's new or needs them, not what you checked. If there's nothing " +
+      "new or worth telling them, make your last message just NO_REPLY: nothing is posted, and the run is quiet. " +
+      "The user isn't watching this thread: only call `request_user_input` if the run can't go on without them. " +
+      "Don't move this thread to another status.";
   } else if (task.kind === "task" && db.is_scratch(task)) {
     // One from a scratch chat works in the chat's folder, which may be shared.
     const dir =

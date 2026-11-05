@@ -36,7 +36,7 @@ export type Down =
   | { t: "ws_close"; id: number }
   | { t: "ping" }
   /**
-   * Who the hub is, sent once the tunnel is up (API 110). A host may then pass it board tool calls (`tool_call`). Older
+   * Who the hub is, sent once the tunnel is up (API 111). A host may then pass it board tool calls (`tool_call`). Older
    * hosts ignore it.
    */
   | { t: "hello"; hub_id: string; name: string; api_version: number }
@@ -51,7 +51,7 @@ export type Up =
   | { t: "ws_msg"; id: number; text: string | null; data: string | null }
   | { t: "ws_close"; id: number; code: number | null; reason: string | null }
   | { t: "pong" }
-  /** A board tool call from one of our agents that we couldn't resolve here, for the hub to run (API 110). Sent only to a hub that said `hello`. */
+  /** A board tool call from one of our agents that we couldn't resolve here, for the hub to run (API 111). Sent only to a hub that said `hello`. */
   | ({ t: "tool_call" } & ToolCall);
 
 export interface Version {
@@ -528,7 +528,7 @@ export async function run_outbound(s: AppState, link: Link, mode: string, on_abo
   register(s, conn);
   try {
     console.error(`connected to host ${link.name}`);
-    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 110 ignore it).
+    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 111 ignore it).
     try {
       ws.send(JSON.stringify(uplink.hub_hello(s)));
     } catch {

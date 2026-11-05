@@ -16,7 +16,7 @@ export interface Link {
   /** For `ssh` links: the target, as JSON. */
   ssh: string | null;
   last_seen: string | null;
-  /** Its agents may use this board's tools, up the link (API 110, see hosts/uplink.ts). Off by default. */
+  /** Its agents may use this board's tools, up the link (API 111, see hosts/uplink.ts). Off by default. */
   uplink: boolean;
   created_at: string;
 }

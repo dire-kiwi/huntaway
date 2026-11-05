@@ -17,6 +17,8 @@ import * as checkpoints from "../../git/checkpoints.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as review from "../../review.ts";
 import * as attachments from "../../attachments.ts";
+import * as assistant from "../assistant.ts";
+import * as automations from "../../integrations/automations.ts";
 import { Cancelled, MCP_SERVER_NAME, load } from "../runner.ts";
 import {
   board_tools_allowed,
@@ -91,6 +93,16 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   }
   // A review thread works on the task it reviews; a task may be part of a subproject.
   let parent: Task | null = task.parent_id ? db.get_task(state.db(), task.parent_id) : null;
+  // The assistant works only in a workspace of its own: not one that's become a symlink, which could be another's. A
+  // routine's thread works in its assistant's.
+  const whose = assistant.whose_workspace(task, parent);
+  if (whose) {
+    try {
+      assistant.checked(state, whose);
+    } catch (e) {
+      throw new Error(`the assistant's workspace: ${err_str(e)}`);
+    }
+  }
 
   // Resolve the working directory for this thread.
   const add_dirs: string[] = [];
@@ -165,6 +177,16 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const plan_file = docs.find(([l]) => l === "plan");
   if (plan != null && plan_file) text = documents.plan_prompt(plan_file[1], plan, true);
   let prompt = task.session_id == null && task.kind === "task" && run.kind !== "compact" ? start_prompt(task, project, text) : text;
+  // The assistant reads its routines' reports since its last turn with the next message. They're read once the agent
+  // has started with them.
+  let reports: number[] = [];
+  if (db.is_assistant(task) && run.kind !== "compact") {
+    const unread = automations.routines.unread_reports(state, task.id);
+    if (unread) {
+      prompt = `${unread[0]}${prompt}`;
+      reports = unread[1];
+    }
+  }
   // Every run but a `/compact` takes messages while it works (see `can_steer`); the prompt is its first.
   const input = run.kind !== "compact";
   if (input) prompt = `${user_input(new_id(), prompt)}\n`;
@@ -259,6 +281,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     };
     console.log(`task ${task_id} run ${run.id}: starting codex (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);
     await started(state, run, l, check);
+    automations.routines.mark_read(state, reports);
     rewound(state, task_id, rewind);
     return;
   }
@@ -320,6 +343,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   };
   console.log(`task ${task_id} run ${run.id}: starting claude (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);
   await started(state, run, l, check);
+  automations.routines.mark_read(state, reports);
   rewound(state, task_id, rewind);
 }
 

@@ -7,6 +7,7 @@ import type { RunHandle, Shared } from "../../state.ts";
 import { err_str, new_id, path_str } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as documents from "../documents.ts";
+import * as automations from "../../integrations/automations.ts";
 import { STEER_GRACE } from "../runner.ts";
 import { is_compact, send_as, send_message } from "./send.ts";
 
@@ -52,7 +53,8 @@ export function steer_or_queue(state: Shared, task_id: string, message: Queued):
   const run = r && !is_compact(text) && !(plan && !writes_documents(r.id)) && can_steer(state, r) ? r : null;
   let t: Task | null;
   if (run) {
-    const steering: Steer[] = [...task.steering, { id: new_id(), text, from_agent, run_id: run.id, written: false }];
+    const steer = db.Steer_with({ id: new_id(), text, from_agent, run_id: run.id, written: false }, message.routine_runs ?? [], !!message.routine);
+    const steering: Steer[] = [...task.steering, steer];
     db.update_task(state.db(), task_id, [["steering", steering]]);
     t = write_steers(state, task_id);
   } else {
@@ -127,6 +129,8 @@ export function steered(state: Shared, run: Run, id: string) {
   const msg: any = { text: steer.text, steered: true };
   if (steer.from_agent) msg.from_agent = true;
   const message = state.add_message(task_id, "user", msg);
+  // The routines whose messages it carried are this run's, for its cost.
+  automations.routines.taken_in(state.db(), run.id, steer.routine_runs ?? []);
   if (new_turn) db.run(state.db(), "UPDATE runs SET turn_message_id=?1 WHERE id=?2", message.id, run.id);
   if (updated) state.emit_task(updated);
 }
@@ -203,7 +207,8 @@ export function requeue_steers(state: Shared, task_id: string, run_id: string) {
   if (!mine.length) return;
   const c = state.db();
   const later = db.take_queued(c, task_id);
-  for (const s of mine) db.queue(c, task_id, db.Queued_new(s.text, s.from_agent));
+  // Its routines' runs go with it, to the run that takes it in.
+  for (const s of mine) db.queue(c, task_id, { ...db.Queued_new(s.text, s.from_agent), routine: !!s.routine, routine_runs: s.routine_runs ?? [] });
   if (later) db.queue(c, task_id, later);
   db.update_task(c, task_id, [["steering", rest]]);
 }

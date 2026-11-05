@@ -470,6 +470,13 @@ test("a_profiles_assistant_gets_the_global_tools_its_profile_switches_on", async
   assert.equal(dir, join(s.data_dir, "profiles", me.id, "agent"));
   const written = (d: string) => readdirSync(join(d, ".claude", "skills")).sort();
   assert.deepEqual(written(dir), ["on"]);
+  // HA-122: a routine's thread under it has the same, for Claude and Codex runs alike.
+  const routine = db.insert_routine_task(s.db(), mine, "Inbox");
+  const theirs_routine = for_task_run(s, routine, null);
+  assert.deepEqual(
+    [Object.keys(theirs_routine.mcp_servers), theirs_routine.allowed, theirs_routine.skills_dir],
+    [["probe"], [tool_prefix("probe")], tools.skills_dir],
+  );
   // A skill switched off later is taken out of its folder on the next run.
   set(me.id, on.id, false);
   tools = for_task_run(s, mine, null);

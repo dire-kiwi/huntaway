@@ -48,7 +48,7 @@ export async function create_profile(s: AppState, r: Req) {
     merge_approval: def_bool(body, "merge_approval"),
     /** See `db::Profile::require_pr_approval` (API 95). */
     require_pr_approval: def_bool(body, "require_pr_approval"),
-    /** See `db::Profile::assistant_host` (API 110). */
+    /** See `db::Profile::assistant_host` (API 111). */
     assistant_host: def_value(body, "assistant_host"),
   };
   const c = s.db();
