@@ -5,7 +5,8 @@
 #   scripts/package-server.sh <out dir> [<node binary>]
 #
 #   <out dir>/huntaway          server-ts/bin/huntaway, which runs the server with the Node beside it
-#   <out dir>/server-ts/        the server's code (src/ without tests), package.json, build.json and its node_modules
+#   <out dir>/server-ts/        the server's code (src/ without tests, compiled to .js), package.json, build.json and its
+#                               node_modules
 #   <out dir>/node/bin/node     <node binary> (default: the node on PATH), with Node's LICENSE
 #   <out dir>/ia-shim           server/target/release/ia-shim (build it first: cargo build --release -p ia-shim)
 #   <out dir>/ui/               app/dist (build it first: npm run build in app/)
@@ -27,11 +28,17 @@ cp "$root/server-ts/bin/huntaway" "$out/huntaway"
 cp "$root/server/target/release/ia-shim" "$out/ia-shim"
 cp -R "$root/app/dist" "$out/ui"
 
-# The code without its tests (and the test helpers' fixtures).
-(cd "$root/server-ts" && find src -type f -name '*.ts' ! -name '*.test.ts') | while read -r f; do
-  mkdir -p "$out/server-ts/$(dirname "$f")"
-  cp "$root/server-ts/$f" "$out/server-ts/$f"
-done
+# The code without its tests, compiled to .js (server-ts/tsconfig.build.json: types and comments stripped, imports of
+# ./x.ts rewritten to ./x.js), with the same layout as src/. Node then runs it as it is: run as .ts, every process
+# (the server, and each agent's MCP helpers) would load Node's TypeScript compiler, about 20 MB more each (HA-181).
+# tsc comes from the lockfile's devDependencies, installed in a scratch copy; it type-checks too, so a type error
+# fails the package.
+build=$(mktemp -d "${TMPDIR:-/tmp}/package-server.XXXXXX")
+trap 'rm -rf "$build"' EXIT
+cp -R "$root/server-ts/src" "$root/server-ts/package.json" "$root/server-ts/package-lock.json" "$root/server-ts/tsconfig.json" \
+  "$root/server-ts/tsconfig.build.json" "$build/"
+(cd "$build" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error && node_modules/.bin/tsc -p tsconfig.build.json --outDir "$out/server-ts/src")
+[[ -f $out/server-ts/src/main.js && -f $out/server-ts/src/mcp.js ]] || { echo "tsc didn't write server-ts/src/main.js" >&2; exit 1; }
 cp "$root/server-ts/package.json" "$root/server-ts/package-lock.json" "$out/server-ts/"
 if [[ -n ${VERSION:-} ]]; then
   node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));

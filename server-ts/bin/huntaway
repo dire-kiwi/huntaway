@@ -5,8 +5,11 @@ unset NODE_TEST_CONTEXT
 self=$(readlink -f "$0")
 here=$(dirname "$self")
 # A release's package (see .github/workflows/release.yml) has this script as its `huntaway`, with the server in
-# server-ts/ and Node in node/ beside it; a checkout has it in server-ts/bin/.
-if [ -f "$here/server-ts/src/main.ts" ]; then src=$here/server-ts/src; else src=$here/../src; fi
+# server-ts/ and Node in node/ beside it; a checkout has it in server-ts/bin/. A package's server is precompiled to .js
+# (scripts/package-server.sh), so Node doesn't load its TypeScript compiler (about 20 MB) for it; a checkout runs the .ts.
+if [ -f "$here/server-ts/src/main.js" ]; then src=$here/server-ts/src ext=js
+elif [ -f "$here/server-ts/src/main.ts" ]; then src=$here/server-ts/src ext=ts
+else src=$here/../src ext=ts; fi
 # The server goes by it for what runs it (agents' MCP helpers, and which installed release it is).
 IA_TS_EXE=$self
 export IA_TS_EXE
@@ -22,14 +25,30 @@ if [ -z "$node" ]; then
   done
   node=${node:-node}
 fi
+# Memory (HA-181, see server-ts/README.md → Memory). V8 lets its young generation grow to two 16 MB semi-spaces, which
+# a server that then goes idle keeps, with whatever garbage is in them (an idle server allocates too little to collect
+# it): 2 MB ones keep an idle server about 20 MB smaller and its heap collected. Under a lower old-space limit V8 grows
+# the heap less eagerly, which roughly halves what's left after a burst of load (loading every thread) at about 10% of
+# its speed. Either is left out when NODE_OPTIONS sets it (the command line would win over NODE_OPTIONS).
+flags=--disable-warning=ExperimentalWarning
+case " ${NODE_OPTIONS:-} " in *semi-space-size*) ;; *) flags="$flags --max-semi-space-size=2" ;; esac
+case " ${NODE_OPTIONS:-} " in *old-space-size* | *max-heap-size*) ;; *) flags="$flags --max-old-space-size=1024" ;; esac
+# glibc's malloc serves blocks above its mmap threshold with their own mappings, which go back to the system when
+# freed, but raises the threshold (to up to 32 MB) as they're freed, so the response bodies and query results that
+# follow come from its heap, which keeps what's freed: a fixed threshold gives back 50 to 100 MB after a burst of load.
+# Only node gets it: the server takes it out of what its children inherit (see main.ts), unless it was set already.
+if [ -z "${MALLOC_MMAP_THRESHOLD_+x}" ]; then
+  MALLOC_MMAP_THRESHOLD_=131072 IA_MALLOC_MMAP=1
+  export MALLOC_MMAP_THRESHOLD_ IA_MALLOC_MMAP
+fi
 # Agents' MCP helper runs once per agent: started straight from its module, it doesn't load the whole server.
 if [ "$1" = mcp ]; then
   shift
-  exec "$node" --disable-warning=ExperimentalWarning "$src/mcp.ts" "$@"
+  exec "$node" $flags "$src/mcp.$ext" "$@"
 fi
 case "$1" in
   "" | serve) ;;
-  *) exec "$node" --disable-warning=ExperimentalWarning "$src/main.ts" "$@" ;;
+  *) exec "$node" $flags "$src/main.$ext" "$@" ;;
 esac
 
 # `serve` runs node as this shell's child, so the server keeps this process's id when it restarts, as the Rust server
@@ -73,7 +92,7 @@ stop() {
 trap stop TERM INT HUP
 # A background job's stdin would be /dev/null: node gets this shell's (when it has one).
 if [ -r /dev/stdin ]; then exec 3<&0; else exec 3</dev/null; fi
-"$node" --disable-warning=ExperimentalWarning "$src/main.ts" "$@" <&3 3<&- &
+"$node" $flags "$src/main.$ext" "$@" <&3 3<&- &
 child=$!
 exec 3<&-
 while :; do
@@ -88,6 +107,7 @@ if [ "$code" = 75 ] && [ -f "$IA_RESTART_FILE" ] && [ -O "$IA_RESTART_FILE" ]; t
   . "$IA_RESTART_FILE"
   rm -rf "$dir"
   unset IA_RESTART_FILE IA_SUPERVISOR_PID
+  [ -n "${IA_MALLOC_MMAP:-}" ] && unset MALLOC_MMAP_THRESHOLD_ IA_MALLOC_MMAP
   if [ -n "$next" ] && [ -x "$next" ]; then
     exec "$next" "$@"
   fi

@@ -1,7 +1,8 @@
 # Porting the server to TypeScript (HA-174)
 
 `server-ts/` is a port of the `huntaway` server crate (`server/src/`) to TypeScript, to compare its memory use with the
-Rust server's. It runs on Node 24+ straight from the `.ts` files (Node strips the types; there's no build step):
+Rust server's. It runs on Node 24+ straight from the `.ts` files (Node strips the types; there's no build step, but a release's
+package carries it compiled to `.js`, see `scripts/package-server.sh`):
 `bin/huntaway serve …` takes the same arguments as the Rust binary. `ia-shim` and `huntaway-broker` stay in Rust (they're
 separate binaries); the TS server runs the Rust `ia-shim` (see `agent/runs.ts`).
 

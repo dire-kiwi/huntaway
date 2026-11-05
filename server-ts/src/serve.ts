@@ -10,7 +10,6 @@ import * as api from "./api.ts";
 import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
 import { expand_tilde, new_id, new_token, now, err_str, home_dir } from "./util.ts";
-import * as demo from "./demo.ts";
 import * as admin from "./update/admin.ts";
 import * as release from "./update/release.ts";
 import * as staging from "./update/staging.ts";
@@ -329,7 +328,7 @@ export async function serve(args: ServeArgs) {
   const state = new AppState(conn, data_dir, identity, meta, default_exe());
   if (args.demo) {
     try {
-      await demo.seed(state);
+      await (await import("./demo.ts")).seed(state);
     } catch (e) {
       throw new Error("seeding the demo project", { cause: e });
     }
