@@ -82,6 +82,23 @@ describe("the inbox", () => {
     expect(broken).toEqual({ board: work, items: [], error: "Unauthorized" });
   });
 
+  // HA-222: a task whose items are its thread's source has no messages since it moved onto them.
+  test("an open question of a task on items comes from its thread's requests", async () => {
+    const question = { id: "legacy:9", type: "question", created_at: "2026-11-06T10:00:00Z", questions: [], metadata: { question: "Which?", status: "pending", message_id: 9 } };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client: any = {
+      hosts: async () => [{ id: "h1", local: true, connected: true }],
+      profiles: async () => [{ id: "p", name: "Work" }],
+      profileTasks: async () => [task("t", { status: "needs_attention", thread_source: "items" })],
+      projects: async () => [],
+      pendingPermissions: async () => [],
+      messagePage: async () => ({ messages: [], more: false, subagents: [] }),
+      thread: async () => ({ items: [], requests: [question], seq: 1 }),
+    };
+    const inbox = await loadBoardInbox(client, work, null);
+    expect(inbox.items.map((i) => [i.kind, i.kind === "question" ? i.message.id : null, i.kind === "question" ? i.message.data.question : null])).toEqual([["question", 9, "Which?"]]);
+  });
+
   test("a board with no profile picked uses its first profile by name on every host, as Projects shows it", async () => {
     const asked: string[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

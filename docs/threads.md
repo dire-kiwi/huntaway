@@ -444,7 +444,10 @@ permission, question, merge-gate and report updates.
   again with its new data (`source.update`). `db.get_message` reads a message either way; for an items task it never
   reads a row, even one from before the move.
 - **Failures:** a message the translator or the store can't take is kept as a `messages` row with its id (and logged),
-  so it isn't lost; the thread goes on being written (there's nothing else to read it from).
+  so it isn't lost; the thread goes on being written (there's nothing else to read it from). A rebuild that fails as a
+  task is to move onto items (a translator bug on its history) is logged and leaves it on messages, so the write goes
+  on as a row as before; it isn't tried again until the thread is rebuilt (`threads.rebuilt_at` changes: `huntaway
+  threads-rebuild`) or the server restarts.
 - **Rebuilds** don't apply to a task on items: its messages stop where it moved. `rebuild` refuses it, `ensure` and the
   batch leave it out, `huntaway threads-rebuild --all` skips it (one named fails), and `threads-readers` and
   `threads-import` leave it out. A translator fix from here on applies to what it writes next.
@@ -469,7 +472,11 @@ tasks stay on their messages.
 
 **The app** draws a task on items from its items whatever the host's *Keep threads as items* setting (which is only
 for tasks still on messages now), and so do the board card's pending prompts (`PendingPrompts`) and a document's last
-reply, which read messages before.
+reply, which read messages before. **The mobile app** (`mobile/src/threadView.tsx`, `thread.ts`'s `itemThreadItems`)
+draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, loaded
+again as its messages' events come, and its Inbox finds an open question in the thread's requests
+(`openItemQuestion`); paired devices may read those two routes (devices.ts). A phone app from before this release reads
+an items task's messages, so it shows its thread as it was at the move: it needs this release's build.
 
 **The tests** default to items, as a server does (`testing.state()`; `IA_TEST_ITEMS_SOURCE=0` runs them with tasks on
 messages, and both pass), and read what was written with `testing.messages`, which for a task on items is a journal of
@@ -493,6 +500,8 @@ move (a throw and a process exit at `threads:flipped` and `threads:write`), and 
 >   offers **Copy again**, which copies it again and discards what was done in `huntaway-2.db` since (it's kept in
 >   `huntaway-2.db.replaced` until the next copy).
 > - Delete `huntaway.db` (with its `-wal` and `-shm`) once you won't go back.
+> - **Update the phone app** to this release's build: an older one shows each thread as it was when its task moved
+>   over, and its Inbox misses the questions asked since.
 
 ## Claude's control protocol
 

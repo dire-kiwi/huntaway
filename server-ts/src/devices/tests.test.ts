@@ -420,6 +420,9 @@ test("what_a_device_may_do", () => {
     ["DELETE", "/api/push/subscriptions/s1"],
     ["POST", "/api/push/subscriptions/s1/test"],
     ["POST", "/api/permissions/p/push-answer"],
+    // HA-222: a thread on items (no messages since it moved onto them), its window and pages.
+    ["GET", "/api/h/x/tasks/a/thread"],
+    ["GET", "/api/h/x/tasks/a/thread/items"],
   ];
   for (const [m, p] of allowed) assert.equal(refused(m, p), null, `${m} ${p}`);
   const not: Array<[string, string]> = [
@@ -455,6 +458,9 @@ test("what_a_device_may_do", () => {
     ["POST", "/api/profiles/p/assistant/memory/import"],
     ["GET", "/api"],
     ["GET", "/profiles"],
+    // The thread's commands are the board's routes it has already, and its events come on the hub's socket.
+    ["POST", "/api/h/x/tasks/a/thread/commands"],
+    ["GET", "/api/h/x/tasks/a/thread/events"],
   ];
   for (const [m, p] of not) assert.notEqual(refused(m, p), null, `${m} ${p}`);
   // The proxy's own check, on the path it forwards.

@@ -93,9 +93,21 @@ function current(c: Conn, task_id: string): boolean {
 }
 
 /**
+ * The tasks whose rebuild failed as they were to move onto items, with what their thread's `rebuilt_at` was then: one
+ * isn't tried again on every write (it stays on messages) until it's rebuilt some other way (`huntaway threads-rebuild`,
+ * from another process too, changes `rebuilt_at`) or the server restarts.
+ */
+const unbuilt = new WeakMap<Conn, Map<string, string>>();
+
+/** The thread's `rebuilt_at`, as `unbuilt` keeps it ("" for none). */
+const rebuilt_at = (c: Conn, task_id: string) => db.value<string | null>(c, "SELECT rebuilt_at FROM threads WHERE task_id=?1", task_id) ?? "";
+
+/**
  * Moves task `task_id` onto items if it's quiet (`busy`) and this board moves tasks (`flips`), in one transaction (the
  * caller's, if it has one): its items are rebuilt from its messages first unless they're complete and this build's.
- * A task with no messages yet (a new one) just starts its thread. What it did (see Flip).
+ * A task with no messages yet (a new one) just starts its thread. What it did (see Flip). A rebuild that fails (a
+ * translator or store bug on its history) is logged and leaves the task on messages, as it was, so the write it's
+ * called from goes on as a row, as before this step; it isn't tried again until the thread is rebuilt (see `unbuilt`).
  */
 export function flip(c: Conn, task_id: string): Flip {
   return db.tx(c, (): Flip => {
@@ -110,7 +122,19 @@ export function flip(c: Conn, task_id: string): Flip {
       if (!thread && !db.one(c, "SELECT 1 FROM messages WHERE task_id=?1 LIMIT 1", task_id)) {
         db.run(c, "INSERT INTO threads (task_id, converter, created_at) VALUES (?1, ?2, ?3)", task_id, CONVERTER_VERSION, now());
       } else {
-        rebuild_rows(c, task_id);
+        const failed = unbuilt.get(c);
+        if (failed?.get(task_id) === rebuilt_at(c, task_id)) return null;
+        try {
+          // A savepoint of its own: a rebuild that throws part-way leaves nothing of it.
+          db.tx(c, () => rebuild_rows(c, task_id));
+        } catch (e) {
+          let mine = failed;
+          if (!mine) unbuilt.set(c, (mine = new Map()));
+          mine.set(task_id, rebuilt_at(c, task_id));
+          console.error(`${now()} ERROR huntaway: task ${task_id} stays on its messages: its thread couldn't be rebuilt as items to move onto them: ${err_str(e)}`);
+          return null;
+        }
+        unbuilt.get(c)?.delete(task_id);
         rebuilt = true;
       }
     }

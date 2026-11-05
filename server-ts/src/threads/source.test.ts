@@ -437,3 +437,43 @@ test("at the start, quiet tasks move onto items; one mid-turn moves when its run
   assert.deepEqual(await source.flip_all(s), { moved: 0, rebuilt: 0, deferred: 0 });
   assert.equal(on(s, other.id), "messages");
 });
+
+// Review of HA-222: a rebuild that failed as a task was to move onto items threw out of insert_message and start_run,
+// so the write was lost, and every later one failed the same way.
+test("a rebuild that fails as a task moves onto items leaves it on messages, and its writes go on as rows", async (t) => {
+  runs.TEST_CAN_RUN.set(true);
+  t.after(() => runs.TEST_CAN_RUN.set(false));
+  const { s, task } = setup();
+  const x = task("stale", "done");
+  on_messages(s, () => s.add_message(x.id, "user", { text: "from before" }));
+  // Items an older converter wrote: moving needs a rebuild.
+  db.run(s.db(), "UPDATE threads SET converter=1 WHERE task_id=?1", x.id);
+  let tried = 0;
+  let armed = true;
+  const bug = () => {
+    if (!armed) return;
+    tried++;
+    throw new Error("translator bug");
+  };
+  testing.when("threads:rebuild", bug);
+  const event = s.add_message(x.id, "event", { level: "info", text: "an event" });
+  assert.equal(tried, 1);
+  assert.deepEqual([on(s, x.id), rows(s, x.id)], ["messages", 2]);
+  assert.equal(db.value(s.db(), "SELECT json_extract(data, '$.text') FROM messages WHERE id=?1", event.id), "an event");
+  // Not tried again on the next write (start_run's prompt): it goes in as a row too, and its run names it.
+  testing.when("threads:rebuild", bug);
+  runner.send(s, x.id, "carry on");
+  assert.equal(tried, 1);
+  assert.equal(on(s, x.id), "messages");
+  const turn = db.value<number>(s.db(), "SELECT turn_message_id FROM runs WHERE task_id=?1", x.id)!;
+  assert.equal(db.value(s.db(), "SELECT json_extract(data, '$.text') FROM messages WHERE id=?1", turn), "carry on");
+  await idle(s, x.id);
+  // Its items, written live beside its messages meanwhile, are still there.
+  assert.ok(store.items(s.db(), x.id).length >= 3);
+  // Rebuilt (by threads-rebuild, say), it moves at its next write. (The bug's hook, never reached, goes first.)
+  armed = false;
+  testing.reached("threads:rebuild");
+  write.rebuild(s.db(), x.id);
+  s.add_message(x.id, "user", { text: "after the fix" });
+  assert.equal(on(s, x.id), "items");
+});
