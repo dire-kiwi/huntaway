@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, canRunAgents, dependencyQueued, documentsOnly, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
@@ -266,7 +266,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5", shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
           >
             {t === "review" && <ReviewDot task={task} />}
-            {isWorkflowTab(t) ? <span className="normal-case">{t.slice(3)}</span> : t}
+            {isWorkflowTab(t) ? (
+              <span className="flex items-center gap-1 normal-case" title="A workflow's tab">
+                <WorkflowIcon size={11} className="text-faint" />
+                {t.slice(3)}
+              </span>
+            ) : (
+              t
+            )}
           </button>
         ))}
       </div>

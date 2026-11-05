@@ -69,7 +69,11 @@ export function useWorkflowRuns(task: Task | undefined): TaskWorkflows | undefin
 export function workflowTabs(data: TaskWorkflows | undefined): string[] {
   const out: string[] = [];
   for (const r of [...(data?.runs ?? [])].reverse())
-    for (const n of r.graph.nodes) if (n.kind === "agent" && n.tab && r.nodes[n.id] && !out.includes(n.tab)) out.push(n.tab);
+    for (const n of r.graph.nodes) {
+      // A step its run skipped (e.g. the summary after a review that found issues) adds no tab.
+      const state = r.nodes[n.id]?.state;
+      if (n.kind === "agent" && n.tab && state && state !== "skipped" && !out.includes(n.tab)) out.push(n.tab);
+    }
   return out;
 }
 
@@ -229,7 +233,7 @@ export function WorkflowsList({ task }: { task: Task }) {
             {last?.state === "running" ? (
               <Loader2 size={12} className="animate-spin text-st-review" />
             ) : (
-              <Button size="sm" variant="ghost" disabled={busy === w.id || task.running} title={task.running ? "Wait for the agent to finish" : "Run it on this task now"} onClick={() => run(w.id)}>
+              <Button size="sm" variant="ghost" aria-label={`Run ${w.name}`} disabled={busy === w.id || task.running} title={task.running ? "Wait for the agent to finish" : "Run it on this task now"} onClick={() => run(w.id)}>
                 {busy === w.id ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run
               </Button>
             )}
