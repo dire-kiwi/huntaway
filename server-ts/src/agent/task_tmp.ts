@@ -22,8 +22,7 @@
  * away, in one synchronous step (Rust's `LOCK`), which `ensure` is too: as a run is registered (`AppState.runs`) before
  * it sets up its folder, a run starting meanwhile either keeps the folder or gets a new one.
  */
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, type Dirent } from "node:fs";
-import { rm } from "node:fs/promises";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, type Dirent } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as db from "../db.ts";
@@ -31,7 +30,7 @@ import type { Task } from "../db.ts";
 import type { AppState, Shared } from "../state.ts";
 import * as worktree from "../git/worktree.ts";
 import * as leftovers from "./leftovers.ts";
-import { err_str, new_id, path_str, reached } from "../util.ts";
+import { err_str, new_id, path_str, reached, remove_dir_all, remove_dir_all_async } from "../util.ts";
 
 /** How often the folders of done and deleted tasks are looked for. */
 const SWEEP_MS = 600_000;
@@ -209,22 +208,22 @@ function take(state: Shared, id: string): { away: string; from: string[] } | nul
  */
 export function remove_all(dir: string) {
   try {
-    rmSync(dir, { recursive: true, force: true });
+    remove_dir_all(dir);
     return;
   } catch {}
   if (!existsSync(dir)) return;
   writable(dir);
-  rmSync(dir, { recursive: true, force: true });
+  remove_dir_all(dir);
 }
 
 async function remove_all_async(dir: string) {
   try {
-    await rm(dir, { recursive: true, force: true });
+    await remove_dir_all_async(dir);
     return;
   } catch {}
   if (!existsSync(dir)) return;
   writable(dir);
-  await rm(dir, { recursive: true, force: true });
+  await remove_dir_all_async(dir);
 }
 
 function writable(dir: string) {
