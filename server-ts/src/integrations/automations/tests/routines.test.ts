@@ -808,7 +808,9 @@ test("pruning_keeps_the_runs_that_count_toward_todays_budget", async () => {
     budget_usd: 1.0,
     action: { kind: "message_assistant", mode: "thread", message: "x" },
   });
-  const now = Date.now();
+  // Midday today, so its runs half an hour back are today's whenever it runs (HA-247: just after midnight they were
+  // yesterday's). It's on the same day as the clock its tick's budget check reads.
+  const now = routines_day_start(Date.now()) + 12 * HOUR;
   const at = (m: number) => now - m * MINUTE;
   // A paid run, then one whose agent is still at work (no cost recorded yet, but its thread's counts).
   const paid = Run_new(a.id, "schedule", "ok", at(30));
