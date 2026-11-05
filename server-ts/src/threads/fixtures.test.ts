@@ -11,7 +11,7 @@ import * as db from "../db.ts";
 import * as testing from "../testing.ts";
 import { handle_line } from "../agent/runner/output.ts";
 import { apply_events, initial_state, type Item, type ThreadEvent, type ThreadRequest } from "./protocol.ts";
-import { ASK_USER, EXIT_PLAN, convert, type Conversion } from "./translate.ts";
+import { ASK_USER, EXIT_PLAN, Translator, convert, fold, type Conversion } from "./translate.ts";
 
 const DIR = join(import.meta.dirname, "fixtures", "claude");
 
@@ -21,8 +21,11 @@ const jsonl = (path: string): any[] =>
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l));
 
-/** The fixture's session as the board stores it: its task's messages. */
-function stored(scenario: string): db.Message[] {
+/**
+ * The fixture's session as the board stores it: its task's messages, and its writes in the order they happened (each
+ * row as it was inserted, and a permission prompt's again as each update left it), as the live path will see them.
+ */
+function stored(scenario: string): { messages: db.Message[]; writes: db.Message[] } {
   const s = testing.state();
   const profile = db.insert_profile(s.db(), "p", [], null);
   const task = db.insert_task(s.db(), {
@@ -44,7 +47,15 @@ function stored(scenario: string): db.Message[] {
   let turn = false;
   // can_use_tool requests waiting for their answer: the board's permission message for each.
   const asked = new Map<string, db.Message>();
+  const writes: db.Message[] = [];
+  let last = 0;
+  const inserted = () => {
+    const rows = db.all(s.db(), "SELECT * FROM messages WHERE task_id=?1 AND id>?2 ORDER BY id", task.id, last).map(db.Message_from_row);
+    writes.push(...rows);
+    if (rows.length) last = rows.at(-1)!.id;
+  };
   for (const line of jsonl(join(DIR, scenario, "session.jsonl"))) {
+    inserted();
     const m = line.msg;
     if (line.dir === "spawn") {
       if (line.run > 1) run = db.insert_run(s.db(), task.id, "prompt");
@@ -71,13 +82,14 @@ function stored(scenario: string): db.Message[] {
       // A plan approved into a mode: the board keeps the mode picked.
       const mode = (answer.updatedPermissions ?? []).find((u: any) => u?.type === "setMode")?.mode;
       if (mode) data.mode = mode;
-      db.update_message_data(s.db(), message.id, data);
+      writes.push(db.update_message_data(s.db(), message.id, data)!);
     } else if (line.dir === "out") {
       if (m?.type === "result") turn = false;
       handle_line(s, db.get_run(s.db(), run.id)!, line.line ?? JSON.stringify(m));
     }
   }
-  return db.list_messages(s.db(), task.id);
+  inserted();
+  return { messages: db.list_messages(s.db(), task.id), writes };
 }
 
 /** The items and requests the fixture's expected events fold into. */
@@ -142,8 +154,13 @@ test("there_are_22_claude_fixtures", () => {
 
 for (const scenario of scenarios) {
   test(`claude_fixture_${scenario}`, () => {
-    const messages = stored(scenario);
+    const { messages, writes } = stored(scenario);
     const c: Conversion = convert(messages, { finished: false });
+    // Fed as the board wrote them, prompts pending first, it ends where the final rows do.
+    assert.equal(writes.length, messages.length + messages.filter((m) => m.kind === "permission").length, "each prompt is written, then answered");
+    const t = new Translator();
+    const live = fold(writes.flatMap((m) => t.message(m).events));
+    assert.deepEqual(live, { items: c.items, requests: c.requests });
     const want = expected(scenario);
     assert.deepEqual(our_items(c.items), expected_items(want.items));
     assert.deepEqual(c.requests.map(request), want.requests.map(request));

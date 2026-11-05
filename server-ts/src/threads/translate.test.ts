@@ -230,6 +230,47 @@ test("a_prompt_answered_later_resolves_its_request", () => {
   assert.equal(t.message(msg(2, "permission", { ...pending, status: "allowed" })).disposition, "redundant");
 });
 
+test("a_late_answer_after_its_run_ended_resolves_its_request_again", () => {
+  // mcp/permissions.ts: a question or plan whose run ended is expired (set_message_status), and can still be answered
+  // late, which updates its message again (with `late`, and the answers or the mode). Fed as each write happens, the live
+  // path must end where translating the final rows does.
+  const plan = { tool_name: EXIT_PLAN, input: { plan: "# Plan" }, tool_use_id: "pl", request_id: "rp", status: "pending" };
+  const ask = {
+    tool_name: ASK_USER,
+    input: { questions: [{ question: "Which?", options: [{ label: "A" }, { label: "B" }] }] },
+    tool_use_id: "q",
+    request_id: "rq",
+    status: "pending",
+  };
+  const card = { question: "Merge?", options: [{ label: "Yes" }], status: "pending" };
+  const writes = [
+    assistant(1, null, [{ type: "tool_use", id: "pl", name: EXIT_PLAN, input: { plan: "# Plan" } }]),
+    msg(2, "permission", plan),
+    assistant(3, null, [{ type: "tool_use", id: "q", name: ASK_USER, input: ask.input }]),
+    msg(4, "permission", ask),
+    msg(5, "question", card),
+    msg(2, "permission", { ...plan, status: "expired" }),
+    msg(4, "permission", { ...ask, status: "expired" }),
+    msg(5, "question", { ...card, status: "expired" }),
+    msg(2, "permission", { ...plan, status: "allowed", late: true, mode: "acceptEdits" }),
+    msg(4, "permission", { ...ask, status: "allowed", late: true, answers: [["B"]] }),
+    msg(5, "question", { ...card, status: "answered", answer: { choices: ["Yes"] } }),
+  ];
+  const t = new Translator();
+  const live = writes.map((m) => t.message(m));
+  // The expiries cancel, and the late answers resolve them again.
+  assert.deepEqual(live.slice(5).map((s) => s.events.map((e) => e.type)), Array(6).fill(["request.resolved"]));
+  const final = new Map(writes.map((m) => [m.id, m]));
+  const whole = convert([...final.values()], { finished: false });
+  assert.deepEqual(fold(live.flatMap((s) => s.events)), { items: whole.items, requests: whole.requests });
+  const r = requests(whole);
+  assert.deepEqual(r.rp.resolution, { outcome: "allow", permission_mode: "accept_edits" });
+  assert.deepEqual(r.rq.resolution, { outcome: "answer", answers: { "Which?": ["B"] } });
+  assert.deepEqual(r["legacy:5"].resolution, { outcome: "answer", answers: { q: ["Yes"] } });
+  // The same status again changes nothing.
+  assert.equal(t.message(writes.at(-1)!).disposition, "redundant");
+});
+
 test("board_questions", () => {
   const card = (status: string) => ({ question: "Merge?", options: [{ label: "Yes" }, { label: "No" }], multi_select: false, allow_other: true, call_id: "c", status });
   const c = convert_all([

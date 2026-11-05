@@ -491,13 +491,14 @@ export class Translator {
   }
 
   /**
-   * Opens `request` with `resolution`, or for a message seen before (its status changed since), resolves the open request
-   * it made. Redundant if that changes nothing.
+   * Opens `request` with `resolution`, or for a message seen before (its status changed since), resolves the request it
+   * made with what its status says now: a question or plan whose run ended (expired, so cancelled) can still be answered
+   * late (mcp/permissions.ts's `answer`), and the stored status is the truth. Redundant if that changes nothing.
    */
   private request(request: ThreadRequest, resolution: Resolution | undefined): Disposition {
     const was = this.requests.get(request.id);
     if (was) {
-      if (was.resolution || !resolution) return "redundant";
+      if (!resolution || same_json(was.resolution, resolution)) return "redundant";
       this.resolve(request.id, resolution);
       return "converted";
     }

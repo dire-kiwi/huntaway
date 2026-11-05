@@ -91,7 +91,8 @@ made a fold, so the live path (step 3) and batch rebuilds (step 7) can share it:
   and an item names its parent by its tool_use id, which is the parent call's item's. What waits is held in memory only:
   rebuilt in between, it's as if its call never came. On the live board's copy that changed nothing (below).
 - A permission or question message fed again after its status changed (the board updates them in place) resolves the
-  request it opened. A pending one stays open.
+  request it opened with what its status says now, even if it was resolved before: a question or plan whose run ended is
+  expired (cancelled) and can still be answered late. A pending one stays open.
 - `finish()` ends a history nothing will add to (an import): calls with no result are cancelled, subagents that never
   ended are stopped, open requests are cancelled, and what waited for a call that never came is warned about.
 - `CONVERTER_VERSION` (1) changes when what it makes of the same messages does: a fix means rebuilding the tasks.
