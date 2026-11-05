@@ -74,10 +74,10 @@ export const GOOGLE_SERVER = "google";
  */
 export function default_rules(): Rule[] {
   const g = (p: string) => `mcp__${GOOGLE_SERVER}__${p}`;
-  const allow = ["search*", "get*", "list*", "read*", "check*", "*draft*"].map((p) => rule(g(p), "allow"));
+  const allow = ["search*", "get*", "list*", "read*", "check*", "query*", "*draft*"].map((p) => rule(g(p), "allow"));
   const ask = [
     "*send*", "create*event*", "modify*event*", "update*event*", "delete*event*", "*share*", "*add*permission*", "*update*permission*",
-    "*remove*permission*", "*message*label*", "manage*", "update*file*", "create*filter*", "*transfer*",
+    "*remove*permission*", "set*permission*", "*message*label*", "manage*", "update*file*", "create*filter*", "*transfer*",
   ].map((p) => rule(g(p), "ask"));
   const never = ["*trash*", "*delete*mail*", "*mail*delete*", "*delete*message*", "*delete*file*", "*delete*drive*", "*drive*delete*"].map((p) =>
     rule(g(p), "never")

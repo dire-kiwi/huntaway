@@ -87,6 +87,31 @@ test("the_google_defaults_read_and_draft_ask_to_send_and_never_delete", () => {
   assert.equal(r.expiry_minutes, 30);
 });
 
+/**
+ * workspace-mcp 2.3.0's Gmail, Calendar and Drive tools at its `extended` tier, as the assistant's Google server serves
+ * them (assistant/google.ts, HA-210): reading and drafting are allowed, sending, sharing and changing ask, and making a
+ * file or a calendar is left to the thread's mode. A new version of the server is checked against this. (HA-125's test,
+ * with the server's name, "google", as GOOGLE_SERVER has it.)
+ */
+test("the_google_defaults_fit_the_google_servers_own_tools", () => {
+  const r = Rules_default();
+  const g = (t: string) => decided(r, `mcp__google__${t}`);
+  const allow = [
+    "search_gmail_messages", "get_gmail_message_content", "get_gmail_messages_content_batch", "get_gmail_attachment_content", "get_gmail_thread_content",
+    "list_gmail_labels", "draft_gmail_message", "list_gmail_filters", "list_calendars", "get_events", "query_freebusy", "search_drive_files",
+    "get_drive_file_content", "get_drive_file_download_url", "list_drive_items",
+  ];
+  for (const t of allow) assert.equal(g(t), "allow", t);
+  const ask = [
+    "send_gmail_message", "modify_gmail_message_labels", "manage_gmail_label", "manage_gmail_filter", "manage_event", "manage_out_of_office",
+    "manage_focus_time", "update_drive_file", "manage_drive_access", "set_drive_file_permissions",
+    // It reads a link, but may make the file shareable to give one.
+    "get_drive_shareable_link",
+  ];
+  for (const t of ask) assert.equal(g(t), "ask", t);
+  for (const t of ["create_drive_file", "create_drive_folder", "copy_drive_file", "import_to_google_doc", "create_calendar"]) assert.equal(g(t), null, t);
+});
+
 test("rules_are_tidied_and_checked_for_saving", () => {
   const r = checked(rules([[" mcp__a ", "allow"], ["", "ask"], ["mcp__b", "ask"]]));
   assert.deepEqual(r.rules, [rule("mcp__a", "allow"), rule("mcp__b", "ask")]);
