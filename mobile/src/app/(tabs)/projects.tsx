@@ -1,14 +1,15 @@
 // Projects: the selected board's projects for its picked profile, with a switcher for the board and the profile.
 import { useRouter } from "expo-router";
-import { FlatList, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
+import { BoardPicker } from "../../boardPicker";
 import { loadProfiles, loadProjects, pickedProfile, profilesOf } from "../../boardData";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad, useRefetchOn } from "../../session";
 import { colors } from "../../theme";
-import { Button, Chip, Empty, ErrorText, s } from "../../ui";
+import { Button, Empty, ErrorText, s } from "../../ui";
 
 export default function Projects() {
   const router = useRouter();
-  const { boards: list } = useBoards();
+  useBoards();
   const statuses = useBoardStatuses();
   const board = boards.selectedBoard();
   const ok = !!board && usable(statusOf(statuses, board.id));
@@ -38,28 +39,7 @@ export default function Projects() {
   }
   return (
     <View style={s.screen}>
-      <View style={{ borderBottomWidth: 1, borderBottomColor: colors.line, paddingVertical: 8, gap: 8 }}>
-        {list.length > 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }} accessibilityLabel="Boards">
-            {list.map((b) => (
-              <Chip
-                key={b.id}
-                label={b.name}
-                selected={b.id === board.id}
-                color={statusOf(statuses, b.id).connected ? colors.green : colors.faint}
-                onPress={() => void boards.select(b.id)}
-              />
-            ))}
-          </ScrollView>
-        )}
-        {(profiles.data?.names.length ?? 0) > 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }} accessibilityLabel="Profiles">
-            {profiles.data!.names.map((n) => (
-              <Chip key={n} label={n} selected={n === profile} onPress={() => void boards.update(board.id, { profile: n })} />
-            ))}
-          </ScrollView>
-        )}
-      </View>
+      <BoardPicker board={board} profiles={profiles.data} profile={profile} />
       {!ok ? (
         <Empty title={statusOf(statuses, board.id).unauthorized ? `This phone was unpaired from ${board.name}. Pair it again.` : `${board.name}'s Huntaway is too old for the app. Update it.`} />
       ) : (

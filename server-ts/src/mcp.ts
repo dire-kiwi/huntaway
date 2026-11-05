@@ -1,7 +1,9 @@
 // Port of server/src/mcp.rs.
 /**
  * The board's MCP server: its tools' schemas and the JSON-RPC that lists and calls them (`handle`). The board serves it
- * over HTTP to the runs it starts (mcp/http.ts), so they have no helper process of their own.
+ * to the runs it starts, so they have no helper process of their own: to Claude runs in process, on their own output and
+ * input (Claude Code's `mcp_message` control requests, see agent/runner/requests.ts), and over HTTP (mcp/http.ts) to
+ * Codex runs and compactions.
  *
  * `huntaway mcp` is the stdio server that runs started before that (HA-180) launched, one per run: it relays every call
  * to the server that started the run. Each call keeps one id across retries, so a server restart mid-call is harmless.
@@ -1000,6 +1002,18 @@ export function check_args(tool: string, args: any): string | null {
   return null;
 }
 
+/** The board server's answer to MCP's `initialize`, for a client that asks for `protocol`. */
+export function initialize_result(protocol: string): any {
+  return { protocolVersion: protocol, capabilities: { tools: {} }, serverInfo: { name: "huntaway", version: VERSION }, instructions: INSTRUCTIONS };
+}
+
+/** A `tools/call`'s result: what tool `name` gave (as JSON text), or its error. */
+export function call_result(name: string, r: { ok: any } | { err: string }): any {
+  if ("err" in r) return { content: [{ type: "text", text: `Error: ${r.err}` }], isError: true };
+  // permission_prompt must return the raw decision JSON as text.
+  return { content: [{ type: "text", text: name === "permission_prompt" ? JSON.stringify(r.ok) : JSON.stringify(r.ok, null, 2) }] };
+}
+
 /** An MCP request's response, or null for a notification. */
 export async function handle(ctx: Caller, req: any): Promise<any | null> {
   if (!req || typeof req !== "object" || !Object.hasOwn(req, "id")) return null; // notifications get no response
@@ -1009,12 +1023,7 @@ export async function handle(ctx: Caller, req: any): Promise<any | null> {
   let error: any = null;
   switch (method) {
     case "initialize":
-      result = {
-        protocolVersion: typeof req.params?.protocolVersion === "string" ? req.params.protocolVersion : "2025-06-18",
-        capabilities: { tools: {} },
-        serverInfo: { name: "huntaway", version: VERSION },
-        instructions: INSTRUCTIONS,
-      };
+      result = initialize_result(typeof req.params?.protocolVersion === "string" ? req.params.protocolVersion : "2025-06-18");
       break;
     case "ping":
       result = {};
@@ -1026,11 +1035,9 @@ export async function handle(ctx: Caller, req: any): Promise<any | null> {
       const name = typeof req.params?.name === "string" ? req.params.name : "";
       const args = req.params?.arguments ?? null;
       try {
-        const v = await ctx.call(name, args);
-        // permission_prompt must return the raw decision JSON as text.
-        result = { content: [{ type: "text", text: name === "permission_prompt" ? JSON.stringify(v) : JSON.stringify(v, null, 2) }] };
+        result = call_result(name, { ok: await ctx.call(name, args) });
       } catch (e) {
-        result = { content: [{ type: "text", text: `Error: ${err_str(e)}` }], isError: true };
+        result = call_result(name, { err: err_str(e) });
       }
       break;
     }

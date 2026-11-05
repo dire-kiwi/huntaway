@@ -104,4 +104,33 @@ describe("the inbox", () => {
     await loadBoardInbox(client, work, "Gone");
     expect(asked.sort()).toEqual(["perms w1", "perms w2", "w1", "w2"]);
   });
+
+  test("the assistant's prompts and attention, and its routine threads' prompts, show", async () => {
+    const asked: string[] = [];
+    const fetched: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client: any = {
+      hosts: async () => [{ id: "h1", local: true, connected: true }],
+      profiles: async () => [{ id: "me", name: "Me" }],
+      // The board leaves the assistant out unless asked, and never lists routine threads.
+      profileTasks: async (_h: string, p: string, assistant?: boolean) => (
+        asked.push(`${p} ${!!assistant}`),
+        assistant ? [task("asst", { project_id: null, task_type: "assistant", profile_id: "me", status: "needs_attention", attention_reason: "Asked you" })] : []
+      ),
+      projects: async () => [],
+      pendingPermissions: async () => [perm("r1", "routine", "2026-11-03T11:00:00Z"), perm("r2", "elsewhere", "2026-11-03T12:00:00Z"), perm("r3", "gone", "2026-11-03T13:00:00Z")],
+      task: async (_h: string, id: string) => {
+        fetched.push(id);
+        if (id === "gone") throw new Error("not found");
+        return { task: task(id, { project_id: null, task_type: "routine", profile_id: id === "routine" ? "me" : "someone-else", title: "Morning brief" }), last_message: null, pending_permissions: 1 };
+      },
+      messagePage: async () => ({ messages: [], more: false, subagents: [] }),
+    };
+    const inbox = await loadBoardInbox(client, work, "Me");
+    expect(asked).toEqual(["me true"]);
+    expect(fetched.sort()).toEqual(["elsewhere", "gone", "routine"]);
+    // The routine's prompt is there under its thread; another profile's routine and a task that's gone aren't.
+    expect(inbox.items.map((i) => `${i.kind}:${i.taskId}`).sort()).toEqual(["attention:asst", "permission:routine"]);
+    expect(inbox.items.find((i) => i.kind === "permission")).toMatchObject({ title: "Morning brief" });
+  });
 });

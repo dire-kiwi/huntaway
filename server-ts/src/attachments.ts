@@ -46,7 +46,7 @@ export function clean_name(name: string): string {
   return out || "file";
 }
 
-function mime(name: string): string {
+export function mime(name: string): string {
   const ext = (name.split(".").pop() ?? "").toLowerCase();
   switch (ext) {
     case "png":
@@ -73,6 +73,22 @@ function mime(name: string): string {
     case "diff":
     case "patch":
       return "text/plain";
+    // Voice notes from the app (API 120), and audio shared into it.
+    case "wav":
+      return "audio/wav";
+    case "m4a":
+    case "mp4a":
+      return "audio/mp4";
+    case "aac":
+      return "audio/aac";
+    case "mp3":
+      return "audio/mpeg";
+    case "ogg":
+    case "oga":
+    case "opus":
+      return "audio/ogg";
+    case "caf":
+      return "audio/x-caf";
     default:
       return "application/octet-stream";
   }

@@ -1,7 +1,7 @@
 // The inbox: what's waiting for the user on every paired board together, each item labelled with its board. For each
-// board, its picked profile's tasks that need attention, their pending permission prompts (answered in place), and the
-// questions their agents asked with request_user_input (answered in place). A task with a prompt or a question shows
-// once, as that.
+// board, its picked profile's tasks that need attention (its assistant's included), their pending permission prompts
+// (answered in place, the assistant's routine threads' too), and the questions their agents asked with request_user_input
+// (answered in place). A task with a prompt or a question shows once, as that.
 import { isScratch, type Client, type Message, type PendingPermission, type Project, type Task } from "@huntaway/client";
 import { loadProfiles, pickedProfile } from "./boardData";
 
@@ -102,6 +102,24 @@ export function mergeInbox(inboxes: BoardInbox[]): { items: InboxItem[]; errors:
 }
 
 /**
+ * The tasks of `profileId` with a pending prompt that its task list leaves out: the assistant's routine threads, which
+ * no list includes, so that a routine waiting on approval shows (and doesn't expire unseen). Each is fetched and kept
+ * only if it's the profile's.
+ */
+export async function promptedTasks(
+  client: Pick<Client, "task">,
+  hostId: string,
+  profileId: string,
+  listed: Task[],
+  permissions: PendingPermission[],
+): Promise<Task[]> {
+  const have = new Set(listed.map((t) => t.id));
+  const missing = [...new Set(permissions.map((p) => p.task_id).filter((id) => !have.has(id)))];
+  const got = await Promise.all(missing.map((id) => client.task(hostId, id).then((d) => d.task).catch(() => null)));
+  return got.filter((t): t is Task => !!t && t.profile_id === profileId);
+}
+
+/**
  * Reads one board's inbox for its profile `profile` (a name), resolved as everywhere else in the app (pickedProfile):
  * that name if the board has it, else the first in its merged list, on every host that has it.
  */
@@ -112,11 +130,13 @@ export async function loadBoardInbox(client: Client, board: BoardRef, profile: s
     const on = name ? (profiles.byName.get(name) ?? []) : [];
     const lists = await Promise.all(
       on.map(async ({ hostId, profile: p }) => {
-        const [tasks, projects, permissions] = await Promise.all([
-          client.profileTasks(hostId, p.id),
+        const [listed, projects, permissions] = await Promise.all([
+          // With the assistant (a board from before API 109 ignores the flag and has none).
+          client.profileTasks(hostId, p.id, true),
           client.projects(hostId, p.id).catch(() => [] as Project[]),
           client.pendingPermissions(hostId, { profile_id: p.id }),
         ]);
+        const tasks = [...listed, ...(await promptedTasks(client, hostId, p.id, listed, permissions))];
         const questions = new Map<string, Message>();
         await Promise.all(
           tasks

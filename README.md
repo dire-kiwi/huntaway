@@ -63,6 +63,10 @@ UI development with hot reload: run the server, then `npm run dev` in `app/` (Vi
 `/api` to `127.0.0.1:7878`, override with `IA_SERVER`). Use `npm run electron:dev` to load the
 dev server in Electron.
 
+Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
+servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
+`/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
+
 Faster Rust builds (`ia-shim` and the broker): install [sccache](https://github.com/mozilla/sccache) (`cargo install sccache
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
@@ -225,6 +229,13 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
+### The personal assistant
+
+The assistant is a profile's personal mode, apart from its projects. This section covers its thread, memory, approval
+rules and Google. The rest is elsewhere: its routines and the morning brief under *Automations*, running it on a
+machine of its own under *An assistant host*, talking to it from Telegram under *Telegram*, push for its replies,
+reports and prompts under *Push notifications on a phone*, and the phone app's Assistant tab under *The mobile app*.
+
 Each profile has an **assistant** (API 109): one long-lived conversation outside every project,
 opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
 It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
@@ -386,10 +397,6 @@ injection), which logs each call to `$STUB_GOOGLE_LOG`. Make it the Google serve
 (`{"command": "python3", "args": ["-I", "<path>/scripts/stub-google-mcp.py"]}`) in Settings → Skills and
 MCP servers.
 
-Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
-`/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
-
 ### Server options
 
 | Flag / env | Default | |
@@ -430,12 +437,14 @@ the run ends (`runs::KEEP_DAYS`), or as soon as its task is deleted. It checks e
 also removes the recorded MCP calls of runs that ended over an hour ago.
 
 The pieces that cross a restart are durable too:
-- The board serves each run's MCP servers over HTTP (see *Agent tools (MCP)*) and answers each
-  tool call on an event stream. When a restart breaks it, the agent (Claude Code or Codex)
-  reconnects for the call's answer, and the call carries on where it was. The server records
-  each call's result, so a call is never executed twice. Runs started before that (with
-  `huntaway mcp` helpers) keep theirs, which retry each call under the same id until the server
-  answers.
+- A Claude run calls the board's tools on its own output and gets their answers on its input
+  (see *Agent tools (MCP)*): a call still going when the server restarts (a `wait`, an approval)
+  is found again in the recorded calls and answered when it's done. Codex runs and compactions
+  reach the board's tools over HTTP, and the gh server's over HTTP too, answered on an event
+  stream: when a restart breaks it, the agent (Claude Code or Codex) reconnects for the call's
+  answer, and the call carries on where it was. The server records each call's result, so a call
+  is never executed twice. Runs started before that (with `huntaway mcp` helpers) keep theirs,
+  which retry each call under the same id until the server answers.
 - Permission prompts are stored with the call that raised them. A prompt pending across a
   restart reappears, and the decision reaches the agent once it's made.
 
@@ -618,7 +627,11 @@ token still works later, and the notification keeps its buttons.
 ### The mobile app
 
 `mobile/` is an Expo app for Android and iOS (API 118) that follows and drives your tasks on several
-boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
+boards at once, a work hub and a personal board say. Its home tab is the **Assistant** (from API
+120): the selected board's assistant for its picked profile, on the host the profile's assistant is
+on (an assistant host of its own, perhaps, which the tab says is offline when it is), with the
+board and profile switchers above it; on an older board the tab is hidden and the Inbox is home.
+Then an **Inbox** of what's waiting for you on every
 paired board together, each item labelled with its board (tasks that need attention, permission
 prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
 project's tasks by status and a sheet to add one; and each task's **thread**, with the agent's
@@ -627,6 +640,17 @@ stop and move. A **Boards** tab lists the paired boards, picks the profile shown
 a board on the web for what the app leaves out (terminals, diffs and commits, settings,
 analytics). It keeps a websocket to each board, and reconnects when it comes back to the front or
 the network changes.
+
+What you **share** from another app (a link, text, photos or a file, from Android's share sheet or
+the iOS share extension, *Huntaway Share*) opens the Assistant with its composer filled in, after
+whatever was typed there, and the files uploading as attachments to the assistant's host. With
+several boards that can take it, the app asks which, with the last one picked first. A share only
+ever becomes a draft: it's never taken as an address or a token. Every composer (the assistant's and
+each task's) has a **mic** button: tap it to dictate into the field with the phone's own speech
+recognition (on the phone where it can be, else Apple's or Google's service), and hold it to
+record a **voice note** (iOS, and Android 13 or later), which is attached as a WAV file with what
+the phone heard of it in the message, since agents read text and not audio. Voice notes stop at
+four minutes, well under an attachment's 10 MB.
 
 **Installing it.** Nothing needs building:
 
@@ -674,16 +698,14 @@ lists them, with the profile shown on each, and removes one. A hub's linked host
 pair the hub rather than each host. Pairing the same board again unpairs the phone's old token
 there.
 
-**Push.** The app doesn't push notifications yet. Until it does, install the board on the phone
-as a web app as well and turn on push there (see *Push notifications on a phone*).
-
 **Revoking a device.** Settings → Network access lists the paired devices, with their last use,
 to rename or revoke; revoking one cuts it off at once, open websockets included, and the app then
 says it was unpaired. A device can't pair others or manage them (`POST /devices/pairing`, `PATCH`
 and `DELETE /devices/{id}` are for the board's own token), but it can list them and unpair itself,
 which removing the board in the app does. A device can only use the routes the app does (`HUB`
-and `HOST` in `server-ts/src/devices.ts`): profiles, projects, tasks and their threads, attachments,
-permission prompts, the board's events and hosts, and the devices list, on every profile, on the
+and `HOST` in `server-ts/src/devices.ts`): profiles, projects, tasks and their threads, each profile's
+assistant (API 120, but not its memory), attachments, permission prompts, the board's events and
+hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
 devices until it's added there. That keeps out what would outlast revoking a device: the board's
 and hub's tokens (`GET /hosts/join`), Claude logins (exporting, importing, copying one to another
@@ -691,6 +713,37 @@ host), linking hosts, terminals (a shell on the host), settings and admin. A dev
 checked percent-decoded, and refused with an encoded `/`, `\`, `%`, `?` or `#`, an empty segment,
 `.` or `..`; the hub's proxy checks again the path it forwards, and the handlers of tokens, Claude logins,
 host linking and terminals refuse a device's request themselves.
+
+**Push to the app** (API 120). The app subscribes on each paired board (a board's hub watches all
+its hosts' events, so once per board) with its Expo push token, and the board sends its pushes
+through [Expo's push service](https://docs.expo.dev/push-notifications/sending-notifications/):
+one HTTPS call, with no Apple or Google keys kept on the board. Boards → a board → **Notifications**
+turns it on or off for that board and picks the events, as the web's Settings does for a browser
+(needs attention, ready to review, ready for merge, done, the assistant's replies and its routines'
+reports, and whose permission prompts); tapping a notification opens the task on the board it came
+from, and tapping the assistant's reply opens the Assistant tab on that board, with the profile
+whose assistant it is (or its thread, on a board without the tab). A routine's report opens the
+routine's own thread. A prompt that can be answered from the
+notification has **Allow** and **Deny** (on iOS and Android, also on the lock screen; Allow asks to
+unlock the phone on iOS), which post the push's one-time token as the web's do, without opening the
+app or reading the keychain, and then show what came of it (allowed, denied, already answered,
+expired). Expo, Apple and Google can read these pushes (Web Push is encrypted for the browser;
+Expo's aren't), so they carry the task's key and title and the event, not the attention reason,
+what the agent wrote, a report's text or a tool's input; the app fetches the rest over its own
+connection. As for the web, nothing is pushed for a move made from the app.
+
+The app's subscriptions are `push_subscriptions` rows with `kind` `expo` (`POST /push/subscriptions`
+with `{"kind": "expo", "endpoint": "ExponentPushToken[…]", "name", "events"}`), whose
+`device_id` is the paired device that made them: a device sees and changes only its own, and they
+go when it's revoked. When Expo's token for the phone changes, its subscription takes the new one
+and keeps its events. The board batches pushes to Expo (100 a request), reads its tickets, and asks
+for the receipts about 15 minutes later: a phone Expo says isn't registered any more (the app was
+uninstalled) is dropped, and other failures show as the subscription's last error (see
+`server-ts/src/integrations/push.ts`). `IA_EXPO_PUSH_URL` sends them somewhere else (a fake, for
+tests), and `IA_EXPO_ACCESS_TOKEN` is the token for a project with Expo's enhanced push security
+on. The app needs a build with its EAS project id (`extra.eas.projectId` in `app.json`, from
+`eas init`) for its push token, and Android builds need Firebase Cloud Messaging set up for it (a
+`google-services.json`, and FCM's key given to Expo: see *Building the mobile app*).
 
 Revoking a phone stops the phone, not what was done with it before: whoever held it could have
 started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost
@@ -729,7 +782,7 @@ losing it means everyone uninstalling and pairing again. Until all four secrets 
 skips the `android` job (its `android-key` job says so in a notice) and has the other files without
 an APK.
 
-The app's push (to come) on Android goes through Firebase Cloud Messaging, which Expo's push
+The app's push on Android goes through Firebase Cloud Messaging, which Expo's push
 service hands it to, so the APK needs a Firebase app's config: in the
 [Firebase console](https://console.firebase.google.com), make a project and add an Android app with the package `nz.net.ivan.huntaway`, download its
 `google-services.json`, and keep it as the repository secret `GOOGLE_SERVICES_JSON` (`gh secret
@@ -742,7 +795,7 @@ Notifications (FCM V1)*, with that file. Without the secret the APK builds with 
 can't register for push.
 
 **iOS** isn't built yet: TestFlight builds through EAS wait for an Apple Developer Program
-membership and an Expo account (HA-163, in the backlog), and this repository has no workflow for
+membership and an Expo account (HA-258, in the backlog), and this repository has no workflow for
 them yet.
 
 `eas.json`'s other profiles are for EAS builds by hand: `development` (a dev build, below) and
@@ -759,8 +812,12 @@ npx eas-cli build --profile development --platform ios   # or android: a dev bui
 npm run typecheck && npm test # what CI's Tests / mobile runs
 ```
 
-It uses native modules that Expo Go lacks (the camera's scanner, secure storage), so it runs as a
-dev build (`expo-dev-client`). A dev build lets the app pair with a board on plain HTTP (an
+It uses native modules that Expo Go lacks (the camera's scanner, secure storage, notifications,
+share intents and speech recognition), so it runs as a dev build (`expo-dev-client`). The share
+extension is an iOS target of its own (`HuntawayShare`, bundle `nz.net.ivan.huntaway.share-extension`,
+in the app group `group.nz.net.ivan.huntaway`), which `expo-share-intent`'s config plugin adds at
+prebuild and `extra.eas` in `app.json` declares for EAS Build's credentials. A dev build lets the
+app pair with a board on plain HTTP (an
 emulator's `10.0.2.2`, say); release builds won't.
 
 ### Desktop config
@@ -1420,7 +1477,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   win over a global one with the same name. A global server named `google` is the assistant's
   alone (see *Google for the assistant*): projects' runs never get it. Before each run, the skills that are on are written to
   `<data-dir>/projects/<id>/agent/.claude/skills/`, which the agent gets with `--add-dir`. The
-  servers are added to the run's `--mcp-config` next to `huntaway`. A server can allow all of
+  servers are added to the run's `--mcp-config` next to `gh` (and `huntaway`, for Codex runs and compactions). A server can allow all of
   its tools, so they never ask for approval. Skills and servers that come from elsewhere (the
   Claude config, its plugins, claude.ai connectors, the repository) can be turned off per project.
   They're denied with `--disallowedTools` (`Skill(<name>)`, `mcp__<server>`). The settings list
@@ -1579,7 +1636,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   reason instead of *working*. The waiting state lasts exactly as long as the call, however it returns
   (failing that, until the turn or run ends), and is kept as the task's `agent_wait`, apart from `waiting`
   (queued for dependencies). A server restart doesn't start a wait over: the agent reconnects for
-  the call (or its MCP helper retries it), which carries on until the same deadline, watching the same tasks (one
+  the call (Claude's runs' calls are taken up again from their output, and an MCP helper retries it), which carries on until the same deadline, watching the same tasks (one
   deleted meanwhile ends it). Planning agents (subprojects and
   group tasks) are told to wait for the tasks they started this way rather than end their turn.
   - `command` lets the agent wait for what the board can't see (CI, a deploy, a file): the server
@@ -2098,8 +2155,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (`--permission-prompt-tool stdio`: a `can_use_tool` control request in the run's `out.jsonl`)
   and gets the answer on its input (`input.jsonl`); a prompt still open when the server restarts
   is asked again, and can be answered as before. A `/compact` run, which takes no input, asks
-  through the MCP helper's `permission_prompt`, as Codex's approvals do. Codex's approvals get the
-  same card, which names the agent asking. Runs that ask on their output are run format 3: an
+  through the board's MCP server's `permission_prompt`, over HTTP, as Codex's approvals do. Codex's
+  approvals get the same card, which names the agent asking. Runs that ask on their output are
+  run format 3 (4 when they call the board's tools there too, see *Agent tools (MCP)*): an
   older build that's rolled back to stops them (it couldn't answer them) rather than follow them.
 - **Questions and plans** (API 64) are cards in the thread rather than approvals, and the task's
   card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
@@ -2178,8 +2236,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
 
 ### Agent tools (MCP)
 
-Each run gets the `huntaway` MCP server, which the board serves itself over HTTP (see *How runs reach
-the board's MCP servers* below):
+Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs
+and over HTTP for Codex runs and compactions (see *How runs reach the board's MCP servers* below):
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
@@ -2267,10 +2325,33 @@ own lookups. `GET /github-accounts` lists the accounts gh is signed in to on a h
 (API 50), and profiles and projects take `github_account` (a login, or `HOST/LOGIN` for a GitHub
 Enterprise host; null for the default). Agents can't change it with `update_project`.
 
-**How runs reach the board's MCP servers.** The board serves both servers itself, over MCP's
-streamable HTTP transport, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on the host's
-internal address (`127.0.0.1:<port>`, the host that runs the agent), so a run has no MCP helper
-process of its own. Each run's `mcp.json` has them as `http` servers with a bearer token of the
+**How runs reach the board's MCP servers.** The board serves both servers itself, so a run has no
+MCP helper process of its own.
+
+A Claude run that takes input (every run but a `/compact`) has the board's tools as an in-process
+("SDK") MCP server of Claude Code's, over its control protocol, as its permission prompts are (HA-221,
+`server-ts/src/agent/runner/requests.ts`). The run's input starts with an `initialize` control
+request that registers the `huntaway` server (`sdkMcpServers`), with no time limit on its calls and
+none moved to the background, and gives Claude Code its handshake's results (`sdkMcpServerManifests`:
+its `initialize` and `tools/list`, the reviewers' tools for a review thread), so it needn't ask for
+them before the first turn. Claude Code sends each MCP message as an `mcp_message` control request
+on the run's output (`out.jsonl`), and gets the server's JSON-RPC answer in a `control_response` on
+its input (`input.jsonl`). A tool call is a board call like any other (the same dispatch, the same
+policy: reviewers' and planning threads' limits, approvals, approval rules, linked hosts), recorded
+in `mcp_calls` as `stdio:<run id>:<request id>` with what answering it takes, and its task is its
+run's: the run's `mcp.json` has no board server, and the board's HTTP server refuses the run (it has
+only `gh` there). After a restart the run's output is followed from its saved offset, past the calls
+already read, so those still going (a `wait`, an approval that `delete_task` or `update_project`
+asked for) are taken up again from `mcp_calls` and answered when they're done: a `wait` keeps its
+deadline and what it watches. A call that may have taken effect before the restart cut it short
+(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code cancels (its turn
+was interrupted) isn't answered: a `wait` ends, and an approval expires. Such runs are run format 4,
+which an older build that's rolled back to stops rather than follow, as it couldn't answer their
+calls. With `IA_MCP_STDIO=1` (below), Claude runs get the helpers instead.
+
+Codex runs and compactions reach the board's tools over MCP's streamable HTTP transport, and every
+run reaches the `gh` server that way, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on
+the host's internal address (`127.0.0.1:<port>`, the host that runs the agent). Each run's `mcp.json` has them as `http` servers with a bearer token of the
 run's own (an HMAC of the run's id with the host's token), which only acts as that run: the server
 says which run a call is for, not the agent, and the agent never holds the host's token. What the
 `gh` server needs of the run (its working directory and GitHub account) is in the run's folder

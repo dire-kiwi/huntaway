@@ -349,6 +349,26 @@ difference.
 
 On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none flagged yet): **no differences** in 145,000 checks: every task was translated for it, and each reader agrees (`user_replies` 7,432 checks, `tool_use` 55,566, `subagent_call` 22,369, `user_wrote_since` 11,358, `tool_calls_since` 3,716, `last_message`, `said_since_asked` and `open_questions` 1,858 each...), and `attachments.referenced` is the same set from messages as from items. The messages readers' windows changed 12 answers (the items readers found what the windows cut off: `tool_use`'s 5 messages, mostly). It took 194 s, most of it translating. The copy has no pending prompts (copy-live-board.sh scrubs them), so pending approvals were compared on unit tests only.
 
+## Claude's control protocol
+
+Steps 8 and 9 move what a Claude run asks the board onto Claude Code's control protocol, on the run's own output
+(`out.jsonl`) and input (`input.jsonl`), in `server-ts/src/agent/runner/requests.ts`:
+
+- **Permission prompts** (step 8, HA-219): `--permission-prompt-tool stdio`, so each prompt is a `can_use_tool` control
+  request, decided by mcp/permissions.ts's policy as the helper's `permission_prompt` was, and answered with a
+  `control_response`. Run format 3.
+- **The board's tools** (step 9, HA-221): an in-process ("SDK") MCP server, registered by the `initialize` control
+  request the run's input starts with, which also gives Claude Code the server's handshake (so no round trips before the
+  first turn). Each MCP message is an `mcp_message` control request; a `tools/call` goes through the same dispatch as
+  the HTTP server's calls (mcp/tools/dispatch.ts), knowing its task from its run. The run's `mcp.json` has no board
+  server, and the board's HTTP server refuses it. Run format 4.
+
+Both are recorded in `mcp_calls` as `stdio:<run id>:<request id>`, at most once each, and answered before they're
+recorded as done. After a restart, those still executing are taken up again from there (`resume_requests`), since the
+run's output is followed from past them: a prompt is asked again, a `wait` carries on to its deadline, and a call that
+may have taken effect is answered that it was cut short. Codex runs and compactions (which take no input) still use the
+board's HTTP server (mcp/http.ts), until step 11. Nothing here changes what's stored in the thread.
+
 ## Status
 
 | Step | Task | State |
@@ -357,11 +377,11 @@ On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none f
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
 | 3. Items written live, behind a setting | HA-239 (was HA-216) | Done: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
 | 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
-| 5. The UI on items | HA-218 | This change: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. The setting can be turned on for new tasks. |
+| 5. The UI on items | HA-218 | Done: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. The setting can be turned on for new tasks. |
 | 6. Readers on items | HA-217 | Done: `threads/history.ts`, `huntaway threads-readers` (`threads/readers.ts`), the attachment scan on items, converter 3. Telegram's readers (HA-257): converter 5. |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
-| 8. Permission prompts and questions over stdio | HA-219 | Not started |
-| 9. The board's tools in process | HA-221 | Not started |
+| 8. Permission prompts and questions over stdio | HA-219 | Done: `agent/runner/requests.ts`, run format 3. See "Claude's control protocol". |
+| 9. The board's tools in process | HA-221 | This change: the board's MCP server in process for Claude runs, run format 4. See "Claude's control protocol". |
 | B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`server-ts/src/db/file.ts`) |
 | 10. Items are the source | HA-222 | Not started |
 | 11. Codex writes items directly | HA-223 | Not started |

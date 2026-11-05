@@ -225,7 +225,10 @@ function PushPanel() {
           {others.map((d) => (
             <div key={d.id} className="rounded-lg border border-line px-3 py-2">
               <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-fg">{d.name || "A device"}</span>
+                <span className="min-w-0 flex-1 truncate text-fg">
+                  {d.name || "A device"}
+                  {d.kind === "expo" && <span className="text-faint"> · Huntaway app</span>}
+                </span>
                 <span className="shrink-0 text-faint">{d.last_sent_at ? `last sent ${timeAgo(d.last_sent_at)}` : `added ${timeAgo(d.created_at)}`}</span>
                 <Button size="sm" variant="ghost" disabled={busy} onClick={() => test(d)} title={`Send ${d.name || "it"} a test notification`}>
                   Test

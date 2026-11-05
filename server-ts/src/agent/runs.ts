@@ -37,14 +37,17 @@ import { context, err_str, expand_tilde, sleep } from "../util.ts";
 import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
-export const RUN_FORMAT = 3;
+export const RUN_FORMAT = 4;
 /** The format from which a run's agent may ask for permission on its output. */
 const ASKS_FORMAT = 3;
+/** The format from which a run's agent may call the board's tools on its output. */
+const TOOLS_FORMAT = 4;
 
 /**
  * Format 3 is a run whose agent asks for permission on its output and waits for the answer on its input (see
- * runner/requests.ts): a server that doesn't answer it there would leave it waiting for good, so a run that doesn't is
- * still written as format 2, which older builds follow.
+ * runner/requests.ts), and format 4 one whose agent calls the board's tools there too (an in-process MCP server, see
+ * the same): a server that doesn't answer it there would leave it waiting for good, so each run is written with the
+ * lowest format it needs, and a run that needs neither is still format 2, which older builds follow.
  */
 const UNASKED_FORMAT = 2;
 
@@ -68,6 +71,11 @@ export interface Launch {
   codex: Spec | null;
   /** Its agent asks for permission on its output (`--permission-prompt-tool stdio`, see runner/requests.ts). */
   asks_on_output?: boolean;
+  /**
+   * Its agent calls the board's tools on its output (an in-process MCP server, which its prompt's `initialize` request
+   * names, see runner/requests.ts): its `mcp.json` has no board server, and the board's HTTP server refuses it.
+   */
+  tools_on_output?: boolean;
 }
 
 /** A value tests can set (Rust's thread-local `Cell`). */
@@ -215,16 +223,21 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   }
   await mkdir(dir, { recursive: true });
   // The boot tells whether its pids are still its own later (see `pid_reused`).
-  const run = { boot: boot_id(), format: l.asks_on_output ? ASKS_FORMAT : UNASKED_FORMAT, version: VERSION };
+  const run = { boot: boot_id(), format: l.tools_on_output ? TOOLS_FORMAT : l.asks_on_output ? ASKS_FORMAT : UNASKED_FORMAT, version: VERSION };
   await writeFile(join(dir, "run.json"), JSON.stringify(run));
   await writeFile(join(dir, "prompt"), l.prompt);
   if (l.input) await writeFile(join(dir, "input.jsonl"), "");
 
   // The board's tools, and GitHub through gh (outside the agent's sandbox; a server of the project's own by this name
   // replaces it). This server serves both over HTTP (see mcp/http.ts), with what they need of the run kept here; the URL
-  // stays valid across restarts.
-  await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review }));
+  // stays valid across restarts. A run that calls the board's tools on its output has only gh's here.
+  const in_process = !!l.tools_on_output;
+  await writeFile(
+    join(dir, mcp_http.SETTINGS_FILE),
+    mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }),
+  );
   const servers: Record<string, any> = process.env.IA_MCP_STDIO === "1" ? stdio_servers(state, l) : mcp_http.servers(state, l.run_id);
+  if (in_process) delete servers[runner.MCP_SERVER_NAME];
   for (const [name, server] of Object.entries(l.mcp_servers ?? {})) {
     if (name !== runner.MCP_SERVER_NAME) servers[name] = server;
   }
@@ -444,9 +457,17 @@ function read_json(path: string): any {
   }
 }
 
-/** Whether run `run_id`'s agent asks for permission on its output (see runner/requests.ts). */
+/**
+ * Whether run `run_id`'s agent asks for permission, or calls the board's tools, on its output (see runner/requests.ts):
+ * it needs its input for any turn it takes, as Claude Code denies or fails those unasked once it's closed.
+ */
 export function asks_on_output(state: Shared, run_id: string): boolean {
   return format(state, run_id) >= ASKS_FORMAT;
+}
+
+/** Whether run `run_id`'s agent calls the board's tools on its output, an in-process MCP server (see runner/requests.ts). */
+export function tools_on_output(state: Shared, run_id: string): boolean {
+  return format(state, run_id) >= TOOLS_FORMAT;
 }
 
 /** Format of an existing run directory. */

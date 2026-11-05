@@ -1,5 +1,5 @@
-// Port of server/src/devices/tests.rs (HA-136, from the HA-117 branch at bb59d8a). Its push and Assistant tab tests
-// (HA-137, HA-138) come with those (HA-209).
+// Port of server/src/devices/tests.rs (HA-136, from the HA-117 branch at bb59d8a), with its push and Assistant tab tests
+// (HA-137, HA-138, ported by HA-209; the push ones are in integrations/push/expo_tests.test.ts).
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -311,6 +311,30 @@ test("a_device_cant_get_the_boards_tokens_or_a_shell", async () => {
 });
 
 /**
+ * The app's Assistant tab (HA-138, ported by HA-209): a device reaches the profile's assistant on the board, through the
+ * hub's proxy to the host it's on (`?local=1`, as the app asks for it), and its thread; not the assistant's memory.
+ */
+test("a_device_reaches_the_profiles_assistant", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "work", [], null);
+  const [phone] = await pair_device(s, "phone");
+  const [status, a] = await call(s, "GET", `/api/profiles/${p.id}/assistant`, phone);
+  assert.deepEqual([status, a.task_type, a.host_id], [200, "assistant", "h"], JSON.stringify(a));
+  const [st, again] = await call(s, "GET", `/api/h/h/profiles/${p.id}/assistant?local=1`, phone);
+  assert.deepEqual([st, again.id], [200, a.id], JSON.stringify(again));
+  assert.equal((await call(s, "GET", `/api/h/h/tasks/${a.id}/messages`, phone))[0], 200);
+  assert.equal(refused("POST", `/api/h/h/profiles/${p.id}/assistant`), null);
+  for (const rest of ["memory", "memory/file?path=USER.md", "memory/history", "memory/diff"]) {
+    const path = `/api/h/h/profiles/${p.id}/assistant/${rest}`;
+    assert.equal((await call(s, "GET", path, phone))[0], 403, path);
+  }
+  for (const rest of ["memory/file", "memory/restore", "memory/import"]) {
+    const path = `/api/profiles/${p.id}/assistant/${rest}`;
+    assert.equal((await call(s, "POST", path, phone, {}))[0], 403, path);
+  }
+});
+
+/**
  * The second check: the handlers of what a device must never reach refuse a request that carries one, as a request
  * through the hub's proxy to this host does, whatever the path check let through.
  */
@@ -386,12 +410,25 @@ test("what_a_device_may_do", () => {
     ["POST", "/api/h/x/permissions/p"],
     ["GET", "/api/h/x/attachments/a/photo%20one.jpg"],
     ["GET", "/api/h/my%20host/profiles"],
+    // HA-138: the Assistant tab.
+    ["GET", "/api/profiles/p/assistant"],
+    ["POST", "/api/h/x/profiles/p/assistant"],
+    // HA-137: the app's push, its own subscriptions.
+    ["GET", "/api/push"],
+    ["POST", "/api/push/subscriptions"],
+    ["PATCH", "/api/push/subscriptions/s1"],
+    ["DELETE", "/api/push/subscriptions/s1"],
+    ["POST", "/api/push/subscriptions/s1/test"],
+    ["POST", "/api/permissions/p/push-answer"],
   ];
   for (const [m, p] of allowed) assert.equal(refused(m, p), null, `${m} ${p}`);
   const not: Array<[string, string]> = [
     ["GET", "/api/hosts/join"],
     ["GET", "/api/h/x/hosts/join"],
     ["GET", "/api/h/x/ws"],
+    ["GET", "/api/h/x/push"],
+    ["POST", "/api/h/x/push/subscriptions"],
+    ["GET", "/api/push/subscriptions"],
     ["GET", "/api/h/x/devices"],
     ["DELETE", "/api/h/x/devices/d1"],
     ["PATCH", "/api/devices/d1"],
@@ -414,6 +451,8 @@ test("what_a_device_may_do", () => {
     ["GET", "/api/h/x/tasks/a%23/messages"],
     ["POST", "/api/h/x/permissions/p%3Fx"],
     ["GET", "/api/profiles/"],
+    ["GET", "/api/h/x/profiles/p/assistant/memory"],
+    ["POST", "/api/profiles/p/assistant/memory/import"],
     ["GET", "/api"],
     ["GET", "/profiles"],
   ];

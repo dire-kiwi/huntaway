@@ -8,7 +8,8 @@ import * as db from "../db.ts";
 import type { Shared } from "../state.ts";
 import * as testing from "../testing.ts";
 import { new_id, sleep } from "../util.ts";
-import { RUN_FORMAT, SERVE_ENV, boot_id, follow_inner, pid_reused, prune, remove_finished, resume_reaping, run_dir, start, stop_orphan, timing } from "./runs.ts";
+import { RUN_FORMAT, SERVE_ENV, boot_id, follow_inner, pid_reused, prune, remove_finished, resume_reaping, run_dir, start, stop_orphan, timing, type Launch } from "./runs.ts";
+import * as mcp_http from "../mcp/http.ts";
 
 // As Rust's are under cfg(test).
 timing.REAP_WAIT = 5_000;
@@ -338,4 +339,34 @@ test("an_agents_run_doesnt_get_the_servers_own_settings", async () => {
   assert.equal(env.get("IA_CLAUDE_BIN"), "/bin/true");
   assert.equal(env.get("IA_FROM_LAUNCH"), "1");
   assert.ok(env.get("PATH"));
+});
+
+test("a_run_that_calls_the_board_on_its_output_has_no_board_server_in_its_mcp_config", async () => {
+  // HA-221: the board's tools are an in-process server (see runner/requests.ts) for a Claude run that takes input.
+  const state = testing.state();
+  const task = new_task(state, "in_progress");
+  const dir = testing.temp_dir();
+  const shim = join(dir, "shim");
+  writeFileSync(shim, `#!/bin/sh\necho $$ > "$1/pid"\n`, { mode: 0o755 });
+  const before = process.env.IA_SHIM_BIN;
+  process.env.IA_SHIM_BIN = shim;
+  const started = async (more: Partial<Launch>) => {
+    const run = db.insert_run(state.db(), task, "prompt");
+    const l: Launch = { run_id: run.id, cwd: dir, args: [], env: [], config_dir: null, prompt: "hi", input: true, review: false,
+      mcp_servers: { own: { type: "stdio", command: "own" } }, github_account: null, codex: null, ...more };
+    await start(state, l);
+    const read = (f: string) => JSON.parse(readFileSync(join(run_dir(state, run.id), f), "utf8"));
+    return { servers: Object.keys(read("mcp.json").mcpServers).sort(), format: read("run.json").format, in_process: read(mcp_http.SETTINGS_FILE).in_process };
+  };
+  try {
+    assert.deepEqual(await started({ asks_on_output: true, tools_on_output: true }), { servers: ["gh", "own"], format: 4, in_process: true });
+    // In Bypass, with nothing to ask: its tools still need its input.
+    assert.deepEqual(await started({ tools_on_output: true }), { servers: ["gh", "own"], format: 4, in_process: true });
+    // A compaction (no input), and older runs' formats.
+    assert.deepEqual(await started({ input: false }), { servers: ["gh", "huntaway", "own"], format: 2, in_process: false });
+    assert.deepEqual(await started({ asks_on_output: true }), { servers: ["gh", "huntaway", "own"], format: 3, in_process: false });
+  } finally {
+    if (before === undefined) delete process.env.IA_SHIM_BIN;
+    else process.env.IA_SHIM_BIN = before;
+  }
 });
