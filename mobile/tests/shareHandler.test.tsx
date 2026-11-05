@@ -9,7 +9,7 @@ jest.mock("expo-router", () => ({ useRouter: () => mockRouter, usePathname: () =
 const mockIntent = { hasShareIntent: true, shareIntent: { text: "Read this", webUrl: null }, resetShareIntent: jest.fn(), error: null };
 jest.mock("expo-share-intent", () => ({ useShareIntentContext: () => mockIntent }));
 
-const b = (id: string) => ({ id, url: `https://${id}`, name: id, deviceId: "", apiVersion: 116, profile: null, pairedAt: "" });
+const b = (id: string) => ({ id, url: `https://${id}`, name: id, deviceId: "", apiVersion: 119, profile: null, pairedAt: "" });
 
 beforeAll(async () => {
   await boards.add(b("work"), "w");

@@ -42,7 +42,7 @@ beforeAll(async () => {
   startNotifications();
   await configure();
   // As the app saves them for the lock screen (the boards themselves aren't read in the background).
-  await saveBoardUrls(lockScreenStore, [{ id: "work", url: "https://work.ts.net", name: "work", deviceId: "d", apiVersion: 113, profile: null, pairedAt: "" }]);
+  await saveBoardUrls(lockScreenStore, [{ id: "work", url: "https://work.ts.net", name: "work", deviceId: "d", apiVersion: 119, profile: null, pairedAt: "" }]);
 });
 
 test("prompts have Allow (which needs the phone unlocked) and Deny, answered without opening the app", () => {

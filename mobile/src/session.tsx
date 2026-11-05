@@ -74,6 +74,9 @@ export function clearStatus(id: string) {
 
 export const statusOf = (all: Record<string, BoardStatus>, id: string) => all[id] ?? NO_STATUS;
 
+/** A board's status now, outside a component (what a tapped notification opens depends on it). */
+export const boardStatus = (id: string) => statusOf(statuses, id);
+
 /** Whether a board can be used: paired and new enough. */
 export const usable = (s: BoardStatus) => !s.unauthorized && !s.tooOld;
 

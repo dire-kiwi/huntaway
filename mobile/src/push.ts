@@ -1,10 +1,12 @@
-// Native push (API 113), apart from Expo's modules so it can be tested: the app's subscription on each paired board
+// Native push (API 119), apart from Expo's modules so it can be tested: the app's subscription on each paired board
 // (a board's hub watches every host on it, so one per board), and what a notification does. Tapping one opens its task
-// on the board it came from. A prompt's Allow and Deny answer it with the push's own one-time token
+// on the board it came from, or for the assistant's reply, the Assistant tab (see `pushTarget`). A prompt's Allow and
+// Deny answer it with the push's own one-time token
 // (`POST /api/permissions/{id}/push-answer`), which needs no device token, so they work from the lock screen, where
 // the keychain can't be read. Pushes pass through Expo, Apple and Google, so they carry the task's key and title and
 // the event only; the rest is fetched over the app's own connection. See notifications.ts for the Expo side.
 import { ASSISTANT_PUSH_EVENTS, EXPO_PUSH_API, type Client, type Fetch, type PushDevice, type PushEvents, type PushPrompts } from "@huntaway/client";
+import { showsAssistant } from "./assistant";
 import type { Board, SecretStore } from "./boards";
 
 /** The notification category of prompts that can be answered from the notification (the server's `categoryId`). */
@@ -32,7 +34,7 @@ export const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
   { id: "all", label: "Every task's" },
 ];
 
-/** What a push from a board carries (server: integrations/push.rs, `expo_message`). */
+/** What a push from a board carries (server-ts/src/integrations/push.ts, `expo_message`). */
 export interface PushData {
   /** The board's host id: the paired board's id. */
   board: string;
@@ -83,10 +85,46 @@ export function pushData(notification: Any): PushData | null {
   return null;
 }
 
+/** A task's screen on a board. */
+export type TaskRoute = { pathname: "/task/[board]/[host]/[id]"; params: { board: string; host: string; id: string } };
+
 /** The task screen a push opens, if it's about a task: a reply's is the assistant's thread, a routine's report's the routine's. */
-export function taskRoute(d: PushData): { pathname: "/task/[board]/[host]/[id]"; params: { board: string; host: string; id: string } } | null {
+export function taskRoute(d: PushData): TaskRoute | null {
   if (!d.host || !d.task_id) return null;
   return { pathname: "/task/[board]/[host]/[id]", params: { board: d.board, host: d.host, id: d.task_id } };
+}
+
+/** Where a tap on a push goes: board `board`'s Assistant tab with `profile` picked, or a task's screen. */
+export type PushTarget = { assistant: { board: string; profile: string } } | { task: TaskRoute };
+
+/** What `pushTarget` needs of the app: its paired boards, how each is doing, and a client for each. */
+export interface TargetDeps {
+  board(id: string): Pick<Board, "apiVersion"> | undefined;
+  status(id: string): { unauthorized: boolean; tooOld: boolean };
+  client(id: string): Pick<Client, "task" | "profiles"> | null;
+}
+
+/**
+ * Where tapping push `d` goes (HA-164). The assistant's reply (`reply`, HA-162) opens the Assistant tab of its board, with
+ * the profile whose assistant it is picked: its task's profile on `host`, by name, as the board merges profiles across its
+ * hosts (boardData.ts). The reply's task screen (the assistant's thread) instead when the board has no Assistant tab (one
+ * from before it, or one the app can't use) or the profile can't be found. Every other push opens its task's screen, a
+ * routine's report too, which is about the routine's own thread. Null for a push about no task.
+ */
+export async function pushTarget(d: PushData, deps: TargetDeps): Promise<PushTarget | null> {
+  const route = taskRoute(d);
+  if (!route) return null;
+  if (d.event !== "reply" || !showsAssistant(deps.board(d.board), deps.status(d.board))) return { task: route };
+  const profile = await assistantProfile(deps.client(d.board), route.params.host, route.params.id).catch(() => null);
+  return profile ? { assistant: { board: d.board, profile } } : { task: route };
+}
+
+/** The name of the profile whose assistant task `id` on `host` is, if it's an assistant and its profile is there. */
+async function assistantProfile(client: Pick<Client, "task" | "profiles"> | null, host: string, id: string): Promise<string | null> {
+  if (!client) return null;
+  const [{ task }, profiles] = await Promise.all([client.task(host, id), client.profiles(host)]);
+  if (task.task_type !== "assistant") return null;
+  return profiles.find((p) => p.id === task.profile_id)?.name ?? null;
 }
 
 // ---------- answering from the notification ----------
@@ -122,8 +160,8 @@ export interface ResponseDeps {
   /** A paired board's address, by its id (readable while the phone is locked: see `saveBoardUrls`). */
   boardUrl(id: string): Promise<string | null>;
   fetch: Fetch;
-  /** Opens a task (only in the app, not in the background). */
-  open?(route: NonNullable<ReturnType<typeof taskRoute>>): void;
+  /** Opens what a push is about, its task or the Assistant tab (only in the app, not in the background: see `pushTarget`). */
+  open?(d: PushData): void;
   /** Shows how it went, in place of the notification answered. */
   show(title: string, body: string, data: PushData): Promise<void>;
   dismiss(notificationId: string): Promise<void>;
@@ -174,7 +212,7 @@ export interface Response {
 }
 
 /**
- * Handles taps on notifications: a plain one opens its task; Allow or Deny answer its prompt, then replace it with what
+ * Handles taps on notifications: a plain one opens its task (or the Assistant tab); Allow or Deny answer its prompt, then replace it with what
  * happened. On Android, a tap made while the app is in the background reaches both its listener and its background
  * task, so each is handled once.
  */
@@ -192,8 +230,7 @@ export function responseHandler(deps: ResponseDeps) {
       await deps.seen.add(key).catch(() => {});
     }
     if (r.actionIdentifier !== ALLOW && r.actionIdentifier !== DENY) {
-      const route = taskRoute(d);
-      if (route && deps.open) deps.open(route);
+      if (taskRoute(d) && deps.open) deps.open(d);
       return null;
     }
     const title: string = r.notification?.request?.content?.title ?? "Huntaway";

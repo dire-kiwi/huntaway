@@ -485,8 +485,10 @@ export const tasksApi = ({ on, storage }: Http) => ({
       fanout_id?: string;
     },
   ) => on(h).post<Task>(`/profiles/${enc(profileId)}/tasks`, b),
-  /** All of the profile's tasks (not reviews), in every project and none. */
-  profileTasks: (h: string, profileId: string) => on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks`),
+  /** All of the profile's tasks (not reviews), in every project and none; with `assistant` its assistant too (API 109),
+   *  which is left out otherwise. Never its routine threads. */
+  profileTasks: (h: string, profileId: string, assistant = false) =>
+    on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks${assistant ? "?include_assistant=true" : ""}`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
    *  assistant (API 109), which is off the board. */
   groupTasks: (h: string, profileId: string, assistant = false) =>

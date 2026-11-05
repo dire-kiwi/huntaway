@@ -8,6 +8,7 @@ import {
   DENY,
   pushable,
   pushData,
+  pushTarget,
   responseHandler,
   handledStore,
   PENDING_KEY,
@@ -21,7 +22,9 @@ import {
   withEvent,
   URLS_KEY,
   type ResponseDeps,
+  type TargetDeps,
 } from "../src/push";
+import { ASSISTANT_TAB_API } from "../src/assistant";
 import { memoryStorage } from "../src/pairing";
 import { fakeFetch, memoryStore } from "./helpers";
 
@@ -36,7 +39,7 @@ const board = (id: string, more: Partial<Board> = {}): Board => ({
   ...more,
 });
 
-/** A push as the server sends it (push.rs, expo_message), as expo-notifications hands it over. */
+/** A push as the server sends it (server-ts/src/integrations/push.ts, expo_message), as expo-notifications hands it over. */
 const promptData = {
   board: "work",
   host: "h1",
@@ -79,6 +82,78 @@ describe("what a push carries", () => {
     const report = { board: "work", host: "h1", url: "/t/r7", tag: "h1:r7:report:9", task_id: "r7", event: "report" };
     expect(pushData(notification(report))?.event).toBe("report");
     expect(taskRoute(pushData(notification(report))!)).toEqual({ pathname: "/task/[board]/[host]/[id]", params: { board: "work", host: "h1", id: "r7" } });
+  });
+});
+
+// HA-164: the assistant's reply opens the Assistant tab on its board, with its profile picked.
+describe("where a tap goes", () => {
+  const reply = { board: "work", host: "h2", task_id: "a1", event: "reply" };
+  const report = { board: "work", host: "h2", task_id: "r7", event: "report" };
+  const thread = (id: string, host = "h2") => ({ task: { pathname: "/task/[board]/[host]/[id]", params: { board: "work", host, id } } });
+
+  /** A board on API `api` whose host h2 has profiles "Ivan" (p-ivan) and "Work", and tasks a1 (Ivan's assistant), r7
+   *  (Ivan's routine thread), w1 (Work's code task) and o1 (the assistant of a profile h2 no longer has). */
+  function app(api = ASSISTANT_TAB_API, status = { unauthorized: false, tooOld: false }) {
+    const tasks: Record<string, { profile_id: string; task_type?: string }> = {
+      a1: { profile_id: "p-ivan", task_type: "assistant" },
+      r7: { profile_id: "p-ivan", task_type: "routine" },
+      w1: { profile_id: "p-work" },
+      o1: { profile_id: "p-gone", task_type: "assistant" },
+    };
+    const asked: string[] = [];
+    const client = {
+      task: jest.fn(async (h: string, id: string) => {
+        asked.push(`task ${h} ${id}`);
+        if (!tasks[id]) throw new Error("not found");
+        return { task: { id, ...tasks[id] }, last_message: null, pending_permissions: 0 };
+      }),
+      profiles: jest.fn(async (h: string) => {
+        asked.push(`profiles ${h}`);
+        return [
+          { id: "p-ivan", name: "Ivan" },
+          { id: "p-work", name: "Work" },
+        ];
+      }),
+    };
+    const deps: TargetDeps = {
+      board: (id) => (id === "work" ? { apiVersion: api } : undefined),
+      status: () => status,
+      client: (id) => (id === "work" ? (client as unknown as ReturnType<TargetDeps["client"]>) : null),
+    };
+    return { deps, asked };
+  }
+
+  test("a reply opens the Assistant tab with the profile whose assistant it is", async () => {
+    const { deps, asked } = app();
+    expect(await pushTarget(pushData(notification(reply))!, deps)).toEqual({ assistant: { board: "work", profile: "Ivan" } });
+    // Its profile on the host it's on: a profile named the same on the board's other hosts is the same profile there.
+    expect(asked.sort()).toEqual(["profiles h2", "task h2 a1"]);
+  });
+
+  test("a report opens its routine's thread, and other pushes their task", async () => {
+    const { deps, asked } = app();
+    expect(await pushTarget(pushData(notification(report))!, deps)).toEqual(thread("r7"));
+    expect(await pushTarget(pushData(notification(promptData))!, deps)).toEqual(thread("t1", "h1"));
+    expect(await pushTarget({ board: "work" }, deps)).toBeNull();
+    // Without asking the board anything.
+    expect(asked).toEqual([]);
+  });
+
+  test("on a board without the Assistant tab, a reply opens the assistant's thread", async () => {
+    for (const { deps, asked } of [app(ASSISTANT_TAB_API - 1), app(ASSISTANT_TAB_API, { unauthorized: true, tooOld: false })]) {
+      expect(await pushTarget(pushData(notification(reply))!, deps)).toEqual(thread("a1"));
+      expect(asked).toEqual([]);
+    }
+    // A board no longer paired here.
+    expect(await pushTarget({ ...reply, board: "gone" }, app().deps)).toEqual({ task: { pathname: "/task/[board]/[host]/[id]", params: { board: "gone", host: "h2", id: "a1" } } });
+  });
+
+  test("a reply whose profile can't be found opens its thread", async () => {
+    const { deps } = app();
+    // Its profile isn't on that host any more; the task can't be read; or it isn't an assistant's.
+    for (const id of ["o1", "nope", "w1", "r7"]) {
+      expect(await pushTarget({ ...reply, task_id: id }, deps)).toEqual(thread(id));
+    }
   });
 });
 
@@ -433,7 +508,7 @@ describe("Allow and Deny on the notification", () => {
     const t = deps({}, { status: 200, body: { result: "allowed", message: "Allowed." } });
     const handle = responseHandler(t.d);
     await handle({ actionIdentifier: DEFAULT_ACTION, notification: notification(promptData, "n2") });
-    expect(t.opened).toEqual([{ pathname: "/task/[board]/[host]/[id]", params: { board: "work", host: "h1", id: "t1" } }]);
+    expect(t.opened).toEqual([pushData(notification(promptData))]);
     expect(await handle({ actionIdentifier: ALLOW, notification: notification(promptData, "n3") })).toEqual({ result: "invalid", message: expect.stringMatching(/isn't paired/) });
     expect(t.f.calls).toEqual([]);
     // Something that isn't a board's push is left alone.

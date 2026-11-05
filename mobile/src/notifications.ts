@@ -21,16 +21,17 @@ import {
   handledStore,
   PROMPT_CATEGORY,
   PushRegistrar,
+  pushTarget,
   responseHandler,
   saveBoardUrls,
   savedBoardUrl,
   subscribedKey,
+  type PushData,
   type Response,
   type Subscribed,
-  type taskRoute,
 } from "./push";
 import { lockScreenStore, secrets } from "./secrets";
-import { boards, clientFor, statusOf, useBoards, useBoardStatuses } from "./session";
+import { boards, boardStatus, clientFor, statusOf, useBoards, useBoardStatuses } from "./session";
 
 export const supported = Platform.OS === "ios" || Platform.OS === "android";
 
@@ -73,16 +74,35 @@ export function configure(): Promise<void> {
 
 // ---------- taps ----------
 
-type Route = NonNullable<ReturnType<typeof taskRoute>>;
-let opener: ((r: Route) => void) | null = null;
-/** A task to open once the app's screens are up (a tap that started the app). */
-let pendingRoute: Route | null = null;
+let opener: ((d: PushData) => void) | null = null;
+/** A push to open once the app's screens are up (a tap that started the app), when its boards have been read. */
+let pendingPush: PushData | null = null;
+
+type Router = ReturnType<typeof useRouter>;
+
+/** Opens what push `d` is about: its task, or for the assistant's reply, the Assistant tab on its board and profile. */
+async function openPush(router: Router, d: PushData) {
+  const target = await pushTarget(d, {
+    board: (id) => boards.board(id),
+    status: (id) => boardStatus(id),
+    client: (id) => {
+      const b = boards.board(id);
+      return b ? clientFor(b) : null;
+    },
+  });
+  if (!target) return;
+  if ("task" in target) return router.push(target.task);
+  const { board, profile } = target.assistant;
+  await boards.update(board, { profile });
+  await boards.select(board);
+  router.navigate("/");
+}
 
 const handle = responseHandler({
   // The boards aren't read in the background (and the keychain can't be while the phone is locked).
   boardUrl: async (id) => boards.board(id)?.url ?? savedBoardUrl(lockScreenStore, id),
   fetch: (url, init) => globalThis.fetch(url, init),
-  open: (r) => (opener ? opener(r) : (pendingRoute = r)),
+  open: (d) => (opener ? opener(d) : (pendingPush = d)),
   show: async (title, body, data) => {
     await Notifications.scheduleNotificationAsync({ content: { title, body, data: { ...data } }, trigger: Platform.OS === "android" ? { channelId: "prompts" } : null });
   },
@@ -200,7 +220,7 @@ export function retryPush() {
  * Keeps this phone subscribed on each paired board that can push to it, and unsubscribed where that was turned off
  * or the board removed: done at start, again whenever a board's websocket connects (after the network or the app
  * came back, say) and when the token changes, and retried by itself after a failure. Also keeps the boards' addresses
- * for the lock screen, and opens the tasks of taps. Rendered once, at the root.
+ * for the lock screen, and opens what taps are about. Rendered once, at the root.
  */
 export function PushSetup() {
   const router = useRouter();
@@ -209,11 +229,11 @@ export function PushSetup() {
 
   useEffect(() => {
     if (!supported) return;
-    opener = (r) => router.push(r);
-    if (pendingRoute) {
-      const r = pendingRoute;
-      pendingRoute = null;
-      router.push(r);
+    opener = (d) => void openPush(router, d).catch(() => {});
+    if (pendingPush) {
+      const d = pendingPush;
+      pendingPush = null;
+      opener(d);
     }
     // A tap that started the app may have come before the listener did (and comes again on each start, which the
     // handler knows from the taps it keeps).

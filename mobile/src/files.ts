@@ -2,7 +2,7 @@
 // which is how the host's POST /attachments takes them. Its limit is 10 MB.
 import { File } from "expo-file-system";
 
-/** The largest file a host takes (server/src/attachments.rs's MAX_BYTES). */
+/** The largest file a host takes (server-ts/src/attachments.ts's MAX_BYTES). */
 export const MAX_ATTACHMENT_BYTES = 10 << 20;
 
 /** A local file's contents, base64, or why it can't go. */

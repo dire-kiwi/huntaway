@@ -131,7 +131,7 @@ export async function loadBoardInbox(client: Client, board: BoardRef, profile: s
     const lists = await Promise.all(
       on.map(async ({ hostId, profile: p }) => {
         const [listed, projects, permissions] = await Promise.all([
-          // With the assistant (a board from before API 107 ignores the flag and has none).
+          // With the assistant (a board from before API 109 ignores the flag and has none).
           client.profileTasks(hostId, p.id, true),
           client.projects(hostId, p.id).catch(() => [] as Project[]),
           client.pendingPermissions(hostId, { profile_id: p.id }),

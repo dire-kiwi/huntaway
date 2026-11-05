@@ -13,7 +13,7 @@ export type ThreadItem =
   | { type: "event"; key: string; level: string; text: string }
   | { type: "permission"; key: string; requestId: string; status: string; tool: string; input: Any }
   | { type: "question"; key: string; id: number; data: Any }
-  /** What one of the assistant's routines posted in its thread (API 111): its name, how its run ended, its text, and the
+  /** What one of the assistant's routines posted in its thread (API 110): its name, how its run ended, its text, and the
    *  routine thread it came from, to open. */
   | { type: "report"; key: string; automation: string; outcome: string; text: string; taskId?: string; taskKey?: string }
   | { type: "result"; key: string; error: boolean; text: string };

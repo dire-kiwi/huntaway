@@ -61,11 +61,11 @@ describe("what a share puts in the composer", () => {
 });
 
 describe("which board a share goes to", () => {
-  const b = (id: string, apiVersion = 116): Board => ({ id, url: `https://${id}`, name: id, deviceId: "", apiVersion, profile: null, pairedAt: "" });
+  const b = (id: string, apiVersion = 119): Board => ({ id, url: `https://${id}`, name: id, deviceId: "", apiVersion, profile: null, pairedAt: "" });
   const ok = () => ({ unauthorized: false, tooOld: false });
 
   test("the only board that can take it is used without asking", () => {
-    const { only, boards } = shareTargets([b("work", 110), b("home")], ok, null);
+    const { only, boards } = shareTargets([b("work", 118), b("home")], ok, null);
     expect(only?.id).toBe("home");
     expect(boards.map((x) => x.id)).toEqual(["home"]);
   });

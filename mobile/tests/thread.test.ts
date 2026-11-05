@@ -7,7 +7,7 @@ const m = (id: number, kind: Message["kind"], data: unknown) => ({ id, task_id: 
 
 describe("the thread", () => {
   test("shows a routine's report with its name, outcome, text and its thread", () => {
-    // As routines.rs posts them in the assistant's thread ("t").
+    // As routines.ts posts them in the assistant's thread ("t").
     const brief = m(7, "report", { automation_id: "a1", automation: "Morning brief", task_id: "r9", key: "A-9", outcome: "reported", text: "3 mails need you." });
     const failed = m(8, "report", { automation: "Inbox sweep", task_id: "r10", key: "A-10", outcome: "failed", text: "Out of usage" });
     const old = m(9, "report", { outcome: "asked", text: "Which one?" });

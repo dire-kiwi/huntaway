@@ -6,7 +6,7 @@ import { waitingNote, WaitingShare } from "../src/shareCard";
 const mockPush = jest.fn();
 jest.mock("expo-router", () => ({ useRouter: () => ({ push: mockPush }) }));
 
-const board = { id: "home", url: "https://home", name: "home", deviceId: "", apiVersion: 116, profile: null, pairedAt: "" } as Board;
+const board = { id: "home", url: "https://home", name: "home", deviceId: "", apiVersion: 119, profile: null, pairedAt: "" } as Board;
 const names = (id: string) => ({ home: "home", work: "work" })[id];
 
 describe("a waiting share on the Assistant tab", () => {
