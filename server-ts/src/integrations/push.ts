@@ -759,7 +759,7 @@ function prompt_settled(s: AppState, host: string, m: any) {
     if (p.size === 0) s.push.prompts.delete(key);
   }
   try {
-    push_answers.settle(s.db(), host, request, status);
+    push_answers.settle(s.db(), host, request, status, data.note);
   } catch (e) {
     console.warn(`push: settling prompt ${request}'s tokens: ${err_str(e)}`);
   }
