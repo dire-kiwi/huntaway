@@ -300,6 +300,38 @@ test("the_fault_route_is_only_there_with_ia_debug_faults", async () => {
   assert.equal(s.child.exitCode, null);
 });
 
+/** The environment variables node was started with (`/proc/<pid>/environ`, which deleting them from `process.env` doesn't change). */
+function environ(pid: number): Record<string, string> {
+  return Object.fromEntries(
+    readFileSync(`/proc/${pid}/environ`, "utf8")
+      .split("\0")
+      .filter(Boolean)
+      .map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]),
+  );
+}
+
+/** HA-184 review: the desktop app's "Start without a backup" is for one start, not for a crash's, a restart's or an Update's. */
+test("start_without_a_backup_is_only_for_the_first_server_bin_huntaway_starts", async () => {
+  const s = await faulty_server({ IA_SKIP_DB_BACKUP_ONCE: "1" });
+  const first = children(s.child.pid!);
+  assert.equal(first.length, 1);
+  assert.equal(environ(first[0]).IA_SKIP_DB_BACKUP_ONCE, "1");
+  // Started again after a crash.
+  assert.deepEqual(await s.req("/debug/fault", { kind: "exit" }), { ok: true });
+  await s.ready(2);
+  const second = children(s.child.pid!);
+  assert.notDeepEqual(second, first);
+  assert.equal(environ(second[0]).IA_SKIP_DB_BACKUP_ONCE, undefined);
+  // A restart (as an Update's, which execs what the server names).
+  assert.deepEqual(await s.req("/admin/restart", { rebuild: false }), { ok: true });
+  await s.ready(3);
+  const third = children(s.child.pid!);
+  assert.notDeepEqual(third, second);
+  assert.equal(environ(third[0]).IA_SKIP_DB_BACKUP_ONCE, undefined);
+  s.child.kill("SIGTERM");
+  assert.equal(await s.exited, 0);
+});
+
 test("a_server_that_crashes_once_up_is_started_again_as_the_same_process", async () => {
   const s = await faulty_server();
   const before = await s.req("/admin/server");

@@ -122,9 +122,10 @@ export const launch = (chromium = defaultChromium()) => playwright().chromium.la
 /**
  * Open a browser on the server. `errors` collects page and console errors that weren't allowed.
  * Options: url, token, size ("1900x1000"), touch (a touch screen), timeout (ms), allowErrors (regexes), chromium (path),
- * log (function), browser (one from `launch` to open a context of its own in, which `close` closes instead of the browser).
+ * log (function), browser (one from `launch` to open a context of its own in, which `close` closes instead of the browser),
+ * onMiss (an async function run each time a way of matching a target finds nothing, for ui-check's own tests).
  */
-export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = defaultChromium(), log = console.log, browser: shared } = {}) {
+export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = defaultChromium(), log = console.log, browser: shared, onMiss } = {}) {
   if (!url) throw new Error("no server URL: pass --env <file|data dir>, or --url and --token (variables set with `. <env file>` aren't exported)");
   const base = url.replace(/\/+$/, "");
   const [width, height] = parseSize(size);
@@ -167,16 +168,29 @@ export async function open({ url, token = "", size = "1900x1000", touch = false,
   async function find(target, { gone = false, quiet = gone } = {}) {
     const candidates = SELECTOR.test(target) ? [page.locator(target)] : textCandidates(page, target);
     const deadline = Date.now() + timeout;
+    const shownBy = async (loc) => {
+      const shown = loc.filter({ visible: true });
+      const n = await shown.count();
+      if (!n) await onMiss?.();
+      return { shown, n };
+    };
     for (;;) {
       let match = null;
-      for (const loc of candidates) {
-        const shown = loc.filter({ visible: true });
-        const n = await shown.count();
-        if (n) {
-          if (n > 1 && !quiet) log(`  note: ${n} shown elements match ${JSON.stringify(target)}; using the first (a selector, or "text=… >> nth=1", picks another)`);
-          match = shown.first();
-          break;
+      for (let i = 0; i < candidates.length; i++) {
+        let { shown, n } = await shownBy(candidates[i]);
+        if (!n) continue;
+        // The candidates are counted one at a time, so the page may have rendered since the better ones were: an
+        // exact "terminal" (a tab) that came with a task titled "Terminal rendering" should win over the title (HA-195).
+        for (let j = 0; j < i; j++) {
+          const better = await shownBy(candidates[j]);
+          if (better.n) {
+            ({ shown, n } = better);
+            break;
+          }
         }
+        if (n > 1 && !quiet) log(`  note: ${n} shown elements match ${JSON.stringify(target)}; using the first (a selector, or "text=… >> nth=1", picks another)`);
+        match = shown.first();
+        break;
       }
       if (gone ? !match : match) return match;
       if (Date.now() > deadline) throw new Error(gone ? `${JSON.stringify(target)} is still shown` : `nothing shown matches ${JSON.stringify(target)}`);

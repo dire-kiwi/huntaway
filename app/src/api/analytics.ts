@@ -130,6 +130,8 @@ export interface DiskUsageReport {
   runs_kept_days?: number;
   /** What the host's database takes up, every profile's data together (API 59). */
   database?: number | null;
+  /** What the database's backups take up, null when there are none (HA-184). */
+  backups?: DiskSize | null;
   /** The disk the host's data dir is on. */
   filesystem: { total: number; free: number } | null;
   elapsed_ms: number;

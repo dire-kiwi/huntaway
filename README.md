@@ -399,8 +399,12 @@ the board's current UI.
 ```json
 { "port": 7878, "dataDir": "~/.local/share/huntaway", "host": "127.0.0.1",
   "serverBin": "/path/to/huntaway",
-  "serverUrl": "http://other-machine:7878", "token": "…" }
+  "serverUrl": "http://other-machine:7878", "token": "…",
+  "skipDbBackup": false }
 ```
+
+`skipDbBackup` starts the server without the database backup it makes when its version changes, when
+that backup can't be made (see *Release builds*).
 
 Setting `serverUrl` makes the desktop app a client of a remote server instead of starting one.
 An `http:` one counts as a secure page in the app, so it can show notifications.
@@ -462,13 +466,24 @@ can return to a Rust release, which the backup below makes safe. Checkouts run t
 
 Whichever server starts on a data dir that another version last ran on (`<data dir>/server_version`;
 the Rust server doesn't write it) first copies the database to
-`<data dir>/backups/huntaway-<from>-to-<to>-<time>.db`, before opening and migrating it, and the
-TypeScript server makes one before Update or Roll back restarts it onto another release too. The
-newest five are kept. Without a backup nothing goes ahead: an Update or Roll back that can't make one
-fails and leaves the running server as it is, and a server that can't make one at startup doesn't
-start, so the update onto it is never settled and the version before it starts again (it's marked
-bad). `IA_SKIP_DB_BACKUP=1` goes ahead without a backup. To go back to one: stop the server, move `huntaway.db` (with any
-`huntaway.db-wal` and `huntaway.db-shm`) aside, and copy the backup to `huntaway.db`.
+`<data dir>/backups/huntaway-<from>-to-<to>-<time>.db`, before opening and migrating it, unless both
+are TypeScript releases (0.4.0 on) and the database's schema is already the new one's, so that opening
+it changes nothing the version before can't read. Before a Roll back to a Rust release (or to a server
+of unknown version), the server makes the copy itself, as that one won't, and records that version in
+`server_version`, so the TypeScript server that starts after it backs up again, even if it's the same
+version as before; an Update or Roll back onto a TypeScript release only checks there's room for the
+copy that one makes. Once the server is up, it gzips the copy (`.db.gz`, about a quarter of the size),
+and keeps the newest two, and the newest from before a major change (another major version, or minor
+before 1.0, or from the Rust server). Settings → Disk shows what they take up.
+
+Without a backup nothing goes ahead: an Update or Roll back that can't make one (or for which the disk
+hasn't room) fails and leaves the running server as it is, and a server that can't make one at startup
+doesn't start, so the update onto it is never settled and the version before it starts again (it's
+marked bad). The error says why (a full disk, or no permission to write to `backups/`).
+`IA_SKIP_DB_BACKUP=1` goes ahead without a backup; in the desktop app, the error page's **Start without
+a backup** does that once, and `"skipDbBackup": true` in `desktop.json` always. To go back to a
+backup: stop the server, move `huntaway.db` (with any `huntaway.db-wal` and `huntaway.db-shm`) aside,
+and `gunzip -c` the backup to `huntaway.db` (or copy it there, if it isn't gzipped yet).
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
