@@ -109,6 +109,9 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
   // In one statement, so of two answers at once only one is sent.
   const taken = db.update_pending_message(s.db(), message_id, answered);
   if (!taken) throw ApiError.conflict("this question has been answered already");
+  // Its thread events go out now, in the order they were written: what answering it writes next (the reply, the merge
+  // decision's event) comes after them.
+  s.emit_thread_events(taken);
   // The board's own question, whether to merge (see review/merge_gate.rs): the answer is the board's to act on.
   const merge_approval = asked.merge_approval === true;
   let task: Task;
@@ -119,7 +122,6 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
   } catch (e) {
     // Answerable again (and its request in the thread kept as items, open again).
     try {
-      s.emit_thread_events(taken);
       const back = db.update_message_data(s.db(), message_id, JSON.parse(data));
       if (back) s.emit_message_updated(back);
     } catch {}
@@ -128,7 +130,7 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
   // The user's answer is a prompt to the agent: it puts the task in "now" like a message does (not the board's own
   // merge decision).
   if (!merge_approval) task = focus.put_in_now(s, task_id) ?? task;
-  emit(s, message_id, taken);
+  emit(s, message_id);
   // Any other question it was waiting on is settled by this reply.
   replied(s, task_id);
   return task;
@@ -177,11 +179,11 @@ export function replied(s: Shared, task_id: string): void {
 }
 
 /**
- * Tells clients message `message_id` changed: `message_updated` with it as it is now, and the thread events written
- * when it was changed to `written` (the update's Message, see db.update_message_data).
+ * Tells clients message `message_id` changed: the thread events written when it was changed to `written` (the update's
+ * Message, see db.update_message_data), if they haven't been sent yet, and `message_updated` with it as it is now.
  */
-export function emit(s: Shared, message_id: number, written: db.Message): void {
-  s.emit_thread_events(written);
+export function emit(s: Shared, message_id: number, written?: db.Message): void {
+  if (written) s.emit_thread_events(written);
   let m: db.Message | undefined;
   try {
     const row = db.one(s.db(), "SELECT * FROM messages WHERE id=?1", message_id);

@@ -169,6 +169,47 @@ test("a question that becomes answerable again reopens its request", () => {
   assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1));
 });
 
+test("answering a question sends its thread's events in order: the answer's, then the reply's or the merge decision's", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const { s, events, task } = setup();
+    const in_order = (id: string) => {
+      const sent = thread_events(events, id).filter((e) => e.type !== "delta");
+      assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1), sent.map((e) => `${e.seq}:${e.type}`).join(" "));
+      assert.equal(sent.at(-1).seq, store.last_seq(s.db(), id));
+    };
+    // A request_user_input question, whose answer is the agent's next prompt (a run of its own starts with it).
+    const t = task();
+    s.add_message(t.id, "user", { text: "go" });
+    const q = s.add_message(t.id, "question", { question: "Which?", options: [{ label: "A" }, { label: "B" }], status: "pending" });
+    questions.answer(s, t.id, q.id, { choices: ["A"] });
+    const reply = db.list_messages(s.db(), t.id).find((m) => m.kind === "user" && m.id > q.id);
+    assert.match(reply?.data.text ?? "", /Which\?/);
+    const sent = thread_events(events, t.id);
+    const resolved = sent.findIndex((e) => e.type === "request.resolved" && e.request_id === `legacy:${q.id}`);
+    const replied = sent.findIndex((e) => e.type === "item.added" && e.item.id === `legacy:${reply!.id}`);
+    assert.ok(resolved >= 0 && replied > resolved, `resolved at ${resolved}, the reply at ${replied}`);
+    in_order(t.id);
+    for (let i = 0; i < 100 && s.is_running(t.id); i++) await new Promise((r) => setTimeout(r, 10));
+    in_order(t.id);
+    matches_rebuild(s, t.id);
+    // A merge-approval card, whose answer the board acts on (an event, and the merge's start).
+    const m = task("merge");
+    s.add_message(m.id, "user", { text: "go" });
+    db.run(s.db(), "UPDATE tasks SET status='needs_attention', merging=1, merge_approval='pending' WHERE id=?1", m.id);
+    merge_gate.ask(s, m.id);
+    const card = db.list_messages(s.db(), m.id).find((x) => x.kind === "question")!;
+    questions.answer(s, m.id, card.id, { choices: [merge_gate.APPROVE] });
+    assert.ok(db.list_messages(s.db(), m.id).some((x) => x.kind === "event" && x.data.text.startsWith("Merge approved")));
+    in_order(m.id);
+    for (let i = 0; i < 100 && s.is_running(m.id); i++) await new Promise((r) => setTimeout(r, 10));
+    in_order(m.id);
+    matches_rebuild(s, m.id);
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});
+
 test("start_run's writes are the thread's first: the start message flags the task, and goes out after the commit", async () => {
   runs.TEST_CAN_RUN.set(true);
   try {
