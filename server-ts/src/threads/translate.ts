@@ -32,7 +32,8 @@ import type {
  * and `huntaway threads-rebuild` brings them up to date. 2: a merge-gate card settled as `replaced` is a cancel with a
  * message, without a warning; a prompt that's pending again reopens its request. 3 (HA-218, for the thread view on
  * items): items and requests carry the board's `metadata` (an auto message, a turn's cost and turns, a compaction's
- * tokens after, a request's stored prompt or question, replaced in place when it changes), subagents their `ended_at`,
+ * tokens after, a request's stored prompt or question and its message id, replaced in place when it changes, a result's
+ * text that no message said), subagents their `ended_at`,
  * and a routine's report is a notice (`routine_report`).
  */
 export const CONVERTER_VERSION = 3;
@@ -591,8 +592,9 @@ export class Translator {
       if (was.parent_id) base.parent_id = was.parent_id;
     }
     let resolution = this.resolution(m, "a prompt");
-    // The prompt as the board keeps it, for its card: a plan's or question's input too, which the request only has in part.
-    base.metadata = { ...d };
+    // The prompt as the board keeps it, for its card (a plan's or question's input too, which the request only has in
+    // part), and the message it's kept in, which the board orders and keys it by.
+    base.metadata = { ...d, message_id: m.id };
     let request: ThreadRequest;
     if (tool === EXIT_PLAN) {
       request = { ...base, type: "plan", plan: typeof input?.plan === "string" ? input.plan : "" };
@@ -622,7 +624,7 @@ export class Translator {
       const fields = tool_fields(tool, input);
       // The board's own approvals (a project change, deleting a task, an automation) are for its tools.
       const kind: ToolKind = typeof d.kind === "string" && d.kind !== "tool" ? "app" : fields.kind;
-      const { input: _, ...metadata } = d;
+      const { input: _, ...metadata } = base.metadata!;
       const r: PermissionRequest = { ...base, metadata, type: "permission", kind, name: fields.name, input };
       if (fields.server !== undefined && kind === "mcp") r.server = fields.server;
       r.title = title(fields);
@@ -646,7 +648,7 @@ export class Translator {
     } else {
       resolution = this.resolution(m, "a question");
     }
-    return this.request({ id: `legacy:${m.id}`, type: "question", questions: [q], created_at: m.created_at, metadata: { ...d } }, resolution);
+    return this.request({ id: `legacy:${m.id}`, type: "question", questions: [q], created_at: m.created_at, metadata: { ...d, message_id: m.id } }, resolution);
   }
 
   // ---------- Claude's messages (and Codex's, shaped like them) ----------
@@ -935,7 +937,8 @@ export class Translator {
     const text = str(d, "result");
     if (text !== undefined && ok && text.trim() && said?.trim() !== text.trim()) {
       const id = `legacy:${m.id}:result`;
-      this.add({ id, type: "assistant_message", text, created_at: m.created_at });
+      // The board's view doesn't draw it (it shows the turn's end): its metadata says so.
+      this.add({ id, type: "assistant_message", text, created_at: m.created_at, metadata: { from_result: true } });
       this.set_meta(id, { from_result: true });
     }
     const id = `legacy:${m.id}`;

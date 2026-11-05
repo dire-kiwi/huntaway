@@ -235,7 +235,7 @@ test("a_prompt_answered_later_resolves_its_request", () => {
   assert.deepEqual(allowed.events, [
     {
       type: "request.opened",
-      request: { id: "r", created_at: "2026-11-01T00:00:02.000Z", tool_call_id: "c", metadata: { ...stored, status: "allowed" }, type: "permission", kind: "shell", name: "Bash", input: { command: "ls" }, title: "ls" },
+      request: { id: "r", created_at: "2026-11-01T00:00:02.000Z", tool_call_id: "c", metadata: { ...stored, status: "allowed", message_id: 2 }, type: "permission", kind: "shell", name: "Bash", input: { command: "ls" }, title: "ls" },
     },
     { type: "request.resolved", request_id: "r", resolution: { outcome: "allow" } },
   ]);
@@ -280,9 +280,9 @@ test("a_late_answer_after_its_run_ended_resolves_its_request_again", () => {
   assert.deepEqual(r.rq.resolution, { outcome: "answer", answers: { "Which?": ["B"] } });
   assert.deepEqual(r["legacy:5"].resolution, { outcome: "answer", answers: { q: ["Yes"] } });
   // And the board's records are the final rows', a permission's without its input (the request's own).
-  assert.deepEqual(r.rp.metadata, { ...plan, status: "allowed", late: true, mode: "acceptEdits" });
-  assert.deepEqual(r.rq.metadata, { ...ask, status: "allowed", late: true, answers: [["B"]] });
-  assert.deepEqual(r["legacy:5"].metadata, { ...card, status: "answered", answer: { choices: ["Yes"] } });
+  assert.deepEqual(r.rp.metadata, { ...plan, status: "allowed", late: true, mode: "acceptEdits", message_id: 2 });
+  assert.deepEqual(r.rq.metadata, { ...ask, status: "allowed", late: true, answers: [["B"]], message_id: 4 });
+  assert.deepEqual(r["legacy:5"].metadata, { ...card, status: "answered", answer: { choices: ["Yes"] }, message_id: 5 });
   // The same status again changes nothing.
   assert.equal(t.message(writes.at(-1)!).disposition, "redundant");
 });
@@ -573,7 +573,7 @@ test("what_a_turn_ended_by_saying_and_what_the_board_knows_of_items", () => {
     msg(9, "user", { text: "Rebase", from_agent: true }),
   ]);
   assert.deepEqual(c.items.map((i) => i.id), ["legacy:1", "legacy:2:0", "legacy:3", "legacy:4:result", "legacy:4", "legacy:5", "a1", "legacy:8", "legacy:9"]);
-  assert.deepEqual(by_id(c)["legacy:4:result"], { id: "legacy:4:result", type: "assistant_message", text: "The report is in.", created_at: "2026-11-01T00:00:04.000Z" });
+  assert.deepEqual(by_id(c)["legacy:4:result"], { id: "legacy:4:result", type: "assistant_message", text: "The report is in.", created_at: "2026-11-01T00:00:04.000Z", metadata: { from_result: true } });
   assert.equal(by_id(c)["legacy:5"].error, "Boom");
   assert.deepEqual(Object.fromEntries(c.meta), {
     "legacy:1": { user_text: "Go" },
