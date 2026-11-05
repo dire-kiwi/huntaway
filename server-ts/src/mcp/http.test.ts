@@ -245,6 +245,51 @@ test("a_call_whose_stream_broke_is_answered_when_the_client_reconnects", async (
   }
 });
 
+test("a_call_with_a_progress_token_makes_progress_on_its_stream_and_after_a_reconnect", async () => {
+  // Claude Code drops a call 90 seconds after its stream broke unless it has had progress since: a prompt answered more
+  // than a minute and a half after a restart was lost without it.
+  const s = testing.state();
+  const [, run] = running_task(s);
+  const { server } = await listen(s);
+  try {
+    const e = entry(s, run, "huntaway");
+    const controller = new AbortController();
+    const res = await fetch(e.url, {
+      method: "POST",
+      headers: { ...e.headers, accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "permission_prompt", arguments: { tool_name: "Bash", input: { command: "ls" } }, _meta: { progressToken: 3, "claudecode/toolUseId": "toolu_9" } },
+      }),
+      signal: controller.signal,
+    });
+    const next = events(res);
+    const last = (await next())!.id!;
+    const first = JSON.parse((await next())!.data);
+    assert.equal(first.method, "notifications/progress");
+    assert.equal(first.params.progressToken, 3);
+    await until(() => request_for(s, run) !== undefined, "the prompt");
+    controller.abort();
+
+    s.calls_inflight.clear();
+    const r = await fetch(e.url, { headers: { ...e.headers, accept: "text/event-stream", "last-event-id": last } });
+    const again = events(r);
+    assert.equal((await again())!.id, last);
+    const note = JSON.parse((await again())!.data);
+    assert.deepEqual([note.method, note.params.progressToken], ["notifications/progress", 3]);
+    assert.ok(note.params.progress >= first.params.progress);
+    permissions.decide(s, request_for(s, run)!, true, false, null);
+    let v: any;
+    do v = JSON.parse((await again())!.data);
+    while (v.method === "notifications/progress");
+    assert.deepEqual([v.id, JSON.parse(v.result.content[0].text).behavior], [3, "allow"]);
+  } finally {
+    server.close();
+  }
+});
+
 test("a_prompt_cut_short_by_a_restart_carries_on_when_the_client_reconnects", async () => {
   const s = testing.state();
   const [, run] = running_task(s);

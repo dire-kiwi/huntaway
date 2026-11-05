@@ -15,7 +15,8 @@
  * `resume`). The id names the board call (`mcp_calls`), which carries on as a helper's retried call did: a permission
  * prompt or a `wait` keeps waiting, a finished call's answer is the one it recorded, and a call that a restart cut
  * short says so. Claude Code tries twice, `RETRY_MS` apart, before it gives up on a call (and the agent sees that it
- * failed); Codex keeps trying, with backoff.
+ * failed); Codex keeps trying, with backoff. Claude Code also drops a call 90 seconds after its connection broke unless
+ * it has had progress since, so its calls get progress notifications (see `reply`).
  */
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -45,8 +46,8 @@ export const SETTINGS_FILE = "mcp-run.json";
  */
 export const RETRY_MS = 5000;
 
-/** A comment on a call's stream this often, so a connection that has gone is noticed. */
-const KEEPALIVE_MS = 30_000;
+/** A progress notification (or a comment) on a call's stream this often (see `reply`). */
+const KEEPALIVE_MS = 20_000;
 
 /** How long a gh call's answer is kept for a client that reconnects for it. */
 const KEPT_MS = 10 * 60_000;
@@ -121,16 +122,22 @@ function gh_run(s: Shared, run_id: string, set: RunSettings): gh_mcp.GhRun {
 /** gh calls' answers, by their streams' event id, while they run and for `KEPT_MS` after. Board calls are in `mcp_calls`. */
 const gh_calls = new Map<string, Promise<any>>();
 
-/** A call's stream's event id: which server, its board call (or a gh call's own id), and the request's JSON-RPC id. */
-function event_id(server: string, call_id: string, rpc_id: any): string {
-  return `${server}.${call_id}.${Buffer.from(JSON.stringify(rpc_id ?? null)).toString("base64url")}`;
+const b64 = (v: any) => Buffer.from(JSON.stringify(v ?? null)).toString("base64url");
+const unb64 = (s: string) => JSON.parse(Buffer.from(s, "base64url").toString());
+
+/**
+ * A call's stream's event id: which server, its board call (or a gh call's own id), the request's JSON-RPC id, and its
+ * progress token if it has one (see `reply`).
+ */
+function event_id(server: string, call_id: string, rpc_id: any, progress: any): string {
+  return `${server}.${call_id}.${b64(rpc_id)}${progress === undefined ? "" : `.${b64(progress)}`}`;
 }
 
-function parse_event_id(id: string): { server: string; call_id: string; rpc_id: any } | null {
-  const m = /^([a-z_]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)$/.exec(id);
+function parse_event_id(id: string): { server: string; call_id: string; rpc_id: any; progress: any } | null {
+  const m = /^([a-z_]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)(?:\.([A-Za-z0-9_-]*))?$/.exec(id);
   if (!m) return null;
   try {
-    return { server: m[1], call_id: m[2], rpc_id: JSON.parse(Buffer.from(m[3], "base64url").toString()) };
+    return { server: m[1], call_id: m[2], rpc_id: unb64(m[3]), progress: m[4] === undefined ? undefined : unb64(m[4]) };
   } catch {
     return null;
   }
@@ -184,7 +191,9 @@ export async function serve(s: Shared, req: IncomingMessage, res: ServerResponse
     return json(res, 200, answer);
   }
   const call_id = new_id();
-  const id = event_id(server, call_id, msg.id);
+  const token = msg.params?._meta?.progressToken;
+  const progress = typeof token === "string" || typeof token === "number" ? token : undefined;
+  const id = event_id(server, call_id, msg.id, progress);
   let answer: Promise<any>;
   if (server === gh_mcp.SERVER_NAME) {
     answer = gh_mcp.handle(msg, gh_run(s, run_id, set));
@@ -194,11 +203,17 @@ export async function serve(s: Shared, req: IncomingMessage, res: ServerResponse
   } else {
     answer = mcp.handle(board(s, run_id, set, call_id), msg);
   }
-  reply(req, res, id, msg.id, answer);
+  reply(req, res, id, msg.id, progress, answer);
 }
 
-/** Answer a call: on an event stream, if the client takes one (both do), else as JSON once it's done. */
-function reply(req: IncomingMessage, res: ServerResponse, event: string, rpc_id: any, answer: Promise<any>) {
+/**
+ * Answer a call: on an event stream, if the client takes one (both do), else as JSON once it's done. A call with a
+ * progress token (Claude Code's) gets a progress notification when its stream opens and every `KEEPALIVE_MS`: Claude
+ * Code drops a call 90 seconds after its connection broke unless the call has made progress since (so a call that
+ * reconnected after a restart would be lost a minute and a half later), and gives up on a call after a while without
+ * any (see `BOARD_TIMEOUT_MS`).
+ */
+function reply(req: IncomingMessage, res: ServerResponse, event: string, rpc_id: any, progress: any, answer: Promise<any>) {
   const done = answer.catch((e) => rpc_error(rpc_id, -32603, err_str(e)));
   const accept = String(req.headers.accept ?? "");
   if (!accept.includes("text/event-stream")) {
@@ -209,7 +224,14 @@ function reply(req: IncomingMessage, res: ServerResponse, event: string, rpc_id:
   }
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
   res.write(`id: ${event}\nretry: ${RETRY_MS}\ndata: \n\n`);
-  const keepalive = setInterval(() => res.write(": keepalive\n\n"), KEEPALIVE_MS);
+  const tick = () => {
+    if (progress === undefined) return void res.write(": keepalive\n\n");
+    // Its value only has to grow, across a restart too.
+    const note = { jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: progress, progress: Math.floor(Date.now() / 1000) } };
+    res.write(`id: ${event}\nevent: message\ndata: ${JSON.stringify(note)}\n\n`);
+  };
+  tick();
+  const keepalive = setInterval(tick, KEEPALIVE_MS);
   keepalive.unref();
   res.on("close", () => clearInterval(keepalive));
   done.then((v) => {
@@ -227,24 +249,24 @@ function resume(s: Shared, res: ServerResponse, run_id: string, server: string, 
   if (server === gh_mcp.SERVER_NAME) {
     const kept = gh_calls.get(last);
     const answer = kept ?? Promise.resolve(tool_error(ev.rpc_id, "The board's server restarted while this gh call ran, so its output is lost: it may or may not have taken effect. Check before you run it again."));
-    return reply(fake, res, last, ev.rpc_id, answer);
+    return reply(fake, res, last, ev.rpc_id, ev.progress, answer);
   }
   // The board's call, which picks up where it was (see tools::handle_mcp): its record has what it was.
   let row: any;
   try {
     row = db.one(s.db(), "SELECT run_id, tool, args FROM mcp_calls WHERE id=?1", ev.call_id);
   } catch (e) {
-    return reply(fake, res, last, ev.rpc_id, Promise.resolve(tool_error(ev.rpc_id, `The board couldn't look up this call: ${err_str(e)}. Call it again.`)));
+    return reply(fake, res, last, ev.rpc_id, ev.progress, Promise.resolve(tool_error(ev.rpc_id, `The board couldn't look up this call: ${err_str(e)}. Call it again.`)));
   }
   if (row && row.run_id !== run_id) return json(res, 404, rpc_error(null, -32000, "unknown event id"));
   // Not recorded, so it never ran: the server stopped before it got to it.
-  if (!row) return reply(fake, res, last, ev.rpc_id, Promise.resolve(tool_error(ev.rpc_id, "The board's server restarted before this call ran, so it wasn't run: call it again.")));
+  if (!row) return reply(fake, res, last, ev.rpc_id, ev.progress, Promise.resolve(tool_error(ev.rpc_id, "The board's server restarted before this call ran, so it wasn't run: call it again.")));
   let args: any = null;
   try {
     args = JSON.parse(row.args);
   } catch {}
   const msg = { jsonrpc: "2.0", id: ev.rpc_id, method: "tools/call", params: { name: row.tool, arguments: args } };
-  reply(fake, res, last, ev.rpc_id, mcp.handle(board(s, run_id, set, ev.call_id), msg));
+  reply(fake, res, last, ev.rpc_id, ev.progress, mcp.handle(board(s, run_id, set, ev.call_id), msg));
 }
 
 /** What the launch keeps for the run's servers (see `settings`). */

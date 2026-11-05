@@ -1769,7 +1769,9 @@ answers what it recorded, and a call the restart cut short says so, as for a ret
 call). A `gh` call's output is lost if the server restarted while it ran, and the agent is told
 it may or may not have taken effect. Claude Code tries twice, 5 seconds apart, before it gives
 the call up (the agent then sees that it failed); a restart takes a second or two. Codex keeps
-trying, with backoff.
+trying, with backoff. Claude Code also drops a call 90 seconds after its connection broke unless
+the call has made progress since, so the streams send progress notifications every 20 seconds
+(and as soon as a client reconnects).
 
 Runs started before the board served these (they have `huntaway mcp` and `huntaway gh-mcp` stdio
 helpers in their `mcp.json`) keep them: the helpers call `/api/internal/mcp` with the host's
