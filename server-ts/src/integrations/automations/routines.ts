@@ -22,6 +22,7 @@ import { err_str, expand_tilde, reached, truncate } from "../../util.ts";
 import { Run_from_row, changed, days, fmt, get, parse_time, type Automation, type Outcome, type Run } from "../automations.ts";
 import { Local, local_parts, to_local, from_local, type Tz } from "./check.ts";
 import { cut, render, untrusted_note, type Vars } from "./delivery.ts";
+import * as history from "../../threads/history.ts";
 
 /** What a routine's agent says when it has nothing to report. */
 export const NO_REPLY = "NO_REPLY";
@@ -301,11 +302,9 @@ export function finished(s: Shared, thread: Task, outcome: runner.Outcome, atten
   else if (typeof outcome === "object") [kind, text] = ["failed", outcome.Failed.split("\n")[0]];
   else if (attention !== null) [kind, text] = ["asked", attention];
   else {
-    let asked = 0;
     let said = "";
     try {
-      asked = Number(db.value(s.db(), "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='user'", thread.id) ?? 0);
-      said = db.last_assistant_text_after(s.db(), thread.id, asked) ?? "";
+      said = history.said_since_asked(s.db(), thread.id) ?? "";
     } catch {}
     [kind, text] = is_quiet(said) ? ["quiet", null] : ["reported", cut(said.trim(), MAX_REPORT_CHARS)];
   }

@@ -155,7 +155,11 @@ function collect(c: Conn, sql: string, args: any[], out: Set<string>) {
   }
 }
 
-/** Attachments referred to by a task: its description, queued message, messages its agent hasn't read yet (`steering`) and thread. */
+/**
+ * Attachments referred to by a task: its description, queued message, messages its agent hasn't read yet (`steering`)
+ * and thread, in its messages and in its items and requests (a thread kept as items, see threads/history.ts): both, so
+ * a file an items-only thread links isn't pruned once its messages stop being written (step 10 of docs/threads.md).
+ */
 export function of_task(c: Conn, task_id: string): Set<string> {
   const ids = new Set<string>();
   collect(
@@ -164,17 +168,24 @@ export function of_task(c: Conn, task_id: string): Set<string> {
     [task_id],
     ids,
   );
-  collect(c, "SELECT data FROM messages WHERE task_id=?1 AND instr(data, 'attachments') > 0", [task_id], ids);
+  for (const table of THREAD_TABLES) collect(c, `SELECT data FROM ${table} WHERE task_id=?1 AND instr(data, 'attachments') > 0`, [task_id], ids);
   return ids;
 }
 
-/** Attachments referred to by any task. */
-export function referenced(c: Conn): Set<string> {
+/** The tables a thread is kept in: its messages, and its items and requests. */
+const THREAD_TABLES = ["messages", "thread_items", "thread_requests"];
+
+/**
+ * Attachments referred to by any task. `threads` says where threads are read: in messages and items both (what the
+ * pruner keeps), or one of them (to compare, see threads/readers.ts).
+ */
+export function referenced(c: Conn, threads: "both" | "messages" | "items" = "both"): Set<string> {
   const ids = new Set<string>();
   collect(c, "SELECT description FROM tasks WHERE instr(description, 'attachments') > 0", [], ids);
   collect(c, "SELECT queued_message FROM tasks WHERE instr(queued_message, 'attachments') > 0", [], ids);
   collect(c, "SELECT steering FROM tasks WHERE instr(steering, 'attachments') > 0", [], ids);
-  collect(c, "SELECT data FROM messages WHERE instr(data, 'attachments') > 0", [], ids);
+  const tables = threads === "both" ? THREAD_TABLES : threads === "messages" ? ["messages"] : ["thread_items", "thread_requests"];
+  for (const table of tables) collect(c, `SELECT data FROM ${table} WHERE instr(data, 'attachments') > 0`, [], ids);
   return ids;
 }
 

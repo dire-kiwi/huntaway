@@ -33,6 +33,7 @@ import * as runner from "./runner.ts";
 import * as agent_tools from "./agent_tools.ts";
 import type { Decision, Rule, Rules } from "./approval_rules/hook.ts";
 import { BLOCKED, BOARD_SERVER_NAMES, HOOK_FAILED, decide, is_board_tool, parse_rule_list, rank, strict } from "./approval_rules/hook.ts";
+import * as history from "../threads/history.ts";
 
 export * from "./approval_rules/hook.ts";
 
@@ -287,24 +288,11 @@ export function on_tool_results(s: Shared, task: Task, v: any): void {
 
 /** The name and input of tool call `id` in `task_id`'s thread. */
 function tool_use(s: Shared, task_id: string, id: string): [string, any] | null {
-  let rows: Array<{ data: string }>;
   try {
-    rows = db.all(s.db(), "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND instr(data, ?2) > 0 ORDER BY id DESC LIMIT 5", task_id, id);
+    return history.tool_use(s.db(), task_id, id);
   } catch {
     return null;
   }
-  for (const { data } of rows) {
-    let v: any;
-    try {
-      v = JSON.parse(data);
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(v?.message?.content)) continue;
-    const b = v.message.content.find((b: any) => b?.type === "tool_use" && b?.id === id);
-    if (b) return [typeof b.name === "string" ? b.name : "unknown", b.input ?? null];
-  }
-  return null;
 }
 
 // ---------- Codex ----------

@@ -23,6 +23,7 @@ import * as worktree from "../git/worktree.ts";
 import * as review from "../review.ts";
 import { ApiError, AsyncMutex, type AppState } from "../state.ts";
 import { err_str, now } from "../util.ts";
+import * as history from "../threads/history.ts";
 
 /** The task type of a summary thread. */
 export const SUMMARY = "summary";
@@ -183,7 +184,7 @@ async function start_locked(state: AppState, task_id: string, manual: boolean): 
     return null;
   }
   const commit = head.slice(0, 10);
-  const last_message = elsewhere ? db.last_assistant_text(state.db(), task.id) : null;
+  const last_message = elsewhere ? history.last_assistant_text(state.db(), task.id) : null;
   const texts: string[] = [];
   for (const [plan, thread] of writing) {
     texts.push(prompt(key, task, branch, base, commit, elsewhere, own_start, last_message, plan.spec, plan.codex));
@@ -356,8 +357,7 @@ export function finished(state: AppState, thread: Task, run_id: string, outcome:
   const written = (): string | null => {
     try {
       // What it said after it was asked for this summary.
-      const asked = db.value<number>(state.db(), "SELECT COALESCE(MAX(id), 0) FROM messages WHERE task_id=?1 AND kind='user'", thread.id) ?? 0;
-      const t = db.last_assistant_text_after(state.db(), thread.id, asked)?.trim();
+      const t = history.said_since_asked(state.db(), thread.id)?.trim();
       return t ? t : null;
     } catch {
       return null;

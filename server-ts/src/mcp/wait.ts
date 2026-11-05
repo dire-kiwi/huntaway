@@ -39,6 +39,7 @@ import type { Shared } from "../state.ts";
 import * as runner from "../agent/runner.ts";
 import * as pr_watch from "./pr_watch.ts";
 import { context, err_str, new_id, now } from "../util.ts";
+import * as history from "../threads/history.ts";
 
 export const DEFAULT_SECS = 600;
 export const MAX_SECS = 3600;
@@ -508,8 +509,8 @@ export function subagent_finished(s: Shared, run: Run, event: any): void {
   const c = s.db();
   const w = db.get_task(c, run.task_id)?.agent_wait;
   if (!w || w.run_id !== run.id || w.subagent_finished != null) return;
-  const id = typeof event.tool_use_id === "string" ? event.tool_use_id : db.subagent_call(c, run.task_id, typeof event.task_id === "string" ? event.task_id : null);
-  if (id === null || !db.is_subagent_call(c, run.task_id, id)) return;
+  const id = history.subagent_call(c, run.task_id, event);
+  if (id === null) return;
   w.subagent_finished = { status, summary: event.summary ?? null, task_id: event.task_id ?? null, tool_use_id: id };
   const changed = db.update_task(c, run.task_id, [["agent_wait", order_wait(w)]]);
   if (changed) s.emit_task(changed);

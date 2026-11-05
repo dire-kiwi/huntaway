@@ -11,6 +11,7 @@ import * as db from "./db.ts";
 import type { Conn } from "./db.ts";
 import { ApiError, type Req } from "./http.ts";
 import type { AppState } from "./state.ts";
+import * as history from "./threads/history.ts";
 
 /** The board's own prompt when a task is started, before those messages were marked `start` (see runner::send_run). */
 export const START_TEXT = "Start working on this task.";
@@ -104,22 +105,11 @@ export function clip(text: string): string {
 /** A review thread's activity belongs to the task under review. */
 const OWNER = "COALESCE(CASE WHEN t.kind='review' THEN t.parent_id END, t.id)";
 
-export function report(c: Conn, profile_id: string, from: string, to: string): Report {
+export function report(c: Conn, profile_id: string, from: string, to: string, mode: history.Mode = "auto"): Report {
   const events: Event[] = [];
-  const rows = db.all(
-    c,
-    `SELECT m.created_at AS at, ${OWNER} AS owner, m.data AS data FROM messages m JOIN tasks t ON t.id=m.task_id
-         WHERE m.kind='user' AND m.created_at >= ?2 AND m.created_at < ?3 AND t.profile_id=?1
-         ORDER BY m.created_at`,
-    profile_id,
-    from,
-    to,
-  );
-  for (const r of rows) {
-    let data: any = null;
-    try {
-      data = JSON.parse(r.data);
-    } catch {}
+  // Each thread's from its items, if it has them (threads/history.ts).
+  for (const r of history.user_messages_between(c, profile_id, from, to, OWNER, mode)) {
+    const data = r.data;
     const kind = classify(data);
     if (kind !== null) {
       const text = kind === "prompt" ? clip(typeof data?.text === "string" ? data.text : "") : "";
