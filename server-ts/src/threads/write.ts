@@ -35,7 +35,7 @@ export function setting_on(c: Conn): boolean {
 /** How many threads' translators a server keeps in memory; the least recently written go first. */
 const CACHED = 64;
 
-interface Live {
+export interface Live {
   t: Translator;
   /** The thread's `writes` this translator is in step with. */
   writes: number;
@@ -128,7 +128,7 @@ function saved_stream(c: Conn, m: Message, inserted: boolean): void {
 }
 
 /** The task's translator, in step with its stored thread at `writes`: the one in memory, or one rebuilt from the store. */
-function translator(c: Conn, task_id: string, writes: number): Live {
+export function translator(c: Conn, task_id: string, writes: number): Live {
   let mine = live.get(c);
   if (!mine) live.set(c, (mine = new Map()));
   let l = mine.get(task_id);
@@ -142,7 +142,7 @@ function translator(c: Conn, task_id: string, writes: number): Live {
   return l;
 }
 
-function forget(c: Conn, task_id: string): void {
+export function forget(c: Conn, task_id: string): void {
   live.get(c)?.delete(task_id);
 }
 

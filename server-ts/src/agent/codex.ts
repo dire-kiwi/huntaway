@@ -68,6 +68,19 @@ export interface Spec {
    * board runs a wait's command without asking. A run from an older build pre-approved them.
    */
   review_waits: boolean;
+  /**
+   * The app-server's requests (approvals, questions, the board's tools) go to the run's output as they are, and their
+   * answers come back on its input (`{"type": "codex_response", "id", "result" | "error"}`), so the board answers them
+   * itself (agent/codex/requests.ts) and the adapter needs no board to call. Only with `input`: without, the adapter
+   * declines them. A run from before this was format 2, and asked the board over its MCP server.
+   */
+  requests_on_output: boolean;
+  /**
+   * The board's tools, as a `namespace` dynamic tool (agent/codex/requests.ts's `board_tools`), for a new thread: Codex
+   * keeps them with the session, and calls them with `item/tool/call` requests. Null to give none (resuming a thread,
+   * which keeps those it started with).
+   */
+  board_tools: any | null;
   /** Revert the thread to before this turn first (a rewind's, see checkpoints::Rewind). Left out when there's none. */
   revert_before_turn?: string;
   /** The user's approval rules, which its MCP servers' configs hold (see approval_rules.codex_server). Left out when there are none. */
@@ -94,6 +107,8 @@ export function Spec_default(fields: Partial<Spec> = {}): Spec {
     approved_mcp_servers: [],
     disabled_mcp_tools: {},
     review_waits: false,
+    requests_on_output: false,
+    board_tools: null,
     ...fields,
   };
 }
@@ -123,6 +138,8 @@ export function Spec_from_json(v: any): Spec | null {
     approved_mcp_servers: strs(v.approved_mcp_servers),
     disabled_mcp_tools: v.disabled_mcp_tools && typeof v.disabled_mcp_tools === "object" ? v.disabled_mcp_tools : {},
     review_waits: v.review_waits === true,
+    requests_on_output: v.requests_on_output === true,
+    board_tools: is_namespace(v.board_tools) ? v.board_tools : null,
   });
   if (typeof v.revert_before_turn === "string") spec.revert_before_turn = v.revert_before_turn;
   if (v.approval_rules != null) {
@@ -132,6 +149,10 @@ export function Spec_from_json(v: any): Spec | null {
     spec.approval_rules = rules;
   }
   return spec;
+}
+
+function is_namespace(v: any): boolean {
+  return v !== null && typeof v === "object" && v.type === "namespace" && typeof v.name === "string" && Array.isArray(v.tools);
 }
 
 /**

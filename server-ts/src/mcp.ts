@@ -134,7 +134,7 @@ export function Ctx_from_server(entry: any): Ctx {
 }
 
 /** Sent with `initialize`; Claude Code adds it to the agent's system prompt. */
-const INSTRUCTIONS =
+export const INSTRUCTIONS =
   "Tools for the Huntaway board, a kanban board where each task is worked by its own Claude agent. " +
   "The board has a profile for each Claude login (e.g. work, personal), each with its own projects and tasks. Besides your own " +
   "profile's, you can use the boards of the profiles that let your agents in (each profile chooses which, in Settings → Profiles). " +

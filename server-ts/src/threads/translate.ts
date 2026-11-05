@@ -229,33 +229,7 @@ export class Translator {
     const t = new Translator();
     t.step = new_step(0);
     for (const r of requests) t.requests.set(r.id, r);
-    for (const item of items) {
-      t.items.add(item.id);
-      const m = meta(item.id);
-      if (m) t.meta.set(item.id, m);
-      t.note_compaction(item);
-      if (item.type !== "tool_call") continue;
-      const call_id = m?.call_id ?? item.id;
-      const parent = item.parent_id ? t.calls.get(item.parent_id) : undefined;
-      const input = item.input;
-      t.add_call({
-        item: item.id,
-        call_id,
-        kind: item.kind,
-        status: item.status,
-        title: item.title,
-        has_result: item.result !== undefined,
-        subagent: item.subagent,
-        model: str(input, "model"),
-        parent_raw: parent ? parent.call_id : (item.parent_id ?? null),
-        session: m?.session,
-        input,
-        metadata: item.metadata,
-      });
-      if (m?.session) t.last_session = m.session;
-      if (m?.subagent_task) t.jobs.set(m.subagent_task, { agent: item.id });
-      for (const job of m?.shown_tasks ?? []) t.jobs.set(job, "shown");
-    }
+    for (const item of items) t.know(item, meta(item.id) ?? undefined);
     // What the latest turn has said so far: its latest main assistant message with text.
     for (let i = items.length - 1; i >= 0; i--) {
       const item = items[i]!;
@@ -272,6 +246,48 @@ export class Translator {
       break;
     }
     return t;
+  }
+
+  /** What the store holds of item `item` (with its meta `m`), as `from` takes it in: its id, and a tool call's state. */
+  private know(item: Item, m: ItemMeta | undefined): void {
+    this.items.add(item.id);
+    if (m) this.meta.set(item.id, m);
+    this.note_compaction(item);
+    if (item.type !== "tool_call") return;
+    const call_id = m?.call_id ?? item.id;
+    const parent = item.parent_id ? this.calls.get(item.parent_id) : undefined;
+    const input = item.input;
+    const known = this.calls.get(item.id);
+    const c: Call = {
+      item: item.id,
+      call_id,
+      kind: item.kind,
+      status: item.status,
+      title: item.title,
+      has_result: item.result !== undefined,
+      subagent: item.subagent,
+      model: str(input, "model"),
+      parent_raw: parent ? parent.call_id : (item.parent_id ?? null),
+      session: m?.session,
+      input,
+      metadata: item.metadata,
+    };
+    // Written again (Codex's items, see `observe`): the same call, as it is now.
+    if (known) Object.assign(known, c);
+    else this.add_call(c);
+    if (m?.session) this.last_session = m.session;
+    if (m?.subagent_task) this.jobs.set(m.subagent_task, { agent: item.id });
+    for (const job of m?.shown_tasks ?? []) this.jobs.set(job, "shown");
+  }
+
+  /**
+   * Items written into the thread by something other than this translator (agent/codex/driver.ts maps a Codex run's
+   * notifications onto items itself, threads/native.ts), as the store holds them now: it goes on as `from` would from
+   * the store, so the board's own messages that follow (a prompt for one of those calls, a turn's result) find them.
+   */
+  observe(item: Item, m: ItemMeta | null | undefined): void {
+    this.know(item, m ?? undefined);
+    if (item.type === "assistant_message" && !item.parent_id && !item.metadata?.from_result) this.last_text = item.text;
   }
 
   /** What message `m` gives. Messages go in id order. */

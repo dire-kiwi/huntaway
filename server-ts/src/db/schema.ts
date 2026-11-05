@@ -772,6 +772,14 @@ export function open(path: string): Conn {
     }
     batch("PRAGMA user_version=98; COMMIT;");
   }
+  if (version < 99) {
+    // Codex writes items directly (step 11 of docs/threads.md): whether a run gave the Codex session it started the
+    // board's tools as dynamic tools (agent/codex.ts's Spec::board_tools), which a resumed session keeps, so its runs
+    // need no board MCP server. Only if it isn't there, in case another migration takes this version first.
+    batch("BEGIN;");
+    if (!has_column(conn, "runs", "board_tools")) batch("ALTER TABLE runs ADD COLUMN board_tools INTEGER NOT NULL DEFAULT 0;");
+    batch("PRAGMA user_version=99; COMMIT;");
+  }
   return conn;
 }
 
@@ -817,7 +825,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 98;
+export const VERSION = 99;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what
