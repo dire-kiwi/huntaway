@@ -222,7 +222,7 @@ export async function dispatch(s: AppState, req: Req, trusted = false): Promise<
     return { status: 400, headers: { "content-type": "text/plain" }, body: Buffer.from("Failed to parse the request body as JSON") };
   }
   req.params = found.params;
-  return call(h, s, req);
+  return call(h, s, req, `${req.method} /${found.route.segs.join("/")}`);
 }
 
 /** Run a request against this node's own host API, as an authenticated caller: (status, JSON body or its text). */
