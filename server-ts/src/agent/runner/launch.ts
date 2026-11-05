@@ -1,13 +1,15 @@
 // Port of server/src/agent/runner/launch.rs: launching a run: preparing its worktree, prompt, MCP config and sandbox,
 // then starting the agent.
 import { statSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import * as db from "../../db.ts";
 import type { Run, Task } from "../../db.ts";
 import type { Shared } from "../../state.ts";
-import { err_str, expand_tilde, new_id, path_str } from "../../util.ts";
+import { context, err_str, expand_tilde, new_id, path_str } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as documents from "../documents.ts";
+import * as memory from "../assistant/memory.ts";
 import * as agent_tools from "../agent_tools.ts";
 import * as codex from "../codex.ts";
 import * as task_tmp from "../task_tmp.ts";
@@ -95,16 +97,15 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   // A review thread works on the task it reviews; a task may be part of a subproject.
   let parent: Task | null = task.parent_id ? db.get_task(state.db(), task.parent_id) : null;
   // The assistant works only in a workspace of its own: not one that's become a symlink, which could be another's. A
-  // routine's thread works in its assistant's.
+  // routine's thread works in its assistant's, with its memory.
   const whose = assistant.whose_workspace(task, parent);
   if (whose) {
     try {
-      assistant.checked(state, whose);
+      memory.checked(state, whose);
     } catch (e) {
-      throw new Error(`the assistant's workspace: ${err_str(e)}`);
+      throw context("the assistant's workspace", e);
     }
   }
-
   // Resolve the working directory for this thread.
   const add_dirs: string[] = [];
   // (`work_dir` says the same for a thread whose run is going.)
@@ -205,6 +206,9 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
 
   const config = db.task_claude_config(state.db(), task);
   const is_codex = config != null && db.is_codex(config);
+  // The assistant's memory files, loaded here rather than by the agent so Claude and Codex both get them.
+  const told_memory = whose ? await memory.for_run(state, whose) : "";
+  check();
   // The project's own skills and MCP servers, and the ones it turns off (for the assistant, its profile's).
   const tools: agent_tools.RunTools = agent_tools.for_task_run(state, task, project);
   if (is_codex) {
@@ -225,7 +229,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     const gh_tools = uses_gh_server(tools);
     const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
     const profiles = db.list_profiles(state.db());
-    const to: Told = { codex: true, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp };
+    const to: Told = { codex: true, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
     let instr = instructions(base, task, to);
     const own_gh = Object.hasOwn(tools.mcp_servers, gh_mcp.SERVER_NAME);
     // Reviewers read and report (see the Claude arguments below).
@@ -298,8 +302,18 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const gh_tools = uses_gh_server(tools);
   const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
   const profiles = db.list_profiles(state.db());
-  const to: Told = { codex: false, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp };
-  args.push("--append-system-prompt", instructions(base, task, to));
+  const to: Told = { codex: false, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
+  // In a file rather than an argument: the assistant's memory and a project's documents can make it longer than the most
+  // an argument may be (128 KiB on Linux).
+  const prompt_file = join(runs.run_dir(state, run.id), "system-prompt.md");
+  await mkdir(runs.run_dir(state, run.id), { recursive: true });
+  try {
+    await writeFile(prompt_file, instructions(base, task, to));
+  } catch (e) {
+    throw context("writing the run's instructions", e);
+  }
+  check();
+  args.push("--append-system-prompt-file", path_str(prompt_file));
   args.push("--permission-mode", permission_mode);
   // The user's approval rules (see agent/approval_rules.ts): a hook's ask goes to the permission prompt even in Bypass,
   // which otherwise has none.

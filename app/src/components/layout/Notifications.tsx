@@ -257,7 +257,7 @@ const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   // The assistant's events the board has (each in its devices' events).
   const assistant = ASSISTANT_PUSH_EVENTS.filter((e) => typeof device.events[e.id] === "boolean");
-  // Whose prompts, on a board that pushes them (API 111).
+  // Whose prompts, on a board that pushes them (API 112).
   const prompts = device.events.prompts;
   return (
     <div className={clsx(compact ? "flex flex-wrap items-center gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>

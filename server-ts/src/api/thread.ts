@@ -79,7 +79,7 @@ function rules_view(c: db.Conn, profile_id: string): any {
 }
 
 /**
- * `GET /profiles/{id}/approval-rules` (API 111): what the profile's assistant may do outside the board, asks first or
+ * `GET /profiles/{id}/approval-rules` (API 112): what the profile's assistant may do outside the board, asks first or
  * never does (see agent/approval_rules.ts).
  */
 export async function get_approval_rules(s: AppState, r: Req) {
@@ -89,7 +89,7 @@ export async function get_approval_rules(s: AppState, r: Req) {
 }
 
 /**
- * `POST /profiles/{id}/approval-rules` (API 111) with `{rules, expiry_minutes}` (either may be left out, keeping it as it
+ * `POST /profiles/{id}/approval-rules` (API 112) with `{rules, expiry_minutes}` (either may be left out, keeping it as it
  * is), or `{reset: true}` for the defaults. They hold from the next run on.
  */
 export async function set_approval_rules(s: AppState, r: Req) {
@@ -123,7 +123,7 @@ export async function set_approval_rules(s: AppState, r: Req) {
 }
 
 /**
- * `GET /profiles/{id}/approval-log` (API 111): the calls the profile's rules asked about or turned away, newest first (see
+ * `GET /profiles/{id}/approval-log` (API 112): the calls the profile's rules asked about or turned away, newest first (see
  * approval_rules.Action).
  */
 export async function approval_log(s: AppState, r: Req) {
@@ -388,7 +388,7 @@ export async function resolve_permission(s: AppState, r: Req) {
   if (decision === "allow" || decision === "allow_always") allow = true;
   else if (decision === "deny") allow = false;
   else throw ApiError.bad("decision must be allow, allow_always or deny");
-  // `push` for an answer from a notification, which the hub passes on (API 111), for the action log.
+  // `push` for an answer from a notification, which the hub passes on (API 112), for the action log.
   const by = opt_str(b, "via") === "push" ? "push" : "user";
   const status = permissions.answer_by(s, r.params.id, allow, decision === "allow_always", message, reply, by);
   return { ok: true, status };

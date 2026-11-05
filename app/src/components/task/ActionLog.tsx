@@ -30,7 +30,7 @@ function outcomeText(a: ApprovalAction) {
 }
 
 /**
- * The assistant's Actions tab (API 111): every call its rules asked about or turned away, newest first, with what it was
+ * The assistant's Actions tab (API 112): every call its rules asked about or turned away, newest first, with what it was
  * called with, how it ended and who answered. It follows the log as it changes.
  */
 export function ActionLog({ task }: { task: Task }) {

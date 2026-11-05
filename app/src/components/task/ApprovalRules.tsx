@@ -5,7 +5,7 @@ import { api, RULE_DECISIONS, ruleFor, type ApprovalRule, type ApprovalRules, ty
 import { onApprovalRules } from "../../store";
 import { Button, IconButton, Input, Modal, ModalFooter, Toggle, useAsyncAction } from "../ui";
 
-/** A profile's approval rules (API 111), loaded and kept up to date as they change on its host. */
+/** A profile's approval rules (API 112), loaded and kept up to date as they change on its host. */
 export function useApprovalRules(hostId: string, profileId: string) {
   const [rules, setRules] = useState<ApprovalRules | null>(null);
   const [error, setError] = useState<string | null>(null);

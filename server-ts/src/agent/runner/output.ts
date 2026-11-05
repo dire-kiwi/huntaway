@@ -10,6 +10,7 @@ import * as context from "../context.ts";
 import * as usage from "../usage.ts";
 import * as documents from "../documents.ts";
 import * as approval_rules from "../approval_rules.ts";
+import * as memory from "../assistant/memory.ts";
 import * as tokens from "../tokens.ts";
 import * as wait from "../../mcp/wait.ts";
 import * as permissions from "../../mcp/permissions.ts";
@@ -329,6 +330,7 @@ function record_turn_end(state: Shared, run: Run, error: string | null, result: 
   // A turn that ended isn't waiting any more, even if the agent gave up on the call.
   wait.ended(state, run.task_id, run.id);
   documents.turn_ended(state, run.task_id);
+  memory.turn_ended(state, run.task_id);
   context.record_turn(state, run, typeof result.total_cost_usd === "number" ? result.total_cost_usd : null);
   const m = state.add_message(run.task_id, "claude", result);
   if (run.kind !== "compact") announce_reply(state, run.task_id, m.id);
@@ -399,6 +401,7 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   tokens.on_run_ended(state, task_id);
   // What a stopped or failed run had written of its document.
   documents.turn_ended(state, task_id);
+  memory.turn_ended(state, task_id);
   state.emit({ type: "delta_reset", task_id });
   let task: Task | null = null;
   try {
